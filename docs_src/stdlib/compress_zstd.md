@@ -1,6 +1,6 @@
 # `std::compress::zstd`
 
-Status: shipped
+Status: experimental
 
 Zstandard encoder / decoder (RFC 8478; libzstd-vendored).
 

@@ -81,21 +81,21 @@ mod tests {
         actions.push(super::make_cleanup("b"))
         actions.push(super::make_cleanup("c"))
         let result = super::run_with_cleanup(actions)
-        testing::check_eq(&result[0], &"cleanup: c", "c last in, first out")
-        testing::check_eq(&result[1], &"cleanup: b", "b second")
-        testing::check_eq(&result[2], &"cleanup: a", "a first in, last out")
+        let _ = testing::check_eq(&result[0], &"cleanup: c", "c last in, first out")
+        let _ = testing::check_eq(&result[1], &"cleanup: b", "b second")
+        let _ = testing::check_eq(&result[2], &"cleanup: a", "a first in, last out")
     }
 
     #[test]
     fn scope_guard_returns_work_value() {
         let r = super::scope_guard("test_resource", || 99)
-        testing::check_eq(&r, &99, "scope_guard passes through work result")
+        let _ = testing::check_eq(&r, &99, "scope_guard passes through work result")
     }
 
     #[test]
     fn empty_cleanup_stack() {
         let actions: [Fn() -> String] = []
         let result = super::run_with_cleanup(actions)
-        testing::check_eq(&(result.len() as i64), &0, "empty stack empty result")
+        let _ = testing::check_eq(&(result.len() as i64), &0, "empty stack empty result")
     }
 }

@@ -1,0 +1,16 @@
+fn sum_to(n: i64) -> i64 {
+    let mut total = 0
+    for value in 0..n {
+        total = total + value
+    }
+    total
+}
+
+fn main() {
+    let answer = sum_to(1000)
+    let label = match answer {
+        499500 => "ok",
+        _ => "bad",
+    }
+    println!("{}:{}", label, answer)
+}

@@ -336,10 +336,12 @@ pub(crate) fn build_variant_to_native_enum(
 pub(crate) struct NativeEnumBuild {
     pub(crate) ptr: i64,
     pub(crate) exclusive: bool,
+    #[allow(dead_code)]
     actions: Vec<NativeFieldAction>,
 }
 
 impl NativeEnumBuild {
+    #[allow(dead_code)]
     pub(crate) fn apply_to_fields(self, inner: &mut VariantInner) -> (i64, bool) {
         for action in self.actions {
             match action {
@@ -357,6 +359,7 @@ impl NativeEnumBuild {
 }
 
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 enum NativeFieldAction {
     DropOriginal(usize),
     TransferOriginal(usize),
@@ -376,6 +379,7 @@ struct BuiltField {
     ownership: BuiltFieldOwnership,
 }
 
+#[allow(dead_code)]
 pub(crate) fn build_variant_to_native_enum_moving(
     inner: &VariantInner,
     shape: &NativeEnumShape,
@@ -476,7 +480,7 @@ fn build_variant_to_native_enum_inner(
             }),
             (NativeFieldKind::Enum(sidx), Value::Variant(child)) => {
                 let child = crate::value::native_shape(*sidx)
-                    .and_then(|cs| build_variant_to_native_enum_inner(child, cs, false));
+                    .and_then(|cs| build_variant_to_native_enum_inner(child, &cs, false));
                 child.map(|built| {
                     exclusive &= built.exclusive;
                     BuiltField {
@@ -575,7 +579,7 @@ fn marshal_vec_enum(elems: &[Value], eidx: u32) -> Option<i64> {
         }
         for elem in elems {
             let child = match elem {
-                Value::Variant(inner) => build_variant_to_native_enum(inner, eshape),
+                Value::Variant(inner) => build_variant_to_native_enum(inner, &eshape),
                 // A live VM node is marshalled as a FRESH, exclusively-owned
                 // native copy (round-trip through a Variant), never an alias:
                 // the vec then owns every element outright, so teardown is a
@@ -583,7 +587,7 @@ fn marshal_vec_enum(elems: &[Value], eidx: u32) -> Option<i64> {
                 // VM keeps its own node untouched.
                 Value::NativeEnum(h) if h.shape.index == eidx => {
                     match crate::value::native_enum_to_variant(h) {
-                        Value::Variant(inner) => build_variant_to_native_enum(&inner, eshape),
+                        Value::Variant(inner) => build_variant_to_native_enum(&inner, &eshape),
                         _ => None,
                     }
                 }
@@ -628,12 +632,12 @@ fn marshal_vec_str_enum(elems: &[Value], eidx: u32) -> Option<i64> {
             };
             let key_ptr = rt::alloc_cstring(key.as_str().as_bytes()) as i64;
             let child = match vval {
-                Value::Variant(inner) => build_variant_to_native_enum(inner, eshape),
+                Value::Variant(inner) => build_variant_to_native_enum(inner, &eshape),
                 // Fresh exclusively-owned native copy of a live VM node (never
                 // an alias) - see `marshal_vec_enum` for the ownership rationale.
                 Value::NativeEnum(h) if h.shape.index == eidx => {
                     match crate::value::native_enum_to_variant(h) {
-                        Value::Variant(inner) => build_variant_to_native_enum(&inner, eshape),
+                        Value::Variant(inner) => build_variant_to_native_enum(&inner, &eshape),
                         _ => None,
                     }
                 }
@@ -675,7 +679,7 @@ fn free_built_field(kind: NativeFieldKind, word: i64, ownership: BuiltFieldOwner
         }
         (NativeFieldKind::Enum(eidx), BuiltFieldOwnership::FreshOwned) => {
             if let Some(s) = crate::value::native_shape(eidx) {
-                free_native_enum(word, s);
+                free_native_enum(word, &s);
             }
         }
         (NativeFieldKind::VecEnum(eidx), BuiltFieldOwnership::FreshOwned) => {
@@ -710,7 +714,7 @@ fn free_native_vec_enum(word: i64, eidx: u32) {
         let len = unsafe { rt::gos_rt_vec_len(v) }.max(0);
         for j in 0..len {
             let elem = unsafe { rt::gos_rt_vec_get_i64(v, j) };
-            free_native_enum(elem, s);
+            free_native_enum(elem, &s);
         }
     }
     // SAFETY: owns this `PRIMITIVE` vec; shallow-frees the buffer (elements
@@ -741,7 +745,7 @@ fn free_native_vec_str_enum(word: i64, eidx: u32) {
             unsafe { rt::gos_rt_str_free(key_word as *mut c_char) };
         }
         let val_word = unsafe { p.add(8).cast::<i64>().read_unaligned() };
-        if let Some(s) = s {
+        if let Some(s) = &s {
             free_native_enum(val_word, s);
         }
         // SAFETY: writing slot words of a vec we own.
@@ -776,7 +780,7 @@ impl Drop for BuiltEnums {
 /// Owns a marshalled flat struct block and every heap child in its slots.
 struct NativeStructBacking {
     slots: Box<[i64]>,
-    shape: &'static NativeStructShape,
+    shape: Arc<NativeStructShape>,
 }
 
 impl NativeStructBacking {
@@ -808,7 +812,7 @@ impl Drop for NativeStructBacking {
 /// the registered struct shape, so the caller falls back to bytecode.
 fn build_native_struct(
     value: &Value,
-    shape: &'static NativeStructShape,
+    shape: Arc<NativeStructShape>,
 ) -> Option<NativeStructBacking> {
     let Value::Struct(inner) = value else {
         return None;
@@ -831,7 +835,7 @@ fn build_native_struct(
             // Other heap fields cannot reach a registered struct shape, and a
             // value whose kind does not match the field declines the marshal.
             _ => {
-                free_native_struct_slots(&slots, shape);
+                free_native_struct_slots(&slots, &shape);
                 return None;
             }
         };
@@ -919,7 +923,7 @@ fn free_native_enum(ptr: i64, shape: &crate::value::NativeEnumShape) {
                 }
                 NativeFieldKind::Enum(eidx) => {
                     if let Some(s) = crate::value::native_shape(*eidx) {
-                        free_native_enum(word, s);
+                        free_native_enum(word, &s);
                     }
                 }
                 NativeFieldKind::VecEnum(eidx) => free_native_vec_enum(word, *eidx),
@@ -1075,7 +1079,7 @@ fn native_ptr_to_value(kind: JitKind, ptr: i64) -> Value {
             Value::Array(Arc::new(rows))
         }
         JitKind::StructPtr(idx) => match native_struct_shape(idx) {
-            Some(shape) => read_native_struct(ptr, shape),
+            Some(shape) => read_native_struct(ptr, &shape),
             None => Value::Unit,
         },
         _ => Value::Unit,
@@ -1197,7 +1201,7 @@ type StrCell = (Box<i64>, std::sync::Arc<parking_lot::Mutex<Value>>);
 fn free_built_enums(built: &[(i64, u32)]) {
     for &(ptr, idx) in built {
         if let Some(s) = crate::value::native_shape(idx) {
-            free_native_enum(ptr, s);
+            free_native_enum(ptr, &s);
         }
     }
 }
@@ -2969,7 +2973,7 @@ pub(crate) fn invoke_prepared(p: &Prepared, args: &[Value], graph_cache: &GraphC
                 Value::NativeEnum(h) if h.shape.index == *idx => Slot::I(h.ptr as i64),
                 Value::Variant(vinner) if marshal_variant => {
                     match crate::value::native_shape(*idx)
-                        .and_then(|s| build_variant_to_native_enum(vinner, s))
+                        .and_then(|s| build_variant_to_native_enum(vinner, &s))
                     {
                         Some(ptr) => {
                             built.0.push(ptr);
@@ -3185,7 +3189,7 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
                 // representation, recording it for `free_native_enum` teardown.
                 Value::Variant(vinner) => {
                     let Some(ptr) = crate::value::native_shape(*idx)
-                        .and_then(|s| build_variant_to_native_enum(vinner, s))
+                        .and_then(|s| build_variant_to_native_enum(vinner, &s))
                     else {
                         free_in_flight(&natives, &built_enums, &str_cells);
                         return Dispatch::Fallback;

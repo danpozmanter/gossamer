@@ -9,11 +9,12 @@
 //! offline in CI.
 
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::sync::Arc;
 
 use gossamer_pkg::{
     Cache, CacheError, FetchOptions, Fetcher, ProjectId, Resolved, ResolvedSource, StaticTransport,
-    Transport, sha256,
+    Transport, TransportError, sha256,
 };
 
 /// Builds a single-entry USTAR tarball in memory so tests do not
@@ -57,6 +58,21 @@ fn build_tar(name: &str, body: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Deliberately rejects the legacy allocating `get` call. A successful fetch
+/// proves that package installation consumes the reader/writer transport API.
+struct WriterOnlyTransport(Vec<u8>);
+
+impl Transport for WriterOnlyTransport {
+    fn get(&self, _url: &str) -> Result<Vec<u8>, TransportError> {
+        panic!("fetch must use get_to_writer, not allocating get")
+    }
+
+    fn get_to_writer(&self, _url: &str, out: &mut dyn Write) -> Result<(), TransportError> {
+        out.write_all(&self.0)
+            .map_err(|error| TransportError::Io(error.to_string()))
+    }
+}
+
 fn resolved_for(url: &str, hash: &str) -> Resolved {
     Resolved {
         id: ProjectId::parse("example.com/demo").unwrap(),
@@ -89,6 +105,22 @@ fn tarball_fetch_verifies_sha256_and_unpacks_into_the_cache() {
         files.get("src/main.gos").map(Vec::as_slice),
         Some(b"fn main() { }\n" as &[u8])
     );
+}
+
+#[test]
+fn tarball_fetch_uses_the_streaming_transport_path() {
+    let tar_bytes = build_tar("src/streamed.gos", b"streamed\n");
+    let expected = sha256::hex(&tar_bytes);
+    let url = "https://example.com/streamed.tar";
+    let fetcher = Fetcher::with_transport(
+        FetchOptions::default(),
+        Arc::new(WriterOnlyTransport(tar_bytes)) as Arc<dyn Transport>,
+    );
+    let mut cache = Cache::new();
+    let outcome = fetcher
+        .fetch_all(&[resolved_for(url, &expected)], &mut cache)
+        .expect("streaming fetch should succeed");
+    assert_eq!(outcome[0].source.files["src/streamed.gos"], b"streamed\n");
 }
 
 #[test]

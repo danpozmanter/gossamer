@@ -1,6 +1,6 @@
 # `std::collections::deque`
 
-Status: shipped
+Status: experimental
 
 Double-ended queue over Vec<i64>. Re-bind shape on every mutator.
 

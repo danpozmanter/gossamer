@@ -34,11 +34,9 @@ mod jit_stub;
 pub mod profile;
 mod regex_builtins;
 mod stdlib_builtins;
-// bytecode validator runs only under
-// `debug_assertions`; gate the module so release builds don't
-// pay the compile cost and don't surface dead-code warnings on
-// items the release stub doesn't use.
-#[cfg(debug_assertions)]
+// Bytecode is validated once when a chunk is installed. The dispatch loop
+// deliberately relies on validated indices for its unchecked fast paths, so
+// release builds must retain this boundary too.
 mod validate;
 pub mod value;
 mod vm;
@@ -163,8 +161,8 @@ pub use value::{
     RuntimeResult, SmolStr, Value, native_enum_to_variant, registry_stats_for_test,
 };
 pub use vm::VM_THREAD_STACK_BYTES;
-pub use vm::Vm;
 pub use vm::goroutine::join_outstanding_goroutines;
+pub use vm::{JitMetrics, Vm};
 
 /// Process-wide panic hook value registered by
 /// `runtime::set_panic_hook` on the interpreter tier. The report

@@ -60,12 +60,12 @@ mod fusion_tests {
             |> iter::filter(|n: i64| n % 2 == 0)
             |> iter::sum_by(|n: i64| n * n)
         // 2^2 + 4^2 + 6^2 + 8^2 + 10^2
-        testing::check_eq(&got, &220, "sum of even squares 1..=10")
+        let _ = testing::check_eq(&got, &220, "sum of even squares 1..=10")
     }
 
     #[test]
     fn empty_range_reduces_to_identity() {
-        testing::check_eq(&(iter::range(5, 5) |> iter::sum), &0, "empty sum")
-        testing::check_eq(&(iter::range(5, 5) |> iter::product), &1, "empty product")
+        let _ = testing::check_eq(&(iter::range(5, 5) |> iter::sum), &0, "empty sum")
+        let _ = testing::check_eq(&(iter::range(5, 5) |> iter::product), &1, "empty product")
     }
 }

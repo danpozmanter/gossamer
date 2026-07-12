@@ -57,6 +57,6 @@ mod tests {
         while let Some(v) = rx.try_recv() {
             total += v
         }
-        testing::check_eq(&total, &60, "10+20+30=60")
+        let _ = testing::check_eq(&total, &60, "10+20+30=60")
     }
 }

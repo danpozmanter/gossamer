@@ -1,6 +1,6 @@
 # `std::mime`
 
-Status: shipped
+Status: experimental
 
 RFC 2045 media type parsing, parameter extraction, and extension lookup.
 

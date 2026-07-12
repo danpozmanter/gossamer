@@ -9,7 +9,9 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
+use std::io::Write as IoWrite;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use thiserror::Error;
 
@@ -23,6 +25,8 @@ pub const LOCKFILE_HEADER: &str = "# gossamer project.lock v1\n";
 
 /// Canonical filename written to a project root.
 pub const LOCKFILE_FILENAME: &str = "project.lock";
+
+static LOCKFILE_WRITE_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Errors raised by [`Lockfile::parse`] and the verify helpers.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -165,7 +169,26 @@ impl Lockfile {
 
     /// Writes the lockfile to `<project_root>/project.lock`.
     pub fn write(&self, project_root: &Path) -> std::io::Result<()> {
-        std::fs::write(project_root.join(LOCKFILE_FILENAME), self.render())
+        std::fs::create_dir_all(project_root)?;
+        let path = project_root.join(LOCKFILE_FILENAME);
+        let tmp = project_root.join(format!(
+            ".{LOCKFILE_FILENAME}.tmp-{}-{}",
+            std::process::id(),
+            LOCKFILE_WRITE_ID.fetch_add(1, Ordering::Relaxed),
+        ));
+        let result = (|| {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)?;
+            file.write_all(self.render().as_bytes())?;
+            file.sync_all()?;
+            std::fs::rename(&tmp, &path)
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        result
     }
 
     /// Renders the lockfile to canonical TOML.
@@ -374,4 +397,29 @@ fn table_to_locked(map: BTreeMap<String, String>) -> Result<LockedEntry, Lockfil
         sha256: sha,
         owner_pubkey,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn atomic_write_replaces_and_loads_a_complete_lockfile() {
+        let root = std::env::temp_dir().join(format!(
+            "gossamer-lock-atomic-{}-{}",
+            std::process::id(),
+            LOCKFILE_WRITE_ID.fetch_add(1, Ordering::Relaxed),
+        ));
+        let lockfile = Lockfile {
+            entries: Vec::new(),
+        };
+        lockfile.write(&root).unwrap();
+        assert_eq!(Lockfile::load(&root).unwrap(), Some(lockfile));
+        let names: Vec<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from(LOCKFILE_FILENAME)]);
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

@@ -214,6 +214,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_vec_insert_safe" => Some("gos_rt_vec_insert_safe"),
         "gos_rt_vec_remove_safe" => Some("gos_rt_vec_remove_safe"),
         "gos_rt_vec_clear" => Some("gos_rt_vec_clear"),
+        "gos_rt_vec_capacity" => Some("gos_rt_vec_capacity"),
         "gos_rt_vec_extend" => Some("gos_rt_vec_extend"),
         "gos_rt_vec_truncate" => Some("gos_rt_vec_truncate"),
         "gos_rt_map_keys_vec" => Some("gos_rt_map_keys_vec"),

@@ -57,7 +57,7 @@ mod tests {
     fn i64_to_f64_precision_boundary() {
         let v: i64 = 9007199254740992
         let f = v as f64
-        testing::check_eq(&(f as i64), &v, "i64->f64->i64 at 2^53")
+        let _ = testing::check_eq(&(f as i64), &v, "i64->f64->i64 at 2^53")
     }
 
     #[test]
@@ -65,14 +65,14 @@ mod tests {
         let v: i64 = -1
         let u = v as u64
         // Round-trip: cast back to i64 to avoid overflow in the expected literal.
-        testing::check_eq(&(u as i64), &v, "neg 1 as u64 round-trip")
+        let _ = testing::check_eq(&(u as i64), &v, "neg 1 as u64 round-trip")
     }
 
     #[test]
     fn float_truncates_toward_zero() {
         let pos: f64 = 3.9
         let neg: f64 = -3.9
-        testing::check_eq(&(pos as i64), &3, "3.9 as i64")
-        testing::check_eq(&(neg as i64), &-3, "-3.9 as i64")
+        let _ = testing::check_eq(&(pos as i64), &3, "3.9 as i64")
+        let _ = testing::check_eq(&(neg as i64), &-3, "-3.9 as i64")
     }
 }

@@ -106,3 +106,6 @@ rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"]
 # suite stays under a minute; `exhaustive_test.sh` passes
 # `--features exhaustive_tests` to flip every gated test on.
 exhaustive_tests = []
+# Forward the VM's optional opcode profiler so real CLI workloads can be
+# measured with `cargo run -p gossamer-cli --features profile`.
+profile = ["gossamer-interp/profile"]

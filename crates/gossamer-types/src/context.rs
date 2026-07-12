@@ -100,6 +100,59 @@ struct Primitives {
 }
 
 impl TyCtxt {
+    /// Returns a deterministic, complete description of this type context for
+    /// compiler-artifact identity. Unlike `Debug` on the context itself, map
+    /// and set members are sorted so randomized hash iteration cannot turn an
+    /// otherwise identical compilation into a cache miss.
+    #[must_use]
+    pub fn stable_snapshot_key(&self) -> String {
+        fn sorted<I>(items: I) -> Vec<String>
+        where
+            I: IntoIterator<Item = String>,
+        {
+            let mut items: Vec<_> = items.into_iter().collect();
+            items.sort_unstable();
+            items
+        }
+
+        format!(
+            "kinds={:?};primitives={:?};struct_fields={:?};enum_variant_tys={:?};enum_ty_by_name={:?};struct_fields_inst={:?};def_names={:?};rc_metas={:?};aggr_copy_metas={:?};rc_managed_tys={:?};rc_managed_enum_defs={:?};tuple_struct_defs={:?};inline_enum_defs={:?}",
+            self.kinds,
+            self.primitives,
+            sorted(
+                self.struct_fields
+                    .iter()
+                    .map(|(k, v)| format!("{k:?}:{v:?}"))
+            ),
+            sorted(
+                self.enum_variant_tys
+                    .iter()
+                    .map(|(k, v)| format!("{k:?}:{v:?}"))
+            ),
+            sorted(
+                self.enum_ty_by_name
+                    .iter()
+                    .map(|(k, v)| format!("{k:?}:{v:?}"))
+            ),
+            sorted(
+                self.struct_fields_inst
+                    .iter()
+                    .map(|(k, v)| format!("{k:?}:{v:?}"))
+            ),
+            sorted(self.def_names.iter().map(|(k, v)| format!("{k:?}:{v:?}"))),
+            sorted(self.rc_metas.iter().map(|(k, v)| format!("{k:?}:{v:?}"))),
+            sorted(
+                self.aggr_copy_metas
+                    .iter()
+                    .map(|(k, v)| format!("{k:?}:{v:?}"))
+            ),
+            sorted(self.rc_managed_tys.iter().map(|v| format!("{v:?}"))),
+            sorted(self.rc_managed_enum_defs.iter().map(|v| format!("{v:?}"))),
+            sorted(self.tuple_struct_defs.iter().map(|v| format!("{v:?}"))),
+            sorted(self.inline_enum_defs.iter().map(|v| format!("{v:?}"))),
+        )
+    }
+
     /// Returns a fresh interner with no entries.
     #[must_use]
     pub fn new() -> Self {

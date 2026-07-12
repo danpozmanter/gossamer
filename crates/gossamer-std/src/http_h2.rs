@@ -46,9 +46,12 @@
     clippy::manual_let_else
 )]
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
+use std::task::{Context as TaskContext, Poll};
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use h2::RecvStream;
@@ -56,6 +59,12 @@ use h2::server::SendResponse;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::http::{Headers, Method, Request, Response, StatusCode};
+
+/// Keeping outgoing DATA frames at the protocol default avoids asking `h2` to
+/// retain an entire complete response while waiting for peer flow-control
+/// credit. The configured maximum frame size may be larger; this conservative
+/// chunk is valid for every HTTP/2 connection.
+const MAX_SEND_CHUNK_BYTES: usize = 16 * 1024;
 
 /// Handler signature for the bounded-body case: receive a
 /// `Request`, return a complete `Response`. The full body is
@@ -122,9 +131,15 @@ enum WriterState {
         respond: SendResponse<Bytes>,
         status: u16,
         headers: Headers,
+        written: usize,
+        max_response_body_bytes: usize,
+        deadline: Instant,
     },
     Streaming {
         sender: h2::SendStream<Bytes>,
+        written: usize,
+        max_response_body_bytes: usize,
+        deadline: Instant,
     },
     Closed,
 }
@@ -158,6 +173,29 @@ impl ResponseWriter {
     /// `Err(Error::Protocol)` if the peer has already cancelled
     /// the stream or the connection has gone away.
     pub fn write_chunk(&mut self, data: &[u8]) -> Result<(), Error> {
+        let (written, max_response_body_bytes, deadline) = match &self.state {
+            WriterState::Pending {
+                written,
+                max_response_body_bytes,
+                deadline,
+                ..
+            }
+            | WriterState::Streaming {
+                written,
+                max_response_body_bytes,
+                deadline,
+                ..
+            } => (*written, *max_response_body_bytes, *deadline),
+            WriterState::Closed => return Err(Error::Protocol("writer closed".into())),
+        };
+        if Instant::now() >= deadline {
+            return Err(Error::Timeout("stream deadline exceeded".into()));
+        }
+        if written.saturating_add(data.len()) > max_response_body_bytes {
+            return Err(Error::Protocol(format!(
+                "streaming response exceeds {max_response_body_bytes}-byte cap"
+            )));
+        }
         // Flush the head if needed.
         if matches!(self.state, WriterState::Pending { .. }) {
             let old = std::mem::replace(&mut self.state, WriterState::Closed);
@@ -165,19 +203,37 @@ impl ResponseWriter {
                 mut respond,
                 status,
                 headers,
+                written,
+                max_response_body_bytes,
+                deadline,
             } = old
             else {
                 unreachable!()
             };
             let sender = send_head(&mut respond, status, &headers, false)?;
-            self.state = WriterState::Streaming { sender };
+            self.state = WriterState::Streaming {
+                sender,
+                written,
+                max_response_body_bytes,
+                deadline,
+            };
         }
-        let WriterState::Streaming { sender, .. } = &mut self.state else {
+        let WriterState::Streaming {
+            sender, written, ..
+        } = &mut self.state
+        else {
             return Err(Error::Protocol("writer closed".into()));
         };
+        // `StreamingHandler` is synchronous, so it cannot await capacity
+        // without re-entering the future driver. Its aggregate byte cap above
+        // bounds any h2 queue retained while the peer grants flow-control
+        // credit; the complete-response path below additionally waits for
+        // capacity before every frame.
         sender
             .send_data(Bytes::copy_from_slice(data), false)
-            .map_err(|e| Error::Protocol(format!("send_data: {e}")))
+            .map_err(|e| Error::Protocol(format!("send_data: {e}")))?;
+        *written += data.len();
+        Ok(())
     }
 
     /// Sends the terminating `END_STREAM` frame. If the head has
@@ -195,6 +251,7 @@ impl ResponseWriter {
                 mut respond,
                 status,
                 headers,
+                ..
             } => {
                 let _ = send_head(&mut respond, status, &headers, true)?;
                 Ok(())
@@ -530,6 +587,18 @@ pub struct Config {
     pub max_frame_size: u32,
     /// Header-list size cap.
     pub max_header_list_size: u32,
+    /// Maximum fully buffered request body per stream. The handler API owns a
+    /// complete `Request`, so accepting an unbounded DATA sequence here would
+    /// let one peer consume process memory before the handler can apply a
+    /// policy of its own.
+    pub max_request_body_bytes: usize,
+    /// Maximum fully buffered response body per stream. Streaming responses
+    /// use the same aggregate cap and reject additional chunks once reached.
+    pub max_response_body_bytes: usize,
+    /// Deadline for receiving one complete request and for cooperative handler
+    /// work through `Request::context`. It is enforced for h2 reads; a
+    /// synchronous handler must observe its request context to stop itself.
+    pub stream_deadline: Duration,
 }
 
 impl Default for Config {
@@ -540,6 +609,9 @@ impl Default for Config {
             initial_connection_window_size: 8 * 1024 * 1024,
             max_frame_size: 16_384,
             max_header_list_size: 16 * 1024,
+            max_request_body_bytes: 8 * 1024 * 1024,
+            max_response_body_bytes: 8 * 1024 * 1024,
+            stream_deadline: Duration::from_secs(30),
         }
     }
 }
@@ -590,6 +662,41 @@ impl Config {
         self
     }
 
+    /// Overrides the maximum fully buffered request body per stream.
+    #[must_use]
+    pub fn with_max_request_body_bytes(mut self, bytes: usize) -> Self {
+        self.max_request_body_bytes = bytes;
+        self
+    }
+
+    /// Overrides the maximum complete response body per stream.
+    #[must_use]
+    pub fn with_max_response_body_bytes(mut self, bytes: usize) -> Self {
+        self.max_response_body_bytes = bytes;
+        self
+    }
+
+    /// Overrides the deadline for receiving a request. The resulting request
+    /// context carries the same deadline for cooperative handler cancellation.
+    #[must_use]
+    pub fn with_stream_deadline(mut self, timeout: Duration) -> Self {
+        self.stream_deadline = timeout;
+        self
+    }
+
+    fn validate(&self) -> Result<(), Error> {
+        if self.max_concurrent_streams == 0
+            || self.max_request_body_bytes == 0
+            || self.max_response_body_bytes == 0
+            || self.stream_deadline.is_zero()
+        {
+            return Err(Error::Protocol(
+                "h2 stream and buffered-body limits must be non-zero".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Enables HTTP/2 server push (SETTINGS frame value
     /// `SETTINGS_ENABLE_PUSH`). The wire-protocol setting is
     /// controlled by the peer (the client decides whether to
@@ -615,6 +722,68 @@ pub enum Error {
     /// Handler panicked or rejected the request.
     #[error("h2 handler: {0}")]
     Handler(String),
+    /// A request or response exceeded its configured per-stream deadline.
+    #[error("h2 timeout: {0}")]
+    Timeout(String),
+}
+
+/// Scheduler-backed deadline around a future used by the h2 bridge. This is
+/// intentionally not Tokio's timer: HTTP/2 is driven by Gossamer goroutines,
+/// so its wakeup must return to `runtime_future::drive` through the native
+/// scheduler. The timer waker is removed when the I/O future wins; the timer
+/// wheel may retain an inert entry until its due time, but never retains the
+/// stream or its request body.
+struct Deadline<F> {
+    future: Pin<Box<F>>,
+    expires_at: Instant,
+    timer_gid: Option<crate::sched_global::Gid>,
+}
+
+impl<F> Deadline<F> {
+    fn new(future: F, expires_at: Instant) -> Self {
+        Self {
+            future: Box::pin(future),
+            expires_at,
+            timer_gid: None,
+        }
+    }
+
+    fn clear_timer(&mut self) {
+        if let Some(gid) = self.timer_gid.take() {
+            crate::sched_global::forget_waker(gid);
+        }
+    }
+}
+
+impl<F: Future> Future for Deadline<F> {
+    type Output = Result<F::Output, Error>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Self::Output> {
+        let this = self.as_mut().get_mut();
+        if Instant::now() >= this.expires_at {
+            this.clear_timer();
+            return Poll::Ready(Err(Error::Timeout("stream deadline exceeded".into())));
+        }
+        if this.timer_gid.is_none() {
+            let timer_gid = crate::sched_global::add_timer(this.expires_at);
+            let wake = cx.waker().clone();
+            crate::sched_global::register_waker(timer_gid, Box::new(move || wake.wake_by_ref()));
+            this.timer_gid = Some(timer_gid);
+        }
+        match this.future.as_mut().poll(cx) {
+            Poll::Ready(output) => {
+                this.clear_timer();
+                Poll::Ready(Ok(output))
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl<F> Drop for Deadline<F> {
+    fn drop(&mut self) {
+        self.clear_timer();
+    }
 }
 
 impl From<h2::Error> for Error {
@@ -628,6 +797,20 @@ impl From<h2::Error> for Error {
 pub struct ServerHandle {
     shutdown: Arc<AtomicBool>,
     in_flight: Arc<AtomicUsize>,
+}
+
+/// Owns one accepted stream's dispatch slot. Keeping this decrement in `Drop`
+/// is important because a stream can be torn down while its future is parked,
+/// and a panic in the future driver must not leave graceful shutdown waiting
+/// on a count that can no longer drain.
+struct InFlightStream {
+    in_flight: Arc<AtomicUsize>,
+}
+
+impl Drop for InFlightStream {
+    fn drop(&mut self) {
+        self.in_flight.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 impl ServerHandle {
@@ -653,6 +836,28 @@ impl ServerHandle {
                 return false;
             }
             std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+/// Acquires one local dispatch slot. h2 advertises the same setting to peers,
+/// but retaining this independent cap means a peer cannot create unbounded
+/// goroutine work during SETTINGS races or implementation changes upstream.
+fn try_begin_stream(in_flight: &AtomicUsize, max_concurrent_streams: u32) -> bool {
+    let max = max_concurrent_streams as usize;
+    let mut current = in_flight.load(Ordering::Acquire);
+    loop {
+        if current >= max {
+            return false;
+        }
+        match in_flight.compare_exchange_weak(
+            current,
+            current + 1,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return true,
+            Err(actual) => current = actual,
         }
     }
 }
@@ -705,6 +910,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     H: Handler,
 {
+    config.validate()?;
     let mut builder = h2::server::Builder::new();
     builder
         .max_concurrent_streams(config.max_concurrent_streams)
@@ -722,13 +928,19 @@ where
             conn.graceful_shutdown();
             while let Some(req) = conn.accept().await {
                 match req {
-                    Ok((req, respond)) => {
-                        in_flight.fetch_add(1, Ordering::AcqRel);
+                    Ok((req, mut respond)) => {
+                        if !try_begin_stream(&in_flight, config.max_concurrent_streams) {
+                            respond.send_reset(h2::Reason::REFUSED_STREAM);
+                            continue;
+                        }
                         spawn_stream_handler(
                             req,
                             respond,
                             Arc::clone(&handler),
                             Arc::clone(&in_flight),
+                            config.max_request_body_bytes,
+                            config.max_response_body_bytes,
+                            config.stream_deadline,
                         );
                     }
                     Err(_) => break,
@@ -737,9 +949,20 @@ where
             break;
         }
         match conn.accept().await {
-            Some(Ok((req, respond))) => {
-                in_flight.fetch_add(1, Ordering::AcqRel);
-                spawn_stream_handler(req, respond, Arc::clone(&handler), Arc::clone(&in_flight));
+            Some(Ok((req, mut respond))) => {
+                if !try_begin_stream(&in_flight, config.max_concurrent_streams) {
+                    respond.send_reset(h2::Reason::REFUSED_STREAM);
+                    continue;
+                }
+                spawn_stream_handler(
+                    req,
+                    respond,
+                    Arc::clone(&handler),
+                    Arc::clone(&in_flight),
+                    config.max_request_body_bytes,
+                    config.max_response_body_bytes,
+                    config.stream_deadline,
+                );
             }
             Some(Err(e)) => {
                 eprintln!("h2: accept error: {e}");
@@ -756,15 +979,25 @@ fn spawn_stream_handler<H>(
     respond: SendResponse<Bytes>,
     handler: Arc<H>,
     in_flight: Arc<AtomicUsize>,
+    max_request_body_bytes: usize,
+    max_response_body_bytes: usize,
+    stream_deadline: Duration,
 ) where
     H: Handler,
 {
     gossamer_runtime::sched_global::spawn(Box::new(move || {
-        let result = crate::runtime_future::drive(serve_one_stream(req, respond, handler));
+        let _stream = InFlightStream { in_flight };
+        let result = crate::runtime_future::drive(serve_one_stream(
+            req,
+            respond,
+            handler,
+            max_request_body_bytes,
+            max_response_body_bytes,
+            stream_deadline,
+        ));
         if let Err(e) = result {
             eprintln!("h2: stream error: {e}");
         }
-        in_flight.fetch_sub(1, Ordering::AcqRel);
     }));
 }
 
@@ -772,10 +1005,14 @@ async fn serve_one_stream<H>(
     h2_req: http::Request<RecvStream>,
     mut respond: SendResponse<Bytes>,
     handler: Arc<H>,
+    max_request_body_bytes: usize,
+    max_response_body_bytes: usize,
+    stream_deadline: Duration,
 ) -> Result<(), Error>
 where
     H: Handler,
 {
+    let deadline = Instant::now() + stream_deadline;
     // Bridge from h2's http::Request<RecvStream> into our
     // Request shape.
     let (parts, mut body_stream) = h2_req.into_parts();
@@ -795,12 +1032,19 @@ where
 
     // Read body chunks.
     let mut body: Vec<u8> = Vec::new();
-    while let Some(chunk) = body_stream.data().await {
+    while let Some(chunk) = Deadline::new(body_stream.data(), deadline).await? {
         let chunk = chunk?;
         let _ = body_stream.flow_control().release_capacity(chunk.len());
+        if body.len().saturating_add(chunk.len()) > max_request_body_bytes {
+            return Err(Error::Protocol(format!(
+                "request body exceeds {max_request_body_bytes}-byte cap"
+            )));
+        }
         body.extend_from_slice(&chunk);
     }
-    let raw_trailers = body_stream.trailers().await.unwrap_or(None);
+    let raw_trailers = Deadline::new(body_stream.trailers(), deadline)
+        .await?
+        .unwrap_or(None);
     let mut trailers: Option<Headers> = None;
     if let Some(tr) = raw_trailers {
         let mut t = Headers::new();
@@ -818,7 +1062,7 @@ where
         query,
         headers,
         body,
-        context: crate::context::Context::background(),
+        context: crate::context::with_deadline(&crate::context::Context::background(), deadline),
         trailers,
     };
 
@@ -835,6 +1079,12 @@ where
                 body_stream: None,
             },
         };
+
+    if response.body.len() > max_response_body_bytes {
+        return Err(Error::Protocol(format!(
+            "response body exceeds {max_response_body_bytes}-byte cap"
+        )));
+    }
 
     // Build the http::Response head for h2.
     let status = ::http::StatusCode::from_u16(response.status.as_u16())
@@ -861,8 +1111,43 @@ where
         .send_response(head, body_empty)
         .map_err(|e| Error::Protocol(format!("send_response: {e}")))?;
     if !body_empty {
+        send_response_body(&mut sender, response.body, deadline).await?;
+    }
+    Ok(())
+}
+
+/// Writes a complete response without transferring an unbounded buffer into
+/// h2. Capacity is reserved and awaited before every bounded DATA frame; a
+/// closed/reset peer and the configured stream deadline both release the
+/// response vector immediately.
+async fn send_response_body(
+    sender: &mut h2::SendStream<Bytes>,
+    body: Vec<u8>,
+    deadline: Instant,
+) -> Result<(), Error> {
+    let mut offset = 0;
+    while offset < body.len() {
+        let desired = (body.len() - offset).min(MAX_SEND_CHUNK_BYTES);
+        sender.reserve_capacity(desired);
+        let capacity = Deadline::new(
+            std::future::poll_fn(|cx| sender.poll_capacity(cx)),
+            deadline,
+        )
+        .await?
+        .ok_or_else(|| Error::Protocol("response stream closed".into()))?
+        .map_err(|e| Error::Protocol(format!("response capacity: {e}")))?;
+        let len = capacity.min(desired);
+        // `poll_capacity` only yields a positive assignment. Keep this guard
+        // in case h2 changes that contract rather than spinning forever.
+        if len == 0 {
+            return Err(Error::Protocol("response stream has zero capacity".into()));
+        }
+        offset += len;
         sender
-            .send_data(Bytes::from(response.body), true)
+            .send_data(
+                Bytes::copy_from_slice(&body[offset - len..offset]),
+                offset == body.len(),
+            )
             .map_err(|e| Error::Protocol(format!("send_data: {e}")))?;
     }
     Ok(())
@@ -966,6 +1251,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     H: StreamingHandler,
 {
+    config.validate()?;
     let mut builder = h2::server::Builder::new();
     builder
         .max_concurrent_streams(config.max_concurrent_streams)
@@ -982,13 +1268,19 @@ where
             conn.graceful_shutdown();
             while let Some(req) = conn.accept().await {
                 match req {
-                    Ok((req, respond)) => {
-                        in_flight.fetch_add(1, Ordering::AcqRel);
+                    Ok((req, mut respond)) => {
+                        if !try_begin_stream(&in_flight, config.max_concurrent_streams) {
+                            respond.send_reset(h2::Reason::REFUSED_STREAM);
+                            continue;
+                        }
                         spawn_streaming_handler(
                             req,
                             respond,
                             Arc::clone(&handler),
                             Arc::clone(&in_flight),
+                            config.max_request_body_bytes,
+                            config.max_response_body_bytes,
+                            config.stream_deadline,
                         );
                     }
                     Err(_) => break,
@@ -997,9 +1289,20 @@ where
             break;
         }
         match conn.accept().await {
-            Some(Ok((req, respond))) => {
-                in_flight.fetch_add(1, Ordering::AcqRel);
-                spawn_streaming_handler(req, respond, Arc::clone(&handler), Arc::clone(&in_flight));
+            Some(Ok((req, mut respond))) => {
+                if !try_begin_stream(&in_flight, config.max_concurrent_streams) {
+                    respond.send_reset(h2::Reason::REFUSED_STREAM);
+                    continue;
+                }
+                spawn_streaming_handler(
+                    req,
+                    respond,
+                    Arc::clone(&handler),
+                    Arc::clone(&in_flight),
+                    config.max_request_body_bytes,
+                    config.max_response_body_bytes,
+                    config.stream_deadline,
+                );
             }
             Some(Err(e)) => {
                 eprintln!("h2: accept error: {e}");
@@ -1016,16 +1319,25 @@ fn spawn_streaming_handler<H>(
     respond: SendResponse<Bytes>,
     handler: Arc<H>,
     in_flight: Arc<AtomicUsize>,
+    max_request_body_bytes: usize,
+    max_response_body_bytes: usize,
+    stream_deadline: Duration,
 ) where
     H: StreamingHandler,
 {
     gossamer_runtime::sched_global::spawn(Box::new(move || {
-        let result =
-            crate::runtime_future::drive(serve_one_streaming_stream(req, respond, handler));
+        let _stream = InFlightStream { in_flight };
+        let result = crate::runtime_future::drive(serve_one_streaming_stream(
+            req,
+            respond,
+            handler,
+            max_request_body_bytes,
+            max_response_body_bytes,
+            stream_deadline,
+        ));
         if let Err(e) = result {
             eprintln!("h2: stream error: {e}");
         }
-        in_flight.fetch_sub(1, Ordering::AcqRel);
     }));
 }
 
@@ -1033,10 +1345,14 @@ async fn serve_one_streaming_stream<H>(
     h2_req: http::Request<RecvStream>,
     respond: SendResponse<Bytes>,
     handler: Arc<H>,
+    max_request_body_bytes: usize,
+    max_response_body_bytes: usize,
+    stream_deadline: Duration,
 ) -> Result<(), Error>
 where
     H: StreamingHandler,
 {
+    let deadline = Instant::now() + stream_deadline;
     let (parts, mut body_stream) = h2_req.into_parts();
     let method = method_from_http(&parts.method);
     let path_q = parts
@@ -1053,12 +1369,19 @@ where
     }
 
     let mut body: Vec<u8> = Vec::new();
-    while let Some(chunk) = body_stream.data().await {
+    while let Some(chunk) = Deadline::new(body_stream.data(), deadline).await? {
         let chunk = chunk?;
         let _ = body_stream.flow_control().release_capacity(chunk.len());
+        if body.len().saturating_add(chunk.len()) > max_request_body_bytes {
+            return Err(Error::Protocol(format!(
+                "request body exceeds {max_request_body_bytes}-byte cap"
+            )));
+        }
         body.extend_from_slice(&chunk);
     }
-    let raw_trailers = body_stream.trailers().await.unwrap_or(None);
+    let raw_trailers = Deadline::new(body_stream.trailers(), deadline)
+        .await?
+        .unwrap_or(None);
     let mut trailers: Option<Headers> = None;
     if let Some(tr) = raw_trailers {
         let mut t = Headers::new();
@@ -1076,7 +1399,7 @@ where
         query,
         headers,
         body,
-        context: crate::context::Context::background(),
+        context: crate::context::with_deadline(&crate::context::Context::background(), deadline),
         trailers,
     };
 
@@ -1085,6 +1408,9 @@ where
             respond,
             status: 200,
             headers: Headers::new(),
+            written: 0,
+            max_response_body_bytes,
+            deadline,
         },
     };
 
@@ -1157,6 +1483,9 @@ mod tests {
         assert!(c.max_concurrent_streams >= 100);
         assert!(c.initial_window_size >= 64 * 1024);
         assert!(c.max_frame_size >= 16 * 1024);
+        assert!(c.max_request_body_bytes >= 1024 * 1024);
+        assert!(c.max_response_body_bytes >= 1024 * 1024);
+        assert!(!c.stream_deadline.is_zero());
     }
 
     #[test]
@@ -1183,6 +1512,17 @@ mod tests {
             in_flight: Arc::new(AtomicUsize::new(1)),
         };
         assert!(!handle.shutdown(Some(Duration::from_millis(50))));
+    }
+
+    #[test]
+    fn in_flight_guard_releases_slot_on_unwind_or_cancellation() {
+        let in_flight = Arc::new(AtomicUsize::new(1));
+        {
+            let _guard = InFlightStream {
+                in_flight: Arc::clone(&in_flight),
+            };
+        }
+        assert_eq!(in_flight.load(Ordering::Acquire), 0);
     }
 
     #[test]
@@ -1215,12 +1555,57 @@ mod tests {
             .with_initial_connection_window_size(131_070)
             .with_max_frame_size(32_768)
             .with_max_header_list_size(8_192)
+            .with_max_request_body_bytes(4_096)
+            .with_max_response_body_bytes(8_192)
+            .with_stream_deadline(Duration::from_secs(2))
             .with_enable_push(true);
         assert_eq!(c.max_concurrent_streams, 42);
         assert_eq!(c.initial_window_size, 65_535);
         assert_eq!(c.initial_connection_window_size, 131_070);
         assert_eq!(c.max_frame_size, 32_768);
         assert_eq!(c.max_header_list_size, 8_192);
+        assert_eq!(c.max_request_body_bytes, 4_096);
+        assert_eq!(c.max_response_body_bytes, 8_192);
+        assert_eq!(c.stream_deadline, Duration::from_secs(2));
+    }
+
+    #[test]
+    fn config_rejects_zero_resource_limits() {
+        let c = Config {
+            max_response_body_bytes: 0,
+            ..Config::default()
+        };
+        assert!(matches!(c.validate(), Err(Error::Protocol(_))));
+        let c = Config {
+            stream_deadline: Duration::ZERO,
+            ..Config::default()
+        };
+        assert!(matches!(c.validate(), Err(Error::Protocol(_))));
+    }
+
+    #[test]
+    fn dispatch_cap_is_strict() {
+        let streams = AtomicUsize::new(0);
+        assert!(try_begin_stream(&streams, 2));
+        assert!(try_begin_stream(&streams, 2));
+        assert!(!try_begin_stream(&streams, 2));
+        assert_eq!(streams.load(Ordering::Acquire), 2);
+    }
+
+    #[test]
+    fn deadline_fails_before_polling_expired_future() {
+        let mut future = Box::pin(Deadline::new(
+            std::future::pending::<()>(),
+            Instant::now()
+                .checked_sub(Duration::from_millis(1))
+                .expect("one millisecond before now"),
+        ));
+        let wake = std::task::Waker::noop();
+        let mut cx = TaskContext::from_waker(wake);
+        assert!(matches!(
+            future.as_mut().poll(&mut cx),
+            Poll::Ready(Err(Error::Timeout(_)))
+        ));
     }
 
     #[test]

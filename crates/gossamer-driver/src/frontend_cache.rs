@@ -23,9 +23,15 @@
 #![forbid(unsafe_code)]
 
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use gossamer_pkg::sha256;
+
+const BLOB_MAGIC: &[u8; 8] = b"GOSFC001";
+const MAX_BLOB_BYTES: usize = 16 * 1024 * 1024;
+static CACHE_WRITE_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Content-addressed identifier for one frontend compile. The key
 /// combines the source bytes with the toolchain version so a
@@ -129,7 +135,7 @@ pub fn mark_success(key: &FrontendCacheKey) {
 /// want an isolated workspace-local cache.
 pub fn mark_success_in(root: &Path, key: &FrontendCacheKey) {
     let _ = fs::create_dir_all(root);
-    let _ = fs::write(marker_path(root, key), b"");
+    let _ = write_atomic(&marker_path(root, key), b"");
 }
 
 /// Returns `true` when `key` has a marker recorded by a prior
@@ -159,7 +165,13 @@ pub fn store_blob_in<T: serde::Serialize>(root: &Path, key: &FrontendCacheKey, v
     let Ok(encoded) = postcard::to_allocvec(value) else {
         return;
     };
-    let _ = fs::write(blob_path(root, key), encoded);
+    if encoded.len() > MAX_BLOB_BYTES {
+        return;
+    }
+    // Do not build a second `magic + encoded` allocation. Frontend trees can
+    // approach the blob ceiling, and the atomic writer already owns the file
+    // handle needed to write a small prefix followed by the postcard bytes.
+    let _ = write_atomic_parts(&blob_path(root, key), BLOB_MAGIC, &encoded);
 }
 
 /// Attempts to load a previously-cached blob for `key`, returning
@@ -176,8 +188,9 @@ pub fn load_blob_in<T: serde::de::DeserializeOwned>(
     root: &Path,
     key: &FrontendCacheKey,
 ) -> Option<T> {
-    let bytes = fs::read(blob_path(root, key)).ok()?;
-    postcard::from_bytes(&bytes).ok()
+    let bytes = read_capped(&blob_path(root, key), BLOB_MAGIC.len() + MAX_BLOB_BYTES)?;
+    let payload = bytes.strip_prefix(BLOB_MAGIC)?;
+    postcard::from_bytes(payload).ok()
 }
 
 /// Writes `bytes` directly to the cache file for `key` without any
@@ -191,7 +204,7 @@ pub fn store_raw(key: &FrontendCacheKey, bytes: &[u8]) {
 /// Variant of [`store_raw`] that writes into `root`.
 pub fn store_raw_in(root: &Path, key: &FrontendCacheKey, bytes: &[u8]) {
     let _ = fs::create_dir_all(root);
-    let _ = fs::write(blob_path(root, key), bytes);
+    let _ = write_atomic(&blob_path(root, key), bytes);
 }
 
 /// Returns the on-disk path the cache uses for `key` if a prior
@@ -216,6 +229,61 @@ fn marker_path(dir: &Path, key: &FrontendCacheKey) -> PathBuf {
 
 fn blob_path(dir: &Path, key: &FrontendCacheKey) -> PathBuf {
     dir.join(format!("{}.bin", key.as_hex()))
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    write_atomic_with(path, |file| file.write_all(bytes))
+}
+
+fn write_atomic_parts(path: &Path, first: &[u8], second: &[u8]) -> std::io::Result<()> {
+    write_atomic_with(path, |file| {
+        file.write_all(first)?;
+        file.write_all(second)
+    })
+}
+
+fn write_atomic_with<F>(path: &Path, write: F) -> std::io::Result<()>
+where
+    F: FnOnce(&mut fs::File) -> std::io::Result<()>,
+{
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "cache path has no parent")
+    })?;
+    fs::create_dir_all(parent)?;
+    let tmp = parent.join(format!(
+        ".{}.tmp-{}-{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("cache"),
+        std::process::id(),
+        CACHE_WRITE_ID.fetch_add(1, Ordering::Relaxed),
+    ));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        write(&mut file)?;
+        file.sync_all()?;
+        fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
+/// Reads one cache blob with a sentinel byte. A prior `metadata` size check is
+/// insufficient because another process can replace the file before the read;
+/// taking at most one extra byte keeps advisory cache corruption from becoming
+/// an unbounded allocation.
+fn read_capped(path: &Path, limit: usize) -> Option<Vec<u8>> {
+    let file = fs::File::open(path).ok()?;
+    let mut bytes = Vec::new();
+    file.take(u64::try_from(limit.saturating_add(1)).ok()?)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() <= limit).then_some(bytes)
 }
 
 #[cfg(test)]
@@ -263,6 +331,35 @@ mod tests {
         let round_trip: Vec<String> = load_blob_in(&tmp, &key).expect("blob not found");
         assert_eq!(round_trip, payload);
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn blob_loader_rejects_legacy_and_oversized_files_before_decode() {
+        let tmp = tempdir();
+        let key = FrontendCacheKey::new("fn a() {}\n", "test");
+        let path = blob_path(&tmp, &key);
+        fs::write(&path, postcard::to_allocvec(&vec!["legacy"]).unwrap()).unwrap();
+        assert!(load_blob_in::<Vec<String>>(&tmp, &key).is_none());
+
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&path)
+            .unwrap();
+        file.set_len(u64::try_from(BLOB_MAGIC.len() + MAX_BLOB_BYTES + 1).unwrap())
+            .unwrap();
+        assert!(load_blob_in::<Vec<String>>(&tmp, &key).is_none());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn capped_reader_rejects_the_sentinel_byte() {
+        let tmp = tempdir();
+        let path = tmp.join("blob");
+        fs::write(&path, b"four").unwrap();
+        assert!(read_capped(&path, 3).is_none());
+        assert_eq!(read_capped(&path, 4), Some(b"four".to_vec()));
+        let _ = fs::remove_dir_all(tmp);
     }
 
     fn tempdir() -> PathBuf {

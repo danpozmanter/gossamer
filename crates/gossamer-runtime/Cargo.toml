@@ -52,7 +52,7 @@ num-traits = "0.2"
 parking_lot = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["unbounded_depth"] }
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 flate2 = "1"
 sha1 = { version = "0.10", default-features = false, features = ["std"] }

@@ -241,10 +241,9 @@ impl IntrinsicContext {
     /// Returns the `DataId` for `text`, defining a static-string
     /// rodata slot on first use.
     ///
-    /// Runtime strings expect the body pointer to have a 5-byte
-    /// prefix: `[len:u32 LE][tag=0xA8][content][NUL]`, with the
-    /// pointer handed to helpers at `content`. The paired
-    /// `static_string_body_ptr` helper below applies that offset.
+    /// Runtime strings carry a 16-byte versioned owner before their legacy
+    /// `[rc, cap, len, tag]` suffix. The paired helper returns the content
+    /// body at the common 29-byte carrier offset.
     pub(super) fn intern_string(&mut self, module: &mut dyn Module, text: &str) -> Result<DataId> {
         if let Some(id) = self.strings.get(text).copied() {
             return Ok(id);
@@ -254,7 +253,15 @@ impl IntrinsicContext {
         let id = module
             .declare_data(&symbol, Linkage::Local, false, false)
             .map_err(|e| anyhow!("declare {symbol}: {e}"))?;
-        let mut bytes = Vec::with_capacity(5 + text.len() + 1);
+        let mut bytes = Vec::with_capacity(29 + text.len() + 1);
+        // StringOwner { abi_version: 1, kind: 2, destructor: static (3),
+        // generation: 0 }, then the legacy string suffix.
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&3u32.to_le_bytes());
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
         bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
         bytes.push(0xA8);
         bytes.extend_from_slice(text.as_bytes());
@@ -262,11 +269,11 @@ impl IntrinsicContext {
         let mut description = DataDescription::new();
         description.define(bytes.into_boxed_slice());
         // Align the blob so its base is even: the body pointer the runtime
-        // uses is `base + 5` (after `[len:u32][tag:u8]`), and `untag_rc`
+        // uses is `base + 29` (after the owner and legacy suffix), and `untag_rc`
         // relies on string bodies being ODD addresses to skip them on the
         // RC accounting path (it masks the low bits of even pointers as a
         // tagged-enum discriminant). A packed blob can land on an odd base,
-        // making `base + 5` even and corrupting the pointer; an even base
+        // making `base + 29` even and corrupting the pointer; an even base
         // keeps every body odd.
         description.set_align(8);
         // These local read-only atoms are reached only through
@@ -285,8 +292,8 @@ impl IntrinsicContext {
     }
 
     /// Materializes a pointer to an interned string's content body,
-    /// skipping the 5-byte `[len:u32][tag=0xA8]` header so `ptr[-1]`
-    /// is the tag and `ptr[-5]` the length the runtime expects.
+    /// skipping the 29-byte owner/header prefix so `ptr[-1]` is the tag and
+    /// `ptr[-5]` the length the runtime expects.
     pub(super) fn static_string_body_ptr(
         &self,
         module: &dyn Module,
@@ -296,7 +303,7 @@ impl IntrinsicContext {
         let ptr_ty = module.target_config().pointer_type();
         let global = module.declare_data_in_func(data_id, builder.func);
         let base = builder.ins().global_value(ptr_ty, global);
-        builder.ins().iadd_imm(base, 5)
+        builder.ins().iadd_imm(base, 29)
     }
 
     /// Returns the `DataId` for a scalar `static mut`'s backing writable

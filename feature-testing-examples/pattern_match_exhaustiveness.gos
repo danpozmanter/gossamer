@@ -64,22 +64,22 @@ mod tests {
     #[test]
     fn describe_point() {
         let s = super::Shape::Point
-        testing::check_eq(&super::describe(&s), &"point", "point")
+        let _ = testing::check_eq(&super::describe(&s), &"point", "point")
     }
 
     #[test]
     fn describe_red_circle() {
         let s = super::Shape::Circle(2.0, super::Color::Red)
         let d = super::describe(&s)
-        testing::check(d.contains("red circle"), "red circle")
-        testing::check(d.contains("2"), "radius in description")
+        let _ = testing::check(d.contains("red circle"), "red circle")
+        let _ = testing::check(d.contains("2"), "radius in description")
     }
 
     #[test]
     fn describe_iso_triangle() {
         let s = super::Shape::Triangle { base: 5.0, height: 5.0 }
         let d = super::describe(&s)
-        testing::check(d.contains("iso"), "isosceles triangle")
+        let _ = testing::check(d.contains("iso"), "isosceles triangle")
     }
 
 }

@@ -10,7 +10,10 @@
 use std::cell::RefCell;
 
 use gossamer_hir::lower_source_file;
-use gossamer_interp::{SmolStr, Value, Vm, set_stdout_writer};
+use gossamer_interp::{
+    SmolStr, Value, Vm, jit_force_disabled_state, set_jit_disabled, set_jit_enabled,
+    set_stdout_writer,
+};
 use gossamer_lex::SourceMap;
 use gossamer_parse::parse_source_file;
 use gossamer_resolve::resolve_source_file;
@@ -18,6 +21,24 @@ use gossamer_types::{TyCtxt, typecheck_source_file};
 
 thread_local! {
     static CAPTURED: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+struct JitDisableGuard(bool);
+
+impl JitDisableGuard {
+    fn new() -> Self {
+        let was_disabled = jit_force_disabled_state();
+        set_jit_disabled();
+        Self(was_disabled)
+    }
+}
+
+impl Drop for JitDisableGuard {
+    fn drop(&mut self) {
+        if !self.0 {
+            set_jit_enabled();
+        }
+    }
 }
 
 fn capture_writer(text: &str) {
@@ -264,12 +285,83 @@ fn sum(n: i64, acc: i64) -> i64 {
     if n <= 0i64 { acc } else { sum(n - 1i64, acc + n) }
 }
 "#;
-    // A 30-deep self-call stays within the VM's conservative
-    // debug-build call-frame cap (release builds and `gos build` allow
-    // far deeper); the assertion checks the recursion accumulates the
-    // correct sum 1 + 2 + … + 30.
+    // The assertion checks the recursion accumulates the correct sum
+    // 1 + 2 + … + 30.
     let result = call_and_return(source, "sum", vec![Value::Int(30), Value::Int(0)]);
     assert!(matches!(result, Value::Int(465)));
+}
+
+#[test]
+fn deep_non_tail_recursion_uses_explicit_vm_frames() {
+    let source = r#"
+fn count_down(n: i64) -> i64 {
+    if n <= 0i64 {
+        return 0i64
+    }
+    let below = count_down(n - 1i64)
+    return below + 1i64
+}
+"#;
+    // The addition after the call makes this deliberately non-tail. The
+    // result exercises suspended register files, return-destination writeback,
+    // and resume without relying on native Rust stack headroom.
+    let _jit_guard = JitDisableGuard::new();
+    let result = call_and_return(source, "count_down", vec![Value::Int(1_000)]);
+    assert!(matches!(result, Value::Int(1_000)));
+}
+
+#[test]
+fn deep_direct_tail_recursion_uses_the_vm_trampoline() {
+    let source = r#"
+fn count_down(n: i64, acc: i64) -> i64 {
+    if n <= 0i64 {
+        return acc
+    }
+    return count_down(n - 1i64, acc + 1i64)
+}
+"#;
+    // This remains a separate regression: tail calls reuse the current VM
+    // frame, while ordinary direct calls suspend it.
+    let result = call_and_return(
+        source,
+        "count_down",
+        vec![Value::Int(10_000), Value::Int(0)],
+    );
+    assert!(matches!(result, Value::Int(10_000)));
+}
+
+#[test]
+fn deep_mutual_tail_recursion_uses_the_vm_trampoline() {
+    let source = r#"
+fn even(n: i64) -> bool {
+    if n == 0i64 {
+        return true
+    }
+    return odd(n - 1i64)
+}
+
+fn odd(n: i64) -> bool {
+    if n == 0i64 {
+        return false
+    }
+    return even(n - 1i64)
+}
+"#;
+    let result = call_and_return(source, "even", vec![Value::Int(10_000)]);
+    assert!(matches!(result, Value::Bool(true)));
+}
+
+#[test]
+fn initializer_closure_call_resumes_its_local_frame() {
+    // Initializer chunks have a short-lived ChunkState and therefore cannot
+    // use the VM's cached-state resume path. A closure call here verifies the
+    // local continuation driver moves the initializer frame out, drives the
+    // closure through `apply`, then resumes at its return destination.
+    let source = r#"
+const ANSWER: i64 = (|n: i64| n + 1i64)(41i64)
+fn main() { println!("{}", ANSWER) }
+"#;
+    assert_eq!(run_program(source), "42\n");
 }
 
 #[test]

@@ -21,6 +21,7 @@ mod exhaustiveness;
 mod infer;
 pub mod printer;
 pub mod std_fn_values;
+pub mod stdlib_signatures;
 mod subst;
 mod table;
 mod trait_index;
@@ -36,6 +37,9 @@ pub use error::{TypeDiagnostic, TypeError};
 pub use exhaustiveness::{ExhaustivenessDiagnostic, ExhaustivenessError, check_exhaustiveness};
 pub use infer::{InferCtxt, UnifyError};
 pub use printer::render_ty;
+pub use stdlib_signatures::{
+    STD_FUNCTION_SIGNATURES, StdFunctionSignature, function_signature as stdlib_function_signature,
+};
 pub use subst::{GenericArg, Substs};
 pub use table::TypeTable;
 pub use trait_index::{

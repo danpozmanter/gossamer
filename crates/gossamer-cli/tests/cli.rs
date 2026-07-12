@@ -1587,7 +1587,7 @@ fn test_subcommand_with_no_args_walks_up_to_project_toml() {
          \x20\x20\x20\x20use std::testing\n\
          \x20\x20\x20\x20#[test]\n\
          \x20\x20\x20\x20fn add_combines_two_ints() {\n\
-         \x20\x20\x20\x20\x20\x20\x20\x20testing::check_eq(&super::add(2, 3), &5, \"add\")\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20let _ = testing::check_eq(&super::add(2, 3), &5, \"add\")\n\
          \x20\x20\x20\x20}\n\
          }\n\
          fn main() { }\n",
@@ -1955,8 +1955,8 @@ mod tests {
     #[test]
     fn unbound_decode_is_loud() {
         match brotli::decode([1, 2, 3]) {
-            Ok(_) => testing::check(false, "must not decode"),
-            Err(_) => testing::check(true, "error surfaced"),
+            Ok(_) => { let _ = testing::check(false, "must not decode") },
+            Err(_) => { let _ = testing::check(true, "error surfaced") },
         }
     }
 }

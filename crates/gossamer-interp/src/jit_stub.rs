@@ -103,7 +103,7 @@ pub struct JitFn {
 #[derive(Default)]
 pub struct JitArtifact {
     /// Compiled functions keyed by Gossamer source name.
-    pub functions: HashMap<String, JitFn>,
+    pub functions: HashMap<String, std::sync::Arc<JitFn>>,
 }
 
 /// wasm never promotes a body to native code.

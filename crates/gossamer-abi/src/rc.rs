@@ -45,7 +45,7 @@ pub const RC_KIND_CLOSURE: i64 = 5;
 /// child at `payload_word` is live only when the word at `disc_word`
 /// reads 0 (the `Some`/`Ok` discriminant) - or unconditionally when
 /// `disc_word` is negative. Every child pointer is additionally checked
-/// against the copy-blob provenance set before retain/release, so a
+/// for the explicit copy-blob owner carrier before retain/release, so a
 /// payload that came from a non-RC producer (map get, borrow, the
 /// Cranelift tier's construction-allocated aggregates) is left alone.
 pub const RC_KIND_STRUCT_GUARDED: i64 = 6;

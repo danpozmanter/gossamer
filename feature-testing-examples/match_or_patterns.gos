@@ -159,57 +159,57 @@ mod tests {
 
     #[test]
     fn face_cards_worth_ten() {
-        testing::check_eq(&super::card_value(&super::Rank::Jack), &10, "jack=10")
-        testing::check_eq(&super::card_value(&super::Rank::Queen), &10, "queen=10")
-        testing::check_eq(&super::card_value(&super::Rank::King), &10, "king=10")
+        let _ = testing::check_eq(&super::card_value(&super::Rank::Jack), &10, "jack=10")
+        let _ = testing::check_eq(&super::card_value(&super::Rank::Queen), &10, "queen=10")
+        let _ = testing::check_eq(&super::card_value(&super::Rank::King), &10, "king=10")
     }
 
     #[test]
     fn or_pattern_classify() {
-        testing::check_eq(&super::classify_int(0), &"tiny", "0 is tiny")
-        testing::check_eq(&super::classify_int(1), &"tiny", "1 is tiny")
-        testing::check_eq(&super::classify_int(3), &"small-prime", "3 is small-prime")
-        testing::check_eq(&super::classify_int(4), &"other", "4 is other")
-        testing::check_eq(&super::classify_int(-5), &"negative", "-5 is negative")
+        let _ = testing::check_eq(&super::classify_int(0), &"tiny", "0 is tiny")
+        let _ = testing::check_eq(&super::classify_int(1), &"tiny", "1 is tiny")
+        let _ = testing::check_eq(&super::classify_int(3), &"small-prime", "3 is small-prime")
+        let _ = testing::check_eq(&super::classify_int(4), &"other", "4 is other")
+        let _ = testing::check_eq(&super::classify_int(-5), &"negative", "-5 is negative")
     }
 
     #[test]
     fn struct_rest_on_axis() {
         let p = super::Point3 { x: 9, y: 0, z: 0 }
         let desc = super::on_axis(&p)
-        testing::check(&desc.contains("x-axis"), "x-axis detected")
-        testing::check(&desc.contains("9"), "x=9 in description")
+        let _ = testing::check(&desc.contains("x-axis"), "x-axis detected")
+        let _ = testing::check(&desc.contains("9"), "x=9 in description")
     }
 
     #[test]
     fn struct_rest_off_axis() {
         let p = super::Point3 { x: 1, y: 2, z: 3 }
         let desc = super::on_axis(&p)
-        testing::check(&desc.contains("off-axis"), "off-axis detected")
+        let _ = testing::check(&desc.contains("off-axis"), "off-axis detected")
     }
 
     #[test]
     fn binding_or_pattern_shares_slot() {
-        testing::check_eq(&super::intensity(&super::Signal::Red(3)), &3, "red binds n")
-        testing::check_eq(&super::intensity(&super::Signal::Green(8)), &8, "green binds n")
-        testing::check_eq(&super::intensity(&super::Signal::Yellow(4)), &1004, "yellow arm")
+        let _ = testing::check_eq(&super::intensity(&super::Signal::Red(3)), &3, "red binds n")
+        let _ = testing::check_eq(&super::intensity(&super::Signal::Green(8)), &8, "green binds n")
+        let _ = testing::check_eq(&super::intensity(&super::Signal::Yellow(4)), &1004, "yellow arm")
     }
 
     #[test]
     fn binding_or_pattern_with_guard() {
-        testing::check_eq(&super::describe(&super::Signal::Red(5)), &"lit 5", "lit guard")
-        testing::check_eq(&super::describe(&super::Signal::Green(0)), &"dark 0", "dark fallthrough")
-        testing::check_eq(&super::describe(&super::Signal::Yellow(1)), &"warn 1", "warn arm")
+        let _ = testing::check_eq(&super::describe(&super::Signal::Red(5)), &"lit 5", "lit guard")
+        let _ = testing::check_eq(&super::describe(&super::Signal::Green(0)), &"dark 0", "dark fallthrough")
+        let _ = testing::check_eq(&super::describe(&super::Signal::Yellow(1)), &"warn 1", "warn arm")
     }
 
     #[test]
     fn nested_binding_or_pattern() {
-        testing::check_eq(
+        let _ = testing::check_eq(
             &super::cell_intensity(&super::Cell::Filled(super::Signal::Green(9))),
             &9,
             "nested green binds n",
         )
-        testing::check_eq(
+        let _ = testing::check_eq(
             &super::cell_intensity(&super::Cell::Blank),
             &-1,
             "blank arm",
@@ -218,21 +218,21 @@ mod tests {
 
     #[test]
     fn result_nested_binding_or_pattern() {
-        testing::check_eq(&super::collapse_result(super::Ok(5)), &5, "ok binds x")
-        testing::check_eq(&super::collapse_result(super::Err(9)), &9, "err binds x")
+        let _ = testing::check_eq(&super::collapse_result(super::Ok(5)), &5, "ok binds x")
+        let _ = testing::check_eq(&super::collapse_result(super::Err(9)), &9, "err binds x")
     }
 
     #[test]
     fn option_nested_binding_or_pattern() {
-        testing::check_eq(&super::option_wrap(super::Some(super::Wrap::A(11))), &11, "wrap a")
-        testing::check_eq(&super::option_wrap(super::Some(super::Wrap::B(22))), &22, "wrap b")
-        testing::check_eq(&super::option_wrap(super::None), &-1, "wrap none")
+        let _ = testing::check_eq(&super::option_wrap(super::Some(super::Wrap::A(11))), &11, "wrap a")
+        let _ = testing::check_eq(&super::option_wrap(super::Some(super::Wrap::B(22))), &22, "wrap b")
+        let _ = testing::check_eq(&super::option_wrap(super::None), &-1, "wrap none")
     }
 
     #[test]
     fn option_result_nested_binding_or_pattern() {
-        testing::check_eq(&super::option_result(super::Some(super::Ok(33))), &33, "opt ok")
-        testing::check_eq(&super::option_result(super::Some(super::Err(44))), &44, "opt err")
-        testing::check_eq(&super::option_result(super::None), &-1, "opt none")
+        let _ = testing::check_eq(&super::option_result(super::Some(super::Ok(33))), &33, "opt ok")
+        let _ = testing::check_eq(&super::option_result(super::Some(super::Err(44))), &44, "opt err")
+        let _ = testing::check_eq(&super::option_result(super::None), &-1, "opt none")
     }
 }

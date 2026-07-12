@@ -16,11 +16,17 @@
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
+use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::cache::{Cache, CacheError, CachedSource, Fetched};
+use crate::cache::{
+    Cache, CacheError, CachedSource, Fetched, MAX_CACHED_SOURCE_BYTES,
+    MAX_CACHED_SOURCE_FILE_BYTES, MAX_CACHED_SOURCE_FILES, is_safe_package_path, read_file_bounded,
+};
 use crate::resolver::{CatalogueEntry, Resolved, ResolvedSource, VersionCatalogue};
 use crate::sha256;
 use crate::tar;
@@ -30,7 +36,7 @@ use crate::transport::{StaticTransport, Transport, TransportError};
 pub const DEFAULT_REGISTRY_URL: &str = "https://pkg.gossamer.dev";
 
 /// Fetcher configuration.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FetchOptions {
     /// When `true`, the fetcher refuses to populate cache entries it
     /// does not already have. Mirrors the SPEC §16.x `--offline` flag.
@@ -44,6 +50,20 @@ pub struct FetchOptions {
     /// Optional bearer token sent on registry requests. The CLI loads
     /// this from `~/.gossamer/credentials.toml`.
     pub auth_token: Option<String>,
+}
+
+impl std::fmt::Debug for FetchOptions {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.debug_struct("FetchOptions")
+            .field("offline", &self.offline)
+            .field("allow_yanked", &self.allow_yanked)
+            .field("registry_url", &self.registry_url)
+            .field(
+                "auth_token",
+                &self.auth_token.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 impl Default for FetchOptions {
@@ -68,6 +88,22 @@ impl FetchOptions {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::FetchOptions;
+
+    #[test]
+    fn debug_redacts_registry_token() {
+        let options = FetchOptions {
+            auth_token: Some("secret-token".to_string()),
+            ..FetchOptions::default()
+        };
+        let rendered = format!("{options:?}");
+        assert!(rendered.contains("<redacted>"));
+        assert!(!rendered.contains("secret-token"));
+    }
+}
+
 /// Fetcher driver.
 pub struct Fetcher {
     options: FetchOptions,
@@ -75,9 +111,13 @@ pub struct Fetcher {
     catalogue: VersionCatalogue,
     /// Publisher keys pinned from the lockfile (project id → hex
     /// public key). A registry fetch whose advertised key differs from
-    /// a pin is rejected; an id with no pin is trusted on first use and
-    /// recorded into the lockfile afterwards.
+    /// a pin is rejected. These pins are sufficient trust roots for
+    /// existing lockfile-backed projects.
     pinned_keys: BTreeMap<String, String>,
+    /// Publisher keys declared by the root manifest. Unlike an index
+    /// entry, this is source-controlled caller input and can establish
+    /// first-fetch trust before a lockfile exists.
+    trusted_keys: BTreeMap<String, String>,
 }
 
 impl std::fmt::Debug for Fetcher {
@@ -87,6 +127,7 @@ impl std::fmt::Debug for Fetcher {
             .field("transport", &"<dyn Transport>")
             .field("catalogue", &self.catalogue)
             .field("pinned_keys", &self.pinned_keys)
+            .field("trusted_keys", &self.trusted_keys)
             .finish()
     }
 }
@@ -106,6 +147,7 @@ impl Fetcher {
             transport: Arc::new(StaticTransport::new()),
             catalogue: VersionCatalogue::new(),
             pinned_keys: BTreeMap::new(),
+            trusted_keys: BTreeMap::new(),
         }
     }
 
@@ -118,6 +160,7 @@ impl Fetcher {
             transport,
             catalogue: VersionCatalogue::new(),
             pinned_keys: BTreeMap::new(),
+            trusted_keys: BTreeMap::new(),
         }
     }
 
@@ -135,6 +178,19 @@ impl Fetcher {
     #[must_use]
     pub fn with_pinned_keys(mut self, pinned_keys: BTreeMap<String, String>) -> Self {
         self.pinned_keys = pinned_keys;
+        self
+    }
+
+    /// Supplies publisher keys authorized by the root project manifest.
+    /// A registry index can advertise signatures, but cannot make a new
+    /// key trusted on its own; use this only for reviewed package-id/key
+    /// bindings.
+    #[must_use]
+    pub fn with_trusted_publisher_keys(mut self, trusted_keys: BTreeMap<String, String>) -> Self {
+        self.trusted_keys = trusted_keys
+            .into_iter()
+            .map(|(id, key)| (id, key.to_ascii_lowercase()))
+            .collect();
         self
     }
 
@@ -192,7 +248,9 @@ impl Fetcher {
                 resolved.id
             )));
         }
-        cache.insert(source.clone());
+        // Do not report a fetched dependency as available when its
+        // content-addressed cache entry could not be safely persisted.
+        cache.insert_checked_ref(&source)?;
         Ok(Fetched {
             resolved: resolved.clone(),
             source,
@@ -212,25 +270,67 @@ impl Fetcher {
         expected_sha256: &str,
         signature: Option<SignatureCheck<'_>>,
     ) -> Result<CachedSource, CacheError> {
-        let bytes = self
-            .transport
-            .get(url)
-            .map_err(|e| map_transport_error(&resolved.id, e))?;
-        let actual = sha256::hex(&bytes);
-        if actual != expected_sha256 {
-            return Err(CacheError::DigestMismatch {
-                id: resolved.id.as_str().to_string(),
-                expected: expected_sha256.to_string(),
-                found: actual,
-            });
-        }
-        if let Some(check) = signature {
-            check.verify(&resolved.id, &bytes)?;
-        }
-        let files = tar::unpack(&bytes).map_err(|e| {
-            CacheError::Unsupported(format!("{}: tarball unpack failed: {e}", resolved.id))
+        let (path, actual) = self.download_tarball(url, &resolved.id)?;
+        let result = (|| {
+            if actual != expected_sha256 {
+                return Err(CacheError::DigestMismatch {
+                    id: resolved.id.as_str().to_string(),
+                    expected: expected_sha256.to_string(),
+                    found: actual,
+                });
+            }
+            // Ed25519 verification accepts a message slice rather than an
+            // incremental reader. Keep this unavoidable one-pass allocation
+            // isolated to signed registry downloads; the archive parser still
+            // reads from the spool and never duplicates that raw buffer.
+            if let Some(check) = signature {
+                let bytes = fs::read(&path).map_err(|e| CacheError::CacheIo {
+                    path: path.display().to_string(),
+                    reason: e.to_string(),
+                })?;
+                check.verify(&resolved.id, &bytes)?;
+            }
+            let file = File::open(&path).map_err(|e| CacheError::CacheIo {
+                path: path.display().to_string(),
+                reason: e.to_string(),
+            })?;
+            let files = tar::unpack_reader(file).map_err(|e| {
+                CacheError::Unsupported(format!("{}: tarball unpack failed: {e}", resolved.id))
+            })?;
+            Ok(CachedSource::build(resolved.id.clone(), files))
+        })();
+        let _ = fs::remove_file(path);
+        result
+    }
+
+    /// Streams a tarball into a private temporary spool while computing its
+    /// SHA-256. This bounds network-to-memory transfer to one 8 KiB buffer;
+    /// the map-shaped cache API remains the only necessary materialisation.
+    fn download_tarball(
+        &self,
+        url: &str,
+        id: &crate::id::ProjectId,
+    ) -> Result<(std::path::PathBuf, String), CacheError> {
+        let (path, file) = create_tarball_spool().map_err(|e| CacheError::CacheIo {
+            path: std::env::temp_dir().display().to_string(),
+            reason: e.to_string(),
         })?;
-        Ok(CachedSource::build(resolved.id.clone(), files))
+        let mut writer = HashingFile::new(file, tar::MAX_PACKAGE_ARCHIVE_BYTES);
+        let transfer = self.transport.get_to_writer(url, &mut writer);
+        let finish = writer.finish();
+        match (transfer, finish) {
+            (Ok(()), Ok(actual)) => Ok((path, actual)),
+            (Err(err), _) => {
+                let _ = fs::remove_file(&path);
+                Err(map_transport_error(id, err))
+            }
+            (_, Err(err)) => {
+                let _ = fs::remove_file(&path);
+                Err(CacheError::Unsupported(format!(
+                    "{id}: tarball spool failed: {err}"
+                )))
+            }
+        }
     }
 
     fn fetch_registry(
@@ -270,11 +370,18 @@ impl Fetcher {
             (Some(s), Some(k)) => (s.clone(), k.clone()),
             _ => return Err(CacheError::Unsigned(resolved.id.as_str().to_string())),
         };
-        let pinned = self.pinned_keys.get(resolved.id.as_str()).cloned();
+        let trusted = self
+            .pinned_keys
+            .get(resolved.id.as_str())
+            .or_else(|| self.trusted_keys.get(resolved.id.as_str()))
+            .ok_or_else(|| CacheError::UntrustedPublisher {
+                id: resolved.id.as_str().to_string(),
+                offered: public_key.clone(),
+            })?;
         let check = SignatureCheck {
             signature_hex: &signature,
             public_key_hex: &public_key,
-            pinned_key: pinned.as_deref(),
+            trusted_key: trusted,
         };
         let source = self.fetch_tarball(resolved, &url, &expected, Some(check))?;
         Ok((source, Some(public_key)))
@@ -308,14 +415,88 @@ impl Fetcher {
     }
 }
 
+static TARBALL_SPOOL_ID: AtomicU64 = AtomicU64::new(0);
+
+fn create_tarball_spool() -> io::Result<(std::path::PathBuf, File)> {
+    let root = std::env::temp_dir();
+    for _ in 0..32 {
+        let path = root.join(format!(
+            "gos-pkg-{}-{}.tar",
+            std::process::id(),
+            TARBALL_SPOOL_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .read(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => return Ok((path, file)),
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not allocate a unique package tarball spool",
+    ))
+}
+
+struct HashingFile {
+    file: File,
+    hasher: sha256::Hasher,
+    written: usize,
+    limit: usize,
+}
+
+impl HashingFile {
+    fn new(file: File, limit: usize) -> Self {
+        Self {
+            file,
+            hasher: sha256::Hasher::new(),
+            written: 0,
+            limit,
+        }
+    }
+
+    fn finish(mut self) -> io::Result<String> {
+        self.file.flush()?;
+        self.file.sync_all()?;
+        Ok(self.hasher.finalize_hex())
+    }
+}
+
+impl Write for HashingFile {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let next = self
+            .written
+            .checked_add(bytes.len())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "tarball size overflow"))?;
+        if next > self.limit {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("tarball exceeds {}-byte limit", self.limit),
+            ));
+        }
+        self.file.write_all(bytes)?;
+        self.hasher.update(bytes);
+        self.written = next;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
+}
+
 /// Publisher-signature inputs for a registry tarball.
 struct SignatureCheck<'a> {
     /// Hex ed25519 signature over the tarball bytes.
     signature_hex: &'a str,
     /// Hex ed25519 public key the registry advertises.
     public_key_hex: &'a str,
-    /// Key pinned in the lockfile, if this id has been fetched before.
-    pinned_key: Option<&'a str>,
+    /// Key trusted by the lockfile or root manifest.
+    trusted_key: &'a str,
 }
 
 impl SignatureCheck<'_> {
@@ -323,12 +504,10 @@ impl SignatureCheck<'_> {
     /// verifies the signature over `bytes`. Public keys are not secret,
     /// so the pin comparison need not be constant-time.
     fn verify(&self, id: &crate::id::ProjectId, bytes: &[u8]) -> Result<(), CacheError> {
-        if let Some(pin) = self.pinned_key
-            && pin != self.public_key_hex
-        {
+        if !self.trusted_key.eq_ignore_ascii_case(self.public_key_hex) {
             return Err(CacheError::KeyMismatch {
                 id: id.as_str().to_string(),
-                pinned: pin.to_string(),
+                pinned: self.trusted_key.to_string(),
                 offered: self.public_key_hex.to_string(),
             });
         }
@@ -359,9 +538,12 @@ fn map_transport_error(id: &crate::id::ProjectId, err: TransportError) -> CacheE
 
 fn fetch_path(resolved: &Resolved, base: &Path) -> Result<CachedSource, CacheError> {
     let mut files = BTreeMap::new();
-    walk_path(base, base, &mut files).map_err(|_| CacheError::PathUnreadable {
-        id: resolved.id.as_str().to_string(),
-        path: base.display().to_string(),
+    let mut total_bytes = 0usize;
+    walk_path(base, base, &mut files, &mut total_bytes).map_err(|_| {
+        CacheError::PathUnreadable {
+            id: resolved.id.as_str().to_string(),
+            path: base.display().to_string(),
+        }
     })?;
     Ok(CachedSource::build(resolved.id.clone(), files))
 }
@@ -370,22 +552,41 @@ fn walk_path(
     base: &Path,
     current: &Path,
     out: &mut BTreeMap<String, Vec<u8>>,
+    total_bytes: &mut usize,
 ) -> std::io::Result<()> {
-    if current.is_file() {
-        let bytes = std::fs::read(current)?;
+    let file_type = std::fs::symlink_metadata(current)?.file_type();
+    if file_type.is_symlink() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("symlink in path dependency: {}", current.display()),
+        ));
+    }
+    if file_type.is_file() {
+        if out.len() >= MAX_CACHED_SOURCE_FILES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("path dependency has more than {MAX_CACHED_SOURCE_FILES} files"),
+            ));
+        }
+        let remaining = MAX_CACHED_SOURCE_BYTES.saturating_sub(*total_bytes);
+        let bytes = read_file_bounded(current, MAX_CACHED_SOURCE_FILE_BYTES.min(remaining))?;
+        *total_bytes = total_bytes.checked_add(bytes.len()).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "source byte count overflow",
+            )
+        })?;
         let key = relative_key(base, current);
         out.insert(key, bytes);
         return Ok(());
     }
-    if !current.is_dir() {
+    if !file_type.is_dir() {
         return Ok(());
     }
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(current)?
-        .filter_map(|res| res.ok().map(|e| e.path()))
-        .collect();
-    entries.sort();
-    for entry in entries {
-        walk_path(base, &entry, out)?;
+    // The output map is ordered, so directory traversal need not materialize
+    // and sort a potentially huge list of child paths just for hashing.
+    for entry in std::fs::read_dir(current)? {
+        walk_path(base, &entry?.path(), out, total_bytes)?;
     }
     Ok(())
 }
@@ -406,11 +607,13 @@ fn relative_key(base: &Path, file: &Path) -> String {
 ///
 /// A `<transport>::<address>` prefix (for example `ext::sh -c '...'`)
 /// selects a git remote helper, and `ext::` runs a shell command, so
-/// only the `https://`, `ssh://`, and `git://` transports are allowed;
-/// `file://` and every remote-helper prefix are refused. A URL or ref
-/// beginning with `-` would be parsed by git as an option rather than a
-/// positional argument, so both are rejected here (and every callee
-/// passes `--` before positional URL arguments as a second guard).
+/// only the authenticated `https://` and `ssh://` transports are allowed;
+/// plaintext `git://`, `file://`, and every remote-helper prefix are refused.
+/// A URL or ref beginning with `-` would be parsed by git as an option rather
+/// than a positional argument, so both are rejected here (and every callee
+/// passes `--` before positional URL arguments as a second guard). A ref must
+/// also be a full immutable git object ID; moving branches and tags cannot be
+/// recorded as reproducible dependency pins.
 fn validate_git_source(url: &str, reference: &str) -> Result<(), String> {
     // A `::` before the first `/` is a remote-helper transport prefix
     // (`ext::`, `fd::`, ...); reject it outright.
@@ -419,11 +622,10 @@ fn validate_git_source(url: &str, reference: &str) -> Result<(), String> {
     {
         return Err(format!("git url uses a disallowed transport prefix: {url}"));
     }
-    let scheme_ok =
-        url.starts_with("https://") || url.starts_with("ssh://") || url.starts_with("git://");
+    let scheme_ok = url.starts_with("https://") || url.starts_with("ssh://");
     if !scheme_ok {
         return Err(format!(
-            "git url scheme not allowed (only https://, ssh://, git://): {url}"
+            "git url scheme not allowed (only https://, ssh://): {url}"
         ));
     }
     if url.starts_with('-') {
@@ -431,6 +633,13 @@ fn validate_git_source(url: &str, reference: &str) -> Result<(), String> {
     }
     if reference.starts_with('-') {
         return Err(format!("git ref may not begin with '-': {reference}"));
+    }
+    let immutable_object_id = matches!(reference.len(), 40 | 64)
+        && reference.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if !immutable_object_id {
+        return Err(format!(
+            "git ref must be a full 40- or 64-hex object ID, not a moving branch or tag: {reference}"
+        ));
     }
     Ok(())
 }
@@ -531,6 +740,12 @@ pub fn vendor(
         std::fs::create_dir_all(&project_dir)?;
         let mut written = Vec::new();
         for (path, bytes) in &entry.source.files {
+            if !is_safe_package_path(path) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("unsafe package path while vendoring: {path:?}"),
+                ));
+            }
             let target = project_dir.join(path);
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -568,35 +783,49 @@ pub fn synthetic_source_for_test(resolved: &Resolved, seed: &str) -> CachedSourc
 mod git_source_tests {
     use super::validate_git_source;
 
+    const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+
     #[test]
     fn allowed_schemes_pass() {
         for url in [
             "https://github.com/owner/repo.git",
             "ssh://git@github.com/owner/repo.git",
-            "git://example.com/repo.git",
         ] {
-            assert!(validate_git_source(url, "main").is_ok(), "rejected {url}");
+            assert!(validate_git_source(url, COMMIT).is_ok(), "rejected {url}");
         }
     }
 
     #[test]
+    fn plaintext_git_transport_is_rejected() {
+        assert!(validate_git_source("git://example.com/repo.git", COMMIT).is_err());
+    }
+
+    #[test]
     fn ext_transport_is_rejected() {
-        let err = validate_git_source("ext::sh -c 'touch /tmp/pwned'", "main").unwrap_err();
+        let err = validate_git_source("ext::sh -c 'touch /tmp/pwned'", COMMIT).unwrap_err();
         assert!(err.contains("transport prefix"), "got: {err}");
     }
 
     #[test]
     fn file_and_unknown_schemes_are_rejected() {
-        assert!(validate_git_source("file:///etc/passwd", "main").is_err());
-        assert!(validate_git_source("fd::17", "main").is_err());
-        assert!(validate_git_source("/local/path", "main").is_err());
+        assert!(validate_git_source("file:///etc/passwd", COMMIT).is_err());
+        assert!(validate_git_source("fd::17", COMMIT).is_err());
+        assert!(validate_git_source("/local/path", COMMIT).is_err());
     }
 
     #[test]
     fn leading_dash_url_and_ref_are_rejected() {
-        assert!(validate_git_source("--upload-pack=touch /tmp/pwned", "main").is_err());
+        assert!(validate_git_source("--upload-pack=touch /tmp/pwned", COMMIT).is_err());
         let err =
             validate_git_source("https://example.com/repo.git", "--output=/etc/x").unwrap_err();
         assert!(err.contains("ref may not begin with '-'"), "got: {err}");
+    }
+
+    #[test]
+    fn moving_git_references_are_rejected() {
+        for reference in ["main", "v1.0.0", "HEAD", "0123456"] {
+            let err = validate_git_source("https://example.com/repo.git", reference).unwrap_err();
+            assert!(err.contains("object ID"), "got: {err}");
+        }
     }
 }

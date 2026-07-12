@@ -62,17 +62,17 @@ mod string_char_needle_tests {
 
     #[test]
     fn contains_char_needle() {
-        testing::check(&"hello".contains('e'), "contains e")
-        testing::check(&!"hello".contains('z'), "not contains z")
+        let _ = testing::check(&"hello".contains('e'), "contains e")
+        let _ = testing::check(&!"hello".contains('z'), "not contains z")
     }
 
     #[test]
     fn replace_char_needle() {
-        testing::check_eq(&"hello".replace('l', "L"), &"heLLo", "replace l")
+        let _ = testing::check_eq(&"hello".replace('l', "L"), &"heLLo", "replace l")
     }
 
     #[test]
     fn trim_matches_char_needle() {
-        testing::check_eq(&"xxhixx".trim_matches('x'), &"hi", "trim x")
+        let _ = testing::check_eq(&"xxhixx".trim_matches('x'), &"hi", "trim x")
     }
 }

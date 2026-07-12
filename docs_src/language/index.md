@@ -27,6 +27,7 @@ One page per language feature. Source is `crates/gossamer-std/src/manifest/featu
 | [`lang::go`](go.md) | shipped | Goroutine spawn. |
 | [`lang::select`](select.md) | shipped | Channel multiplex select expression. |
 | [`lang::channel`](channel.md) | shipped | Typed channel via `std::sync::channel`. |
+| [`lang::weak_references`](weak_references.md) | experimental | `Weak<T>` downgrade/upgrade handles. Native collection is thread-local only and the bytecode VM has no cycle collector, so cross-tier cyclic reclamation is not yet a Stable guarantee. |
 | [`lang::spawn`](spawn.md) | shipped | Goroutine join handle: `spawn(f)` -> `JoinHandle<T>`, `.join()` -> `Result<T, String>`. |
 | [`lang::macros`](macros.md) | shipped | Built-in macros only - no user-defined macros: the format family (print/println/eprint/eprintln/format/panic), the desugar macros (matches!/todo!/unimplemented!/unreachable!/dbg!), and the build-time regex!/sql!/codegen!. |
 | [`lang::doctest`](doctest.md) | shipped | Fenced code in `//` doc comments runs under `gos test`. |

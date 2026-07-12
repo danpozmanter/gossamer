@@ -62,6 +62,6 @@ mod tests {
     #[test]
     fn channel_counter_reaches_200() {
         let result = super::counter_with_channel()
-        testing::check_eq(&result, &200, "channel counter = 200")
+        let _ = testing::check_eq(&result, &200, "channel counter = 200")
     }
 }

@@ -29,27 +29,27 @@ mod tests {
     #[test]
     fn triangular_doc_test_mirror() {
         let t = super::triangular(5)
-        testing::check_eq(&t, &15, "triangular(5)")
+        let _ = testing::check_eq(&t, &15, "triangular(5)")
     }
 
     #[test]
     fn triangular_edge_cases() {
-        testing::check_eq(&super::triangular(0), &0, "triangular(0)")
-        testing::check_eq(&super::triangular(1), &1, "triangular(1)")
-        testing::check_eq(&super::triangular(10), &55, "triangular(10)")
+        let _ = testing::check_eq(&super::triangular(0), &0, "triangular(0)")
+        let _ = testing::check_eq(&super::triangular(1), &1, "triangular(1)")
+        let _ = testing::check_eq(&super::triangular(10), &55, "triangular(10)")
     }
 
     #[test]
     fn is_even_doc_test_mirror() {
-        testing::check(super::is_even(4), "is_even(4)")
-        testing::check(!super::is_even(7), "!is_even(7)")
+        let _ = testing::check(super::is_even(4), "is_even(4)")
+        let _ = testing::check(!super::is_even(7), "!is_even(7)")
     }
 
     #[test]
     fn is_even_edge_cases() {
-        testing::check(super::is_even(0), "is_even(0)")
-        testing::check(!super::is_even(-1), "!is_even(-1)")
-        testing::check(super::is_even(-2), "is_even(-2)")
+        let _ = testing::check(super::is_even(0), "is_even(0)")
+        let _ = testing::check(!super::is_even(-1), "!is_even(-1)")
+        let _ = testing::check(super::is_even(-2), "is_even(-2)")
     }
 }
 

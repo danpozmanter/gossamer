@@ -77,11 +77,21 @@ install_file() {
     src="$1"
     dest="$2"
     if [ -w "$(dirname "$dest")" ]; then
-        cp "$src" "$dest"
-        chmod 755 "$dest"
+        # Replacing a currently-running executable in place fails with
+        # ETXTBSY on Linux. Stage in the destination directory and rename:
+        # existing processes keep their old inode while new invocations see
+        # the complete new binary atomically.
+        staged="${dest}.install.$$"
+        trap 'rm -f "$staged"' EXIT HUP INT TERM
+        cp "$src" "$staged"
+        chmod 755 "$staged"
+        mv -f "$staged" "$dest"
+        trap - EXIT HUP INT TERM
     elif command -v sudo >/dev/null 2>&1; then
-        sudo cp "$src" "$dest"
-        sudo chmod 755 "$dest"
+        staged="${dest}.install.$$"
+        sudo cp "$src" "$staged"
+        sudo chmod 755 "$staged"
+        sudo mv -f "$staged" "$dest"
     else
         echo "gossamer-install: cannot write to $dest and sudo not available" >&2
         exit 1
@@ -103,11 +113,17 @@ install_lib() {
     src="$1"
     dest="$2"
     if [ -w "$(dirname "$dest")" ]; then
-        cp "$src" "$dest"
-        chmod 644 "$dest"
+        staged="${dest}.install.$$"
+        trap 'rm -f "$staged"' EXIT HUP INT TERM
+        cp "$src" "$staged"
+        chmod 644 "$staged"
+        mv -f "$staged" "$dest"
+        trap - EXIT HUP INT TERM
     elif command -v sudo >/dev/null 2>&1; then
-        sudo cp "$src" "$dest"
-        sudo chmod 644 "$dest"
+        staged="${dest}.install.$$"
+        sudo cp "$src" "$staged"
+        sudo chmod 644 "$staged"
+        sudo mv -f "$staged" "$dest"
     else
         echo "gossamer-install: cannot write to $dest and sudo not available" >&2
         exit 1

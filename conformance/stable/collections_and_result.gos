@@ -1,0 +1,16 @@
+fn first_even(values: Vec<i64>) -> Result<i64, String> {
+    for value in values {
+        if value % 2 == 0 {
+            return Ok(value)
+        }
+    }
+    Err("missing".to_string())
+}
+
+fn main() {
+    let values = [3, 5, 8, 13]
+    match first_even(values) {
+        Ok(value) => println!("even={}", value),
+        Err(err) => println!("error={}", err),
+    }
+}

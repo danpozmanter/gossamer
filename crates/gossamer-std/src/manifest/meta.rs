@@ -76,7 +76,7 @@ pub const RUNTIME: StdModule = StdModule {
         StdItem {
             name: "collect_cycles",
             kind: StdItemKind::Function,
-            doc: "Runs the reference-cycle collector and returns objects reclaimed.",
+            doc: "Requests collection of unreachable reference cycles; returns `()`.",
         },
         StdItem {
             name: "scheduler_stats_json",

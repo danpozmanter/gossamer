@@ -40,10 +40,14 @@ static YIELD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Initialises the SIGURG handler. Idempotent.
 pub fn init() {
+    // Miri cannot model sigaction or a signal-delivery thread. The scheduler
+    // remains cooperative there: safepoint polls still observe explicit
+    // `request_yield_*` calls, while OS-signal preemption is exercised by the
+    // native and sanitizer suites.
     install_signal_handler();
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(miri)))]
 fn install_signal_handler() {
     use signal_hook::iterator::Signals;
     use std::sync::Once;
@@ -63,7 +67,7 @@ fn install_signal_handler() {
     });
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, not(miri)))]
 fn install_signal_handler() {
     // Windows preemption via QueueUserAPC. No
     // signal-style dispatcher thread is needed because APCs deliver
@@ -74,7 +78,7 @@ fn install_signal_handler() {
     // [`signal_thread_sigurg`].
 }
 
-#[cfg(not(any(unix, windows)))]
+#[cfg(any(miri, not(any(unix, windows))))]
 fn install_signal_handler() {
     // Other platforms: cooperative-only path still works; targeted
     // preemption is a no-op.
@@ -277,7 +281,15 @@ pub fn signal_thread_sigurg(handle: u64) -> bool {
     if handle == 0 {
         return false;
     }
-    #[cfg(unix)]
+    #[cfg(miri)]
+    {
+        // Miri cannot model pthread_kill/APCs. Keep the cooperative path
+        // observable to the scheduler tests without issuing an OS signal.
+        let _ = handle;
+        request_yield_all();
+        return false;
+    }
+    #[cfg(all(unix, not(miri)))]
     {
         // SAFETY: SIGURG is async-signal-safe; the SIGURG iterator
         // installed in `install_signal_handler` only does atomic
@@ -287,7 +299,7 @@ pub fn signal_thread_sigurg(handle: u64) -> bool {
         let rc = unsafe { libc::pthread_kill(handle as libc::pthread_t, libc::SIGURG) };
         rc == 0
     }
-    #[cfg(windows)]
+    #[cfg(all(windows, not(miri)))]
     {
         // queue a user-mode APC into the
         // targeted worker thread. The APC routine bumps the
@@ -307,7 +319,7 @@ pub fn signal_thread_sigurg(handle: u64) -> bool {
         let rc = unsafe { QueueUserAPC(Some(apc_callback), handle as HANDLE, 0) };
         rc != 0
     }
-    #[cfg(not(any(unix, windows)))]
+    #[cfg(all(not(miri), not(any(unix, windows))))]
     {
         false
     }

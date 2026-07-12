@@ -28,6 +28,20 @@ fn primitive_accessors_are_cached() {
 }
 
 #[test]
+fn stable_snapshot_key_ignores_hashmap_iteration_order() {
+    let mut first = TyCtxt::new();
+    let first_int = first.int_ty(IntTy::I64);
+    let first_vec = first.intern(TyKind::Vec(first_int));
+
+    let mut second = TyCtxt::new();
+    let second_int = second.int_ty(IntTy::I64);
+    let second_vec = second.intern(TyKind::Vec(second_int));
+
+    assert_eq!(first_vec, second_vec);
+    assert_eq!(first.stable_snapshot_key(), second.stable_snapshot_key());
+}
+
+#[test]
 fn structural_tuples_intern_structurally() {
     let mut tcx = TyCtxt::new();
     let i32_ = tcx.int_ty(IntTy::I32);

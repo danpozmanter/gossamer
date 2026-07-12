@@ -1745,6 +1745,7 @@ fn parity_walk(compiled: Tier, group: usize) {
     let _guard = PARITY_WALK_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let trace = env::var_os("GOS_PARITY_TRACE").is_some();
     let mut failures = Vec::new();
     for (idx, spec) in SPECS.iter().enumerate() {
         if idx % PARITY_GROUPS != group {
@@ -1752,6 +1753,13 @@ fn parity_walk(compiled: Tier, group: usize) {
         }
         if spec.skip_all.is_some() || spec.skip_parity.is_some() || spec.server.is_some() {
             continue;
+        }
+        if trace {
+            eprintln!(
+                "tier-parity: {} group {group}: {}",
+                compiled.label(),
+                spec.path
+            );
         }
         let vm = match run_tier(spec, Tier::Vm) {
             Ok(r) => r,
@@ -1936,12 +1944,12 @@ fn http_bare_aliases_parity_across_tiers() {
     self_terminating_server_parity(
         "feature-testing-examples/http_bare_aliases.gos",
         &[
-            "nc_get status=200 body=m=GET b=",
-            "nc_post status=200 body=m=POST b=p",
-            "nc_put status=200 body=m=PUT b=q",
-            "nc_delete status=200 body=m=DELETE b=",
-            "proxy_get status=200 body=m=GET b=",
-            "proxy_post status=200 body=m=POST b=fwd",
+            "nc_get status=200 body=m=GET blen=0",
+            "nc_post status=200 body=m=POST blen=1",
+            "nc_put status=200 body=m=PUT blen=1",
+            "nc_delete status=200 body=m=DELETE blen=0",
+            "proxy_get status=200 body=m=GET blen=0",
+            "proxy_post status=200 body=m=POST blen=1",
             "serve_file status=200 body=served-from-disk",
         ],
     );

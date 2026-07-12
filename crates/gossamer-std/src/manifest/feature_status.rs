@@ -4,9 +4,8 @@
 //!
 //! Single source of truth for the `gos feature-status` subcommand
 //! and the "Status: ..." markers emitted into the per-module doc
-//! pages. `Shipped` is the default; entries appear here only when
-//! the status departs from "fully implemented across every tier
-//! the manifest claims".
+//! pages. `Experimental` is the default for manifest modules;
+//! `Shipped` must be an explicit, evidence-backed claim.
 //!
 //! Drift between this table and the rendered doc pages is gated
 //! by `gos doc --emit-stdlib --check`.
@@ -74,10 +73,9 @@ pub struct FeatureStatus {
     pub doc: &'static str,
 }
 
-/// Entries that override the default `Shipped` status for stdlib
-/// modules, plus every documented language feature. Items not
-/// listed here default to `Shipped` (computed at runtime by walking
-/// `manifest::ALL_MODULES`).
+/// Explicit lifecycle entries for documented language features and
+/// non-default stdlib module statuses. Unlisted stdlib modules default to
+/// `Experimental` when materialized from `manifest::ALL_MODULES`.
 pub const FEATURE_STATUS: &[FeatureStatus] = &[
     // -----------------------------------------------------------------
     // Language features. All `lang::*` so the namespace never collides
@@ -124,6 +122,11 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     lang("lang::go", "Goroutine spawn."),
     lang("lang::select", "Channel multiplex select expression."),
     lang("lang::channel", "Typed channel via `std::sync::channel`."),
+    FeatureStatus {
+        path: "lang::weak_references",
+        status: Status::Experimental,
+        doc: "`Weak<T>` downgrade/upgrade handles. Native collection is thread-local only and the bytecode VM has no cycle collector, so cross-tier cyclic reclamation is not yet a Stable guarantee.",
+    },
     lang(
         "lang::spawn",
         "Goroutine join handle: `spawn(f)` -> `JoinHandle<T>`, `.join()` -> `Result<T, String>`.",
@@ -181,14 +184,19 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
         doc: "Explicit lifetime annotations - not needed under the current memory model; tracked in case a borrow-checker mode lands.",
     },
     // -----------------------------------------------------------------
-    // Stdlib status overrides. Only modules whose status departs from
-    // the implicit `Shipped` default are listed here; everything else
-    // is computed from `manifest::ALL_MODULES` at runtime.
+    // Stdlib status overrides. The implicit module status is Experimental;
+    // explicit Shipped entries are reserved for surfaces with release-grade
+    // cross-tier evidence.
     // -----------------------------------------------------------------
     FeatureStatus {
         path: "std::tls",
         status: Status::Experimental,
         doc: "TLS surface (rustls-backed) - handshake works; mTLS auth + custom verifiers still maturing.",
+    },
+    FeatureStatus {
+        path: "std::runtime::collect_cycles",
+        status: Status::Experimental,
+        doc: "Explicit cycle-collection hook. It returns `()`; native collection covers thread-local RC graphs, while the bytecode VM currently treats it as a no-op.",
     },
     FeatureStatus {
         path: "std::database::sql",
@@ -200,9 +208,42 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
         status: Status::Experimental,
         doc: "Context-aware HTML template engine - auto-escape works (text/attr/URL/JS), pipeline operator set still expanding. Heuristic classifier, NOT a content-security-policy substitute; the `html::escape` primitive (wired on every tier) is the supported cross-tier escape.",
     },
+    // Namespace decisions deliberately remain Experimental until the
+    // underlying process/protocol contracts have release-grade limits and
+    // tier evidence. They document one spelling instead of growing aliases.
+    FeatureStatus {
+        path: "std::process",
+        status: Status::Experimental,
+        doc: "Canonical current-process and child-process API. Process launching remains Experimental while blocking, cancellation, and platform behavior are stabilized.",
+    },
+    FeatureStatus {
+        path: "std::os::exec",
+        status: Status::Experimental,
+        doc: "Deprecated compatibility facade for pre-0.27 child-process code; use `std::process`. It remains wired during the 0.x line but receives no new API.",
+    },
+    FeatureStatus {
+        path: "std::path",
+        status: Status::Experimental,
+        doc: "Lexical filesystem-path API. It uses platform path grammar and never parses, escapes, or resolves network URLs.",
+    },
+    FeatureStatus {
+        path: "std::net::url",
+        status: Status::Experimental,
+        doc: "Network URL parser and component escaper. Do not pass filesystem paths or HTTP route matching through this API.",
+    },
+    FeatureStatus {
+        path: "std::http_h3",
+        status: Status::Experimental,
+        doc: "HTTP/3 over QUIC with bounded connections, streams, headers, bodies, and wire I/O. It remains Experimental because its public handler/client bodies are deliberately fully buffered; no `std::http::h3` alias or fake streaming API is exposed.",
+    },
+    FeatureStatus {
+        path: "std::thread",
+        status: Status::Experimental,
+        doc: "OS-thread yield and CPU-count helpers only. `go`/`spawn` plus channels are the language concurrency model; there is no user-facing `thread::spawn` API.",
+    },
     // -----------------------------------------------------------------
     // Sub-module stdlib feature entries. Not manifest modules (the
-    // implicit-Shipped walk never synthesises them), so the 0.13.0
+    // implicit-Experimental walk never synthesises them), so the 0.13.0
     // HTTP tier-parity surface is registered explicitly.
     // -----------------------------------------------------------------
     shipped(
@@ -252,9 +293,9 @@ const fn shipped(path: &'static str, doc: &'static str) -> FeatureStatus {
 }
 
 /// Returns the registered status for `path`, falling back to
-/// `Shipped` when `path` is a stdlib module present in
+/// `Experimental` when `path` is a stdlib module present in
 /// `manifest::ALL_MODULES` and to `None` otherwise. Callers wanting
-/// the synthesised default-`Shipped` view over the full stdlib +
+/// the synthesised default-Experimental view over the full stdlib +
 /// language surface should iterate `all_entries` instead.
 #[must_use]
 pub fn lookup(path: &str) -> Option<FeatureStatus> {
@@ -264,7 +305,7 @@ pub fn lookup(path: &str) -> Option<FeatureStatus> {
     if let Some(module) = super::ALL_MODULES.iter().find(|m| m.path == path) {
         return Some(FeatureStatus {
             path: module.path,
-            status: Status::Shipped,
+            status: Status::Experimental,
             doc: module.summary,
         });
     }
@@ -273,7 +314,7 @@ pub fn lookup(path: &str) -> Option<FeatureStatus> {
 
 /// Returns every entry in the registry merged with the implicit
 /// stdlib defaults. Stdlib modules that don't appear in
-/// `FEATURE_STATUS` are synthesised as `Shipped`. Entries are
+/// `FEATURE_STATUS` are synthesised as `Experimental`. Entries are
 /// returned in a stable order: registry entries first (declaration
 /// order), then the synthesised stdlib defaults (manifest order).
 #[must_use]
@@ -288,7 +329,7 @@ pub fn all_entries() -> Vec<FeatureStatus> {
         }
         out.push(FeatureStatus {
             path: module.path,
-            status: Status::Shipped,
+            status: Status::Experimental,
             doc: module.summary,
         });
     }
@@ -314,9 +355,44 @@ mod tests {
     }
 
     #[test]
-    fn lookup_defaults_stdlib_modules_to_shipped() {
+    fn weak_and_cycle_collection_are_explicitly_experimental() {
+        for path in ["lang::weak_references", "std::runtime::collect_cycles"] {
+            let entry = lookup(path).unwrap_or_else(|| panic!("missing status for {path}"));
+            assert_eq!(entry.status, Status::Experimental, "{path}");
+        }
+    }
+
+    #[test]
+    fn namespace_boundaries_are_explicit_and_experimental() {
+        let expected = [
+            ("std::process", "Canonical"),
+            ("std::os::exec", "Deprecated"),
+            ("std::path", "filesystem-path"),
+            ("std::net::url", "Network URL"),
+            ("std::http_h3", "fully buffered"),
+            ("std::thread", "no user-facing `thread::spawn`"),
+        ];
+        for (path, contract) in expected {
+            let entry = lookup(path).unwrap_or_else(|| panic!("missing status for {path}"));
+            assert_eq!(entry.status, Status::Experimental, "{path}");
+            assert!(entry.doc.contains(contract), "{path}: {}", entry.doc);
+        }
+    }
+
+    #[test]
+    fn thread_surface_does_not_advertise_unavailable_os_thread_spawn() {
+        let module = super::super::ALL_MODULES
+            .iter()
+            .find(|module| module.path == "std::thread")
+            .expect("std::thread manifest module");
+        let items: Vec<&str> = module.items.iter().map(|item| item.name).collect();
+        assert_eq!(items, ["yield_now", "num_cpus"]);
+    }
+
+    #[test]
+    fn lookup_defaults_stdlib_modules_to_experimental() {
         let entry = lookup("std::fmt").expect("fmt in manifest");
-        assert_eq!(entry.status, Status::Shipped);
+        assert_eq!(entry.status, Status::Experimental);
     }
 
     #[test]
@@ -330,7 +406,7 @@ mod tests {
         for module in super::super::ALL_MODULES {
             assert!(
                 entries.iter().any(|e| e.path == module.path),
-                "missing default-Shipped entry for {}",
+                "missing default-Experimental entry for {}",
                 module.path,
             );
         }

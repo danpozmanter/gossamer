@@ -38,34 +38,34 @@ mod tests {
 
     #[test]
     fn hex_values() {
-        testing::check_eq(&0xFF, &255, "0xFF == 255")
-        testing::check_eq(&0x80, &128, "0x80 == 128")
-        testing::check_eq(&0x1F, &31, "0x1F == 31")
+        let _ = testing::check_eq(&0xFF, &255, "0xFF == 255")
+        let _ = testing::check_eq(&0x80, &128, "0x80 == 128")
+        let _ = testing::check_eq(&0x1F, &31, "0x1F == 31")
     }
 
     #[test]
     fn binary_values() {
-        testing::check_eq(&0b1111_0000, &240, "0b1111_0000 == 240")
-        testing::check_eq(&0b0101_1010, &90, "0b0101_1010 == 90")
-        testing::check_eq(&(0b1111_0000 & 0b0101_1010), &80, "AND == 80")
+        let _ = testing::check_eq(&0b1111_0000, &240, "0b1111_0000 == 240")
+        let _ = testing::check_eq(&0b0101_1010, &90, "0b0101_1010 == 90")
+        let _ = testing::check_eq(&(0b1111_0000 & 0b0101_1010), &80, "AND == 80")
     }
 
     #[test]
     fn octal_values() {
-        testing::check_eq(&0o755, &493, "0o755 == 493")
-        testing::check_eq(&0o644, &420, "0o644 == 420")
+        let _ = testing::check_eq(&0o755, &493, "0o755 == 493")
+        let _ = testing::check_eq(&0o644, &420, "0o644 == 420")
     }
 
     #[test]
     fn underscore_separators() {
-        testing::check_eq(&1_000_000, &1000000, "1_000_000 == 1000000")
-        testing::check_eq(&65_536, &65536, "65_536 == 65536")
+        let _ = testing::check_eq(&1_000_000, &1000000, "1_000_000 == 1000000")
+        let _ = testing::check_eq(&65_536, &65536, "65_536 == 65536")
     }
 
     #[test]
     fn raw_string() {
         let s = r"C:\Users\jane"
-        testing::check_eq(&s.len(), &13, "raw string len == 13")
-        testing::check(&s.contains("\\"), "raw string contains backslash")
+        let _ = testing::check_eq(&s.len(), &13, "raw string len == 13")
+        let _ = testing::check(&s.contains("\\"), "raw string contains backslash")
     }
 }

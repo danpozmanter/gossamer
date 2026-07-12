@@ -20,9 +20,9 @@
 
 #![forbid(unsafe_code)]
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::collections::BinaryHeap;
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
+use std::collections::{BinaryHeap, HashSet};
 use std::io;
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
@@ -203,6 +203,12 @@ pub struct OsPoller {
     pending: Vec<Readiness>,
     /// Outstanding timer wheel.
     timers: BinaryHeap<TimerEntry>,
+    /// Timers cannot be removed cheaply from `BinaryHeap`.  Remember
+    /// cancelled sources and discard them when they reach the heap top.
+    /// This is essential for I/O deadlines: a readiness wake must not leave
+    /// a timer behind that can later unpark the goroutine during an unrelated
+    /// wait.
+    cancelled_timers: HashSet<PollSource>,
     /// Next free token id used when registering with mio.
     next_token: usize,
     /// Map from mio Token to `(PollSource, Gid, Interest)`.
@@ -235,6 +241,7 @@ impl OsPoller {
             by_source: HashMap::new(),
             pending: Vec::new(),
             timers: BinaryHeap::new(),
+            cancelled_timers: HashSet::new(),
             next_token: 1,
             by_token: HashMap::new(),
         })
@@ -331,6 +338,17 @@ impl OsPoller {
         source
     }
 
+    /// Cancels a timer previously returned by [`Self::add_timer`].
+    ///
+    /// Removal is lazy because `BinaryHeap` has no indexed removal.  The
+    /// source is discarded from the heap and pending queue before it can be
+    /// delivered, so cancellation cannot produce a stale scheduler wake.
+    pub fn cancel_timer(&mut self, source: PollSource) {
+        self.cancelled_timers.insert(source);
+        self.pending
+            .retain(|event| !(event.source == source && event.interest == Interest::Timer));
+    }
+
     /// Returns the duration until the next timer fires, or `None` if
     /// no timer is pending.
     fn next_timeout(&self, base: Option<Duration>) -> Option<Duration> {
@@ -356,6 +374,9 @@ impl OsPoller {
                 break;
             }
             let entry = self.timers.pop().expect("peeked timer disappeared");
+            if self.cancelled_timers.remove(&entry.source) {
+                continue;
+            }
             self.pending.push(Readiness {
                 source: entry.source,
                 interest: Interest::Timer,
@@ -461,6 +482,20 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].gid, Gid(7));
         assert!(matches!(events[0].interest, Interest::Timer));
+    }
+
+    #[test]
+    fn cancelled_timer_is_never_delivered() {
+        let mut poller = OsPoller::new().expect("OsPoller::new");
+        let source = poller.add_timer(Instant::now(), Gid(9));
+        poller.cancel_timer(source);
+        let events = poller
+            .poll(Some(Duration::from_millis(5)))
+            .expect("OsPoller::poll");
+        assert!(
+            events.is_empty(),
+            "cancelled deadline must not wake later work"
+        );
     }
 
     #[test]

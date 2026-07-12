@@ -142,6 +142,11 @@ mod top_level_stmt_tests {
     use super::*;
     use gossamer_lex::SourceMap;
 
+    const RETAINED_OOM_REPRO: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fuzz/artifacts/parse/oom-97f06d27482345e26b63de65f5dc42de1cfc4a1c"
+    ));
+
     fn parse(src: &str) -> (SourceFile, Vec<ParseDiagnostic>) {
         let mut map = SourceMap::new();
         let file = map.add_file("t.gos", src.to_string());
@@ -175,5 +180,14 @@ mod top_level_stmt_tests {
                 .any(|d| matches!(d.error, ParseError::StatementOutsideEntry)),
             "expected StatementOutsideEntry, got: {diags:?}"
         );
+    }
+
+    #[test]
+    fn retained_parse_oom_reproducer_terminates_with_diagnostics() {
+        let source = std::str::from_utf8(RETAINED_OOM_REPRO).unwrap();
+        let mut map = SourceMap::new();
+        let file = map.add_file("parse-oom-repro.gos", source.to_owned());
+        let (_ast, diagnostics) = parse_source_file(source, file);
+        assert!(!diagnostics.is_empty());
     }
 }

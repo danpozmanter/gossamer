@@ -86,12 +86,100 @@ const H0: [u32; 8] = [
     0x5be0_cd19,
 ];
 
+/// Incremental SHA-256 state.
+///
+/// This keeps at most one partial 64-byte block in memory, so callers that
+/// hash source trees or network streams do not need a second contiguous copy
+/// of their input merely to produce a digest.
+#[derive(Clone)]
+pub struct Hasher {
+    state: [u32; 8],
+    pending: [u8; 64],
+    pending_len: usize,
+    total_bytes: u64,
+}
+
+impl Default for Hasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Hasher {
+    /// Creates a new incremental SHA-256 hasher.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            state: H0,
+            pending: [0; 64],
+            pending_len: 0,
+            total_bytes: 0,
+        }
+    }
+
+    /// Adds `bytes` to the hash input.
+    pub fn update(&mut self, mut bytes: &[u8]) {
+        self.total_bytes = self.total_bytes.wrapping_add(bytes.len() as u64);
+
+        if self.pending_len != 0 {
+            let needed = 64 - self.pending_len;
+            let take = needed.min(bytes.len());
+            self.pending[self.pending_len..self.pending_len + take].copy_from_slice(&bytes[..take]);
+            self.pending_len += take;
+            bytes = &bytes[take..];
+            if self.pending_len == 64 {
+                compress(&mut self.state, &self.pending);
+                self.pending_len = 0;
+            }
+        }
+
+        while bytes.len() >= 64 {
+            compress(&mut self.state, &bytes[..64]);
+            bytes = &bytes[64..];
+        }
+        if !bytes.is_empty() {
+            self.pending[..bytes.len()].copy_from_slice(bytes);
+            self.pending_len = bytes.len();
+        }
+    }
+
+    /// Finalizes this hash without consuming it, allowing callers to retain a
+    /// checkpoint and continue hashing afterwards.
+    #[must_use]
+    pub fn finalize(&self) -> [u8; 32] {
+        let mut state = self.state;
+        let mut tail = [0u8; 128];
+        tail[..self.pending_len].copy_from_slice(&self.pending[..self.pending_len]);
+        tail[self.pending_len] = 0x80;
+        let tail_len = if self.pending_len < 56 { 64 } else { 128 };
+        let length_offset = tail_len - 8;
+        tail[length_offset..tail_len]
+            .copy_from_slice(&self.total_bytes.wrapping_mul(8).to_be_bytes());
+        for chunk in tail[..tail_len].chunks_exact(64) {
+            compress(&mut state, chunk);
+        }
+        digest_from_state(state)
+    }
+
+    /// Finalizes the hash as lowercase hexadecimal.
+    #[must_use]
+    pub fn finalize_hex(&self) -> String {
+        hex_digest(self.finalize())
+    }
+}
+
 /// Computes the SHA-256 digest of `bytes` and returns its 64-character
 /// lowercase hex form - the canonical representation used by the
 /// fetcher and the lockfile.
 #[must_use]
 pub fn hex(bytes: &[u8]) -> String {
     let digest = digest(bytes);
+    hex_digest(digest)
+}
+
+/// Formats a SHA-256 digest in the canonical lowercase hexadecimal form.
+#[must_use]
+pub fn hex_digest(digest: [u8; 32]) -> String {
     let mut out = String::with_capacity(64);
     for b in digest {
         out.push(hex_nibble(b >> 4));
@@ -103,19 +191,12 @@ pub fn hex(bytes: &[u8]) -> String {
 /// Returns the 32-byte SHA-256 digest of `bytes`.
 #[must_use]
 pub fn digest(bytes: &[u8]) -> [u8; 32] {
-    let mut padded = bytes.to_vec();
-    let bit_len = (bytes.len() as u64).wrapping_mul(8);
-    padded.push(0x80);
-    while padded.len() % 64 != 56 {
-        padded.push(0);
-    }
-    padded.extend_from_slice(&bit_len.to_be_bytes());
+    let mut hasher = Hasher::new();
+    hasher.update(bytes);
+    hasher.finalize()
+}
 
-    let mut state = H0;
-    for chunk in padded.chunks_exact(64) {
-        compress(&mut state, chunk);
-    }
-
+fn digest_from_state(state: [u32; 8]) -> [u8; 32] {
     let mut out = [0u8; 32];
     for (i, word) in state.iter().enumerate() {
         out[i * 4..(i + 1) * 4].copy_from_slice(&word.to_be_bytes());
@@ -183,5 +264,32 @@ const fn hex_nibble(value: u8) -> char {
         0..=9 => (b'0' + value) as char,
         10..=15 => (b'a' + value - 10) as char,
         _ => '?',
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Hasher, hex};
+
+    #[test]
+    fn incremental_hash_matches_one_shot_at_block_boundaries() {
+        let input: Vec<u8> = (0..513).map(|i| (i % 251) as u8).collect();
+        let expected = hex(&input);
+        for width in [1, 2, 3, 7, 31, 63, 64, 65, 127, 256] {
+            let mut hasher = Hasher::new();
+            for chunk in input.chunks(width) {
+                hasher.update(chunk);
+            }
+            assert_eq!(hasher.finalize_hex(), expected, "chunk width {width}");
+        }
+    }
+
+    #[test]
+    fn finalize_does_not_consume_the_checkpoint() {
+        let mut hasher = Hasher::new();
+        hasher.update(b"first");
+        assert_eq!(hasher.finalize_hex(), hex(b"first"));
+        hasher.update(b" second");
+        assert_eq!(hasher.finalize_hex(), hex(b"first second"));
     }
 }

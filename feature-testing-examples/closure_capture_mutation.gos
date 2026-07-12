@@ -54,20 +54,20 @@ mod tests {
     #[test]
     fn apply_twice_scale() {
         let result = super::apply_twice(|y: i64| 3 * y, 2)
-        testing::check_eq(&result, &18, "3*3*2=18")
+        let _ = testing::check_eq(&result, &18, "3*3*2=18")
     }
 
     #[test]
     fn apply_twice_add_one() {
         let result = super::apply_twice(|y: i64| y + 1, 10)
-        testing::check_eq(&result, &12, "10+1+1=12")
+        let _ = testing::check_eq(&result, &12, "10+1+1=12")
     }
 
     #[test]
     fn captured_scale() {
         let scale = 5
         let f = |y: i64| scale * y
-        testing::check_eq(&f(4), &20, "5*4=20")
-        testing::check_eq(&f(0), &0, "5*0=0")
+        let _ = testing::check_eq(&f(4), &20, "5*4=20")
+        let _ = testing::check_eq(&f(0), &0, "5*0=0")
     }
 }

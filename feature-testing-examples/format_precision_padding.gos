@@ -77,24 +77,24 @@ mod tests {
     #[test]
     fn float_two_decimal_places() {
         let s = format!("{:.2}", 3.14159)
-        testing::check_eq(&s, &"3.14", "2dp")
+        let _ = testing::check_eq(&s, &"3.14", "2dp")
     }
 
     #[test]
     fn float_zero_decimal_places() {
         let s = format!("{:.0}", 2.9)
-        testing::check_eq(&s, &"3", "0dp rounds up")
+        let _ = testing::check_eq(&s, &"3", "0dp rounds up")
     }
 
     #[test]
     fn left_pad_shorter_string() {
         let s = super::left_pad("7", 3, "0")
-        testing::check_eq(&s, &"007", "zero-pad 7")
+        let _ = testing::check_eq(&s, &"007", "zero-pad 7")
     }
 
     #[test]
     fn right_pad_already_long() {
         let s = super::right_pad("hello", 3, ".")
-        testing::check_eq(&s, &"hello", "no padding needed")
+        let _ = testing::check_eq(&s, &"hello", "no padding needed")
     }
 }

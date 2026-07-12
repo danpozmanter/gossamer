@@ -13,6 +13,19 @@ fn parse(source: &str) -> gossamer_ast::SourceFile {
 }
 
 #[test]
+fn retained_resolver_oom_reproducer_terminates() {
+    const REPRO: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fuzz/artifacts/resolve/oom-14d3e69bb91be48852f7693451d6081e1ef06af7"
+    ));
+    let source = std::str::from_utf8(REPRO).expect("retained resolver artifact is UTF-8");
+    let mut map = SourceMap::new();
+    let file = map.add_file("resolve-oom-repro.gos", source.to_owned());
+    let (ast, _parse_diagnostics) = parse_source_file(source, file);
+    let _ = resolve_source_file(&ast);
+}
+
+#[test]
 fn simple_hello_world_resolves_without_diagnostics() {
     let source = "use fmt\n\nfn main() {\n    fmt::println(\"hello\")\n}\n";
     let sf = parse(source);

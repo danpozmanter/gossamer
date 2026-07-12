@@ -29,7 +29,7 @@ struct App { }
 
 impl http::Handler for App {
     fn serve(&self, r: http::Request) -> http::Response {
-        http::Response::text(200, "m=" + &r.method + " b=" + &r.body)
+        http::Response::text(200, "m=" + &r.method + " blen=" + &format!("{}", r.body.len()))
     }
 }
 
@@ -61,11 +61,11 @@ fn main() {
         Ok(r) => println!("nc_get status={} body={}", r.status, r.body),
         Err(e) => println!("nc_get error: {}", e),
     }
-    match native_client::post(&url, "p", "text/plain") {
+    match native_client::post(&url, [112], "text/plain") {
         Ok(r) => println!("nc_post status={} body={}", r.status, r.body),
         Err(e) => println!("nc_post error: {}", e),
     }
-    match native_client::put(&url, "q", "text/plain") {
+    match native_client::put(&url, [113], "text/plain") {
         Ok(r) => println!("nc_put status={} body={}", r.status, r.body),
         Err(e) => println!("nc_put error: {}", e),
     }
@@ -74,17 +74,17 @@ fn main() {
         Err(e) => println!("nc_delete error: {}", e),
     }
 
-    match proxy::forward(&url, "GET", "") {
+    match proxy::forward(&url, "GET", []) {
         Ok(r) => println!("proxy_get status={} body={}", r.status, r.body),
         Err(e) => println!("proxy_get error: {}", e),
     }
-    match proxy::forward(&url, "POST", "fwd") {
+    match proxy::forward(&url, "POST", [102]) {
         Ok(r) => println!("proxy_post status={} body={}", r.status, r.body),
         Err(e) => println!("proxy_post error: {}", e),
     }
 
     let file = path::join(&env::temp_dir(), &"gossamer_serve_file_fixture.txt")
-    let _ = fs::write(&file, "served-from-disk")
+    let _ = fs::write(&file, "served-from-disk".to_string().as_bytes())
     match static_files::serve_file(&file) {
         Ok(r) => println!("serve_file status={} body={}", r.status, r.body),
         Err(e) => println!("serve_file error: {}", e),

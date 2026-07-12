@@ -957,7 +957,7 @@ fn render_stdlib_coverage_page(items: &[StdlibSupport]) -> String {
     writeln!(
         out,
         "Columns:\n\n\
-         - **Interp** - `gos run` (bytecode VM + tree-walker fallback).\n\
+         - **Interp** - `gos run` (bytecode VM with optional deferred Cranelift JIT tier-up).\n\
          - **Compiled** - `gos build` and `gos build --release` (LLVM AOT).\n\
          - **Tests** - at least one integration test exercising the item.\n\n\
          Glyphs: ✓ supported · ◑ partial · ✗ missing.\n"

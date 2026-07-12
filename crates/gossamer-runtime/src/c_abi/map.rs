@@ -1482,7 +1482,7 @@ fn map_has_blob_values(m: &GosMap) -> bool {
 }
 
 /// Release one stored blob value word (set-gated inside the RC layer
-/// via the copy-blob provenance set membership of the pointer).
+/// via the copy blob's explicit owner carrier).
 unsafe fn release_blob_value(word: i64) {
     if word != 0 {
         unsafe { crate::c_abi::rc::gos_rt_rc_release(word as usize as *mut u8) };
@@ -1603,7 +1603,18 @@ pub unsafe extern "C" fn gos_rt_binding_map_free(m: *mut u8) {
 /// [`gos_rt_vec_with_capacity`] / [`gos_rt_vec_new_typed`]. Frees
 /// the `GosVec` header, the backing element buffer, and - when
 /// `elem_kind != PRIMITIVE` - every pointer-bearing element
-/// payload (cstring, nested Vec, Map, Error). Idempotent on null.
+/// payload (cstring, nested Vec, Map, Error). Null is a no-op.
+///
+/// # Ownership contract
+///
+/// `v` must be a live owning reference returned by this runtime. In
+/// particular, callers must not pass a borrowed/region Vec, invoke this twice
+/// for the same owning reference, or retain and use the pointer after this
+/// function consumes its final reference. A raw pointer has no generation in
+/// the stable ABI, so an address-only global live set cannot make stale-pointer
+/// release sound: allocator reuse would let an old pointer release a new Vec.
+/// The compiler's ownership lowering supplies this invariant; foreign callers
+/// must model the same retain/release discipline.
 ///
 /// The default `elem_kind = PRIMITIVE` path matches pre-0.6
 /// behaviour: shallow free of the byte buffer. Typed vecs created
@@ -1612,9 +1623,6 @@ pub unsafe extern "C" fn gos_rt_binding_map_free(m: *mut u8) {
 pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
     ffi_entry!((), {
         if v.is_null() {
-            return;
-        }
-        if !crate::c_abi::vec::vec_is_live_heap_header(v) {
             return;
         }
         // Region-allocated vecs (header + buffer in arena slabs) are freed
@@ -1638,7 +1646,6 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
             return;
         }
         std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
-        crate::c_abi::vec::vec_note_final_free(v);
         crate::c_abi::ledger::vec_dec();
         // Non-region headers are a single `Box<InlineVec>` (header + inline
         // element buffer). The header's `ptr` for an inline vec aliases this
@@ -1732,7 +1739,7 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
         // the header drops, so a reused address cannot inherit them.
         // Pass the `Box`'s own borrow, not the raw `v`, so the read of
         // `elem_kind` stays under the Box's exclusive ownership.
-        crate::c_abi::vec::vec_elem_meta_remove(boxed);
+        unsafe { crate::c_abi::vec::drop_vec_owner(&mut *v) };
         // Reconstruct the owning box now that the self-referential walk is
         // done, so its drop reclaims the header block (and any inline buffer).
         drop(unsafe { Box::from_raw(inline_ptr) });

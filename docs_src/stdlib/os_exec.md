@@ -1,8 +1,8 @@
 # `std::os::exec`
 
-Status: shipped
+Status: experimental
 
-Spawn / wait for child processes (Go's os/exec shape).
+Deprecated compatibility facade for child processes; new code uses std::process.
 
 ## Public items
 

@@ -48,22 +48,22 @@ mod tests {
     #[test]
     fn inspect_reads_value() {
         let c = super::Counter { value: 42 }
-        testing::check_eq(&super::inspect(&c), &42, "inspect returns value")
+        let _ = testing::check_eq(&super::inspect(&c), &42, "inspect returns value")
     }
 
     #[test]
     fn increment_adds_one() {
         let mut c = super::Counter { value: 0 }
         super::increment(&mut c)
-        testing::check_eq(&c.value, &1, "increment from 0 → 1")
+        let _ = testing::check_eq(&c.value, &1, "increment from 0 → 1")
         super::increment(&mut c)
-        testing::check_eq(&c.value, &2, "increment from 1 → 2")
+        let _ = testing::check_eq(&c.value, &2, "increment from 1 → 2")
     }
 
     #[test]
     fn reset_zeroes_value() {
         let mut c = super::Counter { value: 99 }
         super::reset(&mut c)
-        testing::check_eq(&c.value, &0, "reset → 0")
+        let _ = testing::check_eq(&c.value, &0, "reset → 0")
     }
 }

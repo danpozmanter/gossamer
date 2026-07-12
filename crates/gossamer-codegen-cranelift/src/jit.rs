@@ -176,7 +176,10 @@ pub struct JitArtifact {
     /// which takes the module by value.
     module: Option<JITModule>,
     /// Compiled functions keyed by their Gossamer source name.
-    pub functions: HashMap<String, JitFn>,
+    /// Handles are immutable and are shared with the VM's dispatch map.
+    /// Keeping one `Arc<JitFn>` per native entry avoids duplicating the
+    /// signature vectors and names merely to install an override.
+    pub functions: HashMap<String, std::sync::Arc<JitFn>>,
 }
 
 impl std::fmt::Debug for JitArtifact {
@@ -279,39 +282,6 @@ fn body_uses_unlowerable_local_repr(
     })
 }
 
-fn ty_contains_rc(tcx: &TyCtxt, mut ty: gossamer_types::Ty) -> bool {
-    while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
-        ty = *inner;
-    }
-    if tcx.is_rc_managed(ty) {
-        return true;
-    }
-    match tcx.kind_of(ty) {
-        TyKind::Tuple(elems) => elems.iter().any(|elem| ty_contains_rc(tcx, *elem)),
-        TyKind::Array { elem, .. }
-        | TyKind::Slice(elem)
-        | TyKind::Vec(elem)
-        | TyKind::Sender(elem)
-        | TyKind::Receiver(elem)
-        | TyKind::JoinHandle(elem) => ty_contains_rc(tcx, *elem),
-        TyKind::HashMap { key, value } => ty_contains_rc(tcx, *key) || ty_contains_rc(tcx, *value),
-        _ => false,
-    }
-}
-
-fn body_returns_rc(body: &Body, tcx: &TyCtxt) -> bool {
-    ty_contains_rc(tcx, body.local_ty(gossamer_mir::Local::RETURN))
-}
-
-/// Recursive RC producers can stay native when they receive only scalar
-/// inputs: their recursive calls exchange freshly allocated native nodes and
-/// cross the VM boundary just once at the final return. A producer accepting
-/// an RC-managed input still needs boundary ownership transfer semantics, so
-/// it remains interpreted.
-fn body_has_rc_params(body: &Body, tcx: &TyCtxt) -> bool {
-    (1..=body.arity).any(|idx| ty_contains_rc(tcx, body.local_ty(gossamer_mir::Local(idx))))
-}
-
 /// Computes the minimal set of body names needed in the JIT module.
 ///
 /// Starts from bodies whose param/return types support JIT promotion
@@ -370,8 +340,13 @@ fn jit_compile_set<'a>(
                 body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes);
             let goroutine_hit = body_has_cross_goroutine_ops(b);
             let recursive = reaches_self(b.name.as_str());
-            let recursive_rc_return =
-                recursive && body_returns_rc(b, tcx) && body_has_rc_params(b, tcx);
+            // Recursive aggregate transforms are safe to promote: ownership
+            // of their result is described by `compute_returns_fresh`, and
+            // the VM/native boundary uses that bit when lifting the return.
+            // The former blanket rejection kept JSON/tree transforms in
+            // bytecode even when every recursive call was otherwise
+            // lowerable.
+            let recursive_rc_return = false;
             let amortizes = recursive || body_has_loop(b);
             if trace && (!kinds_ok || unlowerable_local || goroutine_hit || recursive_rc_return) {
                 eprintln!(
@@ -396,10 +371,7 @@ fn jit_compile_set<'a>(
         for callee in calls {
             let ok = body_map.get(callee).is_some_and(|b| {
                 !(body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes)
-                    || body_has_cross_goroutine_ops(b)
-                    || (reaches_self(b.name.as_str())
-                        && body_returns_rc(b, tcx)
-                        && body_has_rc_params(b, tcx)))
+                    || body_has_cross_goroutine_ops(b))
             });
             if ok && included.insert(callee) {
                 worklist.push(callee);
@@ -818,16 +790,18 @@ fn compile_bodies(
             Some(&thunk_id) => module.get_finalized_function(thunk_id),
             None => module.get_finalized_function(id),
         };
-        functions.insert(
-            body.name.clone(),
-            JitFn {
-                name: body.name.clone(),
-                ptr,
-                params,
-                returns,
-                returns_fresh: returns_fresh.get(&body.name).copied().unwrap_or(false),
-            },
-        );
+        #[allow(
+            clippy::arc_with_non_send_sync,
+            reason = "JIT pointers remain thread-confined; Arc shares immutable metadata with the VM override map"
+        )]
+        let handle = std::sync::Arc::new(JitFn {
+            name: body.name.clone(),
+            ptr,
+            params,
+            returns,
+            returns_fresh: returns_fresh.get(&body.name).copied().unwrap_or(false),
+        });
+        functions.insert(body.name.clone(), handle);
     }
 
     // Diagnostic per-body promotion gating. `GOS_JIT_ONLY=<fn,fn>` keeps
@@ -968,11 +942,10 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
             return true;
         }
         // A `Vec`/`[T]` whose element is a payload-bearing enum is safe in a
-        // read-only, `Unit`-returning serializer body, but not in bodies that
-        // build and return enum DOMs: the native local vector owns per-element
-        // enum references, and those constructor paths still need deeper
-        // ownership modelling. Keep builders such as JSON parse/transform on
-        // bytecode until that model is complete.
+        // read-only, `Unit`-returning serializer body, but a builder that
+        // returns such a vector still needs native-to-VM element ownership
+        // transfer. Keep that shape on bytecode until its lift path can retain
+        // every vector element before the native aggregate is released.
         if let TyKind::Vec(elem) | TyKind::Slice(elem) = lty
             && tcx.is_payload_enum(*elem)
             && !matches!(
@@ -2035,6 +2008,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_stdout_release"      => rt::gos_rt_stdout_release,
         "gos_rt_vec_new"             => rt::gos_rt_vec_new,
         "gos_rt_vec_with_capacity"   => rt::gos_rt_vec_with_capacity,
+        "gos_rt_vec_capacity"        => rt::gos_rt_vec_capacity,
         "gos_rt_vec_from_arr"        => rt::gos_rt_vec_from_arr,
         "gos_rt_vec_borrow_arr"      => rt::gos_rt_vec_borrow_arr,
         "gos_rt_nested_arr_to_vec"   => rt::gos_rt_nested_arr_to_vec,

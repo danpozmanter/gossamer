@@ -5,10 +5,9 @@ use libfuzzer_sys::fuzz_target;
 use gossamer_lex::{SourceMap, tokenize};
 
 fuzz_target!(|data: &[u8]| {
-    // The symbol interner is process-global and never evicts; reset it
-    // each iteration so a long fuzz run does not accumulate every random
-    // identifier ever seen (otherwise RSS grows unbounded -> OOM).
-    gossamer_lex::reset_interner();
+    // The lexer remains unsafe-free during fuzzing. A future session-owned
+    // interner will bound long-lived compiler process RSS without exposing a
+    // global reset that can invalidate live symbols.
     let Ok(source) = std::str::from_utf8(data) else {
         return;
     };

@@ -1,6 +1,6 @@
 # `std::math::big`
 
-Status: shipped
+Status: experimental
 
 Arbitrary-precision integers (num-bigint).
 

@@ -59,7 +59,7 @@ mod select_ctx_tests {
     fn open_context_done_arm_not_ready() {
         let root = context::Context::background()
         let ctx = context::Context::with_cancel(root)
-        testing::check_eq(&super::poll_done(ctx), &0, "open ctx done arm falls to default")
+        let _ = testing::check_eq(&super::poll_done(ctx), &0, "open ctx done arm falls to default")
     }
 
     #[test]
@@ -67,7 +67,7 @@ mod select_ctx_tests {
         let root = context::Context::background()
         let ctx = context::Context::with_cancel(root)
         ctx.cancel()
-        testing::check_eq(&super::poll_done(ctx), &1, "cancelled ctx done arm is ready")
+        let _ = testing::check_eq(&super::poll_done(ctx), &1, "cancelled ctx done arm is ready")
     }
 
     #[test]
@@ -76,6 +76,6 @@ mod select_ctx_tests {
         let parent = context::Context::with_cancel(root)
         let child = context::Context::with_cancel(parent)
         parent.cancel()
-        testing::check_eq(&ready(child), &1, "ancestor cancel makes descendant done arm ready")
+        let _ = testing::check_eq(&ready(child), &1, "ancestor cancel makes descendant done arm ready")
     }
 }

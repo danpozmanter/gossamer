@@ -69,11 +69,11 @@ bytecode VM for a quick edit-run cycle, and native compiled execution
 when you ship a binary.
 - **Interpreted and Compiled** - Develop code quickly with a bytecode vm powered
 interpreter and a REPL. Ship an optimized compiled single binary.
-- **Portable** - First-class on Linux (x86_64 and aarch64, including
-Raspberry Pi OS 64-bit) and Apple Silicon macOS; supported on Intel macOS
-and Windows. Cross-compile a real, runnable binary to any Linux target
-(`{x86_64,aarch64}-unknown-linux-{gnu,musl}`) from a Linux, macOS, or
-Windows desktop.
+- **Portable** - Tier 1 execution on Linux (x86_64 and aarch64, including
+Raspberry Pi OS 64-bit), Apple Silicon macOS, and Windows x86_64. Linux-musl
+AOT deployment is Tier 2 with QEMU-backed VM differential evidence. See the
+[supported target matrix](supported_targets.md) for artifact-only and
+unsupported registered triples.
 - **Go-style goroutines** - (`go expr`) with typed channels.
 - **Go-style async** - Colorless functions and stackful coroutines.
 - **Rust-style type system** - statically-typed, generics with

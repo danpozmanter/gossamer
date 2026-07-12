@@ -15,6 +15,8 @@ use thiserror::Error;
 use crate::id::{ProjectId, ProjectIdError};
 use crate::version::{CaretRange, Version, VersionError};
 
+const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
+
 /// Parsed `project.toml`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
@@ -24,6 +26,10 @@ pub struct Manifest {
     pub dependencies: BTreeMap<String, DependencySpec>,
     /// `[registries]` map keyed by DNS prefix.
     pub registries: BTreeMap<String, String>,
+    /// `[trusted-publishers]` map from package id to the hex Ed25519
+    /// key authorized to sign its registry tarballs. This is a trust
+    /// root supplied by the project, not by the mutable registry index.
+    pub trusted_publishers: BTreeMap<String, String>,
     /// `[rust-bindings]` map keyed by Cargo crate name.
     pub rust_bindings: BTreeMap<String, RustBindingSpec>,
     /// `[[bin]]` array-of-tables - explicit binary targets.
@@ -258,156 +264,112 @@ pub fn find_manifest(start: &std::path::Path) -> Option<std::path::PathBuf> {
 impl Manifest {
     /// Parses a `project.toml` document.
     pub fn parse(source: &str) -> Result<Self, ManifestError> {
-        let mut current_section: Option<String> = None;
-        let mut project = RawTable::default();
+        if source.len() > MAX_MANIFEST_BYTES {
+            return Err(ManifestError::Malformed {
+                line_no: 0,
+                line: format!("manifest exceeds {MAX_MANIFEST_BYTES}-byte limit"),
+            });
+        }
+        let document: toml::Value =
+            toml::from_str(source).map_err(|e| ManifestError::Malformed {
+                line_no: 0,
+                line: format!("invalid TOML: {e}"),
+            })?;
+        let root = document
+            .as_table()
+            .ok_or_else(|| ManifestError::WrongType {
+                field: "project.toml".to_string(),
+                expected: "TOML table",
+            })?;
+        for section in root.keys() {
+            if !matches!(
+                section.as_str(),
+                "project"
+                    | "dependencies"
+                    | "registries"
+                    | "trusted-publishers"
+                    | "rust-bindings"
+                    | "bin"
+                    | "lib"
+            ) {
+                return Err(ManifestError::Malformed {
+                    line_no: 0,
+                    line: format!("unknown section [{section}]"),
+                });
+            }
+        }
+
+        let project = required_toml_table(root, "project")?;
+        let id = ProjectId::parse(required_toml_str(
+            project,
+            "id",
+            "project.id",
+            "project.id",
+        )?)?;
+        let version = Version::parse(required_toml_str(
+            project,
+            "version",
+            "project.version",
+            "project.version",
+        )?)?;
+        let authors =
+            optional_toml_string_array(project, "authors", "project.authors")?.unwrap_or_default();
+        let license = optional_toml_str(project, "license", "project.license")?.unwrap_or_default();
+        let output = optional_toml_str(project, "output", "project.output")?;
+        let entry = optional_toml_str(project, "entry", "project.entry")?;
+
         let mut deps: BTreeMap<String, DependencySpec> = BTreeMap::new();
+        if let Some(table) = optional_toml_table(root, "dependencies")? {
+            for (key, value) in table {
+                deps.insert(key.clone(), parse_dependency_toml(value, key)?);
+            }
+        }
+
         let mut registries: BTreeMap<String, String> = BTreeMap::new();
+        if let Some(table) = optional_toml_table(root, "registries")? {
+            for (key, value) in table {
+                let url = toml_value_str(value, &format!("registries.{key}"))?.to_string();
+                validate_http_url(&url, &format!("registries.{key}"))?;
+                registries.insert(key.clone(), url);
+            }
+        }
+
+        let mut trusted_publishers: BTreeMap<String, String> = BTreeMap::new();
+        if let Some(table) = optional_toml_table(root, "trusted-publishers")? {
+            for (key, value) in table {
+                ProjectId::parse(key)?;
+                let public_key = toml_value_str(value, &format!("trusted-publishers.{key}"))?;
+                if public_key.len() != 64
+                    || !public_key.bytes().all(|byte| byte.is_ascii_hexdigit())
+                {
+                    return Err(ManifestError::Malformed {
+                        line_no: 0,
+                        line: format!("trusted-publishers.{key} must be a 32-byte hex key"),
+                    });
+                }
+                trusted_publishers.insert(key.clone(), public_key.to_ascii_lowercase());
+            }
+        }
+
         let mut rust_bindings: BTreeMap<String, RustBindingSpec> = BTreeMap::new();
-        let mut bins: Vec<RawTable> = Vec::new();
-        let mut current_bin: Option<RawTable> = None;
-        let mut lib_raw: Option<RawTable> = None;
-        for (i, raw_line) in source.lines().enumerate() {
-            let line_no = u32::try_from(i + 1).expect("line overflow");
-            let trimmed = strip_comment(raw_line).trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            // `[[bin]]` array-of-table opener.
-            if let Some(inner) = trimmed
-                .strip_prefix("[[")
-                .and_then(|s| s.strip_suffix("]]"))
-            {
-                let header = inner.trim();
-                // Flush in-progress bin into the array before
-                // switching context.
-                if let Some(prev) = current_bin.take() {
-                    bins.push(prev);
+        if let Some(table) = optional_toml_table(root, "rust-bindings")? {
+            for (key, value) in table {
+                if !is_valid_binding_name(key) {
+                    return Err(ManifestError::BadBindingName(key.clone()));
                 }
-                if header == "bin" {
-                    current_section = Some("__bin__".to_string());
-                    current_bin = Some(RawTable::default());
-                } else {
-                    return Err(ManifestError::Malformed {
-                        line_no,
-                        line: format!("unknown array-of-table [[{header}]]"),
-                    });
-                }
-                continue;
-            }
-            if let Some(section) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-                // Leaving a `[[bin]]` block - flush.
-                if let Some(prev) = current_bin.take() {
-                    bins.push(prev);
-                }
-                current_section = Some(section.trim().to_string());
-                continue;
-            }
-            let (key, value) =
-                split_key_value(trimmed).ok_or_else(|| ManifestError::Malformed {
-                    line_no,
-                    line: raw_line.to_string(),
-                })?;
-            match current_section.as_deref() {
-                Some("project") => project.insert(key.to_string(), value.to_string()),
-                Some("dependencies") => {
-                    let spec = parse_dependency_value(value, &key)?;
-                    deps.insert(key.to_string(), spec);
-                }
-                Some("registries") => {
-                    let url = parse_string(value).ok_or_else(|| ManifestError::WrongType {
-                        field: format!("registries.{key}"),
-                        expected: "string",
-                    })?;
-                    registries.insert(key.to_string(), url.to_string());
-                }
-                Some("rust-bindings") => {
-                    if !is_valid_binding_name(&key) {
-                        return Err(ManifestError::BadBindingName(key.clone()));
-                    }
-                    let spec = parse_rust_binding_value(value, &key)?;
-                    rust_bindings.insert(key, spec);
-                }
-                Some("__bin__") => {
-                    if let Some(table) = current_bin.as_mut() {
-                        table.insert(key.to_string(), value.to_string());
-                    }
-                }
-                Some("lib") => {
-                    if lib_raw.is_none() {
-                        lib_raw = Some(RawTable::default());
-                    }
-                    if let Some(table) = lib_raw.as_mut() {
-                        table.insert(key.to_string(), value.to_string());
-                    }
-                }
-                Some(other) => {
-                    return Err(ManifestError::Malformed {
-                        line_no,
-                        line: format!("unknown section [{other}]"),
-                    });
-                }
-                None => {
-                    return Err(ManifestError::Malformed {
-                        line_no,
-                        line: raw_line.to_string(),
-                    });
-                }
+                rust_bindings.insert(key.clone(), parse_rust_binding_toml(value, key)?);
             }
         }
-        // Flush final pending bin.
-        if let Some(prev) = current_bin.take() {
-            bins.push(prev);
-        }
-        let id_text = project
-            .get("id")
-            .ok_or(ManifestError::MissingField("project.id"))?;
-        let version_text = project
-            .get("version")
-            .ok_or(ManifestError::MissingField("project.version"))?;
-        let id = ProjectId::parse(parse_string(id_text).ok_or(ManifestError::WrongType {
-            field: "project.id".to_string(),
-            expected: "string",
-        })?)?;
-        let version =
-            Version::parse(parse_string(version_text).ok_or(ManifestError::WrongType {
-                field: "project.version".to_string(),
-                expected: "string",
-            })?)?;
-        let authors = project
-            .get("authors")
-            .map(|raw| parse_string_array(raw).unwrap_or_default())
-            .unwrap_or_default();
-        let license = project
-            .get("license")
-            .and_then(|raw| parse_string(raw).map(str::to_string))
-            .unwrap_or_default();
-        let output = project
-            .get("output")
-            .and_then(|raw| parse_string(raw).map(str::to_string));
-        let entry = project
-            .get("entry")
-            .and_then(|raw| parse_string(raw).map(str::to_string));
-        let bins_parsed: Vec<BinTarget> = bins
-            .iter()
+
+        let bins_parsed = parse_bins(root.get("bin"))?;
+        let lib_parsed = optional_toml_table(root, "lib")?
             .map(|raw| {
-                let name = raw
-                    .get("name")
-                    .and_then(|v| parse_string(v).map(str::to_string))
-                    .ok_or(ManifestError::MissingField("bin.name"))?;
-                let path = raw
-                    .get("path")
-                    .and_then(|v| parse_string(v).map(str::to_string));
-                Ok::<_, ManifestError>(BinTarget { name, path })
+                Ok::<_, ManifestError>(LibTarget {
+                    name: optional_toml_str(raw, "name", "lib.name")?,
+                    path: optional_toml_str(raw, "path", "lib.path")?,
+                })
             })
-            .collect::<Result<Vec<_>, _>>()?;
-        let lib_parsed = lib_raw.map(|raw| LibTarget {
-            name: raw
-                .get("name")
-                .and_then(|v| parse_string(v).map(str::to_string)),
-            path: raw
-                .get("path")
-                .and_then(|v| parse_string(v).map(str::to_string)),
-        });
+            .transpose()?;
 
         // Reject duplicate `[[bin]]` names - they would collide
         // at the artefact-filename level.
@@ -432,6 +394,7 @@ impl Manifest {
             },
             dependencies: deps,
             registries,
+            trusted_publishers,
             rust_bindings,
             bins: bins_parsed,
             lib: lib_parsed,
@@ -502,6 +465,12 @@ impl Manifest {
             out.push_str("\n[registries]\n");
             for (prefix, url) in &self.registries {
                 out.push_str(&format!("\"{prefix}\" = \"{url}\"\n"));
+            }
+        }
+        if !self.trusted_publishers.is_empty() {
+            out.push_str("\n[trusted-publishers]\n");
+            for (id, public_key) in &self.trusted_publishers {
+                out.push_str(&format!("\"{id}\" = \"{public_key}\"\n"));
             }
         }
         if !self.rust_bindings.is_empty() {
@@ -663,144 +632,185 @@ fn resolve_path(base: &std::path::Path, raw: &str) -> std::path::PathBuf {
     }
 }
 
-fn is_valid_binding_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first.is_ascii_alphabetic() || first == '_') {
-        return false;
-    }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+fn required_toml_table<'a>(
+    root: &'a toml::Table,
+    key: &'static str,
+) -> Result<&'a toml::Table, ManifestError> {
+    root.get(key)
+        .ok_or(ManifestError::MissingField(key))?
+        .as_table()
+        .ok_or_else(|| ManifestError::WrongType {
+            field: key.to_string(),
+            expected: "table",
+        })
 }
 
-fn parse_rust_binding_value(value: &str, key: &str) -> Result<RustBindingSpec, ManifestError> {
-    let trimmed = value.trim();
-    let Some(table) = trimmed.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
+fn optional_toml_table<'a>(
+    root: &'a toml::Table,
+    key: &str,
+) -> Result<Option<&'a toml::Table>, ManifestError> {
+    root.get(key)
+        .map(|value| {
+            value.as_table().ok_or_else(|| ManifestError::WrongType {
+                field: key.to_string(),
+                expected: "table",
+            })
+        })
+        .transpose()
+}
+
+fn toml_value_str<'a>(value: &'a toml::Value, field: &str) -> Result<&'a str, ManifestError> {
+    value.as_str().ok_or_else(|| ManifestError::WrongType {
+        field: field.to_string(),
+        expected: "string",
+    })
+}
+
+fn required_toml_str<'a>(
+    table: &'a toml::Table,
+    key: &'static str,
+    missing_field: &'static str,
+    field: &str,
+) -> Result<&'a str, ManifestError> {
+    let value = table
+        .get(key)
+        .ok_or(ManifestError::MissingField(missing_field))?;
+    toml_value_str(value, field)
+}
+
+fn optional_toml_str(
+    table: &toml::Table,
+    key: &str,
+    field: &str,
+) -> Result<Option<String>, ManifestError> {
+    table
+        .get(key)
+        .map(|value| toml_value_str(value, field).map(str::to_string))
+        .transpose()
+}
+
+fn optional_toml_string_array(
+    table: &toml::Table,
+    key: &str,
+    field: &str,
+) -> Result<Option<Vec<String>>, ManifestError> {
+    let Some(value) = table.get(key) else {
+        return Ok(None);
+    };
+    let Some(items) = value.as_array() else {
+        return Err(ManifestError::WrongType {
+            field: field.to_string(),
+            expected: "array of strings",
+        });
+    };
+    items
+        .iter()
+        .enumerate()
+        .map(|(i, item)| {
+            item.as_str()
+                .map(str::to_string)
+                .ok_or_else(|| ManifestError::WrongType {
+                    field: format!("{field}[{i}]"),
+                    expected: "string",
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+fn parse_bins(value: Option<&toml::Value>) -> Result<Vec<BinTarget>, ManifestError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let Some(items) = value.as_array() else {
+        return Err(ManifestError::WrongType {
+            field: "bin".to_string(),
+            expected: "array of tables",
+        });
+    };
+    items
+        .iter()
+        .enumerate()
+        .map(|(i, item)| {
+            let table = item.as_table().ok_or_else(|| ManifestError::WrongType {
+                field: format!("bin[{i}]"),
+                expected: "table",
+            })?;
+            let name = required_toml_str(table, "name", "bin.name", "bin.name")?.to_string();
+            let path = optional_toml_str(table, "path", "bin.path")?;
+            Ok(BinTarget { name, path })
+        })
+        .collect()
+}
+
+fn parse_dependency_toml(value: &toml::Value, key: &str) -> Result<DependencySpec, ManifestError> {
+    if let Some(literal) = value.as_str() {
+        return Ok(DependencySpec::Registry(CaretRange::parse(literal)?));
+    }
+    let Some(table) = value.as_table() else {
+        return Err(ManifestError::WrongType {
+            field: key.to_string(),
+            expected: "string version literal or inline-table dependency",
+        });
+    };
+    let git_url = optional_toml_str(table, "git", &format!("{key}.git"))?;
+    let path = optional_toml_str(table, "path", &format!("{key}.path"))?;
+    let tarball = optional_toml_str(table, "tarball", &format!("{key}.tarball"))?;
+    let active = [git_url.is_some(), path.is_some(), tarball.is_some()]
+        .iter()
+        .filter(|b| **b)
+        .count();
+    if active != 1 {
+        return Err(ManifestError::AmbiguousDependency(key.to_string()));
+    }
+    if let Some(url) = git_url {
+        validate_url_with_scheme(&url, &format!("{key}.git"), &["https", "ssh"])?;
+        let git_ref = ["tag", "branch", "rev"]
+            .iter()
+            .find_map(|field| {
+                optional_toml_str(table, field, &format!("{key}.{field}")).transpose()
+            })
+            .transpose()?
+            .unwrap_or_else(|| "main".to_string());
+        return Ok(DependencySpec::Inline(InlineDependency::Git {
+            url,
+            reference: git_ref,
+        }));
+    }
+    if let Some(path) = path {
+        return Ok(DependencySpec::Inline(InlineDependency::Path { path }));
+    }
+    let url = tarball.expect("active tarball case checked above");
+    validate_http_url(&url, &format!("{key}.tarball"))?;
+    let sha256 = optional_toml_str(table, "sha256", &format!("{key}.sha256"))?.ok_or(
+        ManifestError::WrongType {
+            field: format!("{key}.sha256"),
+            expected: "string (mandatory for tarball)",
+        },
+    )?;
+    Ok(DependencySpec::Inline(InlineDependency::Tarball {
+        url,
+        sha256,
+    }))
+}
+
+fn parse_rust_binding_toml(
+    value: &toml::Value,
+    key: &str,
+) -> Result<RustBindingSpec, ManifestError> {
+    let Some(table) = value.as_table() else {
         return Err(ManifestError::WrongType {
             field: format!("rust-bindings.{key}"),
             expected: "inline table",
         });
     };
-    let mut version: Option<CaretRange> = None;
-    let mut path: Option<String> = None;
-    let mut git: Option<String> = None;
-    let mut branch: Option<String> = None;
-    let mut tag: Option<String> = None;
-    let mut rev: Option<String> = None;
-    let mut features: Vec<String> = Vec::new();
-    let mut default_features: bool = true;
-    let mut src: Option<String> = None;
-    let mut deps: Option<String> = None;
-    let mut prebuilt: Option<String> = None;
-    let mut abi: Option<String> = None;
-    for entry in split_top_level_commas(table) {
-        let entry = entry.trim();
-        if entry.is_empty() {
-            continue;
-        }
-        let (k, v) = split_key_value(entry).ok_or_else(|| ManifestError::Malformed {
-            line_no: 0,
-            line: entry.to_string(),
-        })?;
-        match k.as_str() {
-            "version" => {
-                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
-                    field: format!("rust-bindings.{key}.version"),
-                    expected: "string",
-                })?;
-                version = Some(CaretRange::parse(s)?);
-            }
-            "path" => {
-                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
-                    field: format!("rust-bindings.{key}.path"),
-                    expected: "string",
-                })?;
-                path = Some(s.to_string());
-            }
-            "git" => {
-                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
-                    field: format!("rust-bindings.{key}.git"),
-                    expected: "string",
-                })?;
-                git = Some(s.to_string());
-            }
-            "branch" => {
-                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
-                    field: format!("rust-bindings.{key}.branch"),
-                    expected: "string",
-                })?;
-                branch = Some(s.to_string());
-            }
-            "tag" => {
-                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
-                    field: format!("rust-bindings.{key}.tag"),
-                    expected: "string",
-                })?;
-                tag = Some(s.to_string());
-            }
-            "rev" => {
-                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
-                    field: format!("rust-bindings.{key}.rev"),
-                    expected: "string",
-                })?;
-                rev = Some(s.to_string());
-            }
-            "features" => {
-                features = parse_string_array(v).ok_or_else(|| ManifestError::WrongType {
-                    field: format!("rust-bindings.{key}.features"),
-                    expected: "array of strings",
-                })?;
-            }
-            "src" => {
-                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
-                    field: format!("rust-bindings.{key}.src"),
-                    expected: "string",
-                })?;
-                src = Some(s.to_string());
-            }
-            "deps" => {
-                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
-                    field: format!("rust-bindings.{key}.deps"),
-                    expected: "string",
-                })?;
-                deps = Some(s.to_string());
-            }
-            "prebuilt" => {
-                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
-                    field: format!("rust-bindings.{key}.prebuilt"),
-                    expected: "string",
-                })?;
-                prebuilt = Some(s.to_string());
-            }
-            "abi" => {
-                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
-                    field: format!("rust-bindings.{key}.abi"),
-                    expected: "string",
-                })?;
-                abi = Some(s.to_string());
-            }
-            "default-features" | "default_features" => {
-                let s = v.trim();
-                default_features = match s {
-                    "true" => true,
-                    "false" => false,
-                    _ => {
-                        return Err(ManifestError::WrongType {
-                            field: format!("rust-bindings.{key}.default-features"),
-                            expected: "boolean",
-                        });
-                    }
-                };
-            }
-            other => {
-                return Err(ManifestError::Malformed {
-                    line_no: 0,
-                    line: format!("unknown rust-binding field {other}"),
-                });
-            }
-        }
-    }
+    let version = optional_toml_str(table, "version", &format!("rust-bindings.{key}.version"))?
+        .map(|v| CaretRange::parse(&v))
+        .transpose()?;
+    let path = optional_toml_str(table, "path", &format!("rust-bindings.{key}.path"))?;
+    let git = optional_toml_str(table, "git", &format!("rust-bindings.{key}.git"))?;
+    let src = optional_toml_str(table, "src", &format!("rust-bindings.{key}.src"))?;
+    let prebuilt = optional_toml_str(table, "prebuilt", &format!("rust-bindings.{key}.prebuilt"))?;
     let active = [
         path.is_some(),
         git.is_some(),
@@ -813,6 +823,23 @@ fn parse_rust_binding_value(value: &str, key: &str) -> Result<RustBindingSpec, M
     if active > 1 {
         return Err(ManifestError::AmbiguousRustBinding(key.to_string()));
     }
+    let features =
+        optional_toml_string_array(table, "features", &format!("rust-bindings.{key}.features"))?
+            .unwrap_or_default();
+    let default_features = table
+        .get("default-features")
+        .or_else(|| table.get("default_features"))
+        .map(|value| {
+            value.as_bool().ok_or_else(|| ManifestError::WrongType {
+                field: format!("rust-bindings.{key}.default-features"),
+                expected: "boolean",
+            })
+        })
+        .transpose()?
+        .unwrap_or(true);
+    let branch = optional_toml_str(table, "branch", &format!("rust-bindings.{key}.branch"))?;
+    let tag = optional_toml_str(table, "tag", &format!("rust-bindings.{key}.tag"))?;
+    let rev = optional_toml_str(table, "rev", &format!("rust-bindings.{key}.rev"))?;
     let git_ref_count = [branch.is_some(), tag.is_some(), rev.is_some()]
         .iter()
         .filter(|b| **b)
@@ -821,16 +848,14 @@ fn parse_rust_binding_value(value: &str, key: &str) -> Result<RustBindingSpec, M
         return Err(ManifestError::AmbiguousGitRef(key.to_string()));
     }
     if let Some(src) = src {
-        return Ok(RustBindingSpec::Src {
-            src,
-            deps: deps.unwrap_or_default(),
-        });
+        let deps = optional_toml_str(table, "deps", &format!("rust-bindings.{key}.deps"))?
+            .unwrap_or_default();
+        return Ok(RustBindingSpec::Src { src, deps });
     }
     if let Some(archive) = prebuilt {
-        return Ok(RustBindingSpec::Prebuilt {
-            archive,
-            abi: abi.unwrap_or_else(|| "1.0".to_string()),
-        });
+        let abi = optional_toml_str(table, "abi", &format!("rust-bindings.{key}.abi"))?
+            .unwrap_or_else(|| "1.0".to_string());
+        return Ok(RustBindingSpec::Prebuilt { archive, abi });
     }
     if let Some(path) = path {
         return Ok(RustBindingSpec::Path {
@@ -841,6 +866,7 @@ fn parse_rust_binding_value(value: &str, key: &str) -> Result<RustBindingSpec, M
         });
     }
     if let Some(url) = git {
+        validate_url_with_scheme(&url, &format!("rust-bindings.{key}.git"), &["https", "ssh"])?;
         let reference = if let Some(b) = branch {
             Some(GitRef::Branch(b))
         } else if let Some(t) = tag {
@@ -864,157 +890,33 @@ fn parse_rust_binding_value(value: &str, key: &str) -> Result<RustBindingSpec, M
     })
 }
 
-#[derive(Debug, Default)]
-struct RawTable {
-    entries: Vec<(String, String)>,
+fn validate_http_url(url: &str, field: &str) -> Result<(), ManifestError> {
+    validate_url_with_scheme(url, field, &["http", "https"])
 }
 
-impl RawTable {
-    fn insert(&mut self, key: String, value: String) {
-        if let Some(slot) = self.entries.iter_mut().find(|(k, _)| k == &key) {
-            slot.1 = value;
-        } else {
-            self.entries.push((key, value));
-        }
+fn validate_url_with_scheme(url: &str, field: &str, schemes: &[&str]) -> Result<(), ManifestError> {
+    let parsed = url::Url::parse(url).map_err(|e| ManifestError::Malformed {
+        line_no: 0,
+        line: format!("{field} is not a valid URL: {e}"),
+    })?;
+    if !schemes.iter().any(|scheme| *scheme == parsed.scheme()) || parsed.host_str().is_none() {
+        return Err(ManifestError::Malformed {
+            line_no: 0,
+            line: format!("{field} must be an absolute {} URL", schemes.join("/")),
+        });
     }
-    fn get(&self, key: &str) -> Option<&String> {
-        self.entries.iter().find(|(k, _)| k == key).map(|(_, v)| v)
-    }
+    Ok(())
 }
 
-fn strip_comment(line: &str) -> &str {
-    let bytes = line.as_bytes();
-    let mut in_string = false;
-    for (i, b) in bytes.iter().enumerate() {
-        match *b {
-            b'"' => in_string = !in_string,
-            b'#' if !in_string => return &line[..i],
-            _ => {}
-        }
-    }
-    line
-}
-
-fn split_key_value(line: &str) -> Option<(String, &str)> {
-    let eq = line.find('=')?;
-    let key_text = line[..eq].trim();
-    let value_text = line[eq + 1..].trim();
-    let key = if let Some(stripped) = key_text.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
-        stripped.to_string()
-    } else {
-        key_text.to_string()
+fn is_valid_binding_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
     };
-    Some((key, value_text))
-}
-
-fn parse_string(text: &str) -> Option<&str> {
-    let trimmed = text.trim();
-    trimmed.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
-}
-
-fn parse_string_array(text: &str) -> Option<Vec<String>> {
-    let trimmed = text.trim();
-    let inner = trimmed
-        .strip_prefix('[')
-        .and_then(|s| s.strip_suffix(']'))?;
-    if inner.trim().is_empty() {
-        return Some(Vec::new());
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
     }
-    let mut out = Vec::new();
-    for piece in inner.split(',') {
-        let piece = piece.trim();
-        let value = parse_string(piece)?;
-        out.push(value.to_string());
-    }
-    Some(out)
-}
-
-fn parse_dependency_value(value: &str, key: &str) -> Result<DependencySpec, ManifestError> {
-    let trimmed = value.trim();
-    if let Some(literal) = parse_string(trimmed) {
-        return Ok(DependencySpec::Registry(CaretRange::parse(literal)?));
-    }
-    if let Some(table) = trimmed.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
-        let mut git_url: Option<String> = None;
-        let mut git_ref: Option<String> = None;
-        let mut path: Option<String> = None;
-        let mut tarball: Option<String> = None;
-        let mut sha256: Option<String> = None;
-        for entry in split_top_level_commas(table) {
-            let (k, v) = split_key_value(entry.trim()).ok_or_else(|| ManifestError::Malformed {
-                line_no: 0,
-                line: entry.to_string(),
-            })?;
-            let v = parse_string(v).ok_or_else(|| ManifestError::WrongType {
-                field: format!("{key}.{k}"),
-                expected: "string",
-            })?;
-            match k.as_str() {
-                "git" => git_url = Some(v.to_string()),
-                "tag" | "branch" | "rev" => git_ref = Some(v.to_string()),
-                "path" => path = Some(v.to_string()),
-                "tarball" => tarball = Some(v.to_string()),
-                "sha256" => sha256 = Some(v.to_string()),
-                other => {
-                    return Err(ManifestError::Malformed {
-                        line_no: 0,
-                        line: format!("unknown dependency field {other}"),
-                    });
-                }
-            }
-        }
-        let active = [git_url.is_some(), path.is_some(), tarball.is_some()]
-            .iter()
-            .filter(|b| **b)
-            .count();
-        if active != 1 {
-            return Err(ManifestError::AmbiguousDependency(key.to_string()));
-        }
-        if let Some(url) = git_url {
-            return Ok(DependencySpec::Inline(InlineDependency::Git {
-                url,
-                reference: git_ref.unwrap_or_else(|| "main".to_string()),
-            }));
-        }
-        if let Some(path) = path {
-            return Ok(DependencySpec::Inline(InlineDependency::Path { path }));
-        }
-        if let Some(url) = tarball {
-            let sha256 = sha256.ok_or(ManifestError::WrongType {
-                field: format!("{key}.sha256"),
-                expected: "string (mandatory for tarball)",
-            })?;
-            return Ok(DependencySpec::Inline(InlineDependency::Tarball {
-                url,
-                sha256,
-            }));
-        }
-    }
-    Err(ManifestError::WrongType {
-        field: key.to_string(),
-        expected: "string version literal or inline-table dependency",
-    })
-}
-
-fn split_top_level_commas(text: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut depth: i32 = 0;
-    let mut start = 0;
-    for (i, ch) in text.char_indices() {
-        match ch {
-            '{' | '[' => depth += 1,
-            '}' | ']' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
-                out.push(&text[start..i]);
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    if start < text.len() {
-        out.push(&text[start..]);
-    }
-    out
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 fn render_dependency(spec: &DependencySpec) -> String {

@@ -49,13 +49,13 @@ mod tests {
     fn neg_one_as_u64_roundtrip() {
         let v: i64 = -1
         let u = v as u64
-        testing::check_eq(&(u as i64), &v, "-1 as u64 round-trips")
+        let _ = testing::check_eq(&(u as i64), &v, "-1 as u64 round-trips")
     }
 
     #[test]
     fn i64_min_is_negative() {
         let min: i64 = -9223372036854775808
-        testing::check(min < 0, "i64 min is negative")
+        let _ = testing::check(min < 0, "i64 min is negative")
     }
 
     #[test]
@@ -63,13 +63,13 @@ mod tests {
         let g: i32 = 2147483647
         let h: i64 = g as i64
         let result = h + 1
-        testing::check_eq(&result, &2147483648, "i32 max widened + 1")
+        let _ = testing::check_eq(&result, &2147483648, "i32 max widened + 1")
     }
 
     #[test]
     fn max_u64_as_i64() {
         let d: u64 = 18446744073709551615
         let back: i64 = d as i64
-        testing::check_eq(&back, &-1, "max u64 as i64 = -1")
+        let _ = testing::check_eq(&back, &-1, "max u64 as i64 = -1")
     }
 }

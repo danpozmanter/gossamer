@@ -54,7 +54,7 @@ mod tests {
         m.inc("x")
         m.inc("x")
         m.inc("x")
-        testing::check_eq(&m.get_or("x", 0), &3, "inc x 3 times = 3")
+        let _ = testing::check_eq(&m.get_or("x", 0), &3, "inc x 3 times = 3")
     }
 
     #[test]
@@ -62,13 +62,13 @@ mod tests {
         let mut m: HashMap<String, i64> = HashMap::new()
         m.or_insert("k", 42)
         m.or_insert("k", 99)
-        testing::check_eq(&m.get_or("k", 0), &42, "or_insert keeps first value")
+        let _ = testing::check_eq(&m.get_or("k", 0), &42, "or_insert keeps first value")
     }
 
     #[test]
     fn missing_key_returns_default() {
         let m: HashMap<String, i64> = HashMap::new()
-        testing::check_eq(&m.get_or("missing", -1), &-1, "missing key → default")
+        let _ = testing::check_eq(&m.get_or("missing", -1), &-1, "missing key → default")
     }
 
     #[test]
@@ -78,8 +78,8 @@ mod tests {
         for w in words {
             counts.inc(w)
         }
-        testing::check_eq(&counts.get_or("a", 0), &3, "a appears 3 times")
-        testing::check_eq(&counts.get_or("b", 0), &2, "b appears 2 times")
-        testing::check_eq(&counts.get_or("c", 0), &1, "c appears 1 time")
+        let _ = testing::check_eq(&counts.get_or("a", 0), &3, "a appears 3 times")
+        let _ = testing::check_eq(&counts.get_or("b", 0), &2, "b appears 2 times")
+        let _ = testing::check_eq(&counts.get_or("c", 0), &1, "c appears 1 time")
     }
 }

@@ -90,7 +90,7 @@ mod tests {
         while let Some(_) = rx.recv() {
             n += 1
         }
-        testing::check_eq(&n, &20, "20 increments")
+        let _ = testing::check_eq(&n, &20, "20 increments")
     }
 
     #[test]
@@ -104,7 +104,7 @@ mod tests {
         while let Some(v) = rx.recv() {
             total += v
         }
-        testing::check_eq(&total, &60, "two goroutines sum 60")
+        let _ = testing::check_eq(&total, &60, "two goroutines sum 60")
     }
 
     #[test]
@@ -114,6 +114,6 @@ mod tests {
         for v in vals {
             sum += v
         }
-        testing::check_eq(&sum, &55, "1..10 sum = 55")
+        let _ = testing::check_eq(&sum, &55, "1..10 sum = 55")
     }
 }

@@ -46,27 +46,27 @@ mod tests {
 
     #[test]
     fn double_fn() {
-        testing::check_eq(&super::double(5), &10, "double(5)=10")
-        testing::check_eq(&super::double(0), &0, "double(0)=0")
+        let _ = testing::check_eq(&super::double(5), &10, "double(5)=10")
+        let _ = testing::check_eq(&super::double(0), &0, "double(0)=0")
     }
 
     #[test]
     fn add_fn() {
-        testing::check_eq(&super::add(3, 4), &7, "add(3,4)=7")
-        testing::check_eq(&super::add(0, 0), &0, "add(0,0)=0")
+        let _ = testing::check_eq(&super::add(3, 4), &7, "add(3,4)=7")
+        let _ = testing::check_eq(&super::add(0, 0), &0, "add(0,0)=0")
     }
 
     #[test]
     fn clamp_fn() {
-        testing::check_eq(&super::clamp(0, 10, -5), &0, "below lo")
-        testing::check_eq(&super::clamp(0, 10, 15), &10, "above hi")
-        testing::check_eq(&super::clamp(0, 10, 7), &7, "in range")
+        let _ = testing::check_eq(&super::clamp(0, 10, -5), &0, "below lo")
+        let _ = testing::check_eq(&super::clamp(0, 10, 15), &10, "above hi")
+        let _ = testing::check_eq(&super::clamp(0, 10, 7), &7, "in range")
     }
 
     #[test]
     fn pipe_chain() {
         // pipe sends value to last arg: double(5)=10; add(3,10)=13; sub(1,13)=-12
         let a = 5 |> super::double |> super::add(3) |> super::sub(1)
-        testing::check_eq(&a, &-12, "pipe chain = -12")
+        let _ = testing::check_eq(&a, &-12, "pipe chain = -12")
     }
 }

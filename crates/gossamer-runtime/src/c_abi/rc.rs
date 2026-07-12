@@ -752,7 +752,10 @@ fn tsan_sizes() -> &'static parking_lot::Mutex<std::collections::HashMap<usize, 
 // with a per-thread single-entry memo, which hits ~always because
 // allocation sites repeat the same type.
 
-const META_TABLE_CAP: usize = 1 << 16;
+// `RcHeader::meta_id` is u16. Reserve the all-ones value as an internal
+// exhaustion sentinel, so a full table is an allocation failure rather than
+// silently turning a managed aggregate into a leaf and leaking its children.
+const META_TABLE_CAP: usize = u16::MAX as usize;
 
 /// Append-only id -> blob-pointer table. Slot 0 is permanently null.
 static META_TABLE: [std::sync::atomic::AtomicUsize; META_TABLE_CAP] =
@@ -767,14 +770,14 @@ thread_local! {
     static META_MEMO: std::cell::Cell<(usize, u16)> = const { std::cell::Cell::new((0, 0)) };
 }
 
-fn meta_intern(meta: *const i64) -> u16 {
+fn meta_intern(meta: *const i64) -> Option<u16> {
     if meta.is_null() {
-        return 0;
+        return Some(0);
     }
     let key = meta as usize;
     let memo = META_MEMO.with(std::cell::Cell::get);
     if memo.0 == key {
-        return memo.1;
+        return Some(memo.1);
     }
     let mut ids = META_IDS.lock();
     let id = if let Some(&id) = ids.get(&key) {
@@ -782,10 +785,7 @@ fn meta_intern(meta: *const i64) -> u16 {
     } else {
         let next = META_NEXT.fetch_add(1, Ordering::Relaxed);
         if next >= META_TABLE_CAP {
-            // Table exhausted (65535 distinct metas): treat the object as
-            // a leaf. Its children are never released - a leak, never a
-            // corruption - and no realistic program has this many ADTs.
-            return 0;
+            return None;
         }
         let id = next as u16;
         META_TABLE[next].store(key, Ordering::Release);
@@ -794,7 +794,7 @@ fn meta_intern(meta: *const i64) -> u16 {
     };
     drop(ids);
     META_MEMO.with(|m| m.set((key, id)));
-    id
+    Some(id)
 }
 
 /// The child-layout blob for a header, or null for leaves.
@@ -855,10 +855,112 @@ const REGION_ARENA_BYTES: usize = 1 << 30;
 static REGION_ARENA_BASE: AtomicUsize = AtomicUsize::new(0);
 /// Bump offset of the next never-used slab within the reserve.
 static REGION_ARENA_NEXT: AtomicUsize = AtomicUsize::new(0);
-/// Decommitted standard-size slabs available for re-commit, as arena
-/// offsets. (Thread-local `FREE_SLABS` recycling keeps slabs
-/// committed; this list holds overflow beyond `FREE_SLAB_CAP`.)
-static REGION_ARENA_FREE: parking_lot::Mutex<Vec<usize>> = parking_lot::Mutex::new(Vec::new());
+/// Maximum number of standard slabs the reserved arena can hold.  The
+/// overflow recycler addresses slabs by this index, so it never needs to
+/// allocate a bookkeeping node or take a global allocator-side lock.
+const REGION_ARENA_STANDARD_SLABS: usize = REGION_ARENA_BYTES / REGION_SLAB_BYTES;
+
+/// Bits used for the one-based slab index in [`ArenaFreeSlabs::head`].  The
+/// remaining bits are an ABA generation.  The reservation contains at most
+/// 2^16 standard slabs, so 17 bits leave zero as the empty-list sentinel.
+const ARENA_FREE_INDEX_BITS: usize = 17;
+const ARENA_FREE_INDEX_MASK: usize = (1 << ARENA_FREE_INDEX_BITS) - 1;
+
+/// Lock-free stack of decommitted standard slab offsets.
+///
+/// A normal region never reaches this stack: it retains a small committed
+/// per-thread cache in `FREE_SLABS`.  When that cache overflows, the former
+/// global `Mutex<Vec<usize>>` serialised unrelated container destruction and
+/// later allocation.  This fixed-size, tagged Treiber stack stores the link
+/// outside decommitted memory, so it remains readable after `madvise` /
+/// `VirtualFree(MEM_DECOMMIT)`.  The tag in `head` prevents an ABA pop from
+/// handing the same slab to two workers.
+struct ArenaFreeSlabs<const N: usize> {
+    head: AtomicUsize,
+    next: [AtomicUsize; N],
+}
+
+impl<const N: usize> ArenaFreeSlabs<N> {
+    const fn new() -> Self {
+        Self {
+            head: AtomicUsize::new(0),
+            next: [const { AtomicUsize::new(0) }; N],
+        }
+    }
+
+    #[inline]
+    fn pop(&self) -> Option<usize> {
+        let mut head = self.head.load(Ordering::Acquire);
+        loop {
+            let id = head & ARENA_FREE_INDEX_MASK;
+            if id == 0 {
+                return None;
+            }
+            let index = id - 1;
+            // The index is produced only by `push`.  Keep this defensive
+            // check so a corrupted process never indexes the static table.
+            if index >= N {
+                return None;
+            }
+            let next = self.next[index].load(Ordering::Relaxed);
+            let tagged_next =
+                (head.wrapping_add(1 << ARENA_FREE_INDEX_BITS) & !ARENA_FREE_INDEX_MASK) | next;
+            match self.head.compare_exchange_weak(
+                head,
+                tagged_next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(index),
+                Err(actual) => head = actual,
+            }
+        }
+    }
+
+    #[inline]
+    fn push(&self, index: usize) -> bool {
+        if index >= N {
+            return false;
+        }
+        let id = index + 1;
+        let mut head = self.head.load(Ordering::Acquire);
+        loop {
+            self.next[index].store(head & ARENA_FREE_INDEX_MASK, Ordering::Relaxed);
+            let tagged_id =
+                (head.wrapping_add(1 << ARENA_FREE_INDEX_BITS) & !ARENA_FREE_INDEX_MASK) | id;
+            match self.head.compare_exchange_weak(
+                head,
+                tagged_id,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(actual) => head = actual,
+            }
+        }
+    }
+}
+
+/// Decommitted standard-size slabs available for re-commit.  This is global
+/// only in reach, not in lock ownership: regular container allocation and
+/// destruction use the per-thread cache, and overflow uses this atomic stack.
+static REGION_ARENA_FREE: ArenaFreeSlabs<REGION_ARENA_STANDARD_SLABS> = ArenaFreeSlabs::new();
+
+/// Diagnostic counters for the shared overflow recycler.  They let focused
+/// stress tests prove that overflow recycling remains lock-free without
+/// instrumenting the ordinary per-thread slab cache.
+static REGION_ARENA_FREE_PUSHES: AtomicUsize = AtomicUsize::new(0);
+static REGION_ARENA_FREE_POPS: AtomicUsize = AtomicUsize::new(0);
+
+/// Number of `(retired, reacquired)` standard region slabs that passed
+/// through the shared overflow recycler since process start.
+#[must_use]
+pub fn region_arena_overflow_reuse_counts() -> (usize, usize) {
+    (
+        REGION_ARENA_FREE_PUSHES.load(Ordering::Relaxed),
+        REGION_ARENA_FREE_POPS.load(Ordering::Relaxed),
+    )
+}
 
 /// True when `ptr` points into region-arena memory. One cached global
 /// load plus the pure [`addr_in_region_arena`] range test.
@@ -898,6 +1000,16 @@ pub(crate) fn untag_rc(p: *mut u8) -> *mut u8 {
     } else {
         p
     }
+}
+
+/// String bodies intentionally have an odd payload address, while every
+/// headered RC allocation is at least 8-byte aligned. Check that representation
+/// bit before attempting any RC-header access: an unrecognised binding/static
+/// string must be conservatively ignored by its string drop path, never
+/// reinterpreted as an unaligned `RcHeader`.
+#[inline]
+fn is_odd_string_repr(p: *const u8) -> bool {
+    !p.is_null() && (p as usize & 1) != 0
 }
 
 /// Reserve the arena on first use. Returns the base, or `usize::MAX`
@@ -1055,9 +1167,11 @@ fn arena_acquire(slab_size: usize) -> *mut u8 {
         return std::ptr::null_mut();
     }
     if slab_size == REGION_SLAB_BYTES {
-        if let Some(off) = REGION_ARENA_FREE.lock().pop() {
+        if let Some(index) = REGION_ARENA_FREE.pop() {
+            let off = index * REGION_SLAB_BYTES;
             let p = (base + off) as *mut u8;
             if arena_commit(p, slab_size) {
+                REGION_ARENA_FREE_POPS.fetch_add(1, Ordering::Relaxed);
                 return p;
             }
             return std::ptr::null_mut();
@@ -1084,7 +1198,11 @@ fn arena_retire(p: *mut u8, slab_size: usize) {
     let base = REGION_ARENA_BASE.load(Ordering::Relaxed);
     arena_decommit(p, slab_size);
     if slab_size == REGION_SLAB_BYTES {
-        REGION_ARENA_FREE.lock().push(p as usize - base);
+        let off = p as usize - base;
+        debug_assert_eq!(off % REGION_SLAB_BYTES, 0);
+        if REGION_ARENA_FREE.push(off / REGION_SLAB_BYTES) {
+            REGION_ARENA_FREE_PUSHES.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -1098,6 +1216,58 @@ struct RegionSlabs {
     /// Objects committed to this region before it was suspended (the live
     /// innermost region's uncommitted count is in `BUMP_OBJS`).
     objs: usize,
+}
+
+/// Arena state owned by one running goroutine.
+///
+/// Region allocation uses thread-local fast-path caches while a goroutine is
+/// executing, but a parked coroutine can be resumed on a different worker
+/// when its original worker retires.  Moving this state at the coroutine
+/// boundary keeps the active region, its slab ownership, and its pending RC
+/// accounting with the coroutine instead of with the worker that happened to
+/// run it last.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) struct ArenaState {
+    regions: Vec<RegionSlabs>,
+    depth: usize,
+    bump: BumpState,
+    bump_objs: usize,
+}
+
+// Region slabs are uniquely owned by the suspended goroutine. They are moved
+// only between scheduler steps, when no worker can concurrently access them.
+unsafe impl Send for ArenaState {}
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+impl ArenaState {
+    pub(crate) const fn empty() -> Self {
+        Self {
+            regions: Vec::new(),
+            depth: 0,
+            bump: BumpState::EMPTY,
+            bump_objs: 0,
+        }
+    }
+}
+
+impl Drop for ArenaState {
+    fn drop(&mut self) {
+        if self.depth == 0 {
+            return;
+        }
+        // A scheduler can discard a parked task during shutdown or future
+        // cancellation support. Reattach its detached state briefly so the
+        // normal pop path performs the RC accounting and slab recycling; a
+        // raw `Vec<RegionSlabs>` drop would leak committed slabs instead.
+        let state = std::mem::replace(self, Self::empty());
+        install_arena_state(state);
+        while region_active() {
+            gos_rt_arena_pop();
+        }
+        let empty = take_arena_state();
+        debug_assert!(empty.regions.is_empty());
+        debug_assert_eq!(empty.depth, 0);
+    }
 }
 
 /// Thread-local bump-pointer cache: `(base, cur, end)` of the innermost
@@ -1143,6 +1313,69 @@ thread_local! {
     /// innermost (reconciled into `RegionSlabs::objs` at push, into `RC_LIVE`
     /// at pop).
     static BUMP_OBJS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Detaches the active arena from this worker at a coroutine yield boundary.
+/// The caller must later install the returned state before resuming that same
+/// coroutine. Worker-local recycled slabs deliberately stay local: they hold
+/// no live allocations and are only an allocation cache.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) fn take_arena_state() -> ArenaState {
+    let regions = REGIONS.with(|r| std::mem::take(&mut *r.borrow_mut()));
+    let depth = REGION_DEPTH.with(|d| d.replace(0));
+    let bump = BUMP.with(|b| b.replace(BumpState::EMPTY));
+    let bump_objs = BUMP_OBJS.with(|o| o.replace(0));
+    ArenaState {
+        regions,
+        depth,
+        bump,
+        bump_objs,
+    }
+}
+
+/// Installs a suspended coroutine's arena on the worker about to resume it.
+/// Scheduler task steps are serialized, so the worker TLS must be empty here;
+/// retaining another task's state would cross-contaminate request ownership.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) fn install_arena_state(mut state: ArenaState) {
+    debug_assert!(REGIONS.with(|r| r.borrow().is_empty()));
+    debug_assert_eq!(REGION_DEPTH.with(std::cell::Cell::get), 0);
+    debug_assert!(BUMP.with(std::cell::Cell::get).base.is_null());
+    let regions = std::mem::take(&mut state.regions);
+    let depth = std::mem::replace(&mut state.depth, 0);
+    let bump = std::mem::replace(&mut state.bump, BumpState::EMPTY);
+    let bump_objs = std::mem::replace(&mut state.bump_objs, 0);
+    REGIONS.with(|r| *r.borrow_mut() = regions);
+    REGION_DEPTH.with(|d| d.set(depth));
+    BUMP.with(|b| b.set(bump));
+    BUMP_OBJS.with(|o| o.set(bump_objs));
+}
+
+/// Cleans up any arena regions a request opened but did not close. This guard
+/// is deliberately request-scoped rather than connection-scoped: a suspended
+/// handler retains its region until it actually returns or unwinds, while a
+/// malformed request, write timeout, or connection shutdown cannot leave an
+/// unbalanced raw `arena_push` pinned on the worker.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) struct RequestArenaGuard {
+    initial_depth: usize,
+}
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+impl RequestArenaGuard {
+    pub(crate) fn new() -> Self {
+        Self {
+            initial_depth: REGION_DEPTH.with(std::cell::Cell::get),
+        }
+    }
+}
+
+impl Drop for RequestArenaGuard {
+    fn drop(&mut self) {
+        while REGION_DEPTH.with(std::cell::Cell::get) > self.initial_depth {
+            gos_rt_arena_pop();
+        }
+    }
 }
 
 /// Acquire a slab of `slab_size` bytes. Standard-size slabs come from the
@@ -1397,6 +1630,9 @@ pub unsafe extern "C" fn gos_rt_rc_alloc_tagged(size: u64, meta: *const i64) -> 
     // path also skips the payload memset (the header is written field
     // by field below).
     let total = (size as usize).saturating_add(RC_HEADER_SIZE);
+    let Some(meta_id) = meta_intern(meta) else {
+        return std::ptr::null_mut();
+    };
     let in_region = false;
     let _ = in_region;
     let base = rc_block_alloc_unzeroed(total);
@@ -1408,7 +1644,7 @@ pub unsafe extern "C" fn gos_rt_rc_alloc_tagged(size: u64, meta: *const i64) -> 
         (*h).strong = 1;
         (*h).weak = AtomicU8::new(0);
         (*h).disc = 0;
-        (*h).meta_id = meta_intern(meta);
+        (*h).meta_id = meta_id;
     }
     rc_live_inc();
     unsafe { base.add(RC_HEADER_SIZE) }
@@ -1420,6 +1656,9 @@ pub unsafe extern "C" fn gos_rt_rc_alloc(size: u64, meta: *const i64) -> *mut u8
     // `mi_free` recovers everything from the pointer, so neither a size
     // field nor class rounding is needed.
     let total = (size as usize).saturating_add(RC_HEADER_SIZE);
+    let Some(meta_id) = meta_intern(meta) else {
+        return std::ptr::null_mut();
+    };
     // Inside a `region { … }` the object is bump-allocated and freed
     // wholesale at pop - tag it so retain/release stay no-ops and the
     // teardown walk never touches it.
@@ -1437,7 +1676,7 @@ pub unsafe extern "C" fn gos_rt_rc_alloc(size: u64, meta: *const i64) -> *mut u8
         (*h).strong = if in_region { 1 | REGION_BIT } else { 1 };
         (*h).weak = AtomicU8::new(0);
         (*h).disc = 0;
-        (*h).meta_id = meta_intern(meta);
+        (*h).meta_id = meta_id;
     }
     rc_live_inc();
     unsafe { base.add(RC_HEADER_SIZE) }
@@ -1524,6 +1763,10 @@ pub extern "C" fn gos_rt_enum_unit(tag: i64) -> *mut u8 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rc_retain(payload: *mut u8) {
     let payload = untag_rc(payload);
+    if is_odd_string_repr(payload) {
+        unsafe { crate::c_abi::string::gos_rt_str_retain(payload.cast()) };
+        return;
+    }
     // Region-arena objects are bulk-freed at pop and may be HEADERLESS:
     // never touch their memory from the accounting paths.
     if in_region_arena(payload) {
@@ -1550,6 +1793,10 @@ pub unsafe extern "C" fn gos_rt_rc_retain(payload: *mut u8) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rc_release(payload: *mut u8) {
     let payload = untag_rc(payload);
+    if is_odd_string_repr(payload) {
+        unsafe { crate::c_abi::string::gos_rt_str_free(payload.cast()) };
+        return;
+    }
     // Region-arena objects are bulk-freed at pop and may be HEADERLESS:
     // never touch their memory from the accounting paths.
     if in_region_arena(payload) {
@@ -1938,6 +2185,9 @@ pub unsafe extern "C" fn gos_rt_rc_alloc_reuse(
     size: u64,
     meta: *const i64,
 ) -> *mut u8 {
+    let Some(meta_id) = meta_intern(meta) else {
+        return std::ptr::null_mut();
+    };
     if token.is_null() {
         return unsafe { gos_rt_rc_alloc(size, meta) };
     }
@@ -1953,7 +2203,7 @@ pub unsafe extern "C" fn gos_rt_rc_alloc_reuse(
         (*h).strong = 1;
         (*h).weak = AtomicU8::new(0);
         (*h).disc = 0;
-        (*h).meta_id = meta_intern(meta);
+        (*h).meta_id = meta_id;
     }
     let payload = unsafe { token.add(RC_HEADER_SIZE) };
     unsafe { std::ptr::write_bytes(payload, 0, size as usize) };
@@ -2243,20 +2493,23 @@ unsafe fn visit_entries(payload: *mut u8, mut f: impl FnMut(i64, *mut u8)) {
 /// size is recovered from the header's `size_u` (or the oversized side table).
 unsafe fn free_block(payload: *mut u8) {
     let h = unsafe { header_ptr(payload) };
-    // Copy-blobs leave the provenance set exactly here, so a reused
-    // address can never inherit membership. One meta-word compare for
-    // every other RC object.
-    let meta = unsafe { meta_of(h) };
-    if !meta.is_null() && unsafe { *meta } == RC_KIND_STRUCT_GUARDED {
-        copy_blob_remove(payload);
-    }
+    // A copy blob's explicit carrier changes the allocation base. Ordinary
+    // RC objects still start at their compact header.
+    let copy_base = if unsafe { (*h).disc } == COPY_BLOB_DISC {
+        // Copy blobs carry their allocation base in the explicit owner that
+        // precedes the ordinary compact RC header.  Other guarded objects are
+        // ordinary RC allocations and keep `h` as their base.
+        Some(unsafe { (h as *mut u8).sub(COPY_BLOB_OWNER_BYTES) })
+    } else {
+        None
+    };
     if unsafe { load_strong(h) } & SHARED_BIT != 0 {
         // A shared object is being reclaimed: keep the live-shared diagnostic
         // count in step. (A shared cycle never reaches here, which is exactly
         // what the non-zero exit count surfaces.)
         rc_shared_dec();
     }
-    let base = h as *mut u8;
+    let base = copy_base.unwrap_or(h.cast::<u8>());
     rc_live_dec();
     // Straight back to mimalloc - see `gos_rt_rc_alloc` for why a custom
     // slab/pool is not used (measured net-neutral), and
@@ -2275,58 +2528,58 @@ unsafe fn free_block(payload: *mut u8) {
 // meta so the MIR drop pass can release them deterministically when the
 // owning aggregate slot dies.
 //
-// The provenance set below is the soundness backstop: a guarded payload
-// word can also hold pointers this system did NOT allocate (a map-get
-// result, an interior borrow, the Cranelift tier's construction-allocated
-// aggregates). Every guarded retain/release first checks membership and
-// leaves foreign pointers untouched - an unknown pointer can be leaked,
-// never corrupted. Entries are removed exactly at `free_block`, so a
-// reused address can never inherit stale membership.
-/// Number of `COPY_BLOBS` shards. The provenance set is touched on every
-/// guarded-struct alloc / free / retain / release; a single global lock
-/// serialised all of those across every goroutine. Sharding by address spreads
-/// the traffic so unrelated guarded objects on different goroutines do not
-/// contend. Power of two for a mask instead of a modulo.
-const COPY_BLOB_SHARDS: usize = 64;
+// A guarded payload may also hold a non-copy pointer (map-get result,
+// construction aggregate, or borrow). Copy blobs therefore carry a real
+// owner immediately before their compact `RcHeader`; the carrier includes the
+// ABI version, destructor identity, allocation generation, and the exact
+// guarded metadata used for the copy. This replaces the former address-keyed
+// fallback.
+#[repr(C)]
+struct CopyBlobOwner {
+    abi_version: u16,
+    kind: u16,
+    destructor: u32,
+    generation: u64,
+    meta: *const i64,
+}
 
-/// Provenance set of guarded copy-blob addresses, sharded by address. A
-/// guarded payload word can hold a pointer this system did not allocate (a
-/// map-get result, an interior borrow, a construction-allocated aggregate),
-/// and such a pointer may have no `RcHeader` to inspect, so membership cannot
-/// be recovered from the object itself - the side table is the soundness
-/// backstop. Entries are removed exactly at `free_block`, so a reused address
-/// never inherits stale membership.
-static COPY_BLOBS: std::sync::LazyLock<
-    [parking_lot::Mutex<std::collections::HashSet<usize>>; COPY_BLOB_SHARDS],
-> = std::sync::LazyLock::new(|| {
-    std::array::from_fn(|_| parking_lot::Mutex::new(std::collections::HashSet::new()))
-});
+const COPY_BLOB_OWNER_VERSION: u16 = 1;
+const COPY_BLOB_OWNER_KIND: u16 = 3;
+const COPY_BLOB_OWNER_DTOR: u32 = 1;
+const COPY_BLOB_DISC: u8 = 0xCB;
+const COPY_BLOB_OWNER_BYTES: usize = std::mem::size_of::<CopyBlobOwner>();
+static NEXT_COPY_BLOB_GENERATION: AtomicUsize = AtomicUsize::new(1);
 
-/// Shard index for an address. Pointers are at least 16-byte aligned, so the
-/// low bits carry no entropy; bits 4.. spread allocations across shards.
 #[inline]
-fn copy_blob_shard(p: *mut u8) -> usize {
-    ((p as usize) >> 4) & (COPY_BLOB_SHARDS - 1)
+unsafe fn copy_blob_owner(payload: *mut u8) -> Option<&'static CopyBlobOwner> {
+    if payload.is_null() {
+        return None;
+    }
+    let header = unsafe { header_ptr(payload) };
+    if unsafe { (*header).disc } != COPY_BLOB_DISC {
+        return None;
+    }
+    let owner = unsafe {
+        &*((header as *mut u8)
+            .sub(COPY_BLOB_OWNER_BYTES)
+            .cast::<CopyBlobOwner>())
+    };
+    (owner.abi_version == COPY_BLOB_OWNER_VERSION
+        && owner.kind == COPY_BLOB_OWNER_KIND
+        && owner.destructor == COPY_BLOB_OWNER_DTOR
+        && !owner.meta.is_null())
+    .then_some(owner)
 }
 
-fn copy_blob_register(p: *mut u8) {
-    COPY_BLOBS[copy_blob_shard(p)].lock().insert(p as usize);
-}
-
-fn copy_blob_contains(p: *mut u8) -> bool {
-    COPY_BLOBS[copy_blob_shard(p)]
-        .lock()
-        .contains(&(p as usize))
-}
-
-fn copy_blob_remove(p: *mut u8) {
-    COPY_BLOBS[copy_blob_shard(p)].lock().remove(&(p as usize));
+#[inline]
+unsafe fn is_copy_blob(payload: *mut u8) -> bool {
+    unsafe { copy_blob_owner(payload).is_some() }
 }
 
 /// Walk the `(disc_word, payload_word)` pairs of an `RC_KIND_STRUCT_GUARDED`
 /// meta over the aggregate slots at `base`, calling `f` for each child that
 /// is live (negative disc word, or the disc word reads 0), non-null, and a
-/// registered copy-blob. `base` may be a heap payload or a stack slot - the
+/// copy blob with a validated owner. `base` may be a heap payload or a stack slot - the
 /// walk only reads the flat words the meta names.
 unsafe fn visit_guarded_children(base: *mut u8, meta: *const i64, mut f: impl FnMut(*mut u8)) {
     let entry_count = unsafe { *meta.add(1) };
@@ -2344,17 +2597,17 @@ unsafe fn visit_guarded_children(base: *mut u8, meta: *const i64, mut f: impl Fn
             }
         }
         let child = unsafe { *(base.add(payload_word as usize * 8) as *const *mut u8) };
-        if !child.is_null() && copy_blob_contains(child) {
+        if !child.is_null() && unsafe { is_copy_blob(child) } {
             f(child);
         }
     }
 }
 
 /// Allocate an RC copy-blob, memcpy `size` bytes from `src`, retain the
-/// guarded children the copy now shares with its source, and register the
-/// blob in the provenance set. Inside a `region` block the bytes are
-/// bump-allocated and freed wholesale at pop, so the blob is neither
-/// registered nor are its children retained (region objects never run the
+/// guarded children the copy now shares with its source, and attach an
+/// explicit owner carrier. Inside a `region` block the bytes are
+/// bump-allocated and freed wholesale at pop, so it has no individual owner
+/// and its children are not retained (region objects never run the
 /// per-node teardown walk).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rc_alloc_copy(
@@ -2363,20 +2616,49 @@ pub unsafe extern "C" fn gos_rt_rc_alloc_copy(
     src: *const u8,
 ) -> *mut u8 {
     let in_region = region_active();
-    let payload = unsafe { gos_rt_rc_alloc(size, if in_region { std::ptr::null() } else { meta }) };
+    if in_region {
+        let payload = unsafe { gos_rt_rc_alloc(size, std::ptr::null()) };
+        if !payload.is_null() && !src.is_null() {
+            unsafe { std::ptr::copy_nonoverlapping(src, payload, size as usize) };
+        }
+        return payload;
+    }
+    let Some(meta_id) = meta_intern(meta) else {
+        return std::ptr::null_mut();
+    };
+    let total = COPY_BLOB_OWNER_BYTES
+        .saturating_add(RC_HEADER_SIZE)
+        .saturating_add(size as usize);
+    let base = rc_block_alloc_zeroed(total);
+    if base.is_null() {
+        return std::ptr::null_mut();
+    }
+    let owner = base.cast::<CopyBlobOwner>();
+    let header = unsafe { base.add(COPY_BLOB_OWNER_BYTES).cast::<RcHeader>() };
+    unsafe {
+        owner.write(CopyBlobOwner {
+            abi_version: COPY_BLOB_OWNER_VERSION,
+            kind: COPY_BLOB_OWNER_KIND,
+            destructor: COPY_BLOB_OWNER_DTOR,
+            generation: NEXT_COPY_BLOB_GENERATION.fetch_add(1, Ordering::Relaxed) as u64,
+            meta,
+        });
+        (*header).strong = 1;
+        (*header).weak = AtomicU8::new(0);
+        (*header).disc = COPY_BLOB_DISC;
+        (*header).meta_id = meta_id;
+    }
+    rc_live_inc();
+    let payload = unsafe { (header as *mut u8).add(RC_HEADER_SIZE) };
     if payload.is_null() || src.is_null() {
         return payload;
     }
     unsafe { std::ptr::copy_nonoverlapping(src, payload, size as usize) };
-    if in_region {
-        return payload;
-    }
     unsafe {
         visit_guarded_children(payload, meta, |child| {
             gos_rt_rc_retain(child);
         });
     }
-    copy_blob_register(payload);
     payload
 }
 
@@ -2498,7 +2780,7 @@ pub unsafe extern "C" fn gos_rt_aggr_zero_guarded(base: *mut u8, meta: *const i6
 }
 
 /// Release the payload of the by-value `{disc, payload}` Option/Result at
-/// `slot` when it is a registered copy-blob. Companion to
+/// `slot` when it carries a validated copy-blob owner. Companion to
 /// [`gos_rt_option_slot_retain`]; used when an option holder dies, is
 /// overwritten, or an owning field slot is replaced. Null-safe.
 #[unsafe(no_mangle)]
@@ -2507,21 +2789,21 @@ pub unsafe extern "C" fn gos_rt_option_slot_release(slot: *const i64) {
         return;
     }
     let payload = unsafe { *(slot.add(1) as *const *mut u8) };
-    if !payload.is_null() && copy_blob_contains(payload) {
+    if !payload.is_null() && unsafe { is_copy_blob(payload) } {
         unsafe { gos_rt_rc_release(payload) };
         // Null the payload word so a second release of the same slot
         // (consumption-site release + the unconditional return-sweep)
         // is a no-op instead of a double-free - the same null-out
-        // discipline the local-release pass uses. The address may be
-        // reused and re-registered in the provenance set, so "the set
-        // no longer contains it" is not a safe second-release guard.
+        // discipline the local-release pass uses. A later allocation can
+        // reuse this address, so the explicit null-out
+        // remains the second-release guard for this slot.
         unsafe { *slot.add(1).cast_mut() = 0 };
     }
 }
 
 /// Retain the payload of the by-value `{disc, payload}` Option/Result at
 /// `slot` when the discriminant reads 0 (`Some`/`Ok`) and the payload is a
-/// registered copy-blob. Used when an aliased option value is stored into
+/// copy-blob owner. Used when an aliased option value is stored into
 /// an owning aggregate slot. Null-safe.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_option_slot_retain(slot: *const i64) {
@@ -2529,7 +2811,7 @@ pub unsafe extern "C" fn gos_rt_option_slot_retain(slot: *const i64) {
         return;
     }
     let payload = unsafe { *(slot.add(1) as *const *mut u8) };
-    if !payload.is_null() && copy_blob_contains(payload) {
+    if !payload.is_null() && unsafe { is_copy_blob(payload) } {
         unsafe { gos_rt_rc_retain(payload) };
     }
 }
@@ -2866,7 +3148,7 @@ pub unsafe extern "C" fn gos_rt_collect_cycles() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, PoisonError};
+    use std::sync::{Arc, Mutex, PoisonError};
 
     #[test]
     #[cfg_attr(miri, ignore)] // arena uses mmap with non-RW protections; Miri can't model it
@@ -2896,12 +3178,138 @@ mod tests {
         assert!(!addr_in_region_arena(0x1_0000, base));
     }
 
+    #[test]
+    fn arena_overflow_recycler_reuses_offsets_without_a_lock() {
+        let recycler = ArenaFreeSlabs::<4>::new();
+        assert_eq!(recycler.pop(), None, "new recycler is empty");
+        assert!(recycler.push(0));
+        assert!(recycler.push(3));
+        assert_eq!(recycler.pop(), Some(3), "last retired slab is reused first");
+        assert_eq!(recycler.pop(), Some(0));
+        assert_eq!(recycler.pop(), None);
+        assert!(!recycler.push(4), "out-of-range offsets are rejected");
+    }
+
+    #[test]
+    fn arena_overflow_recycler_does_not_duplicate_a_slab_under_contention() {
+        const SLOTS: usize = 8;
+        const WORKERS: usize = 4;
+        const ROUNDS: usize = 10_000;
+        let recycler = Arc::new(ArenaFreeSlabs::<SLOTS>::new());
+        let in_use: Arc<[AtomicUsize; SLOTS]> =
+            Arc::new(std::array::from_fn(|_| AtomicUsize::new(0)));
+        for index in 0..SLOTS {
+            assert!(recycler.push(index));
+        }
+
+        let mut workers = Vec::new();
+        for _ in 0..WORKERS {
+            let recycler = Arc::clone(&recycler);
+            let in_use = Arc::clone(&in_use);
+            workers.push(std::thread::spawn(move || {
+                for _ in 0..ROUNDS {
+                    let index = loop {
+                        if let Some(index) = recycler.pop() {
+                            break index;
+                        }
+                        std::thread::yield_now();
+                    };
+                    assert_eq!(
+                        in_use[index].compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire),
+                        Ok(0),
+                        "an ABA race handed one slab to two workers"
+                    );
+                    in_use[index].store(0, Ordering::Release);
+                    assert!(recycler.push(index));
+                }
+            }));
+        }
+        for worker in workers {
+            worker
+                .join()
+                .expect("overflow recycler worker must not panic");
+        }
+        let mut recovered = [false; SLOTS];
+        for _ in 0..SLOTS {
+            let index = recycler.pop().expect("every retired slab is recovered");
+            assert!(!recovered[index], "slab appears in the recycler twice");
+            recovered[index] = true;
+        }
+        assert!(recovered.into_iter().all(std::convert::identity));
+        assert_eq!(recycler.pop(), None);
+    }
+
     // `RC_LIVE` is process-global; tests that assert exact live-count
     // deltas must not run concurrently with each other's allocations.
     static COUNT_LOCK: Mutex<()> = Mutex::new(());
 
     fn count_guard() -> std::sync::MutexGuard<'static, ()> {
         COUNT_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // arena uses mmap with non-RW protections; Miri can't model it
+    fn suspended_arena_state_moves_with_its_coroutine() {
+        let _guard = count_guard();
+        gos_rt_arena_push();
+        if !region_is_active() {
+            // Targets without virtual-memory reservations intentionally fall
+            // back to ordinary RC allocation and have no arena state to move.
+            return;
+        }
+        let ptr = crate::c_abi::gc::gos_rt_gc_alloc(64);
+        assert!(in_region_arena(ptr));
+
+        let state = take_arena_state();
+        assert!(
+            !region_is_active(),
+            "a yielded worker must not retain the suspended handler arena"
+        );
+        install_arena_state(state);
+        assert!(region_is_active());
+        assert!(
+            in_region_arena(ptr),
+            "the resumed handler must retain ownership of its existing slab"
+        );
+        gos_rt_arena_pop();
+        assert!(!region_is_active());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // arena uses mmap with non-RW protections; Miri can't model it
+    fn request_arena_guard_closes_unbalanced_handler_regions() {
+        let _guard = count_guard();
+        let request = RequestArenaGuard::new();
+        gos_rt_arena_push();
+        if !region_is_active() {
+            drop(request);
+            return;
+        }
+        let ptr = crate::c_abi::gc::gos_rt_gc_alloc(64);
+        assert!(in_region_arena(ptr));
+        drop(request);
+        assert!(
+            !region_is_active(),
+            "timeout/cancellation cleanup must not retain a handler region"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // arena uses mmap with non-RW protections; Miri can't model it
+    fn dropped_suspended_arena_state_reclaims_handler_regions() {
+        let _guard = count_guard();
+        gos_rt_arena_push();
+        if !region_is_active() {
+            return;
+        }
+        let ptr = crate::c_abi::gc::gos_rt_gc_alloc(64);
+        assert!(in_region_arena(ptr));
+        let state = take_arena_state();
+        drop(state);
+        assert!(
+            !region_is_active(),
+            "cancelling a parked handler must release its detached arena"
+        );
     }
 
     /// Allocate via the runtime entry and write the discriminant into
@@ -3821,6 +4229,30 @@ mod tests {
             gos_rt_rc_release(payload);
             gos_rt_rc_release(s);
             gos_rt_rc_weak_release(w);
+        }
+        assert_eq!(rc_live_count(), base);
+    }
+
+    #[test]
+    fn guarded_copy_blob_owns_a_versioned_carrier_without_a_side_table() {
+        let _g = count_guard();
+        fresh_cycle_state();
+        let base = rc_live_count();
+        let meta = [RC_KIND_STRUCT_GUARDED, 0];
+        let source = [17_u64];
+        unsafe {
+            let first = gos_rt_rc_alloc_copy(8, meta.as_ptr(), source.as_ptr().cast());
+            let first_owner = copy_blob_owner(first).expect("copy blob owner");
+            assert_eq!(first_owner.meta, meta.as_ptr());
+            assert_ne!(first_owner.generation, 0);
+            assert_eq!(unsafe { first.cast::<u64>().read() }, 17);
+            let first_generation = first_owner.generation;
+            gos_rt_rc_release(first);
+
+            let second = gos_rt_rc_alloc_copy(8, meta.as_ptr(), source.as_ptr().cast());
+            let second_owner = copy_blob_owner(second).expect("copy blob owner");
+            assert_ne!(second_owner.generation, first_generation);
+            gos_rt_rc_release(second);
         }
         assert_eq!(rc_live_count(), base);
     }

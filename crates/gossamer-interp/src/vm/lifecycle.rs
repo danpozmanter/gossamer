@@ -16,16 +16,21 @@ impl Vm {
         let mut vm = Self {
             globals: Arc::new(rustc_hash::FxHashMap::default()),
             prelude: builtins::prelude_globals(),
+            qualified_names: RefCell::new(Vec::new()),
             pool: RefCell::new(FramePool::default()),
             mir_bodies: RefCell::new(None),
             tcx_snapshot: RefCell::new(None),
             enum_shape_defs: RefCell::new(None),
+            enum_shape_handles: RefCell::new(None),
             struct_shape_defs: RefCell::new(None),
-            jit_eager_names: RefCell::new(std::collections::HashSet::new()),
+            struct_shape_handles: RefCell::new(None),
+            jit_eager_names: RefCell::new(Arc::new(std::collections::HashSet::new())),
+            jit_cache_key: RefCell::new(None),
             jit_droppable: Cell::new(false),
             jit: parking_lot::RwLock::new(JitState::default()),
             jit_override_count: AtomicUsize::new(0),
             jit_graph_cache: crate::jit_call::GraphCache::default(),
+            jit_counters: JitCounters::default(),
             chunk_state_arena: RefCell::new(Vec::new()),
             chunk_state_map: RefCell::new(HashMap::new()),
             chunk_state_last: Cell::new(None),
@@ -58,42 +63,32 @@ impl Vm {
         mir_bodies: Option<Arc<Vec<Body>>>,
         tcx_snapshot: Option<Arc<TyCtxt>>,
         enum_shape_defs: Option<Arc<std::collections::HashMap<u32, u32>>>,
+        enum_shape_handles: Option<Arc<Vec<Arc<crate::value::NativeEnumShape>>>>,
         struct_shape_defs: Option<Arc<std::collections::HashMap<u32, u32>>>,
+        struct_shape_handles: Option<Arc<Vec<Arc<crate::value::NativeStructShape>>>>,
+        jit_eager_names: Arc<std::collections::HashSet<String>>,
+        jit_cache_key: Option<Arc<str>>,
     ) -> Self {
-        // A spawned goroutine inherits the parent's MIR, so it can derive
-        // the same eager-compile set. The set may be empty when the runtime
-        // policy requires lazy promotion instead.
-        let empty_shapes = std::collections::HashMap::new();
-        let mut jit_eager_names: std::collections::HashSet<String> =
-            match (&mir_bodies, &tcx_snapshot, &enum_shape_defs) {
-                (Some(bodies), Some(tcx), Some(shapes)) => jit_backend::jit_eager_loop_bodies(
-                    bodies,
-                    tcx,
-                    shapes,
-                    struct_shape_defs.as_deref().unwrap_or(&empty_shapes),
-                )
-                .into_iter()
-                .collect(),
-                _ => std::collections::HashSet::new(),
-            };
-        if !jit_eager_names.is_empty() {
-            jit_eager_names.insert("main".to_string());
-        }
         Self {
             globals,
             prelude: builtins::prelude_globals(),
+            qualified_names: RefCell::new(Vec::new()),
             pool: RefCell::new(FramePool::default()),
             mir_bodies: RefCell::new(mir_bodies),
             tcx_snapshot: RefCell::new(tcx_snapshot),
             enum_shape_defs: RefCell::new(enum_shape_defs),
+            enum_shape_handles: RefCell::new(enum_shape_handles),
             struct_shape_defs: RefCell::new(struct_shape_defs),
+            struct_shape_handles: RefCell::new(struct_shape_handles),
             jit_eager_names: RefCell::new(jit_eager_names),
+            jit_cache_key: RefCell::new(jit_cache_key),
             // Worker VMs run pool tasks back-to-back; `reset_after_task`
             // manages their MIR lifetime, so they never self-drop.
             jit_droppable: Cell::new(false),
             jit: parking_lot::RwLock::new(JitState::default()),
             jit_override_count: AtomicUsize::new(0),
             jit_graph_cache: crate::jit_call::GraphCache::default(),
+            jit_counters: JitCounters::default(),
             chunk_state_arena: RefCell::new(Vec::new()),
             chunk_state_map: RefCell::new(HashMap::new()),
             chunk_state_last: Cell::new(None),
@@ -107,6 +102,26 @@ impl Vm {
             // Comptime folding is a main-VM compile-time concern only.
             collect_comptime: Cell::new(false),
             comptime_folds: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// Returns deferred-JIT counters and the current native dispatch footprint.
+    /// Reading this snapshot does not compile, promote, or otherwise alter the
+    /// VM's execution policy.
+    #[must_use]
+    pub fn jit_metrics(&self) -> JitMetrics {
+        let state = self.jit.read();
+        JitMetrics {
+            tier_up_requests: self.jit_counters.tier_up_requests.get(),
+            work_floor_deferrals: self.jit_counters.work_floor_deferrals.get(),
+            compile_attempts: self.jit_counters.compile_attempts.get(),
+            successful_compiles: self.jit_counters.successful_compiles.get(),
+            resident_functions: state.overrides.len(),
+            discarded_artifacts: self.jit_counters.discarded_artifacts.get(),
+            released_snapshots: self.jit_counters.released_snapshots.get(),
+            reused_artifacts: self.jit_counters.reused_artifacts.get(),
+            ram_skipped_compiles: self.jit_counters.ram_skipped_compiles.get(),
+            last_observed_rss_bytes: self.jit_counters.last_observed_rss_bytes.get(),
         }
     }
 
@@ -218,6 +233,12 @@ impl Vm {
         let mut call_stack = self.call_stack.borrow_mut();
         call_stack.clear();
         call_stack.shrink_to_fit();
+        // A worker task is an execution boundary. Its JIT snapshot is only a
+        // deferred compile input, never bytecode runtime state, so retaining
+        // it in a thread-local worker would pin a whole program after the
+        // task completed. A worker that already compiled retains its artifact;
+        // a later task safely stays on bytecode if it did not tier up here.
+        self.release_deferred_jit_snapshots();
     }
 
     /// Frees MIR bodies and the `TyCtxt` snapshot retained for deferred JIT.
@@ -226,13 +247,35 @@ impl Vm {
     /// Call once after `vm.call()` returns to reclaim the per-program MIR
     /// allocation before the goroutine-join phase.
     pub fn release_jit_prelude(&mut self) {
-        *self.mir_bodies.borrow_mut() = None;
-        *self.tcx_snapshot.borrow_mut() = None;
+        self.release_deferred_jit_snapshots();
         // The chunk-state arena (per-call IC slots, hot counters)
         // can grow large for big programs. Trim it back to the
         // steady-state floor while goroutines drain.
         self.chunk_state_arena.borrow_mut().shrink_to_fit();
         self.chunk_state_map.borrow_mut().shrink_to_fit();
+    }
+
+    /// Drops the compiler-only state retained for deferred JIT. This takes
+    /// `&self` because each component is independently owned behind a
+    /// `RefCell`; execution only ever reads these before a tier-up starts.
+    /// Returns whether it released anything, which keeps metrics idempotent.
+    fn release_deferred_jit_snapshots(&self) -> bool {
+        let had_snapshot = self.mir_bodies.borrow().is_some()
+            || self.tcx_snapshot.borrow().is_some()
+            || self.enum_shape_defs.borrow().is_some()
+            || self.struct_shape_defs.borrow().is_some()
+            || !self.jit_eager_names.borrow().is_empty()
+            || self.jit_cache_key.borrow().is_some();
+        *self.mir_bodies.borrow_mut() = None;
+        *self.tcx_snapshot.borrow_mut() = None;
+        *self.enum_shape_defs.borrow_mut() = None;
+        *self.struct_shape_defs.borrow_mut() = None;
+        *self.jit_eager_names.borrow_mut() = Arc::new(std::collections::HashSet::new());
+        *self.jit_cache_key.borrow_mut() = None;
+        if had_snapshot {
+            self.jit_counters.snapshots_released();
+        }
+        had_snapshot
     }
 
     /// Enables comptime folding: the next [`Self::load`] evaluates every
@@ -494,14 +537,11 @@ impl Vm {
         // Coverage runs stay on the bytecode path: the cranelift JIT
         // lowers from MIR and never sees the `Op::CovHit` markers, so a
         // promoted function would silently stop recording line hits.
-        if jit_call::jit_enabled()
-            && has_jit_eligible_fn(program)
-            && !program_calls_collect_cycles(program)
-            && !self.coverage_active()
-        {
+        if jit_call::jit_enabled() && has_jit_eligible_fn(program) && !self.coverage_active() {
             let mut jit_tcx = tcx.clone();
-            let shapes = build_native_enum_shapes(program, &jit_tcx);
-            let struct_shapes = build_native_struct_shapes(program, &jit_tcx);
+            let (shapes, enum_shape_handles) = build_native_enum_shapes(program, &jit_tcx);
+            let (struct_shapes, struct_shape_handles) =
+                build_native_struct_shapes(program, &jit_tcx);
             let mut bodies = gossamer_mir::lower_program(program, &mut jit_tcx);
             // Monomorphise before the JIT sees the bodies, exactly as the LLVM
             // AOT pipeline does. A generic function / method / struct
@@ -539,9 +579,22 @@ impl Vm {
                 if !eager_names.is_empty() {
                     eager_names.insert("main".to_string());
                 }
-                *self.jit_eager_names.borrow_mut() = eager_names;
+                *self.jit_eager_names.borrow_mut() = Arc::new(eager_names);
+                // Keep the full, collision-free compiler description rather
+                // than a lossy hash: an accidental cache hit could dispatch a
+                // function compiled for a different type layout. This string
+                // exists only while deferred tier-up remains possible and is
+                // released together with the MIR/type snapshot.
+                *self.jit_cache_key.borrow_mut() = Some(Arc::from(jit_artifact_key(
+                    &bodies,
+                    &jit_tcx,
+                    &shapes,
+                    &struct_shapes,
+                )));
                 *self.enum_shape_defs.borrow_mut() = Some(Arc::new(shapes));
+                *self.enum_shape_handles.borrow_mut() = Some(enum_shape_handles);
                 *self.struct_shape_defs.borrow_mut() = Some(Arc::new(struct_shapes));
+                *self.struct_shape_handles.borrow_mut() = Some(struct_shape_handles);
                 *self.mir_bodies.borrow_mut() = Some(Arc::new(bodies));
                 // Store the JIT-local type context. MIR lowering and
                 // monomorphisation intern additional types, so they must not
@@ -599,20 +652,38 @@ impl Vm {
             if state.compiled != JitCompileState::Pending {
                 return;
             }
+            if let Some((rss_bytes, cap_bytes)) = jit_rss_sample_and_cap() {
+                self.jit_counters.observed_rss(rss_bytes);
+                if rss_bytes >= cap_bytes {
+                    state.compiled = JitCompileState::Failed;
+                    self.jit_counters.ram_skipped_compile(rss_bytes);
+                    if jit_call::jit_trace() {
+                        eprintln!(
+                            "jit: skip compile at rss={rss_bytes} bytes cap={cap_bytes} bytes"
+                        );
+                    }
+                    drop(state);
+                    self.release_terminal_jit_snapshot();
+                    return;
+                }
+            }
             state.compiled = JitCompileState::InProgress;
         }
         if !jit_call::jit_enabled() {
             self.jit.write().compiled = JitCompileState::Failed;
+            self.release_terminal_jit_snapshot();
             return;
         }
         // Clone the Arcs out so the `RefCell` borrows release before the
         // compile, leaving the fields free to be dropped afterwards.
         let Some(bodies) = self.mir_bodies.borrow().clone() else {
             self.jit.write().compiled = JitCompileState::Failed;
+            self.release_terminal_jit_snapshot();
             return;
         };
         let Some(tcx) = self.tcx_snapshot.borrow().clone() else {
             self.jit.write().compiled = JitCompileState::Failed;
+            self.release_terminal_jit_snapshot();
             return;
         };
         let bodies = &bodies;
@@ -626,6 +697,18 @@ impl Vm {
         let struct_shape_defs_arc = self.struct_shape_defs.borrow().clone();
         let struct_shape_defs: &std::collections::HashMap<u32, u32> =
             struct_shape_defs_arc.as_deref().unwrap_or(&empty);
+        let cache_key = self.jit_cache_key.borrow().clone();
+        if let Some(cache_key) = cache_key.as_deref()
+            && let Some(artifact) = thread_jit_artifact(cache_key)
+        {
+            if self.install_jit_artifact(artifact) {
+                self.jit_counters.artifact_reused();
+            }
+            self.release_terminal_jit_snapshot();
+            return;
+        }
+
+        self.jit_counters.compile_started();
         let artifact = match jit_backend::compile_to_jit_for_promotion(
             bodies,
             tcx,
@@ -638,6 +721,7 @@ impl Vm {
                     eprintln!("jit: compile_to_jit_for_promotion failed: {err}");
                 }
                 self.jit.write().compiled = JitCompileState::Failed;
+                self.release_terminal_jit_snapshot();
                 return;
             }
         };
@@ -650,75 +734,72 @@ impl Vm {
         }
         if artifact.functions.is_empty() {
             self.jit.write().compiled = JitCompileState::Failed;
+            self.release_terminal_jit_snapshot();
             return;
         }
-        // Only bodies admitted by the promotion policy reach
-        // `artifact.functions`. Bodies with constructs the JIT cannot run
-        // faithfully (go-spawn sites, cross-goroutine sync handles, closures)
-        // stay on bytecode.
+        let artifact = Rc::new(artifact);
+        if let Some(cache_key) = cache_key {
+            cache_thread_jit_artifact(cache_key, &artifact);
+        }
+        if self.install_jit_artifact(artifact) {
+            self.jit_counters.compile_succeeded();
+        } else {
+            self.jit_counters.artifact_discarded();
+        }
+        self.release_terminal_jit_snapshot();
+        gossamer_runtime::collect_process_allocator(true);
+    }
+
+    /// Installs callable entries from an immutable artifact. The artifact is
+    /// held by this VM before its raw entry pointers become reachable through
+    /// `overrides`, so a cache eviction can never invalidate a dispatch.
+    fn install_jit_artifact(&self, artifact: Rc<JitArtifact>) -> bool {
+        let trace = jit_call::jit_trace();
         let mut state = self.jit.write();
         for (name, jit_fn) in &artifact.functions {
-            // Only register an override for names the bytecode VM
-            // actually has chunks for. Closure bodies and other
-            // synthesised functions live only in the MIR; the VM
-            // calls them through different paths.
             let Some(Global::Fn(chunk)) = self.lookup_global_ref(name.as_str()) else {
                 continue;
             };
-            // Skip promotion of any chunk that calls `panic`.
-            // The cranelift codegen lowers `panic(...)` into a
-            // `gos_rt_panic` call that aborts the process directly,
-            // bypassing the bytecode VM's call-stack capture for the
-            // user-facing diagnostic. Keeping panicking helpers on the
-            // bytecode path preserves the call-stack render.
-            //
-            // Admitting these would also be unsound for side-effecting
-            // helpers: the trampoline catches the unwind and falls back
-            // to the bytecode chunk, which re-runs the body from the
-            // start - any effect performed before the panic in the
-            // native body would happen twice. The bytecode path renders
-            // the same trace (exit 101, `main` -> helper) with neither
-            // hazard, so the exclusion stays.
+            // Keep panic-capable code on bytecode so the VM's diagnostic and
+            // side-effect semantics remain the single execution path.
             if chunk.globals.iter().any(|g| g == "panic") {
                 continue;
             }
             if trace {
                 eprintln!("jit: promote {name}");
             }
-            // `JitFn` carries a raw `*const u8` so it isn't
-            // `Send + Sync`. The VM is single-threaded today, so
-            // an `Arc` is the right shape for the override map's
-            // shared ownership semantics - a `Rc` would prevent
-            // the artifact's `Drop` from waiting for outstanding
-            // override references on shutdown.
             #[allow(
                 clippy::arc_with_non_send_sync,
-                reason = "JitFn carries non-Sync raw fn ptrs; Arc shape needed for shared-ownership across the override map"
+                reason = "JitFn is immutable but intentionally not Send/Sync; artifacts are cached per thread"
             )]
-            let jit_arc = Arc::new(jit_fn.clone());
+            let jit_arc = Arc::clone(jit_fn);
             state.insert_override(name.clone(), jit_arc.clone());
             state
                 .chunk_overrides
                 .insert(Arc::as_ptr(chunk) as usize, jit_arc);
         }
-        self.jit_override_count
-            .store(state.overrides.len(), Ordering::Release);
-        state.artifact = Some(artifact);
-        state.compiled = JitCompileState::Done;
+        let installed = !state.overrides.is_empty();
+        if installed {
+            self.jit_override_count
+                .store(state.overrides.len(), Ordering::Release);
+            state.artifact = Some(artifact);
+            state.compiled = JitCompileState::Done;
+        } else {
+            state.compiled = JitCompileState::Failed;
+        }
         drop(state);
         for chunk_state in self.chunk_state_map.borrow().values() {
             *chunk_state.jit_resolve.borrow_mut() = crate::vm::JitResolve::Unresolved;
         }
-        // Spawn-free programs hand the MIR to no child Vm, so reclaim it
-        // now (the compile is the last reader) rather than at run end -
-        // freeing the live set before the program reaches its peak.
+        installed
+    }
+
+    /// A terminal tier-up result has no future use for compiler snapshots in
+    /// spawn-free programs, including RAM skips and compilation failures.
+    fn release_terminal_jit_snapshot(&self) {
         if self.jit_droppable.get() {
-            *self.mir_bodies.borrow_mut() = None;
-            *self.tcx_snapshot.borrow_mut() = None;
-            *self.enum_shape_defs.borrow_mut() = None;
-            *self.struct_shape_defs.borrow_mut() = None;
+            self.release_deferred_jit_snapshots();
         }
-        gossamer_runtime::collect_process_allocator(true);
     }
 
     /// Evaluates a `const`/`static` initializer by compiling `expr` into
@@ -736,7 +817,7 @@ impl Vm {
         mut_statics: &crate::compile::MutStatics,
     ) -> RuntimeResult<Value> {
         let cov_map = self.coverage_source_map();
-        let chunk = crate::compile::compile_initializer(
+        let chunk = Arc::new(crate::compile::compile_initializer(
             expr,
             tcx,
             layouts,
@@ -746,8 +827,8 @@ impl Vm {
             method_muts,
             mut_statics,
             cov_map.as_deref(),
-        )?;
-        debug_validate_chunk(&chunk)?;
+        )?);
+        validate_chunk_for_execution(&chunk)?;
         // Run with a fresh, local `ChunkState` rather than the
         // address-keyed `chunk_state_for` cache. An initializer chunk is
         // dropped as soon as it returns, so caching its heap address
@@ -764,7 +845,7 @@ impl Vm {
             jit_disabled,
             false,
         );
-        self.run(&chunk, &state, Vec::new())
+        self.run_local(Arc::clone(&chunk), &state, Vec::new())
     }
 
     /// Registers a `const`/`static` value in `globals` under both its
@@ -844,7 +925,7 @@ impl Vm {
                     mut_statics,
                     cov_map.as_deref(),
                 )?;
-                debug_validate_chunk(&chunk)?;
+                validate_chunk_for_execution(&chunk)?;
                 let shared = chunk.into_shared();
                 if let Some(prefix) = &module_prefix {
                     let qualified = format!("{prefix}::{}", decl.name.name);
@@ -865,7 +946,7 @@ impl Vm {
                         mut_statics,
                         cov_map.as_deref(),
                     )?;
-                    debug_validate_chunk(&chunk)?;
+                    validate_chunk_for_execution(&chunk)?;
                     let shared = chunk.into_shared();
                     if let Some(type_name) = &decl.self_name {
                         let qualified = format!("{}::{}", type_name.name, method.name.name);
@@ -896,7 +977,7 @@ impl Vm {
                             mut_statics,
                             cov_map.as_deref(),
                         )?;
-                        debug_validate_chunk(&chunk)?;
+                        validate_chunk_for_execution(&chunk)?;
                         let shared = chunk.into_shared();
                         if let Some(prefix) = &module_prefix {
                             globals.insert(
@@ -936,6 +1017,90 @@ impl Vm {
     }
 }
 
+/// Returns a live artifact for `key` from this OS thread. Pruning dead weak
+/// entries here keeps the cache metadata bounded even when many short-lived
+/// programs execute on one worker.
+fn thread_jit_artifact(key: &str) -> Option<Rc<JitArtifact>> {
+    THREAD_JIT_ARTIFACTS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.retain(|entry| entry.artifact.strong_count() != 0);
+        cache
+            .iter()
+            .find(|entry| entry.key.as_ref() == key)
+            .and_then(|entry| entry.artifact.upgrade())
+    })
+}
+
+/// Publishes an artifact only to the current thread. The cache itself holds a
+/// `Weak`, so it coordinates reuse but never extends executable-page lifetime.
+fn cache_thread_jit_artifact(key: Arc<str>, artifact: &Rc<JitArtifact>) {
+    THREAD_JIT_ARTIFACTS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.retain(|entry| {
+            entry.artifact.strong_count() != 0 && entry.key.as_ref() != key.as_ref()
+        });
+        while cache.len() >= THREAD_JIT_ARTIFACT_CACHE_CAP {
+            cache.pop_front();
+        }
+        cache.push_back(ThreadJitArtifact {
+            key,
+            artifact: Rc::downgrade(artifact),
+        });
+    });
+}
+
+/// Full (rather than hashed) identity for code pages produced from a compiler
+/// snapshot. Sorted map entries avoid randomized `HashMap` iteration turning
+/// identical programs into a cache miss; string equality avoids collision
+/// risks at this unsafe ABI boundary.
+fn jit_artifact_key(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+    enum_shape_defs: &std::collections::HashMap<u32, u32>,
+    struct_shape_defs: &std::collections::HashMap<u32, u32>,
+) -> String {
+    fn sorted_map(map: &std::collections::HashMap<u32, u32>) -> Vec<(u32, u32)> {
+        let mut entries: Vec<_> = map.iter().map(|(&key, &value)| (key, value)).collect();
+        entries.sort_unstable();
+        entries
+    }
+
+    format!(
+        "bodies={bodies:?};tcx={};enum_shapes={:?};struct_shapes={:?}",
+        tcx.stable_snapshot_key(),
+        sorted_map(enum_shape_defs),
+        sorted_map(struct_shape_defs),
+    )
+}
+
+fn jit_rss_sample_and_cap() -> Option<(u64, u64)> {
+    let cap_mb = std::env::var("GOS_JIT_MAX_RSS_MB").ok()?;
+    let cap_mb = cap_mb.trim().parse::<u64>().ok()?;
+    if cap_mb == 0 {
+        return None;
+    }
+    let cap_bytes = cap_mb.saturating_mul(1024 * 1024);
+    current_process_rss_bytes().map(|rss| (rss, cap_bytes))
+}
+
+#[cfg(target_os = "linux")]
+fn current_process_rss_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    for line in status.lines() {
+        let Some(rest) = line.strip_prefix("VmRSS:") else {
+            continue;
+        };
+        let kb = rest.split_whitespace().next()?.parse::<u64>().ok()?;
+        return Some(kb.saturating_mul(1024));
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn current_process_rss_bytes() -> Option<u64> {
+    None
+}
+
 /// Builds native shape descriptors for every heap enum whose values
 /// can cross the JIT boundary as raw pointers (all variant fields are
 /// scalars, strings, or other supported heap enums), registers them in
@@ -944,7 +1109,10 @@ impl Vm {
 fn build_native_enum_shapes(
     program: &HirProgram,
     tcx: &TyCtxt,
-) -> std::collections::HashMap<u32, u32> {
+) -> (
+    std::collections::HashMap<u32, u32>,
+    Arc<Vec<Arc<crate::value::NativeEnumShape>>>,
+) {
     use crate::value::{
         NativeEnumShape, NativeFieldKind, NativeVariantShape, intern_type_name,
         register_native_shapes,
@@ -1034,7 +1202,7 @@ fn build_native_enum_shapes(
         .filter(|c| supported.contains(&c.def_local))
         .collect();
     if kept.is_empty() {
-        return std::collections::HashMap::new();
+        return (std::collections::HashMap::new(), Arc::new(Vec::new()));
     }
     // Two-phase index assignment so recursive/mutual references
     // resolve: indices are decided up front, shapes built after. The
@@ -1047,7 +1215,7 @@ fn build_native_enum_shapes(
             .enumerate()
             .map(|(i, c)| (c.def_local, base + u32::try_from(i).unwrap_or(0)))
             .collect();
-        let shapes: Vec<&'static NativeEnumShape> = kept
+        let shapes: Vec<std::sync::Arc<NativeEnumShape>> = kept
             .iter()
             .map(|c| {
                 let tagged = !c.variants.is_empty() && c.variants.len() <= 4;
@@ -1087,16 +1255,16 @@ fn build_native_enum_shapes(
                             .collect(),
                     })
                     .collect();
-                let shape: &'static NativeEnumShape = Box::leak(Box::new(NativeEnumShape {
+                std::sync::Arc::new(NativeEnumShape {
                     enum_name: intern_type_name(c.name),
                     index: idx_of[&c.def_local],
                     tagged,
                     variants,
-                }));
-                shape
+                })
             })
             .collect();
-        (shapes, idx_of)
+        let handles = Arc::new(shapes.clone());
+        (shapes, (idx_of, handles))
     })
 }
 
@@ -1109,7 +1277,10 @@ fn build_native_enum_shapes(
 fn build_native_struct_shapes(
     program: &HirProgram,
     tcx: &TyCtxt,
-) -> std::collections::HashMap<u32, u32> {
+) -> (
+    std::collections::HashMap<u32, u32>,
+    Arc<Vec<Arc<crate::value::NativeStructShape>>>,
+) {
     use crate::value::{
         NativeFieldKind, NativeStructShape, intern_type_name, register_native_struct_shapes,
     };
@@ -1169,7 +1340,7 @@ fn build_native_struct_shapes(
         });
     }
     if cands.is_empty() {
-        return std::collections::HashMap::new();
+        return (std::collections::HashMap::new(), Arc::new(Vec::new()));
     }
     register_native_struct_shapes(|base| {
         let idx_of: std::collections::HashMap<u32, u32> = cands
@@ -1177,7 +1348,7 @@ fn build_native_struct_shapes(
             .enumerate()
             .map(|(i, c)| (c.def_local, base + u32::try_from(i).unwrap_or(0)))
             .collect();
-        let shapes: Vec<&'static NativeStructShape> = cands
+        let shapes: Vec<std::sync::Arc<NativeStructShape>> = cands
             .iter()
             .map(|c| {
                 let fields = c
@@ -1185,14 +1356,14 @@ fn build_native_struct_shapes(
                     .iter()
                     .map(|(n, k)| (intern_type_name(n), *k))
                     .collect();
-                let shape: &'static NativeStructShape = Box::leak(Box::new(NativeStructShape {
+                std::sync::Arc::new(NativeStructShape {
                     struct_name: intern_type_name(c.name),
                     index: idx_of[&c.def_local],
                     fields,
-                }));
-                shape
+                })
             })
             .collect();
-        (shapes, idx_of)
+        let handles = Arc::new(shapes.clone());
+        (shapes, (idx_of, handles))
     })
 }

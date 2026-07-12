@@ -30,8 +30,8 @@
 
 #![forbid(unsafe_code)]
 
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 use crate::crypto;
 use crate::errors::Error;
@@ -44,10 +44,20 @@ const DEFAULT_COOKIE_NAME: &str = "gos_session";
 /// Default session lifetime: 7 days.
 const DEFAULT_MAX_AGE_SECS: i64 = 86_400 * 7;
 
-/// Minimum recommended key length for HMAC-SHA256 signing. Shorter
-/// keys are not refused outright (HMAC tolerates any length) but
-/// the constructor flags them as a configuration smell.
+/// Minimum HMAC-SHA256 signing-key length. HMAC technically accepts
+/// shorter keys, but accepting them makes brute-force resistance depend on a
+/// configuration mistake rather than the primitive's strength.
 const MIN_HMAC_KEY_LEN: usize = 32;
+
+/// Maximum encoded session cookie value accepted or emitted. Cookies have a
+/// practical per-cookie browser limit around 4 KiB, but this larger parser cap
+/// gives applications room for base64/encryption overhead while preventing an
+/// attacker-controlled Cookie header from driving unbounded decode/JSON work.
+const MAX_SESSION_COOKIE_BYTES: usize = 16 * 1024;
+
+/// Maximum plaintext JSON session payload. Kept below the wire cap so a saved
+/// session stays within a bounded, deployable cookie size after encoding.
+const MAX_SESSION_PAYLOAD_BYTES: usize = 8 * 1024;
 
 /// AES-256-GCM key length in bytes - only key length the underlying
 /// AEAD primitive accepts in this build.
@@ -100,9 +110,8 @@ pub struct SessionConfig {
 impl SessionConfig {
     /// Builds a signed-only session config with the given key.
     ///
-    /// The key is used for HMAC-SHA256; at least 32 bytes is
-    /// recommended (matching the digest output length). Shorter
-    /// keys are accepted but waste mixing rounds.
+    /// The key is used for HMAC-SHA256 and must be at least 32 bytes
+    /// when the store is constructed.
     #[must_use]
     pub fn cookie(key: Vec<u8>) -> Self {
         Self {
@@ -202,6 +211,17 @@ pub struct Session {
     data: serde_json::Map<String, serde_json::Value>,
     dirty: bool,
     destroy: bool,
+}
+
+/// Authenticated on-wire session frame. Keeping expiry inside the signed or
+/// encrypted payload prevents a copied cookie from being replayed after a
+/// browser-only `Max-Age` would have elapsed.
+#[derive(Serialize, Deserialize)]
+struct SessionEnvelope {
+    version: u8,
+    issued_at: i64,
+    expires_at: Option<i64>,
+    data: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Session {
@@ -317,27 +337,47 @@ impl SignedCookieStore {
     ///
     /// Returns an error when:
     /// - `config.keys` is empty.
-    /// - The active key is empty.
+    /// - Any signed-only key is shorter than 32 bytes.
     /// - `mode = Encrypted` and any configured key is not exactly
     ///   32 bytes (AES-256-GCM requirement).
+    /// - Cookie attributes violate the strict cookie contract.
     pub fn try_new(config: SessionConfig) -> Result<Self, Error> {
         if config.keys.is_empty() {
             return Err(Error::new("session: at least one key is required"));
         }
-        if config.keys[0].is_empty() {
-            return Err(Error::new("session: active key must be non-empty"));
+        if config.max_age_secs < 0 {
+            return Err(Error::new("session: max_age_secs must not be negative"));
         }
-        if matches!(config.mode, SerializationMode::Encrypted) {
-            for (i, key) in config.keys.iter().enumerate() {
-                if key.len() != AES_GCM_KEY_LEN {
+        for (i, key) in config.keys.iter().enumerate() {
+            match config.mode {
+                SerializationMode::SignedOnly if key.len() < MIN_HMAC_KEY_LEN => {
                     return Err(Error::new(format!(
-                        "session: encrypted mode requires {AES_GCM_KEY_LEN}-byte keys; \
-                         key #{i} is {len} bytes",
-                        len = key.len()
+                        "session: signed mode requires keys of at least {MIN_HMAC_KEY_LEN} bytes; \
+                         key #{i} is {} bytes",
+                        key.len()
                     )));
                 }
+                SerializationMode::Encrypted if key.len() != AES_GCM_KEY_LEN => {
+                    return Err(Error::new(format!(
+                        "session: encrypted mode requires {AES_GCM_KEY_LEN}-byte keys; \
+                         key #{i} is {} bytes",
+                        key.len()
+                    )));
+                }
+                _ => {}
             }
         }
+        let mut cookie = crate::http_cookie::Cookie::builder(&config.cookie_name, "validation")
+            .path(config.path.clone())
+            .http_only(config.http_only)
+            .secure(config.secure)
+            .same_site(config.same_site);
+        if let Some(domain) = &config.domain {
+            cookie = cookie.domain(domain.clone());
+        }
+        cookie
+            .try_build()
+            .map_err(|e| Error::wrap(e, "session: invalid cookie configuration"))?;
         Ok(Self { config })
     }
 
@@ -384,6 +424,9 @@ impl SignedCookieStore {
     }
 
     fn decode(&self, wire: &str) -> Option<Vec<u8>> {
+        if wire.len() > MAX_SESSION_COOKIE_BYTES {
+            return None;
+        }
         let (left, right) = wire.split_once('.')?;
         let left_bytes = b64url_decode(left).ok()?;
         let right_bytes = b64url_decode(right).ok()?;
@@ -395,7 +438,8 @@ impl SignedCookieStore {
                 for key in &self.config.keys {
                     let mac = crypto::hmac::sha256_mac(key, payload_b64_bytes);
                     if crypto::subtle::constant_time_eq(&mac, &right_bytes) {
-                        return Some(left_bytes);
+                        return (left_bytes.len() <= MAX_SESSION_PAYLOAD_BYTES)
+                            .then_some(left_bytes);
                     }
                 }
                 None
@@ -411,7 +455,7 @@ impl SignedCookieStore {
                     if let Ok(plain) =
                         crypto::aead::aes_256_gcm_open(key, &left_bytes, &right_bytes, &[])
                     {
-                        return Some(plain);
+                        return (plain.len() <= MAX_SESSION_PAYLOAD_BYTES).then_some(plain);
                     }
                 }
                 None
@@ -453,6 +497,44 @@ impl SignedCookieStore {
         }
         builder.build().to_header_value()
     }
+
+    fn encode_session(&self, data: serde_json::Map<String, serde_json::Value>) -> Option<String> {
+        let issued_at = unix_time_secs()?;
+        let expires_at = if self.config.max_age_secs == 0 {
+            None
+        } else {
+            issued_at.checked_add(self.config.max_age_secs)
+        };
+        let payload = serde_json::to_vec(&SessionEnvelope {
+            version: 1,
+            issued_at,
+            expires_at,
+            data,
+        })
+        .ok()?;
+        if payload.len() > MAX_SESSION_PAYLOAD_BYTES {
+            return None;
+        }
+        self.encode(&payload).ok()
+    }
+
+    fn decode_session(&self, wire: &str) -> Option<Session> {
+        let plain = self.decode(wire)?;
+        let envelope = serde_json::from_slice::<SessionEnvelope>(&plain).ok()?;
+        if envelope.version != 1 || envelope.issued_at < 0 {
+            return None;
+        }
+        if let Some(expires_at) = envelope.expires_at
+            && unix_time_secs()? >= expires_at
+        {
+            return None;
+        }
+        Some(Session {
+            data: envelope.data,
+            dirty: false,
+            destroy: false,
+        })
+    }
 }
 
 impl SessionStore for SignedCookieStore {
@@ -462,15 +544,8 @@ impl SessionStore for SignedCookieStore {
         };
         for (name, value) in parse_cookie_header(header) {
             if name == self.config.cookie_name {
-                if let Some(plain) = self.decode(&value)
-                    && let Ok(serde_json::Value::Object(map)) =
-                        serde_json::from_slice::<serde_json::Value>(&plain)
-                {
-                    return Session {
-                        data: map,
-                        dirty: false,
-                        destroy: false,
-                    };
+                if let Some(session) = self.decode_session(&value) {
+                    return session;
                 }
                 // Right name, bad cookie: degrade to empty.
                 return Session::new();
@@ -486,18 +561,10 @@ impl SessionStore for SignedCookieStore {
         let header_value = if session.is_destroyed() {
             self.build_deletion_cookie()
         } else {
-            // Encoding a Map<String, Value> cannot fail in practice
-            // - serde_json only errors on non-string map keys or
-            // non-finite floats inserted through raw Value. Degrade
-            // silently rather than panic out of a handler.
-            let Ok(payload) = serde_json::to_vec(&serde_json::Value::Object(session.data.clone()))
-            else {
+            let Some(value) = self.encode_session(session.data.clone()) else {
                 return;
             };
-            match self.encode(&payload) {
-                Ok(s) => self.build_session_cookie(s),
-                Err(_) => return,
-            }
+            self.build_session_cookie(value)
         };
         // Multiple Set-Cookie headers can stack on a single response;
         // the BTreeMap-backed Headers map keeps the last value when
@@ -505,6 +572,13 @@ impl SessionStore for SignedCookieStore {
         // (saving twice overwrites the first emission).
         response.headers.insert("set-cookie", &header_value);
     }
+}
+
+fn unix_time_secs() -> Option<i64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_secs()).ok())
 }
 
 /// Convenience adapter: `load`, run the handler with a mutable
@@ -979,6 +1053,45 @@ mod tests {
         let mut cfg = SessionConfig::cookie(signing_key());
         cfg.keys.clear();
         assert!(SignedCookieStore::try_new(cfg).is_err());
+    }
+
+    #[test]
+    fn try_new_rejects_short_signed_and_legacy_keys() {
+        assert!(SignedCookieStore::try_new(SessionConfig::cookie(vec![7; 31])).is_err());
+        let cfg = SessionConfig::cookie(signing_key()).add_legacy_key(vec![9; 31]);
+        assert!(SignedCookieStore::try_new(cfg).is_err());
+    }
+
+    #[test]
+    fn oversized_session_cookie_is_rejected_without_json_decode() {
+        let store = make_signed_store();
+        let huge = "a".repeat(MAX_SESSION_COOKIE_BYTES + 1);
+        let req = fresh_request_with_cookie(Some(&format!("{}={huge}", store.config.cookie_name)));
+        assert!(store.load(&req).is_empty());
+    }
+
+    #[test]
+    fn expired_or_legacy_signed_payload_is_rejected() {
+        let store = make_signed_store();
+        let expired = SessionEnvelope {
+            version: 1,
+            issued_at: 1,
+            expires_at: Some(2),
+            data: serde_json::Map::new(),
+        };
+        let expired_wire = store
+            .encode(&serde_json::to_vec(&expired).unwrap())
+            .expect("encode expired cookie");
+        let expired_req = fresh_request_with_cookie(Some(&format!(
+            "{}={expired_wire}",
+            store.config.cookie_name
+        )));
+        assert!(store.load(&expired_req).is_empty());
+
+        let legacy_wire = store.encode(br#"{"uid":7}"#).expect("encode legacy cookie");
+        let legacy_req =
+            fresh_request_with_cookie(Some(&format!("{}={legacy_wire}", store.config.cookie_name)));
+        assert!(store.load(&legacy_req).is_empty());
     }
 
     #[test]

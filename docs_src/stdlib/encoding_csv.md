@@ -1,6 +1,6 @@
 # `std::encoding::csv`
 
-Status: shipped
+Status: experimental
 
 CSV record reader and writer.
 

@@ -51,13 +51,13 @@ pub mod vec_elem_kind {
     pub const ERROR: u8 = 4;
     /// Element is a multi-slot struct/tuple stored inline whose option
     /// payload words may hold copy-blob pointers. The per-type guarded
-    /// meta lives in the side table (`vec_elem_meta`); `gos_rt_vec_free`
+    /// meta lives in the Vec's versioned owner carrier; `gos_rt_vec_free`
     /// releases each element's guarded children, and `gos_rt_vec_push`
     /// retains them when the element bytes are copied in.
     pub const AGGR_GUARDED: u8 = 5;
     /// Element is a multi-slot struct/tuple stored inline whose slots
     /// embed heap pointers (runtime strings / nested vecs) OWNED by the
-    /// vec. The per-vec slot layout lives in the side table
+    /// vec. The per-vec slot layout lives in the versioned owner carrier
     /// ([`super::vec::vec_slot_children`]); `gos_rt_vec_free` deep-frees
     /// each live child even when the vec was never iterated (the
     /// early-`break` path), and `gos_rt_vec_push` retains the copied
@@ -109,6 +109,92 @@ pub struct GosVec {
     /// replaces, so `ptr` stays at offset 24 and the layout is unchanged.
     pub rc: std::sync::atomic::AtomicU16,
     pub ptr: SyncRawPtr<u8>,
+    /// Versioned ownership carrier. This is deliberately appended after the
+    /// legacy 32-byte prefix, whose offsets are part of the native ABI.
+    /// Runtime-created Vecs always carry a non-null owner; region Vecs are
+    /// bulk-owned by their region and leave this null.
+    pub owner: SyncRawPtr<VecOwner>,
+}
+
+/// ABI-versioned ownership state for a heap Vec.
+///
+/// Unlike the former address-keyed metadata maps, this allocation is owned by
+/// the Vec header and dies with it. `generation` identifies this particular
+/// allocation instance, and `destructor` makes the release protocol explicit
+/// at ABI boundaries instead of inferring it from an address.
+#[repr(C)]
+pub struct VecOwner {
+    abi_version: u16,
+    kind: u16,
+    destructor: u32,
+    generation: u64,
+    elem_meta: SyncRawPtr<i64>,
+    slot_children: Option<Box<[VecSlotChild]>>,
+}
+
+const ABI_OWNER_VERSION: u16 = 1;
+const ABI_OWNER_KIND_VEC: u16 = 1;
+const ABI_OWNER_DTOR_VEC: u32 = 1;
+static NEXT_VEC_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn new_vec_owner() -> SyncRawPtr<VecOwner> {
+    let generation = NEXT_VEC_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let owner = Box::new(VecOwner {
+        abi_version: ABI_OWNER_VERSION,
+        kind: ABI_OWNER_KIND_VEC,
+        destructor: ABI_OWNER_DTOR_VEC,
+        generation,
+        elem_meta: SyncRawPtr::NULL,
+        slot_children: None,
+    });
+    SyncRawPtr::new(Box::into_raw(owner))
+}
+
+#[inline]
+fn vec_owner(v: &GosVec) -> Option<&VecOwner> {
+    let owner = v.owner.as_ptr();
+    if owner.is_null() {
+        return None;
+    }
+    // SAFETY: a non-region Vec owner is created with its header and reclaimed
+    // only after the header's last release.
+    let owner = unsafe { &*owner };
+    (owner.abi_version == ABI_OWNER_VERSION
+        && owner.kind == ABI_OWNER_KIND_VEC
+        && owner.destructor == ABI_OWNER_DTOR_VEC)
+        .then_some(owner)
+}
+
+/// Generation of this Vec allocation's owner carrier, or zero for a region
+/// Vec. This is a diagnostic/testing hook; ABI consumers use the opaque owner
+/// pointer rather than fabricating a generation from an address.
+#[must_use]
+pub fn vec_owner_generation(v: &GosVec) -> u64 {
+    vec_owner(v).map_or(0, |owner| owner.generation)
+}
+
+#[inline]
+fn vec_owner_mut(v: &mut GosVec) -> Option<&mut VecOwner> {
+    let owner = v.owner.as_ptr();
+    if owner.is_null() {
+        return None;
+    }
+    // SAFETY: callers hold exclusive access while attaching metadata.
+    let owner = unsafe { &mut *owner };
+    (owner.abi_version == ABI_OWNER_VERSION
+        && owner.kind == ABI_OWNER_KIND_VEC
+        && owner.destructor == ABI_OWNER_DTOR_VEC)
+        .then_some(owner)
+}
+
+pub(crate) unsafe fn drop_vec_owner(v: &mut GosVec) {
+    let owner = v.owner.as_ptr();
+    if owner.is_null() {
+        return;
+    }
+    v.owner = SyncRawPtr::NULL;
+    // SAFETY: final Vec release owns the carrier exactly once.
+    drop(unsafe { Box::from_raw(owner) });
 }
 
 /// `region_flag` bit marking a GosVec (and its backing buffer) as
@@ -195,6 +281,7 @@ pub(crate) unsafe fn alloc_box_vec(
             region_flag: flag,
             rc: std::sync::atomic::AtomicU16::new(1),
             ptr: init_ptr,
+            owner: new_vec_owner(),
         },
         buf: [0u64; INLINE_BUF_WORDS],
     });
@@ -212,9 +299,7 @@ pub(crate) unsafe fn alloc_box_vec(
             (*boxed_ptr).header.ptr = SyncRawPtr::new(bufptr);
         }
     }
-    let out = boxed_ptr.cast::<GosVec>();
-    vec_note_allocated(out);
-    out
+    boxed_ptr.cast::<GosVec>()
 }
 
 /// True when this non-region GosVec's `ptr` is a separately-allocated
@@ -241,52 +326,12 @@ unsafe fn alloc_vec_header(mut v: GosVec) -> *mut GosVec {
     }
 }
 
-/// Per-vec guarded element meta, keyed by the stable `GosVec` header
-/// pointer. Only vecs tagged `vec_elem_kind::AGGR_GUARDED` have entries,
-/// so ordinary vecs never consult the table - the tag byte (already in
-/// the header) gates every lookup. Entries are removed when the vec is
-/// reclaimed, so a reused header address cannot inherit a stale meta.
-static VEC_ELEM_METAS: std::sync::LazyLock<
-    parking_lot::Mutex<std::collections::HashMap<usize, usize>>,
-> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
-
-/// Heap Vec headers currently owned by the runtime allocator.
-///
-/// This lets a stale repeated `gos_rt_vec_free(ptr)` return before reading the
-/// reclaimed header. Tracking live headers, rather than all historical freed
-/// headers, keeps the side table bounded by the number of currently-live heap
-/// Vecs. Region Vecs are intentionally omitted: they are arena-owned and never
-/// reclaimed by `gos_rt_vec_free`.
-static LIVE_VEC_HEADERS: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashSet<usize>>> =
-    std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashSet::new()));
-
-pub(crate) fn vec_note_allocated(v: *mut GosVec) {
-    LIVE_VEC_HEADERS.lock().insert(v as usize);
-}
-
-pub(crate) fn vec_is_live_heap_header(v: *const GosVec) -> bool {
-    LIVE_VEC_HEADERS.lock().contains(&(v as usize))
-}
-
-pub(crate) fn vec_note_final_free(v: *const GosVec) {
-    LIVE_VEC_HEADERS.lock().remove(&(v as usize));
-}
-
 pub(crate) fn vec_elem_meta(v: *const GosVec) -> *const i64 {
-    *VEC_ELEM_METAS.lock().get(&(v as usize)).unwrap_or(&0) as *const i64
-}
-
-pub(crate) fn vec_elem_meta_remove(v: &GosVec) {
-    // PRIMITIVE vecs never have side-table entries, so skip both locks entirely.
-    if v.elem_kind == vec_elem_kind::PRIMITIVE {
-        return;
+    if v.is_null() {
+        return std::ptr::null();
     }
-    // Side tables are keyed by the header's integer address; take it from
-    // the borrow we were handed so the reclaiming `Box<GosVec>` keeps sole
-    // access to the allocation (no aliasing raw deref).
-    let key = std::ptr::from_ref(v) as usize;
-    VEC_ELEM_METAS.lock().remove(&key);
-    VEC_SLOT_CHILDREN.lock().remove(&key);
+    // SAFETY: callers only query live Vec headers.
+    vec_owner(unsafe { &*v }).map_or(std::ptr::null(), |owner| owner.elem_meta.as_const_ptr())
 }
 
 /// One owned heap child inside each element slot of an
@@ -306,19 +351,10 @@ pub struct VecSlotChild {
     pub kind: u8,
 }
 
-/// Per-vec owned-slot-children layouts, keyed by the stable `GosVec`
-/// header pointer. Only vecs tagged `vec_elem_kind::AGGR_OWNED` have
-/// entries; the tag byte gates every lookup. Entries are removed when
-/// the vec is reclaimed, so a reused header address cannot inherit a
-/// stale layout.
-static VEC_SLOT_CHILDREN: std::sync::LazyLock<
-    parking_lot::Mutex<std::collections::HashMap<usize, &'static [VecSlotChild]>>,
-> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
-
 /// Slot-children layout of an `AGGR_OWNED` vec, or `None` for any
 /// other vec.
-pub fn vec_slot_children(v: *const GosVec) -> Option<&'static [VecSlotChild]> {
-    VEC_SLOT_CHILDREN.lock().get(&(v as usize)).copied()
+pub fn vec_slot_children(v: &GosVec) -> Option<&[VecSlotChild]> {
+    vec_owner(v).and_then(|owner| owner.slot_children.as_deref())
 }
 
 /// Tags `v` as an [`vec_elem_kind::AGGR_OWNED`] vec and records where
@@ -344,7 +380,9 @@ pub fn vec_set_slot_children(v: *mut GosVec, children: &'static [VecSlotChild]) 
         return;
     }
     vec.elem_kind = vec_elem_kind::AGGR_OWNED;
-    VEC_SLOT_CHILDREN.lock().insert(v as usize, children);
+    if let Some(owner) = vec_owner_mut(vec) {
+        owner.slot_children = Some(children.into());
+    }
 }
 
 /// Calls `f` with each live, non-null child pointer (and its kind)
@@ -374,7 +412,7 @@ unsafe fn visit_slot_children(
 /// Retain the owned children of the element slot at `slot` of the
 /// `AGGR_OWNED` vec `v` (a slot copy that now shares them).
 pub(crate) unsafe fn vec_retain_slot_children(v: *const GosVec, slot: *const u8) {
-    let Some(children) = vec_slot_children(v) else {
+    let Some(children) = vec_slot_children(unsafe { &*v }) else {
         return;
     };
     unsafe {
@@ -510,7 +548,7 @@ pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosV
             }
         }
         vec_elem_kind::AGGR_OWNED => {
-            if let Some(children) = vec_slot_children(src) {
+            if let Some(children) = vec_slot_children(s) {
                 vec_set_slot_children(out, children);
                 let stride = o.elem_bytes as usize;
                 if stride == 0 || o.ptr.is_null() {
@@ -581,14 +619,10 @@ pub unsafe extern "C" fn gos_rt_vec_set_elem_meta(v: *mut GosVec, meta: *const i
         return;
     }
     vec.elem_kind = vec_elem_kind::AGGR_GUARDED;
-    VEC_ELEM_METAS.lock().insert(v as usize, meta as usize);
+    if let Some(owner) = vec_owner_mut(vec) {
+        owner.elem_meta = SyncRawPtr::from_const(meta);
+    }
 }
-
-/// Parsed `VecSlotChild` layouts, keyed by the (static) meta blob
-/// address so each per-type layout is parsed and leaked at most once.
-static SLOT_CHILD_LAYOUTS: std::sync::LazyLock<
-    parking_lot::Mutex<std::collections::HashMap<usize, &'static [VecSlotChild]>>,
-> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
 
 /// Tags `v` as an [`vec_elem_kind::AGGR_OWNED`] vec carrying inline
 /// aggregate elements whose RC child pointers (strings, nested vecs,
@@ -603,28 +637,24 @@ pub unsafe extern "C" fn gos_rt_vec_set_slot_children(v: *mut GosVec, meta: *con
     if v.is_null() || meta.is_null() {
         return;
     }
-    let layout = {
-        let mut cache = SLOT_CHILD_LAYOUTS.lock();
-        if let Some(l) = cache.get(&(meta as usize)) {
-            *l
-        } else {
-            let count = unsafe { *meta }.max(0) as usize;
-            let mut children = Vec::with_capacity(count);
-            for i in 0..count {
-                let base = 1 + i * 4;
-                children.push(VecSlotChild {
-                    gate: unsafe { *meta.add(base) },
-                    disc_word: unsafe { *meta.add(base + 1) }.max(0) as usize,
-                    word: unsafe { *meta.add(base + 2) }.max(0) as usize,
-                    kind: unsafe { *meta.add(base + 3) } as u8,
-                });
-            }
-            let leaked: &'static [VecSlotChild] = Box::leak(children.into_boxed_slice());
-            cache.insert(meta as usize, leaked);
-            leaked
+    let count = unsafe { *meta }.max(0) as usize;
+    let mut children = Vec::with_capacity(count);
+    for i in 0..count {
+        let base = 1 + i * 4;
+        children.push(VecSlotChild {
+            gate: unsafe { *meta.add(base) },
+            disc_word: unsafe { *meta.add(base + 1) }.max(0) as usize,
+            word: unsafe { *meta.add(base + 2) }.max(0) as usize,
+            kind: unsafe { *meta.add(base + 3) } as u8,
+        });
+    }
+    let vec = unsafe { &mut *v };
+    if !vec_is_region(vec) {
+        vec.elem_kind = vec_elem_kind::AGGR_OWNED;
+        if let Some(owner) = vec_owner_mut(vec) {
+            owner.slot_children = Some(children.into_boxed_slice());
         }
-    };
-    vec_set_slot_children(v, layout);
+    }
 }
 
 /// Release the guarded children of every element of an
@@ -740,6 +770,7 @@ pub unsafe extern "C" fn gos_rt_vec_new(elem_bytes: u32) -> *mut GosVec {
                 region_flag: 0,
                 rc: std::sync::atomic::AtomicU16::new(0),
                 ptr: SyncRawPtr::NULL,
+                owner: SyncRawPtr::NULL,
             })
         }
     })
@@ -770,6 +801,7 @@ pub unsafe extern "C" fn gos_rt_vec_new_typed(elem_bytes: u32, elem_kind: u8) ->
                 region_flag: 0,
                 rc: std::sync::atomic::AtomicU16::new(0),
                 ptr: SyncRawPtr::NULL,
+                owner: SyncRawPtr::NULL,
             })
         }
     })
@@ -943,6 +975,23 @@ pub unsafe extern "C" fn gos_rt_vec_len(v: *const GosVec) -> i64 {
             return 0;
         }
         unsafe { (*v).len }
+    })
+}
+
+/// Returns the total element capacity of `v` without changing its allocation.
+///
+/// A null Vec is the canonical empty representation and therefore reports
+/// zero, matching [`gos_rt_vec_len`].  Keeping this query in the runtime
+/// rather than exposing the header layout lets the ABI retain freedom to
+/// change the backing representation while callers continue to plan capacity
+/// explicitly.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_capacity(v: *const GosVec) -> i64 {
+    ffi_entry!(0, {
+        if v.is_null() {
+            return 0;
+        }
+        unsafe { (*v).cap.max(0) }
     })
 }
 

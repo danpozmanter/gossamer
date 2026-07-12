@@ -71,7 +71,7 @@ fn main() {
     println!("rune_count_in_string(héllo) = {}", utf8::rune_count_in_string(&"héllo"))
     println!("rune_len(BMP) = {}", utf8::rune_len('é'))
     println!("rune_len(supplementary) = {}", utf8::rune_len('𝄞'))
-    println!("valid_rune(0x61) = {}", utf8::valid_rune(97))
+    println!("valid_rune(0x61) = {}", utf8::valid_rune('a'))
     println!("valid_string(héllo) = {}", utf8::valid_string(&"héllo"))
     println!("rune_start(0x61) = {}", utf8::rune_start(97))
     println!("full_rune_in_string(hi) = {}", utf8::full_rune_in_string(&"hi"))

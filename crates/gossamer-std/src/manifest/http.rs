@@ -828,7 +828,7 @@ pub const JWT: StdModule = StdModule {
 
 pub const HTTP_H3: StdModule = StdModule {
     path: "std::http_h3",
-    summary: "First-party HTTP/3 server + client over QUIC (RFC 9114; quinn + h3). Each `serve` and `Client` instance owns a private tokio runtime; callers see only synchronous entry points.",
+    summary: "Experimental HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias yet.",
     items: &[
         StdItem {
             name: "Handler",

@@ -72,6 +72,9 @@ license = "Apache-2.0"
 
 [registries]
 "example.org" = "https://registry.example.org/v1"
+
+[trusted-publishers]
+"example.org/linalg" = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 "#;
     let manifest = Manifest::parse(source).unwrap();
     assert_eq!(manifest.project.id.as_str(), "example.com/math");
@@ -83,6 +86,13 @@ license = "Apache-2.0"
     assert_eq!(manifest.project.license, "Apache-2.0");
     assert_eq!(manifest.dependencies.len(), 3);
     assert!(manifest.registries.contains_key("example.org"));
+    assert_eq!(
+        manifest
+            .trusted_publishers
+            .get("example.org/linalg")
+            .map(String::as_str),
+        Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+    );
 
     let rendered = manifest.render();
     let reparsed = Manifest::parse(&rendered).unwrap();

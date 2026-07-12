@@ -74,7 +74,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::http::state`](http_state.md) | Handler-side dependency injection via a typed AppState. |
 | [`std::http::static_files`](http_static_files.md) | Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff. |
 | [`std::http::websocket`](http_websocket.md) | RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close. |
-| [`std::http_h3`](http_h3.md) | First-party HTTP/3 server + client over QUIC (RFC 9114; quinn + h3). Each `serve` and `Client` instance owns a private tokio runtime; callers see only synchronous entry points. |
+| [`std::http_h3`](http_h3.md) | Experimental HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias yet. |
 | [`std::io`](io.md) | Stream-oriented I/O abstractions and process standard streams. |
 | [`std::iter`](iter.md) | Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc. |
 | [`std::jwt`](jwt.md) | RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens. |
@@ -88,15 +88,15 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::net`](net.md) | TCP/UDP networking primitives. |
 | [`std::net::ip`](net_ip.md) | String-level IPv4 / IPv6 parsing and classification helpers. |
 | [`std::net::netip`](net_netip.md) | Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape). |
-| [`std::net::url`](net_url.md) | URL parsing, rendering, and query escaping. |
+| [`std::net::url`](net_url.md) | Network URL parsing and component escaping; never use filesystem-path rules. |
 | [`std::option`](option.md) | Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc. |
 | [`std::os`](os.md) | Operating-system identity. |
-| [`std::os::exec`](os_exec.md) | Spawn / wait for child processes (Go's os/exec shape). |
+| [`std::os::exec`](os_exec.md) | Deprecated compatibility facade for child processes; new code uses std::process. |
 | [`std::os::signal`](os_signal.md) | POSIX-style signal subscription (Go's os/signal shape). |
 | [`std::os::user`](os_user.md) | POSIX user / group lookup. Unix-backed by `nix`; Windows falls back to env vars. |
 | [`std::panic`](panic.md) | Panic / `catch_unwind` integration. |
-| [`std::path`](path.md) | POSIX-style path manipulation. |
-| [`std::process`](process.md) | Spawn child processes, exit the current process (Rust std::process shape). |
+| [`std::path`](path.md) | Lexical filesystem-path operations; platform path grammar, no URL parsing or I/O. |
+| [`std::process`](process.md) | Canonical process control and child-process API; std::os::exec is compatibility-only. |
 | [`std::regex`](regex.md) | Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around). |
 | [`std::result`](result.md) | Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc. |
 | [`std::runtime`](runtime.md) | Goroutine / scheduler introspection and tuning. |
@@ -105,7 +105,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::strings`](strings.md) | Polished `String` operations. |
 | [`std::sync`](sync.md) | Synchronisation primitives beyond channels. |
 | [`std::testing`](testing.md) | Assertions and sub-test harness helpers. |
-| [`std::thread`](thread.md) | Native OS threads. For goroutines use the `go expr` syntax. |
+| [`std::thread`](thread.md) | OS-thread scheduling hints and CPU introspection; user concurrency uses goroutines, not thread spawning. |
 | [`std::time`](time.md) | Wall-clock and monotonic time facilities. |
 | [`std::tls`](tls.md) | TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed. |
 | [`std::trace`](trace.md) | W3C trace-context-compatible distributed tracing. Identifier types, request-scoped SpanContext, process-level Tracer, and OTLP JSON export. |

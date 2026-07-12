@@ -62,23 +62,23 @@ mod tests {
     #[test]
     fn nested_eq_and_clone() {
         let d = super::diag()
-        testing::check(d == d.clone(), "nested struct equals its clone")
+        let _ = testing::check(d == d.clone(), "nested struct equals its clone")
     }
 
     #[test]
     fn default_is_zero_valued() {
         let z = super::zero_line()
-        testing::check(z.from.x == 0 && z.to.y == 0, "Default zeroes nested fields")
+        let _ = testing::check(z.from.x == 0 && z.to.y == 0, "Default zeroes nested fields")
     }
 
     #[test]
     fn generic_eq() {
-        testing::check(super::wrapped() == super::wrapped(), "generic struct equality")
+        let _ = testing::check(super::wrapped() == super::wrapped(), "generic struct equality")
     }
 
     #[test]
     fn enum_eq_and_default() {
-        testing::check(super::pair() == super::pair().clone(), "enum equals its clone")
-        testing::check(super::pair() != super::Token::Num(1), "different variants are unequal")
+        let _ = testing::check(super::pair() == super::pair().clone(), "enum equals its clone")
+        let _ = testing::check(super::pair() != super::Token::Num(1), "different variants are unequal")
     }
 }

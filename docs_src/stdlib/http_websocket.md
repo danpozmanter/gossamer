@@ -1,6 +1,6 @@
 # `std::http::websocket`
 
-Status: shipped
+Status: experimental
 
 RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close.
 

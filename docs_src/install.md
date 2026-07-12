@@ -58,17 +58,13 @@ Switching contexts requires a per-architecture inline-assembly
 implementation, so the supported platform matrix is narrower than
 "anything Rust can build":
 
-| OS       | Architecture                  | Status |
-| -------- | ----------------------------- | ------ |
-| Linux    | x86_64                        | First-class |
-| Linux    | aarch64                       | First-class |
-| Linux    | armv7 (32-bit ARM)            | Supported |
-| macOS    | x86_64 (Intel)                | Supported |
-| macOS    | aarch64 (Apple Silicon)       | First-class |
-| Windows  | x86_64 (MSVC ABI)             | Supported |
-
-Other targets compile but the goroutine scheduler refuses to start
-because corosensei has no context-switch backend for them.
+The precise target contract is maintained in the executable
+[supported-target matrix](supported_targets.md). Tier 1 executes the pure
+bytecode VM, JIT-enabled VM, and LLVM AOT binaries on native CI for Linux
+x86_64/aarch64, Apple Silicon macOS, and Windows x86_64. Linux
+x86_64/aarch64-musl AOT output is Tier 2: it is executed natively or under
+QEMU and compared with the pure bytecode VM. Intel macOS is artifact-only;
+armv7, riscv64, and wasm are not supported execution targets.
 
 `aarch64` Linux - including Raspberry Pi OS 64-bit - is exercised in CI
 across all three tiers (the bytecode VM, the in-process Cranelift JIT,
@@ -79,16 +75,14 @@ clang`).
 
 ## Target toolchains
 
-`gos build --target <triple>` validates the triple against the
-registered set. Every Linux target -
-`{x86_64,aarch64}-unknown-linux-{gnu,musl}` - cross-compiles to a real,
-runnable binary from a Linux, macOS, or Windows host (Cross output is
-validated against the bytecode VM under QEMU in CI, including Raspberry
-Pi). The musl-static path is host-agnostic (rustup's self-contained CRT
-+ `ld.lld`); the gnu-dynamic path uses the matching `*-linux-gnu-gcc` on
-a Linux host, or a `GOS_CROSS_SYSROOT` on macOS/Windows. Cross-compiling
-*to* macOS or Windows as a target remains out of scope (needs external
-SDKs). (A fully-static single-file binary also comes from `gos build
+`gos build --target <triple>` validates the triple against the registered
+set, which is broader than the supported matrix. Linux-musl
+`{x86_64,aarch64}-unknown-linux-musl` AOT output is the cross-host path with
+QEMU-backed release evidence. The gnu targets are native Tier 1 targets on
+their matching Linux architecture; cross-host glibc links require an external
+sysroot and are not part of the support contract. Cross-compiling *to* macOS
+or Windows as a target remains out of scope (needs external SDKs). (A
+fully-static single-file binary also comes from `gos build
 --release` on a Linux host with the musl rustup target installed - no
 `--target` needed.)
 

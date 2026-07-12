@@ -494,6 +494,41 @@ pub mod server {
 
     use super::{BodyStream, Method, Request, Response};
 
+    // Match the compiled runtime's process-wide HTTP admission limit.  The
+    // interpreter keeps one blocking worker per keep-alive socket, but 64 is
+    // below ordinary browser/load-balancer fan-out: a 256-connection client
+    // previously received deliberate 503s even though the handler and host
+    // still had capacity.  The cap remains finite to bound those workers.
+    const DEFAULT_MAX_CONNECTIONS: usize = 4096;
+    static ACTIVE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
+
+    fn try_acquire_connection(cap: usize) -> bool {
+        let cap = cap.clamp(1, DEFAULT_MAX_CONNECTIONS);
+        let mut current = ACTIVE_CONNECTIONS.load(Ordering::Acquire);
+        loop {
+            if current >= cap {
+                return false;
+            }
+            match ACTIVE_CONNECTIONS.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    struct ConnectionPermit;
+
+    impl Drop for ConnectionPermit {
+        fn drop(&mut self) {
+            ACTIVE_CONNECTIONS.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+
     /// Configuration passed to [`run`].
     #[derive(Debug, Clone)]
     pub struct Config {
@@ -529,6 +564,13 @@ pub mod server {
         /// Maximum body size (bytes). Requests larger than this
         /// return `413`. Default 1 MiB.
         pub max_body_bytes: usize,
+        /// Maximum live TCP connections, including idle keep-alive
+        /// peers. Excess peers receive `503` and are closed.
+        pub max_connections: usize,
+        /// Maximum requests waiting for the single interpreter handler.
+        /// Workers back-pressure here instead of growing an unbounded
+        /// request queue.
+        pub max_pending_requests: usize,
         /// Optional `Server` header value. Auto-inserted on every
         /// response that does not already carry a `Server`
         /// header. Set to `None` to suppress.
@@ -551,6 +593,8 @@ pub mod server {
                 shutdown: Arc::new(AtomicBool::new(false)),
                 max_header_bytes: 8 * 1024,
                 max_body_bytes: 1024 * 1024,
+                max_connections: DEFAULT_MAX_CONNECTIONS,
+                max_pending_requests: 64,
                 server_name: Some(concat!("gossamer/", env!("CARGO_PKG_VERSION")).to_string()),
                 in_flight: Arc::new(AtomicUsize::new(0)),
             }
@@ -610,11 +654,13 @@ pub mod server {
     where
         H: FnMut(Request) -> Response,
     {
-        use std::sync::mpsc::{RecvTimeoutError, channel};
+        use std::sync::mpsc::{RecvTimeoutError, sync_channel};
 
         let bound_addr = listener.local_addr()?;
 
-        let (dispatch_tx, dispatch_rx) = channel::<(Request, std::sync::mpsc::Sender<Response>)>();
+        let (dispatch_tx, dispatch_rx) = sync_channel::<(Request, std::sync::mpsc::Sender<Response>)>(
+            config.max_pending_requests.max(1),
+        );
 
         // Acceptor thread: blocking accept, one worker per
         // connection. No poll sleep.
@@ -681,7 +727,7 @@ pub mod server {
         listener: TcpListener,
         shutdown: Arc<AtomicBool>,
         config: Config,
-        dispatch_tx: std::sync::mpsc::Sender<(Request, std::sync::mpsc::Sender<Response>)>,
+        dispatch_tx: std::sync::mpsc::SyncSender<(Request, std::sync::mpsc::Sender<Response>)>,
     ) {
         // Non-blocking accept + netpoller readiness wait. The
         // listener registers with the global netpoller; the
@@ -706,6 +752,14 @@ pub mod server {
                         let _ = stream.shutdown(Shutdown::Both);
                         return;
                     }
+                    if !try_acquire_connection(config.max_connections) {
+                        let mut stream = stream;
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                        let _ = stream.shutdown(Shutdown::Both);
+                        continue;
+                    }
                     let worker_config = config.clone();
                     let tx = dispatch_tx.clone();
                     // Each accepted connection runs on a dedicated
@@ -726,11 +780,15 @@ pub mod server {
                     // timeout. Per-connection threads sidestep the
                     // problem entirely - blocking I/O is fine when
                     // each connection owns its own thread.
-                    let _ = std::thread::Builder::new()
+                    let spawn = std::thread::Builder::new()
                         .name("gossamer-http-conn".into())
                         .spawn(move || {
+                            let _permit = ConnectionPermit;
                             worker_loop(stream, worker_config, tx);
                         });
+                    if spawn.is_err() {
+                        ACTIVE_CONNECTIONS.fetch_sub(1, Ordering::AcqRel);
+                    }
                 }
                 Err(ref e) if matches!(e.kind(), io::ErrorKind::WouldBlock) => {
                     if let Some(ref mut mio_listener) = listener_mio {
@@ -774,9 +832,16 @@ pub mod server {
         config: &Config,
         body_deadline: Option<Instant>,
     ) -> io::Result<Vec<u8>> {
-        let chunked = headers
-            .get("transfer-encoding")
-            .is_some_and(|v| v.eq_ignore_ascii_case("chunked"));
+        let chunked = match headers.get("transfer-encoding") {
+            None => false,
+            Some(value) if value.eq_ignore_ascii_case("chunked") => true,
+            Some(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unsupported Transfer-Encoding",
+                ));
+            }
+        };
         if chunked && headers.contains("content-length") {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -859,7 +924,7 @@ pub mod server {
     fn worker_loop(
         stream: TcpStream,
         config: Config,
-        dispatch_tx: std::sync::mpsc::Sender<(Request, std::sync::mpsc::Sender<Response>)>,
+        dispatch_tx: std::sync::mpsc::SyncSender<(Request, std::sync::mpsc::Sender<Response>)>,
     ) {
         // Set the initial per-syscall timeout. The actual phase
         // (idle / header / body / write) is switched dynamically
@@ -1058,6 +1123,7 @@ pub mod server {
     /// timeouts (set by the worker via
     /// `TcpStream::set_read_timeout`) protect against zero-byte
     /// stalls; this deadline protects against drip-feed attacks.
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_request_head_generic<R: BufRead>(
         reader: &mut R,
         config: &Config,
@@ -1074,25 +1140,43 @@ pub mod server {
             }
             Ok(())
         };
-        let mut line = String::new();
-        let first = reader.read_line(&mut line)?;
+        let mut line = Vec::with_capacity(config.max_header_bytes.min(1024));
+        let first = read_head_line(reader, &mut line, config.max_header_bytes, header_deadline)?;
         if first == 0 {
             return Ok(None);
         }
-        check_deadline(header_deadline)?;
-        let trimmed = line.trim_end_matches(&['\r', '\n'][..]);
+        let trimmed = head_line_text(&line)?;
         let (method, raw_target, version) = super::parse_request_line(trimmed)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad request line"))?;
+        if !matches!(version.as_str(), "HTTP/1.0" | "HTTP/1.1") {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported HTTP version",
+            ));
+        }
+        if !raw_target.starts_with('/') && raw_target != "*" {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid request target",
+            ));
+        }
         let (path, query) = super::split_path_query(&raw_target);
         let http10 = version.eq_ignore_ascii_case("HTTP/1.0");
         let mut headers = super::Headers::new();
         let mut content_length: usize = 0;
-        let mut header_bytes_read: usize = line.len();
+        let mut content_length_seen = false;
+        let mut transfer_encoding_seen = false;
+        let mut header_bytes_read = first;
+        let mut header_count = 0usize;
         loop {
             line.clear();
-            let bytes = reader.read_line(&mut line)?;
+            let remaining = config.max_header_bytes.saturating_sub(header_bytes_read);
+            let bytes = read_head_line(reader, &mut line, remaining, header_deadline)?;
             if bytes == 0 {
-                break;
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "EOF before request headers completed",
+                ));
             }
             check_deadline(header_deadline)?;
             header_bytes_read = header_bytes_read.saturating_add(bytes);
@@ -1102,17 +1186,68 @@ pub mod server {
                     format!("header block exceeded {}-byte cap", config.max_header_bytes),
                 ));
             }
-            let stripped = line.trim_end_matches(&['\r', '\n'][..]);
+            let stripped = head_line_text(&line)?;
             if stripped.is_empty() {
                 break;
             }
-            if let Some((name, value)) = stripped.split_once(':') {
-                let value = value.trim();
-                headers.insert(name.trim(), value);
-                if name.trim().eq_ignore_ascii_case("content-length") {
-                    content_length = value.parse().unwrap_or(0);
-                }
+            header_count = header_count.saturating_add(1);
+            if header_count > 100 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "too many request headers",
+                ));
             }
+            if stripped.starts_with([' ', '\t']) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "obsolete folded request header",
+                ));
+            }
+            let (name, value) = stripped.split_once(':').ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "malformed request header")
+            })?;
+            if !is_header_name(name) || !is_header_value(value) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid request header",
+                ));
+            }
+            let value = value.trim();
+            if name.eq_ignore_ascii_case("content-length") {
+                let parsed = value.parse::<usize>().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, "invalid Content-Length")
+                })?;
+                if content_length_seen && parsed != content_length {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "conflicting Content-Length",
+                    ));
+                }
+                content_length = parsed;
+                content_length_seen = true;
+            }
+            if name.eq_ignore_ascii_case("transfer-encoding") {
+                if transfer_encoding_seen || !value.eq_ignore_ascii_case("chunked") {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "unsupported Transfer-Encoding",
+                    ));
+                }
+                transfer_encoding_seen = true;
+            }
+            headers.insert(name, value);
+        }
+        if !http10 && !headers.contains("host") {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HTTP/1.1 request missing Host header",
+            ));
+        }
+        if content_length_seen && transfer_encoding_seen {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "request has both Transfer-Encoding and Content-Length",
+            ));
         }
         let expects_continue = headers
             .get("expect")
@@ -1126,6 +1261,90 @@ pub mod server {
             content_length,
             expects_continue,
         }))
+    }
+
+    /// Fuzz-only entry point for complete HTTP/1 request heads. It applies
+    /// the production parser and default resource limits without opening a
+    /// socket or reading a body.
+    #[doc(hidden)]
+    pub fn fuzz_parse_request_head(bytes: &[u8]) -> io::Result<()> {
+        let mut reader = BufReader::new(bytes);
+        parse_request_head_generic(&mut reader, &Config::default(), None).map(|_| ())
+    }
+
+    fn read_head_line<R: BufRead>(
+        reader: &mut R,
+        out: &mut Vec<u8>,
+        limit: usize,
+        deadline: Option<Instant>,
+    ) -> io::Result<usize> {
+        loop {
+            if let Some(deadline) = deadline
+                && Instant::now() >= deadline
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "header phase exceeded read_header_timeout",
+                ));
+            }
+            let available = reader.fill_buf()?;
+            if available.is_empty() {
+                return Ok(out.len());
+            }
+            let take = available
+                .iter()
+                .position(|b| *b == b'\n')
+                .map_or(available.len(), |idx| idx + 1);
+            if out.len().saturating_add(take) > limit {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "request header line exceeds configured cap",
+                ));
+            }
+            out.extend_from_slice(&available[..take]);
+            reader.consume(take);
+            if out.last() == Some(&b'\n') {
+                return Ok(out.len());
+            }
+        }
+    }
+
+    fn head_line_text(bytes: &[u8]) -> io::Result<&str> {
+        let content = bytes.strip_suffix(b"\r\n").ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "request header line lacks CRLF")
+        })?;
+        std::str::from_utf8(content)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "request head is not UTF-8"))
+    }
+
+    fn is_header_name(name: &str) -> bool {
+        !name.is_empty()
+            && name.bytes().all(|b| {
+                b.is_ascii_alphanumeric()
+                    || matches!(
+                        b,
+                        b'!' | b'#'
+                            | b'$'
+                            | b'%'
+                            | b'&'
+                            | b'\''
+                            | b'*'
+                            | b'+'
+                            | b'-'
+                            | b'.'
+                            | b'^'
+                            | b'_'
+                            | b'`'
+                            | b'|'
+                            | b'~'
+                    )
+            })
+    }
+
+    fn is_header_value(value: &str) -> bool {
+        value
+            .bytes()
+            .all(|b| b == b'\t' || (0x20..=0x7e).contains(&b))
     }
 
     /// Reads the request body, applying chunked decoding /
@@ -1203,13 +1422,15 @@ pub mod server {
         H: FnMut(Request) -> Response,
     {
         use std::io::ErrorKind;
-        use std::sync::mpsc::{RecvTimeoutError, channel};
+        use std::sync::mpsc::{RecvTimeoutError, sync_channel};
 
         let listener = TcpListener::bind(addr)?;
         let bound = listener.local_addr()?;
         let _ = listener.set_nonblocking(false);
 
-        let (dispatch_tx, dispatch_rx) = channel::<(Request, std::sync::mpsc::Sender<Response>)>();
+        let (dispatch_tx, dispatch_rx) = sync_channel::<(Request, std::sync::mpsc::Sender<Response>)>(
+            config.max_pending_requests.max(1),
+        );
 
         let shutdown = Arc::clone(&config.shutdown);
         let cfg_for_workers = config.clone();
@@ -1360,7 +1581,7 @@ pub mod server {
         shutdown: Arc<AtomicBool>,
         config: Config,
         server_config: std::sync::Arc<rustls::ServerConfig>,
-        dispatch_tx: std::sync::mpsc::Sender<(Request, std::sync::mpsc::Sender<Response>)>,
+        dispatch_tx: std::sync::mpsc::SyncSender<(Request, std::sync::mpsc::Sender<Response>)>,
     ) {
         let _ = listener.set_nonblocking(true);
         loop {
@@ -1370,12 +1591,30 @@ pub mod server {
             match listener.accept() {
                 Ok((stream, _)) => {
                     let _ = stream.set_nonblocking(false);
+                    if shutdown.load(Ordering::Relaxed) {
+                        let _ = stream.shutdown(Shutdown::Both);
+                        return;
+                    }
+                    if !try_acquire_connection(config.max_connections) {
+                        let mut stream = stream;
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                        let _ = stream.shutdown(Shutdown::Both);
+                        continue;
+                    }
                     let cfg = config.clone();
                     let tls_cfg = std::sync::Arc::clone(&server_config);
                     let tx = dispatch_tx.clone();
-                    let _ = std::thread::Builder::new()
+                    let spawn = std::thread::Builder::new()
                         .name("gossamer-https-conn".to_string())
-                        .spawn(move || tls_worker(stream, cfg, tls_cfg, tx));
+                        .spawn(move || {
+                            let _permit = ConnectionPermit;
+                            tls_worker(stream, cfg, tls_cfg, tx);
+                        });
+                    if spawn.is_err() {
+                        ACTIVE_CONNECTIONS.fetch_sub(1, Ordering::AcqRel);
+                    }
                 }
                 Err(ref e) if matches!(e.kind(), io::ErrorKind::WouldBlock) => {
                     std::thread::sleep(Duration::from_millis(50));
@@ -1390,7 +1629,7 @@ pub mod server {
         stream: TcpStream,
         config: Config,
         server_config: std::sync::Arc<rustls::ServerConfig>,
-        dispatch_tx: std::sync::mpsc::Sender<(Request, std::sync::mpsc::Sender<Response>)>,
+        dispatch_tx: std::sync::mpsc::SyncSender<(Request, std::sync::mpsc::Sender<Response>)>,
     ) {
         if let Some(timeout) = config.read_timeout {
             let _ = stream.set_read_timeout(Some(timeout));
@@ -1609,6 +1848,13 @@ pub mod server {
     #[cfg(test)]
     mod wire_tests {
         use super::*;
+        use std::io::BufReader;
+
+        fn parse_head(input: &[u8], config: &Config) -> io::Result<RequestHead> {
+            let mut reader = BufReader::new(input);
+            parse_request_head_generic(&mut reader, config, None)?
+                .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "missing request head"))
+        }
 
         #[test]
         fn response_writer_emits_lowercase_header_names() {
@@ -1658,6 +1904,41 @@ pub mod server {
             assert!(is_valid_header_name("x-custom"));
             assert!(!is_valid_header_name("bad: name"));
             assert!(!is_valid_header_name("bad\r\n"));
+        }
+
+        #[test]
+        fn request_head_rejects_ambiguous_or_oversized_framing() {
+            let config = Config::default();
+            let cl = b"POST / HTTP/1.1\r\nHost: example.test\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n";
+            assert!(parse_head(cl, &config).is_err());
+
+            let te = b"POST / HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: gzip, chunked\r\n\r\n";
+            assert!(parse_head(te, &config).is_err());
+
+            let small = Config {
+                max_header_bytes: 32,
+                ..Config::default()
+            };
+            let oversized = b"GET / HTTP/1.1\r\nHost: example.test-with-a-long-name\r\n\r\n";
+            assert!(parse_head(oversized, &small).is_err());
+        }
+
+        #[test]
+        fn fuzz_request_head_entry_exercises_full_framing_parser() {
+            assert!(fuzz_parse_request_head(
+                b"POST / HTTP/1.1\r\nHost: example.test\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n"
+            )
+            .is_err());
+            assert!(
+                fuzz_parse_request_head(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n").is_ok()
+            );
+        }
+
+        #[test]
+        fn request_head_requires_host_for_http11() {
+            let config = Config::default();
+            assert!(parse_head(b"GET / HTTP/1.1\r\n\r\n", &config).is_err());
+            assert!(parse_head(b"GET / HTTP/1.0\r\n\r\n", &config).is_ok());
         }
     }
 }
@@ -2459,6 +2740,16 @@ mod tests {
             .build()
             .expect("build with mTLS PEM");
         let _ = client;
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn interpreter_server_default_admits_load_balancer_fanout() {
+        let config = super::server::Config::default();
+        assert!(
+            config.max_connections >= 256,
+            "the default must admit a normal 256-connection keep-alive fanout"
+        );
     }
 
     #[test]

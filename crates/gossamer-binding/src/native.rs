@@ -38,6 +38,7 @@ use crate::types::Type;
 // flow correctly through the compiled-mode boundary.
 unsafe extern "C" {
     fn gos_rt_gc_alloc(size: u64) -> *mut u8;
+    fn gos_rt_vec_with_capacity(elem_bytes: u32, cap: i64) -> *mut GosVec;
 }
 
 /// Arena-backed allocator used by every compound `to_output`
@@ -426,35 +427,26 @@ impl BindingAbi for String {
 
 // --- Vec ------------------------------------------------------------
 
-/// Builds a `GosVec` from `elements` using the same heap-owned
-/// allocation pattern the runtime's own `gos_rt_vec_with_capacity`
-/// uses: header via `Box::into_raw`, data buffer via `Vec::leak`.
-/// `gos_rt_vec_free` (`Box::from_raw` + `Vec::from_raw_parts`) reclaims
-/// both at end of lifetime. Arena-allocating instead would crash
-/// inside libc when the compiled program drops the value.
+/// Builds a runtime-owned `GosVec` from `elements`.
+///
+/// Binding outputs must go through the runtime allocator: the header carries
+/// a versioned owner with its generation and destructor identity, so a later
+/// compiled-tier drop never needs to infer provenance from the header address.
 fn make_gos_vec<T: Copy>(elements: &[T]) -> *mut GosVec {
     let elem_bytes = u32::try_from(std::mem::size_of::<T>()).unwrap_or(0);
     let len = i64::try_from(elements.len()).unwrap_or(0);
-    let cap = len;
+    // SAFETY: runtime allocator returns a header valid for this ABI prefix;
+    // copying `T: Copy` bytes into its reserved buffer preserves the element.
+    let out = unsafe { gos_rt_vec_with_capacity(elem_bytes, len) };
+    if out.is_null() || elements.is_empty() {
+        return out;
+    }
     let bytes = std::mem::size_of_val(elements);
-    let raw_ptr = if bytes == 0 {
-        std::ptr::null_mut()
-    } else {
-        let mut buf: Vec<u8> = vec![0u8; bytes];
-        let p = buf.as_mut_ptr();
-        // SAFETY: `T: Copy`; byte-blit preserves semantics.
-        unsafe {
-            std::ptr::copy_nonoverlapping(elements.as_ptr().cast::<u8>(), p, bytes);
-        }
-        std::mem::forget(buf);
-        p
-    };
-    Box::into_raw(Box::new(GosVec {
-        len,
-        cap,
-        elem_bytes,
-        ptr: raw_ptr,
-    }))
+    unsafe {
+        std::ptr::copy_nonoverlapping(elements.as_ptr().cast::<u8>(), (*out).ptr, bytes);
+        (*out).len = len;
+    }
+    out
 }
 
 /// Length and element stride of a vec header. The runtime emits

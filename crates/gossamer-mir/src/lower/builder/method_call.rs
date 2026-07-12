@@ -1380,6 +1380,18 @@ impl<'a> Builder<'a> {
                 }
                 _ => None,
             },
+            "reserve" if args.len() == 1 => match &receiver_kind_flat {
+                TyKind::Vec(_) | TyKind::Slice(_) => Some("gos_rt_vec_reserve_at_least"),
+                _ => None,
+            },
+            "reserve_exact" if args.len() == 1 => match &receiver_kind_flat {
+                TyKind::Vec(_) | TyKind::Slice(_) => Some("gos_rt_vec_reserve_exact"),
+                _ => None,
+            },
+            "capacity" if args.is_empty() => match &receiver_kind_flat {
+                TyKind::Vec(_) | TyKind::Slice(_) => Some("gos_rt_vec_capacity"),
+                _ => None,
+            },
             // Option / Result methods. Result/Option now live as
             // `*mut GosResult { disc, payload }` heap aggregates
             // (see `gos_rt_result_new`), so `.unwrap()` /
@@ -2520,6 +2532,7 @@ impl<'a> Builder<'a> {
                 self.tcx.intern(gossamer_types::TyKind::Vec(i))
             }
             "gos_rt_http_response_status"
+            | "gos_rt_vec_capacity"
             | "gos_rt_set_len"
             | "gos_rt_set_clear"
             | "gos_rt_btmap_len"
@@ -2660,6 +2673,8 @@ impl<'a> Builder<'a> {
                 self.tcx.float_ty(gossamer_types::FloatTy::F64)
             }
             "gos_rt_validate_errors_add"
+            | "gos_rt_vec_reserve_at_least"
+            | "gos_rt_vec_reserve_exact"
             | "gos_rt_rwlock_set"
             | "gos_rt_ctx_cancel"
             | "gos_rt_metrics_counter_inc"

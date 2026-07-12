@@ -45,9 +45,9 @@ fn main() {
     println!("0/0 rem is_nan={}", math::is_nan(math::rem(0.0, 0.0)))
 
     // --- typed int helpers + negatives ---
-    println!("math_min_int={}", math::min(-5, 3))
-    println!("math_max_int={}", math::max(-5, 3))
-    println!("math_abs min+1={}", math::abs(-9223372036854775807))
+    println!("math_min_int={}", math::min(-5.0, 3.0))
+    println!("math_max_int={}", math::max(-5.0, 3.0))
+    println!("math_abs min+1={}", math::abs(-9223372036854775807.0))
 
     // --- math::bits over zero, negative (all-ones), max ---
     println!("count_ones 0={}", math::bits::count_ones(0))

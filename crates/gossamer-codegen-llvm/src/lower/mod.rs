@@ -184,16 +184,13 @@ impl StringPool {
     /// length-carrying header so `gos_rt_str_len` / `gos_rt_str_slice`
     /// are O(1) on string literals (matching heap strings).
     ///
-    /// Each literal becomes a packed `<{ i32 len, i8 0xA8, [N x i8]
-    /// bytes }>` constant (`STR_STATIC_TAG = 0xA8` in the runtime), with a
-    /// global *alias* pointing at the byte body (`base + 5`). Every
-    /// existing `@.gstr_N` reference therefore still resolves to the
-    /// NUL-terminated bytes, while `ptr[-1]` is the tag and `ptr[-5]` the
-    /// length - the same header shape the heap allocator writes. The
-    /// emitter calls this after every body has lowered.
+    /// Each literal has an explicit owner followed by the legacy
+    /// `<rc, cap, len, tag, bytes>` suffix. The body is at `base + 29`, so
+    /// its carrier shape matches heap strings while `ptr[-1]` / `ptr[-5]`
+    /// keep their established tag/length offsets.
     ///
     /// The backing constant is deliberately *not* `unnamed_addr`: the
-    /// body alias is an interior pointer (`base + 5`), so the constant's
+    /// body alias is an interior pointer (`base + 29`), so the constant's
     /// address and layout are significant. Marking it `unnamed_addr`
     /// lets the Mach-O backend file 4/8/16-byte constants into the
     /// mergeable `__literal{4,8,16}` pools, where ld64 coalesces and
@@ -208,17 +205,17 @@ impl StringPool {
             let escaped = escape_c_string(text);
             let content_len = text.len();
             let data = format!("{name}.data");
-            let ty = format!("<{{ i32, i8, [{size} x i8] }}>");
+            let ty = format!("<{{ [16 x i8], i32, i32, i32, i8, [{size} x i8] }}>");
             let _ = writeln!(
                 out,
                 "{data} = private constant {ty} \
-                 <{{ i32 {content_len}, i8 -88, [{size} x i8] c\"{escaped}\\00\" }}>"
+                 <{{ [16 x i8] [i8 1, i8 0, i8 2, i8 0, i8 3, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0], i32 0, i32 {content_len}, i32 {content_len}, i8 -88, [{size} x i8] c\"{escaped}\\00\" }}>"
             );
             // `-88` is `0xA8` (STR_STATIC_TAG) as a signed i8.
             let _ = writeln!(
                 out,
                 "{name} = private unnamed_addr alias i8, ptr getelementptr inbounds \
-                 ({ty}, ptr {data}, i32 0, i32 2, i32 0)"
+                 ({ty}, ptr {data}, i32 0, i32 5, i32 0)"
             );
         }
         out
@@ -676,7 +673,7 @@ mod tests {
         // `unnamed_addr` the Mach-O backend files it into the mergeable
         // `__literal8` pool, where ld64 coalesces/reorders literals and
         // ignores the interior `.alt_entry` body symbol - corrupting the
-        // `base + 5` body pointer (SIGSEGV/SIGBUS on macOS). The backing
+        // `base + 29` body pointer (SIGSEGV/SIGBUS on macOS). The backing
         // constant must therefore stay a plain (address-significant)
         // `constant` so it lands in `__const`.
         let mut pool = StringPool::default();
@@ -690,11 +687,11 @@ mod tests {
             !data_line.contains("unnamed_addr"),
             "header string constant must not be unnamed_addr (mergeable-literal hazard):\n{data_line}"
         );
-        // The body alias must still be an interior pointer at field 2
-        // (`base + 5`): the i32 length + i8 tag header.
+        // The body alias must still be an interior pointer at field 5
+        // (`base + 29`): owner plus the legacy string header.
         assert!(
-            ir.contains("i32 0, i32 2, i32 0"),
-            "body alias must point past the 5-byte header:\n{ir}"
+            ir.contains("i32 0, i32 5, i32 0"),
+            "body alias must point past the 29-byte owner/header:\n{ir}"
         );
     }
 }

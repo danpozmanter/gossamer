@@ -1,6 +1,6 @@
 # `std::trace`
 
-Status: shipped
+Status: experimental
 
 W3C trace-context-compatible distributed tracing. Identifier types, request-scoped SpanContext, process-level Tracer, and OTLP JSON export.
 

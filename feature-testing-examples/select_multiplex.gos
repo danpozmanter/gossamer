@@ -60,7 +60,7 @@ mod tests {
             v = rx.recv() => v,
             default => -1,
         }
-        testing::check(chosen == -1, "default arm fires when no value is ready")
+        let _ = testing::check(chosen == -1, "default arm fires when no value is ready")
     }
 
     #[test]
@@ -71,6 +71,6 @@ mod tests {
             v = rx.recv() => v,
             default => -1,
         }
-        testing::check(chosen == 7, "ready recv arm is chosen over default")
+        let _ = testing::check(chosen == 7, "ready recv arm is chosen over default")
     }
 }

@@ -37,7 +37,7 @@ fn main() {
     show_b64("4", [102, 111, 111, 98])
     show_b64("hi255", [0, 1, 127, 128, 200, 255])
     // String input also routes through the byte-coercion path.
-    println!("b64 str = {}", encoding::base64::encode("Hello, Gossamer!"))
+    println!("b64 str = {}", encoding::base64::encode("Hello, Gossamer!".to_string().as_bytes()))
 
     // --- hex round-trips incl high bytes ---
     show_hex("empty", empty)

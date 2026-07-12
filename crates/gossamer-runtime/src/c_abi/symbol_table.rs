@@ -5095,6 +5095,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             "gos_rt_vec_last_i64",
             crate::c_abi::gos_rt_vec_last_i64 as *const u8,
         ),
+        (
+            "gos_rt_vec_capacity",
+            crate::c_abi::gos_rt_vec_capacity as *const u8,
+        ),
         ("gos_rt_vec_len", crate::c_abi::gos_rt_vec_len as *const u8),
         ("gos_rt_vec_new", crate::c_abi::gos_rt_vec_new as *const u8),
         (

@@ -19,10 +19,9 @@ use gossamer_resolve::resolve_source_file;
 use gossamer_types::{TyCtxt, typecheck_source_file};
 
 fuzz_target!(|data: &[u8]| {
-    // The symbol interner is process-global and never evicts; reset it
-    // each iteration so a long fuzz run does not accumulate every random
-    // identifier ever seen (otherwise RSS grows unbounded -> OOM).
-    gossamer_lex::reset_interner();
+    // Keep fuzzing on the same unsafe-free lexer lifecycle as production.
+    // A session-owned interner is the long-lived RSS solution; a global reset
+    // can invalidate symbols retained by an in-flight VM program.
     // 0.6.0: grammar-aware input so the fuzzer spends
     // cycles on well-shaped programs instead of UTF-8 boundary
     // triage. A single bit-flip in `data` reroutes a grammar

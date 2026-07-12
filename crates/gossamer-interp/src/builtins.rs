@@ -1201,7 +1201,7 @@ fn register_flag_spec(set_id: u64, spec: &Value) -> Option<(&'static str, Value)
     let Value::Struct(spec_inner) = spec else {
         return None;
     };
-    let spec_name = spec_inner.name;
+    let spec_name = spec_inner.name.clone();
     let spec_fields = &spec_inner.fields;
     if spec_name != "FlagSpec" {
         return None;
@@ -2751,7 +2751,7 @@ fn builtin_http_response_with_header(args: &[Value]) -> RuntimeResult<Value> {
     } else {
         fields.push(("headers", Value::Array(Arc::new(vec![pair]))));
     }
-    Ok(Value::struct_(inner.name, fields))
+    Ok(Value::struct_(inner.name.clone(), fields))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -3817,9 +3817,10 @@ fn builtin_time_sleep(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 /// `runtime::collect_cycles()`. The interpreter models heap values with
-/// `Arc`, so reclamation timing is not observable in program output; this is
-/// a no-op that keeps the call available across all tiers (the compiled
-/// tiers run the real trial-deletion collector).
+/// `Arc`, so reclamation timing is not observable in program output. Once
+/// those refs have dropped, force a process allocator collection/purge so
+/// phase-oriented workloads can return pages before starting the next phase,
+/// matching the compiled tier's explicit collection boundary.
 /// `runtime::set_panic_hook(f)`. Stores the function value; the panic
 /// report paths invoke it with the rendered message instead of the
 /// default report. Mirrors the compiled tier's `gos_rt_set_panic_hook`.
@@ -3829,6 +3830,7 @@ fn builtin_runtime_set_panic_hook(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_runtime_collect_cycles(_args: &[Value]) -> RuntimeResult<Value> {
+    gossamer_runtime::collect_process_allocator(true);
     Ok(Value::Unit)
 }
 
@@ -5046,7 +5048,7 @@ fn gossamer_to_json_value(value: &Value) -> json_std::Value {
             json_std::Value::Object(map)
         }
         Value::Variant(inner) => {
-            let name = inner.name;
+            let name = inner.name.clone();
             let fields = &inner.fields;
             if fields.is_empty() {
                 json_std::Value::String(name.to_string())
@@ -6994,7 +6996,7 @@ fn native_variant_map(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runt
             if (inner.name == "Some" || inner.name == "Ok") && !inner.fields.is_empty() =>
         {
             let mapped = invoke_callable(dispatch, &transform, vec![inner.fields[0].clone()])?;
-            Ok(Value::variant(inner.name, vec![mapped]))
+            Ok(Value::variant(inner.name.clone(), vec![mapped]))
         }
         other => Ok(other.clone()),
     }

@@ -67,7 +67,11 @@ pub use manifest::{
     RustBindingSpec, find_manifest,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use publish::{PackError, PublishError, PublishedArtifact, pack_crate};
+pub use publish::{
+    PackError, PublishError, PublishedArtifact, StreamingArtifact, StreamingPublishRequest,
+    pack_crate, pack_crate_streaming, pack_crate_streaming_with_limits, pack_crate_with_limits,
+    upload_streaming_with,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use resolver::{
     CacheBackedLoader, CatalogueEntry, FnLoader, NoopLoader, Requirement, RequirementSpec,

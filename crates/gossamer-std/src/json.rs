@@ -112,7 +112,7 @@ pub fn parse(source: &str) -> Result<Value, Error> {
 /// Encodes a [`Value`] as a compact UTF-8 JSON string.
 #[must_use]
 pub fn encode(value: &Value) -> String {
-    let mut out = String::new();
+    let mut out = String::with_capacity(encoded_capacity_hint(value));
     write_value(&mut out, value);
     out
 }
@@ -120,7 +120,10 @@ pub fn encode(value: &Value) -> String {
 /// Encodes a [`Value`] with two-space indentation.
 #[must_use]
 pub fn encode_pretty(value: &Value) -> String {
-    let mut out = String::new();
+    // Pretty output is never shorter than compact output. Reserving the
+    // compact size avoids geometric growth for the common shallow case;
+    // indentation is appended as needed for deeply nested documents.
+    let mut out = String::with_capacity(encoded_capacity_hint(value));
     write_pretty(&mut out, value, 0);
     out
 }
@@ -314,13 +317,14 @@ impl<R: std::io::Read> Decoder<R> {
         if self.cursor >= self.buffer.len() && self.eof {
             return Ok(None);
         }
-        let span = self.read_one_document()?;
-        let text = std::str::from_utf8(&span).map_err(|_| Error {
+        let (start, end) = self.read_one_document()?;
+        let text = std::str::from_utf8(&self.buffer[start..end]).map_err(|_| Error {
             message: "invalid UTF-8 in stream".into(),
             line: 0,
             column: 0,
         })?;
         let value = parse(text)?;
+        self.discard_consumed();
         Ok(Some(value))
     }
 
@@ -365,13 +369,22 @@ impl<R: std::io::Read> Decoder<R> {
             if self.cursor < self.buffer.len() {
                 return Ok(());
             }
+            // Do not retain an unbounded whitespace-only tail while waiting
+            // for the next document (or EOF). All buffered bytes have been
+            // consumed at this point, so compaction cannot discard input the
+            // caller might still decode.
+            self.discard_consumed();
             if !self.fill_more()? {
                 return Ok(());
             }
         }
     }
 
-    fn read_one_document(&mut self) -> Result<Vec<u8>, Error> {
+    /// Returns the byte range of one document in `buffer`. Keeping the
+    /// document in place avoids a full temporary copy before `parse` builds
+    /// the value tree. `decode` discards the consumed prefix immediately
+    /// after parsing, so prior documents never accumulate in the buffer.
+    fn read_one_document(&mut self) -> Result<(usize, usize), Error> {
         let start = self.cursor;
         let first = self.peek_byte_buffered()?;
         match first {
@@ -379,8 +392,8 @@ impl<R: std::io::Read> Decoder<R> {
             b'[' => self.read_balanced(b'[', b']'),
             b'"' => {
                 self.cursor += 1;
-                self.read_until_string_end()?;
-                Ok(self.buffer[start..self.cursor].to_vec())
+                self.read_until_string_end(start)?;
+                Ok((start, self.cursor))
             }
             _ => self.read_scalar(),
         }
@@ -401,7 +414,7 @@ impl<R: std::io::Read> Decoder<R> {
         }
     }
 
-    fn read_balanced(&mut self, open: u8, close: u8) -> Result<Vec<u8>, Error> {
+    fn read_balanced(&mut self, open: u8, close: u8) -> Result<(usize, usize), Error> {
         let start = self.cursor;
         let mut depth = 0i64;
         let mut in_string = false;
@@ -410,6 +423,7 @@ impl<R: std::io::Read> Decoder<R> {
             while self.cursor < self.buffer.len() {
                 let b = self.buffer[self.cursor];
                 self.cursor += 1;
+                self.ensure_document_limit(start)?;
                 if in_string {
                     if escape {
                         escape = false;
@@ -427,7 +441,7 @@ impl<R: std::io::Read> Decoder<R> {
                 } else if b == close {
                     depth -= 1;
                     if depth == 0 {
-                        return Ok(self.buffer[start..self.cursor].to_vec());
+                        return Ok((start, self.cursor));
                     }
                 }
             }
@@ -441,12 +455,13 @@ impl<R: std::io::Read> Decoder<R> {
         }
     }
 
-    fn read_until_string_end(&mut self) -> Result<(), Error> {
+    fn read_until_string_end(&mut self, start: usize) -> Result<(), Error> {
         let mut escape = false;
         loop {
             while self.cursor < self.buffer.len() {
                 let b = self.buffer[self.cursor];
                 self.cursor += 1;
+                self.ensure_document_limit(start)?;
                 if escape {
                     escape = false;
                 } else if b == b'\\' {
@@ -465,20 +480,53 @@ impl<R: std::io::Read> Decoder<R> {
         }
     }
 
-    fn read_scalar(&mut self) -> Result<Vec<u8>, Error> {
+    fn read_scalar(&mut self) -> Result<(usize, usize), Error> {
         let start = self.cursor;
         loop {
             while self.cursor < self.buffer.len() {
                 let b = self.buffer[self.cursor];
                 if matches!(b, b' ' | b'\t' | b'\n' | b'\r' | b',' | b']' | b'}') {
-                    return Ok(self.buffer[start..self.cursor].to_vec());
+                    return Ok((start, self.cursor));
                 }
                 self.cursor += 1;
+                self.ensure_document_limit(start)?;
             }
             if !self.fill_more()? {
-                return Ok(self.buffer[start..self.cursor].to_vec());
+                return Ok((start, self.cursor));
             }
         }
+    }
+
+    fn ensure_document_limit(&self, start: usize) -> Result<(), Error> {
+        let len = self.cursor.saturating_sub(start);
+        let cap = max_size();
+        if len > cap {
+            return Err(Error {
+                message: format!("input exceeds max_size ({len} > {cap})"),
+                line: 0,
+                column: 0,
+            });
+        }
+        Ok(())
+    }
+
+    /// Drops consumed bytes while retaining an allocation suitable for the
+    /// next small document. A one-off large document must not permanently
+    /// pin its input buffer for a long-lived streaming decoder.
+    fn discard_consumed(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let unread = self.buffer.len() - self.cursor;
+        if self.buffer.capacity() > 16 * 1024 && unread <= 4096 {
+            let mut next = Vec::with_capacity(4096);
+            next.extend_from_slice(&self.buffer[self.cursor..]);
+            self.buffer = next;
+        } else {
+            self.buffer.copy_within(self.cursor.., 0);
+            self.buffer.truncate(unread);
+        }
+        self.cursor = 0;
     }
 }
 
@@ -496,9 +544,14 @@ impl<W: std::io::Write> Encoder<W> {
 
     /// Writes `value` followed by a newline.
     pub fn encode(&mut self, value: &Value) -> std::io::Result<()> {
-        let s = encode(value);
-        self.writer.write_all(s.as_bytes())?;
-        self.writer.write_all(b"\n")
+        // Buffer small punctuation/string writes so streaming to an
+        // unbuffered file or socket does not turn one JSON character into
+        // one system call. The buffer is fixed-size, unlike the former
+        // `encode(value)` temporary which grew with the whole document.
+        let mut writer = std::io::BufWriter::new(&mut self.writer);
+        write_value_to(&mut writer, value)?;
+        std::io::Write::write_all(&mut writer, b"\n")?;
+        std::io::Write::flush(&mut writer)
     }
 
     /// Returns the underlying writer.
@@ -845,6 +898,44 @@ fn utf8_first_byte_len(b: u8) -> usize {
     }
 }
 
+/// A close upper bound for compact JSON output. This moves the normal
+/// `encode` path to one String allocation without changing rendering or the
+/// public `Value` representation. Number bounds deliberately over-reserve
+/// a few bytes; that is cheaper than formatting each number twice merely to
+/// determine its exact length.
+fn encoded_capacity_hint(value: &Value) -> usize {
+    match value {
+        Value::Null => 4,
+        Value::Bool(false) => 5,
+        Value::Bool(true) => 4,
+        Value::Int(_) => 20,
+        Value::Number(_) => 32,
+        Value::String(s) => escaped_string_len(s),
+        Value::Array(values) => values.iter().fold(2usize, |size, value| {
+            size.saturating_add(encoded_capacity_hint(value))
+                .saturating_add(1)
+        }),
+        Value::Object(map) => map.iter().fold(2usize, |size, (key, value)| {
+            size.saturating_add(escaped_string_len(key))
+                .saturating_add(1)
+                .saturating_add(encoded_capacity_hint(value))
+                .saturating_add(1)
+        }),
+    }
+}
+
+fn escaped_string_len(text: &str) -> usize {
+    text.chars().fold(2usize, |size, ch| {
+        let width = match ch {
+            '"' | '\\' | '\n' | '\t' | '\r' | '\u{0008}' | '\u{000c}' => 2,
+            '<' | '>' | '&' | '\u{2028}' | '\u{2029}' => 6,
+            c if (c as u32) < 0x20 => 6,
+            c => c.len_utf8(),
+        };
+        size.saturating_add(width)
+    })
+}
+
 fn write_value(out: &mut String, value: &Value) {
     match value {
         Value::Null => out.push_str("null"),
@@ -908,13 +999,15 @@ fn write_pretty(out: &mut String, value: &Value, indent: usize) {
         Value::Object(map) if !map.is_empty() => {
             out.push('{');
             out.push('\n');
-            let entries: Vec<(&String, &Value)> = map.iter().collect();
-            for (i, (k, v)) in entries.iter().enumerate() {
+            // BTreeMap already provides stable sorted iteration. Avoid
+            // materialising every borrowed entry just to enumerate it while
+            // rendering pretty JSON.
+            for (i, (k, v)) in map.iter().enumerate() {
                 push_indent(out, indent + 1);
                 write_string(out, k);
                 out.push_str(": ");
                 write_pretty(out, v, indent + 1);
-                if i + 1 < entries.len() {
+                if i + 1 < map.len() {
                     out.push(',');
                 }
                 out.push('\n');
@@ -960,6 +1053,71 @@ fn write_string(out: &mut String, text: &str) {
         }
     }
     out.push('"');
+}
+
+fn write_value_to<W: std::io::Write>(out: &mut W, value: &Value) -> std::io::Result<()> {
+    match value {
+        Value::Null => out.write_all(b"null"),
+        Value::Bool(b) => {
+            if *b {
+                out.write_all(b"true")
+            } else {
+                out.write_all(b"false")
+            }
+        }
+        Value::Int(n) => write!(out, "{n}"),
+        Value::Number(n) if n.is_finite() && n.fract() == 0.0 => write!(out, "{n}.0"),
+        Value::Number(n) => write!(out, "{n}"),
+        Value::String(s) => write_string_to(out, s),
+        Value::Array(values) => {
+            out.write_all(b"[")?;
+            for (index, value) in values.iter().enumerate() {
+                if index != 0 {
+                    out.write_all(b",")?;
+                }
+                write_value_to(out, value)?;
+            }
+            out.write_all(b"]")
+        }
+        Value::Object(map) => {
+            out.write_all(b"{")?;
+            for (index, (key, value)) in map.iter().enumerate() {
+                if index != 0 {
+                    out.write_all(b",")?;
+                }
+                write_string_to(out, key)?;
+                out.write_all(b":")?;
+                write_value_to(out, value)?;
+            }
+            out.write_all(b"}")
+        }
+    }
+}
+
+fn write_string_to<W: std::io::Write>(out: &mut W, text: &str) -> std::io::Result<()> {
+    out.write_all(b"\"")?;
+    for ch in text.chars() {
+        match ch {
+            '"' => out.write_all(b"\\\"")?,
+            '\\' => out.write_all(b"\\\\")?,
+            '\n' => out.write_all(b"\\n")?,
+            '\t' => out.write_all(b"\\t")?,
+            '\r' => out.write_all(b"\\r")?,
+            '\u{0008}' => out.write_all(b"\\b")?,
+            '\u{000c}' => out.write_all(b"\\f")?,
+            '<' => out.write_all(b"\\u003c")?,
+            '>' => out.write_all(b"\\u003e")?,
+            '&' => out.write_all(b"\\u0026")?,
+            '\u{2028}' => out.write_all(b"\\u2028")?,
+            '\u{2029}' => out.write_all(b"\\u2029")?,
+            c if (c as u32) < 0x20 => write!(out, "\\u{:04x}", c as u32)?,
+            c => {
+                let mut bytes = [0u8; 4];
+                out.write_all(c.encode_utf8(&mut bytes).as_bytes())?;
+            }
+        }
+    }
+    out.write_all(b"\"")
 }
 
 #[cfg(test)]
@@ -1039,6 +1197,49 @@ mod tests {
             enc.encode(&Value::String("two".into())).unwrap();
         }
         assert_eq!(buf.as_slice(), b"1\n\"two\"\n".as_slice());
+    }
+
+    #[test]
+    fn streaming_encoder_matches_compact_encoder_without_document_buffer() {
+        let value = Value::Object(BTreeMap::from([
+            ("unsafe".into(), Value::String("</script>&".into())),
+            (
+                "items".into(),
+                Value::Array(vec![Value::Int(1), Value::Bool(false)]),
+            ),
+        ]));
+        let mut bytes = Vec::new();
+        Encoder::new(&mut bytes).encode(&value).unwrap();
+        assert_eq!(bytes, format!("{}\n", encode(&value)).into_bytes());
+    }
+
+    #[test]
+    fn streaming_decoder_reclaims_consumed_large_document_buffer() {
+        let large = format!("\"{}\"\n1", "x".repeat(20 * 1024));
+        let mut decoder = Decoder::new(large.as_bytes());
+        assert_eq!(
+            decoder.decode().unwrap(),
+            Some(Value::String("x".repeat(20 * 1024)))
+        );
+        assert!(
+            decoder.buffer.capacity() <= 4096,
+            "consumed document buffer remained allocated: {} bytes",
+            decoder.buffer.capacity()
+        );
+        assert_eq!(decoder.decode().unwrap(), Some(Value::Int(1)));
+        assert!(decoder.decode().unwrap().is_none());
+    }
+
+    #[test]
+    fn streaming_decoder_does_not_retain_whitespace_only_tail() {
+        let whitespace = " \n\t\r".repeat(10 * 1024);
+        let mut decoder = Decoder::new(whitespace.as_bytes());
+        assert!(decoder.decode().unwrap().is_none());
+        assert!(
+            decoder.buffer.capacity() <= 4096,
+            "whitespace tail remained allocated: {} bytes",
+            decoder.buffer.capacity()
+        );
     }
 
     #[test]

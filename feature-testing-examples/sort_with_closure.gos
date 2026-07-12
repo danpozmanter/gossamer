@@ -40,23 +40,23 @@ mod tests {
     fn sort_ascending() {
         let mut nums: [i64] = [5, 2, 8, 1, 9]
         nums.sort_by(|a, b| if a < b { -1 } else if a > b { 1 } else { 0 })
-        testing::check_eq(&nums[0], &1, "smallest first")
-        testing::check_eq(&nums[4], &9, "largest last")
+        let _ = testing::check_eq(&nums[0], &1, "smallest first")
+        let _ = testing::check_eq(&nums[4], &9, "largest last")
     }
 
     #[test]
     fn sort_descending() {
         let mut nums: [i64] = [1, 2, 3, 4, 5]
         nums.sort_by(|a, b| if a > b { -1 } else if a < b { 1 } else { 0 })
-        testing::check_eq(&nums[0], &5, "largest first")
-        testing::check_eq(&nums[4], &1, "smallest last")
+        let _ = testing::check_eq(&nums[0], &5, "largest first")
+        let _ = testing::check_eq(&nums[4], &1, "smallest last")
     }
 
     #[test]
     fn sort_already_sorted() {
         let mut nums: [i64] = [1, 2, 3]
         nums.sort_by(|a, b| if a < b { -1 } else if a > b { 1 } else { 0 })
-        testing::check_eq(&nums[0], &1, "stays sorted")
-        testing::check_eq(&nums[2], &3, "end stays")
+        let _ = testing::check_eq(&nums[0], &1, "stays sorted")
+        let _ = testing::check_eq(&nums[2], &3, "end stays")
     }
 }

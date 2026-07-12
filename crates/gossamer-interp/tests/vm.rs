@@ -166,3 +166,21 @@ fn compute(a: i64, b: i64) -> i64 {
         );
     }
 }
+
+#[test]
+fn runtime_collect_cycles_is_callable_on_vm() {
+    let source = r#"
+use std::runtime
+
+fn main() {
+    let mut values: Vec<String> = Vec::new()
+    for i in 0i64..1000i64 {
+        values.push(format("item-{}", i))
+    }
+    values = Vec::new()
+    runtime::collect_cycles()
+    println("collected")
+}
+"#;
+    assert_eq!(run_vm_main(source), "collected\n");
+}

@@ -79,7 +79,8 @@ use super::*;
 pub fn render_module_markdown(module: &StdModule) -> String {
     let mut out = String::with_capacity(1024);
     out.push_str(&format!("# `{}`\n\n", module.path));
-    let status = super::feature_status::lookup(module.path).map_or("shipped", |e| e.status.tag());
+    let status =
+        super::feature_status::lookup(module.path).map_or("experimental", |e| e.status.tag());
     out.push_str(&format!("Status: {status}\n\n"));
     out.push_str(&format!("{}\n\n", module.summary));
     out.push_str("## Public items\n\n");

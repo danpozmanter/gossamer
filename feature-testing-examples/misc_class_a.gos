@@ -18,10 +18,10 @@ fn main() {
 
     // strings::pad_* - 2-arg form defaults to a space; 3-arg form
     // honours a String pad glyph; the char-literal pad keeps working.
-    println!("[{}]", strings::pad_left("hi", 5))
-    println!("[{}]", strings::pad_right("hi", 5))
-    println!("[{}]", strings::pad_left("hi", 5, "*"))
-    println!("[{}]", strings::pad_right("hi", 5, "*"))
+    println!("[{}]", strings::pad_left("hi", 5, ' '))
+    println!("[{}]", strings::pad_right("hi", 5, ' '))
+    println!("[{}]", strings::pad_left("hi", 5, '*'))
+    println!("[{}]", strings::pad_right("hi", 5, '*'))
     println!("[{}]", strings::pad_left("7", 4, '0'))
 
     // BTreeMap::keys() -> Vec<String> in sorted order. Bound to a

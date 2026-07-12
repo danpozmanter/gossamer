@@ -13,12 +13,13 @@
 
 #![allow(missing_docs)]
 
-/// Same worker-count formula as the interp's goroutine pool, so the
+/// Same bounded default as the interp's goroutine pool, so the
 /// barrier occupies every worker without deadlocking on a queued task.
 fn pool_workers() -> usize {
+    const DEFAULT_MAX_WORKERS: usize = 4;
     std::thread::available_parallelism()
-        .map_or(4, std::num::NonZeroUsize::get)
-        .min(64)
+        .map_or(DEFAULT_MAX_WORKERS, std::num::NonZeroUsize::get)
+        .min(DEFAULT_MAX_WORKERS)
 }
 
 /// Each of the `k` goroutines parks on the barrier until all `k` (plus

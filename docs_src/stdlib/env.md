@@ -1,6 +1,6 @@
 # `std::env`
 
-Status: shipped
+Status: experimental
 
 Process environment, command-line arguments, working directory.
 

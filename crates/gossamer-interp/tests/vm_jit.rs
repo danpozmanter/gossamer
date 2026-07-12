@@ -16,24 +16,69 @@ use gossamer_lex::SourceMap;
 use gossamer_parse::parse_source_file;
 use gossamer_resolve::resolve_source_file;
 use gossamer_types::{TyCtxt, typecheck_source_file};
+use std::ffi::OsString;
+use std::sync::{LazyLock, Mutex, MutexGuard};
 
-struct GosJitGuard;
+/// Process environments are shared by every test thread in this binary.
+/// Serialize the tests that toggle JIT policy so the RAM-cap regression cannot
+/// accidentally suppress promotion in an unrelated JIT test.
+static JIT_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+struct GosJitGuard {
+    _lock: MutexGuard<'static, ()>,
+    previous: Option<OsString>,
+}
 
 impl GosJitGuard {
     fn new() -> Self {
-        // SAFETY: tests are single-threaded by default and we restore
-        // the env on drop. `cargo test` runs each integration-test
-        // file in its own process, so no other test in this binary
-        // can race the variable.
+        let lock = JIT_ENV_LOCK.lock().expect("JIT environment lock poisoned");
+        let previous = std::env::var_os("GOS_JIT");
+        // SAFETY: `lock` serializes all JIT environment mutations in this
+        // integration-test process, and `Drop` restores the prior value.
         unsafe { std::env::set_var("GOS_JIT", "1") };
-        Self
+        Self {
+            _lock: lock,
+            previous,
+        }
+    }
+}
+
+struct JitRssCapGuard {
+    previous: Option<OsString>,
+}
+
+impl JitRssCapGuard {
+    fn new(megabytes: &str) -> Self {
+        let previous = std::env::var_os("GOS_JIT_MAX_RSS_MB");
+        // SAFETY: a `GosJitGuard` holds `JIT_ENV_LOCK` for this test.
+        unsafe { std::env::set_var("GOS_JIT_MAX_RSS_MB", megabytes) };
+        Self { previous }
+    }
+}
+
+impl Drop for JitRssCapGuard {
+    fn drop(&mut self) {
+        // SAFETY: a `GosJitGuard` still holds `JIT_ENV_LOCK` here.
+        unsafe {
+            if let Some(previous) = &self.previous {
+                std::env::set_var("GOS_JIT_MAX_RSS_MB", previous);
+            } else {
+                std::env::remove_var("GOS_JIT_MAX_RSS_MB");
+            }
+        };
     }
 }
 
 impl Drop for GosJitGuard {
     fn drop(&mut self) {
-        // SAFETY: same single-threaded test contract.
-        unsafe { std::env::remove_var("GOS_JIT") };
+        // SAFETY: this guard owns `JIT_ENV_LOCK` until after the restoration.
+        unsafe {
+            if let Some(previous) = &self.previous {
+                std::env::set_var("GOS_JIT", previous);
+            } else {
+                std::env::remove_var("GOS_JIT");
+            }
+        };
     }
 }
 
@@ -117,6 +162,121 @@ fn warm_up(vm: &Vm, name: &str, args: &[Value]) {
     for _ in 0..300 {
         let _ = vm.call(name, args.to_vec());
     }
+}
+
+#[test]
+fn jit_metrics_report_promotion_and_snapshot_release() {
+    let _g = GosJitGuard::new();
+    let source = "fn fib(n: i64) -> i64 {\n  if n < 2i64 { n } else { fib(n - 1i64) + fib(n - 2i64) }\n}\nfn main() -> i64 { fib(10i64) }\n";
+    let (mut vm, _) = build_vm(source);
+
+    warm_up(&vm, "fib", &[Value::Int(8)]);
+    let promoted = vm.jit_metrics();
+    assert!(
+        promoted.tier_up_requests >= 1,
+        "hot bytecode calls must expose a tier-up request: {promoted:?}"
+    );
+    assert_eq!(
+        promoted.compile_attempts, 1,
+        "one VM compiles its immutable program snapshot at most once"
+    );
+    assert_eq!(
+        promoted.successful_compiles, 1,
+        "promotion metrics: {promoted:?}"
+    );
+    assert!(
+        promoted.resident_functions >= 1,
+        "a successful promotion must retain a callable native entry: {promoted:?}"
+    );
+
+    assert!(
+        promoted.released_snapshots >= 1,
+        "spawn-free promotion must release its MIR/type snapshot: {promoted:?}"
+    );
+    let releases_before = promoted.released_snapshots;
+    vm.release_jit_prelude();
+    let released = vm.jit_metrics();
+    assert_eq!(
+        released.released_snapshots, releases_before,
+        "an already-released snapshot must not be counted twice: {released:?}"
+    );
+    let result = vm
+        .call("fib", vec![Value::Int(10)])
+        .expect("fib after release");
+    assert!(
+        matches!(result, Value::Int(55)),
+        "releasing MIR metadata must not release the installed artifact: {result:?}"
+    );
+}
+
+#[test]
+fn jit_metrics_report_ram_aware_tier_up_skip() {
+    let _g = GosJitGuard::new();
+    let _rss = JitRssCapGuard::new("1");
+    let source = "fn fib(n: i64) -> i64 {\n  if n < 2i64 { n } else { fib(n - 1i64) + fib(n - 2i64) }\n}\nfn main() -> i64 { fib(10i64) }\n";
+    let (vm, _) = build_vm(source);
+
+    warm_up(&vm, "fib", &[Value::Int(8)]);
+    let metrics = vm.jit_metrics();
+    assert!(
+        metrics.tier_up_requests >= 1,
+        "hot calls must still be observable before a RAM skip: {metrics:?}"
+    );
+    assert_eq!(
+        metrics.compile_attempts, 0,
+        "RAM cap must skip before Cranelift compile work starts: {metrics:?}"
+    );
+    assert_eq!(
+        metrics.successful_compiles, 0,
+        "RAM-capped tier-up must not install native dispatch: {metrics:?}"
+    );
+    assert!(
+        metrics.ram_skipped_compiles >= 1,
+        "RAM-capped tier-up must be counted: {metrics:?}"
+    );
+    assert!(
+        metrics.last_observed_rss_bytes > 0,
+        "RAM-capped tier-up must record observed RSS: {metrics:?}"
+    );
+    assert!(
+        metrics.released_snapshots >= 1,
+        "a terminal RAM skip must release the unused MIR/type snapshot: {metrics:?}"
+    );
+}
+
+#[test]
+fn jit_reuses_immutable_artifact_for_overlapping_vms_on_one_thread() {
+    let _g = GosJitGuard::new();
+    let source = "fn artifact_cache_fib(n: i64) -> i64 {\n  if n < 2i64 { n } else { artifact_cache_fib(n - 1i64) + artifact_cache_fib(n - 2i64) }\n}\nfn main() -> i64 { artifact_cache_fib(10i64) }\n";
+    let (first, _) = build_vm(source);
+    warm_up(&first, "artifact_cache_fib", &[Value::Int(8)]);
+    let first_metrics = first.jit_metrics();
+    assert_eq!(
+        first_metrics.compile_attempts, 1,
+        "first VM must compile: {first_metrics:?}"
+    );
+
+    // Keep `first` alive while warming `second`: the thread-local cache is
+    // weak by design, so it must never retain code pages after all executions
+    // release them.
+    let (second, _) = build_vm(source);
+    warm_up(&second, "artifact_cache_fib", &[Value::Int(8)]);
+    let second_metrics = second.jit_metrics();
+    assert_eq!(
+        second_metrics.compile_attempts, 0,
+        "the second equivalent VM must reuse finalized code instead of recompiling: {second_metrics:?}"
+    );
+    assert_eq!(
+        second_metrics.reused_artifacts, 1,
+        "reuse must be observable: {second_metrics:?}"
+    );
+    assert!(
+        matches!(
+            second.call("artifact_cache_fib", vec![Value::Int(10)]),
+            Ok(Value::Int(55))
+        ),
+        "reused artifact must preserve bytecode-visible behavior"
+    );
 }
 
 #[test]

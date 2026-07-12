@@ -1,6 +1,6 @@
 # `std::os`
 
-Status: shipped
+Status: experimental
 
 Operating-system identity.
 

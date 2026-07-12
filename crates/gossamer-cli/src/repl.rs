@@ -9,7 +9,7 @@ use regex::Regex;
 
 use crate::paths::repl_history_path;
 
-const REPL_HELP_TEXT: &str = "meta-commands: %quit  %history  %bindings  %reset  %help  %dir\n\
+const REPL_HELP_TEXT: &str = "meta-commands: %quit  %history  %bindings  %reset  %help  %ls\n\
                          plain expressions render as Out[N]; declarations and\n\
                          `let` bindings persist across inputs.";
 
@@ -127,8 +127,8 @@ pub(crate) fn cmd_repl() -> Result<()> {
                     }
                     continue;
                 }
-                "dir" => {
-                    match repl_dir(arg) {
+                "ls" => {
+                    match repl_ls(arg) {
                         Ok(text) => println!("{text}"),
                         Err(msg) => eprintln!("{msg}"),
                     }
@@ -227,9 +227,12 @@ pub(crate) fn cmd_repl() -> Result<()> {
             Ok(value) => {
                 if !matches!(value, gossamer_interp::Value::Unit) {
                     if tty {
-                        println!("\x1b[31mOut[{input_no}]:\x1b[0m {value}");
+                        println!(
+                            "\x1b[31mOut[{input_no}]:\x1b[0m {}",
+                            render_repl_value(&value)
+                        );
                     } else {
-                        println!("Out[{input_no}]: {value}");
+                        println!("Out[{input_no}]: {}", render_repl_value(&value));
                     }
                 }
             }
@@ -238,6 +241,36 @@ pub(crate) fn cmd_repl() -> Result<()> {
             }
         }
         input_no += 1;
+    }
+}
+
+/// REPL results use literal syntax for strings nested in a variant.  Plain
+/// string results remain unquoted for the existing interactive ergonomics,
+/// while `Ok("bc")` is no longer indistinguishable from a hypothetical
+/// identifier/value named `bc`.
+fn render_repl_value(value: &gossamer_interp::Value) -> String {
+    match value {
+        gossamer_interp::Value::Variant(inner) => {
+            let fields = inner
+                .fields
+                .iter()
+                .map(render_repl_nested_value)
+                .collect::<Vec<_>>();
+            match fields.as_slice() {
+                [] => inner.name.as_str().to_string(),
+                [field] => format!("{}({field})", inner.name.as_str()),
+                _ => format!("{}({})", inner.name.as_str(), fields.join(", ")),
+            }
+        }
+        _ => value.to_string(),
+    }
+}
+
+fn render_repl_nested_value(value: &gossamer_interp::Value) -> String {
+    match value {
+        gossamer_interp::Value::String(text) => format!("{:?}", text.as_str()),
+        gossamer_interp::Value::Variant(_) => render_repl_value(value),
+        _ => value.to_string(),
     }
 }
 
@@ -274,7 +307,7 @@ fn repl_help(arg: &str) -> std::result::Result<String, String> {
     }
 }
 
-fn repl_dir(arg: &str) -> std::result::Result<String, String> {
+fn repl_ls(arg: &str) -> std::result::Result<String, String> {
     if arg.is_empty() {
         return Ok(render_module_dir(gossamer_std::registry::modules()));
     }
@@ -288,16 +321,15 @@ fn repl_dir(arg: &str) -> std::result::Result<String, String> {
         return Ok(render_module_dir(&modules));
     }
 
-    let items = matching_items(query);
-    if items.is_empty() {
-        Ok(format!("no stdlib entries found for `{arg}`"))
-    } else {
-        let mut out = String::new();
-        for (module, item) in items {
-            push_item_dir(&mut out, &module, &item);
-        }
-        Ok(out.trim_end().to_string())
+    if let Some((module, item)) = matching_items(query).into_iter().next() {
+        return Err(format!(
+            "`{}::{}` is a {}; %ls accepts module names only (use %help for an item)",
+            module.path,
+            item.name,
+            item_kind_label(item.kind)
+        ));
     }
+    Ok(format!("no stdlib module found for `{arg}`"))
 }
 
 fn regex_argument(arg: &str) -> std::result::Result<Option<Regex>, String> {
@@ -341,14 +373,9 @@ fn render_dir_matches(pattern: &Regex) -> String {
         if module_matches_regex(pattern, module) {
             push_module_dir_line(&mut out, module);
         }
-        for item in module.items {
-            if item_matches_regex(pattern, module, item) {
-                push_item_dir(&mut out, module, item);
-            }
-        }
     }
     if out.is_empty() {
-        "no stdlib entries match".to_string()
+        "no stdlib modules match".to_string()
     } else {
         out.trim_end().to_string()
     }
@@ -359,17 +386,34 @@ fn render_module_dir(modules: &[StdModule]) -> String {
     for module in modules {
         push_module_dir_line(&mut out, module);
         if modules.len() == 1 {
-            for item in module.items {
-                push_item_dir(&mut out, module, item);
+            // A directory command names a module, so render its complete
+            // namespace tree: the module's own members plus every registered
+            // descendant module and its members.  A plain `%ls` deliberately
+            // stays shallow; recursively expanding the entire standard
+            // library there would make the useful module overview unusable.
+            push_module_items(&mut out, module);
+            let prefix = format!("{}::", module.path);
+            for child in gossamer_std::registry::modules()
+                .iter()
+                .filter(|child| child.path.starts_with(&prefix))
+            {
+                push_module_dir_line(&mut out, child);
+                push_module_items(&mut out, child);
             }
         }
     }
     out.trim_end().to_string()
 }
 
+fn push_module_items(out: &mut String, module: &StdModule) {
+    for item in module.items {
+        push_item_dir(out, module, item);
+    }
+}
+
 fn push_module_help(out: &mut String, module: &StdModule) {
     let status = gossamer_std::manifest::feature_status::lookup(module.path)
-        .map_or("shipped", |entry| entry.status.tag());
+        .map_or("experimental", |entry| entry.status.tag());
     out.push_str(&format!("{} ({status})\n", module.path));
     out.push_str(&format!("  {}\n", module.summary));
     out.push_str(&format!("  items: {}\n\n", module.items.len()));
@@ -382,6 +426,9 @@ fn push_item_help(out: &mut String, module: &StdModule, item: &StdItem) {
         item.name,
         item_kind_label(item.kind)
     ));
+    if let Some(signature) = gossamer_types::stdlib_function_signature(module.path, item.name) {
+        out.push_str(&format!("  {signature}\n"));
+    }
     out.push_str(&format!("  {}\n\n", item.doc));
 }
 
@@ -392,7 +439,7 @@ fn push_feature_help(out: &mut String, feature: gossamer_std::manifest::FeatureS
 
 fn push_module_dir_line(out: &mut String, module: &StdModule) {
     let status = gossamer_std::manifest::feature_status::lookup(module.path)
-        .map_or("shipped", |entry| entry.status.tag());
+        .map_or("experimental", |entry| entry.status.tag());
     out.push_str(&format!(
         "{:<32} module  {:<12} {}\n",
         module.path, status, module.summary
@@ -554,9 +601,15 @@ fn rebuild_session(declarations: &[String]) -> std::result::Result<(), String> {
     if !parse_diags.is_empty() {
         return Err(format_parse_diags(&parse_diags, &map, file));
     }
-    let (res, _) = gossamer_resolve::resolve_source_file(&sf);
+    let (res, resolve_diags) = gossamer_resolve::resolve_source_file(&sf);
+    if !resolve_diags.is_empty() {
+        return Err(format_semantic_diags("resolution", &resolve_diags));
+    }
     let mut tcx = gossamer_types::TyCtxt::new();
-    let (tbl, _) = gossamer_types::typecheck_source_file(&sf, &res, &mut tcx);
+    let (tbl, type_diags) = gossamer_types::typecheck_source_file(&sf, &res, &mut tcx);
+    if !type_diags.is_empty() {
+        return Err(format_semantic_diags("type", &type_diags));
+    }
     let program = gossamer_hir::lower_source_file(&sf, &res, &tbl, &mut tcx);
     let mut vm = gossamer_interp::Vm::new();
     vm.load(&program, tcx, true).map_err(|e| format!("{e}"))?;
@@ -573,13 +626,74 @@ fn build_and_call(
     if !parse_diags.is_empty() {
         return Err(format_parse_diags(&parse_diags, &map, file));
     }
-    let (res, _) = gossamer_resolve::resolve_source_file(&sf);
+    let (res, resolve_diags) = gossamer_resolve::resolve_source_file(&sf);
+    if !resolve_diags.is_empty() {
+        return Err(format_semantic_diags("resolution", &resolve_diags));
+    }
     let mut tcx = gossamer_types::TyCtxt::new();
-    let (tbl, _) = gossamer_types::typecheck_source_file(&sf, &res, &mut tcx);
+    let (tbl, type_diags) = gossamer_types::typecheck_source_file(&sf, &res, &mut tcx);
+    // REPL expressions are installed as the tail of a generated function with
+    // no written return annotation. The checker correctly diagnoses that
+    // synthetic function as returning a non-unit value; it is not a user
+    // error, because the REPL deliberately returns that value for `Out[N]`.
+    // The checker attaches this return mismatch to the generated body span.
+    // Suppress only that exact body-level diagnostic, never one from the
+    // submitted expression's children or declarations.
+    let tail_span = repl_generated_body_span(&sf);
+    let user_type_diags: Vec<_> = type_diags
+        .iter()
+        .filter(|diag| !is_implicit_repl_tail_diag(diag, tail_span))
+        .collect();
+    if !user_type_diags.is_empty() {
+        return Err(format_semantic_diags("type", &user_type_diags));
+    }
     let program = gossamer_hir::lower_source_file(&sf, &res, &tbl, &mut tcx);
     let mut vm = gossamer_interp::Vm::new();
     vm.load(&program, tcx, true).map_err(|e| format!("{e}"))?;
     vm.call(entry, Vec::new()).map_err(|e| format!("{e}"))
+}
+
+fn repl_generated_body_span(sf: &gossamer_ast::SourceFile) -> Option<gossamer_lex::Span> {
+    use gossamer_ast::ItemKind;
+
+    sf.items.iter().find_map(|item| {
+        let ItemKind::Fn(decl) = &item.kind else {
+            return None;
+        };
+        if !decl.name.name.starts_with("__irepl_") {
+            return None;
+        }
+        decl.body.as_ref().map(|body| body.span)
+    })
+}
+
+fn is_implicit_repl_tail_diag(
+    diag: &gossamer_types::TypeDiagnostic,
+    tail_span: Option<gossamer_lex::Span>,
+) -> bool {
+    matches!(
+        (&diag.error, tail_span),
+        (
+            gossamer_types::TypeError::TypeMismatch { expected, .. },
+            Some(span),
+        ) if expected == "()" && diag.span == span
+    )
+}
+
+/// Renders hard resolver/type-checker failures before the REPL can lower a
+/// program.  Keeping this gate here is essential: lowering after a rejected
+/// call used to let missing or wrongly typed arguments reach permissive
+/// runtime shims, which then silently substituted defaults.
+fn format_semantic_diags<T: std::fmt::Display>(phase: &str, diags: &[T]) -> String {
+    let noun = if diags.len() == 1 { "error" } else { "errors" };
+    let mut out = format!("{} {phase} {noun}:\n", diags.len());
+    for diag in diags {
+        out.push_str("  ");
+        out.push_str(&diag.to_string());
+        out.push('\n');
+    }
+    out.pop();
+    out
 }
 
 /// Renders a parse-diagnostic batch as one human-readable line per

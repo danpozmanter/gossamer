@@ -260,6 +260,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_vec_insert_safe" => (&[ptr_ty, types::I64, types::I64], Some(ptr_ty)),
         "gos_rt_vec_remove_safe" => (&[ptr_ty, types::I64], Some(ptr_ty)),
         "gos_rt_vec_clear" => (&[ptr_ty], None),
+        "gos_rt_vec_capacity" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_vec_extend" => (&[ptr_ty, ptr_ty], None),
         "gos_rt_vec_truncate" => (&[ptr_ty, types::I64], None),
         "gos_rt_map_keys_vec" => (&[ptr_ty], Some(ptr_ty)),

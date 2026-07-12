@@ -50,20 +50,20 @@ mod tests {
     fn i64_to_f64() {
         let n: i64 = 7
         let f: f64 = n as f64
-        testing::check(f > 6.9 && f < 7.1, "7 as f64 ≈ 7.0")
+        let _ = testing::check(f > 6.9 && f < 7.1, "7 as f64 ≈ 7.0")
     }
 
     #[test]
     fn pi_approximation() {
         let pi = (22 as f64) / (7 as f64)
-        testing::check(pi > 3.14 && pi < 3.15, "22/7 ≈ 3.14")
+        let _ = testing::check(pi > 3.14 && pi < 3.15, "22/7 ≈ 3.14")
     }
 
     #[test]
     fn negative_to_float() {
         let neg: i64 = -273
         let f = neg as f64
-        testing::check(f > -273.1 && f < -272.9, "-273 as f64")
+        let _ = testing::check(f > -273.1 && f < -272.9, "-273 as f64")
     }
 
     #[test]
@@ -71,6 +71,6 @@ mod tests {
         let a: f64 = 1000000001 as f64
         let b: f64 = 1000000002 as f64
         let diff = b - a
-        testing::check(diff > 0.9 && diff < 1.1, "diff near 1e9 ≈ 1")
+        let _ = testing::check(diff > 0.9 && diff < 1.1, "diff near 1e9 ≈ 1")
     }
 }

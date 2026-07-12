@@ -279,5 +279,5 @@ pub(crate) fn builtin_request_set_value(args: &[Value]) -> RuntimeResult<Value> 
         .cloned()
         .collect();
     fields.push(("__values", Value::Array(Arc::new(pairs))));
-    Ok(Value::struct_(inner.name, fields))
+    Ok(Value::struct_(inner.name.clone(), fields))
 }

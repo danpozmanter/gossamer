@@ -67,29 +67,29 @@ mod tests {
     #[test]
     fn split_produces_correct_parts() {
         let parts = "a,b,c".split(",")
-        testing::check_eq(&parts.len(), &3, "split len")
-        testing::check_eq(&parts[0], &"a", "parts[0]")
-        testing::check_eq(&parts[2], &"c", "parts[2]")
+        let _ = testing::check_eq(&parts.len(), &3, "split len")
+        let _ = testing::check_eq(&parts[0], &"a", "parts[0]")
+        let _ = testing::check_eq(&parts[2], &"c", "parts[2]")
     }
 
     #[test]
     fn find_returns_byte_offset() {
         let s = "hello world"
         match s.find("world") {
-            Some(i) => testing::check_eq(&i, &6, "find offset"),
-            None => testing::check(false, "expected Some"),
+            Some(i) => { let _ = testing::check_eq(&i, &6, "find offset"); },
+            None => { let _ = testing::check(false, "expected Some"); },
         }
     }
 
     #[test]
     fn trim_strips_whitespace() {
         let s = "  hello  ".trim()
-        testing::check_eq(&s, &"hello", "trimmed")
+        let _ = testing::check_eq(&s, &"hello", "trimmed")
     }
 
     #[test]
     fn replace_all_occurrences() {
         let r = "aabbaa".replace("aa", "x")
-        testing::check(r.contains("x"), "replaced")
+        let _ = testing::check(r.contains("x"), "replaced")
     }
 }

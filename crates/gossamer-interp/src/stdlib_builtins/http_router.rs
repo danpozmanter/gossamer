@@ -359,7 +359,7 @@ fn inject_path_params(request: Value, captures: &[(String, String)]) -> Value {
         })
         .collect();
     fields.push(("__params", Value::Array(Arc::new(params))));
-    Value::struct_(inner.name, fields)
+    Value::struct_(inner.name.clone(), fields)
 }
 
 /// Look up a router-captured path parameter on a server Request value

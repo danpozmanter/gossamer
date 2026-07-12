@@ -7,7 +7,7 @@ module.
 
 Columns:
 
-- **Interp** - `gos run` (bytecode VM + tree-walker fallback).
+- **Interp** - `gos run` (bytecode VM with optional deferred Cranelift JIT tier-up).
 - **Compiled** - `gos build` and `gos build --release` (LLVM AOT).
 - **Tests** - at least one integration test exercising the item.
 

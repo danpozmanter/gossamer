@@ -55,6 +55,30 @@ jobs:
       - name: Build release `gos`
         run: cargo build --release -p gossamer-cli
 
+      - name: Release HTTP soak resource gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Compile the stress target once, then measure the test executable
+          # itself so cargo/rustc RSS is not mistaken for server retention.
+          cargo test --release -p gossamer-cli --test http_load --no-run
+          test_bin=$(find target/release/deps -maxdepth 1 -type f -name 'http_load-*' -perm -u+x | head -n 1)
+          [[ -n "$test_bin" ]] || { echo "http_load release test binary missing" >&2; exit 1; }
+          rss_file=$(mktemp)
+          # This is a release-mode in-process server soak. Its test asserts
+          # service ratio, clean shutdown, and panic isolation; this wrapper
+          # adds a hard runtime/RSS ceiling for thread or request retention.
+          GOSSAMER_LOAD_SECS=10 GOSSAMER_LOAD_WORKERS=16 \
+            timeout 90s /usr/bin/time -f '%M' -o "$rss_file" \
+            "$test_bin" --exact http_server_survives_concurrent_load_without_panicking --nocapture
+          rss=$(tail -n 1 "$rss_file")
+          rm -f "$rss_file"
+          [[ "$rss" =~ ^[0-9]+$ ]] || { echo "invalid HTTP soak RSS: $rss" >&2; exit 1; }
+          # 512 MiB leaves ample headroom for an instrumented hosted runner;
+          # a leak or worker explosion crosses it quickly under this load.
+          (( rss <= 524288 )) || { echo "HTTP soak RSS ${rss}KiB exceeds 512MiB cap" >&2; exit 1; }
+          echo "HTTP soak peak RSS: ${rss}KiB"
+
       - name: Run benchmarks
         shell: bash
         run: |
@@ -62,8 +86,11 @@ jobs:
           GOS=./target/release/gos
           mkdir -p .perf
 
-          # time_ns LABEL ARGS... - benchmarks the command and appends
-          # "LABEL <minimum-nanoseconds>" to .perf/current.txt.
+          # measure LABEL ARGS... records the fastest elapsed time and the
+          # highest peak RSS across representative warm samples as
+          # "LABEL <minimum-nanoseconds> <max-rss-kib>". Time isolates
+          # steady-state execution; the RSS high-water catches allocator and
+          # retention regressions that a startup-only timing gate misses.
           #
           # One discarded warmup run pages in the binary and primes the OS
           # cache; the fastest of PERF_RUNS timed runs is then recorded. The
@@ -77,32 +104,39 @@ jobs:
           # minimum across main pushes (see "Update baseline on main"), so
           # recording the minimum here compares like with like.
           PERF_RUNS="${PERF_RUNS:-7}"
-          time_ns() {
+          measure() {
             local label=$1; shift
             "$@" >/dev/null 2>&1
-            local i start end ns best=
+            local i start end ns rss best= max_rss= rss_file
             for ((i = 0; i < PERF_RUNS; i++)); do
+              rss_file=$(mktemp)
               start=$(date +%s%N)
-              "$@" >/dev/null 2>&1
+              /usr/bin/time -f '%M' -o "$rss_file" "$@" >/dev/null 2>&1
               end=$(date +%s%N)
               ns=$((end - start))
+              rss=$(tail -n1 "$rss_file")
+              rm -f "$rss_file"
+              [[ "$rss" =~ ^[0-9]+$ ]] || { echo "invalid RSS sample for $label" >&2; exit 1; }
               if [[ -z "$best" || "$ns" -lt "$best" ]]; then
                 best=$ns
               fi
+              if [[ -z "$max_rss" || "$rss" -gt "$max_rss" ]]; then
+                max_rss=$rss
+              fi
             done
-            echo "$label $best" | tee -a .perf/current.txt
+            echo "$label $best $max_rss" | tee -a .perf/current.txt
           }
 
           rm -f .perf/current.txt
 
           # Arithmetic-heavy: factorial via recursion
-          [[ -f examples/factorial.gos ]] && time_ns factorial "$GOS" run examples/factorial.gos
+          [[ -f examples/factorial.gos ]] && measure factorial "$GOS" run examples/factorial.gos
 
           # String + I/O: hello world (baseline for interpreter startup)
-          [[ -f examples/hello_world.gos ]] && time_ns hello_world "$GOS" run examples/hello_world.gos
+          [[ -f examples/hello_world.gos ]] && measure hello_world "$GOS" run examples/hello_world.gos
 
           # Struct + field arithmetic: generic struct instantiation
-          [[ -f examples/generic_struct.gos ]] && time_ns generic_struct "$GOS" run examples/generic_struct.gos
+          [[ -f examples/generic_struct.gos ]] && measure generic_struct "$GOS" run examples/generic_struct.gos
 
       - name: Compare against baseline
         shell: bash
@@ -130,8 +164,9 @@ jobs:
             exit 0
           fi
 
-          # 2× regression check: fail if any benchmark exceeds twice
-          # its baseline. Missing baseline entries are skipped.
+          # Time and peak-RSS regression check. Existing two-column
+          # baselines remain readable; RSS begins gating once a current
+          # baseline entry has been written on main.
           python3 - "$BASELINE" "$CURRENT" <<'PY'
           import sys, collections
 
@@ -139,25 +174,28 @@ jobs:
               d = {}
               for line in open(path):
                   parts = line.split()
-                  if len(parts) == 2:
-                      d[parts[0]] = int(parts[1])
+                  if len(parts) >= 2:
+                      d[parts[0]] = (int(parts[1]), int(parts[2]) if len(parts) >= 3 else None)
               return d
 
           base = load(sys.argv[1])
           curr = load(sys.argv[2])
           regressions = []
-          for name, ns in curr.items():
+          for name, (ns, rss) in curr.items():
               if name not in base:
                   continue
-              ratio = ns / base[name]
+              base_ns, base_rss = base[name]
+              ratio = ns / base_ns
               ms_curr = ns // 1_000_000
-              ms_base = base[name] // 1_000_000
-              status = "OK" if ratio < 2.0 else "REGRESSION"
-              print(f"  {name}: {ms_curr}ms (baseline {ms_base}ms, {ratio:.2f}x) [{status}]")
-              if ratio >= 2.0:
+              ms_base = base_ns // 1_000_000
+              rss_ratio = rss / base_rss if rss is not None and base_rss else None
+              status = "OK" if ratio < 1.5 and (rss_ratio is None or rss_ratio < 1.5) else "REGRESSION"
+              rss_text = "RSS baseline pending" if rss_ratio is None else f"RSS {rss}KiB (baseline {base_rss}KiB, {rss_ratio:.2f}x)"
+              print(f"  {name}: {ms_curr}ms (baseline {ms_base}ms, {ratio:.2f}x); {rss_text} [{status}]")
+              if ratio >= 1.5 or (rss_ratio is not None and rss_ratio >= 1.5):
                   regressions.append(name)
           if regressions:
-              print(f"\nPerf regressions (>2x baseline): {', '.join(regressions)}")
+              print(f"\nPerf regressions (>=1.5x time or RSS baseline): {', '.join(regressions)}")
               sys.exit(1)
           PY
 
@@ -178,8 +216,8 @@ jobs:
               try:
                   for line in open(path):
                       parts = line.split()
-                      if len(parts) == 2:
-                          d[parts[0]] = int(parts[1])
+                      if len(parts) >= 2:
+                          d[parts[0]] = (int(parts[1]), int(parts[2]) if len(parts) >= 3 else None)
               except FileNotFoundError:
                   pass
               return d
@@ -187,12 +225,15 @@ jobs:
           base = load(sys.argv[1])
           curr = load(sys.argv[2])
           merged = {**base, **curr}
-          # Take the minimum (fastest) for any benchmark in both.
+          # Take the fastest time and highest observed RSS for matching
+          # entries. A missing legacy RSS is upgraded from the current run.
           for k in set(base) & set(curr):
-              merged[k] = min(base[k], curr[k])
+              base_ns, base_rss = base[k]
+              curr_ns, curr_rss = curr[k]
+              merged[k] = (min(base_ns, curr_ns), max(v for v in (base_rss, curr_rss) if v is not None))
           with open(sys.argv[1], 'w') as f:
-              for k, v in sorted(merged.items()):
-                  f.write(f"{k} {v}\n")
+              for k, (ns, rss) in sorted(merged.items()):
+                  f.write(f"{k} {ns}" + (f" {rss}" if rss is not None else "") + "\n")
           PY
 
       - name: Save updated baseline

@@ -1,6 +1,6 @@
 # `std::crypto::blake3`
 
-Status: shipped
+Status: experimental
 
 BLAKE3 hashing.
 

@@ -286,6 +286,21 @@ impl<'tcx> FnBuilder<'tcx> {
                 if let Some(first) = segments.first() {
                     if let Some(target) = self.lookup_local(&first.name) {
                         if target.kind == RegKind::Value {
+                            let value_is_i64 =
+                                matches!(self.tcx.kind(value.ty), Some(TyKind::Int(IntTy::I64)));
+                            let receiver_ty = self.unwrap_ref(receiver.ty);
+                            let offset =
+                                self.resolve_struct_field_offset(receiver_ty, name.name.as_str());
+                            if value_is_i64 && let Some(offset) = offset {
+                                let value_tr = self.compile_expr_ex(value)?;
+                                let value_i = self.as_i64(value_tr);
+                                self.emit(Op::FieldSetI64ByOffset {
+                                    receiver: target.reg,
+                                    offset,
+                                    value_i,
+                                });
+                                return Ok(());
+                            }
                             let value_reg = self.compile_expr(value)?;
                             let name_idx = self.const_idx(
                                 ConstKey::String(name.name.clone()),

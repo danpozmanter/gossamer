@@ -28,12 +28,12 @@ mod tests {
 
     #[test]
     fn radix_round_trips() {
-        testing::check(strconv::format_i64_radix(255, 16) == "ff", "255 in hex")
-        testing::check(strconv::format_i64_radix(10, 2) == "1010", "10 in binary")
+        let _ = testing::check(strconv::format_i64_radix(255, 16) == "ff", "255 in hex")
+        let _ = testing::check(strconv::format_i64_radix(10, 2) == "1010", "10 in binary")
         let n = match strconv::parse_i64_radix("zz", 36) { Ok(v) => v, Err(_) => -1 }
-        testing::check(n == 1295, "zz base 36 = 1295")
+        let _ = testing::check(n == 1295, "zz base 36 = 1295")
         let bad = match strconv::parse_i64_radix("2", 2) { Ok(_) => false, Err(_) => true }
-        testing::check(bad, "digit 2 is invalid in base 2")
+        let _ = testing::check(bad, "digit 2 is invalid in base 2")
     }
 
     #[test]
@@ -41,6 +41,6 @@ mod tests {
         let original = "tab\there\\and\"quotes\""
         let q = strconv::quote(original)
         let back = match strconv::unquote(q) { Ok(s) => s, Err(_) => "" }
-        testing::check(back == original, "quote then unquote is identity")
+        let _ = testing::check(back == original, "quote then unquote is identity")
     }
 }

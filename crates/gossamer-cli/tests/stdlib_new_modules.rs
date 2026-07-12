@@ -294,8 +294,8 @@ fn utf8_is_valid_and_rune_count() {
         r#"
 use std::utf8
 fn main() {
-    println!("{}", utf8::is_valid("hello"))
-    println!("{}", utf8::rune_count("café"))
+    println!("{}", utf8::valid_string("hello"))
+    println!("{}", utf8::rune_count_in_string("café"))
     println!("{}", utf8::rune_len('€'))
 }
 "#,
@@ -472,7 +472,7 @@ fn encoding_binary_u64_roundtrip() {
 use std::encoding
 fn main() {
     let n = 72623859790382856
-    let buf = encoding::binary::put_u64_be(0, n)
+    let buf = encoding::binary::put_u64_be([0; 8], n)
     match encoding::binary::get_u64_be(buf) {
         Ok(back) => println!("{}", back == n),
         Err(e) => println!("err: {}", e),
@@ -787,10 +787,10 @@ fn main() {
         Ok(key) => {
             match crypto::rand::bytes(12) {
                 Ok(nonce) => {
-                    let pt = "hello aes"
-                    match crypto::aead::aes_256_gcm_seal(key, nonce, pt, "") {
+                    let pt = [104, 101, 108, 108, 111, 32, 97, 101, 115]
+                    match crypto::aead::aes_256_gcm_seal(key, nonce, pt, []) {
                         Ok(ct) => {
-                            match crypto::aead::aes_256_gcm_open(key, nonce, ct, "") {
+                            match crypto::aead::aes_256_gcm_open(key, nonce, ct, []) {
                                 Ok(dec) => println!("{}", dec.len()),
                                 Err(e) => println!("open err: {}", e)
                             }
@@ -820,7 +820,7 @@ fn main() {
         Ok(pair) => {
             let secret = pair.0
             let public = pair.1
-            let msg = "test message"
+            let msg = [116, 101, 115, 116, 32, 109, 101, 115, 115, 97, 103, 101]
             match crypto::ed25519::sign(secret, msg) {
                 Ok(sig) => {
                     match crypto::ed25519::verify(public, msg, sig) {
@@ -846,7 +846,7 @@ fn crypto_kdf_pbkdf2() {
         r#"
 use std::crypto
 fn main() {
-    let key = crypto::kdf::pbkdf2_sha256("password", "salt", 1, 32)
+    let key = crypto::kdf::pbkdf2_sha256([112, 97, 115, 115, 119, 111, 114, 100], [115, 97, 108, 116], 1, 32)
     println!("{}", key.len())
 }
 "#,
@@ -1041,7 +1041,7 @@ fn encoding_base32_roundtrip() {
         r#"
 use std::encoding
 fn main() {
-    let enc = encoding::base32::encode("foobar")
+    let enc = encoding::base32::encode_string("foobar")
     println!("{}", enc)
     let dec = encoding::base32::decode_string(enc)
     match dec {
@@ -1064,7 +1064,7 @@ fn encoding_ascii85_roundtrip() {
         r#"
 use std::encoding
 fn main() {
-    let enc = encoding::ascii85::encode("hello")
+    let enc = encoding::ascii85::encode([104, 101, 108, 108, 111])
     let dec = encoding::ascii85::decode(enc)
     match dec {
         Ok(bytes) => println!("{}", bytes.len()),
@@ -1161,7 +1161,7 @@ fn compress_bzip2_roundtrip() {
         r#"
 use std::compress
 fn main() {
-    let data = "hello, gossamer lang!"
+    let data = [104, 101, 108, 108, 111, 44, 32, 103, 111, 115, 115, 97, 109, 101, 114, 32, 108, 97, 110, 103, 33]
     let enc = compress::bzip2::compress(data, 6)
     match enc {
         Ok(compressed) => {

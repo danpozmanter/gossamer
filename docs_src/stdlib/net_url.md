@@ -1,8 +1,8 @@
 # `std::net::url`
 
-Status: shipped
+Status: experimental
 
-URL parsing, rendering, and query escaping.
+Network URL parsing and component escaping; never use filesystem-path rules.
 
 ## Public items
 

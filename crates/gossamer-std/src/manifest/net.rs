@@ -71,7 +71,7 @@ use super::*;
 
 pub const NET_URL: StdModule = StdModule {
     path: "std::net::url",
-    summary: "URL parsing, rendering, and query escaping.",
+    summary: "Network URL parsing and component escaping; never use filesystem-path rules.",
     items: &[
         StdItem {
             name: "Url",

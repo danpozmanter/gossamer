@@ -71,7 +71,7 @@ use super::*;
 
 pub const OS_EXEC: StdModule = StdModule {
     path: "std::os::exec",
-    summary: "Spawn / wait for child processes (Go's os/exec shape).",
+    summary: "Deprecated compatibility facade for child processes; new code uses std::process.",
     items: &[
         StdItem {
             name: "Child",
@@ -165,7 +165,7 @@ pub const OS_SIGNAL: StdModule = StdModule {
 
 pub const PATH: StdModule = StdModule {
     path: "std::path",
-    summary: "POSIX-style path manipulation.",
+    summary: "Lexical filesystem-path operations; platform path grammar, no URL parsing or I/O.",
     items: &[
         StdItem {
             name: "join",
@@ -487,7 +487,7 @@ pub const OS: StdModule = StdModule {
 
 pub const PROCESS: StdModule = StdModule {
     path: "std::process",
-    summary: "Spawn child processes, exit the current process (Rust std::process shape).",
+    summary: "Canonical process control and child-process API; std::os::exec is compatibility-only.",
     items: &[
         StdItem {
             name: "Child",

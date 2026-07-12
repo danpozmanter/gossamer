@@ -62,7 +62,7 @@ mod tests {
     #[test]
     fn wall_clock_positive() {
         let ms = time::now_ms()
-        testing::check(ms > 0, "unix ms > 0")
+        let _ = testing::check(ms > 0, "unix ms > 0")
     }
 
     #[test]
@@ -70,15 +70,15 @@ mod tests {
         let a = time::now()
         time::sleep(10)
         let b = time::now()
-        testing::check(b >= a, "monotonic advances after sleep")
+        let _ = testing::check(b >= a, "monotonic advances after sleep")
     }
 
     #[test]
     fn format_rfc3339_contains_t() {
         let ms = time::now_ms()
         match time::format_rfc3339(ms) {
-            Ok(s) => testing::check(s.contains("T"), "RFC3339 contains T"),
-            Err(e) => testing::check(false, e),
+            Ok(s) => { let _ = testing::check(s.contains("T"), "RFC3339 contains T"); },
+            Err(e) => { let _ = testing::check(false, e); },
         }
     }
 
@@ -90,12 +90,12 @@ mod tests {
                 match time::parse_rfc3339(s) {
                     Ok(reparsed) => {
                         let diff = reparsed - ms
-                        testing::check(diff < 1000, "roundtrip within 1s")
+                        let _ = testing::check(diff < 1000, "roundtrip within 1s")
                     }
-                    Err(e) => testing::check(false, e),
+                    Err(e) => { let _ = testing::check(false, e); },
                 }
             }
-            Err(e) => testing::check(false, e),
+            Err(e) => { let _ = testing::check(false, e); },
         }
     }
 }

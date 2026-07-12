@@ -18,7 +18,66 @@
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
+use serde::Deserialize;
+
 use super::*;
+
+// Keep compiled JSON's resource limits aligned with the VM standard
+// library. `serde_json` otherwise accepts unbounded input and nesting,
+// letting an HTTP-facing compiled program allocate or recurse far beyond the
+// limits enforced by `gossamer_std::json::parse`.
+const JSON_MAX_SIZE: usize = 16 * 1024 * 1024;
+const JSON_MAX_DEPTH: usize = 128;
+
+/// Validates a C JSON input once before handing it to `serde_json`. The scan
+/// is allocation-free, understands quoted strings/escapes, and rejects only
+/// limits that the VM parser already rejects. Syntax remains `serde_json`'s
+/// responsibility so its detailed parse diagnostics are preserved.
+fn checked_json_text(bytes: &[u8]) -> Result<&str, &'static str> {
+    if bytes.len() > JSON_MAX_SIZE {
+        return Err("input exceeds max_size (16 MiB)");
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| "invalid UTF-8")?;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for byte in bytes {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if *byte == b'\\' {
+                escaped = true;
+            } else if *byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match *byte {
+            b'"' => in_string = true,
+            b'{' | b'[' => {
+                depth += 1;
+                if depth > JSON_MAX_DEPTH {
+                    return Err("nesting depth exceeds max_depth (128)");
+                }
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    Ok(text)
+}
+
+/// Parses after [`checked_json_text`] has applied Gossamer's explicit depth
+/// limit. `serde_json`'s default recursion counter rejects the valid
+/// VM-boundary document at depth 128 one level early, so disable only that
+/// duplicate guard and keep the bounded preflight as the authority.
+fn parse_checked_json(text: &str) -> Result<serde_json::Value, serde_json::Error> {
+    let mut deserializer = serde_json::Deserializer::from_str(text);
+    deserializer.disable_recursion_limit();
+    let value = serde_json::Value::deserialize(&mut deserializer)?;
+    deserializer.end()?;
+    Ok(value)
+}
 
 // ---------------------------------------------------------------
 // JSON runtime - wraps `serde_json::Value` behind a heap pointer
@@ -171,9 +230,9 @@ pub unsafe extern "C" fn gos_rt_json_valid(text: *const c_char) -> i8 {
         } else {
             unsafe { CStr::from_ptr(text).to_bytes() }
         };
-        let ok = std::str::from_utf8(bytes)
+        let ok = checked_json_text(bytes)
             .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+            .and_then(|s| parse_checked_json(s).ok())
             .is_some();
         i8::from(ok)
     })
@@ -189,19 +248,21 @@ pub unsafe extern "C" fn gos_rt_json_parse(text: *const c_char) -> i128 {
         } else {
             unsafe { CStr::from_ptr(text).to_bytes() }
         };
-        match std::str::from_utf8(bytes).map(serde_json::from_str::<serde_json::Value>) {
-            Ok(Ok(v)) => {
-                let ptr = GosJson::into_raw(v);
-                unsafe { gos_rt_result_new(0, ptr as i64) }
-            }
-            Ok(Err(e)) => {
-                let msg = format!("{e}");
-                let cs = alloc_cstring(msg.as_bytes());
-                let err = unsafe { gos_rt_error_new(cs) };
-                unsafe { gos_rt_result_new(1, err as i64) }
-            }
-            Err(_) => {
-                let cs = alloc_cstring(b"invalid UTF-8");
+        match checked_json_text(bytes) {
+            Ok(s) => match parse_checked_json(s) {
+                Ok(v) => {
+                    let ptr = GosJson::into_raw(v);
+                    unsafe { gos_rt_result_new(0, ptr as i64) }
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    let cs = alloc_cstring(message.as_bytes());
+                    let err = unsafe { gos_rt_error_new(cs) };
+                    unsafe { gos_rt_result_new(1, err as i64) }
+                }
+            },
+            Err(message) => {
+                let cs = alloc_cstring(message.as_bytes());
                 let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
@@ -554,9 +615,14 @@ pub unsafe extern "C" fn gos_rt_json_keys_opt(j: *const GosJson) -> i128 {
                 // STRING-typed 8-byte slots (cstring pointers): the vec
                 // owns each fresh key string, so `gos_rt_vec_free`
                 // reclaims them even when a consumer loop breaks early.
+                // `serde_json::Map::len` is exact, so build the runtime
+                // vector at its final capacity. This avoids repeated copies
+                // of key pointers and extra arena/global allocations for
+                // object-heavy JSON responses.
                 let vec_ptr = unsafe {
-                    crate::c_abi::vec::gos_rt_vec_new_typed(
+                    crate::c_abi::vec::gos_rt_vec_with_capacity_typed(
                         8,
+                        map.len().min(i64::MAX as usize) as i64,
                         crate::c_abi::vec::vec_elem_kind::STRING,
                     )
                 };
@@ -586,7 +652,15 @@ pub unsafe extern "C" fn gos_rt_json_as_array_opt(j: *const GosJson) -> i128 {
         let v = unsafe { &*parent.view.as_const_ptr() };
         match v {
             serde_json::Value::Array(items) => {
-                let vec_ptr = unsafe { gos_rt_vec_new(8) };
+                // Each returned child handle needs one pointer slot. Reserve
+                // once from the source array's exact length instead of
+                // growing through every capacity tier.
+                let vec_ptr = unsafe {
+                    crate::c_abi::vec::gos_rt_vec_with_capacity(
+                        8,
+                        items.len().min(i64::MAX as usize) as i64,
+                    )
+                };
                 for item in items {
                     // Each element shares the parent's `Arc<Value>`
                     // tree - no deep clone, no per-element leak of a
@@ -659,6 +733,7 @@ pub unsafe extern "C" fn gos_rt_json_value_array(vec: *const GosVec) -> *mut Gos
             let header = unsafe { &*vec };
             let len = usize::try_from(header.len.max(0)).unwrap_or(0);
             if !header.ptr.is_null() && len > 0 {
+                out.reserve(len);
                 let base = header.ptr;
                 for i in 0..len {
                     // Slots hold child pointers exposed as integers by the
@@ -696,6 +771,7 @@ pub unsafe extern "C" fn gos_rt_json_array_from_scalar_vec(
             let header = unsafe { &*vec };
             let len = usize::try_from(header.len.max(0)).unwrap_or(0);
             if !header.ptr.is_null() && len > 0 {
+                out.reserve(len);
                 let words = unsafe { std::slice::from_raw_parts(header.ptr.cast::<i64>(), len) };
                 for &w in words {
                     let v = match kind {
@@ -891,5 +967,63 @@ mod tests {
         assert_eq!(unsafe { CStr::from_ptr(k0) }.to_str().unwrap(), "alpha");
         unsafe { crate::c_abi::string::gos_rt_str_free(k0) };
         unsafe { gos_rt_json_free(j) };
+    }
+
+    #[test]
+    fn json_input_limits_match_vm_defaults_and_ignore_string_brackets() {
+        assert!(checked_json_text(br#"{"brackets":"[{]}"}"#).is_ok());
+        let at_limit = format!(
+            "{}0{}",
+            "[".repeat(JSON_MAX_DEPTH),
+            "]".repeat(JSON_MAX_DEPTH)
+        );
+        let at_limit = std::ffi::CString::new(at_limit).unwrap();
+        let parsed = unsafe { gos_rt_json_parse(at_limit.as_ptr()) };
+        assert_eq!(crate::c_abi::vec::gos_rt_result_disc(parsed), 0);
+        unsafe {
+            gos_rt_json_free(crate::c_abi::vec::gos_rt_result_payload(parsed) as *mut GosJson);
+        }
+        let nested = format!(
+            "{}0{}",
+            "[".repeat(JSON_MAX_DEPTH + 1),
+            "]".repeat(JSON_MAX_DEPTH + 1)
+        );
+        assert_eq!(
+            checked_json_text(nested.as_bytes()),
+            Err("nesting depth exceeds max_depth (128)")
+        );
+        let large = vec![b' '; JSON_MAX_SIZE + 1];
+        assert_eq!(
+            checked_json_text(&large),
+            Err("input exceeds max_size (16 MiB)")
+        );
+    }
+
+    #[test]
+    fn json_collection_projections_reserve_the_source_length() {
+        let text = std::ffi::CString::new(
+            r#"{"k0":0,"k1":1,"k2":2,"k3":3,"k4":4,"k5":5,"k6":6,"k7":7,"k8":8}"#,
+        )
+        .unwrap();
+        let parsed = unsafe { gos_rt_json_parse(text.as_ptr()) };
+        let json = crate::c_abi::vec::gos_rt_result_payload(parsed) as *mut GosJson;
+
+        let keys = unsafe { gos_rt_json_keys_opt(json) };
+        let keys = crate::c_abi::vec::gos_rt_result_payload(keys) as *mut GosVec;
+        assert_eq!(unsafe { (*keys).len }, 9);
+        assert!(unsafe { (*keys).cap } >= 9);
+
+        let array_text = std::ffi::CString::new("[0,1,2,3,4,5,6,7,8]").unwrap();
+        let array_result = unsafe { gos_rt_json_parse(array_text.as_ptr()) };
+        let array = crate::c_abi::vec::gos_rt_result_payload(array_result) as *mut GosJson;
+        let items = unsafe { gos_rt_json_as_array_opt(array) };
+        let items = crate::c_abi::vec::gos_rt_result_payload(items) as *mut GosVec;
+        assert_eq!(unsafe { (*items).len }, 9);
+        assert!(unsafe { (*items).cap } >= 9);
+
+        unsafe { crate::c_abi::map::gos_rt_vec_free(keys) };
+        unsafe { crate::c_abi::map::gos_rt_vec_free(items) };
+        unsafe { gos_rt_json_free(json) };
+        unsafe { gos_rt_json_free(array) };
     }
 }

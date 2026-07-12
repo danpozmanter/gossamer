@@ -1,7 +1,7 @@
 # Gossamer fuzz corpora
 
-`cargo-fuzz` targets covering every untrusted-input boundary the
-toolchain exposes plus differential execution between tiers:
+`cargo-fuzz` targets covering the untrusted-input boundaries currently
+implemented by the toolchain:
 
 | Target | What it fuzzes | Seed inputs |
 |--------|----------------|-------------|
@@ -15,7 +15,6 @@ toolchain exposes plus differential execution between tiers:
 | `resolve` | resolver-only driver; takes `Arbitrary`-grown AST and forces it through `resolve_source_file` without a parse-clean prefix. | 0 |
 | `hir_lower` | HIR lowering - drives `gossamer_hir::lower_program` on grammar-generated input bypassing typecheck rejection. | 0 |
 | `vm_run` | bytecode VM **execution** - `Vm::run` on grammar-generated programs; surfaces `get_unchecked` UB the validator misses. | 0 |
-| `differential` | grammar-generated programs through VM, Cranelift JIT and LLVM AOT; byte-compares stdout, panics on divergence. | 0 |
 
 ## Running locally
 

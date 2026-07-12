@@ -1,7 +1,7 @@
 use std::strconv
 use std::errors
 
-fn show(label: String, r: Result<i64, errors::Error>) {
+fn show(label: String, r: Result<u64, errors::Error>) {
     match r {
         Ok(v) => println!("{} ok {}", label, v),
         Err(e) => println!("{} err {}", label, e),

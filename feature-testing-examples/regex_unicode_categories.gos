@@ -83,41 +83,41 @@ mod tests {
     fn is_match_digit_pattern() {
         let p = match regex::compile("\\d+") {
             Ok(p) => p,
-            Err(e) => { testing::check(false, e); return }
+            Err(e) => { let _ = testing::check(false, e); return }
         }
-        testing::check(regex::is_match(p, "abc123"), "digit in abc123")
-        testing::check(!regex::is_match(p, "abc"), "no digit in abc")
+        let _ = testing::check(regex::is_match(p, "abc123"), "digit in abc123")
+        let _ = testing::check(!regex::is_match(p, "abc"), "no digit in abc")
     }
 
     #[test]
     fn find_all_count() {
         let p = match regex::compile("[0-9]+") {
             Ok(p) => p,
-            Err(e) => { testing::check(false, e); return }
+            Err(e) => { let _ = testing::check(false, e); return }
         }
         let matches = regex::find_all(p, "1 22 333")
-        testing::check_eq(&(matches.len() as i64), &3, "three digit groups")
+        let _ = testing::check_eq(&(matches.len() as i64), &3, "three digit groups")
     }
 
     #[test]
     fn replace_all_whitespace() {
         let p = match regex::compile("\\s+") {
             Ok(p) => p,
-            Err(e) => { testing::check(false, e); return }
+            Err(e) => { let _ = testing::check(false, e); return }
         }
         let r = regex::replace_all(p, "a  b   c", "_")
-        testing::check_eq(&r, &"a_b_c", "compressed spaces")
+        let _ = testing::check_eq(&r, &"a_b_c", "compressed spaces")
     }
 
     #[test]
     fn captures_date() {
         let p = match regex::compile("(\\d{4})-(\\d{2})-(\\d{2})") {
             Ok(p) => p,
-            Err(e) => { testing::check(false, e); return }
+            Err(e) => { let _ = testing::check(false, e); return }
         }
         match regex::captures(p, "2024-01-15") {
-            Some(caps) => testing::check(caps.len() >= 1, "captures non-empty"),
-            None => testing::check(false, "expected date match"),
+            Some(caps) => { let _ = testing::check(caps.len() >= 1, "captures non-empty"); },
+            None => { let _ = testing::check(false, "expected date match"); },
         }
     }
 }

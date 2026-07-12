@@ -31,6 +31,11 @@ license = "Apache-2.0"
 [registries]
 default = "https://registry.gossamer-lang.org"
 
+# Required before the first registry fetch for a package. The registry
+# cannot establish this binding by advertising a key in its index.
+[trusted-publishers]
+"example.org/lib" = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 # Optional: explicit binary targets. Without this section, the
 # default is one binary named after the project id whose entry
 # point is `src/main.gos`.
@@ -206,5 +211,8 @@ See the SPEC (section 12 in the repository root),
 uploads it to the registry; `--dry-run` packs and signs without
 uploading. `gos yank`, `gos login` / `gos logout`, and `gos owner`
 round out the registry workflow, with dependency tarballs sha256-pinned
-in `project.lock`. Path-based and git-based dependencies in
+in `project.lock`. A registry package must also have a publisher key pinned
+in `project.lock` or explicitly bound in `[trusted-publishers]` before its
+first fetch; keys advertised only by a registry index are not trusted.
+Path-based and git-based dependencies in
 `project.toml` also work end-to-end.

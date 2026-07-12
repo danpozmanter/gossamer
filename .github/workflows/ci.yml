@@ -52,6 +52,7 @@ jobs:
         with:
           prefix-key: v2-clippy-stdio
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   test-native:
     name: Test native (${{ matrix.os }})

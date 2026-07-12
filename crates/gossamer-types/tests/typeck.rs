@@ -1095,6 +1095,112 @@ fn strings_free_fn_accepts_string_and_char_patterns() {
 }
 
 #[test]
+fn string_slice_rejects_missing_or_non_integer_bounds() {
+    let d = diagnostics_for(
+        "fn main() {\n\
+         let s = \"abcde\"\n\
+         let _ = s.slice(1)\n\
+         let _ = s.slice(1..3)\n\
+         let _ = s.slice(\"a\")\n\
+         }\n",
+    );
+    assert!(
+        d.iter().any(|x| matches!(
+            x.error,
+            TypeError::CallArityMismatch { ref callee, expected: 2, found: 1 }
+                if callee == "strings::slice"
+        )),
+        "missing string-method argument must be rejected: {d:?}"
+    );
+    assert_eq!(
+        d.iter()
+            .filter(|x| matches!(x.error, TypeError::CallArityMismatch { .. }))
+            .count(),
+        3,
+        "every one-argument slice spelling must be rejected: {d:?}"
+    );
+    assert!(
+        d.iter()
+            .any(|x| matches!(x.error, TypeError::TypeMismatch { .. })),
+        "a string bound must be rejected as non-integer: {d:?}"
+    );
+}
+
+#[test]
+fn strings_free_calls_enforce_complete_arity() {
+    let d = diagnostics_for(
+        "use std::strings\n\
+         fn main() {\n\
+         let _ = strings::count(\"abc\")\n\
+         let _ = strings::slice(\"abc\", 0, 2)\n\
+         }\n",
+    );
+    assert!(
+        d.iter().any(|x| matches!(
+            x.error,
+            TypeError::CallArityMismatch { ref callee, expected: 2, found: 1 }
+                if callee == "strings::count"
+        )),
+        "missing free-function argument must be rejected: {d:?}"
+    );
+    assert!(
+        !d.iter().any(|x| matches!(
+            x.error,
+            TypeError::CallArityMismatch { ref callee, .. } if callee == "strings::slice"
+        )),
+        "valid string slice must retain its three-argument contract: {d:?}"
+    );
+}
+
+#[test]
+fn stdlib_signature_catalog_rejects_non_string_arity_mismatch() {
+    let d = diagnostics_for(
+        "use std::math\n\
+         fn main() { let _ = math::sqrt() }\n",
+    );
+    assert!(
+        d.iter().any(|x| matches!(
+            x.error,
+            TypeError::CallArityMismatch { ref callee, expected: 1, found: 0 }
+                if callee == "math::sqrt"
+        )),
+        "stdlib signature arity must reject missing math::sqrt arg: {d:?}"
+    );
+}
+
+#[test]
+fn stdlib_signature_catalog_shapes_non_string_argument_types() {
+    let d = diagnostics_for(
+        "use std::math\n\
+         fn main() { let _ = math::pow(\"x\", 2.0) }\n",
+    );
+    assert!(
+        d.iter().any(|x| matches!(
+            &x.error,
+            TypeError::TypeMismatch { expected, found }
+                if expected == "f64" && found == "String"
+        )),
+        "stdlib signature argument expectations must reject math::pow(String, f64): {d:?}"
+    );
+}
+
+#[test]
+fn stdlib_signature_catalog_supplies_non_specialized_return_type() {
+    let d = diagnostics_for(
+        "use std::math\n\
+         fn f() -> String { math::sqrt(4.0) }\n",
+    );
+    assert!(
+        d.iter().any(|x| matches!(
+            &x.error,
+            TypeError::TypeMismatch { expected, found }
+                if expected == "String" && found == "f64"
+        )),
+        "stdlib signature return type must reject returning math::sqrt as String: {d:?}"
+    );
+}
+
+#[test]
 fn json_value_variant_pattern_is_rejected() {
     // `json::Value` is an opaque dynamic-document handle with no matchable
     // discriminant; matching its variants silently falls through on the VM

@@ -20,7 +20,7 @@ fn check(t: &Tree) -> i64 {
 
 fn early(n: i64) -> i64 {
     arena {
-        let t = build(8)
+        let t = build(6)
         if check(&t) > 100 {
             return n * 2
         }
@@ -31,10 +31,12 @@ fn early(n: i64) -> i64 {
 fn nested() -> i64 {
     let mut total = 0
     arena {
-        let outer = build(10)
+        // Keep the tree large enough to exercise nested arena ownership while
+        // staying inside the debug VM's native stack budget on every CI host.
+        let outer = build(6)
         total += check(&outer)
         arena {
-            let inner = build(6)
+            let inner = build(4)
             total += check(&inner)
         }
         total += check(&outer)

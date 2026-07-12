@@ -39,6 +39,43 @@ fn build(source: &str) -> (Vec<Body>, TyCtxt) {
 }
 
 #[test]
+fn retained_mir_lower_oom_reproducers_terminate() {
+    const LARGE_REPRO: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fuzz/artifacts/mir_lower/oom-73482b7de2d0447f96f167d9ecf35dabf9628704"
+    ));
+    const EMPTY_REPRO: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fuzz/artifacts/mir_lower/oom-da39a3ee5e6b4b0d3255bfef95601890afd80709"
+    ));
+
+    for (name, bytes) in [("large", LARGE_REPRO), ("empty", EMPTY_REPRO)] {
+        let source = std::str::from_utf8(bytes).expect("retained MIR artifact is UTF-8");
+        let mut map = SourceMap::new();
+        let file = map.add_file(format!("mir-lower-oom-{name}.gos"), source.to_owned());
+        let (sf, parse_diagnostics) = parse_source_file(source, file);
+        if !parse_diagnostics.is_empty() {
+            continue;
+        }
+        let (resolutions, resolve_diagnostics) = resolve_source_file(&sf);
+        if !resolve_diagnostics.is_empty() {
+            continue;
+        }
+        let mut tcx = TyCtxt::new();
+        let (table, type_diagnostics) = typecheck_source_file(&sf, &resolutions, &mut tcx);
+        if !type_diagnostics.is_empty() {
+            continue;
+        }
+        let hir = lower_source_file(&sf, &resolutions, &table, &mut tcx);
+        let mut bodies = lower_program(&hir, &mut tcx);
+        for body in &mut bodies {
+            optimise(body, &tcx);
+            verify_body(body).expect("retained MIR artifact must preserve verifier invariants");
+        }
+    }
+}
+
+#[test]
 fn identity_body_passes_verify() {
     let (bodies, _) = build("fn id(x: i64) -> i64 { x }\n");
     for body in &bodies {

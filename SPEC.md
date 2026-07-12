@@ -8,6 +8,32 @@
 
 ---
 
+## 0. Contract status
+
+This document distinguishes three contract levels:
+
+- **Stable**: a feature named Stable by `gos feature-status` has a
+  compatibility commitment under §17. Stable language syntax and semantics in
+  this document are normative for the active edition.
+- **Experimental**: the syntax or API is implemented enough to be exposed,
+  but may change incompatibly, gain limits, or be withdrawn in a later
+  release. Experimental APIs are not part of the 1.0 compatibility promise.
+- **Planned**: documentation of an intended direction only. Planned surface
+  has no implementation or compatibility commitment.
+
+The generated `gos feature-status` registry is authoritative for the status
+of individual language and standard-library entries. This specification is
+authoritative for the semantics of Stable language constructs; it does not
+silently promote a manifest entry merely because it is documented here.
+
+Until a 1.0 release designates a core-library set explicitly, standard-library
+modules default to Experimental. Network protocols, databases, templates,
+archive formats, process launching, and platform drivers remain Experimental
+regardless of examples elsewhere in this document. In particular, compatibility
+aliases do not become Stable merely because they remain wired.
+
+---
+
 ## 1. Introduction
 
 Gossamer is a general-purpose, automatically memory-managed, statically
@@ -1235,6 +1261,11 @@ license = "Apache-2.0"
 
 [registries]
 "example.org" = "https://registry.example.org/v1"
+
+# First-fetch trust roots for registry publishers. The key is the
+# publisher's 32-byte Ed25519 public key in lowercase hexadecimal.
+[trusted-publishers]
+"example.org/linalg" = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 ```
 
 Required fields:
@@ -1350,6 +1381,10 @@ every transitive dependency:
 - A sha256 checksum of the source tree as fetched.
 
 A checked-in lockfile yields byte-identical builds across machines.
+For registry dependencies it also records the publisher key. A new registry
+publisher must be authorized by a matching `[trusted-publishers]` entry in the
+root manifest; a mutable registry index is not a trust root. On later fetches,
+the lockfile key is authoritative and a different advertised key is rejected.
 
 ### 6.9 Decentralisation
 
@@ -1419,7 +1454,10 @@ stack-allocated (escape analysis). The escape rules are:
 Memory management is deterministic reference counting for heap enums
 and runtime containers, drop-pass reclamation for value aggregates,
 weak references, an on-demand cycle collector
-(`runtime::collect_cycles()`), and `arena { }` regions - on every tier.
+(`runtime::collect_cycles()`), and `arena { }` regions. Cycle collection and
+collection-driven `Weak<T>` invalidation are Experimental: the compiled
+runtime collects thread-local RC graphs, while the bytecode VM currently has
+no cycle collector. They are not part of the Stable cross-tier contract.
 There is no tracing collector: no pacer, no write barrier, and no GC
 pause.
 
@@ -1434,9 +1472,12 @@ Memory is reclaimed deterministically, without a tracing collector:
 - **Weak references.** A weak reference does not contribute to the
   strong count; upgrading after the payload is destroyed yields
   `None` (Swift-ARC model).
-- **Cycle collection.** Reference cycles are reclaimed on demand by
-  `runtime::collect_cycles()` (Bacon-Rajan trial deletion). No
-  background collector runs.
+- **Cycle collection.** On the compiled tiers, thread-local reference cycles
+  are reclaimed on demand by `runtime::collect_cycles()` (Bacon-Rajan trial
+  deletion). Values shared across goroutines are excluded from this pass and
+  their cycles must be broken with `Weak<T>`. The bytecode VM currently treats
+  `runtime::collect_cycles()` as a no-op. This entire collection surface is
+  Experimental; no background collector runs.
 - **Value aggregates.** Structs, tuples, and arrays are
   heap-allocated at construction and freed by the compile-time drop
   pass at scope exit. An aggregate that escapes the drop pass's
@@ -1948,6 +1989,24 @@ transformation when the chain doesn't return from the enclosing fn.
 - `http::Server`, `http::Client`, `http::Request`, `http::Response`.
 - `http::serve(addr: String, handler: impl Handler) -> Result<(), Error>`.
 
+#### Namespace boundaries
+
+`std::path` operates on lexical filesystem paths using the target platform's
+path grammar. It performs neither URL parsing nor percent escaping; filesystem
+I/O belongs to `std::fs`. `std::net::url` parses network URLs and escapes URL
+components. It is not an HTTP router or a filesystem path API.
+
+`std::process` is the canonical API for the current process and child
+processes. `std::os::exec` is a deprecated compatibility facade retained for
+the 0.x line; new APIs land only in `std::process`. Both remain Experimental
+until cancellation, blocking behavior, and platform differences have a Stable
+contract.
+
+HTTP/3 remains Experimental under the historical `std::http_h3` spelling.
+There is intentionally no `std::http::h3` alias in 0.27: adding a second
+public name before streaming and resource-limit semantics are complete would
+create a compatibility promise without improving fidelity.
+
 ### 10.11 `std::encoding::json`, `std::encoding::csv`
 
 - Dynamic surface: `json::parse(text) -> Result<json::Value, Error>`,
@@ -1973,8 +2032,12 @@ transformation when the chain doesn't return from the enclosing fn.
 
 ### 10.12 `std::thread`, `std::channel`
 
-- `thread::spawn(|| { ... })` - OS thread (rarely used; prefer `go`).
-- `channel<T>()`, `channel<T>(cap)`.
+- `thread::yield_now()` and `thread::num_cpus()` expose OS-thread scheduling
+  hints and CPU availability only. There is no user-facing `thread::spawn`.
+- `go expr` and `spawn(f)` create Gossamer goroutines; channels coordinate
+  goroutines with `channel<T>()` and `channel<T>(cap)`.
+- Runtime workers, blocking pools, and protocol threads are implementation
+  details, not a language-level thread API.
 
 ### 10.13 `std::panic`
 
@@ -2065,15 +2128,17 @@ binary when:
    `rust-lld` for an OS-crossing link (overridable via
    `CARGO_TARGET_<TRIPLE>_LINKER` / `GOS_CROSS_CC`).
 
-The validated matrix is **Linux, macOS, and Windows hosts ->
-`{x86_64,aarch64}-unknown-linux-{gnu,musl}`** - both Linux
-architectures, glibc or musl. The musl-static target is the
-host-agnostic path: rustup ships its self-contained CRT on every host
-and `ld.lld` emits ELF anywhere. The
-gnu-dynamic target links out of the box on a Linux host; on macOS or
-Windows it additionally needs an aarch64 glibc sysroot via
-`GOS_CROSS_SYSROOT`. Cross output is checked bit-identical to the
-bytecode VM under QEMU in CI across all three host OSes.
+The executable supported-target contract is
+[`conformance/target_matrix.tsv`](conformance/target_matrix.tsv). Tier 1
+executes the bytecode VM, forced-JIT VM, and LLVM AOT fixture suite natively
+on Linux x86_64/aarch64, Apple Silicon macOS, and Windows x86_64. Tier 2 is
+the Linux-musl AOT path for x86_64/aarch64: CI executes its output natively or
+under QEMU and compares it with the pure bytecode VM. The musl-static target
+is host-agnostic when the required runtime archive and linker are installed.
+Cross-host glibc links require `GOS_CROSS_SYSROOT` and are not part of the
+supported target contract. Artifact-only and registered-but-unsupported
+triples are deliberately listed in that matrix; a locally accepted triple is
+not support.
 
 Cross-compiling *to* macOS or Windows as a target is not yet supported;
 it requires external SDKs (osxcross + the Apple SDK, mingw-w64) whose
@@ -2346,14 +2411,60 @@ No central registry is shipped with the toolchain and none is required
 to use Gossamer. A project whose dependencies are all git or path
 sources is a fully supported, registry-free setup.
 
+The index supplies availability metadata only. A registry tarball must carry a
+valid Ed25519 signature, and its advertised publisher key must match either an
+existing `project.lock` pin or a root-manifest `[trusted-publishers]` binding.
+The first index response alone must never establish publisher identity.
+
 ---
 
 ## 17. Versioning and compatibility
 
-- Language version string: `edition = "2026"` in the manifest.
-- The compiler accepts any edition up to its own.
-- Breaking changes land only between editions.
-- Minor/patch versions of the toolchain are backward-compatible.
+### 17.1 Editions and language compatibility
+
+- The language version string is `edition = "2026"` in the manifest.
+- A compiler accepts editions it explicitly supports; accepting a manifest is
+  not a promise that a future edition's semantics are understood.
+- Breaking Stable-language changes require a new edition. Diagnostics must
+  name the edition or migration rule when rejecting an older source form.
+- Experimental syntax may change without an edition change, but it must be
+  reported as Experimental by `gos feature-status` before it is accepted.
+
+### 17.2 Standard library compatibility
+
+- Stable entries retain their canonical module path, callable signature,
+  observable error/result shape, and documented resource limits throughout a
+  compatible toolchain line.
+- Adding an optional field, method, error variant, or capability to an
+  Experimental entry is not a Stable compatibility guarantee.
+- Removing, renaming, or weakening a Stable entry requires a new edition or a
+  documented compatibility shim that remains available for the old edition.
+- A module's status is not inherited by undocumented implementation helpers;
+  only manifest-listed paths are public contracts.
+
+### 17.3 Project formats and generated artifacts
+
+- `project.toml` and `project.lock` are versioned public formats. A compatible
+  toolchain must either read an older supported version losslessly or reject
+  it with an actionable migration diagnostic; it must not silently reinterpret
+  a pin, registry identity, or build setting.
+- Lockfile source pins, checksums, and publisher keys are integrity data. A
+  compatible toolchain must preserve them byte-for-byte unless an explicit
+  update operation changes them.
+- Bindings, generated ABI declarations, diagnostics codes, and target triples
+  are versioned outputs. Stable consumers may depend on documented names and
+  machine-readable shapes, not on incidental formatting or allocation layout.
+
+### 17.4 Toolchain and target policy
+
+- Patch releases fix defects without changing Stable language or library
+  semantics. Minor releases may add Stable surface but cannot break existing
+  Stable programs in a supported edition/target pair.
+- The supported-target matrix is published with each release. A target absent
+  from that matrix is Experimental even when it happens to compile.
+- `gos build --release` must fail when Stable code cannot be lowered by the
+  selected release backend; it must not silently substitute an interpreter or
+  alternate execution tier.
 
 ---
 

@@ -820,19 +820,19 @@ fn warmup_jit() {
         let _ = substring(&s, i, i + 5)
         i += 1
     }
-    testing::check_eq(&s.len(), &47, "length sanity")
+    let _ = testing::check_eq(&s.len(), &47, "length sanity")
 }
 
 #[cfg(test)]
 #[test]
 fn after_jit_string_eq() {
-    testing::check_eq(&"hi".to_string(), &"hi".to_string(), "string eq")
+    let _ = testing::check_eq(&"hi".to_string(), &"hi".to_string(), "string eq")
 }
 
 #[cfg(test)]
 #[test]
 fn after_jit_check_true() {
-    testing::check(true, "always true")
+    let _ = testing::check(true, "always true")
 }
 
 fn main() {}
@@ -1190,27 +1190,27 @@ pub fn count_user_messages(messages_json: &String) -> i64 {
     n
 }
 
-#[cfg(test)] #[test] fn warm_a()  { testing::check(1 == 1, "a") }
-#[cfg(test)] #[test] fn warm_b()  { testing::check(2 == 2, "b") }
-#[cfg(test)] #[test] fn warm_c()  { testing::check(3 == 3, "c") }
-#[cfg(test)] #[test] fn warm_d()  { testing::check(4 == 4, "d") }
-#[cfg(test)] #[test] fn warm_e()  { testing::check(5 == 5, "e") }
-#[cfg(test)] #[test] fn warm_f()  { testing::check(6 == 6, "f") }
-#[cfg(test)] #[test] fn warm_g()  { testing::check(7 == 7, "g") }
-#[cfg(test)] #[test] fn warm_h()  { testing::check(8 == 8, "h") }
-#[cfg(test)] #[test] fn warm_i()  { testing::check(9 == 9, "i") }
-#[cfg(test)] #[test] fn warm_j()  { testing::check(10 == 10, "j") }
-#[cfg(test)] #[test] fn warm_k()  { testing::check(11 == 11, "k") }
-#[cfg(test)] #[test] fn warm_l()  { testing::check(12 == 12, "l") }
-#[cfg(test)] #[test] fn warm_m()  { testing::check(13 == 13, "m") }
-#[cfg(test)] #[test] fn warm_n()  { testing::check(14 == 14, "n") }
+#[cfg(test)] #[test] fn warm_a()  { let _ = testing::check(1 == 1, "a") }
+#[cfg(test)] #[test] fn warm_b()  { let _ = testing::check(2 == 2, "b") }
+#[cfg(test)] #[test] fn warm_c()  { let _ = testing::check(3 == 3, "c") }
+#[cfg(test)] #[test] fn warm_d()  { let _ = testing::check(4 == 4, "d") }
+#[cfg(test)] #[test] fn warm_e()  { let _ = testing::check(5 == 5, "e") }
+#[cfg(test)] #[test] fn warm_f()  { let _ = testing::check(6 == 6, "f") }
+#[cfg(test)] #[test] fn warm_g()  { let _ = testing::check(7 == 7, "g") }
+#[cfg(test)] #[test] fn warm_h()  { let _ = testing::check(8 == 8, "h") }
+#[cfg(test)] #[test] fn warm_i()  { let _ = testing::check(9 == 9, "i") }
+#[cfg(test)] #[test] fn warm_j()  { let _ = testing::check(10 == 10, "j") }
+#[cfg(test)] #[test] fn warm_k()  { let _ = testing::check(11 == 11, "k") }
+#[cfg(test)] #[test] fn warm_l()  { let _ = testing::check(12 == 12, "l") }
+#[cfg(test)] #[test] fn warm_m()  { let _ = testing::check(13 == 13, "m") }
+#[cfg(test)] #[test] fn warm_n()  { let _ = testing::check(14 == 14, "n") }
 
 #[cfg(test)]
 #[test]
 fn after_jit_array_iteration_works() {
     let raw = "[{\"role\":\"user\",\"content\":\"hi\"},{\"role\":\"assistant\",\"content\":\"there\"},{\"role\":\"user\",\"content\":\"again\"}]"
     let n = super::count_user_messages(&raw)
-    testing::check_eq(&n, &2, "two user messages survive iteration")
+    let _ = testing::check_eq(&n, &2, "two user messages survive iteration")
 }
 
 fn main() {}
@@ -1574,7 +1574,7 @@ fn gos_test_discovers_tests_in_cross_referencing_files() {
                  \x20   use std::testing\n\
                  \x20   #[test]\n\
                  \x20   fn total_uses_sibling() {\n\
-                 \x20       testing::check_eq(&super::total(), &42, \"40 + 2\")\n\
+                 \x20       let _ = testing::check_eq(&super::total(), &42, \"40 + 2\")\n\
                  \x20   }\n\
                  }\n",
             ),

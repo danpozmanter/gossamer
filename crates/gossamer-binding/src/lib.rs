@@ -51,14 +51,15 @@ pub use gossamer_binding_macros::{GosStruct, gos_blocking, gos_module, gos_opaqu
 /// binding records this constant via the `__GOS_BINDING_ABI_VERSION`
 /// static the runtime sniffs at startup.
 ///
-/// ABI v1.0 (this release) freezes the wire shapes documented in
+/// ABI v2.0 freezes the legacy wire prefix and requires runtime-created
+/// ownership carriers for allocation-backed values such as `GosVec`.
 /// `ABI_0_4.md`: `GosVec`, `GosVariant`, `GosVariantValue`,
 /// `GosTuple`, `GosBytes`, `BindingGosMap`, `GosDynVariant`,
 /// `GosCallback`, `GosStruct`, plus the `gos_binding_<...>` symbol
 /// scheme. Minor bumps within v1 add new wire shapes or new
 /// `BindingAbi` impls; they do NOT reorder existing fields. Major
 /// bumps (v2) break compatibility.
-pub const ABI_VERSION: (u8, u8) = (1, 0);
+pub const ABI_VERSION: (u8, u8) = (2, 0);
 
 /// Linkage-anchored marker so the runtime can verify the binding's
 /// ABI version at load time. The runtime probes for the symbol

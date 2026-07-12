@@ -15,9 +15,10 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
+use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
 use std::ffi::CStr;
 use std::os::raw::c_char;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use super::*;
 
@@ -30,7 +31,58 @@ use super::*;
 // payload; it is nul-terminated so C code can `%s`-print it. We
 // track length separately by scanning for the nul byte in the C
 // ABI; users that want O(1) length should use the GosStr header
-// helpers (future). For L2 the single-owner story is enough.
+// helpers (future). The ABI pointer remains the first content byte, but every
+// runtime string now has an explicit carrier immediately before its legacy
+// header.  The carrier is selected by the pointer's fixed low-bit shape before
+// any backwards read, so public C-ABI helpers never probe a foreign C string.
+
+/// ABI-versioned ownership carrier preceding every Gossamer string header.
+/// The legacy `[rc, cap, len, tag]` suffix stays immediately before the C
+/// string body, preserving all native-code offsets.
+#[repr(C)]
+struct StringOwner {
+    abi_version: u16,
+    kind: u16,
+    destructor: u32,
+    generation: u64,
+}
+
+const STRING_OWNER_VERSION: u16 = 1;
+const STRING_OWNER_KIND: u16 = 2;
+const STRING_DTOR_HEAP: u32 = 1;
+const STRING_DTOR_REGION: u32 = 2;
+const STRING_DTOR_STATIC: u32 = 3;
+const STRING_OWNER_BYTES: usize = std::mem::size_of::<StringOwner>();
+const STRING_LEGACY_HEADER_BYTES: usize = 13;
+const STRING_BODY_OFFSET: usize = STRING_OWNER_BYTES + STRING_LEGACY_HEADER_BYTES;
+const STRING_BODY_TAG: usize = STRING_BODY_OFFSET & 7;
+static NEXT_STRING_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+const _: () = assert!(STRING_OWNER_BYTES == 16);
+const _: () = assert!(STRING_BODY_TAG == 5);
+
+#[inline]
+fn str_owner(s: *const c_char) -> Option<&'static StringOwner> {
+    if s.is_null() || (s as usize & 7) != STRING_BODY_TAG {
+        return None;
+    }
+    // The low-bit shape is assigned only by the three carrier layouts below;
+    // it is checked before the backwards offset, so ordinary foreign C
+    // strings (allocator-aligned bodies) stay borrowed and untouched.
+    let owner = unsafe { &*s.cast::<u8>().sub(STRING_BODY_OFFSET).cast::<StringOwner>() };
+    (owner.abi_version == STRING_OWNER_VERSION
+        && owner.kind == STRING_OWNER_KIND
+        && matches!(
+            owner.destructor,
+            STRING_DTOR_HEAP | STRING_DTOR_REGION | STRING_DTOR_STATIC
+        ))
+    .then_some(owner)
+}
+
+#[inline]
+fn managed_string_owner(s: *const c_char) -> Option<&'static StringOwner> {
+    str_owner(s).filter(|owner| owner.destructor == STRING_DTOR_HEAP)
+}
 
 pub(crate) unsafe fn c_str_len(s: *const c_char) -> usize {
     if s.is_null() {
@@ -58,14 +110,47 @@ pub(crate) unsafe fn gos_str_key_bytes<'a>(s: *const c_char) -> &'a [u8] {
     unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) }
 }
 
-/// Allocator-provenance tag written 1 byte BEFORE every cstring
-/// returned by `alloc_cstring`. `gos_rt_str_free` reads this byte
-/// and refuses to reclaim anything whose prefix does not match,
-/// turning "free a foreign pointer" from a heap-corruption silent
-/// crash into a one-line stderr leak. Bump the value when the
-/// allocator layout changes so older binaries' frees don't
-/// collide with the new shape.
-const STR_ALLOC_TAG: u8 = 0xA9;
+/// Returns the byte length of a compiler-typed Gossamer string without the
+/// allocation-registry lookup used by raw C ABI entry points.
+///
+/// Generated code only passes values of the language's `String` type here, so
+/// the byte immediately before the payload is always readable: heap builders,
+/// static literals, and region strings carry a length header; foreign strings
+/// are not part of this internal contract. Keeping this path separate from
+/// [`str_header_len`] preserves the defensive registry check for APIs that can
+/// genuinely receive arbitrary C pointers.
+#[inline]
+unsafe fn typed_str_len(s: *const c_char) -> usize {
+    if s.is_null() {
+        return 0;
+    }
+    if str_owner(s).is_none() {
+        return unsafe { c_str_len(s) };
+    }
+    let tag = unsafe { *s.cast::<u8>().sub(1) };
+    if matches!(tag, STR_BUILDER_TAG | STR_STATIC_TAG | STR_REGION_TAG) {
+        let p = unsafe { s.cast::<u8>().sub(5) };
+        return u32::from_le_bytes(unsafe { [*p, *p.add(1), *p.add(2), *p.add(3)] }) as usize;
+    }
+    unsafe { c_str_len(s) }
+}
+
+/// Borrows bytes from a compiler-typed Gossamer string. See
+/// [`typed_str_len`] for why this does not consult the allocation registry.
+#[inline]
+unsafe fn typed_str_bytes<'a>(s: *const c_char) -> &'a [u8] {
+    if s.is_null() {
+        return &[];
+    }
+    let len = unsafe { typed_str_len(s) };
+    unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) }
+}
+
+/// Tests the private builder tag on a compiler-typed string.
+#[inline]
+unsafe fn is_typed_builder(s: *const c_char) -> bool {
+    managed_string_owner(s).is_some() && unsafe { *s.cast::<u8>().sub(1) == STR_BUILDER_TAG }
+}
 
 /// Tag for growable strings allocated by `alloc_growable`.
 /// Layout: `[cap:u32 LE][len:u32 LE][tag=0xAB][content(cap bytes)][NUL]`
@@ -84,11 +169,10 @@ const STR_BUILDER_TAG: u8 = 0xAB;
 /// collides with a real count.
 pub(crate) const STR_SHARED: u32 = 1 << 31;
 
-/// Tag for static string literals emitted into rodata by codegen with a
-/// length-carrying header `[len:u32 LE][tag=0xA8][content][NUL]` (body at
-/// base+5). Like the builder layout, the length is at `ptr[-5..-1]`, giving
-/// O(1) `gos_rt_str_len`; the distinct tag tells `gos_rt_str_free` to leak
-/// (never `free` rodata).
+/// Tag for static string literals emitted into compiler-owned rodata.
+/// `is_gos_string` uses this only on values already known by typed runtime RC
+/// metadata to be Gossamer values; public raw-string entry points never probe
+/// this prefix.
 const STR_STATIC_TAG: u8 = 0xA8;
 
 /// Tag for growable strings whose backing bytes live in an arena region.
@@ -97,24 +181,23 @@ const STR_STATIC_TAG: u8 = 0xA8;
 /// freed wholesale at `arena_pop`, so `gos_rt_str_free` skips them.
 const STR_REGION_TAG: u8 = 0xAA;
 
-/// O(1) byte length for strings carrying a length header (builder + static
-/// layouts both store `len:u32` at `ptr[-5]`). Returns `None` for foreign /
-/// untagged pointers, where the caller must fall back to `strlen`. Reading
-/// `ptr[-5..-1]` and `ptr[-1]` on a foreign pointer is the same probabilistic
-/// prefix probe `gos_rt_str_free` already relies on.
+#[inline]
+fn is_managed_string(s: *const c_char) -> bool {
+    managed_string_owner(s).is_some() && unsafe { *s.cast::<u8>().sub(1) == STR_BUILDER_TAG }
+}
+
+/// O(1) byte length for a compiler-typed Gossamer string. Returns `None` for a
+/// foreign/untagged pointer, where callers fall back to `strlen`.
 #[inline]
 pub(crate) unsafe fn str_header_len(s: *const c_char) -> Option<usize> {
-    if s.is_null() {
-        return Some(0);
-    }
+    str_owner(s)?;
     let tag = unsafe { *s.cast::<u8>().sub(1) };
-    if tag == STR_BUILDER_TAG || tag == STR_STATIC_TAG || tag == STR_REGION_TAG {
-        let p = unsafe { s.cast::<u8>().sub(5) };
-        let len = u32::from_le_bytes(unsafe { [*p, *p.add(1), *p.add(2), *p.add(3)] });
-        Some(len as usize)
-    } else {
-        None
+    if !matches!(tag, STR_BUILDER_TAG | STR_STATIC_TAG | STR_REGION_TAG) {
+        return None;
     }
+    let p = unsafe { s.cast::<u8>().sub(5) };
+    let len = u32::from_le_bytes(unsafe { [*p, *p.add(1), *p.add(2), *p.add(3)] });
+    Some(len as usize)
 }
 
 /// Copies `n` non-overlapping bytes from `src` to `dst`, keeping short copies
@@ -221,25 +304,31 @@ where
         );
         std::process::abort();
     }
-    // rc(4) + cap(4) + len(4) + tag(1) + content(cap) + NUL(1) = cap + 14.
+    // owner(16) + rc(4) + cap(4) + len(4) + tag(1) + content(cap) + NUL(1).
     // Refcount at the FRONT keeps cap(-9)/len(-5)/tag(-1) offsets unchanged.
-    let total = 4 + 4 + 4 + 1 + cap + 1;
+    let total = STRING_BODY_OFFSET + cap + 1;
     // Inside an arena region, allocate the bytes from the region (freed
-    // wholesale at pop; `gos_rt_str_free` skips the region tag). Else a
-    // boxed slice on the global allocator.
+    // wholesale at pop; `gos_rt_str_free` skips the region tag). Else use an
+    // explicitly 8-byte-aligned global allocation. The payload begins at
+    // offset 29; this makes it reliably odd, which is part of the C ABI's
+    // tagged-enum/RC-pointer discriminator. `Box<[u8]>` is only byte-aligned
+    // by contract and can make that payload even on a conforming allocator.
     let region_base = crate::c_abi::rc::region_alloc_bytes(total);
-    // `zero_tail` is set for the boxed branch, which allocates uninitialised:
+    // `zero_tail` is set for the global branch, which allocates uninitialised:
     // the header, content, and trailing zero region are all written below
     // before the buffer is read or freed, so the whole-allocation `vec![0u8;
     // total]` memset is unnecessary. Only the bytes after the content must be
     // zero, so `strlen` stops one byte past the content; region bytes arrive
     // pre-zeroed and need no tail fill.
     let (base, tag, zero_tail) = if region_base.is_null() {
-        // Uninitialised heap buffer; the header, content, and trailing zero
-        // region written below cover all `total` bytes before any read. Frees
-        // reclaim it as a `Box<[u8]>` of the same layout.
-        let buf: Box<[std::mem::MaybeUninit<u8>]> = Box::new_uninit_slice(total);
-        (Box::into_raw(buf).cast::<u8>(), STR_BUILDER_TAG, true)
+        let layout = Layout::from_size_align(total, 8).expect("string layout is valid");
+        // SAFETY: `layout` has non-zero size and a power-of-two alignment.
+        // The matching `dealloc` below reconstructs the exact same layout.
+        let base = unsafe { alloc(layout) };
+        if base.is_null() {
+            handle_alloc_error(layout);
+        }
+        (base, STR_BUILDER_TAG, true)
     } else {
         (region_base, STR_REGION_TAG, false)
     };
@@ -247,11 +336,23 @@ where
     // trailing zero region are initialised here; `fill` initialises the content
     // prefix promised by its caller.
     unsafe {
-        std::ptr::copy_nonoverlapping(1u32.to_le_bytes().as_ptr(), base, 4);
-        std::ptr::copy_nonoverlapping((cap as u32).to_le_bytes().as_ptr(), base.add(4), 4);
-        std::ptr::copy_nonoverlapping((content_len as u32).to_le_bytes().as_ptr(), base.add(8), 4);
-        *base.add(12) = tag;
-        let content = base.add(13);
+        let owner = base.cast::<StringOwner>();
+        owner.write(StringOwner {
+            abi_version: STRING_OWNER_VERSION,
+            kind: STRING_OWNER_KIND,
+            destructor: if tag == STR_REGION_TAG {
+                STRING_DTOR_REGION
+            } else {
+                STRING_DTOR_HEAP
+            },
+            generation: NEXT_STRING_GENERATION.fetch_add(1, Ordering::Relaxed),
+        });
+        let hdr = base.add(STRING_OWNER_BYTES);
+        std::ptr::copy_nonoverlapping(1u32.to_le_bytes().as_ptr(), hdr, 4);
+        std::ptr::copy_nonoverlapping((cap as u32).to_le_bytes().as_ptr(), hdr.add(4), 4);
+        std::ptr::copy_nonoverlapping((content_len as u32).to_le_bytes().as_ptr(), hdr.add(8), 4);
+        *hdr.add(12) = tag;
+        let content = base.add(STRING_BODY_OFFSET);
         fill(content);
         if zero_tail {
             // Zero the spare capacity and NUL terminator (`cap - content_len +
@@ -270,95 +371,74 @@ where
     }
 }
 
-/// Reclaims a c-string previously returned by [`alloc_cstring`].
-/// Reads the allocator-provenance tag at `s[-1]` and reconstructs
-/// the original `Box<[u8]>` covering `tag(1) + content(strlen) +
-/// NUL(1)`. The cleanup pass emits a call to this helper at every
+/// Reclaims a live heap c-string previously returned by [`alloc_cstring`].
+/// The cleanup pass emits a call to this helper at every
 /// body return for a non-escaping String produced by a known
 /// String allocator (e.g. `gos_rt_stream_read_to_string`); the
 /// escape analyser's non-capturing-callee whitelist ensures only
 /// owning bindings reach this path so the drop never observes an
 /// aliased pointer.
 ///
-/// SAFETY: caller guarantees that `s` was allocated by
-/// `alloc_cstring` (so the byte at offset `-1` is `STR_ALLOC_TAG`)
-/// and that no other live pointer aliases it. If the prefix byte
-/// does not match, the call leaks the allocation rather than
-/// corrupting the allocator's free list.
+/// SAFETY: caller guarantees that `s` remains a valid C string for this call
+/// and that it owns one live runtime reference. Foreign, static, and
+/// region-backed strings are ignored without probing a private prefix. As with
+/// every raw-pointer ABI, a stale pointer whose address has been reused cannot
+/// be distinguished without a generation-bearing carrier type.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_free(s: *mut c_char) {
     ffi_entry!((), {
         if s.is_null() {
             return;
         }
-        // Tag check at offset -1. A mismatch means the caller handed
-        // us a cstring that did NOT come from `alloc_cstring` (foreign
-        // allocation, libc-owned argv string, or a static literal).
-        // Reclaiming such a pointer with `Box::from_raw` corrupts the
-        // global allocator's free list - leak instead.
-        let tag_ptr = unsafe { s.cast::<u8>().sub(1) };
-        let tag = unsafe { *tag_ptr };
-        if tag == STR_REGION_TAG {
-            // Region-allocated: freed wholesale at arena_pop, never here.
+        if !is_managed_string(s) {
             return;
         }
-        if tag == STR_ALLOC_TAG {
-            // Fixed layout: [tag(1)][content][NUL(1)]
-            let content_len = unsafe { c_str_len(s) };
-            let total = 1 + content_len + 1;
-            let slice = std::ptr::slice_from_raw_parts_mut(tag_ptr, total);
-            drop(unsafe { Box::from_raw(slice) });
-        } else if tag == STR_BUILDER_TAG {
-            // Refcounted: [rc:u32][cap:u32][len:u32][tag(1)][content][NUL].
-            // Decrement; reclaim only at zero.
-            let hdr = unsafe { s.cast::<u8>().sub(13) };
-            let rc = u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] });
-            if rc & STR_SHARED != 0 {
-                // Goroutine-shared: atomic decrement of the low-31-bit count.
-                let cell = unsafe { AtomicU32::from_ptr(hdr.cast::<u32>()) };
-                let prev = cell.fetch_sub(1, Ordering::Release);
-                if prev & !STR_SHARED != 1 {
-                    return;
-                }
-                // Count reached zero: synchronize with the other goroutines'
-                // releases before reclaiming, then fall through to free.
-                std::sync::atomic::fence(Ordering::Acquire);
-            } else if rc > 1 {
-                unsafe {
-                    std::ptr::copy_nonoverlapping((rc - 1).to_le_bytes().as_ptr(), hdr, 4);
-                }
+        // Refcounted carrier: [owner][rc:u32][cap:u32][len:u32][tag][content][NUL].
+        // Carrier validation above establishes that the legacy suffix belongs
+        // to a live runtime allocation.
+        let hdr = unsafe { s.cast::<u8>().sub(13) };
+        let rc = u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] });
+        if rc & STR_SHARED != 0 {
+            let cell = unsafe { AtomicU32::from_ptr(hdr.cast::<u32>()) };
+            let prev = cell.fetch_sub(1, Ordering::Release);
+            if prev & !STR_SHARED != 1 {
                 return;
             }
-            let cap =
-                u32::from_le_bytes(unsafe { [*hdr.add(4), *hdr.add(5), *hdr.add(6), *hdr.add(7)] })
-                    as usize;
-            let total = 4 + 4 + 4 + 1 + cap + 1;
-            let slice = std::ptr::slice_from_raw_parts_mut(hdr, total);
-            drop(unsafe { Box::from_raw(slice) });
-            crate::c_abi::ledger::str_dec();
-        } else if tag == STR_STATIC_TAG {
-            // Static rodata literal - never freed.
-        } else {
-            eprintln!(
-                "gos_rt_str_free: allocator tag mismatch (got 0x{tag:02x}, \
-             expected 0x{STR_ALLOC_TAG:02x}) - refusing to free"
-            );
+            std::sync::atomic::fence(Ordering::Acquire);
+        } else if rc > 1 {
+            unsafe {
+                std::ptr::copy_nonoverlapping((rc - 1).to_le_bytes().as_ptr(), hdr, 4);
+            }
+            return;
         }
+        let cap =
+            u32::from_le_bytes(unsafe { [*hdr.add(4), *hdr.add(5), *hdr.add(6), *hdr.add(7)] })
+                as usize;
+        let total = STRING_BODY_OFFSET + cap + 1;
+        let layout = Layout::from_size_align(total, 8).expect("string layout is valid");
+        // SAFETY: builder allocation uses this exact layout, and this is the
+        // last strong reference after the count logic above. The carrier owns
+        // the allocation base; `hdr` is only its legacy suffix.
+        unsafe { dealloc(s.cast::<u8>().sub(STRING_BODY_OFFSET), layout) };
+        crate::c_abi::ledger::str_dec();
     });
 }
 
-/// True when `s` is a Gossamer-allocated string (tag byte at offset -1 in
-/// `0xA8..=0xAB`). An RC object's byte at -1 is its (canonical) `meta` high
-/// byte = `0x00`, so the ranges never collide - the RC retain/release dispatch
-/// uses this to route strings to the string allocator.
+/// True when `s` is a string value inside a compiler-typed Gossamer object.
+///
+/// SAFETY: unlike public raw C-string entry points, this internal RC dispatch
+/// helper may only receive a pointer whose surrounding typed metadata already
+/// establishes it as a valid Gossamer value. Static and region strings have no
+/// registry entry, so their compiler-owned tag is read here to route cleanup
+/// away from the RC header path. Do not use this to validate a foreign pointer.
 #[inline]
 pub unsafe fn is_gos_string(s: *const c_char) -> bool {
-    !s.is_null() && matches!(unsafe { *s.cast::<u8>().sub(1) }, 0xA8..=0xAB)
+    str_owner(s).is_some()
 }
 
 /// Increment a heap (`STR_BUILDER_TAG`) string's refcount; no-op otherwise.
 pub(crate) unsafe fn gos_rt_str_retain(s: *const c_char) {
-    if s.is_null() || unsafe { *s.cast::<u8>().sub(1) } != STR_BUILDER_TAG {
+    if !is_managed_string(s) {
         return;
     }
     let hdr = unsafe { s.cast::<u8>().sub(13) };
@@ -385,7 +465,7 @@ pub(crate) unsafe fn gos_rt_str_retain(s: *const c_char) {
 /// region / fixed `STR_ALLOC` strings carry no refcount). Called from
 /// `gos_rt_rc_mark_shared` when a string escapes to another goroutine.
 pub(crate) unsafe fn gos_rt_str_mark_shared(s: *const c_char) {
-    if s.is_null() || unsafe { *s.cast::<u8>().sub(1) } != STR_BUILDER_TAG {
+    if !is_managed_string(s) {
         return;
     }
     let hdr = unsafe { s.cast::<u8>().sub(13) };
@@ -394,7 +474,7 @@ pub(crate) unsafe fn gos_rt_str_mark_shared(s: *const c_char) {
 }
 
 /// Allocate an owned, NUL-terminated heap string holding `s`'s bytes (the
-/// `STR_ALLOC_TAG` allocator shape).
+/// growable runtime-string allocator shape).
 pub fn alloc_cstring(s: &[u8]) -> *mut c_char {
     alloc_cstring_from_slices(&[s])
 }
@@ -408,8 +488,9 @@ pub fn alloc_cstring(s: &[u8]) -> *mut c_char {
 /// Layout: one allocator-tag byte, then the joined content bytes,
 /// then NUL. The returned pointer is 1 byte into the allocation
 /// (the content head) so `CStr::from_ptr` and `strlen` see a
-/// normal c-string; `gos_rt_str_free` reads `ptr[-1]` to verify
-/// the allocation originated here.
+/// normal c-string. Runtime ownership is recorded when the allocation is
+/// created, so release never needs to inspect memory before an arbitrary raw
+/// pointer.
 pub fn alloc_cstring_from_slices(parts: &[&[u8]]) -> *mut c_char {
     // Use the length-carrying builder layout (cap = content length) so the
     // result has its byte length stored at `ptr[-5]` for O(1)
@@ -658,24 +739,21 @@ pub unsafe extern "C" fn gos_rt_str_chars(s: *const c_char) -> *mut GosVec {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_byte_at(s: *const c_char, i: i64) -> i64 {
-    ffi_entry!(-1, {
-        // The read is bounded by the string's byte length so any index
-        // outside `[0, len)` returns 0 without touching memory past the
-        // content. `gos_rt_str_len` is O(1) for header-carrying strings
-        // (the length is stored at `ptr[-5]`) and falls back to `strlen`
-        // for bare c-strings.
-        if s.is_null() || i < 0 {
-            return 0;
-        }
-        let len = unsafe { gos_rt_str_len(s) };
-        if i >= len {
-            return 0;
-        }
-        // SAFETY: `i` lies in `[0, len)`, so the byte at offset `i` is
-        // within the string's content bytes.
-        let byte = unsafe { *s.cast::<u8>().add(i as usize) };
-        i64::from(byte)
-    })
+    // Bare (no `ffi_entry!`): byte access is a generated-code primitive, is
+    // panic-free, and commonly executes once per input byte. Wrapping each
+    // read in `catch_unwind` and an allocation-registry lock made parsers pay
+    // synchronization overhead in their innermost loop.
+    if s.is_null() || i < 0 {
+        return 0;
+    }
+    let len = unsafe { typed_str_len(s) };
+    if i as usize >= len {
+        return 0;
+    }
+    // SAFETY: `i` lies in `[0, len)`, so the byte at offset `i` is within the
+    // compiler-typed string's content bytes.
+    let byte = unsafe { *s.cast::<u8>().add(i as usize) };
+    i64::from(byte)
 }
 
 /// `os::read_dir(path) -> Result<Vec<String>, errors::Error>` -
@@ -813,11 +891,8 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
 
         if b_empty {
             // Nothing new to append; return a as-is when it is already owned.
-            if !a.is_null() {
-                let tag = unsafe { *a.cast::<u8>().sub(1) };
-                if tag == STR_BUILDER_TAG || tag == STR_ALLOC_TAG || tag == STR_REGION_TAG {
-                    return a.cast_mut();
-                }
+            if is_managed_string(a) {
+                return a.cast_mut();
             }
             let a_bytes: &[u8] = if a_empty {
                 &[]
@@ -827,49 +902,45 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
             return alloc_growable(&[a_bytes], 64.max(a_bytes.len()));
         }
 
-        let b_bytes: &[u8] = unsafe { gos_str_key_bytes(b) };
+        let b_bytes: &[u8] = unsafe { typed_str_bytes(b) };
         let len_b = b_bytes.len();
 
-        // Fast path: a is a growable string (heap or region) - try in-place
-        // append. Region builders share the layout; their backing bytes are
-        // writable until pop, and the realloc branch routes a fresh buffer
-        // through the region too (and `gos_rt_str_free(a)` no-ops on it).
-        if !a.is_null() {
-            let tag = unsafe { *a.cast::<u8>().sub(1) };
-            if tag == STR_BUILDER_TAG || tag == STR_REGION_TAG {
-                let hdr = unsafe { a.cast::<u8>().sub(13) };
-                let rc =
-                    u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] });
-                let cap = u32::from_le_bytes(unsafe {
-                    [*hdr.add(4), *hdr.add(5), *hdr.add(6), *hdr.add(7)]
-                }) as usize;
-                let len_a = u32::from_le_bytes(unsafe {
-                    [*hdr.add(8), *hdr.add(9), *hdr.add(10), *hdr.add(11)]
-                }) as usize;
-                let new_len = len_a + len_b;
-                // In-place only when sole owner (rc == 1): mutating a shared
-                // buffer would corrupt other holders.
-                if new_len <= cap && (rc == 1 || tag == STR_REGION_TAG) {
-                    unsafe {
-                        let dst = (a as *mut u8).add(len_a);
-                        std::ptr::copy_nonoverlapping(b_bytes.as_ptr(), dst, len_b);
-                        *dst.add(len_b) = 0;
-                        let hdr_mut = hdr.cast_mut();
-                        std::ptr::copy_nonoverlapping(
-                            (new_len as u32).to_le_bytes().as_ptr(),
-                            hdr_mut.add(8),
-                            4,
-                        );
-                    }
-                    return a.cast_mut();
+        // Fast path: a is a known live heap builder - try in-place append.
+        // Region/static pointers intentionally take the copying path: their
+        // ABI has no registration callback, so probing a prefix would make a
+        // foreign pointer unsafe to pass here.
+        if unsafe { is_typed_builder(a) } {
+            let hdr = unsafe { a.cast::<u8>().sub(13) };
+            let rc = u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] });
+            let cap =
+                u32::from_le_bytes(unsafe { [*hdr.add(4), *hdr.add(5), *hdr.add(6), *hdr.add(7)] })
+                    as usize;
+            let len_a = u32::from_le_bytes(unsafe {
+                [*hdr.add(8), *hdr.add(9), *hdr.add(10), *hdr.add(11)]
+            }) as usize;
+            let new_len = len_a + len_b;
+            // In-place only when sole owner (rc == 1): mutating a shared
+            // buffer would corrupt other holders.
+            if new_len <= cap && rc == 1 {
+                unsafe {
+                    let dst = (a as *mut u8).add(len_a);
+                    std::ptr::copy_nonoverlapping(b_bytes.as_ptr(), dst, len_b);
+                    *dst.add(len_b) = 0;
+                    let hdr_mut = hdr.cast_mut();
+                    std::ptr::copy_nonoverlapping(
+                        (new_len as u32).to_le_bytes().as_ptr(),
+                        hdr_mut.add(8),
+                        4,
+                    );
                 }
-                // Shared or capacity exhausted: copy, allocate fresh, drop one ref.
-                let a_content = unsafe { std::slice::from_raw_parts(a.cast::<u8>(), len_a) };
-                let new_cap = (new_len * 2).max(64);
-                let result = alloc_growable(&[a_content, b_bytes], new_cap);
-                unsafe { gos_rt_str_free(a.cast_mut()) };
-                return result;
+                return a.cast_mut();
             }
+            // Shared or capacity exhausted: copy, allocate fresh, drop one ref.
+            let a_content = unsafe { std::slice::from_raw_parts(a.cast::<u8>(), len_a) };
+            let new_cap = (new_len * 2).max(64);
+            let result = alloc_growable(&[a_content, b_bytes], new_cap);
+            unsafe { gos_rt_str_free(a.cast_mut()) };
+            return result;
         }
 
         // a is null, a literal, or a fixed heap string - allocate fresh growable.
@@ -881,11 +952,8 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
         let new_len = a_bytes.len() + len_b;
         let new_cap = (new_len * 2).max(64);
         let result = alloc_growable(&[a_bytes, b_bytes], new_cap);
-        if !a.is_null() {
-            let tag = unsafe { *a.cast::<u8>().sub(1) };
-            if tag == STR_ALLOC_TAG {
-                unsafe { gos_rt_str_free(a.cast_mut()) };
-            }
+        if is_managed_string(a) {
+            unsafe { gos_rt_str_free(a.cast_mut()) };
         }
         result
     }
@@ -908,39 +976,36 @@ pub unsafe extern "C" fn gos_rt_str_append_bytes(
     }
     let b_bytes: &[u8] = unsafe { std::slice::from_raw_parts(b, len_b) };
 
-    // Fast path mirrors concat_drop_a: in-place append when `acc` is a
-    // sole-owner growable builder (or a region builder) with spare capacity.
-    if !acc.is_null() {
-        let tag = unsafe { *acc.cast::<u8>().sub(1) };
-        if tag == STR_BUILDER_TAG || tag == STR_REGION_TAG {
-            let hdr = unsafe { acc.cast::<u8>().sub(13) };
-            let rc = u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] });
-            let cap =
-                u32::from_le_bytes(unsafe { [*hdr.add(4), *hdr.add(5), *hdr.add(6), *hdr.add(7)] })
-                    as usize;
-            let len_a = u32::from_le_bytes(unsafe {
-                [*hdr.add(8), *hdr.add(9), *hdr.add(10), *hdr.add(11)]
-            }) as usize;
-            let new_len = len_a + len_b;
-            if new_len <= cap && (rc == 1 || tag == STR_REGION_TAG) {
-                unsafe {
-                    let dst = (acc as *mut u8).add(len_a);
-                    std::ptr::copy_nonoverlapping(b_bytes.as_ptr(), dst, len_b);
-                    *dst.add(len_b) = 0;
-                    let hdr_mut = hdr.cast_mut();
-                    std::ptr::copy_nonoverlapping(
-                        (new_len as u32).to_le_bytes().as_ptr(),
-                        hdr_mut.add(8),
-                        4,
-                    );
-                }
-                return acc.cast_mut();
+    // Generated code supplies a typed String, so its private tag is directly
+    // available without a global allocation-registry lookup.
+    if unsafe { is_typed_builder(acc) } {
+        let hdr = unsafe { acc.cast::<u8>().sub(13) };
+        let rc = u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] });
+        let cap =
+            u32::from_le_bytes(unsafe { [*hdr.add(4), *hdr.add(5), *hdr.add(6), *hdr.add(7)] })
+                as usize;
+        let len_a =
+            u32::from_le_bytes(unsafe { [*hdr.add(8), *hdr.add(9), *hdr.add(10), *hdr.add(11)] })
+                as usize;
+        let new_len = len_a + len_b;
+        if new_len <= cap && rc == 1 {
+            unsafe {
+                let dst = (acc as *mut u8).add(len_a);
+                std::ptr::copy_nonoverlapping(b_bytes.as_ptr(), dst, len_b);
+                *dst.add(len_b) = 0;
+                let hdr_mut = hdr.cast_mut();
+                std::ptr::copy_nonoverlapping(
+                    (new_len as u32).to_le_bytes().as_ptr(),
+                    hdr_mut.add(8),
+                    4,
+                );
             }
-            let a_content = unsafe { std::slice::from_raw_parts(acc.cast::<u8>(), len_a) };
-            let result = alloc_growable(&[a_content, b_bytes], (new_len * 2).max(64));
-            unsafe { gos_rt_str_free(acc.cast_mut()) };
-            return result;
+            return acc.cast_mut();
         }
+        let a_content = unsafe { std::slice::from_raw_parts(acc.cast::<u8>(), len_a) };
+        let result = alloc_growable(&[a_content, b_bytes], (new_len * 2).max(64));
+        unsafe { gos_rt_str_free(acc.cast_mut()) };
+        return result;
     }
 
     let a_empty = acc.is_null() || unsafe { *acc.cast::<u8>() } == 0;
@@ -950,11 +1015,8 @@ pub unsafe extern "C" fn gos_rt_str_append_bytes(
         unsafe { gos_str_key_bytes(acc) }
     };
     let result = alloc_growable(&[a_bytes, b_bytes], ((a_bytes.len() + len_b) * 2).max(64));
-    if !acc.is_null() {
-        let tag = unsafe { *acc.cast::<u8>().sub(1) };
-        if tag == STR_ALLOC_TAG {
-            unsafe { gos_rt_str_free(acc.cast_mut()) };
-        }
+    if is_managed_string(acc) {
+        unsafe { gos_rt_str_free(acc.cast_mut()) };
     }
     result
 }

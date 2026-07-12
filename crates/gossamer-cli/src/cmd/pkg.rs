@@ -83,7 +83,9 @@ fn build_fetcher(
             }
         }
     }
-    Ok(gossamer_pkg::Fetcher::with_transport(options, transport).with_catalogue(catalogue))
+    Ok(gossamer_pkg::Fetcher::with_transport(options, transport)
+        .with_catalogue(catalogue)
+        .with_trusted_publisher_keys(manifest.trusted_publishers.clone()))
 }
 
 /// When `locked` is set, looks up the nearest `project.toml`,
@@ -460,16 +462,19 @@ pub(crate) fn publish(
     let source = fs::read_to_string(&path).map_err(|e| friendly_io_error(e, &path))?;
     let m = gossamer_pkg::Manifest::parse(&source)?;
     let registry_url = registry.unwrap_or_else(|| self::registry_url(&m));
-    let artifact =
-        gossamer_pkg::pack_crate(&project_root).map_err(|e| anyhow!("pack failed: {e}"))?;
+    let artifact = gossamer_pkg::pack_crate_streaming(&project_root)
+        .map_err(|e| anyhow!("pack failed: {e}"))?;
     println!(
         "publish: packed {bytes} byte(s), sha256 {sha}",
-        bytes = artifact.bytes.len(),
+        bytes = artifact.bytes,
         sha = artifact.sha256
     );
     let signature = match gossamer_pkg::signing::load_publish_key(m.project.id.as_str()) {
         Ok(key) => {
-            let sig = key.sign(&artifact.bytes);
+            // Publish protocol v2 signs the archive's immutable digest. The
+            // archive itself stays in its private spool and is copied to the
+            // registry directly by the reader-based transport.
+            let sig = key.sign(artifact.sha256.as_bytes());
             let pk = key.verifying_key().to_bytes();
             println!(
                 "publish: signed with ed25519 pubkey {pk}",
@@ -492,7 +497,7 @@ pub(crate) fn publish(
     let uploader = gossamer_pkg::publish::HttpUploader {
         transport: transport.as_ref(),
     };
-    let request = gossamer_pkg::publish::PublishRequest {
+    let request = gossamer_pkg::publish::StreamingPublishRequest {
         project_id: m.project.id.as_str(),
         version: &m.project.version.to_string(),
         artifact: &artifact,
@@ -500,7 +505,7 @@ pub(crate) fn publish(
         public_key: signature.map(|(_, k)| k),
         auth_token: token.as_deref(),
     };
-    gossamer_pkg::publish::upload_with(&uploader, &registry_url, &request)
+    gossamer_pkg::publish::upload_streaming_with(&uploader, &registry_url, &request)
         .map_err(|e| anyhow!("upload: {e}"))?;
     println!("publish: uploaded to {registry_url}");
     Ok(())

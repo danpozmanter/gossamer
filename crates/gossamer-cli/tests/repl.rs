@@ -212,7 +212,7 @@ fn repl_meta_help_preserves_base_banner() {
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout
-            .contains("meta-commands: %quit  %history  %bindings  %reset  %help  %dir"),
+            .contains("meta-commands: %quit  %history  %bindings  %reset  %help  %ls"),
         "bare %help should keep the existing banner; stdout: {}",
         out.stdout
     );
@@ -241,6 +241,53 @@ fn repl_meta_help_finds_stdlib_symbol() {
 }
 
 #[test]
+fn repl_meta_help_shows_a_function_signature_and_docs() {
+    let out = run_repl("%help strings::slice\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains(
+            "fn slice(text: String, start: i64, end: i64) -> Result<String, errors::Error>"
+        ),
+        "function help must include the complete public signature: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("Safe byte-range slice"),
+        "function help must retain documentation: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_help_uses_checker_exposed_stdlib_signatures() {
+    let out = run_repl("%help fs::read\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout
+            .contains("fn read(path: String) -> Result<Vec<u8>, io::Error>"),
+        "expected generated catalog signature for fs::read: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_help_distinguishes_same_leaf_function_names_by_type() {
+    let out = run_repl("%help count\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout
+            .contains("fn count(text: String, needle: String | char) -> i64"),
+        "strings count signature missing: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("fn count<T>(items: Vec<T>) -> i64"),
+        "iter count signature missing: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_meta_help_searches_regex() {
     let out = run_repl("%help /question_mark/\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -252,8 +299,8 @@ fn repl_meta_help_searches_regex() {
 }
 
 #[test]
-fn repl_meta_dir_lists_modules() {
-    let out = run_repl("%dir\n");
+fn repl_meta_ls_lists_modules() {
+    let out = run_repl("%ls\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("std::strings"),
@@ -268,8 +315,8 @@ fn repl_meta_dir_lists_modules() {
 }
 
 #[test]
-fn repl_meta_dir_lists_namespace_items() {
-    let out = run_repl("%dir strings\n");
+fn repl_meta_ls_lists_namespace_items() {
+    let out = run_repl("%ls strings\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("std::strings"),
@@ -284,17 +331,86 @@ fn repl_meta_dir_lists_namespace_items() {
 }
 
 #[test]
-fn repl_meta_dir_filters_regex() {
-    let out = run_repl("%dir /std::regex::replace_all/\n");
+fn repl_meta_ls_lists_the_complete_io_namespace() {
+    let out = run_repl("%ls io\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for item in ["stdin", "stdout", "stderr", "ReadAll", "Copy"] {
+        assert!(
+            out.stdout.contains(&format!("std::io::{item}")),
+            "%ls io omitted {item}; stdout: {}",
+            out.stdout
+        );
+    }
+}
+
+#[test]
+fn repl_meta_ls_filters_regex_to_modules_only() {
+    let out = run_repl("%ls /std::regex/\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("std::regex::replace_all"),
-        "expected regex-filtered item; stdout: {}",
+        out.stdout.contains("std::regex"),
+        "expected regex-filtered module; stdout: {}",
         out.stdout
     );
     assert!(
-        !out.stdout.contains("Out["),
-        "meta-command should not evaluate as an expression; stdout: {}",
+        !out.stdout.contains("replace_all"),
+        "%ls must not list function members; stdout: {}",
         out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_ls_rejects_functions() {
+    let out = run_repl("%ls strings::slice\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("%ls accepts module names only"),
+        "expected function rejection; stderr: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn repl_rejects_invalid_string_call_arguments_before_execution() {
+    let out = run_repl(
+        "let s = \"abcde\"\n\
+         s.slice(1)\n\
+         s.slice(1..3)\n\
+         s.slice(\"a\")\n\
+         s.slice(1, 3)\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("strings::slice` takes 2 argument(s) but 1 were supplied"),
+        "missing slice-end argument was not rejected: {}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("expected `i64`"),
+        "non-integer slice argument was not rejected: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("Out[5]: Ok(\"bc\")"),
+        "valid slice call should still run: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_rejects_unqualified_std_functions() {
+    let out = run_repl("count(\"abc\", 'a')\nstrings::count(\"abc\")\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("cannot find `count` in this scope"),
+        "unqualified std function must not dispatch ambiguously: {}",
+        out.stderr
+    );
+    assert!(
+        out.stderr
+            .contains("strings::count` takes 2 argument(s) but 1 were supplied"),
+        "qualified std function must still enforce arity: {}",
+        out.stderr
     );
 }

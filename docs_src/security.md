@@ -70,11 +70,15 @@ Email security@gossamer-lang.org with a PoC and a suggested
 severity. A `SECURITY.md` lands in the repository root alongside
 the 1.0.0 release.
 
-## CI automation (planned)
+## CI automation
 
-- `cargo deny` - license + advisory gate.
-- `cargo audit` - weekly vulnerability scan.
-- `cargo geiger` - unsafe-transitive usage snapshot.
-- `cargo fuzz` - targets for lexer, parser, HTTP parser,
-  manifest parser. Nightly run.
-- `miri` - pure-Rust phases (diagnostics, MIR, lint) every PR.
+- `cargo deny` and `cargo audit` run on pull requests and main.
+- The pull-request fuzz smoke covers lexer, parser, manifest, HTTP,
+  resolver, HIR, type, MIR, bytecode-compile, and bytecode-run targets;
+  longer bounded fuzz runs are scheduled weekly.
+- A pinned-nightly Miri suite runs weekly for the runtime, scheduler,
+  coroutine, resolver, type, and MIR crates. It is intentionally scoped to
+  code Miri can execute.
+- ASan runs on the runtime, interpreter, coroutine, MIR, and binding crates;
+  TSan covers the runtime, scheduler, and coroutine crates on main and on a
+  nightly schedule.

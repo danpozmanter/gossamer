@@ -63,7 +63,7 @@ mod select_closed_tests {
             v = rx.recv() => v,
             default => -1,
         }
-        testing::check(chosen == -1, "open+empty recv arm is not ready")
+        let _ = testing::check(chosen == -1, "open+empty recv arm is not ready")
     }
 
     #[test]
@@ -74,7 +74,7 @@ mod select_closed_tests {
             v = rx.recv() => v,
             default => -1,
         }
-        testing::check(chosen == 0, "closed recv arm yields the zero value")
+        let _ = testing::check(chosen == 0, "closed recv arm yields the zero value")
     }
 
     #[test]
@@ -90,7 +90,7 @@ mod select_closed_tests {
             v = rx.recv() => v,
             default => -1,
         }
-        testing::check_eq(&a, &42, "buffered value drains first")
-        testing::check_eq(&b, &0, "zero value once drained")
+        let _ = testing::check_eq(&a, &42, "buffered value drains first")
+        let _ = testing::check_eq(&b, &0, "zero value once drained")
     }
 }

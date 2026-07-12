@@ -115,9 +115,9 @@ mod tests {
     #[test]
     fn adder_captures_correctly() {
         let add10 = super::make_adder(10)
-        testing::check_eq(&add10(5), &15, "5+10=15")
-        testing::check_eq(&add10(0), &10, "0+10=10")
-        testing::check_eq(&add10(-3), &7, "-3+10=7")
+        let _ = testing::check_eq(&add10(5), &15, "5+10=15")
+        let _ = testing::check_eq(&add10(0), &10, "0+10=10")
+        let _ = testing::check_eq(&add10(-3), &7, "-3+10=7")
     }
 
     #[test]
@@ -126,23 +126,23 @@ mod tests {
         let mul2 = super::make_multiplier(2)
         let f = super::compose(add1, mul2)
         // f(x) = (x*2)+1
-        testing::check_eq(&f(3), &7, "(3*2)+1=7")
-        testing::check_eq(&f(0), &1, "(0*2)+1=1")
+        let _ = testing::check_eq(&f(3), &7, "(3*2)+1=7")
+        let _ = testing::check_eq(&f(0), &1, "(0*2)+1=1")
     }
 
     #[test]
     fn apply_n_repeated_application() {
         let add2 = super::make_adder(2)
-        testing::check_eq(&super::apply_n(add2, 0, 5), &10, "add2 x5 from 0 = 10")
+        let _ = testing::check_eq(&super::apply_n(add2, 0, 5), &10, "add2 x5 from 0 = 10")
     }
 
     #[test]
     fn reduce_sum_and_product() {
         let xs = [1, 2, 3, 4, 5]
         let s = super::reduce_fn(xs, 0, |a, b| a + b)
-        testing::check_eq(&s, &15, "1+2+3+4+5=15")
+        let _ = testing::check_eq(&s, &15, "1+2+3+4+5=15")
         let p = super::reduce_fn(xs, 1, |a, b| a * b)
-        testing::check_eq(&p, &120, "5!=120")
+        let _ = testing::check_eq(&p, &120, "5!=120")
     }
 
     #[test]
@@ -152,6 +152,6 @@ mod tests {
         ops.push(super::make_multiplier(2))
         let result = super::pipeline([4], ops)
         // (4+1)*2=10
-        testing::check_eq(&result[0], &10, "(4+1)*2=10")
+        let _ = testing::check_eq(&result[0], &10, "(4+1)*2=10")
     }
 }

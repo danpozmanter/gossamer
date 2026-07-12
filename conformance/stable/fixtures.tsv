@@ -1,0 +1,7 @@
+# Stable conformance fixtures. Each row is a source file and its exact stdout.
+# `stable_tier_conformance` runs every row on the bytecode VM (JIT disabled),
+# forced JIT, and LLVM AOT release executable. Keep this intentionally small:
+# it is an independent release contract, not a second copy of the exhaustive
+# example parity battery.
+language_core.gos	language_core.out
+collections_and_result.gos	collections_and_result.out

@@ -6,7 +6,8 @@
 #   Layout: <bins-root>/<artifact>/<target-triple>/<stem>
 #   (artifact = e.g. cross-bins-macos; produced by cross_build_fixtures).
 # An x86_64 binary runs natively on an x86_64 host; an aarch64 binary
-# runs under qemu-aarch64.
+# runs under qemu-aarch64. The canonical fixture list includes the independent
+# Stable all-tier contract fixtures as well as representative examples.
 set -eu
 
 BINS_ROOT="$1"

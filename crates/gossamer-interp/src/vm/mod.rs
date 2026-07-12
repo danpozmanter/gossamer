@@ -74,7 +74,8 @@
 //! bounds checks is the difference between a 60-second run
 //! and "slower than the VM was before typed opcodes landed".
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -110,14 +111,19 @@ pub struct Vm {
     /// Per-Vm overlay holding user-defined functions, consts, and
     /// statics. Lookups consult this first; on miss they fall back
     /// to [`Self::prelude`]. Behind `Arc` so spawned worker `Vm`s
-    /// share one immutable copy. Keys are `&'static str` interned
-    /// via [`intern_type_name`] / [`intern_qualified`].
+    /// share one immutable copy. Keys are program/load-owned canonical names;
+    /// dynamically assembled method spellings use [`Self::qualified_names`]
+    /// and are not inserted here.
     pub(crate) globals: Arc<rustc_hash::FxHashMap<&'static str, Global>>,
     /// Process-shared prelude of built-in callables - built once
     /// from a `OnceLock` and `Arc::clone`d into every Vm at
     /// construction. Pre-lazy: every `Vm::new` cloned all ~330
     /// entries into its own HashMap. Post-lazy: a refcount bump.
     pub(crate) prelude: Arc<rustc_hash::FxHashMap<&'static str, Global>>,
+    /// VM-owned qualified method-name cache. Dynamic `Type::method` keys are
+    /// released with the VM instead of being retained by a process/thread
+    /// global interner.
+    pub(crate) qualified_names: RefCell<Vec<QualifiedName>>,
     /// Frame pool: reused register-file storage handed out at
     /// `run()` entry and returned on exit. Eliminates the per-
     /// call `Vec<Value>` / `Vec<f64>` / `Vec<i64>` malloc storm
@@ -136,10 +142,17 @@ pub struct Vm {
     /// DefId.local -> native shape index for heap enums whose values
     /// may cross the JIT boundary as raw pointers.
     pub(crate) enum_shape_defs: RefCell<Option<Arc<std::collections::HashMap<u32, u32>>>>,
+    /// Strong handles for this program's native enum descriptors. The legacy
+    /// index lookup table holds only `Weak`s, so dropping this program releases
+    /// its descriptors instead of retaining them process-wide.
+    pub(crate) enum_shape_handles: RefCell<Option<Arc<Vec<Arc<crate::value::NativeEnumShape>>>>>,
     /// DefId.local -> native struct-shape index for all-scalar user
     /// structs whose values may cross the JIT boundary as a flat
     /// field-slot block pointer.
     pub(crate) struct_shape_defs: RefCell<Option<Arc<std::collections::HashMap<u32, u32>>>>,
+    /// Strong handles for this program's native scalar-struct descriptors.
+    pub(crate) struct_shape_handles:
+        RefCell<Option<Arc<Vec<Arc<crate::value::NativeStructShape>>>>>,
     /// Snapshot of the type context as it stood when MIR was
     /// lowered. Cranelift's `compile_to_jit` only needs `&TyCtxt`.
     /// `Arc` so spawned goroutines reuse the parent's snapshot
@@ -152,7 +165,14 @@ pub struct Vm {
     /// reaches native code without waiting on a call-count threshold it
     /// would never hit. Computed once at load, before `mir_bodies` may be
     /// released, so it survives the deferred compile that drops the bodies.
-    pub(crate) jit_eager_names: RefCell<std::collections::HashSet<String>>,
+    /// Immutable promotion metadata derived during load. Worker VMs share the
+    /// same allocation instead of re-walking MIR when a goroutine starts.
+    pub(crate) jit_eager_names: RefCell<Arc<std::collections::HashSet<String>>>,
+    /// Stable description of the optimized MIR/type snapshot used for JIT
+    /// promotion. It keys the per-thread weak artifact cache: raw Cranelift
+    /// handles never cross an OS-thread boundary, while overlapping VMs on one
+    /// execution thread can reuse the same immutable code pages.
+    pub(crate) jit_cache_key: RefCell<Option<Arc<str>>>,
     /// True once `load` proves the program has no goroutine spawn
     /// sites: then [`Self::try_compile_jit_lazy`] can free
     /// `mir_bodies` / `tcx_snapshot` the moment the compile lands,
@@ -184,6 +204,9 @@ pub struct Vm {
     /// this field drops at Vm teardown (and cleared between pooled worker
     /// tasks). See [`crate::jit_call::GraphCache`].
     pub(crate) jit_graph_cache: crate::jit_call::GraphCache,
+    /// Low-overhead accounting for the deferred JIT policy. The counters are
+    /// per VM and use `Cell` because a VM is owned by one execution thread.
+    pub(crate) jit_counters: JitCounters,
     /// Per-`Vm` cache state pinned in a never-shrinking arena. The
     /// hot dispatch loop reaches into `chunk_state_for(chunk)` once
     /// per call entry and threads `&ChunkState` through the
@@ -258,6 +281,16 @@ pub struct Vm {
     pub(crate) comptime_folds: RefCell<Vec<ComptimeFold>>,
 }
 
+/// One lazily materialised `Type::method` spelling owned by a [`Vm`]. A compact
+/// vector is intentional: method resolution only reaches this cache on an
+/// inline-cache miss, and typical programs have few distinct method pairs.
+/// It avoids allocating a temporary concatenated key on every probe.
+pub(crate) struct QualifiedName {
+    type_name: Box<str>,
+    method: Box<str>,
+    key: Arc<str>,
+}
+
 /// Per-`Vm` per-chunk dispatch caches. Pinned inside
 /// [`Vm::chunk_state_arena`]; references handed out by
 /// [`Vm::chunk_state_for`] are valid for the lifetime of the
@@ -276,6 +309,108 @@ pub(crate) enum JitResolve {
     None,
     /// Resolved: pre-computed dispatch data to call through.
     Some(std::rc::Rc<crate::jit_call::Prepared>),
+}
+
+/// A point-in-time view of deferred-JIT activity for one [`Vm`].
+///
+/// These counters make tier-up decisions inspectable without enabling trace
+/// output or changing execution. `resident_functions` is the number of native
+/// dispatch entries currently retained by the VM; it is zero when promotion
+/// was skipped or produced no VM-callable body.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct JitMetrics {
+    /// Number of hot-counter expirations observed by bytecode dispatch.
+    pub tier_up_requests: u64,
+    /// Requests deferred because their observed bytecode work was too small.
+    pub work_floor_deferrals: u64,
+    /// Times this VM actually started a Cranelift compilation.
+    pub compile_attempts: u64,
+    /// Successful compilations that installed at least one dispatch entry.
+    pub successful_compiles: u64,
+    /// Native functions currently reachable through this VM's dispatch map.
+    pub resident_functions: usize,
+    /// Finalised artifacts dropped immediately because no body was admissible.
+    pub discarded_artifacts: u64,
+    /// MIR/type snapshots released after a spawn-free compilation.
+    pub released_snapshots: u64,
+    /// Finalized native artifacts reused from this thread's immutable cache.
+    /// A reuse does not increment `compile_attempts` because Cranelift did no
+    /// work for this VM.
+    pub reused_artifacts: u64,
+    /// Compile attempts skipped because `GOS_JIT_MAX_RSS_MB` was set and the
+    /// process was already at or above that resident-memory cap.
+    pub ram_skipped_compiles: u64,
+    /// Last process RSS observed by the JIT tier-up gate, in bytes. `0` means
+    /// no RSS sample was available or no RAM gate was configured.
+    pub last_observed_rss_bytes: u64,
+}
+
+/// Interior counters backing [`JitMetrics`]. Kept separate from `JitState`
+/// so hot-counter observations do not take the JIT lock.
+#[derive(Default)]
+pub(crate) struct JitCounters {
+    tier_up_requests: Cell<u64>,
+    work_floor_deferrals: Cell<u64>,
+    compile_attempts: Cell<u64>,
+    successful_compiles: Cell<u64>,
+    discarded_artifacts: Cell<u64>,
+    released_snapshots: Cell<u64>,
+    reused_artifacts: Cell<u64>,
+    ram_skipped_compiles: Cell<u64>,
+    last_observed_rss_bytes: Cell<u64>,
+}
+
+impl JitCounters {
+    #[inline]
+    fn bump(counter: &Cell<u64>) {
+        counter.set(counter.get().saturating_add(1));
+    }
+
+    #[inline]
+    pub(crate) fn tier_up_requested(&self) {
+        Self::bump(&self.tier_up_requests);
+    }
+
+    #[inline]
+    pub(crate) fn work_floor_deferred(&self) {
+        Self::bump(&self.work_floor_deferrals);
+    }
+
+    #[inline]
+    pub(crate) fn compile_started(&self) {
+        Self::bump(&self.compile_attempts);
+    }
+
+    #[inline]
+    pub(crate) fn compile_succeeded(&self) {
+        Self::bump(&self.successful_compiles);
+    }
+
+    #[inline]
+    pub(crate) fn artifact_discarded(&self) {
+        Self::bump(&self.discarded_artifacts);
+    }
+
+    #[inline]
+    pub(crate) fn snapshots_released(&self) {
+        Self::bump(&self.released_snapshots);
+    }
+
+    #[inline]
+    pub(crate) fn artifact_reused(&self) {
+        Self::bump(&self.reused_artifacts);
+    }
+
+    #[inline]
+    pub(crate) fn ram_skipped_compile(&self, rss_bytes: u64) {
+        Self::bump(&self.ram_skipped_compiles);
+        self.last_observed_rss_bytes.set(rss_bytes);
+    }
+
+    #[inline]
+    pub(crate) fn observed_rss(&self, rss_bytes: u64) {
+        self.last_observed_rss_bytes.set(rss_bytes);
+    }
 }
 
 pub(crate) struct ChunkState {
@@ -367,7 +502,7 @@ impl ChunkState {
 pub(crate) struct JitState {
     /// Owns the finalised `JITModule`; dropped along with the Vm so
     /// the code pages outlive every reachable `JitFn` handle.
-    pub(crate) artifact: Option<JitArtifact>,
+    pub(crate) artifact: Option<Rc<JitArtifact>>,
     /// Map from chunk name to the JIT entry the deferred compile
     /// produced. Populated together with `artifact`. Skips entries
     /// for `main` (see vm.rs:343 comment) and any function the
@@ -394,6 +529,24 @@ pub(crate) struct JitState {
     /// reaches `Done` or `Failed` no thread retries.
     pub(crate) compiled: JitCompileState,
 }
+
+/// A weak, per-thread cache of finalized JIT modules. `JitArtifact` and its
+/// raw entry pointers are deliberately not `Send`/`Sync`; a thread-local cache
+/// gives overlapping VM executions reuse without pretending that Cranelift's
+/// module ownership is cross-thread safe. Weak entries do not retain code
+/// pages after the last VM using an artifact finishes.
+struct ThreadJitArtifact {
+    key: Arc<str>,
+    artifact: Weak<JitArtifact>,
+}
+
+thread_local! {
+    static THREAD_JIT_ARTIFACTS: RefCell<VecDeque<ThreadJitArtifact>> = const {
+        RefCell::new(VecDeque::new())
+    };
+}
+
+const THREAD_JIT_ARTIFACT_CACHE_CAP: usize = 8;
 
 /// Soft cap on the size of [`JitState::overrides`]. Picked an
 /// order of magnitude above any realistic single-program function
@@ -457,11 +610,14 @@ pub(crate) struct FramePool {
     pub(crate) peak_value: usize,
     pub(crate) peak_float: usize,
     pub(crate) peak_int: usize,
-    /// Count of consecutive `shrink_to` calls with sub-50%
-    /// utilisation across all three kinds. Once it crosses
-    /// [`HYSTERESIS_RUNS`], the next `shrink_to` reclaims excess
-    /// per-buffer capacity to `max(peak * 2, SHRINK_FLOOR)`.
-    pub(crate) low_util_runs: u32,
+    pub(crate) peak_args: usize,
+    /// Consecutive low-utilisation runs are intentionally tracked per
+    /// buffer class. A large integer frame must not keep unrelated value,
+    /// float, or call-argument buffers at its high-water mark.
+    pub(crate) low_value_runs: u32,
+    pub(crate) low_float_runs: u32,
+    pub(crate) low_int_runs: u32,
+    pub(crate) low_arg_runs: u32,
 }
 
 /// Threshold of consecutive low-utilisation `shrink_to` calls
@@ -487,7 +643,16 @@ impl FramePool {
         if n > self.peak_value {
             self.peak_value = n;
         }
-        let mut v = self.values.pop().unwrap_or_default();
+        let mut v = match self.values.pop() {
+            Some(v) => {
+                crate::profile::bump_pool_value_hit();
+                v
+            }
+            None => {
+                crate::profile::bump_pool_value_miss();
+                Vec::new()
+            }
+        };
         v.resize(n, Value::Void);
         v
     }
@@ -505,53 +670,62 @@ impl FramePool {
         if n > self.peak_float {
             self.peak_float = n;
         }
-        let mut v = self.floats.pop().unwrap_or_default();
-        v.reserve(n);
-        // SAFETY: `f64` is `Copy` with no `Drop`. We ensured
-        // capacity ≥ n; the bytes left behind in the backing
-        // buffer are valid `f64` patterns from the prior owner.
-        // The compiler emits a `LoadConstF64` or arithmetic-
-        // result write to every float reg before any read (the
-        // typed register allocator gives every result a fresh
-        // slot), so reading uninitialised garbage is never
-        // observable.
-        #[allow(clippy::uninit_vec)]
-        unsafe {
-            v.set_len(n);
-        }
+        let mut v = match self.floats.pop() {
+            Some(v) => {
+                crate::profile::bump_pool_float_hit();
+                v
+            }
+            None => {
+                crate::profile::bump_pool_float_miss();
+                Vec::new()
+            }
+        };
+        // A compiler bug must not make a typed register read uninitialized
+        // memory. Chunk validation proves write-before-read, but zero-fill
+        // keeps this boundary sound even if a future validator regression
+        // misses an opcode. The buffers retain their capacity across calls.
+        v.resize(n, 0.0);
         v
     }
     fn give_floats(&mut self, mut v: Vec<f64>) {
-        // No `Drop` to run; len-reset is just a u-word write,
-        // cheaper than `clear()`'s iteration.
-        unsafe {
-            v.set_len(0);
-        }
+        v.clear();
         self.floats.push(v);
     }
     fn take_ints(&mut self, n: usize) -> Vec<i64> {
         if n > self.peak_int {
             self.peak_int = n;
         }
-        let mut v = self.ints.pop().unwrap_or_default();
-        v.reserve(n);
-        // SAFETY: see `take_floats`. `i64` is `Copy` with no
-        // `Drop`; every int reg is written before read by the
-        // compile-time register allocator.
-        #[allow(clippy::uninit_vec)]
-        unsafe {
-            v.set_len(n);
-        }
+        let mut v = match self.ints.pop() {
+            Some(v) => {
+                crate::profile::bump_pool_int_hit();
+                v
+            }
+            None => {
+                crate::profile::bump_pool_int_miss();
+                Vec::new()
+            }
+        };
+        v.resize(n, 0);
         v
     }
     fn give_ints(&mut self, mut v: Vec<i64>) {
-        unsafe {
-            v.set_len(0);
-        }
+        v.clear();
         self.ints.push(v);
     }
     fn take_args(&mut self, capacity: usize) -> Vec<Value> {
-        let mut v = self.args.pop().unwrap_or_default();
+        if capacity > self.peak_args {
+            self.peak_args = capacity;
+        }
+        let mut v = match self.args.pop() {
+            Some(v) => {
+                crate::profile::bump_pool_arg_hit();
+                v
+            }
+            None => {
+                crate::profile::bump_pool_arg_miss();
+                Vec::new()
+            }
+        };
         // `clear()` drops any leftovers (paranoia - `give_args`
         // already empties), then reserve so the upcoming pushes
         // don't reallocate.
@@ -569,14 +743,12 @@ impl FramePool {
     /// goroutine task completes so a worker `Vm` does not ratchet
     /// to high-water and stay there for the rest of the program.
     ///
-    /// Also applies exponential hysteresis on each surviving
-    /// buffer's capacity: when several consecutive tasks have run
-    /// with sub-50% utilisation across every kind, surviving
-    /// buffers are shrunk to `max(peak * 2, SHRINK_FLOOR)`. Without
-    /// this, one large goroutine permanently fattens every
-    /// subsequent task on this worker - the per-buffer capacity
-    /// stays at the high-water mark even though the task that
-    /// needed it has long since returned.
+    /// Also applies exponential hysteresis independently to each surviving
+    /// buffer class. Once a class has been below 50% utilisation for several
+    /// consecutive tasks, its buffers are shrunk to
+    /// `max(peak * 2, SHRINK_FLOOR)`. This preserves reuse for a noisy mix
+    /// of tasks without letting one large task permanently raise the worker's
+    /// memory floor.
     fn shrink_to(&mut self, keep_per_kind: usize) {
         if self.values.len() > keep_per_kind {
             self.values.truncate(keep_per_kind);
@@ -594,46 +766,67 @@ impl FramePool {
         let cap_v = self.values.iter().map(Vec::capacity).max().unwrap_or(0);
         let cap_f = self.floats.iter().map(Vec::capacity).max().unwrap_or(0);
         let cap_i = self.ints.iter().map(Vec::capacity).max().unwrap_or(0);
-        let low_util = self.peak_value.saturating_mul(2) < cap_v
-            && self.peak_float.saturating_mul(2) < cap_f
-            && self.peak_int.saturating_mul(2) < cap_i;
-        if low_util {
-            self.low_util_runs = self.low_util_runs.saturating_add(1);
-        } else {
-            self.low_util_runs = 0;
-        }
-        if self.low_util_runs >= HYSTERESIS_RUNS {
-            let target_v = self.peak_value.saturating_mul(2).max(SHRINK_FLOOR);
-            let target_f = self.peak_float.saturating_mul(2).max(SHRINK_FLOOR);
-            let target_i = self.peak_int.saturating_mul(2).max(SHRINK_FLOOR);
+        let cap_a = self.args.iter().map(Vec::capacity).max().unwrap_or(0);
+        update_low_util_runs(&mut self.low_value_runs, self.peak_value, cap_v);
+        update_low_util_runs(&mut self.low_float_runs, self.peak_float, cap_f);
+        update_low_util_runs(&mut self.low_int_runs, self.peak_int, cap_i);
+        update_low_util_runs(&mut self.low_arg_runs, self.peak_args, cap_a);
+
+        if self.low_value_runs >= HYSTERESIS_RUNS {
+            let target = self.peak_value.saturating_mul(2).max(SHRINK_FLOOR);
             for buf in &mut self.values {
-                if buf.capacity() > target_v {
-                    buf.shrink_to(target_v);
+                if buf.capacity() > target {
+                    buf.shrink_to(target);
                 }
             }
+            self.low_value_runs = 0;
+        }
+        if self.low_float_runs >= HYSTERESIS_RUNS {
+            let target = self.peak_float.saturating_mul(2).max(SHRINK_FLOOR);
             for buf in &mut self.floats {
-                if buf.capacity() > target_f {
-                    buf.shrink_to(target_f);
+                if buf.capacity() > target {
+                    buf.shrink_to(target);
                 }
             }
+            self.low_float_runs = 0;
+        }
+        if self.low_int_runs >= HYSTERESIS_RUNS {
+            let target = self.peak_int.saturating_mul(2).max(SHRINK_FLOOR);
             for buf in &mut self.ints {
-                if buf.capacity() > target_i {
-                    buf.shrink_to(target_i);
+                if buf.capacity() > target {
+                    buf.shrink_to(target);
                 }
             }
-            self.low_util_runs = 0;
+            self.low_int_runs = 0;
+        }
+        if self.low_arg_runs >= HYSTERESIS_RUNS {
+            let target = self.peak_args.saturating_mul(2).max(SHRINK_FLOOR);
+            for buf in &mut self.args {
+                if buf.capacity() > target {
+                    buf.shrink_to(target);
+                }
+            }
+            self.low_arg_runs = 0;
         }
         self.peak_value = 0;
         self.peak_float = 0;
         self.peak_int = 0;
+        self.peak_args = 0;
 
-        // Free the trailing capacity that pop()/push() rounds up
-        // over time so `Vec` headers do not pin allocations
-        // larger than the steady-state high-water mark.
-        self.values.shrink_to_fit();
-        self.floats.shrink_to_fit();
-        self.ints.shrink_to_fit();
-        self.args.shrink_to_fit();
+        // The free-list headers themselves can grow when a deeply nested task
+        // completes. Keep modest headroom but release a pathological peak.
+        self.values.shrink_to(keep_per_kind.saturating_mul(2));
+        self.floats.shrink_to(keep_per_kind.saturating_mul(2));
+        self.ints.shrink_to(keep_per_kind.saturating_mul(2));
+        self.args.shrink_to(keep_per_kind.saturating_mul(2));
+    }
+}
+
+fn update_low_util_runs(runs: &mut u32, peak: usize, capacity: usize) {
+    if peak.saturating_mul(2) < capacity {
+        *runs = runs.saturating_add(1);
+    } else {
+        *runs = 0;
     }
 }
 
@@ -648,6 +841,12 @@ pub(crate) struct FrameGuard<'a> {
     pub(crate) registers: std::mem::ManuallyDrop<Vec<Value>>,
     pub(crate) floats: std::mem::ManuallyDrop<Vec<f64>>,
     pub(crate) ints: std::mem::ManuallyDrop<Vec<i64>>,
+    /// Set when the real register files were moved into a
+    /// [`run::SuspendedFrame`]. In that state the `ManuallyDrop` fields hold only
+    /// empty placeholders left by `std::mem::take`; returning those empty Vecs
+    /// to the pool poisons the LIFO free list and makes the callee reallocate
+    /// on every non-tail bytecode call.
+    pub(crate) suspended: bool,
 }
 
 impl<'a> FrameGuard<'a> {
@@ -665,12 +864,34 @@ impl<'a> FrameGuard<'a> {
             registers: std::mem::ManuallyDrop::new(registers),
             floats: std::mem::ManuallyDrop::new(floats),
             ints: std::mem::ManuallyDrop::new(ints),
+            suspended: false,
+        }
+    }
+
+    /// Re-wrap register files that were suspended across a direct bytecode
+    /// call. Resumed frames still return their buffers through the ordinary
+    /// per-VM pool on every normal exit.
+    fn from_parts(
+        pool: &'a RefCell<FramePool>,
+        registers: Vec<Value>,
+        floats: Vec<f64>,
+        ints: Vec<i64>,
+    ) -> Self {
+        Self {
+            pool,
+            registers: std::mem::ManuallyDrop::new(registers),
+            floats: std::mem::ManuallyDrop::new(floats),
+            ints: std::mem::ManuallyDrop::new(ints),
+            suspended: false,
         }
     }
 }
 
 impl Drop for FrameGuard<'_> {
     fn drop(&mut self) {
+        if self.suspended {
+            return;
+        }
         // SAFETY: `take` runs exactly once at construction and
         // `Drop` runs exactly once at end-of-scope; the inner
         // `ManuallyDrop`s are never observed empty by anyone.
@@ -713,24 +934,18 @@ pub(crate) enum Global {
 
 /// Maximum Gossamer call frames per goroutine before `StackOverflow`.
 ///
-/// Each Gossamer call adds one `apply()` + `run()` pair to the Rust call
-/// stack. `run()` is a 2 000-line match function; in debug builds the
-/// compiler keeps every arm's locals live simultaneously, making each
-/// pair cost ~160 KB of Rust stack. The default OS thread stack is 8 MB,
-/// leaving roughly 40 safe levels after process and CLI startup.
-///
-/// Debug builds use a conservative 40-frame cap (each VM frame holds
-/// several KB of `Value` slots in the register pool). Release builds
-/// have ~10× smaller frames in practice; the cap is raised to 512 so
-/// typical recursive shapes (mergesort over moderate inputs, parser
-/// combinators, recursive-descent traversals) run without hitting the
-/// limit. For
-/// deeply recursive programs use `gos build`, where the native codegen
-/// produces standard call instructions the OS can grow to handle.
-#[cfg(debug_assertions)]
-const MAX_CALL_DEPTH: usize = 40;
-#[cfg(not(debug_assertions))]
-const MAX_CALL_DEPTH: usize = 512;
+/// Direct named bytecode calls live in heap-owned VM frames, so they do not
+/// consume the Rust stack. A finite cap still bounds adversarial recursion's
+/// register-file memory and gives programs a deterministic `GX0008` rather
+/// than exhausting process memory.
+const MAX_CALL_DEPTH: usize = 4_096;
+
+/// Maximum logical tail frames retained for diagnostics in one trampoline
+/// chain. Tail calls reuse their physical VM frame, so [`MAX_CALL_DEPTH`]
+/// cannot bound an unbounded tail-recursive program. This remains above the
+/// 10,000-step tail-recursion regression while ensuring a malformed program
+/// reaches `GX0008` instead of spinning indefinitely.
+const MAX_TAIL_CALL_DEPTH: usize = 65_536;
 
 /// Native stack reserved for every OS thread that executes the
 /// bytecode VM - the main `gos-vm` thread and each goroutine worker.
@@ -759,21 +974,13 @@ impl Default for Vm {
     }
 }
 
-/// Runs [`crate::validate::validate_chunk`] in debug builds; no-op
-/// in release. Catches `compile_fn` regressions before they reach
-/// the unsafe dispatch loop in [`Vm::run`].
-#[cfg(debug_assertions)]
-fn debug_validate_chunk(chunk: &FnChunk) -> RuntimeResult<()> {
+/// Validates each immutable bytecode chunk before it reaches the unsafe
+/// dispatch loop in [`Vm::run`]. The O(bytecode) cost is paid once at load
+/// time, while a malformed chunk would otherwise turn a compiler regression
+/// into release-build undefined behavior.
+fn validate_chunk_for_execution(chunk: &FnChunk) -> RuntimeResult<()> {
     crate::validate::validate_chunk(chunk)
         .map_err(|e| RuntimeError::Type(format!("invalid bytecode for `{}`: {e}", chunk.name)))
-}
-
-/// Release-build stub - production execution trusts the unverified
-/// "compiler emits in-bounds indices" invariant for speed.
-#[cfg(not(debug_assertions))]
-#[inline]
-fn debug_validate_chunk(_chunk: &FnChunk) -> RuntimeResult<()> {
-    Ok(())
 }
 
 /// Recognises `fn name(p) { intrinsic_path(p) }` (a single
@@ -942,30 +1149,48 @@ fn index_get_consume(base: &mut Value, raw: i64) -> RuntimeResult<Value> {
     }
 }
 
-/// Builds the `TypeName::method` global-table key for a
-/// nominal receiver. Used as the fallback when the bare
-/// method-name lookup misses.
-fn qualified_key(receiver: &Value, method: &str) -> Option<&'static str> {
-    match receiver {
-        Value::Struct(inner) => Some(intern_qualified(inner.name.as_str(), method)),
-        Value::MutCell(cell) => {
-            let inner = cell.lock();
-            qualified_key(&inner, method)
+impl Vm {
+    /// Builds the `TypeName::method` global-table key for a nominal receiver.
+    /// Keys are VM-owned: a workload that creates many short-lived VMs no
+    /// longer turns distinct dynamic method spellings into permanent process
+    /// allocations.
+    fn qualified_key(&self, receiver: &Value, method: &str) -> Option<Arc<str>> {
+        match receiver {
+            Value::Struct(inner) => Some(self.intern_qualified(inner.name.as_str(), method)),
+            Value::MutCell(cell) => {
+                let inner = cell.lock();
+                self.qualified_key(&inner, method)
+            }
+            Value::Channel(_) => Some(self.intern_qualified("Channel", method)),
+            Value::String(_) => Some(self.intern_qualified("String", method)),
+            // `Vec`-receiver methods resolve by type so a bare name shared
+            // with another module's free function cannot override the builtin.
+            Value::Array(_) | Value::IntArray(_) | Value::FloatVec(_) | Value::FloatArray(_) => {
+                Some(self.intern_qualified("Vec", method))
+            }
+            _ => None,
         }
-        Value::Channel(_) => Some(intern_qualified("Channel", method)),
-        Value::String(_) => Some(intern_qualified("String", method)),
-        // `Vec`-receiver methods resolve by type so a bare name shared with
-        // another module's free function (`path::join` vs `strings::join`)
-        // or a same-named user free function (`fn first(xs)` calling
-        // `xs.first()`) dispatches to the builtin. Every array-shaped value -
-        // boxed `Array`, the scalar-flat `IntArray` / `FloatVec`, and the
-        // all-f64 `FloatArray` - is a `Vec`/slice receiver, so all four route
-        // through the `Vec::` key. Only names registered under `Vec::` reroute;
-        // the rest fall back to the bare lookup.
-        Value::Array(_) | Value::IntArray(_) | Value::FloatVec(_) | Value::FloatArray(_) => {
-            Some(intern_qualified("Vec", method))
+    }
+
+    fn intern_qualified(&self, type_name: &str, method: &str) -> Arc<str> {
+        let mut names = self.qualified_names.borrow_mut();
+        if let Some(entry) = names
+            .iter()
+            .find(|entry| entry.type_name.as_ref() == type_name && entry.method.as_ref() == method)
+        {
+            return Arc::clone(&entry.key);
         }
-        _ => None,
+        let mut key = String::with_capacity(type_name.len() + 2 + method.len());
+        key.push_str(type_name);
+        key.push_str("::");
+        key.push_str(method);
+        let key: Arc<str> = Arc::from(key);
+        names.push(QualifiedName {
+            type_name: type_name.into(),
+            method: method.into(),
+            key: Arc::clone(&key),
+        });
+        key
     }
 }
 
@@ -1025,7 +1250,12 @@ pub(crate) fn type_token(v: &Value) -> u64 {
 /// { call, .. })`. Mirrors `CPython` 3.11's specialisation of
 /// `LOAD_METHOD_NO_DICT` (where the resolved `__call__` is cached
 /// alongside the type-version guard).
-fn fill_cache_slot(token: u64, generation: u32, g: &Global) -> crate::bytecode::CacheSlot {
+fn fill_cache_slot(
+    token: u64,
+    generation: u32,
+    callee_name: Option<SmolStr>,
+    g: &Global,
+) -> crate::bytecode::CacheSlot {
     let builtin_fn = match g {
         Global::Value(Value::Builtin(inner)) => Some(inner.call),
         _ => None,
@@ -1036,6 +1266,7 @@ fn fill_cache_slot(token: u64, generation: u32, g: &Global) -> crate::bytecode::
     };
     crate::bytecode::CacheSlot {
         type_token: token,
+        callee_name,
         generation,
         builtin_fn,
         fn_chunk,
@@ -1051,58 +1282,12 @@ fn fill_cache_slot(token: u64, generation: u32, g: &Global) -> crate::bytecode::
 pub(crate) fn call_token(v: &Value) -> u64 {
     const TAG_NAMED: u64 = 1 << 56;
     match v {
-        Value::String(s) => {
-            // Intern once per program - the leaked `&'static str`
-            // is identity-stable across the run, so the cache hit
-            // path is one u64 compare.
-            let interned = intern_type_name(s);
-            TAG_NAMED | (interned.as_ptr() as u64 & 0x00FF_FFFF_FFFF_FFFF)
-        }
+        // Cache slots retain and compare the exact `SmolStr` spelling, so all
+        // named calls can share this class token without collisions or a
+        // process-global `&'static str` interner.
+        Value::String(_) => TAG_NAMED,
         _ => 0,
     }
-}
-
-/// Returns a `&'static str` for `name`, allocating only the first
-/// time a given byte sequence is seen on this thread. Used by
-/// [`type_token`] so receivers of "the same struct" produce the
-/// same token across `Value::clone` boundaries.
-fn intern_type_name(name: &str) -> &'static str {
-    use std::cell::RefCell;
-    thread_local! {
-        static TYPE_NAMES: RefCell<rustc_hash::FxHashSet<&'static str>> =
-            RefCell::new(rustc_hash::FxHashSet::default());
-    }
-    TYPE_NAMES.with(|cell| {
-        if let Some(&interned) = cell.borrow().get(name) {
-            return interned;
-        }
-        let interned: &'static str = Box::leak(name.to_string().into_boxed_str());
-        cell.borrow_mut().insert(interned);
-        interned
-    })
-}
-
-/// Returns the canonical `"<type>::<method>"` key, allocating only
-/// the first time a given (type, method) pair is seen on this
-/// thread.
-fn intern_qualified(type_name: &str, method: &str) -> &'static str {
-    use std::cell::RefCell;
-    thread_local! {
-        static CACHE: RefCell<rustc_hash::FxHashSet<&'static str>> =
-            RefCell::new(rustc_hash::FxHashSet::default());
-    }
-    let mut buf = String::with_capacity(type_name.len() + 2 + method.len());
-    buf.push_str(type_name);
-    buf.push_str("::");
-    buf.push_str(method);
-    CACHE.with(|cell| {
-        if let Some(&interned) = cell.borrow().get(buf.as_str()) {
-            return interned;
-        }
-        let interned: &'static str = Box::leak(buf.into_boxed_str());
-        cell.borrow_mut().insert(interned);
-        interned
-    })
 }
 
 /// Binary arithmetic that dispatches on operand kind. Ints use
@@ -1367,135 +1552,6 @@ fn has_jit_eligible_fn(program: &HirProgram) -> bool {
         }),
         _ => false,
     })
-}
-
-fn program_calls_collect_cycles(program: &HirProgram) -> bool {
-    program.items.iter().any(|item| match &item.kind {
-        HirItemKind::Fn(decl) => decl
-            .body
-            .as_ref()
-            .is_some_and(|body| hir_block_calls_collect_cycles(&body.block)),
-        HirItemKind::Const(k) => hir_expr_calls_collect_cycles(&k.value),
-        HirItemKind::Static(s) => hir_expr_calls_collect_cycles(&s.value),
-        _ => false,
-    })
-}
-
-fn hir_block_calls_collect_cycles(block: &gossamer_hir::HirBlock) -> bool {
-    block.stmts.iter().any(|stmt| match &stmt.kind {
-        gossamer_hir::HirStmtKind::Let { init, .. } => {
-            init.as_ref().is_some_and(hir_expr_calls_collect_cycles)
-        }
-        gossamer_hir::HirStmtKind::Expr { expr, .. }
-        | gossamer_hir::HirStmtKind::Defer(expr)
-        | gossamer_hir::HirStmtKind::Go(expr) => hir_expr_calls_collect_cycles(expr),
-        gossamer_hir::HirStmtKind::Item(item) => match &item.kind {
-            HirItemKind::Fn(decl) => decl
-                .body
-                .as_ref()
-                .is_some_and(|body| hir_block_calls_collect_cycles(&body.block)),
-            _ => false,
-        },
-    }) || block
-        .tail
-        .as_deref()
-        .is_some_and(hir_expr_calls_collect_cycles)
-}
-
-fn hir_expr_calls_collect_cycles(expr: &gossamer_hir::HirExpr) -> bool {
-    use gossamer_hir::HirExprKind as K;
-    match &expr.kind {
-        K::Call { callee, args } => {
-            let collect_call = matches!(
-                &callee.kind,
-                K::Path { segments, .. }
-                    if segments.last().is_some_and(|seg| seg.name == "collect_cycles")
-                        && (segments.len() == 1
-                            || segments
-                                .get(segments.len().saturating_sub(2))
-                                .is_some_and(|seg| seg.name == "runtime"))
-            );
-            collect_call
-                || hir_expr_calls_collect_cycles(callee)
-                || args.iter().any(hir_expr_calls_collect_cycles)
-        }
-        K::MethodCall { receiver, args, .. } => {
-            hir_expr_calls_collect_cycles(receiver)
-                || args.iter().any(hir_expr_calls_collect_cycles)
-        }
-        K::Field { receiver, .. } | K::TupleIndex { receiver, .. } => {
-            hir_expr_calls_collect_cycles(receiver)
-        }
-        K::Index { base, index } => {
-            hir_expr_calls_collect_cycles(base) || hir_expr_calls_collect_cycles(index)
-        }
-        K::Unary { operand, .. } | K::Cast { value: operand, .. } => {
-            hir_expr_calls_collect_cycles(operand)
-        }
-        K::Binary { lhs, rhs, .. } => {
-            hir_expr_calls_collect_cycles(lhs) || hir_expr_calls_collect_cycles(rhs)
-        }
-        K::Assign { place, value } => {
-            hir_expr_calls_collect_cycles(place) || hir_expr_calls_collect_cycles(value)
-        }
-        K::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            hir_expr_calls_collect_cycles(condition)
-                || hir_expr_calls_collect_cycles(then_branch)
-                || else_branch
-                    .as_deref()
-                    .is_some_and(hir_expr_calls_collect_cycles)
-        }
-        K::Match { scrutinee, arms } => {
-            hir_expr_calls_collect_cycles(scrutinee)
-                || arms.iter().any(|arm| {
-                    arm.guard
-                        .as_ref()
-                        .is_some_and(hir_expr_calls_collect_cycles)
-                        || hir_expr_calls_collect_cycles(&arm.body)
-                })
-        }
-        K::Loop { body, .. } => hir_expr_calls_collect_cycles(body),
-        K::While {
-            condition, body, ..
-        } => hir_expr_calls_collect_cycles(condition) || hir_expr_calls_collect_cycles(body),
-        K::Block(block) => hir_block_calls_collect_cycles(block),
-        K::Closure { body, .. } => hir_expr_calls_collect_cycles(body),
-        K::LiftedClosure { captures, .. } => captures.iter().any(hir_expr_calls_collect_cycles),
-        K::Tuple(elems) => elems.iter().any(hir_expr_calls_collect_cycles),
-        K::Array(arr) => match arr {
-            gossamer_hir::HirArrayExpr::List(elems) => {
-                elems.iter().any(hir_expr_calls_collect_cycles)
-            }
-            gossamer_hir::HirArrayExpr::Repeat { value, count } => {
-                hir_expr_calls_collect_cycles(value) || hir_expr_calls_collect_cycles(count)
-            }
-        },
-        K::Go(inner) => hir_expr_calls_collect_cycles(inner),
-        K::Range { start, end, .. } => {
-            start.as_deref().is_some_and(hir_expr_calls_collect_cycles)
-                || end.as_deref().is_some_and(hir_expr_calls_collect_cycles)
-        }
-        K::Return(value) | K::Break { value, .. } => {
-            value.as_deref().is_some_and(hir_expr_calls_collect_cycles)
-        }
-        K::Select { arms } => arms.iter().any(|arm| {
-            let op_calls = match &arm.op {
-                gossamer_hir::HirSelectOp::Recv { channel, .. } => {
-                    hir_expr_calls_collect_cycles(channel)
-                }
-                gossamer_hir::HirSelectOp::Send { channel, value } => {
-                    hir_expr_calls_collect_cycles(channel) || hir_expr_calls_collect_cycles(value)
-                }
-                gossamer_hir::HirSelectOp::Default => false,
-            };
-            op_calls || hir_expr_calls_collect_cycles(&arm.body)
-        }),
-        K::Path { .. } | K::Literal(_) | K::Continue { .. } | K::Placeholder => false,
-    }
 }
 
 fn hir_block_has_loop(block: &gossamer_hir::HirBlock) -> bool {
@@ -1937,22 +1993,46 @@ mod tests {
     }
 
     #[test]
-    fn debug_validate_chunk_accepts_well_formed_bytecode() {
+    fn execution_validation_accepts_well_formed_bytecode() {
         let mut chunk = empty_chunk(2);
         chunk.instrs.push(Op::LoadConst { dst: 0, idx: 0 });
         chunk.instrs.push(Op::Return { value: 0 });
         assert!(validate_chunk(&chunk).is_ok());
-        assert!(debug_validate_chunk(&chunk).is_ok());
+        assert!(validate_chunk_for_execution(&chunk).is_ok());
     }
 
     #[test]
-    fn debug_validate_chunk_rejects_malformed_bytecode() {
+    fn execution_validation_rejects_malformed_bytecode() {
         let mut chunk = empty_chunk(2);
         chunk.instrs.push(Op::Move { dst: 99, src: 0 });
-        let err = debug_validate_chunk(&chunk).expect_err("must reject");
+        let err = validate_chunk_for_execution(&chunk).expect_err("must reject");
         match err {
             RuntimeError::Type(msg) => assert!(msg.contains("invalid bytecode")),
             other => panic!("unexpected error variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn qualified_name_cache_is_owned_by_its_vm() {
+        let weak = {
+            let vm = Vm::new();
+            let receiver = Value::struct_("RequestScopedType", Vec::new());
+            let first = vm
+                .qualified_key(&receiver, "very_dynamic_method")
+                .expect("struct receiver has a qualified key");
+            let second = vm
+                .qualified_key(&receiver, "very_dynamic_method")
+                .expect("same receiver has a qualified key");
+            assert!(Arc::ptr_eq(&first, &second));
+            assert_eq!(vm.qualified_names.borrow().len(), 1);
+            let weak = Arc::downgrade(&first);
+            drop(first);
+            drop(second);
+            // The cache retains the spelling during the VM's lifetime.
+            assert!(weak.upgrade().is_some());
+            weak
+        };
+        // Regression: this used to be an immortal thread-local `Box::leak`.
+        assert!(weak.upgrade().is_none());
     }
 }

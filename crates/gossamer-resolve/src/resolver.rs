@@ -16,7 +16,7 @@ use gossamer_lex::Span;
 use crate::def_id::{DefId, DefIdGenerator, DefKind};
 use crate::diagnostic::{ResolveDiagnostic, ResolveError};
 use crate::resolutions::{Resolution, Resolutions};
-use crate::scope::{Binding, ScopeStack};
+use crate::scope::{Binding, PRELUDE_SENTINEL, ScopeStack};
 
 /// Runs name resolution on a parsed source file and returns the resolved
 /// side-table plus any diagnostics surfaced along the way.
@@ -1062,6 +1062,25 @@ impl Resolver {
                 }
                 return;
             }
+            // Registered standard-library paths are always available by their
+            // qualified spelling.  They do not need a synthetic `use` in a
+            // REPL cell (or in a one-off script), but their bare leaf names
+            // must still go through lexical lookup so `count` cannot
+            // ambiguously select strings/iter or a user function.  Record a
+            // prelude-style import for the qualified path; lowering retains
+            // the written segments and dispatches the canonical runtime name.
+            if self.stdlib_member_resolves(&joined, &effective) {
+                self.resolutions.insert(
+                    anchor,
+                    Resolution::Import {
+                        use_id: PRELUDE_SENTINEL,
+                    },
+                );
+                for segment in &path.segments {
+                    self.resolve_generic_args(&segment.generics);
+                }
+                return;
+            }
         }
         let head_name = head.name.name.clone();
         let lookup_name = effective.first().copied().unwrap_or(head_name.as_str());
@@ -1319,7 +1338,7 @@ impl Resolver {
             } => {
                 self.scopes
                     .top_mut()
-                    .shadow_value(name.name.clone(), Binding::local(pattern.id));
+                    .shadow_value(&name.name, Binding::local(pattern.id));
                 if let Some(subpattern) = subpattern {
                     self.bind_pattern(subpattern);
                 }
@@ -1374,7 +1393,7 @@ impl Resolver {
             None => {
                 self.scopes
                     .top_mut()
-                    .shadow_value(field.name.name.clone(), Binding::local(NodeId::DUMMY));
+                    .shadow_value(&field.name.name, Binding::local(NodeId::DUMMY));
             }
         }
     }

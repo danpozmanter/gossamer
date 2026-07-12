@@ -5,8 +5,8 @@
 //! is driving timers and UDP I/O. Gossamer's scheduler does not
 //! expose those primitives, so each [`serve`] call and each
 //! [`Client`] instance spins up its own current-thread tokio
-//! runtime that stays private to this crate; callers see only
-//! synchronous entry points.
+//! runtime that stays private to this crate; clients share that runtime and
+//! endpoint through `Arc`, while callers see only synchronous entry points.
 //!
 //! The engine speaks plain wire types ([`H3Request`] /
 //! [`H3Response`]) rather than any tier's `http::Request` /
@@ -28,6 +28,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use bytes::{Buf, Bytes, BytesMut};
@@ -35,6 +36,100 @@ use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use tokio::runtime::Builder as RtBuilder;
+use tokio::sync::Semaphore;
+
+/// The complete-body compatibility API is bounded independently from QUIC's
+/// transport windows. A peer can therefore not turn one buffered request or
+/// response into an unbounded allocation.
+const MAX_BUFFERED_BODY_BYTES: usize = 8 * 1024 * 1024;
+
+/// Resource limits for an HTTP/3 server.
+///
+/// HTTP/3 support deliberately exposes complete request/response bodies today.
+/// It is therefore important that the transport windows are bounded as well as
+/// the application buffers: a peer must not be able to retain an arbitrary
+/// amount of QUIC receive memory while waiting for the buffered handler API to
+/// consume it. Streaming request and response bodies are not implemented by
+/// this API and must not be inferred from these limits.
+#[derive(Debug, Clone)]
+pub struct ServerConfig {
+    /// Concurrent QUIC connections accepted by this endpoint.
+    pub max_connections: usize,
+    /// Concurrent HTTP request streams per QUIC connection.
+    pub max_concurrent_streams: u32,
+    /// Largest decoded HTTP field section accepted from a peer.
+    pub max_header_list_size: u64,
+    /// Largest fully buffered request body.
+    pub max_request_body_bytes: usize,
+    /// Largest fully buffered response body.
+    pub max_response_body_bytes: usize,
+    /// QUIC receive credit for one stream. This also bounds a peer's
+    /// pre-application buffered data on any individual stream.
+    pub stream_receive_window: u32,
+    /// QUIC receive credit across all streams in one connection.
+    pub connection_receive_window: u32,
+    /// Upper bound on QUIC send buffering per connection.
+    pub send_window: u64,
+    /// Closes idle QUIC connections rather than retaining them indefinitely.
+    pub idle_timeout: Duration,
+    /// Bounds header and request-body I/O for an individual stream.
+    pub request_io_timeout: Duration,
+    /// Bounds synchronous handler execution and response writes for an
+    /// individual stream. On expiry [`H3Request::is_cancelled`] becomes true;
+    /// synchronous handlers must observe it cooperatively.
+    pub response_io_timeout: Duration,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: 1_024,
+            max_concurrent_streams: 64,
+            max_header_list_size: 16 * 1024,
+            max_request_body_bytes: MAX_BUFFERED_BODY_BYTES,
+            max_response_body_bytes: MAX_BUFFERED_BODY_BYTES,
+            stream_receive_window: 1_048_576,
+            connection_receive_window: 8 * 1_048_576,
+            send_window: 8 * 1_048_576,
+            idle_timeout: Duration::from_secs(30),
+            request_io_timeout: Duration::from_secs(30),
+            response_io_timeout: Duration::from_secs(30),
+        }
+    }
+}
+
+impl ServerConfig {
+    fn validate(&self) -> Result<(), H3Error> {
+        if self.max_connections == 0 || self.max_concurrent_streams == 0 {
+            return Err(H3Error::Protocol(
+                "max_connections and max_concurrent_streams must be non-zero".into(),
+            ));
+        }
+        if self.max_header_list_size == 0
+            || self.max_request_body_bytes == 0
+            || self.max_response_body_bytes == 0
+            || self.stream_receive_window == 0
+            || self.connection_receive_window == 0
+            || self.send_window == 0
+        {
+            return Err(H3Error::Protocol(
+                "HTTP/3 resource limits must be non-zero".into(),
+            ));
+        }
+        if self.connection_receive_window < self.stream_receive_window {
+            return Err(H3Error::Protocol(
+                "connection_receive_window must be at least stream_receive_window".into(),
+            ));
+        }
+        if self.idle_timeout.is_zero()
+            || self.request_io_timeout.is_zero()
+            || self.response_io_timeout.is_zero()
+        {
+            return Err(H3Error::Protocol("HTTP/3 timeouts must be non-zero".into()));
+        }
+        Ok(())
+    }
+}
 
 /// Errors raised by the HTTP/3 server and client wrappers.
 #[derive(Debug, thiserror::Error)]
@@ -69,6 +164,29 @@ pub struct H3Request {
     pub headers: Vec<(String, String)>,
     /// Fully buffered request body.
     pub body: Vec<u8>,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl H3Request {
+    /// Returns whether the client disconnected or the stream's handler/write
+    /// deadline elapsed. A synchronous handler cannot be forcibly preempted,
+    /// so long-running work must check this between bounded operations.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
+
+/// Cancels the application-facing request when its transport task exits for
+/// any reason. The handler owns a clone of the same atomic flag, so timeout,
+/// peer reset, and connection shutdown are all observable without retaining
+/// a transport stream beyond its task's lifetime.
+struct RequestCancellation(Arc<AtomicBool>);
+
+impl Drop for RequestCancellation {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
 }
 
 /// A complete response handed back from a handler.
@@ -146,9 +264,24 @@ pub fn serve_files<H>(
 where
     H: Handler,
 {
+    serve_files_with_config(addr, cert_path, key_path, handler, ServerConfig::default())
+}
+
+/// Like [`serve_files`], with explicit server resource limits.
+pub fn serve_files_with_config<H>(
+    addr: &str,
+    cert_path: &str,
+    key_path: &str,
+    handler: H,
+    config: ServerConfig,
+) -> Result<(), H3Error>
+where
+    H: Handler,
+{
+    config.validate()?;
     let cert_pem = std::fs::read(cert_path).map_err(|e| H3Error::Io(format!("read cert: {e}")))?;
     let key_pem = std::fs::read(key_path).map_err(|e| H3Error::Io(format!("read key: {e}")))?;
-    serve(addr, &cert_pem, &key_pem, handler)
+    serve_with_config(addr, &cert_pem, &key_pem, handler, config)
 }
 
 /// Binds a UDP socket on `addr`, runs a QUIC + HTTP/3 endpoint, and
@@ -164,6 +297,26 @@ pub fn serve<H>(addr: &str, cert_pem: &[u8], key_pem: &[u8], handler: H) -> Resu
 where
     H: Handler,
 {
+    serve_with_config(addr, cert_pem, key_pem, handler, ServerConfig::default())
+}
+
+/// Like [`serve`], with explicit connection, stream, memory, and I/O limits.
+///
+/// The limits only govern transport and buffered wire values. The public
+/// [`Handler`] is synchronous, so the configured deadline provides
+/// cooperative cancellation through [`H3Request::is_cancelled`] rather than
+/// forcefully terminating user code.
+pub fn serve_with_config<H>(
+    addr: &str,
+    cert_pem: &[u8],
+    key_pem: &[u8],
+    handler: H,
+    config: ServerConfig,
+) -> Result<(), H3Error>
+where
+    H: Handler,
+{
+    config.validate()?;
     install_ring_provider();
     let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(cert_pem)
         .collect::<Result<_, _>>()
@@ -188,34 +341,60 @@ where
         let transport = Arc::get_mut(&mut server_config.transport)
             .ok_or_else(|| H3Error::Quic("transport config aliased".into()))?;
         transport.max_concurrent_uni_streams(0_u8.into());
+        transport.max_concurrent_bidi_streams(config.max_concurrent_streams.into());
+        transport.stream_receive_window(config.stream_receive_window.into());
+        transport.receive_window(config.connection_receive_window.into());
+        transport.send_window(config.send_window);
+        transport.max_idle_timeout(Some(
+            config
+                .idle_timeout
+                .try_into()
+                .map_err(|e| H3Error::Quic(format!("idle timeout: {e}")))?,
+        ));
     }
 
     let socket_addr: SocketAddr = addr
         .parse()
         .map_err(|e| H3Error::Io(format!("parse addr: {e}")))?;
 
-    let rt = RtBuilder::new_current_thread()
+    let rt = RtBuilder::new_multi_thread()
+        .worker_threads(2)
         .enable_all()
         .build()
         .map_err(|e| H3Error::Io(format!("tokio runtime: {e}")))?;
     let handler = Arc::new(handler);
-    rt.block_on(run_server(socket_addr, server_config, handler))
+    rt.block_on(run_server(
+        socket_addr,
+        server_config,
+        handler,
+        Arc::new(config),
+    ))
 }
 
 async fn run_server<H>(
     addr: SocketAddr,
     config: quinn::ServerConfig,
     handler: Arc<H>,
+    limits: Arc<ServerConfig>,
 ) -> Result<(), H3Error>
 where
     H: Handler,
 {
     let endpoint = quinn::Endpoint::server(config, addr)
         .map_err(|e| H3Error::Io(format!("endpoint bind: {e}")))?;
+    let connections = Arc::new(Semaphore::new(limits.max_connections));
     while let Some(incoming) = endpoint.accept().await {
+        // Reject excess handshakes immediately instead of retaining an
+        // unbounded task/connection queue under a UDP flood.
+        let Ok(permit) = Arc::clone(&connections).try_acquire_owned() else {
+            incoming.refuse();
+            continue;
+        };
         let handler = Arc::clone(&handler);
+        let limits = Arc::clone(&limits);
         tokio::spawn(async move {
-            if let Err(e) = serve_connection(incoming, handler).await {
+            let _permit = permit;
+            if let Err(e) = serve_connection(incoming, handler, limits).await {
                 eprintln!("h3: connection error: {e}");
             }
         });
@@ -223,24 +402,44 @@ where
     Ok(())
 }
 
-async fn serve_connection<H>(incoming: quinn::Incoming, handler: Arc<H>) -> Result<(), H3Error>
+async fn serve_connection<H>(
+    incoming: quinn::Incoming,
+    handler: Arc<H>,
+    limits: Arc<ServerConfig>,
+) -> Result<(), H3Error>
 where
     H: Handler,
 {
-    let conn = incoming
+    let conn = tokio::time::timeout(limits.request_io_timeout, incoming)
         .await
+        .map_err(|_| H3Error::Quic("handshake timed out".into()))?
         .map_err(|e| H3Error::Quic(format!("accept: {e}")))?;
     let h3_conn = h3_quinn::Connection::new(conn);
-    let mut h3_server = h3::server::Connection::<_, Bytes>::new(h3_conn)
+    let mut builder = h3::server::builder();
+    builder.max_field_section_size(limits.max_header_list_size);
+    let mut h3_server = builder
+        .build(h3_conn)
         .await
         .map_err(|e| H3Error::Protocol(format!("h3 conn: {e}")))?;
 
+    // QUIC's advertised stream cap constrains peer-created streams, but keep a
+    // local permit too: it bounds spawned handler tasks even if an upstream
+    // transport changes its admission behavior.
+    let stream_slots = Arc::new(Semaphore::new(limits.max_concurrent_streams as usize));
     loop {
         match h3_server.accept().await {
             Ok(Some(resolver)) => {
+                let Ok(permit) = Arc::clone(&stream_slots).try_acquire_owned() else {
+                    // Dropping an unresolved request releases its QUIC stream;
+                    // do not queue work that has already exceeded the limit.
+                    drop(resolver);
+                    continue;
+                };
                 let handler = Arc::clone(&handler);
+                let limits = Arc::clone(&limits);
                 tokio::spawn(async move {
-                    if let Err(e) = serve_stream(resolver, handler).await {
+                    let _permit = permit;
+                    if let Err(e) = serve_stream(resolver, handler, limits).await {
                         eprintln!("h3: stream error: {e}");
                     }
                 });
@@ -257,14 +456,20 @@ where
 async fn serve_stream<C, H>(
     resolver: h3::server::RequestResolver<C, Bytes>,
     handler: Arc<H>,
+    limits: Arc<ServerConfig>,
 ) -> Result<(), H3Error>
 where
     C: h3::quic::Connection<Bytes>,
     H: Handler,
 {
-    let (req, mut stream) = resolver
-        .resolve_request()
+    let cancellation = RequestCancellation(Arc::new(AtomicBool::new(false)));
+    // One absolute deadline for headers plus the complete body prevents a
+    // peer from keeping a stream alive forever by dribbling one chunk just
+    // before a per-read timeout expires.
+    let request_deadline = tokio::time::Instant::now() + limits.request_io_timeout;
+    let (req, mut stream) = tokio::time::timeout_at(request_deadline, resolver.resolve_request())
         .await
+        .map_err(|_| H3Error::Protocol("request headers timed out".into()))?
         .map_err(|e| H3Error::Protocol(format!("resolve: {e}")))?;
 
     let (parts, ()) = req.into_parts();
@@ -283,13 +488,19 @@ where
     }
 
     let mut body = Vec::<u8>::new();
-    while let Some(mut chunk) = stream
-        .recv_data()
+    while let Some(mut chunk) = tokio::time::timeout_at(request_deadline, stream.recv_data())
         .await
+        .map_err(|_| H3Error::Protocol("request body timed out".into()))?
         .map_err(|e| H3Error::Protocol(format!("recv body: {e}")))?
     {
         while chunk.has_remaining() {
             let bs = chunk.chunk();
+            if body.len().saturating_add(bs.len()) > limits.max_request_body_bytes {
+                return Err(H3Error::Protocol(format!(
+                    "request body exceeds {}-byte cap",
+                    limits.max_request_body_bytes
+                )));
+            }
             body.extend_from_slice(bs);
             let len = bs.len();
             chunk.advance(len);
@@ -302,46 +513,75 @@ where
         query,
         headers,
         body,
+        cancelled: Arc::clone(&cancellation.0),
     };
 
-    let response =
+    // The h3 driver must keep polling while a synchronous application handler
+    // runs. `spawn_blocking` isolates that work from QUIC progress; the
+    // per-stream permit above bounds the number of blocking tasks. If the
+    // deadline or peer cancellation wins, dropping `cancellation` flips the
+    // request flag observed by the detached cooperative handler.
+    let handler_task = tokio::task::spawn_blocking(move || {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler.handle(request))) {
             Ok(resp) => resp,
             Err(_) => H3Response::internal_error(),
-        };
+        }
+    });
+    let response = tokio::time::timeout(limits.response_io_timeout, handler_task)
+        .await
+        .map_err(|_| H3Error::Protocol("handler timed out".into()))?
+        .map_err(|e| H3Error::Protocol(format!("handler task: {e}")))?;
+    send_stream_response(&mut stream, response, &limits).await
+}
 
+async fn send_stream_response<S>(
+    stream: &mut h3::server::RequestStream<S, Bytes>,
+    response: H3Response,
+    limits: &ServerConfig,
+) -> Result<(), H3Error>
+where
+    S: h3::quic::SendStream<Bytes>,
+{
+    if response.body.len() > limits.max_response_body_bytes {
+        return Err(H3Error::Protocol(format!(
+            "response body exceeds {}-byte cap",
+            limits.max_response_body_bytes
+        )));
+    }
+    let response_deadline = tokio::time::Instant::now() + limits.response_io_timeout;
     let status = ::http::StatusCode::from_u16(response.status)
         .map_err(|e| H3Error::Protocol(format!("bad status: {e}")))?;
     let mut builder = ::http::Response::builder().status(status);
-    {
-        let h = builder
-            .headers_mut()
-            .ok_or_else(|| H3Error::Protocol("response head".into()))?;
-        for (name, value) in &response.headers {
-            if let (Ok(n), Ok(v)) = (
-                ::http::HeaderName::from_bytes(name.as_bytes()),
-                ::http::HeaderValue::from_str(value),
-            ) {
-                h.insert(n, v);
-            }
+    let headers = builder
+        .headers_mut()
+        .ok_or_else(|| H3Error::Protocol("response head".into()))?;
+    for (name, value) in &response.headers {
+        if let (Ok(name), Ok(value)) = (
+            ::http::HeaderName::from_bytes(name.as_bytes()),
+            ::http::HeaderValue::from_str(value),
+        ) {
+            headers.insert(name, value);
         }
     }
-    let head: ::http::Response<()> = builder
+    let head = builder
         .body(())
         .map_err(|e| H3Error::Protocol(format!("build head: {e}")))?;
-    stream
-        .send_response(head)
+    tokio::time::timeout_at(response_deadline, stream.send_response(head))
         .await
+        .map_err(|_| H3Error::Protocol("response headers timed out".into()))?
         .map_err(|e| H3Error::Protocol(format!("send_response: {e}")))?;
     if !response.body.is_empty() {
-        stream
-            .send_data(Bytes::from(response.body))
-            .await
-            .map_err(|e| H3Error::Protocol(format!("send_data: {e}")))?;
-    }
-    stream
-        .finish()
+        tokio::time::timeout_at(
+            response_deadline,
+            stream.send_data(Bytes::from(response.body)),
+        )
         .await
+        .map_err(|_| H3Error::Protocol("response body timed out".into()))?
+        .map_err(|e| H3Error::Protocol(format!("send_data: {e}")))?;
+    }
+    tokio::time::timeout_at(response_deadline, stream.finish())
+        .await
+        .map_err(|_| H3Error::Protocol("response finish timed out".into()))?
         .map_err(|e| H3Error::Protocol(format!("finish: {e}")))?;
     Ok(())
 }
@@ -360,17 +600,18 @@ pub struct ClientResponse {
     pub body: Vec<u8>,
 }
 
-/// HTTP/3 client. Each instance owns a private tokio runtime (one
-/// worker thread) plus a `quinn::Endpoint` bound to an ephemeral
-/// UDP port. Cloning is O(1); internal state is `Arc`-shared.
+/// HTTP/3 client. Each instance owns a private multi-thread Tokio runtime plus
+/// a `quinn::Endpoint` bound to an ephemeral UDP port. Cloning is O(1): the
+/// runtime and endpoint remain `Arc`-shared until the last client is dropped.
 #[derive(Clone)]
 pub struct Client {
     inner: Arc<ClientInner>,
 }
 
 struct ClientInner {
-    rt: tokio::runtime::Runtime,
     endpoint: quinn::Endpoint,
+    // `endpoint` must shut down before the runtime that drives it.
+    rt: tokio::runtime::Runtime,
 }
 
 impl Client {
@@ -389,7 +630,8 @@ impl Client {
 
     fn build(skip_verify: bool) -> Result<Self, H3Error> {
         install_ring_provider();
-        let rt = RtBuilder::new_current_thread()
+        let rt = RtBuilder::new_multi_thread()
+            .worker_threads(2)
             .enable_all()
             .build()
             .map_err(|e| H3Error::Io(format!("tokio runtime: {e}")))?;
@@ -398,7 +640,7 @@ impl Client {
         // spawned; `block_on` keeps the constructor synchronous.
         let endpoint = rt.block_on(async move { build_endpoint(skip_verify) })?;
         Ok(Self {
-            inner: Arc::new(ClientInner { rt, endpoint }),
+            inner: Arc::new(ClientInner { endpoint, rt }),
         })
     }
 
@@ -437,28 +679,28 @@ struct ParsedUrl {
 }
 
 fn parse_url(url: &str) -> Result<ParsedUrl, H3Error> {
-    let rest = url
-        .strip_prefix("https://")
-        .ok_or_else(|| H3Error::Protocol(format!("not https: {url}")))?;
-    let (authority, path_and_query) = match rest.find('/') {
-        Some(idx) => (&rest[..idx], &rest[idx..]),
-        None => (rest, "/"),
-    };
-    let (host, port) = match authority.rfind(':') {
-        Some(idx) => {
-            let h = &authority[..idx];
-            let p: u16 = authority[idx + 1..]
-                .parse()
-                .map_err(|e| H3Error::Protocol(format!("bad port: {e}")))?;
-            (h.to_string(), p)
-        }
-        None => (authority.to_string(), 443),
-    };
+    let uri: ::http::Uri = url
+        .parse()
+        .map_err(|e| H3Error::Protocol(format!("bad URL: {e}")))?;
+    if uri.scheme_str() != Some("https") {
+        return Err(H3Error::Protocol(format!("not https: {url}")));
+    }
+    let authority = uri
+        .authority()
+        .ok_or_else(|| H3Error::Protocol(format!("missing authority: {url}")))?;
+    let host = uri
+        .host()
+        .ok_or_else(|| H3Error::Protocol(format!("missing host: {url}")))?;
+    let host = host
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(host);
+    let path_and_query = uri.path_and_query().map_or("/", |pq| pq.as_str());
     Ok(ParsedUrl {
-        host,
-        port,
+        host: host.to_string(),
+        port: uri.port_u16().unwrap_or(443),
         path_and_query: path_and_query.to_string(),
-        authority: authority.to_string(),
+        authority: authority.as_str().to_string(),
     })
 }
 
@@ -477,8 +719,20 @@ fn build_endpoint(skip_verify: bool) -> Result<quinn::Endpoint, H3Error> {
             .with_no_client_auth();
         quic_client_config_from_rustls(crypto)?
     };
+    let limits = ServerConfig::default();
     let mut transport = quinn::TransportConfig::default();
     transport.keep_alive_interval(Some(Duration::from_secs(5)));
+    transport.max_concurrent_bidi_streams(0_u8.into());
+    transport.max_concurrent_uni_streams(0_u8.into());
+    transport.stream_receive_window(limits.stream_receive_window.into());
+    transport.receive_window(limits.connection_receive_window.into());
+    transport.send_window(limits.send_window);
+    transport.max_idle_timeout(Some(
+        limits
+            .idle_timeout
+            .try_into()
+            .map_err(|e| H3Error::Quic(format!("client idle timeout: {e}")))?,
+    ));
     client_config.transport_config(Arc::new(transport));
     let bind: SocketAddr = "0.0.0.0:0"
         .parse()
@@ -557,6 +811,14 @@ async fn do_request_async(
     body: Option<Bytes>,
     headers: Vec<(String, String)>,
 ) -> Result<ClientResponse, H3Error> {
+    if body
+        .as_ref()
+        .is_some_and(|body| body.len() > MAX_BUFFERED_BODY_BYTES)
+    {
+        return Err(H3Error::Protocol(format!(
+            "request body exceeds {MAX_BUFFERED_BODY_BYTES}-byte cap"
+        )));
+    }
     let socket = tokio::net::lookup_host((url.host.as_str(), url.port))
         .await
         .map_err(|e| H3Error::Io(format!("dns: {e}")))?
@@ -568,7 +830,10 @@ async fn do_request_async(
         .await
         .map_err(|e| H3Error::Quic(format!("handshake: {e}")))?;
     let h3_conn = h3_quinn::Connection::new(conn);
-    let (mut driver, mut send) = h3::client::new(h3_conn)
+    let mut h3_builder = h3::client::builder();
+    h3_builder.max_field_section_size(16 * 1024);
+    let (mut driver, mut send) = h3_builder
+        .build(h3_conn)
         .await
         .map_err(|e| H3Error::Protocol(format!("h3 client: {e}")))?;
     let driver_task = tokio::spawn(async move {
@@ -627,6 +892,13 @@ async fn do_request_async(
     {
         while chunk.has_remaining() {
             let s = chunk.chunk();
+            if body_bytes.len().saturating_add(s.len()) > MAX_BUFFERED_BODY_BYTES {
+                driver_task.abort();
+                let _ = driver_task.await;
+                return Err(H3Error::Protocol(format!(
+                    "response body exceeds {MAX_BUFFERED_BODY_BYTES}-byte cap"
+                )));
+            }
             body_bytes.extend_from_slice(s);
             let len = s.len();
             chunk.advance(len);
@@ -695,9 +967,85 @@ mod tests {
     }
 
     #[test]
+    fn server_config_defaults_bound_transport_and_buffers() {
+        let config = ServerConfig::default();
+        assert!(config.max_connections > 0);
+        assert!(config.max_concurrent_streams > 0);
+        assert!(config.max_header_list_size > 0);
+        assert!(config.max_request_body_bytes > 0);
+        assert!(config.max_response_body_bytes > 0);
+        assert!(config.connection_receive_window >= config.stream_receive_window);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn server_config_rejects_zero_or_inconsistent_limits() {
+        let config = ServerConfig {
+            max_connections: 0,
+            ..ServerConfig::default()
+        };
+        assert!(matches!(config.validate(), Err(H3Error::Protocol(_))));
+        let stream_receive_window = ServerConfig::default().stream_receive_window;
+        let config = ServerConfig {
+            connection_receive_window: stream_receive_window - 1,
+            ..ServerConfig::default()
+        };
+        assert!(matches!(config.validate(), Err(H3Error::Protocol(_))));
+    }
+
+    #[test]
+    fn request_cancellation_is_visible_to_the_handler_value() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let request = H3Request {
+            method: "GET".into(),
+            path: "/".into(),
+            query: String::new(),
+            headers: Vec::new(),
+            body: Vec::new(),
+            cancelled: Arc::clone(&cancelled),
+        };
+        assert!(!request.is_cancelled());
+        cancelled.store(true, Ordering::Release);
+        assert!(request.is_cancelled());
+    }
+
+    #[test]
+    fn serve_with_config_validates_limits_before_tls_work() {
+        let config = ServerConfig {
+            max_concurrent_streams: 0,
+            ..ServerConfig::default()
+        };
+        let err = serve_with_config(
+            "127.0.0.1:0",
+            b"",
+            b"",
+            |_req: H3Request| H3Response::internal_error(),
+            config,
+        )
+        .expect_err("invalid resource limits must fail synchronously");
+        assert!(matches!(err, H3Error::Protocol(_)));
+    }
+
+    #[test]
     fn h3_client_insecure_builds() {
         let client = Client::insecure().expect("client");
         drop(client);
+    }
+
+    #[test]
+    fn h3_parse_url_uses_structured_uri_rules() {
+        let parsed = parse_url("https://example.com:8443/path?q=1").expect("valid https URL");
+        assert_eq!(parsed.host, "example.com");
+        assert_eq!(parsed.port, 8443);
+        assert_eq!(parsed.path_and_query, "/path?q=1");
+        assert_eq!(parsed.authority, "example.com:8443");
+
+        let ipv6 = parse_url("https://[::1]/").expect("valid bracketed IPv6 URL");
+        assert_eq!(ipv6.host, "::1");
+        assert_eq!(ipv6.port, 443);
+
+        assert!(parse_url("http://example.com/").is_err());
+        assert!(parse_url("https://exa mple.com/").is_err());
     }
 
     #[test]

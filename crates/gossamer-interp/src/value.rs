@@ -320,7 +320,7 @@ pub struct NativeEnumWeakRef {
     /// Tagged native pointer of the referent.
     pub ptr: usize,
     /// Layout for the rebuilt handle.
-    pub shape: &'static NativeEnumShape,
+    pub shape: Arc<NativeEnumShape>,
 }
 
 impl Clone for WeakValue {
@@ -339,7 +339,7 @@ impl Clone for WeakValue {
                 }
                 WeakValue::NativeEnum(Box::new(NativeEnumWeakRef {
                     ptr: r.ptr,
-                    shape: r.shape,
+                    shape: Arc::clone(&r.shape),
                 }))
             }
             WeakValue::Dead => WeakValue::Dead,
@@ -381,7 +381,7 @@ impl WeakValue {
                 unsafe { gossamer_runtime::c_abi::gos_rt_rc_downgrade(base as *mut u8) };
                 WeakValue::NativeEnum(Box::new(NativeEnumWeakRef {
                     ptr: h.ptr,
-                    shape: h.shape,
+                    shape: Arc::clone(&h.shape),
                 }))
             }
             _ => WeakValue::Dead,
@@ -409,7 +409,7 @@ impl WeakValue {
                     unsafe { gossamer_runtime::c_abi::gos_rt_rc_retain(base as *mut u8) };
                     Some(Value::NativeEnum(Arc::new(NativeEnumOwner {
                         ptr: r.ptr,
-                        shape: r.shape,
+                        shape: Arc::clone(&r.shape),
                         owned: false,
                     })))
                 } else {
@@ -491,7 +491,7 @@ impl MapKey {
                 fields: ns.iter().map(|n| Self::Int(*n)).collect(),
             })),
             Value::Struct(inner) => Self::Agg(Box::new(AggKey {
-                name: inner.name,
+                name: inner.name.clone(),
                 fields: inner
                     .fields
                     .iter()
@@ -499,7 +499,7 @@ impl MapKey {
                     .collect(),
             })),
             Value::Variant(inner) => Self::Agg(Box::new(AggKey {
-                name: inner.name,
+                name: inner.name.clone(),
                 fields: inner.fields.iter().map(Self::from_value).collect(),
             })),
             // A native enum hashes through its boxed shape so a user enum used
@@ -1110,64 +1110,27 @@ unsafe impl Sync for SmolStr {}
 /// The intern table owns one leaked `&'static str` per distinct name, while
 /// each aggregate node stores only the numeric tag. Callers that need the text
 /// recover it through [`Self::as_str`].
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TypeTag(u32);
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TypeTag(Arc<str>);
 
-#[derive(Default)]
-struct TypeTagTable {
-    by_name: rustc_hash::FxHashMap<&'static str, u32>,
-    names: Vec<&'static str>,
-}
-
-static TYPE_TAGS: std::sync::LazyLock<parking_lot::Mutex<TypeTagTable>> =
-    std::sync::LazyLock::new(|| parking_lot::Mutex::new(TypeTagTable::default()));
-
-thread_local! {
-    /// Per-thread positive cache for the fixed set of type/variant names a
-    /// loaded program uses.  Constructor-heavy workloads otherwise take the
-    /// global name-intern and tag-table mutexes for every node even though the
-    /// mapping became immutable after its first lookup.
-    static TYPE_TAG_CACHE: std::cell::RefCell<
-        rustc_hash::FxHashMap<&'static str, TypeTag>
-    > = std::cell::RefCell::new(rustc_hash::FxHashMap::default());
-    /// Reverse side of `TYPE_TAG_CACHE`, indexed by compact tag id.  Native
-    /// enum construction compares a node tag to its shape name for every
-    /// allocation; this avoids taking `TYPE_TAGS`' global mutex for that
-    /// immutable reverse lookup.
-    static TYPE_NAME_CACHE: std::cell::RefCell<Vec<Option<&'static str>>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
+/// Compatibility lookup only: it owns no type-name storage. Live values,
+/// chunks, and VM sessions own the `Arc<str>` handles; stale entries are
+/// replaced on the next lookup after their session is dropped.
+static TYPE_TAGS: std::sync::LazyLock<
+    parking_lot::Mutex<rustc_hash::FxHashMap<String, std::sync::Weak<str>>>,
+> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(rustc_hash::FxHashMap::default()));
 
 impl TypeTag {
     /// Returns the interned textual name for this tag.
     #[must_use]
-    pub fn as_str(self) -> &'static str {
-        if let Some(name) =
-            TYPE_NAME_CACHE.with(|cache| cache.borrow().get(self.0 as usize).copied().flatten())
-        {
-            return name;
-        }
-        let name = TYPE_TAGS
-            .lock()
-            .names
-            .get(self.0 as usize)
-            .copied()
-            .unwrap_or("<invalid>");
-        TYPE_NAME_CACHE.with(|cache| {
-            let mut cache = cache.borrow_mut();
-            let need = self.0 as usize + 1;
-            if cache.len() < need {
-                cache.resize(need, None);
-            }
-            cache[self.0 as usize] = Some(name);
-        });
-        name
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 
     /// Returns the compact numeric identity stored in aggregate nodes.
     #[must_use]
-    pub fn id(self) -> u32 {
-        self.0
+    pub fn id(&self) -> u64 {
+        Arc::as_ptr(&self.0).cast::<()>() as usize as u64
     }
 }
 
@@ -1226,32 +1189,14 @@ pub(crate) fn intern_type_name(name: &str) -> &'static str {
 /// text at most once through [`intern_type_name`].
 #[must_use]
 pub(crate) fn intern_type_tag(name: &str) -> TypeTag {
-    if let Some(tag) = TYPE_TAG_CACHE.with(|cache| cache.borrow().get(name).copied()) {
-        return tag;
-    }
-    let interned = intern_type_name(name);
     let mut tags = TYPE_TAGS.lock();
-    let tag = if let Some(&id) = tags.by_name.get(interned) {
-        TypeTag(id)
-    } else {
-        let id = u32::try_from(tags.names.len()).unwrap_or(u32::MAX);
-        tags.names.push(interned);
-        tags.by_name.insert(interned, id);
-        TypeTag(id)
-    };
-    drop(tags);
-    TYPE_TAG_CACHE.with(|cache| {
-        cache.borrow_mut().insert(interned, tag);
-    });
-    TYPE_NAME_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        let need = tag.id() as usize + 1;
-        if cache.len() < need {
-            cache.resize(need, None);
-        }
-        cache[tag.id() as usize] = Some(interned);
-    });
-    tag
+    tags.retain(|_, weak| weak.strong_count() != 0);
+    if let Some(existing) = tags.get(name).and_then(std::sync::Weak::upgrade) {
+        return TypeTag(existing);
+    }
+    let owned: Arc<str> = Arc::from(name);
+    tags.insert(name.to_owned(), Arc::downgrade(&owned));
+    TypeTag(owned)
 }
 
 #[must_use]
@@ -1305,17 +1250,17 @@ thread_local! {
 /// small-variant interning: nullary, or a single `Int` in the cached
 /// range, or a single `Bool`. Everything else (multi-field nodes,
 /// large ints, aggregate payloads) returns `None` and allocates fresh.
-fn small_variant_key(name: TypeTag, fields: &[Value]) -> Option<SmallVariantKey> {
+fn small_variant_key(name: &TypeTag, fields: &[Value]) -> Option<SmallVariantKey> {
     match fields {
-        [] => Some(SmallVariantKey::Unit(name)),
+        [] => Some(SmallVariantKey::Unit(name.clone())),
         [Value::Int(n)] if (SMALL_VARIANT_INT_MIN..=SMALL_VARIANT_INT_MAX).contains(n) => {
-            Some(SmallVariantKey::Int(name, *n))
+            Some(SmallVariantKey::Int(name.clone(), *n))
         }
-        [Value::Bool(b)] => Some(SmallVariantKey::Bool(name, *b)),
+        [Value::Bool(b)] => Some(SmallVariantKey::Bool(name.clone(), *b)),
         // A single short string payload: immutable, so sharing one node
         // across all identical occurrences is sound exactly as for scalars.
         [Value::String(s)] if s.len() <= SMALL_VARIANT_STR_MAX => {
-            Some(SmallVariantKey::Str(name, s.clone()))
+            Some(SmallVariantKey::Str(name.clone(), s.clone()))
         }
         _ => None,
     }
@@ -1338,11 +1283,25 @@ fn intern_small_variant(
         }
         let node = Arc::new(VariantInner {
             name,
-            fields: SmallVec::from_vec(fields),
+            fields: variant_fields(fields),
         });
         cache.borrow_mut().insert(key, Arc::downgrade(&node));
         node
     })
+}
+
+/// Converts a constructor's temporary field `Vec` into the inline payload
+/// storage used by ordinary enum nodes. `SmallVec::from_vec` only inlines when
+/// the source Vec's capacity is <= the inline capacity; VM call-argument Vecs
+/// are pooled and may carry a larger spare capacity from an unrelated call
+/// site. For arity <= 2, force a move into inline storage so a two-field enum
+/// node does not retain an accidental heap buffer.
+fn variant_fields(fields: Vec<Value>) -> SmallVec<[Value; 2]> {
+    if fields.len() <= 2 {
+        fields.into_iter().collect()
+    } else {
+        SmallVec::from_vec(fields)
+    }
 }
 
 /// Interns a struct field name to a `&'static str` with a leak
@@ -1403,47 +1362,22 @@ impl Value {
     /// there is no lock contention across per-connection VM threads.
     #[must_use]
     pub fn variant(name: impl AsRef<str>, fields: Vec<Value>) -> Self {
-        let raw_name = name.as_ref();
-        let name = intern_type_tag(raw_name);
-        // Step 8: a variant of a registered native enum shape (scalar / string /
-        // nested-enum fields) is built directly in the compiled-tier
-        // representation, so it flows through the JIT with zero marshalling and
-        // the VM and JIT share one shape end to end. `Vec`-bearing variants keep
-        // the boxed form (their marshalling ownership is handled at the boundary
-        // as before). Ambiguous variant names fall through to `Variant`.
-        if let Some(shape) = native_shape_for_variant(name, raw_name) {
-            let mut inner = VariantInner {
-                name,
-                fields: SmallVec::from_vec(fields),
-            };
-            let has_aggregate = inner
-                .fields
-                .iter()
-                .any(|f| matches!(f, Value::Array(_) | Value::Tuple(_)));
-            if !has_aggregate
-                && let Some(built) =
-                    crate::jit_call::build_variant_to_native_enum_moving(&inner, shape)
-            {
-                // Unique native child handles are moved directly into the
-                // parent node; shared children fall back to retain + drop of the
-                // caller's original handle. This keeps recursive tree
-                // construction from building an extra reference per edge while
-                // preserving aliasing semantics for non-unique values.
-                let (ptr, _exclusive) = built.apply_to_fields(&mut inner);
-                return Self::NativeEnum(Arc::new(NativeEnumOwner {
-                    ptr: ptr as usize,
-                    shape,
-                    owned: false,
-                }));
-            }
-            return Self::Variant(Arc::new(inner));
-        }
-        if let Some(key) = small_variant_key(name, &fields) {
+        let name = intern_type_tag(name.as_ref());
+        // Keep bytecode-VM enum construction in the compact boxed
+        // representation. Earlier builds eagerly converted any variant with a
+        // registered native enum shape into the compiled-tier RC layout here.
+        // That made pure interpretation pay a native handle allocation plus an
+        // `Arc<NativeEnumOwner>` for every recursive tree / JSON-DOM node; the
+        // stress `ast-rewrite` and `json-serde` benchmarks ballooned into
+        // multi-GB RSS. Native representation is still built lazily at the JIT
+        // boundary by `jit_call::build_variant_to_native_enum`, where it is
+        // actually needed.
+        if let Some(key) = small_variant_key(&name, &fields) {
             return Self::Variant(intern_small_variant(name, fields, key));
         }
         Self::Variant(Arc::new(VariantInner {
             name,
-            fields: SmallVec::from_vec(fields),
+            fields: variant_fields(fields),
         }))
     }
 
@@ -1455,12 +1389,12 @@ impl Value {
     #[must_use]
     pub(crate) fn variant_boxed(name: &'static str, fields: Vec<Value>) -> Self {
         let name = type_tag_from_static(name);
-        if let Some(key) = small_variant_key(name, &fields) {
+        if let Some(key) = small_variant_key(&name, &fields) {
             return Self::Variant(intern_small_variant(name, fields, key));
         }
         Self::Variant(Arc::new(VariantInner {
             name,
-            fields: SmallVec::from_vec(fields),
+            fields: variant_fields(fields),
         }))
     }
     /// Constructs a [`Value::Struct`].
@@ -2500,8 +2434,7 @@ pub struct NativeVariantShape {
 
 /// Layout description of a heap enum whose values may cross the JIT
 /// boundary as raw native pointers. Built once per program load from
-/// the HIR and leaked (`&'static`) so handles can carry it without a
-/// table lookup.
+/// the HIR and shared by native value handles.
 #[derive(Debug)]
 pub struct NativeEnumShape {
     /// Enum name (diagnostics).
@@ -2523,7 +2456,7 @@ pub struct NativeEnumOwner {
     /// Tagged native pointer (compiled-tier representation).
     pub ptr: usize,
     /// Layout for VM-side structural access.
-    pub shape: &'static NativeEnumShape,
+    pub shape: Arc<NativeEnumShape>,
     /// `true` when this handle exclusively owns the whole tree it roots (a
     /// value returned from a JIT body to the VM). Its drop frees the tree via
     /// the shape walk, tolerating the caller-cleans over-retention the native
@@ -2609,7 +2542,7 @@ fn release_native_vec_enum(word: i64, eidx: u32) {
         let len = unsafe { rt::gos_rt_vec_len(v) }.max(0);
         for i in 0..len {
             let elem = unsafe { rt::gos_rt_vec_get_i64(v, i) };
-            release_native_enum_tree(elem as usize, eshape);
+            release_native_enum_tree(elem as usize, &eshape);
         }
     }
     // SAFETY: owns this `PRIMITIVE` vec; its elements were released above.
@@ -2639,7 +2572,7 @@ fn release_native_vec_str_enum(word: i64, eidx: u32) {
             // SAFETY: a live owned key cstring.
             unsafe { rt::gos_rt_str_free(key_word as *mut std::os::raw::c_char) };
         }
-        if let Some(s) = eshape {
+        if let Some(s) = eshape.as_ref() {
             let val_word = unsafe { p.add(8).cast::<i64>().read_unaligned() };
             release_native_enum_tree(val_word as usize, s);
         }
@@ -2658,9 +2591,9 @@ impl Drop for NativeEnumOwner {
     fn drop(&mut self) {
         let base = self.ptr & !7;
         if self.owned && base != 0 {
-            free_exclusive_enum_tree(self.ptr, self.shape);
+            free_exclusive_enum_tree(self.ptr, Arc::clone(&self.shape));
         } else {
-            release_native_enum_tree(self.ptr, self.shape);
+            release_native_enum_tree(self.ptr, &self.shape);
         }
     }
 }
@@ -2675,7 +2608,7 @@ impl Drop for NativeEnumOwner {
 /// gate): each node's whole reference count belongs to this tree, so draining
 /// it frees exactly once - a shared subtree still held elsewhere is never
 /// routed here.
-fn free_exclusive_enum_tree(root_ptr: usize, root_shape: &'static NativeEnumShape) {
+fn free_exclusive_enum_tree(root_ptr: usize, root_shape: Arc<NativeEnumShape>) {
     use gossamer_runtime::c_abi as rt;
     let root_base = root_ptr & !7;
     if root_base == 0 {
@@ -2683,7 +2616,7 @@ fn free_exclusive_enum_tree(root_ptr: usize, root_shape: &'static NativeEnumShap
     }
     // (base, full pointer for discriminant reads, shape) for each node.
     let mut seen: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
-    let mut nodes: Vec<(usize, usize, &'static NativeEnumShape)> = Vec::new();
+    let mut nodes: Vec<(usize, usize, Arc<NativeEnumShape>)> = Vec::new();
     seen.insert(root_base);
     let mut work = vec![(root_ptr, root_shape)];
     while let Some((ptr, shape)) = work.pop() {
@@ -2691,8 +2624,8 @@ fn free_exclusive_enum_tree(root_ptr: usize, root_shape: &'static NativeEnumShap
         if base == 0 {
             continue;
         }
-        nodes.push((base, ptr, shape));
-        let disc = native_enum_disc(ptr, shape);
+        nodes.push((base, ptr, Arc::clone(&shape)));
+        let disc = native_enum_disc(ptr, &shape);
         let Some(variant) = shape.variants.get(disc) else {
             continue;
         };
@@ -2711,13 +2644,13 @@ fn free_exclusive_enum_tree(root_ptr: usize, root_shape: &'static NativeEnumShap
     }
     // Reclaim `String` / `Vec` payloads and clear every enum-pointer slot so the
     // strong-count drain below cannot re-enter the runtime cascade.
-    for &(base, ptr, shape) in &nodes {
-        let disc = native_enum_disc(ptr, shape);
+    for (base, ptr, shape) in &nodes {
+        let disc = native_enum_disc(*ptr, shape);
         let Some(variant) = shape.variants.get(disc) else {
             continue;
         };
         for (i, kind) in variant.fields.iter().enumerate() {
-            let slot = (base + i * 8) as *mut i64;
+            let slot = (*base + i * 8) as *mut i64;
             // SAFETY: payload slot inside the node's allocation.
             let payload_word = unsafe { *slot };
             match kind {
@@ -2754,28 +2687,32 @@ fn free_exclusive_enum_tree(root_ptr: usize, root_shape: &'static NativeEnumShap
     // no release re-enters the cascade; the no-buffer release reclaims each node
     // immediately instead of leaving an over-retained interior node parked as a
     // cycle-collection candidate.
-    for &(base, _, _) in &nodes {
+    for (base, _, _) in &nodes {
         // SAFETY: `base` is a live runtime-managed node reached from the root.
-        let rc = unsafe { rt::gos_rt_rc_strong_count(base as *mut u8) };
+        let rc = unsafe { rt::gos_rt_rc_strong_count(*base as *mut u8) };
         for _ in 0..rc.max(0) {
             // Re-check before each release so a node already driven to zero by
             // an earlier iteration (a shared node reached along two paths whose
             // count this teardown already drained) is never released past zero
             // into freed memory.
-            if unsafe { rt::gos_rt_rc_strong_count(base as *mut u8) } <= 0 {
+            if unsafe { rt::gos_rt_rc_strong_count(*base as *mut u8) } <= 0 {
                 break;
             }
             // SAFETY: exclusively owned and count still positive.
-            unsafe { rt::gos_rt_rc_release_no_buffer(base as *mut u8) };
+            unsafe { rt::gos_rt_rc_release_no_buffer(*base as *mut u8) };
         }
     }
 }
 
-/// Process-global table of registered native enum shapes. Append-only
-/// across program loads (REPL re-loads append; indices from older
-/// loads stay valid because shapes are leaked).
-static NATIVE_SHAPES: std::sync::LazyLock<parking_lot::RwLock<Vec<&'static NativeEnumShape>>> =
-    std::sync::LazyLock::new(|| parking_lot::RwLock::new(Vec::new()));
+/// Process-global weak compatibility table of registered native enum shapes.
+/// A loaded VM owns the strong descriptor handles; this table exists only for
+/// legacy shape-index operands and JIT trampoline metadata while the VM
+/// migrates to fully program-owned shape sessions. Dead programs leave no
+/// descriptor allocation alive through the compatibility path.
+static NATIVE_SHAPES: std::sync::LazyLock<
+    parking_lot::RwLock<rustc_hash::FxHashMap<u32, std::sync::Weak<NativeEnumShape>>>,
+> = std::sync::LazyLock::new(|| parking_lot::RwLock::new(rustc_hash::FxHashMap::default()));
+static NEXT_NATIVE_SHAPE_INDEX: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// Maps a variant name to the single native enum shape that declares it, so
 /// the bytecode enum constructor ([`Value::variant`]) can build the native
@@ -2784,9 +2721,11 @@ static NATIVE_SHAPES: std::sync::LazyLock<parking_lot::RwLock<Vec<&'static Nativ
 /// A name declared by more than one shape maps to `None` (ambiguous - the
 /// constructor cannot pick a shape from the variant name alone and falls back
 /// to the boxed form).
-static VARIANT_NAME_TO_SHAPE: std::sync::LazyLock<
-    parking_lot::RwLock<rustc_hash::FxHashMap<&'static str, Option<&'static NativeEnumShape>>>,
-> = std::sync::LazyLock::new(|| parking_lot::RwLock::new(rustc_hash::FxHashMap::default()));
+type VariantShapeMap =
+    rustc_hash::FxHashMap<&'static str, Option<std::sync::Weak<NativeEnumShape>>>;
+
+static VARIANT_NAME_TO_SHAPE: std::sync::LazyLock<parking_lot::RwLock<VariantShapeMap>> =
+    std::sync::LazyLock::new(|| parking_lot::RwLock::new(VariantShapeMap::default()));
 
 /// Bumped after every shape registration. A later program can make a variant
 /// name that was unique become ambiguous, so thread-local positive caches must
@@ -2799,17 +2738,15 @@ thread_local! {
     /// is found, however, the append-only registry makes it immutable.
     static NATIVE_SHAPE_CACHE: std::cell::RefCell<(
         u64,
-        rustc_hash::FxHashMap<TypeTag, &'static NativeEnumShape>
+        rustc_hash::FxHashMap<TypeTag, Arc<NativeEnumShape>>
     )> = std::cell::RefCell::new((0, rustc_hash::FxHashMap::default()));
 }
 
 /// The native enum shape that uniquely declares a variant named `name`, or
 /// `None` if no native shape declares it or more than one does.
 #[must_use]
-pub(crate) fn native_shape_for_variant(
-    tag: TypeTag,
-    name: &str,
-) -> Option<&'static NativeEnumShape> {
+#[allow(dead_code)]
+pub(crate) fn native_shape_for_variant(tag: TypeTag, name: &str) -> Option<Arc<NativeEnumShape>> {
     use std::sync::atomic::Ordering;
     let generation = NATIVE_SHAPE_GENERATION.load(Ordering::Acquire);
     if let Some(shape) = NATIVE_SHAPE_CACHE.with(|cache| {
@@ -2818,13 +2755,18 @@ pub(crate) fn native_shape_for_variant(
             cache.0 = generation;
             cache.1.clear();
         }
-        cache.1.get(&tag).copied()
+        cache.1.get(&tag).cloned()
     }) {
         return Some(shape);
     }
-    let shape = VARIANT_NAME_TO_SHAPE.read().get(name).copied().flatten()?;
+    let shape = VARIANT_NAME_TO_SHAPE
+        .read()
+        .get(name)
+        .cloned()
+        .flatten()?
+        .upgrade()?;
     NATIVE_SHAPE_CACHE.with(|cache| {
-        cache.borrow_mut().1.insert(tag, shape);
+        cache.borrow_mut().1.insert(tag, Arc::clone(&shape));
     });
     Some(shape)
 }
@@ -2841,11 +2783,13 @@ pub(crate) fn native_shape_for_variant(
 /// return the shapes in index order, each carrying `index == base +
 /// offset`. Returns `build`'s second value (typically the `DefId ->
 /// index` map the shapes were built against).
-pub fn register_native_shapes<R>(
-    build: impl FnOnce(u32) -> (Vec<&'static NativeEnumShape>, R),
-) -> R {
+pub fn register_native_shapes<R>(build: impl FnOnce(u32) -> (Vec<Arc<NativeEnumShape>>, R)) -> R {
     let mut t = NATIVE_SHAPES.write();
-    let base = u32::try_from(t.len()).unwrap_or(0);
+    t.retain(|_, weak| weak.strong_count() != 0);
+    // The builder needs its base before it can reveal the batch length. Reserve
+    // a fixed, intentionally generous block; shape batches are tiny and the
+    // opaque compatibility ids need only be unique, not dense.
+    let base = NEXT_NATIVE_SHAPE_INDEX.fetch_add(1024, std::sync::atomic::Ordering::AcqRel);
     let (shapes, result) = build(base);
     let mut names = VARIANT_NAME_TO_SHAPE.write();
     for (offset, shape) in shapes.into_iter().enumerate() {
@@ -2862,16 +2806,20 @@ pub fn register_native_shapes<R>(
         for variant in &shape.variants {
             names
                 .entry(variant.name)
-                .and_modify(|e| {
-                    // A second shape declaring this variant name makes it
-                    // ambiguous; the constructor must fall back to `Variant`.
-                    if !matches!(e, Some(s) if std::ptr::eq(*s, shape)) {
-                        *e = None;
-                    }
-                })
-                .or_insert(Some(shape));
+                .and_modify(
+                    |entry| match entry.as_ref().and_then(std::sync::Weak::upgrade) {
+                        // The old program has gone away. Reuse the compatibility
+                        // entry instead of leaving a stale ambiguity behind.
+                        None => *entry = Some(Arc::downgrade(&shape)),
+                        Some(existing) if Arc::ptr_eq(&existing, &shape) => {}
+                        // A live second shape declaring this variant name makes
+                        // the constructor ambiguous; fall back to `Variant`.
+                        Some(_) => *entry = None,
+                    },
+                )
+                .or_insert_with(|| Some(Arc::downgrade(&shape)));
         }
-        t.push(shape);
+        t.insert(shape.index, Arc::downgrade(&shape));
     }
     NATIVE_SHAPE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Release);
     result
@@ -2879,8 +2827,8 @@ pub fn register_native_shapes<R>(
 
 /// Looks up a registered shape by global index.
 #[must_use]
-pub fn native_shape(idx: u32) -> Option<&'static NativeEnumShape> {
-    NATIVE_SHAPES.read().get(idx as usize).copied()
+pub fn native_shape(idx: u32) -> Option<Arc<NativeEnumShape>> {
+    NATIVE_SHAPES.read().get(&idx)?.upgrade()
 }
 
 /// The discriminant of a native enum pointer under `shape`.
@@ -2900,7 +2848,7 @@ pub fn native_enum_disc(ptr: usize, shape: &NativeEnumShape) -> usize {
 /// `Value::Unit` for out-of-range access (mirrors `VariantField`).
 #[must_use]
 pub fn native_enum_field(owner: &NativeEnumOwner, idx: usize) -> Value {
-    let disc = native_enum_disc(owner.ptr, owner.shape);
+    let disc = native_enum_disc(owner.ptr, &owner.shape);
     let Some(variant) = owner.shape.variants.get(disc) else {
         return Value::Unit;
     };
@@ -2941,7 +2889,7 @@ pub fn native_enum_field(owner: &NativeEnumOwner, idx: usize) -> Value {
             }
             Value::NativeEnum(Arc::new(NativeEnumOwner {
                 ptr: word as usize,
-                shape,
+                shape: Arc::clone(&shape),
                 owned: false,
             }))
         }
@@ -2972,7 +2920,7 @@ pub fn native_enum_field_consume(owner: &mut NativeEnumOwner, idx: usize) -> Opt
     if !unique {
         return None;
     }
-    let disc = native_enum_disc(owner.ptr, owner.shape);
+    let disc = native_enum_disc(owner.ptr, &owner.shape);
     let kind = owner.shape.variants.get(disc)?.fields.get(idx)?;
     let NativeFieldKind::Enum(shape_idx) = kind else {
         return None;
@@ -2984,7 +2932,7 @@ pub fn native_enum_field_consume(owner: &mut NativeEnumOwner, idx: usize) -> Opt
     let word = unsafe { std::ptr::replace(slot, 0) };
     Some(Value::NativeEnum(Arc::new(NativeEnumOwner {
         ptr: word as usize,
-        shape,
+        shape: Arc::clone(&shape),
         owned: false,
     })))
 }
@@ -3017,7 +2965,7 @@ pub(crate) fn native_vec_enum_to_array(word: i64, eidx: u32) -> Value {
         unsafe { gossamer_runtime::c_abi::gos_rt_rc_retain(elem as usize as *mut u8) };
         out.push(Value::NativeEnum(Arc::new(NativeEnumOwner {
             ptr: elem as usize,
-            shape: eshape,
+            shape: Arc::clone(&eshape),
             owned: false,
         })));
     }
@@ -3069,7 +3017,7 @@ pub(crate) fn native_vec_str_enum_to_array(word: i64, eidx: u32) -> Value {
             unsafe { gossamer_runtime::c_abi::gos_rt_rc_retain(val_word as usize as *mut u8) };
             Value::NativeEnum(Arc::new(NativeEnumOwner {
                 ptr: val_word as usize,
-                shape: eshape,
+                shape: Arc::clone(&eshape),
                 owned: false,
             }))
         };
@@ -3083,7 +3031,7 @@ pub(crate) fn native_vec_str_enum_to_array(word: i64, eidx: u32) -> Value {
 /// that need structural `Value`s (FFI bridging, fallback equality).
 #[must_use]
 pub fn native_enum_to_variant(owner: &NativeEnumOwner) -> Value {
-    let disc = native_enum_disc(owner.ptr, owner.shape);
+    let disc = native_enum_disc(owner.ptr, &owner.shape);
     let Some(variant) = owner.shape.variants.get(disc) else {
         return Value::Unit;
     };
@@ -3117,8 +3065,7 @@ fn deep_native_value(v: Value) -> Value {
 // ---------------------------------------------------------------
 
 /// Layout description of a user struct whose values may cross the JIT
-/// boundary. Built once per program load from the HIR and leaked
-/// (`&'static`). Unlike a heap enum, a struct in the compiled tier is a
+/// boundary. Built once per program load from the HIR. Unlike a heap enum, a struct in the compiled tier is a
 /// flat field-slot block with NO RC header: field `i` lives at byte
 /// offset `i * 8` and `&self` / `&mut self` point at field 0.
 ///
@@ -3137,20 +3084,24 @@ pub struct NativeStructShape {
     pub fields: Vec<(&'static str, NativeFieldKind)>,
 }
 
-/// Process-global table of registered native struct shapes. Append-only
-/// across program loads, mirroring [`NATIVE_SHAPES`].
+/// Process-global weak compatibility table of registered native struct shapes.
+/// Loaded VMs retain descriptors; dead program descriptors are releasable even
+/// though legacy shape-index slots remain append-only for now.
 static NATIVE_STRUCT_SHAPES: std::sync::LazyLock<
-    parking_lot::RwLock<Vec<&'static NativeStructShape>>,
-> = std::sync::LazyLock::new(|| parking_lot::RwLock::new(Vec::new()));
+    parking_lot::RwLock<rustc_hash::FxHashMap<u32, std::sync::Weak<NativeStructShape>>>,
+> = std::sync::LazyLock::new(|| parking_lot::RwLock::new(rustc_hash::FxHashMap::default()));
+static NEXT_NATIVE_STRUCT_SHAPE_INDEX: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
 
 /// Atomically reserves a contiguous block of struct-shape indices and
 /// registers the shapes `build` produces under them. Same contract as
 /// [`register_native_shapes`].
 pub fn register_native_struct_shapes<R>(
-    build: impl FnOnce(u32) -> (Vec<&'static NativeStructShape>, R),
+    build: impl FnOnce(u32) -> (Vec<Arc<NativeStructShape>>, R),
 ) -> R {
     let mut t = NATIVE_STRUCT_SHAPES.write();
-    let base = u32::try_from(t.len()).unwrap_or(0);
+    t.retain(|_, weak| weak.strong_count() != 0);
+    let base = NEXT_NATIVE_STRUCT_SHAPE_INDEX.fetch_add(1024, std::sync::atomic::Ordering::AcqRel);
     let (shapes, result) = build(base);
     for (offset, shape) in shapes.into_iter().enumerate() {
         debug_assert_eq!(
@@ -3158,15 +3109,15 @@ pub fn register_native_struct_shapes<R>(
             base + u32::try_from(offset).unwrap_or(0),
             "struct shape table index drift",
         );
-        t.push(shape);
+        t.insert(shape.index, Arc::downgrade(&shape));
     }
     result
 }
 
 /// Looks up a registered struct shape by global index.
 #[must_use]
-pub fn native_struct_shape(idx: u32) -> Option<&'static NativeStructShape> {
-    NATIVE_STRUCT_SHAPES.read().get(idx as usize).copied()
+pub fn native_struct_shape(idx: u32) -> Option<Arc<NativeStructShape>> {
+    NATIVE_STRUCT_SHAPES.read().get(&idx)?.upgrade()
 }
 
 #[cfg(test)]
@@ -3271,17 +3222,62 @@ mod deep_drop_tests {
 
 #[cfg(test)]
 mod native_consume_tests {
+    use std::sync::Arc;
+
     use super::{
-        NativeEnumOwner, NativeEnumShape, NativeFieldKind, NativeVariantShape, Value,
-        intern_type_name, intern_type_tag, native_enum_field_consume, native_shape_for_variant,
-        register_native_shapes,
+        NativeEnumOwner, NativeEnumShape, NativeFieldKind, NativeStructShape, NativeVariantShape,
+        Value, intern_type_name, intern_type_tag, native_enum_field_consume, native_shape,
+        native_shape_for_variant, native_struct_shape, register_native_shapes,
+        register_native_struct_shapes,
     };
+
+    #[test]
+    fn dead_type_tag_storage_is_not_retained_by_compatibility_lookup() {
+        let name = "SessionOwnedTypeTagRegression";
+        let tag = intern_type_tag(name);
+        let weak = Arc::downgrade(&tag.0);
+        drop(tag);
+        assert!(weak.upgrade().is_none());
+        let _ = intern_type_tag("SessionOwnedTypeTagSweep");
+        assert!(
+            !super::TYPE_TAGS.lock().contains_key(name),
+            "compatibility lookup retained a dead type tag"
+        );
+    }
+
+    #[test]
+    fn compatibility_shape_indices_do_not_keep_descriptors_alive() {
+        let (enum_index, enum_weak) = register_native_shapes(|base| {
+            let shape = Arc::new(NativeEnumShape {
+                enum_name: intern_type_name("WeakCompatibilityEnum"),
+                index: base,
+                tagged: true,
+                variants: Vec::new(),
+            });
+            let weak = Arc::downgrade(&shape);
+            (vec![shape], (base, weak))
+        });
+        assert!(enum_weak.upgrade().is_none());
+        assert!(native_shape(enum_index).is_none());
+
+        let (struct_index, struct_weak) = register_native_struct_shapes(|base| {
+            let shape = Arc::new(NativeStructShape {
+                struct_name: intern_type_name("WeakCompatibilityStruct"),
+                index: base,
+                fields: Vec::new(),
+            });
+            let weak = Arc::downgrade(&shape);
+            (vec![shape], (base, weak))
+        });
+        assert!(struct_weak.upgrade().is_none());
+        assert!(native_struct_shape(struct_index).is_none());
+    }
 
     #[test]
     fn native_shape_cache_invalidates_when_name_becomes_ambiguous() {
         const VARIANT: &str = "ShapeCacheAmbiguousVariant";
         let first = register_native_shapes(|base| {
-            let shape: &'static NativeEnumShape = Box::leak(Box::new(NativeEnumShape {
+            let shape = Arc::new(NativeEnumShape {
                 enum_name: intern_type_name("ShapeCacheFirst"),
                 index: base,
                 tagged: true,
@@ -3289,17 +3285,17 @@ mod native_consume_tests {
                     name: intern_type_name(VARIANT),
                     fields: Vec::new(),
                 }],
-            }));
-            (vec![shape], shape)
+            });
+            (vec![Arc::clone(&shape)], shape)
         });
         let tag = intern_type_tag(VARIANT);
-        assert!(std::ptr::eq(
-            native_shape_for_variant(tag, VARIANT).expect("initial unique shape"),
-            first
+        assert!(Arc::ptr_eq(
+            &native_shape_for_variant(tag.clone(), VARIANT).expect("initial unique shape"),
+            &first
         ));
 
         register_native_shapes(|base| {
-            let shape: &'static NativeEnumShape = Box::leak(Box::new(NativeEnumShape {
+            let shape = Arc::new(NativeEnumShape {
                 enum_name: intern_type_name("ShapeCacheSecond"),
                 index: base,
                 tagged: true,
@@ -3307,7 +3303,7 @@ mod native_consume_tests {
                     name: intern_type_name(VARIANT),
                     fields: Vec::new(),
                 }],
-            }));
+            });
             (vec![shape], ())
         });
         assert!(
@@ -3319,7 +3315,7 @@ mod native_consume_tests {
     #[test]
     fn consuming_unique_native_child_transfers_without_retain() {
         let (child_shape, parent_shape) = register_native_shapes(|base| {
-            let child: &'static NativeEnumShape = Box::leak(Box::new(NativeEnumShape {
+            let child = Arc::new(NativeEnumShape {
                 enum_name: intern_type_name("ConsumeChild"),
                 index: base,
                 tagged: false,
@@ -3327,8 +3323,8 @@ mod native_consume_tests {
                     name: intern_type_name("ConsumeLeaf"),
                     fields: vec![NativeFieldKind::I64],
                 }],
-            }));
-            let parent: &'static NativeEnumShape = Box::leak(Box::new(NativeEnumShape {
+            });
+            let parent = Arc::new(NativeEnumShape {
                 enum_name: intern_type_name("ConsumeParent"),
                 index: base + 1,
                 tagged: false,
@@ -3336,8 +3332,11 @@ mod native_consume_tests {
                     name: intern_type_name("ConsumeNode"),
                     fields: vec![NativeFieldKind::Enum(base)],
                 }],
-            }));
-            (vec![child, parent], (child, parent))
+            });
+            (
+                vec![Arc::clone(&child), Arc::clone(&parent)],
+                (child, parent),
+            )
         });
 
         // Null metadata is sufficient here: the test explicitly transfers the
@@ -3354,7 +3353,7 @@ mod native_consume_tests {
         let before = unsafe { gossamer_runtime::c_abi::gos_rt_rc_strong_count(child) };
         let mut owner = NativeEnumOwner {
             ptr: parent as usize,
-            shape: parent_shape,
+            shape: Arc::clone(&parent_shape),
             owned: false,
         };
         let moved = native_enum_field_consume(&mut owner, 0).expect("unique child moves");
@@ -3367,7 +3366,7 @@ mod native_consume_tests {
             panic!("consume returned non-enum")
         };
         assert_eq!(child_owner.ptr, child as usize);
-        assert!(std::ptr::eq(child_owner.shape, child_shape));
+        assert!(Arc::ptr_eq(&child_owner.shape, &child_shape));
         assert_eq!(
             unsafe { gossamer_runtime::c_abi::gos_rt_rc_strong_count(child) },
             before,

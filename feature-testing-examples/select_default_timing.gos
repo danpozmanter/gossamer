@@ -64,6 +64,6 @@ mod tests {
         while let Some(v) = rx2.recv() {
             total += v
         }
-        testing::check_eq(&total, &3, "slow(1) + fast(2) = 3")
+        let _ = testing::check_eq(&total, &3, "slow(1) + fast(2) = 3")
     }
 }

@@ -57,7 +57,7 @@ mod tests {
     fn shadow_basic() {
         let x = 1
         let x = x + 10
-        testing::check_eq(&x, &11, "shadow adds 10")
+        let _ = testing::check_eq(&x, &11, "shadow adds 10")
     }
 
     #[test]
@@ -69,7 +69,7 @@ mod tests {
         } else {
             x
         }
-        testing::check_eq(&doubled, &22, "shadow in if doubles")
+        let _ = testing::check_eq(&doubled, &22, "shadow in if doubles")
     }
 
     #[test]
@@ -80,9 +80,9 @@ mod tests {
             let inner = x + i
             vals.push(inner)
         }
-        testing::check_eq(&x, &16, "outer x unchanged")
-        testing::check_eq(&vals[0], &16, "loop i=0")
-        testing::check_eq(&vals[2], &18, "loop i=2")
+        let _ = testing::check_eq(&x, &16, "outer x unchanged")
+        let _ = testing::check_eq(&vals[0], &16, "loop i=0")
+        let _ = testing::check_eq(&vals[2], &18, "loop i=2")
     }
 
     #[test]
@@ -92,6 +92,6 @@ mod tests {
             n if n > 15 => n - 5,
             n => n + 5,
         }
-        testing::check_eq(&x, &16, "match shadow: 11+5=16")
+        let _ = testing::check_eq(&x, &16, "match shadow: 11+5=16")
     }
 }

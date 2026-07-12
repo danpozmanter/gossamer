@@ -1,6 +1,6 @@
 # `std::utf8`
 
-Status: shipped
+Status: experimental
 
 UTF-8 validation and scalar decoding.
 

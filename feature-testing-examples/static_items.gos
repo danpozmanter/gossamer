@@ -43,31 +43,31 @@ mod tests {
 
     #[test]
     fn static_i64_value() {
-        testing::check_eq(&super::MAX_RETRIES, &5, "MAX_RETRIES == 5")
+        let _ = testing::check_eq(&super::MAX_RETRIES, &5, "MAX_RETRIES == 5")
     }
 
     #[test]
     fn should_retry_uses_static() {
-        testing::check(&super::should_retry(0), "attempt 0 retries")
-        testing::check(&super::should_retry(4), "attempt 4 retries")
-        testing::check(&!super::should_retry(5), "attempt 5 does not retry")
+        let _ = testing::check(&super::should_retry(0), "attempt 0 retries")
+        let _ = testing::check(&super::should_retry(4), "attempt 4 retries")
+        let _ = testing::check(&!super::should_retry(5), "attempt 5 does not retry")
     }
 
     #[test]
     fn above_threshold_uses_static() {
-        testing::check(&super::above_threshold(0.9), "0.9 above threshold")
-        testing::check(&!super::above_threshold(0.5), "0.5 not above threshold")
+        let _ = testing::check(&super::above_threshold(0.9), "0.9 above threshold")
+        let _ = testing::check(&!super::above_threshold(0.5), "0.5 not above threshold")
     }
 
     #[test]
     fn greet_uses_static_str() {
         let g = super::greet("alice")
-        testing::check(&g.contains("hello"), "greeting uses GREETING")
-        testing::check(&g.contains("alice"), "greeting contains name")
+        let _ = testing::check(&g.contains("hello"), "greeting uses GREETING")
+        let _ = testing::check(&g.contains("alice"), "greeting contains name")
     }
 
     #[test]
     fn retry_count_matches_static() {
-        testing::check_eq(&super::retry_count(), &super::MAX_RETRIES, "retry_count == MAX_RETRIES")
+        let _ = testing::check_eq(&super::retry_count(), &super::MAX_RETRIES, "retry_count == MAX_RETRIES")
     }
 }

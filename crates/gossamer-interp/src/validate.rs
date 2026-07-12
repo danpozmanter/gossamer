@@ -5,13 +5,9 @@
 //! checks (see the unsafe-block doc in [`crate::vm`]). When that
 //! invariant is silently broken by a compile.rs regression, the
 //! result is UB rather than a clean panic. [`validate_chunk`] runs at
-//! [`Vm::load`](crate::vm::Vm::load) time under `debug_assertions` so
+//! [`Vm::load`](crate::vm::Vm::load) time so
 //! malformed bytecode surfaces as a clear `RuntimeError` instead of a
 //! segfault.
-//!
-//! Release builds skip validation entirely - the goal is to catch
-//! compiler regressions during development; production execution
-//! still trusts the unverified invariant for speed.
 
 use std::fmt;
 
@@ -26,6 +22,12 @@ use crate::bytecode::{FnChunk, Op, Reg, WideOp};
     reason = "every violation is shape `XOutOfBounds`; the prefix is the discriminator"
 )]
 pub(crate) enum ValidationError {
+    /// A chunk-level declaration is internally inconsistent before any
+    /// instruction is executed.
+    InvalidChunkShape {
+        /// Human-readable invariant that failed.
+        reason: String,
+    },
     /// A jump-shaped op targets an instruction past the end of the
     /// chunk's instruction stream.
     PcOutOfBounds {
@@ -60,6 +62,38 @@ pub(crate) enum ValidationError {
         len: usize,
         /// Pool kind (for diagnostics).
         pool: PoolKind,
+    },
+    /// An inline-cache operand exceeds the chunk's declared cache-slot count.
+    CacheOutOfBounds {
+        /// Index of the offending op within `chunk.instrs`.
+        op_idx: usize,
+        /// Cache slot named by the op.
+        idx: u16,
+        /// Declared number of slots for this cache kind.
+        count: u16,
+        /// Cache family used for diagnostics.
+        cache: CacheKind,
+    },
+    /// A reachable instruction can continue past the end of the
+    /// instruction stream instead of returning, panicking, or jumping.
+    ControlFlowFallsOffEnd {
+        /// The last reachable instruction before the invalid fall-through.
+        op_idx: usize,
+    },
+    /// A reachable instruction reads an unboxed register that no preceding
+    /// write on every control-flow path has initialized. The unboxed files'
+    /// storage is reused between frames and the dispatch loop intentionally
+    /// uses unchecked indexing on the validated bytecode path. Boxed
+    /// registers deliberately do not use this error: every frame materializes
+    /// them as `Value::Void`, which is a defined language value rather than
+    /// uninitialized host memory.
+    RegisterUninitialized {
+        /// Index of the instruction that performs the invalid read.
+        op_idx: usize,
+        /// Register number read before initialization.
+        reg: u32,
+        /// Register file containing the invalid read.
+        file: RegFile,
     },
 }
 
@@ -101,6 +135,29 @@ pub(crate) enum PoolKind {
     ClosureProtos,
     /// `select` arm metadata table (`select_arms`).
     SelectArms,
+    /// Variant and struct shape-name table (`shape_names`).
+    ShapeNames,
+}
+
+/// Inline-cache discriminator for [`ValidationError::CacheOutOfBounds`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CacheKind {
+    /// Call and method dispatch cache.
+    Call,
+    /// Adaptive arithmetic cache.
+    Arithmetic,
+    /// Struct field lookup cache.
+    Field,
+}
+
+impl fmt::Display for CacheKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Call => f.write_str("call"),
+            Self::Arithmetic => f.write_str("arithmetic"),
+            Self::Field => f.write_str("field"),
+        }
+    }
 }
 
 impl fmt::Display for PoolKind {
@@ -113,6 +170,7 @@ impl fmt::Display for PoolKind {
             Self::WideOps => f.write_str("wide_ops"),
             Self::ClosureProtos => f.write_str("closure_protos"),
             Self::SelectArms => f.write_str("select_arms"),
+            Self::ShapeNames => f.write_str("shape_names"),
         }
     }
 }
@@ -120,6 +178,9 @@ impl fmt::Display for PoolKind {
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidChunkShape { reason } => {
+                write!(f, "bytecode validator: invalid chunk shape: {reason}")
+            }
             Self::PcOutOfBounds {
                 op_idx,
                 target,
@@ -145,6 +206,23 @@ impl fmt::Display for ValidationError {
             } => write!(
                 f,
                 "bytecode validator: op #{op_idx} references {pool}[{idx}], but pool has length {len}"
+            ),
+            Self::CacheOutOfBounds {
+                op_idx,
+                idx,
+                count,
+                cache,
+            } => write!(
+                f,
+                "bytecode validator: op #{op_idx} references {cache} cache slot {idx}, but chunk declares {count}"
+            ),
+            Self::ControlFlowFallsOffEnd { op_idx } => write!(
+                f,
+                "bytecode validator: reachable op #{op_idx} falls off the end of the chunk"
+            ),
+            Self::RegisterUninitialized { op_idx, reg, file } => write!(
+                f,
+                "bytecode validator: op #{op_idx} reads uninitialized {file} register {reg}"
             ),
         }
     }
@@ -175,6 +253,28 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
     let closure_protos_len = chunk.closure_protos.len();
     let select_arms_len = chunk.select_arms.len();
     let wide_len = chunk.wide_ops.len();
+    let call_cache_count = chunk.call_cache_count;
+    let arith_cache_count = chunk.arith_cache_count;
+    let field_cache_count = chunk.field_cache_count;
+
+    if chunk.arity > chunk.register_count {
+        return Err(ValidationError::InvalidChunkShape {
+            reason: format!(
+                "arity {} exceeds {} value registers",
+                chunk.arity, chunk.register_count
+            ),
+        });
+    }
+    for &reg in &chunk.mut_ref_params {
+        if reg >= chunk.arity {
+            return Err(ValidationError::InvalidChunkShape {
+                reason: format!(
+                    "mutable-reference parameter register {reg} is outside arity {}",
+                    chunk.arity
+                ),
+            });
+        }
+    }
 
     let check_v = |op_idx: usize, r: Reg| -> Result<(), ValidationError> {
         let r = u32::from(r);
@@ -279,6 +379,18 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
             }
             Ok(())
         };
+    let check_cache =
+        |op_idx: usize, idx: u16, count: u16, cache: CacheKind| -> Result<(), ValidationError> {
+            if idx >= count {
+                return Err(ValidationError::CacheOutOfBounds {
+                    op_idx,
+                    idx,
+                    count,
+                    cache,
+                });
+            }
+            Ok(())
+        };
 
     for (op_idx, op) in chunk.instrs.iter().enumerate() {
         match *op {
@@ -304,14 +416,40 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
             }
 
             // Adaptive arith - boxed value lhs/rhs/dst.
-            Op::AddInt { dst, lhs, rhs, .. }
-            | Op::SubInt { dst, lhs, rhs, .. }
-            | Op::MulInt { dst, lhs, rhs, .. }
-            | Op::DivInt { dst, lhs, rhs, .. }
-            | Op::RemInt { dst, lhs, rhs, .. } => {
+            Op::AddInt {
+                dst,
+                lhs,
+                rhs,
+                cache_idx,
+            }
+            | Op::SubInt {
+                dst,
+                lhs,
+                rhs,
+                cache_idx,
+            }
+            | Op::MulInt {
+                dst,
+                lhs,
+                rhs,
+                cache_idx,
+            }
+            | Op::DivInt {
+                dst,
+                lhs,
+                rhs,
+                cache_idx,
+            }
+            | Op::RemInt {
+                dst,
+                lhs,
+                rhs,
+                cache_idx,
+            } => {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, lhs)?;
                 check_v(op_idx, rhs)?;
+                check_cache(op_idx, cache_idx, arith_cache_count, CacheKind::Arithmetic)?;
             }
             Op::Neg { dst, operand } | Op::Not { dst, operand } => {
                 check_v(op_idx, dst)?;
@@ -341,11 +479,13 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 callee,
                 args,
                 argc,
+                cache_idx,
                 ..
             } => {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, callee)?;
                 check_v_span(op_idx, args, argc)?;
+                check_cache(op_idx, cache_idx, call_cache_count, CacheKind::Call)?;
             }
             Op::Return { value } => check_v(op_idx, value)?,
             Op::ReturnUnit => {}
@@ -357,23 +497,26 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_pool(op_idx, proto, closure_protos_len, PoolKind::ClosureProtos)?;
             }
             Op::Select { first, count } => {
-                if count > 0 {
-                    let last = first.saturating_add(u32::from(count) - 1);
-                    check_pool(op_idx, last, select_arms_len, PoolKind::SelectArms)?;
-                    let start = first as usize;
-                    for arm in &chunk.select_arms[start..start + count as usize] {
-                        check_target(op_idx, arm.body_block)?;
-                        match arm.kind {
-                            crate::bytecode::SelectArmKind::Recv => {
-                                check_v(op_idx, arm.channel_reg)?;
-                                check_v(op_idx, arm.bind_reg)?;
-                            }
-                            crate::bytecode::SelectArmKind::Send => {
-                                check_v(op_idx, arm.channel_reg)?;
-                                check_v(op_idx, arm.value_reg)?;
-                            }
-                            crate::bytecode::SelectArmKind::Default => {}
+                if count == 0 {
+                    return Err(ValidationError::InvalidChunkShape {
+                        reason: format!("select op #{op_idx} has no arms"),
+                    });
+                }
+                let last = first.saturating_add(u32::from(count) - 1);
+                check_pool(op_idx, last, select_arms_len, PoolKind::SelectArms)?;
+                let start = first as usize;
+                for arm in &chunk.select_arms[start..start + count as usize] {
+                    check_target(op_idx, arm.body_block)?;
+                    match arm.kind {
+                        crate::bytecode::SelectArmKind::Recv => {
+                            check_v(op_idx, arm.channel_reg)?;
+                            check_v(op_idx, arm.bind_reg)?;
                         }
+                        crate::bytecode::SelectArmKind::Send => {
+                            check_v(op_idx, arm.channel_reg)?;
+                            check_v(op_idx, arm.value_reg)?;
+                        }
+                        crate::bytecode::SelectArmKind::Default => {}
                     }
                 }
             }
@@ -386,12 +529,13 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 name_idx,
                 args,
                 argc,
-                ..
+                cache_idx,
             } => {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, receiver)?;
                 check_pool(op_idx, u32::from(name_idx), globals_len, PoolKind::Globals)?;
                 check_v_span(op_idx, args, argc)?;
+                check_cache(op_idx, cache_idx, call_cache_count, CacheKind::Call)?;
             }
 
             // Fused super-instructions over Value registers.
@@ -652,11 +796,12 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 dst,
                 receiver,
                 name_idx,
-                ..
+                cache_idx,
             } => {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, receiver)?;
                 check_pool(op_idx, u32::from(name_idx), consts_len, PoolKind::Consts)?;
+                check_cache(op_idx, cache_idx, field_cache_count, CacheKind::Field)?;
             }
             Op::FieldSet {
                 receiver,
@@ -974,6 +1119,15 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, receiver)?;
                 check_pool(op_idx, u32::from(name_idx), consts_len, PoolKind::Consts)?;
             }
+            Op::FieldGetI64 {
+                dst_i,
+                receiver,
+                name_idx,
+            } => {
+                check_i(op_idx, dst_i)?;
+                check_v(op_idx, receiver)?;
+                check_pool(op_idx, u32::from(name_idx), consts_len, PoolKind::Consts)?;
+            }
             Op::IndexedFieldGet {
                 dst,
                 base,
@@ -1080,6 +1234,18 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_f(op_idx, dst_f)?;
                 check_v(op_idx, receiver)?;
             }
+            Op::FieldGetI64ByOffset {
+                dst_i, receiver, ..
+            } => {
+                check_i(op_idx, dst_i)?;
+                check_v(op_idx, receiver)?;
+            }
+            Op::FieldSetI64ByOffset {
+                receiver, value_i, ..
+            } => {
+                check_v(op_idx, receiver)?;
+                check_i(op_idx, value_i)?;
+            }
             Op::FlatGetF64 {
                 dst_f, base, index, ..
             } => {
@@ -1130,7 +1296,7 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                     op_idx,
                     u32::from(name_idx),
                     shape_names_len,
-                    PoolKind::Consts,
+                    PoolKind::ShapeNames,
                 )?;
             }
             Op::VariantField { dst, src, .. } => {
@@ -1144,7 +1310,7 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                     op_idx,
                     u32::from(name_idx),
                     shape_names_len,
-                    PoolKind::Consts,
+                    PoolKind::ShapeNames,
                 )?;
             }
             Op::MoveConsume { dst, src } => {
@@ -1167,7 +1333,762 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
         }
     }
 
+    validate_control_flow(chunk)?;
+    validate_register_initialization(chunk)
+}
+
+/// Verifies the reachable control-flow graph after per-op target bounds are
+/// known valid. Unreachable instructions are permitted: lowering deliberately
+/// keeps some label scaffolding and an unconditional jump can make a following
+/// return unreachable. What must never happen is a reachable ordinary op at
+/// the final instruction, because VM dispatch would then advance outside the
+/// chunk instead of reaching an explicit terminator.
+fn validate_control_flow(chunk: &FnChunk) -> Result<(), ValidationError> {
+    if chunk.instrs.is_empty() {
+        return Err(ValidationError::InvalidChunkShape {
+            reason: "chunk has no instructions".to_string(),
+        });
+    }
+
+    let mut reachable = vec![false; chunk.instrs.len()];
+    let mut pending = vec![0usize];
+    while let Some(op_idx) = pending.pop() {
+        if reachable[op_idx] {
+            continue;
+        }
+        reachable[op_idx] = true;
+        let mut add_successor = |target: usize| {
+            if !reachable[target] {
+                pending.push(target);
+            }
+        };
+        match chunk.instrs[op_idx] {
+            Op::Return { .. } | Op::ReturnUnit | Op::Panic { .. } => {}
+            Op::Jump { target } => add_successor(target as usize),
+            Op::BranchIf { target, .. }
+            | Op::BranchIfNot { target, .. }
+            | Op::BranchIfLtI64 { target, .. }
+            | Op::BranchIfGeI64 { target, .. }
+            | Op::BranchIfGtI64 { target, .. }
+            | Op::BranchIfLtF64 { target, .. }
+            | Op::BranchIfGeF64 { target, .. }
+            | Op::IncJumpIfLtI64 { target, .. }
+            | Op::IncJumpIfLeI64 { target, .. } => {
+                add_successor(target as usize);
+                if let Some(next) = op_idx
+                    .checked_add(1)
+                    .filter(|next| *next < chunk.instrs.len())
+                {
+                    add_successor(next);
+                } else {
+                    return Err(ValidationError::ControlFlowFallsOffEnd { op_idx });
+                }
+            }
+            Op::Select { first, count } => {
+                let start = first as usize;
+                for arm in &chunk.select_arms[start..start + count as usize] {
+                    add_successor(arm.body_block as usize);
+                }
+            }
+            _ => {
+                if let Some(next) = op_idx
+                    .checked_add(1)
+                    .filter(|next| *next < chunk.instrs.len())
+                {
+                    add_successor(next);
+                } else {
+                    return Err(ValidationError::ControlFlowFallsOffEnd { op_idx });
+                }
+            }
+        }
+    }
     Ok(())
+}
+
+/// Per-instruction register reads, writes, and explicit invalidations. Keeping
+/// this separate from the bounds pass makes the write-before-read audit
+/// exhaustive without adding any cost to bytecode execution.
+#[derive(Default)]
+struct RegisterEffects {
+    v_reads: Vec<Reg>,
+    f_reads: Vec<Reg>,
+    i_reads: Vec<Reg>,
+    v_writes: Vec<Reg>,
+    f_writes: Vec<Reg>,
+    i_writes: Vec<Reg>,
+    v_clears: Vec<Reg>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct RegisterInitialization {
+    values: Vec<bool>,
+    floats: Vec<bool>,
+    ints: Vec<bool>,
+}
+
+impl RegisterInitialization {
+    fn entry(chunk: &FnChunk) -> Self {
+        let mut values = vec![false; usize::from(chunk.register_count)];
+        values[..usize::from(chunk.arity)].fill(true);
+        Self {
+            values,
+            floats: vec![false; usize::from(chunk.float_count)],
+            ints: vec![false; usize::from(chunk.int_count)],
+        }
+    }
+
+    fn intersect_assign(&mut self, other: &Self) -> bool {
+        let before = self.clone();
+        for (left, right) in self.values.iter_mut().zip(&other.values) {
+            *left &= *right;
+        }
+        for (left, right) in self.floats.iter_mut().zip(&other.floats) {
+            *left &= *right;
+        }
+        for (left, right) in self.ints.iter_mut().zip(&other.ints) {
+            *left &= *right;
+        }
+        *self != before
+    }
+
+    fn apply(&mut self, effects: &RegisterEffects) {
+        for &reg in &effects.v_clears {
+            self.values[usize::from(reg)] = false;
+        }
+        for &reg in &effects.v_writes {
+            self.values[usize::from(reg)] = true;
+        }
+        for &reg in &effects.f_writes {
+            self.floats[usize::from(reg)] = true;
+        }
+        for &reg in &effects.i_writes {
+            self.ints[usize::from(reg)] = true;
+        }
+    }
+}
+
+fn add_v_span(registers: &mut Vec<Reg>, first: Reg, count: u16) {
+    registers.extend((0..count).map(|offset| first + offset));
+}
+
+fn add_i_span(registers: &mut Vec<Reg>, first: Reg, count: u16) {
+    registers.extend((0..count).map(|offset| first + offset));
+}
+
+fn add_f_span(registers: &mut Vec<Reg>, first: Reg, count: u32) {
+    registers.extend((0..count).map(|offset| first + offset as Reg));
+}
+
+/// Proves every reachable source register was initialized along all paths.
+/// Value-register parameters are initialized at entry; typed registers have no
+/// ABI parameters and must therefore be written by bytecode first. A meet at
+/// each control-flow join uses intersection, the standard definite-assignment
+/// rule. The pass also models consuming ops and `ClearRegs` as invalidations,
+/// preventing a later compiler regression from silently reading `Void`.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the exhaustive opcode table is the validation contract"
+)]
+fn validate_register_initialization(chunk: &FnChunk) -> Result<(), ValidationError> {
+    let mut incoming = vec![None; chunk.instrs.len()];
+    incoming[0] = Some(RegisterInitialization::entry(chunk));
+    let mut pending = vec![0usize];
+
+    while let Some(op_idx) = pending.pop() {
+        let state = incoming[op_idx].as_ref().expect("queued state").clone();
+        let effects = register_effects(chunk, op_idx);
+        let mut out = state;
+        out.apply(&effects);
+
+        let mut propagate = |target: usize, next: RegisterInitialization| {
+            if target == 0 {
+                // Entry always includes the initial call-frame state. A loop
+                // back-edge can only add facts, never weaken that requirement.
+                return;
+            }
+            let changed = match &mut incoming[target] {
+                Some(current) => current.intersect_assign(&next),
+                slot @ None => {
+                    *slot = Some(next);
+                    true
+                }
+            };
+            if changed {
+                pending.push(target);
+            }
+        };
+
+        match chunk.instrs[op_idx] {
+            Op::Return { .. } | Op::ReturnUnit | Op::Panic { .. } => {}
+            Op::Jump { target } => propagate(target as usize, out),
+            Op::BranchIf { target, .. }
+            | Op::BranchIfNot { target, .. }
+            | Op::BranchIfLtI64 { target, .. }
+            | Op::BranchIfGeI64 { target, .. }
+            | Op::BranchIfGtI64 { target, .. }
+            | Op::BranchIfLtF64 { target, .. }
+            | Op::BranchIfGeF64 { target, .. }
+            | Op::IncJumpIfLtI64 { target, .. }
+            | Op::IncJumpIfLeI64 { target, .. } => {
+                propagate(target as usize, out.clone());
+                propagate(op_idx + 1, out);
+            }
+            Op::Select { first, count } => {
+                for arm in &chunk.select_arms[first as usize..first as usize + count as usize] {
+                    let mut arm_out = out.clone();
+                    if matches!(arm.kind, crate::bytecode::SelectArmKind::Recv) {
+                        arm_out.values[usize::from(arm.bind_reg)] = true;
+                    }
+                    propagate(arm.body_block as usize, arm_out);
+                }
+            }
+            _ => propagate(op_idx + 1, out),
+        }
+    }
+
+    for (op_idx, state) in incoming.into_iter().enumerate() {
+        let Some(state) = state else { continue };
+        let effects = register_effects(chunk, op_idx);
+        // The boxed register file is materialized as `Value::Void` on every
+        // frame entry. Reading a compiler-temporary before a write is still a
+        // lowering bug, but it cannot expose uninitialized host memory; a
+        // conservative CFG intersection here also rejects valid loop and
+        // match lowering that deliberately reuses a Void scratch slot. The
+        // unboxed files below are the release-safety boundary and must remain
+        // definitely assigned before every read.
+        for reg in effects.f_reads {
+            if !state.floats[usize::from(reg)] {
+                return Err(ValidationError::RegisterUninitialized {
+                    op_idx,
+                    reg: u32::from(reg),
+                    file: RegFile::Float,
+                });
+            }
+        }
+        for reg in effects.i_reads {
+            if !state.ints[usize::from(reg)] {
+                return Err(ValidationError::RegisterUninitialized {
+                    op_idx,
+                    reg: u32::from(reg),
+                    file: RegFile::Int,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one exhaustive table keeps every opcode's reads explicit"
+)]
+fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
+    let mut effect = RegisterEffects::default();
+    let op = chunk.instrs[op_idx];
+    match op {
+        Op::LoadConst { dst, .. }
+        | Op::LoadGlobal { dst, .. }
+        | Op::MakeClosure { dst, .. }
+        | Op::BuildTuple { dst, .. }
+        | Op::BuildArray { dst, .. }
+        | Op::BuildArrayRepeat { dst, .. }
+        | Op::BuildRange { dst, .. }
+        | Op::CastScalar { dst, .. }
+        | Op::CellNew { dst, .. }
+        | Op::CellNewMove { dst, .. }
+        | Op::CellTake { dst, .. }
+        | Op::IndexGet { dst, .. }
+        | Op::IndexGetChecked { dst, .. }
+        | Op::StrByteAt { dst, .. }
+        | Op::FieldGet { dst, .. }
+        | Op::VecPop { dst, .. }
+        | Op::VecRemoveAt { dst, .. }
+        | Op::TupleIndex { dst, .. }
+        | Op::TupleTailIndex { dst, .. }
+        | Op::IndexedFieldGet { dst, .. }
+        | Op::VariantIs { dst, .. }
+        | Op::VariantField { dst, .. }
+        | Op::StructIs { dst, .. }
+        | Op::MoveConsume { dst, .. }
+        | Op::VariantFieldConsume { dst, .. }
+        | Op::IndexGetConsume { dst, .. }
+        | Op::TupleIndexConsume { dst, .. }
+        | Op::StreamWriteByte { dst, .. }
+        | Op::U8VecSetByte { dst, .. }
+        | Op::StrSubstring { dst, .. }
+        | Op::MapIncMethod { dst, .. }
+        | Op::MapInc { dst, .. }
+        | Op::MethodCall { dst, .. }
+        | Op::Call { dst, .. }
+        | Op::AddInt { dst, .. }
+        | Op::SubInt { dst, .. }
+        | Op::MulInt { dst, .. }
+        | Op::DivInt { dst, .. }
+        | Op::RemInt { dst, .. }
+        | Op::Neg { dst, .. }
+        | Op::Not { dst, .. }
+        | Op::Deref { dst, .. }
+        | Op::Move { dst, .. }
+        | Op::Eq { dst, .. }
+        | Op::Ne { dst, .. }
+        | Op::Lt { dst, .. }
+        | Op::Le { dst, .. }
+        | Op::Gt { dst, .. }
+        | Op::Ge { dst, .. } => effect.v_writes.push(dst),
+        Op::BuildIntArray { dst_v, .. }
+        | Op::BuildFloatVec { dst_v, .. }
+        | Op::BuildIntMap { dst_v }
+        | Op::BuildStrIntMap { dst_v }
+        | Op::IntMapInsert { dst_v, .. }
+        | Op::BoxF64 { dst_v, .. }
+        | Op::BoxI64 { dst_v, .. }
+        | Op::I64ToUint { dst_v, .. }
+        | Op::LtF64 { dst_v, .. }
+        | Op::LeF64 { dst_v, .. }
+        | Op::GtF64 { dst_v, .. }
+        | Op::GeF64 { dst_v, .. }
+        | Op::EqF64 { dst_v, .. }
+        | Op::NeF64 { dst_v, .. }
+        | Op::LtI64 { dst_v, .. }
+        | Op::LeI64 { dst_v, .. }
+        | Op::GtI64 { dst_v, .. }
+        | Op::GeI64 { dst_v, .. }
+        | Op::EqI64 { dst_v, .. }
+        | Op::NeI64 { dst_v, .. }
+        | Op::LtU64 { dst_v, .. }
+        | Op::LeU64 { dst_v, .. }
+        | Op::GtU64 { dst_v, .. }
+        | Op::GeU64 { dst_v, .. } => effect.v_writes.push(dst_v),
+        Op::LoadConstF64 { dst_f, .. }
+        | Op::IntToFloatF64 { dst_f, .. }
+        | Op::UnboxF64 { dst_f, .. }
+        | Op::FieldGetF64 { dst_f, .. }
+        | Op::IndexedFieldGetF64 { dst_f, .. }
+        | Op::IndexedFieldGetF64ByOffset { dst_f, .. }
+        | Op::FieldGetF64ByOffset { dst_f, .. }
+        | Op::FlatGetF64 { dst_f, .. }
+        | Op::FlatGetF64I { dst_f, .. }
+        | Op::FloatVecGetF64 { dst_f, .. }
+        | Op::NegF64 { dst_f, .. }
+        | Op::SqrtF64 { dst_f, .. }
+        | Op::SinF64 { dst_f, .. }
+        | Op::CosF64 { dst_f, .. }
+        | Op::AbsF64 { dst_f, .. }
+        | Op::FloorF64 { dst_f, .. }
+        | Op::CeilF64 { dst_f, .. }
+        | Op::ExpF64 { dst_f, .. }
+        | Op::LnF64 { dst_f, .. }
+        | Op::MoveF64 { dst_f, .. }
+        | Op::AddF64 { dst_f, .. }
+        | Op::SubF64 { dst_f, .. }
+        | Op::MulF64 { dst_f, .. }
+        | Op::DivF64 { dst_f, .. }
+        | Op::MulAddF64 { dst_f, .. }
+        | Op::MulSubF64 { dst_f, .. } => effect.f_writes.push(dst_f),
+        Op::LoadConstI64 { dst_i, .. }
+        | Op::FloatToIntI64 { dst_i, .. }
+        | Op::TruncCastI64 { dst_i, .. }
+        | Op::UnboxI64 { dst_i, .. }
+        | Op::U8VecGetByte { dst_i, .. }
+        | Op::IntArrayGetI64 { dst_i, .. }
+        | Op::IntMapInc { dst_i, .. }
+        | Op::IntMapGetOr { dst_i, .. }
+        | Op::IntMapLen { dst_i, .. }
+        | Op::FieldGetI64 { dst_i, .. }
+        | Op::FieldGetI64ByOffset { dst_i, .. }
+        | Op::NegI64 { dst_i, .. }
+        | Op::MoveI64 { dst_i, .. }
+        | Op::ArithImmI64 { dst_i, .. }
+        | Op::AddI64 { dst_i, .. }
+        | Op::SubI64 { dst_i, .. }
+        | Op::MulI64 { dst_i, .. }
+        | Op::DivI64 { dst_i, .. }
+        | Op::RemI64 { dst_i, .. }
+        | Op::DivU64 { dst_i, .. }
+        | Op::RemU64 { dst_i, .. }
+        | Op::BitAndI64 { dst_i, .. }
+        | Op::BitOrI64 { dst_i, .. }
+        | Op::BitXorI64 { dst_i, .. }
+        | Op::ShlI64 { dst_i, .. }
+        | Op::ShrI64 { dst_i, .. }
+        | Op::ShrU64 { dst_i, .. } => effect.i_writes.push(dst_i),
+        _ => {}
+    }
+
+    match op {
+        // `Return` intentionally permits an untouched Value register: unit
+        // expression tails are represented by the frame's `Value::Void`
+        // sentinel. Typed register files have no such semantic zero value.
+        Op::StoreStatic { src, .. } => effect.v_reads.push(src),
+        Op::Move { src, .. }
+        | Op::Deref { src, .. }
+        | Op::Neg { operand: src, .. }
+        | Op::Not { operand: src, .. }
+        | Op::CastScalar { src, .. }
+        | Op::CellNew { src, .. }
+        | Op::CellNewMove { src, .. }
+        | Op::MoveConsume { src, .. }
+        | Op::VariantIs { src, .. }
+        | Op::VariantField { src, .. }
+        | Op::StructIs { src, .. }
+        | Op::VariantFieldConsume { src, .. } => effect.v_reads.push(src),
+        Op::AddInt { lhs, rhs, .. }
+        | Op::SubInt { lhs, rhs, .. }
+        | Op::MulInt { lhs, rhs, .. }
+        | Op::DivInt { lhs, rhs, .. }
+        | Op::RemInt { lhs, rhs, .. }
+        | Op::Eq { lhs, rhs, .. }
+        | Op::Ne { lhs, rhs, .. }
+        | Op::Lt { lhs, rhs, .. }
+        | Op::Le { lhs, rhs, .. }
+        | Op::Gt { lhs, rhs, .. }
+        | Op::Ge { lhs, rhs, .. } => effect.v_reads.extend([lhs, rhs]),
+        Op::BranchIf { cond, .. } | Op::BranchIfNot { cond, .. } => effect.v_reads.push(cond),
+        Op::Call {
+            callee, args, argc, ..
+        } => {
+            effect.v_reads.push(callee);
+            add_v_span(&mut effect.v_reads, args, argc);
+        }
+        Op::MethodCall {
+            receiver,
+            args,
+            argc,
+            ..
+        } => {
+            effect.v_reads.push(receiver);
+            add_v_span(&mut effect.v_reads, args, argc);
+        }
+        Op::StreamWriteByte {
+            stream_reg,
+            byte_reg,
+            ..
+        } => effect.v_reads.extend([stream_reg, byte_reg]),
+        Op::U8VecSetByte {
+            u8vec_reg,
+            idx_reg,
+            byte_reg,
+            ..
+        } => effect.v_reads.extend([u8vec_reg, idx_reg, byte_reg]),
+        Op::U8VecGetByte {
+            u8vec_reg, idx_reg, ..
+        }
+        | Op::StrByteAt {
+            recv: u8vec_reg,
+            idx: idx_reg,
+            ..
+        } => effect.v_reads.extend([u8vec_reg, idx_reg]),
+        Op::StrSubstring {
+            recv_reg,
+            start_reg,
+            end_reg,
+            ..
+        } => effect.v_reads.extend([recv_reg, start_reg, end_reg]),
+        Op::MapIncMethod {
+            map_reg,
+            key_reg,
+            by_reg,
+            ..
+        }
+        | Op::MapInc {
+            map_reg,
+            key_reg,
+            by_reg,
+            ..
+        } => effect.v_reads.extend([map_reg, key_reg, by_reg]),
+        Op::BuildTuple { first, count, .. } | Op::BuildArray { first, count, .. } => {
+            add_v_span(&mut effect.v_reads, first, count);
+        }
+        Op::BuildArrayRepeat { value, count, .. } => effect.v_reads.extend([value, count]),
+        Op::BuildRange { start, end, .. } => effect.v_reads.extend([start, end]),
+        Op::CellTake { cell, .. } => effect.v_reads.push(cell),
+        Op::IndexGet { base, index, .. }
+        | Op::IndexGetChecked { base, index, .. }
+        | Op::IndexGetConsume { base, index, .. }
+        | Op::IndexedFieldGet { base, index, .. }
+        | Op::IndexedFieldGetF64 { base, index, .. }
+        | Op::IndexedFieldGetF64ByOffset { base, index, .. }
+        | Op::FlatGetF64 { base, index, .. } => effect.v_reads.extend([base, index]),
+        Op::IndexSet { base, index, value }
+        | Op::IndexedFieldSet {
+            base, index, value, ..
+        } => effect.v_reads.extend([base, index, value]),
+        Op::FieldGet { receiver, .. }
+        | Op::VecPop { receiver, .. }
+        | Op::TupleIndex { receiver, .. }
+        | Op::TupleTailIndex { receiver, .. }
+        | Op::TupleIndexConsume { receiver, .. }
+        | Op::FieldGetF64 { receiver, .. }
+        | Op::FieldGetF64ByOffset { receiver, .. }
+        | Op::FieldGetI64 { receiver, .. }
+        | Op::FieldGetI64ByOffset { receiver, .. } => effect.v_reads.push(receiver),
+        Op::FieldSetI64ByOffset {
+            receiver, value_i, ..
+        } => {
+            effect.v_reads.push(receiver);
+            effect.i_reads.push(value_i);
+        }
+        Op::FieldSet {
+            receiver, value, ..
+        }
+        | Op::VecPush { receiver, value }
+        | Op::StrAppend { receiver, value } => effect.v_reads.extend([receiver, value]),
+        Op::VecInsert {
+            receiver,
+            index,
+            value,
+        } => effect.v_reads.extend([receiver, index, value]),
+        Op::VecRemove { receiver, index }
+        | Op::VecRemoveAt {
+            receiver, index, ..
+        } => effect.v_reads.extend([receiver, index]),
+        Op::Spawn { callee, args, argc } => {
+            effect.v_reads.push(callee);
+            add_v_span(&mut effect.v_reads, args, argc);
+        }
+        Op::SpawnMethod {
+            receiver,
+            args,
+            argc,
+            ..
+        } => {
+            effect.v_reads.push(receiver);
+            add_v_span(&mut effect.v_reads, args, argc);
+        }
+        Op::BuildIntArray { first_i, count, .. } => add_i_span(&mut effect.i_reads, first_i, count),
+        Op::BuildFloatVec { first_f, count, .. } => {
+            add_f_span(&mut effect.f_reads, first_f, u32::from(count));
+        }
+        Op::IntToFloatF64 { src_i, .. }
+        | Op::TruncCastI64 { src_i, .. }
+        | Op::I64ToUint { src_i, .. }
+        | Op::BoxI64 { src_i, .. } => effect.i_reads.push(src_i),
+        Op::FloatToIntI64 { src_f, .. } | Op::BoxF64 { src_f, .. } => effect.f_reads.push(src_f),
+        Op::UnboxI64 { src_v, .. } | Op::UnboxF64 { src_v, .. } => effect.v_reads.push(src_v),
+        Op::IntArrayGetI64 { base, index_i, .. } | Op::FloatVecGetF64 { base, index_i, .. } => {
+            effect.v_reads.push(base);
+            effect.i_reads.push(index_i);
+        }
+        Op::IntArraySetI64 {
+            base,
+            index_i,
+            value_i,
+        } => {
+            effect.v_reads.push(base);
+            effect.i_reads.extend([index_i, value_i]);
+        }
+        Op::IntArraySwap { base, i_i, j_i } | Op::FloatVecSwap { base, i_i, j_i } => {
+            effect.v_reads.push(base);
+            effect.i_reads.extend([i_i, j_i]);
+        }
+        Op::FloatVecSetF64 {
+            base,
+            index_i,
+            value_f,
+        } => {
+            effect.v_reads.push(base);
+            effect.i_reads.push(index_i);
+            effect.f_reads.push(value_f);
+        }
+        Op::IntMapInc {
+            map_reg,
+            key_i,
+            by_i,
+            ..
+        } => {
+            effect.v_reads.push(map_reg);
+            effect.i_reads.extend([key_i, by_i]);
+        }
+        Op::IntMapGetOr {
+            map_reg,
+            key_i,
+            default_i,
+            ..
+        } => {
+            effect.v_reads.push(map_reg);
+            effect.i_reads.extend([key_i, default_i]);
+        }
+        Op::IntMapInsert {
+            map_reg,
+            key_i,
+            value_i,
+            ..
+        } => {
+            effect.v_reads.push(map_reg);
+            effect.i_reads.extend([key_i, value_i]);
+        }
+        Op::IntMapLen { map_reg, .. } => effect.v_reads.push(map_reg),
+        Op::IntMapContainsKey { map_reg, key_i, .. } => {
+            effect.v_reads.push(map_reg);
+            effect.i_reads.push(key_i);
+        }
+        Op::LoadConst { .. }
+        | Op::LoadGlobal { .. }
+        | Op::Jump { .. }
+        | Op::Return { .. }
+        | Op::ReturnUnit
+        | Op::Panic { .. }
+        | Op::CovHit { .. }
+        | Op::BuildIntMap { .. }
+        | Op::BuildStrIntMap { .. }
+        | Op::LoadConstF64 { .. }
+        | Op::LoadConstI64 { .. } => {}
+        Op::AddF64 { lhs_f, rhs_f, .. }
+        | Op::SubF64 { lhs_f, rhs_f, .. }
+        | Op::MulF64 { lhs_f, rhs_f, .. }
+        | Op::DivF64 { lhs_f, rhs_f, .. }
+        | Op::LtF64 { lhs_f, rhs_f, .. }
+        | Op::LeF64 { lhs_f, rhs_f, .. }
+        | Op::GtF64 { lhs_f, rhs_f, .. }
+        | Op::GeF64 { lhs_f, rhs_f, .. }
+        | Op::EqF64 { lhs_f, rhs_f, .. }
+        | Op::NeF64 { lhs_f, rhs_f, .. }
+        | Op::BranchIfLtF64 { lhs_f, rhs_f, .. }
+        | Op::BranchIfGeF64 { lhs_f, rhs_f, .. } => effect.f_reads.extend([lhs_f, rhs_f]),
+        Op::NegF64 { src_f, .. }
+        | Op::SqrtF64 { src_f, .. }
+        | Op::SinF64 { src_f, .. }
+        | Op::CosF64 { src_f, .. }
+        | Op::AbsF64 { src_f, .. }
+        | Op::FloorF64 { src_f, .. }
+        | Op::CeilF64 { src_f, .. }
+        | Op::ExpF64 { src_f, .. }
+        | Op::LnF64 { src_f, .. }
+        | Op::MoveF64 { src_f, .. } => effect.f_reads.push(src_f),
+        Op::MulAddF64 { a_f, b_f, c_f, .. } | Op::MulSubF64 { a_f, b_f, c_f, .. } => {
+            effect.f_reads.extend([a_f, b_f, c_f]);
+        }
+        Op::AddI64 { lhs_i, rhs_i, .. }
+        | Op::SubI64 { lhs_i, rhs_i, .. }
+        | Op::MulI64 { lhs_i, rhs_i, .. }
+        | Op::DivI64 { lhs_i, rhs_i, .. }
+        | Op::RemI64 { lhs_i, rhs_i, .. }
+        | Op::DivU64 { lhs_i, rhs_i, .. }
+        | Op::RemU64 { lhs_i, rhs_i, .. }
+        | Op::BitAndI64 { lhs_i, rhs_i, .. }
+        | Op::BitOrI64 { lhs_i, rhs_i, .. }
+        | Op::BitXorI64 { lhs_i, rhs_i, .. }
+        | Op::ShlI64 { lhs_i, rhs_i, .. }
+        | Op::ShrI64 { lhs_i, rhs_i, .. }
+        | Op::ShrU64 { lhs_i, rhs_i, .. }
+        | Op::LtI64 { lhs_i, rhs_i, .. }
+        | Op::LeI64 { lhs_i, rhs_i, .. }
+        | Op::GtI64 { lhs_i, rhs_i, .. }
+        | Op::GeI64 { lhs_i, rhs_i, .. }
+        | Op::EqI64 { lhs_i, rhs_i, .. }
+        | Op::NeI64 { lhs_i, rhs_i, .. }
+        | Op::LtU64 { lhs_i, rhs_i, .. }
+        | Op::LeU64 { lhs_i, rhs_i, .. }
+        | Op::GtU64 { lhs_i, rhs_i, .. }
+        | Op::GeU64 { lhs_i, rhs_i, .. }
+        | Op::BranchIfLtI64 { lhs_i, rhs_i, .. }
+        | Op::BranchIfGeI64 { lhs_i, rhs_i, .. }
+        | Op::BranchIfGtI64 { lhs_i, rhs_i, .. } => effect.i_reads.extend([lhs_i, rhs_i]),
+        Op::NegI64 { src_i, .. }
+        | Op::MoveI64 { src_i, .. }
+        | Op::ArithImmI64 { lhs_i: src_i, .. } => effect.i_reads.push(src_i),
+        Op::IncJumpIfLtI64 {
+            counter_i, end_i, ..
+        }
+        | Op::IncJumpIfLeI64 {
+            counter_i, end_i, ..
+        } => effect.i_reads.extend([counter_i, end_i]),
+        Op::IndexedFieldSetF64 {
+            base,
+            index,
+            value_f,
+            ..
+        }
+        | Op::IndexedFieldSetF64ByOffset {
+            base,
+            index,
+            value_f,
+            ..
+        } => {
+            effect.v_reads.extend([base, index]);
+            effect.f_reads.push(value_f);
+        }
+        Op::FlatSetF64 {
+            base,
+            index,
+            value_f,
+            ..
+        } => {
+            effect.v_reads.extend([base, index]);
+            effect.f_reads.push(value_f);
+        }
+        Op::FlatGetF64I { base, index_i, .. } => {
+            effect.v_reads.push(base);
+            effect.i_reads.push(index_i);
+        }
+        Op::FlatSetF64I {
+            base,
+            index_i,
+            value_f,
+            ..
+        } => {
+            effect.v_reads.push(base);
+            effect.i_reads.push(index_i);
+            effect.f_reads.push(value_f);
+        }
+        Op::MakeClosure { proto, .. } => effect.v_reads.extend(
+            chunk.closure_protos[proto as usize]
+                .capture_regs
+                .iter()
+                .copied(),
+        ),
+        Op::Select { first, count } => {
+            for arm in &chunk.select_arms[first as usize..first as usize + count as usize] {
+                match arm.kind {
+                    crate::bytecode::SelectArmKind::Recv => effect.v_reads.push(arm.channel_reg),
+                    crate::bytecode::SelectArmKind::Send => {
+                        effect.v_reads.extend([arm.channel_reg, arm.value_reg]);
+                    }
+                    crate::bytecode::SelectArmKind::Default => {}
+                }
+            }
+        }
+        Op::Wide { idx } => match &chunk.wide_ops[idx as usize] {
+            WideOp::MapIncAt {
+                dst,
+                map_reg,
+                seq_reg,
+                start_reg,
+                len_reg,
+                by_reg,
+                ..
+            } => {
+                effect
+                    .v_reads
+                    .extend([*map_reg, *seq_reg, *start_reg, *len_reg, *by_reg]);
+                effect.v_writes.push(*dst);
+            }
+            WideOp::BuildFloatArray {
+                dst_v,
+                first_f,
+                stride,
+                elem_count,
+                ..
+            } => {
+                add_f_span(
+                    &mut effect.f_reads,
+                    *first_f,
+                    u32::from(*stride) * u32::from(*elem_count),
+                );
+                effect.v_writes.push(*dst_v);
+            }
+        },
+        Op::ClearRegs { start, count } => add_v_span(&mut effect.v_clears, start, count),
+    }
+
+    match op {
+        Op::CellNewMove { src, .. } | Op::MoveConsume { src, .. } => effect.v_clears.push(src),
+        Op::IncJumpIfLtI64 { counter_i, .. } | Op::IncJumpIfLeI64 { counter_i, .. } => {
+            effect.i_writes.push(counter_i);
+        }
+        _ => {}
+    }
+    effect
 }
 
 /// Helper for [`validate_chunk`] - descends into the wide-op side
@@ -1243,7 +2164,7 @@ fn validate_wide_op(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytecode::Op;
+    use crate::bytecode::{Op, SelectArmKind, SelectArmMeta, WideOp};
     use crate::value::Value;
 
     fn minimal_chunk() -> FnChunk {
@@ -1277,6 +2198,36 @@ mod tests {
         chunk.instrs.push(Op::Jump { target: 0 });
         chunk.instrs.push(Op::Return { value: 1 });
         assert!(validate_chunk(&chunk).is_ok());
+    }
+
+    #[test]
+    fn float_vec_get_initializes_its_float_destination() {
+        let mut chunk = minimal_chunk();
+        chunk.instrs = vec![
+            Op::LoadConst { dst: 0, idx: 0 },
+            Op::LoadConstI64 { dst_i: 0, idx: 0 },
+            Op::FloatVecGetF64 {
+                dst_f: 0,
+                base: 0,
+                index_i: 0,
+            },
+            Op::BoxF64 { dst_v: 1, src_f: 0 },
+            Op::Return { value: 1 },
+        ];
+        assert!(validate_chunk(&chunk).is_ok());
+    }
+
+    #[test]
+    fn validate_chunk_rejects_invalid_parameter_layout() {
+        let mut chunk = minimal_chunk();
+        chunk.arity = 3;
+        let err = validate_chunk(&chunk).unwrap_err();
+        assert!(matches!(err, ValidationError::InvalidChunkShape { .. }));
+
+        chunk.arity = 1;
+        chunk.mut_ref_params = vec![1];
+        let err = validate_chunk(&chunk).unwrap_err();
+        assert!(matches!(err, ValidationError::InvalidChunkShape { .. }));
     }
 
     #[test]
@@ -1328,6 +2279,566 @@ mod tests {
                 assert_eq!(len, 1);
             }
             other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_chunk_rejects_inline_cache_overflow() {
+        let mut chunk = minimal_chunk();
+        chunk.register_count = 3;
+        chunk.instrs.push(Op::AddInt {
+            dst: 0,
+            lhs: 1,
+            rhs: 2,
+            cache_idx: 0,
+        });
+        chunk.instrs.push(Op::ReturnUnit);
+
+        let err = validate_chunk(&chunk).expect_err("must reject missing cache slot");
+        assert!(matches!(
+            err,
+            ValidationError::CacheOutOfBounds {
+                cache: CacheKind::Arithmetic,
+                idx: 0,
+                count: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_chunk_rejects_reachable_fallthrough_and_empty_chunks() {
+        let mut chunk = minimal_chunk();
+        chunk.instrs.push(Op::LoadConst { dst: 0, idx: 0 });
+        assert!(matches!(
+            validate_chunk(&chunk),
+            Err(ValidationError::ControlFlowFallsOffEnd { op_idx: 0 })
+        ));
+
+        chunk.instrs.clear();
+        assert!(matches!(
+            validate_chunk(&chunk),
+            Err(ValidationError::InvalidChunkShape { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_chunk_rejects_uninitialized_typed_register_read() {
+        let mut chunk = minimal_chunk();
+        chunk.instrs = vec![
+            Op::AddI64 {
+                dst_i: 0,
+                lhs_i: 0,
+                rhs_i: 0,
+            },
+            Op::ReturnUnit,
+        ];
+
+        assert!(matches!(
+            validate_chunk(&chunk),
+            Err(ValidationError::RegisterUninitialized {
+                op_idx: 0,
+                reg: 0,
+                file: RegFile::Int,
+            })
+        ));
+    }
+
+    #[test]
+    fn validate_chunk_permits_boxed_void_scratch_after_clear() {
+        let mut chunk = minimal_chunk();
+        chunk.instrs = vec![
+            Op::LoadConst { dst: 0, idx: 0 },
+            Op::ClearRegs { start: 0, count: 1 },
+            Op::FieldSet {
+                receiver: 0,
+                name_idx: 0,
+                value: 1,
+            },
+            Op::ReturnUnit,
+        ];
+
+        assert!(validate_chunk(&chunk).is_ok());
+    }
+
+    #[test]
+    fn validate_chunk_permits_boxed_void_scratch_at_a_join() {
+        let mut chunk = minimal_chunk();
+        chunk.instrs = vec![
+            Op::LoadConst { dst: 0, idx: 0 },
+            Op::BranchIf { cond: 0, target: 3 },
+            Op::LoadConst { dst: 1, idx: 0 },
+            Op::Move { dst: 0, src: 1 },
+            Op::ReturnUnit,
+        ];
+
+        assert!(validate_chunk(&chunk).is_ok());
+    }
+
+    fn assert_register_mutation_rejected(label: &str, op: Op, file: RegFile) {
+        let mut chunk = minimal_chunk();
+        chunk.register_count = 3;
+        chunk.float_count = 3;
+        chunk.int_count = 3;
+        chunk.instrs = vec![op, Op::ReturnUnit];
+
+        assert!(
+            matches!(
+                validate_chunk(&chunk),
+                Err(ValidationError::RegisterOutOfBounds {
+                    file: actual_file,
+                    ..
+                }) if actual_file == file
+            ),
+            "{label} must reject its mutated {file} register operand"
+        );
+    }
+
+    /// This is deliberately deterministic rather than property-test based:
+    /// it is cheap enough for every test run and gives every register operand
+    /// *class* a stable regression case. Each case starts from a legal shape
+    /// and changes just one operand to the first out-of-range register.
+    #[test]
+    fn deterministic_register_operand_mutations_are_rejected() {
+        const OUT: Reg = 3;
+        let mutations = [
+            (
+                "value destination",
+                Op::LoadConst { dst: OUT, idx: 0 },
+                RegFile::Value,
+            ),
+            (
+                "value span",
+                Op::BuildArray {
+                    dst: 0,
+                    first: OUT,
+                    count: 1,
+                },
+                RegFile::Value,
+            ),
+            (
+                "call argument span",
+                Op::Call {
+                    dst: 0,
+                    callee: 0,
+                    args: OUT,
+                    argc: 1,
+                    cache_idx: 0,
+                    may_have_cells: false,
+                },
+                RegFile::Value,
+            ),
+            (
+                "mixed value source",
+                Op::U8VecGetByte {
+                    dst_i: 0,
+                    u8vec_reg: OUT,
+                    idx_reg: 0,
+                },
+                RegFile::Value,
+            ),
+            (
+                "float destination",
+                Op::LoadConstF64 { dst_f: OUT, idx: 0 },
+                RegFile::Float,
+            ),
+            (
+                "float span",
+                Op::BuildFloatVec {
+                    dst_v: 0,
+                    first_f: OUT,
+                    count: 1,
+                },
+                RegFile::Float,
+            ),
+            (
+                "mixed float destination",
+                Op::IntToFloatF64 {
+                    dst_f: OUT,
+                    src_i: 0,
+                },
+                RegFile::Float,
+            ),
+            (
+                "integer destination",
+                Op::LoadConstI64 { dst_i: OUT, idx: 0 },
+                RegFile::Int,
+            ),
+            (
+                "integer span",
+                Op::BuildIntArray {
+                    dst_v: 0,
+                    first_i: OUT,
+                    count: 1,
+                },
+                RegFile::Int,
+            ),
+            (
+                "mixed integer destination",
+                Op::FloatToIntI64 {
+                    dst_i: OUT,
+                    src_f: 0,
+                },
+                RegFile::Int,
+            ),
+        ];
+
+        for (label, op, file) in mutations {
+            assert_register_mutation_rejected(label, op, file);
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn deterministic_non_register_operand_mutations_are_rejected() {
+        let cases = [
+            (
+                "boxed constant",
+                Op::LoadConst { dst: 0, idx: 1 },
+                PoolKind::Consts,
+            ),
+            (
+                "float constant",
+                Op::LoadConstF64 { dst_f: 0, idx: 1 },
+                PoolKind::F64Consts,
+            ),
+            (
+                "integer constant",
+                Op::LoadConstI64 { dst_i: 0, idx: 1 },
+                PoolKind::I64Consts,
+            ),
+            (
+                "global",
+                Op::LoadGlobal { dst: 0, idx: 1 },
+                PoolKind::Globals,
+            ),
+            (
+                "closure prototype",
+                Op::MakeClosure { dst: 0, proto: 0 },
+                PoolKind::ClosureProtos,
+            ),
+            ("wide-op table", Op::Wide { idx: 0 }, PoolKind::WideOps),
+            (
+                "select-arm table",
+                Op::Select { first: 0, count: 1 },
+                PoolKind::SelectArms,
+            ),
+            (
+                "shape-name table",
+                Op::StructIs {
+                    dst: 0,
+                    src: 0,
+                    name_idx: 1,
+                },
+                PoolKind::ShapeNames,
+            ),
+        ];
+
+        for (label, op, pool) in cases {
+            let mut chunk = minimal_chunk();
+            chunk.instrs = vec![op, Op::ReturnUnit];
+            assert!(
+                matches!(
+                    validate_chunk(&chunk),
+                    Err(ValidationError::ConstantOutOfBounds {
+                        pool: actual_pool,
+                        ..
+                    }) if actual_pool == pool
+                ),
+                "{label} must reject its mutated side-table operand"
+            );
+        }
+
+        let cache_cases = [
+            (
+                "call cache",
+                Op::Call {
+                    dst: 0,
+                    callee: 0,
+                    args: 0,
+                    argc: 0,
+                    cache_idx: 0,
+                    may_have_cells: false,
+                },
+                CacheKind::Call,
+            ),
+            (
+                "arithmetic cache",
+                Op::AddInt {
+                    dst: 0,
+                    lhs: 0,
+                    rhs: 0,
+                    cache_idx: 0,
+                },
+                CacheKind::Arithmetic,
+            ),
+            (
+                "field cache",
+                Op::FieldGet {
+                    dst: 0,
+                    receiver: 0,
+                    name_idx: 0,
+                    cache_idx: 0,
+                },
+                CacheKind::Field,
+            ),
+        ];
+        for (label, op, cache) in cache_cases {
+            let mut chunk = minimal_chunk();
+            chunk.instrs = vec![op, Op::ReturnUnit];
+            assert!(
+                matches!(
+                    validate_chunk(&chunk),
+                    Err(ValidationError::CacheOutOfBounds {
+                        cache: actual_cache,
+                        ..
+                    }) if actual_cache == cache
+                ),
+                "{label} must reject its mutated cache operand"
+            );
+        }
+    }
+
+    #[test]
+    fn deterministic_jump_operand_mutations_are_rejected() {
+        let cases = [
+            ("plain jump", Op::Jump { target: 9 }),
+            ("conditional jump", Op::BranchIf { cond: 0, target: 9 }),
+            (
+                "typed fused jump",
+                Op::BranchIfLtI64 {
+                    lhs_i: 0,
+                    rhs_i: 0,
+                    target: 9,
+                },
+            ),
+            (
+                "increment fused jump",
+                Op::IncJumpIfLtI64 {
+                    counter_i: 0,
+                    end_i: 0,
+                    target: 9,
+                },
+            ),
+        ];
+
+        for (label, op) in cases {
+            let mut chunk = minimal_chunk();
+            chunk.int_count = 1;
+            chunk.instrs = vec![op, Op::ReturnUnit];
+            assert!(
+                matches!(
+                    validate_chunk(&chunk),
+                    Err(ValidationError::PcOutOfBounds { .. })
+                ),
+                "{label} must reject its mutated instruction target"
+            );
+        }
+    }
+
+    #[test]
+    fn deterministic_select_arm_operand_mutations_are_rejected() {
+        let mut bad_body = minimal_chunk();
+        bad_body.select_arms.push(SelectArmMeta {
+            kind: SelectArmKind::Default,
+            channel_reg: 0,
+            value_reg: 0,
+            bind_reg: 0,
+            body_block: 99,
+        });
+        bad_body.instrs = vec![Op::Select { first: 0, count: 1 }, Op::ReturnUnit];
+        assert!(matches!(
+            validate_chunk(&bad_body),
+            Err(ValidationError::PcOutOfBounds { .. })
+        ));
+
+        let mut bad_recv_reg = minimal_chunk();
+        bad_recv_reg.register_count = 1;
+        bad_recv_reg.select_arms.push(SelectArmMeta {
+            kind: SelectArmKind::Recv,
+            channel_reg: 1,
+            value_reg: 0,
+            bind_reg: 0,
+            body_block: 1,
+        });
+        bad_recv_reg.instrs = vec![Op::Select { first: 0, count: 1 }, Op::ReturnUnit];
+        assert!(matches!(
+            validate_chunk(&bad_recv_reg),
+            Err(ValidationError::RegisterOutOfBounds {
+                file: RegFile::Value,
+                ..
+            })
+        ));
+
+        let mut bad_send_reg = minimal_chunk();
+        bad_send_reg.register_count = 1;
+        bad_send_reg.select_arms.push(SelectArmMeta {
+            kind: SelectArmKind::Send,
+            channel_reg: 0,
+            value_reg: 1,
+            bind_reg: 0,
+            body_block: 1,
+        });
+        bad_send_reg.instrs = vec![Op::Select { first: 0, count: 1 }, Op::ReturnUnit];
+        assert!(matches!(
+            validate_chunk(&bad_send_reg),
+            Err(ValidationError::RegisterOutOfBounds {
+                file: RegFile::Value,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn deterministic_wide_operand_mutations_are_rejected() {
+        let mut bad_map_reg = minimal_chunk();
+        bad_map_reg.register_count = 1;
+        bad_map_reg.wide_ops.push(WideOp::MapIncAt {
+            dst: 0,
+            map_reg: 1,
+            seq_reg: 0,
+            start_reg: 0,
+            len_reg: 0,
+            by_reg: 0,
+        });
+        bad_map_reg.instrs = vec![Op::Wide { idx: 0 }, Op::ReturnUnit];
+        assert!(matches!(
+            validate_chunk(&bad_map_reg),
+            Err(ValidationError::RegisterOutOfBounds {
+                file: RegFile::Value,
+                ..
+            })
+        ));
+
+        let mut bad_float_span = minimal_chunk();
+        bad_float_span.float_count = 1;
+        bad_float_span.wide_ops.push(WideOp::BuildFloatArray {
+            dst_v: 0,
+            name_idx: 0,
+            fields_idx: 0,
+            stride: 2,
+            elem_count: 1,
+            first_f: 0,
+        });
+        bad_float_span.instrs = vec![Op::Wide { idx: 0 }, Op::ReturnUnit];
+        assert!(matches!(
+            validate_chunk(&bad_float_span),
+            Err(ValidationError::RegisterOutOfBounds {
+                file: RegFile::Float,
+                ..
+            })
+        ));
+
+        let mut bad_const = minimal_chunk();
+        bad_const.wide_ops.push(WideOp::BuildFloatArray {
+            dst_v: 0,
+            name_idx: 1,
+            fields_idx: 0,
+            stride: 1,
+            elem_count: 1,
+            first_f: 0,
+        });
+        bad_const.instrs = vec![Op::Wide { idx: 0 }, Op::ReturnUnit];
+        assert!(matches!(
+            validate_chunk(&bad_const),
+            Err(ValidationError::ConstantOutOfBounds {
+                pool: PoolKind::Consts,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn deterministic_malformed_operand_corpus_never_panics() {
+        let mut bad_wide_payload = minimal_chunk();
+        bad_wide_payload.float_count = 1;
+        bad_wide_payload.wide_ops.push(WideOp::BuildFloatArray {
+            dst_v: 0,
+            name_idx: 0,
+            fields_idx: 0,
+            stride: 2,
+            elem_count: 1,
+            first_f: 0,
+        });
+        bad_wide_payload.instrs = vec![Op::Wide { idx: 0 }, Op::ReturnUnit];
+
+        let mut bad_jump = minimal_chunk();
+        bad_jump.instrs = vec![Op::Jump { target: u32::MAX }];
+
+        let mut bad_select_range = minimal_chunk();
+        bad_select_range.instrs = vec![Op::Select {
+            first: u32::MAX,
+            count: 1,
+        }];
+
+        let mut bad_value_span = minimal_chunk();
+        bad_value_span.instrs = vec![
+            Op::BuildTuple {
+                dst: 0,
+                first: u16::MAX,
+                count: 1,
+            },
+            Op::ReturnUnit,
+        ];
+
+        for (label, chunk) in [
+            ("wide payload", bad_wide_payload),
+            ("jump target", bad_jump),
+            ("select range", bad_select_range),
+            ("value span", bad_value_span),
+        ] {
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| validate_chunk(&chunk)));
+            assert!(result.is_ok(), "validator panicked on malformed {label}");
+            assert!(
+                result.expect("checked above").is_err(),
+                "accepted malformed {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn boxed_value_void_reads_are_not_false_positive_definite_assignment_errors() {
+        let operations = [
+            ("move", Op::Move { dst: 0, src: 1 }),
+            (
+                "call",
+                Op::Call {
+                    dst: 0,
+                    callee: 1,
+                    args: 2,
+                    argc: 1,
+                    cache_idx: 0,
+                    may_have_cells: false,
+                },
+            ),
+            (
+                "aggregate span",
+                Op::BuildArray {
+                    dst: 0,
+                    first: 1,
+                    count: 2,
+                },
+            ),
+            (
+                "mutating receiver",
+                Op::FieldSet {
+                    receiver: 1,
+                    name_idx: 0,
+                    value: 2,
+                },
+            ),
+        ];
+
+        for (label, op) in operations {
+            let mut chunk = minimal_chunk();
+            chunk.register_count = 4;
+            chunk.call_cache_count = 1;
+            chunk.instrs = vec![Op::ClearRegs { start: 0, count: 4 }, op, Op::ReturnUnit];
+            assert!(
+                validate_chunk(&chunk).is_ok(),
+                "boxed Value::Void read in {label} must not be treated as uninitialized host memory"
+            );
         }
     }
 }

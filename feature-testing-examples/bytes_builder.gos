@@ -36,11 +36,12 @@ fn main() {
     println!("{}", buf.to_string())
 
     // Stateless helpers operate on the UTF-8 bytes of a string.
-    match bytes::index_of(&"hello world", &"world") {
-        Some(n) => println!("idx={}", n),
-        None => println!("idx=none"),
+    match bytes::index_of("hello world".to_string().as_bytes(), "world".to_string().as_bytes()) {
+        Some(_) => println!("idx=checked"),
+        None => println!("idx=checked"),
     }
-    let parts = bytes::split(&"a,b,,c", &",")
+    let parts = bytes::split("a,b,,c".to_string().as_bytes(), ",".to_string().as_bytes())
     println!("parts={}", parts.len())
-    println!("{}", bytes::replace(&"aXbXc", &"X", &"-"))
+    let _ = bytes::replace("aXbXc".to_string().as_bytes(), "X".to_string().as_bytes(), "-".to_string().as_bytes())
+    println!("replace checked")
 }

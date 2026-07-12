@@ -15,7 +15,7 @@ Once `gos` is on your `PATH`, every subcommand takes either a
 | `gos check src/main.gos` | Type-check + exhaustiveness |
 | `gos build src/main.gos` | Native build via LLVM AOT - lowers through MIR + LLVM (`llc -O0`), then links the user's object against the `gossamer-runtime` staticlib into an ELF/Mach-O/PE. |
 | `gos build --release src/main.gos` | Optimised native build - full LLVM `opt -O3 \| llc -O3` pipeline, static musl on Linux. |
-| `gos build --target aarch64-unknown-linux-musl src/main.gos` | Cross-compile to a target triple. Every Linux target - `{x86_64,aarch64}-unknown-linux-{gnu,musl}` - produces a real, runnable binary from a Linux, macOS, or Windows host (QEMU-validated in CI). macOS/Windows *as a target* remain out of scope. |
+| `gos build --target aarch64-unknown-linux-musl src/main.gos` | Cross-compile to a Tier 2 Linux-musl target. CI executes the resulting AOT output under QEMU and compares it with the pure bytecode VM. Other registered triples are not necessarily supported deployment targets. |
 | `gos fmt src/main.gos` | Rewrite canonically; `--check` refuses to edit |
 | `gos doc src/main.gos` | List items + docstrings |
 | `gos test src/main.gos` | Discover and run `#[test]` functions |
@@ -31,7 +31,7 @@ Once `gos` is on your `PATH`, every subcommand takes either a
 | `gos fetch` / `gos vendor` | Populate the package cache / vendor tree |
 | `gos` (no args) | Interactive REPL |
 | `gos repl` then `%help strings::trim` | Show stdlib or language help from the manifest |
-| `gos repl` then `%dir strings` | List stdlib modules or module contents |
+| `gos repl` then `%ls strings` | List stdlib modules or module contents |
 
 ## Entry file
 

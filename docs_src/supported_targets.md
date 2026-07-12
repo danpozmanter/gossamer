@@ -1,0 +1,50 @@
+# Supported Targets
+
+The executable matrix in
+[`conformance/target_matrix.tsv`](https://github.com/danpozmanter/gossamer/blob/main/conformance/target_matrix.tsv)
+is the release contract. `stable_tier_conformance` checks that it remains
+registered and that this page and `SPEC.md` name the same support classes.
+The matrix is evidence-based: accepting a triple locally is not support.
+
+## Tier 1
+
+Tier 1 targets execute the pure bytecode VM, the JIT-enabled VM, and LLVM AOT
+fixtures on native CI. They are the supported 1.0 execution contract.
+
+| Target triple | Native CI evidence |
+|---|---|
+| `x86_64-unknown-linux-gnu` | `ubuntu-latest` |
+| `aarch64-unknown-linux-gnu` | `ubuntu-24.04-arm` |
+| `aarch64-apple-darwin` | `macos-latest` |
+| `x86_64-pc-windows-msvc` | `windows-latest` |
+
+## Tier 2
+
+Tier 2 covers Linux-musl AOT output. CI builds it from the supported hosts,
+executes it natively or under QEMU, and compares its output with the pure
+bytecode VM. This is supported for release AOT deployment, but not evidence
+that every host-side toolchain path has native execution coverage.
+
+| Target triple | Differential evidence |
+|---|---|
+| `x86_64-unknown-linux-musl` | native/QEMU AOT-versus-VM fixture differential |
+| `aarch64-unknown-linux-musl` | QEMU AOT-versus-VM fixture differential |
+
+## Artifact-only
+
+`x86_64-apple-darwin` has a release-artifact build in CI, but that artifact is
+not executed by the target matrix. It is distributed for evaluation and is not
+a supported execution target until native or emulator-backed all-tier evidence
+is added.
+
+## Registered, unsupported
+
+The driver also recognises `riscv64gc-unknown-linux-gnu`,
+`wasm32-unknown-unknown`, and `wasm32-wasi` for targeted compile checks. They
+are not supported execution targets: the full runtime/scheduler and all-tier
+conformance suite do not run there. In particular, `gos build --target
+wasm32-...` is not a supported deployment path.
+
+Targets not listed above are Experimental. A local build, a generated object
+file, or a package artifact alone does not promote a target, ABI, allocator,
+or standard-library surface to Stable.

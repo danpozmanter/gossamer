@@ -30,6 +30,7 @@
 
 use std::collections::HashMap;
 use std::ffi::CStr;
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::os::raw::c_char;
 use std::sync::Arc;
@@ -39,9 +40,40 @@ use parking_lot::Mutex;
 
 use gossamer_ws::{Message, WebSocket};
 
-/// Underlying transport for a connected WebSocket. Plaintext only today;
-/// the registry type widens to an enum when `wss://` lands.
-type WsStream = TcpStream;
+/// Underlying transport for a connected WebSocket. Server connections use
+/// `HttpConn`, which parks their scheduler goroutine through mio on a slow
+/// peer. Client connections retain a blocking `TcpStream`: they are not
+/// accepted server work and changing their public blocking semantics is a
+/// separate API decision.
+enum WsStream {
+    Client(TcpStream),
+    Server(super::http_server::HttpConn),
+}
+
+impl Read for WsStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Client(stream) => stream.read(buf),
+            Self::Server(stream) => stream.read(buf),
+        }
+    }
+}
+
+impl Write for WsStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Client(stream) => stream.write(buf),
+            Self::Server(stream) => stream.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Client(stream) => stream.flush(),
+            Self::Server(stream) => stream.flush(),
+        }
+    }
+}
 
 /// One registered connection. `Arc<Mutex<_>>` so a blocking `recv`
 /// releases the registry lock before parking on the socket.
@@ -91,7 +123,8 @@ fn register_conn(ws: WebSocket<WsStream>) -> i64 {
 /// blocking recv/send loop and returns to close; the handle is then
 /// unregistered. A handshake failure drops the socket without invoking
 /// the handler.
-fn serve_ws_conn(mut stream: TcpStream, env_addr: usize, fn_addr: usize) {
+fn serve_ws_conn(stream: super::http_server::HttpConn, env_addr: usize, fn_addr: usize) {
+    let mut stream = WsStream::Server(stream);
     if gossamer_ws::server_accept(&mut stream).is_err() {
         return;
     }
@@ -110,9 +143,10 @@ fn serve_ws_conn(mut stream: TcpStream, env_addr: usize, fn_addr: usize) {
 
 /// `websocket::serve(addr, handler) -> Result<(), Error>`. Binds a TCP
 /// listener, upgrades each connection to a WebSocket, and hands the
-/// connected handle to the user handler on a dedicated per-connection
-/// thread (Go model). Reuses `accept_serve` from the HTTP server so the
-/// connection-cap / shutdown behaviour matches `http::serve`.
+/// connected handle to the user handler on a scheduler goroutine. The
+/// WebSocket framing engine is synchronous at the trait boundary, but its
+/// server transport is the poll-driven `HttpConn`, so a slow handshake or
+/// frame read parks only that goroutine rather than pinning an OS thread.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn gos_rt_ws_serve(
     addr: *const c_char,
@@ -132,6 +166,9 @@ pub unsafe extern "C-unwind" fn gos_rt_ws_serve(
         let env_addr = handler_env as usize;
         let fn_addr = handler_fn as usize;
         super::http_server::accept_serve(listener, move |stream| {
+            let Some(stream) = super::http_server::HttpConn::wrap(stream) else {
+                return;
+            };
             serve_ws_conn(stream, env_addr, fn_addr);
         });
     }
@@ -159,7 +196,7 @@ fn ws_client_connect(url: &str) -> Result<i64, String> {
     let mut stream =
         TcpStream::connect(&authority).map_err(|e| format!("connect {authority}: {e}"))?;
     gossamer_ws::client_handshake(&mut stream, &authority, &path).map_err(|e| format!("{e}"))?;
-    Ok(register_conn(WebSocket::client(stream)))
+    Ok(register_conn(WebSocket::client(WsStream::Client(stream))))
 }
 
 /// `websocket::send_text(ws, s) -> Result<(), Error>`.

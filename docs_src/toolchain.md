@@ -11,7 +11,7 @@ the implementation by a rev.
 | `gos parse FILE` | Print the AST. |
 | `gos check [--timings] FILE` | Parse + resolve + typecheck + exhaustiveness. With `--timings`, prints per-stage wall-clock times. Parse output is cached by source hash - re-invocations on an unchanged file reuse the parsed AST. Set `GOSSAMER_CACHE_TRACE=1` to log cache hits. |
 | `gos run FILE` | Execute via the register-based bytecode VM. Recursive helper workloads may promote through the in-process Cranelift JIT. |
-| `gos build [--release] [--target TRIPLE] FILE` | Produce a native binary (ELF/Mach-O/PE) by lowering through MIR + LLVM (`llc -O0`; `--release` runs the full `opt -O3 \| llc -O3` pipeline) and linking the user's `.o` against `libgossamer_runtime.a`. The Cranelift code path is reserved for the in-process JIT (`gos run`), not this command. A non-host `--target` cross-compiles to any Linux target (`{x86_64,aarch64}-unknown-linux-{gnu,musl}`) as a real, runnable binary, from a Linux/macOS/Windows host (QEMU-validated in CI); macOS/Windows as a target are out of scope. |
+| `gos build [--release] [--target TRIPLE] FILE` | Produce a native binary (ELF/Mach-O/PE) by lowering through MIR + LLVM (`llc -O0`; `--release` runs the full `opt -O3 \| llc -O3` pipeline) and linking the user's `.o` against `libgossamer_runtime.a`. The Cranelift code path is reserved for the in-process JIT (`gos run`), not this command. Tier 2 cross deployment is `{x86_64,aarch64}-unknown-linux-musl`, QEMU-differential-tested in CI. Other registered triples are not supported merely because a local link succeeds; macOS/Windows as cross targets are out of scope. |
 
 ## Formatting + linting + docs
 
@@ -75,12 +75,12 @@ interactive session. The first-slice supports:
   expression sees previously-bound locals in scope. `%bindings`
   lists the active set.
 - Meta-commands `%quit`, `%history`, `%bindings`, `%reset`,
-  `%help`, and `%dir`.
+  `%help`, and `%ls`.
 - `%help <symbol>` shows stdlib module/item or language-feature
   documentation from the manifest and feature-status registry;
   `%help /regex/` searches that same surface.
-- `%dir` lists stdlib modules; `%dir <namespace-or-symbol>` lists a
-  module's items or matching symbols; `%dir /regex/` filters stdlib
+- `%ls` lists stdlib modules; `%ls <namespace-or-symbol>` lists a
+  module's items or matching symbols; `%ls /regex/` filters stdlib
   modules/items.
 - Ctrl-D exits cleanly.
 

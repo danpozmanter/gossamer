@@ -87,28 +87,28 @@ mod tests {
     #[test]
     fn map_doubles() {
         let r = super::map_i64([1, 2, 3], |x| x * 2)
-        testing::check_eq(&r.len(), &3, "len")
-        testing::check_eq(&r[0], &2, "r[0]")
-        testing::check_eq(&r[2], &6, "r[2]")
+        let _ = testing::check_eq(&r.len(), &3, "len")
+        let _ = testing::check_eq(&r[0], &2, "r[0]")
+        let _ = testing::check_eq(&r[2], &6, "r[2]")
     }
 
     #[test]
     fn filter_evens() {
         let r = super::filter_i64([1, 2, 3, 4], |x| x % 2 == 0)
-        testing::check_eq(&r.len(), &2, "evens len")
-        testing::check_eq(&r[0], &2, "first even")
+        let _ = testing::check_eq(&r.len(), &2, "evens len")
+        let _ = testing::check_eq(&r[0], &2, "first even")
     }
 
     #[test]
     fn fold_sum() {
         let s = super::fold_i64([1, 2, 3, 4, 5], 0, |a, x| a + x)
-        testing::check_eq(&s, &15, "sum 1..5")
+        let _ = testing::check_eq(&s, &15, "sum 1..5")
     }
 
     #[test]
     fn zip_sum_basic() {
         let r = super::zip_sum([1, 2, 3], [4, 5, 6])
-        testing::check_eq(&r[0], &5, "zip[0]")
-        testing::check_eq(&r[2], &9, "zip[2]")
+        let _ = testing::check_eq(&r[0], &5, "zip[0]")
+        let _ = testing::check_eq(&r[2], &9, "zip[2]")
     }
 }

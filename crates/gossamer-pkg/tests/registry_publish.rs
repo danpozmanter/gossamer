@@ -160,7 +160,7 @@ fn yanked_registry_version_refuses_install_without_flag() {
             tarball_sha256: Some(expected_sha.clone()),
             yank_reason: Some("security".to_string()),
             signature: Some(sig),
-            public_key: Some(pubkey),
+            public_key: Some(pubkey.clone()),
         },
     );
 
@@ -170,7 +170,11 @@ fn yanked_registry_version_refuses_install_without_flag() {
     };
     let fetcher =
         Fetcher::with_transport(options, Arc::new(transport.clone()) as Arc<dyn Transport>)
-            .with_catalogue(catalogue.clone());
+            .with_catalogue(catalogue.clone())
+            .with_trusted_publisher_keys(BTreeMap::from([(
+                id.as_str().to_string(),
+                pubkey.clone(),
+            )]));
 
     let mut cache = Cache::new();
     let resolved = resolved_registry("example.com/yanked", Version::new(1, 0, 0));
@@ -187,7 +191,8 @@ fn yanked_registry_version_refuses_install_without_flag() {
     };
     let allow_fetcher =
         Fetcher::with_transport(allow_options, Arc::new(transport) as Arc<dyn Transport>)
-            .with_catalogue(catalogue);
+            .with_catalogue(catalogue)
+            .with_trusted_publisher_keys(BTreeMap::from([(id.as_str().to_string(), pubkey)]));
     let ok = allow_fetcher
         .fetch_all(std::slice::from_ref(&resolved), &mut cache)
         .expect("allow_yanked should bypass yank check");
@@ -219,7 +224,7 @@ fn second_fetch_hits_disk_cache_and_skips_network() {
                 tarball_sha256: Some(expected_sha.clone()),
                 yank_reason: None,
                 signature: Some(sig),
-                public_key: Some(pubkey),
+                public_key: Some(pubkey.clone()),
             },
         );
         let live = Fetcher::with_transport(
@@ -229,7 +234,8 @@ fn second_fetch_hits_disk_cache_and_skips_network() {
             },
             Arc::new(transport) as Arc<dyn Transport>,
         )
-        .with_catalogue(catalogue);
+        .with_catalogue(catalogue)
+        .with_trusted_publisher_keys(BTreeMap::from([(id.as_str().to_string(), pubkey)]));
         let mut warm_cache = Cache::with_disk_root(cache_dir.clone());
         let resolved = resolved_registry("example.com/disk", Version::new(1, 0, 0));
         let outcome = live.fetch_all(&[resolved], &mut warm_cache).unwrap();
@@ -411,7 +417,7 @@ fn default_cache_root_returns_some_path_when_home_or_cache_dir_set() {
 fn http_transport_post_round_trips_against_local_server() {
     use gossamer_pkg::Transport;
     use gossamer_pkg::transport::HttpTransport;
-    use std::io::{Read, Write};
+    use std::io::{Cursor, Read, Write};
     use std::net::TcpListener;
     use std::thread;
 
@@ -461,7 +467,13 @@ fn http_transport_post_round_trips_against_local_server() {
     let url = format!("http://127.0.0.1:{port}/v1/upload");
     let body = br#"{"hello":"world"}"#;
     let response = transport
-        .post(&url, body, "application/json", Some("supersecret"))
+        .post_reader(
+            &url,
+            &mut Cursor::new(body),
+            body.len(),
+            "application/json",
+            Some("supersecret"),
+        )
         .expect("post");
     assert_eq!(response, b"ok");
 
@@ -503,7 +515,7 @@ fn signed_registry_fetcher(
             tarball_sha256: Some(sha256::hex(tar_bytes)),
             yank_reason: None,
             signature,
-            public_key,
+            public_key: public_key.clone(),
         },
     );
     Fetcher::with_transport(
@@ -514,6 +526,11 @@ fn signed_registry_fetcher(
         Arc::new(transport) as Arc<dyn Transport>,
     )
     .with_catalogue(catalogue)
+    .with_trusted_publisher_keys(
+        public_key
+            .map(|key| BTreeMap::from([(id.as_str().to_string(), key)]))
+            .unwrap_or_default(),
+    )
 }
 
 #[test]

@@ -43,19 +43,19 @@ mod tests {
 
     #[test]
     fn width_and_align() {
-        testing::check(format!("[{:>6}]", 42) == "[    42]", "right align")
-        testing::check(format!("[{:<6}]", 42) == "[42    ]", "left align")
-        testing::check(format!("[{:^6}]", 42) == "[  42  ]", "center")
-        testing::check(format!("[{:06}]", 42) == "[000042]", "zero pad")
-        testing::check(format!("[{:*>5}]", "hi") == "[***hi]", "fill char")
+        let _ = testing::check(format!("[{:>6}]", 42) == "[    42]", "right align")
+        let _ = testing::check(format!("[{:<6}]", 42) == "[42    ]", "left align")
+        let _ = testing::check(format!("[{:^6}]", 42) == "[  42  ]", "center")
+        let _ = testing::check(format!("[{:06}]", 42) == "[000042]", "zero pad")
+        let _ = testing::check(format!("[{:*>5}]", "hi") == "[***hi]", "fill char")
     }
 
     #[test]
     fn radix_and_precision() {
-        testing::check(format!("{:x}", 255) == "ff", "hex")
-        testing::check(format!("{:X}", 255) == "FF", "upper hex")
-        testing::check(format!("{:b}", 10) == "1010", "binary")
-        testing::check(format!("{:08x}", 255) == "000000ff", "zero-padded hex")
-        testing::check(format!("{:>8.2}", 3.5) == "    3.50", "precision + width")
+        let _ = testing::check(format!("{:x}", 255) == "ff", "hex")
+        let _ = testing::check(format!("{:X}", 255) == "FF", "upper hex")
+        let _ = testing::check(format!("{:b}", 10) == "1010", "binary")
+        let _ = testing::check(format!("{:08x}", 255) == "000000ff", "zero-padded hex")
+        let _ = testing::check(format!("{:>8.2}", 3.5) == "    3.50", "precision + width")
     }
 }

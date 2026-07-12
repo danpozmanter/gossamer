@@ -1,8 +1,8 @@
 # `std::http_h3`
 
-Status: shipped
+Status: experimental
 
-First-party HTTP/3 server + client over QUIC (RFC 9114; quinn + h3). Each `serve` and `Client` instance owns a private tokio runtime; callers see only synchronous entry points.
+Experimental HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias yet.
 
 ## Public items
 

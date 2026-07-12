@@ -1,6 +1,6 @@
 # `std::unicode`
 
-Status: shipped
+Status: experimental
 
 Unicode general-category predicates, casing, normalization, and segmentation.
 

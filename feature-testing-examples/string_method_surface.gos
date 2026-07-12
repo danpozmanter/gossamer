@@ -57,24 +57,24 @@ mod tests {
 
     #[test]
     fn transforms_match_across_tiers() {
-        testing::check("hello world".to_title() == "Hello World", "to_title titlecases words")
-        testing::check("hi".pad_left(6, '.') == "....hi", "pad_left uses the char")
-        testing::check("hi".pad_right(6, '*') == "hi****", "pad_right uses the char")
-        testing::check("a,b,a".replacen("a", "X", 1) == "X,b,a", "replacen bounds replacements")
+        let _ = testing::check("hello world".to_title() == "Hello World", "to_title titlecases words")
+        let _ = testing::check("hi".pad_left(6, '.') == "....hi", "pad_left uses the char")
+        let _ = testing::check("hi".pad_right(6, '*') == "hi****", "pad_right uses the char")
+        let _ = testing::check("a,b,a".replacen("a", "X", 1) == "X,b,a", "replacen bounds replacements")
     }
 
     #[test]
     fn predicates_and_search() {
-        testing::check("abc".contains_any("zx") == false, "contains_any false")
-        testing::check("abc".contains_any("zb"), "contains_any true")
-        testing::check("Hello".equal_fold("HELLO"), "equal_fold case-insensitive")
+        let _ = testing::check("abc".contains_any("zx") == false, "contains_any false")
+        let _ = testing::check("abc".contains_any("zb"), "contains_any true")
+        let _ = testing::check("Hello".equal_fold("HELLO"), "equal_fold case-insensitive")
         let i = match "Hello".find_any("lo") { Some(n) => n, None => -1 }
-        testing::check(i == 2, "find_any finds first of set")
+        let _ = testing::check(i == 2, "find_any finds first of set")
     }
 
     #[test]
     fn vec_join_method() {
         let parts: Vec<String> = ["x", "y", "z"]
-        testing::check(parts.join("+") == "x+y+z", "Vec<String>.join")
+        let _ = testing::check(parts.join("+") == "x+y+z", "Vec<String>.join")
     }
 }

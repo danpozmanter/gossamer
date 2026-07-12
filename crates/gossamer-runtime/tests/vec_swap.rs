@@ -1,5 +1,6 @@
 //! Vec scalar swap runtime tests.
 
+use gossamer_runtime::c_abi::vec::vec_owner_generation;
 use gossamer_runtime::c_abi::{
     gos_rt_vec_free, gos_rt_vec_get_i64, gos_rt_vec_new, gos_rt_vec_push_i64, gos_rt_vec_swap_i64,
 };
@@ -30,15 +31,14 @@ fn vec_swap_i64_exchanges_in_range_elements_and_ignores_oob() {
 }
 
 #[test]
-fn vec_free_is_idempotent_for_stale_raw_pointer_and_allows_address_reuse() {
-    // SAFETY: The first vec is intentionally freed twice to pin the runtime
-    // contract: stale duplicate frees must return before reading the reclaimed
-    // header. Later allocations/free calls must still work even if the
-    // allocator reuses the same address.
+fn vec_owner_releases_once_and_allows_address_reuse() {
+    // A raw ABI pointer does not contain a generation, so a duplicate free is
+    // undefined even if an address-set happens to reject it today. Keep this
+    // test Miri-valid: each owner is released exactly once while allocator
+    // churn verifies that ordinary reuse remains correct.
     unsafe {
         let v = gos_rt_vec_new(8);
         gos_rt_vec_push_i64(v, 1);
-        gos_rt_vec_free(v);
         gos_rt_vec_free(v);
 
         for i in 0..64 {
@@ -48,4 +48,38 @@ fn vec_free_is_idempotent_for_stale_raw_pointer_and_allows_address_reuse() {
             gos_rt_vec_free(next);
         }
     }
+}
+
+#[test]
+fn vec_owner_generation_is_distinct_from_the_header_address() {
+    unsafe {
+        let first = gos_rt_vec_new(8);
+        let first_generation = vec_owner_generation(&*first);
+        assert_ne!(first_generation, 0);
+        gos_rt_vec_free(first);
+
+        let second = gos_rt_vec_new(8);
+        let second_generation = vec_owner_generation(&*second);
+        assert_ne!(second_generation, 0);
+        assert_ne!(first_generation, second_generation);
+        gos_rt_vec_free(second);
+    }
+}
+
+#[test]
+fn concurrent_vec_lifetimes_release_each_owner_once() {
+    // Each worker exercises independent allocation and final release without
+    // address-keyed liveness locks or stale-pointer access.
+    std::thread::scope(|scope| {
+        for worker in 0..8_i64 {
+            scope.spawn(move || unsafe {
+                for i in 0..2_000_i64 {
+                    let v = gos_rt_vec_new(8);
+                    gos_rt_vec_push_i64(v, worker * 2_000 + i);
+                    assert_eq!(gos_rt_vec_get_i64(v, 0), worker * 2_000 + i);
+                    gos_rt_vec_free(v);
+                }
+            });
+        }
+    });
 }

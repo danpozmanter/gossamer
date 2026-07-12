@@ -94,40 +94,40 @@ mod tests {
     #[test]
     fn pipeline_success() {
         match super::pipeline("40", 4) {
-            Ok(v) => testing::check_eq(&v, &20, "40/4*2=20"),
-            Err(e) => testing::check(false, e),
+            Ok(v) => { let _ = testing::check_eq(&v, &20, "40/4*2=20"); },
+            Err(e) => { let _ = testing::check(false, e); },
         }
     }
 
     #[test]
     fn pipeline_parse_error() {
         match super::pipeline("xyz", 1) {
-            Ok(_) => testing::check(false, "expected error"),
-            Err(e) => testing::check(e.contains("parse"), "parse error message"),
+            Ok(_) => { let _ = testing::check(false, "expected error"); },
+            Err(e) => { let _ = testing::check(e.contains("parse"), "parse error message"); },
         }
     }
 
     #[test]
     fn pipeline_domain_error() {
         match super::pipeline("-5", 1) {
-            Ok(_) => testing::check(false, "expected error"),
-            Err(e) => testing::check(e.contains("positive"), "domain error message"),
+            Ok(_) => { let _ = testing::check(false, "expected error"); },
+            Err(e) => { let _ = testing::check(e.contains("positive"), "domain error message"); },
         }
     }
 
     #[test]
     fn pipeline_div_zero() {
         match super::pipeline("10", 0) {
-            Ok(_) => testing::check(false, "expected error"),
-            Err(e) => testing::check(e.contains("zero"), "div zero message"),
+            Ok(_) => { let _ = testing::check(false, "expected error"); },
+            Err(e) => { let _ = testing::check(e.contains("zero"), "div zero message"); },
         }
     }
 
     #[test]
     fn divide_checked_ok() {
         match super::divide_checked(15, 3) {
-            Ok(v) => testing::check_eq(&v, &5, "15/3=5"),
-            Err(e) => testing::check(false, e),
+            Ok(v) => { let _ = testing::check_eq(&v, &5, "15/3=5"); },
+            Err(e) => { let _ = testing::check(false, e); },
         }
     }
 }

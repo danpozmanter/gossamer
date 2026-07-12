@@ -1,6 +1,6 @@
 # `std::sync`
 
-Status: shipped
+Status: experimental
 
 Synchronisation primitives beyond channels.
 

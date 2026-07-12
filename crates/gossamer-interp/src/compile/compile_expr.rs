@@ -1891,6 +1891,7 @@ impl<'tcx> FnBuilder<'tcx> {
         field_ty: Ty,
     ) -> RuntimeResult<TypedReg> {
         let field_is_f64 = matches!(self.tcx.kind(field_ty), Some(TyKind::Float(FloatTy::F64)));
+        let field_is_i64 = matches!(self.tcx.kind(field_ty), Some(TyKind::Int(IntTy::I64)));
         // Try to resolve the receiver's struct field layout
         // for a compile-time offset. When present, emit an
         // offset-based op so the runtime skips the field-name
@@ -1987,6 +1988,26 @@ impl<'tcx> FnBuilder<'tcx> {
         // clone. The remaining win is unboxing the scalar
         // into a float reg.
         let recv_reg = self.compile_expr(receiver)?;
+        if field_is_i64 {
+            let dst = self.alloc_int();
+            if let Some(offset) = offset {
+                self.emit(Op::FieldGetI64ByOffset {
+                    dst_i: dst,
+                    receiver: recv_reg,
+                    offset,
+                });
+            } else {
+                self.emit(Op::FieldGetI64 {
+                    dst_i: dst,
+                    receiver: recv_reg,
+                    name_idx,
+                });
+            }
+            return Ok(TypedReg {
+                reg: dst,
+                kind: RegKind::I64,
+            });
+        }
         if field_is_f64 {
             if let Some(offset) = offset {
                 let dst = self.alloc_float();

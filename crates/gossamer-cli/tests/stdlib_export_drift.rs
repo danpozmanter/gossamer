@@ -249,6 +249,52 @@ fn manifest_functions_have_implementations() {
 }
 
 #[test]
+fn manifest_functions_have_checker_signatures() {
+    use std::collections::HashSet;
+
+    let manifest_fns: HashSet<(&str, &str)> = gossamer_std::manifest::ALL_MODULES
+        .iter()
+        .flat_map(|module| {
+            module
+                .items
+                .iter()
+                .filter(|item| item.kind == gossamer_std::registry::StdItemKind::Function)
+                .map(move |item| (module.path, item.name))
+        })
+        .collect();
+
+    let missing: Vec<String> = manifest_fns
+        .iter()
+        .filter(|(module_path, name)| {
+            gossamer_types::stdlib_function_signature(module_path, name).is_none()
+        })
+        .map(|(module_path, name)| format!("{module_path}::{name}"))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "{} manifest Function item(s) have no checker-exposed signature:\n{missing:#?}",
+        missing.len()
+    );
+
+    let mut seen = HashSet::new();
+    let stale_or_duplicate: Vec<String> = gossamer_types::STD_FUNCTION_SIGNATURES
+        .iter()
+        .filter_map(|sig| {
+            let key = (sig.module_path, sig.name);
+            if !seen.insert(key) {
+                return Some(format!("duplicate {}::{}", sig.module_path, sig.name));
+            }
+            (!manifest_fns.contains(&key))
+                .then(|| format!("stale {}::{}", sig.module_path, sig.name))
+        })
+        .collect();
+    assert!(
+        stale_or_duplicate.is_empty(),
+        "checker stdlib signature table drifted from the manifest:\n{stale_or_duplicate:#?}"
+    );
+}
+
+#[test]
 fn stdlib_module_paths_match_manifest() {
     let mut live: Vec<&str> = gossamer_std::manifest::ALL_MODULES
         .iter()

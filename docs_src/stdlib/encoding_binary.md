@@ -1,6 +1,6 @@
 # `std::encoding::binary`
 
-Status: shipped
+Status: experimental
 
 Big/little-endian integer packing and varint codecs.
 

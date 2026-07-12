@@ -106,6 +106,20 @@ impl Cookie {
         }
     }
 
+    /// Constructs a cookie after validating its name and attribute-safe value.
+    /// Prefer this in code that can surface a configuration error instead of
+    /// relying on the compatibility sanitization in [`Self::to_header_value`].
+    pub fn try_new(name: impl Into<String>, value: impl Into<String>) -> Result<Self, Error> {
+        let cookie = Self::new(name, value);
+        if !is_cookie_name(&cookie.name) {
+            return Err(Error::new("cookie: name must be an RFC token"));
+        }
+        if !is_cookie_value(&cookie.value) {
+            return Err(Error::new("cookie: value contains an illegal byte"));
+        }
+        Ok(cookie)
+    }
+
     /// Opens a builder for incremental attribute configuration.
     pub fn builder(name: impl Into<String>, value: impl Into<String>) -> CookieBuilder {
         CookieBuilder {
@@ -121,15 +135,26 @@ impl Cookie {
     /// backslash-escaped.
     pub fn to_header_value(&self) -> String {
         let mut out = String::with_capacity(self.name.len() + self.value.len() + 8);
-        out.push_str(&sanitize_cookie_name(&self.name));
+        let name = sanitize_cookie_name(&self.name);
+        let host_prefix = name.starts_with("__Host-");
+        let secure = self.secure
+            || self.same_site == Some(SameSite::None)
+            || name.starts_with("__Secure-")
+            || host_prefix;
+        out.push_str(&name);
         out.push('=');
         out.push_str(&encode_value(&self.value));
 
-        if let Some(d) = &self.domain {
+        if !host_prefix && let Some(d) = self.domain.as_deref().filter(|d| is_domain(d)) {
             out.push_str("; Domain=");
             out.push_str(d);
         }
-        if let Some(p) = &self.path {
+        let path = if host_prefix {
+            Some("/")
+        } else {
+            self.path.as_deref()
+        };
+        if let Some(p) = path.filter(|p| is_path(p)) {
             out.push_str("; Path=");
             out.push_str(p);
         }
@@ -137,14 +162,14 @@ impl Cookie {
             out.push_str("; Max-Age=");
             out.push_str(&m.to_string());
         }
-        if let Some(e) = &self.expires {
+        if let Some(e) = self.expires.as_deref().filter(|e| is_attribute_value(e)) {
             out.push_str("; Expires=");
             out.push_str(e);
         }
         if self.http_only {
             out.push_str("; HttpOnly");
         }
-        if self.secure {
+        if secure {
             out.push_str("; Secure");
         }
         if let Some(s) = self.same_site {
@@ -216,6 +241,44 @@ impl CookieBuilder {
     /// Finalizes the builder into a [`Cookie`].
     pub fn build(self) -> Cookie {
         self.inner
+    }
+
+    /// Finalizes the builder after strict validation.
+    pub fn try_build(self) -> Result<Cookie, Error> {
+        let cookie = self.inner;
+        if !is_cookie_name(&cookie.name) {
+            return Err(Error::new("cookie: name must be an RFC token"));
+        }
+        if !is_cookie_value(&cookie.value) {
+            return Err(Error::new("cookie: value contains an illegal byte"));
+        }
+        if cookie.domain.as_deref().is_some_and(|d| !is_domain(d)) {
+            return Err(Error::new("cookie: invalid Domain attribute"));
+        }
+        if cookie.path.as_deref().is_some_and(|p| !is_path(p)) {
+            return Err(Error::new("cookie: invalid Path attribute"));
+        }
+        if cookie
+            .expires
+            .as_deref()
+            .is_some_and(|e| !is_attribute_value(e))
+        {
+            return Err(Error::new("cookie: invalid Expires attribute"));
+        }
+        if cookie.same_site == Some(SameSite::None) && !cookie.secure {
+            return Err(Error::new("cookie: SameSite=None requires Secure"));
+        }
+        if cookie.name.starts_with("__Host-")
+            && (cookie.domain.is_some() || cookie.path.as_deref() != Some("/") || !cookie.secure)
+        {
+            return Err(Error::new(
+                "cookie: __Host- requires Secure, Path=/, and no Domain",
+            ));
+        }
+        if cookie.name.starts_with("__Secure-") && !cookie.secure {
+            return Err(Error::new("cookie: __Secure- requires Secure"));
+        }
+        Ok(cookie)
     }
 }
 
@@ -333,9 +396,65 @@ fn encode_value(value: &str) -> String {
 // untrusted input cannot inject a new header line. (A conformant name
 // is a token; this is the minimal split-prevention guard.)
 fn sanitize_cookie_name(name: &str) -> String {
-    name.chars()
-        .filter(|&c| c != '\r' && c != '\n' && c != '\0')
-        .collect()
+    let sanitized: String = name
+        .bytes()
+        .filter(|&b| is_token_byte(b))
+        .map(char::from)
+        .collect();
+    if sanitized.is_empty() {
+        "invalid".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn is_token_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric()
+        || matches!(
+            b,
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
+        )
+}
+
+fn is_cookie_name(name: &str) -> bool {
+    !name.is_empty() && name.bytes().all(is_token_byte)
+}
+
+fn is_cookie_value(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|b| (0x21..=0x7e).contains(&b) && b != b'"' && b != b';' && b != b'\\')
+}
+
+fn is_attribute_value(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| (0x20..=0x7e).contains(&b) && b != b';')
+}
+
+fn is_domain(domain: &str) -> bool {
+    !domain.is_empty()
+        && domain
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'))
+}
+
+fn is_path(path: &str) -> bool {
+    path.starts_with('/') && is_attribute_value(path)
 }
 
 // Strips a surrounding pair of `"` if present and unescapes the
@@ -470,6 +589,52 @@ mod tests {
         assert!(
             !header.contains('\r') && !header.contains('\n'),
             "got {header:?}"
+        );
+    }
+
+    #[test]
+    fn serialization_cannot_inject_attributes_through_name_or_raw_attributes() {
+        let header = Cookie::builder("sid; Secure", "v")
+            .domain("example.test; Domain=evil.test")
+            .path("/ok; HttpOnly")
+            .expires("Wed, 09 Jun 2027 10:18:14 GMT\r\nX-Evil: yes")
+            .build()
+            .to_header_value();
+        assert_eq!(header, "sidSecure=v");
+    }
+
+    #[test]
+    fn prefixes_and_samesite_none_enforce_secure_serialization() {
+        let host = Cookie::builder("__Host-session", "v")
+            .domain("example.test")
+            .path("/not-root")
+            .build()
+            .to_header_value();
+        assert_eq!(host, "__Host-session=v; Path=/; Secure");
+
+        let none = Cookie::builder("sid", "v")
+            .same_site(SameSite::None)
+            .build()
+            .to_header_value();
+        assert_eq!(none, "sid=v; Secure; SameSite=None");
+    }
+
+    #[test]
+    fn strict_builder_rejects_invalid_cookie_contracts() {
+        assert!(Cookie::builder("sid; Secure", "v").try_build().is_err());
+        assert!(
+            Cookie::builder("sid", "v")
+                .same_site(SameSite::None)
+                .try_build()
+                .is_err()
+        );
+        assert!(
+            Cookie::builder("__Host-sid", "v")
+                .secure(true)
+                .domain("example.test")
+                .path("/")
+                .try_build()
+                .is_err()
         );
     }
 

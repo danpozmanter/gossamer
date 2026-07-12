@@ -1,6 +1,6 @@
 # `std::net`
 
-Status: shipped
+Status: experimental
 
 TCP/UDP networking primitives.
 

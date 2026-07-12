@@ -1,6 +1,6 @@
 # `std::collections::ordered_vec`
 
-Status: shipped
+Status: experimental
 
 Sorted-on-insert Vec<i64> with binary-search lookups.
 

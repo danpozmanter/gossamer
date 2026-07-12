@@ -8,11 +8,9 @@
 
 use std::collections::HashMap;
 
-use gossamer_ast::NodeId;
-use gossamer_lex::Symbol;
-
 use crate::def_id::{DefId, DefKind};
 use crate::resolutions::{FloatWidth, IntWidth, PrimitiveTy, Resolution};
+use gossamer_ast::NodeId;
 
 /// Sentinel [`NodeId`] used for prelude-provided names that have no
 /// corresponding `use` declaration in the source file.
@@ -66,10 +64,10 @@ impl Binding {
 pub(crate) struct Scope {
     /// Names live in the type namespace (struct/enum/trait/alias/module/
     /// type-parameter/primitive).
-    types: HashMap<Symbol, Binding>,
+    types: HashMap<Box<str>, Binding>,
     /// Names live in the value namespace (fn/const/static/variant/local
     /// binding).
-    values: HashMap<Symbol, Binding>,
+    values: HashMap<Box<str>, Binding>,
 }
 
 impl Scope {
@@ -78,38 +76,36 @@ impl Scope {
     /// inserted by `with_prelude` with `PRELUDE_SENTINEL` - get
     /// silently overwritten so user definitions can shadow them
     /// (e.g. `fn clamp(...)` overriding the new prelude `clamp`).
-    pub(crate) fn insert_type(&mut self, name: impl Into<Symbol>, binding: Binding) -> bool {
-        let sym = name.into();
-        if let Some(existing) = self.types.get(&sym) {
+    pub(crate) fn insert_type(&mut self, name: &str, binding: Binding) -> bool {
+        if let Some(existing) = self.types.get(name) {
             if !is_prelude_binding(existing) {
                 return false;
             }
         }
-        self.types.insert(sym, binding);
+        self.types.insert(Box::from(name), binding);
         true
     }
 
-    pub(crate) fn insert_value(&mut self, name: impl Into<Symbol>, binding: Binding) -> bool {
-        let sym = name.into();
-        if let Some(existing) = self.values.get(&sym) {
+    pub(crate) fn insert_value(&mut self, name: &str, binding: Binding) -> bool {
+        if let Some(existing) = self.values.get(name) {
             if !is_prelude_binding(existing) {
                 return false;
             }
         }
-        self.values.insert(sym, binding);
+        self.values.insert(Box::from(name), binding);
         true
     }
 
-    pub(crate) fn shadow_value(&mut self, name: impl Into<Symbol>, binding: Binding) {
-        self.values.insert(name.into(), binding);
+    pub(crate) fn shadow_value(&mut self, name: &str, binding: Binding) {
+        self.values.insert(Box::from(name), binding);
     }
 
     pub(crate) fn lookup_type(&self, name: &str) -> Option<Binding> {
-        self.types.get(&Symbol::intern(name)).copied()
+        self.types.get(name).copied()
     }
 
     pub(crate) fn lookup_value(&self, name: &str) -> Option<Binding> {
-        self.values.get(&Symbol::intern(name)).copied()
+        self.values.get(name).copied()
     }
 }
 
@@ -126,13 +122,13 @@ impl ScopeStack {
     pub(crate) fn with_prelude() -> Self {
         let mut root = Scope::default();
         for (name, prim) in PRIMITIVE_TYPES {
-            root.insert_type(*name, Binding::primitive(*prim));
+            root.insert_type(name, Binding::primitive(*prim));
         }
         for name in PRELUDE_TYPES {
-            root.insert_type(*name, Binding::import(PRELUDE_SENTINEL));
+            root.insert_type(name, Binding::import(PRELUDE_SENTINEL));
         }
         for name in PRELUDE_VALUES {
-            root.insert_value(*name, Binding::import(PRELUDE_SENTINEL));
+            root.insert_value(name, Binding::import(PRELUDE_SENTINEL));
         }
         Self { layers: vec![root] }
     }

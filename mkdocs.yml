@@ -56,6 +56,7 @@ nav:
   - Home: index.md
   - Install: install.md
   - Running: running.md
+  - Supported targets: supported_targets.md
   - WebAssembly: wasm.md
   - Syntax: syntax.md
   - Language:

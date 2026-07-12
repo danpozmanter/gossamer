@@ -260,17 +260,15 @@ crate wrapped thinly).
 The runtime's stackful goroutines (corosensei) need a per-arch
 context-switch implementation. The current support matrix:
 
-| OS       | Architecture                  | Status |
-| -------- | ----------------------------- | ------ |
-| Linux    | x86_64                        | First-class |
-| Linux    | aarch64                       | First-class |
-| Linux    | armv7 (32-bit ARM)            | Supported |
-| macOS    | aarch64 (Apple Silicon)       | First-class |
-| macOS    | x86_64 (Intel)                | Supported |
-| Windows  | x86_64 (MSVC ABI)             | Supported |
-
-Other targets compile but the goroutine scheduler will refuse to
-start.
+The supported target contract is the executable matrix in
+[`conformance/target_matrix.tsv`](conformance/target_matrix.tsv) and the
+matching [supported-targets documentation](docs_src/supported_targets.md).
+Tier 1 executes the bytecode VM, JIT-enabled VM, and LLVM AOT binaries on
+native CI for Linux x86_64/aarch64, Apple Silicon macOS, and Windows x86_64.
+Linux x86_64/aarch64 musl AOT output is Tier 2: it is built from supported
+hosts, executed natively or under QEMU, and compared with the pure bytecode
+VM. Intel macOS is artifact-only pending execution evidence; armv7, riscv64,
+and wasm are not supported execution targets.
 
 ### Raspberry Pi
 
@@ -308,7 +306,8 @@ Support for various editors (VS Code, Neovim, etc) [here](https://github.com/dan
 
 ## Status and Rough Roadmap
 
-Examples all run via interpretation, compile in debug or release mode.
+Examples run through the bytecode VM by default (with optional deferred JIT
+tier-up) and compile in debug or release mode.
 
 There are gaps to fill in the standard library, bugs and optimizations to find via real world usage.
 

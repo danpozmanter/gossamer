@@ -19,6 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use serde_json::Value as JsonValue;
 use thiserror::Error;
 
 use crate::cache::{Cache, CachedSource};
@@ -26,6 +27,9 @@ use crate::id::ProjectId;
 use crate::manifest::{DependencySpec, InlineDependency, Manifest};
 use crate::transport::{Transport, TransportError};
 use crate::version::{CaretRange, Version};
+
+const MAX_REGISTRY_INDEX_BYTES: usize = 1024 * 1024;
+const MAX_REGISTRY_VERSIONS: usize = 16_384;
 
 /// One published version of a project as advertised by the registry
 /// index.
@@ -155,18 +159,41 @@ fn parse_index_json(
     id: &ProjectId,
     catalogue: &mut VersionCatalogue,
 ) -> Result<bool, String> {
-    let text = std::str::from_utf8(bytes).map_err(|e| format!("utf-8: {e}"))?;
-    let versions_array = extract_array(text, "versions").ok_or("missing `versions` array")?;
+    if bytes.len() > MAX_REGISTRY_INDEX_BYTES {
+        return Err(format!(
+            "index exceeds {MAX_REGISTRY_INDEX_BYTES}-byte limit"
+        ));
+    }
+    let document: JsonValue =
+        serde_json::from_slice(bytes).map_err(|e| format!("malformed JSON: {e}"))?;
+    let versions_array = document
+        .as_object()
+        .and_then(|object| object.get("versions"))
+        .and_then(JsonValue::as_array)
+        .ok_or("missing `versions` array")?;
+    if versions_array.len() > MAX_REGISTRY_VERSIONS {
+        return Err(format!(
+            "index has more than {MAX_REGISTRY_VERSIONS} versions"
+        ));
+    }
     let mut added = false;
-    for object_text in iter_objects(versions_array) {
-        let version_text = extract_string(object_text, "version").ok_or("missing `version`")?;
-        let version = Version::parse(&version_text).map_err(|e| format!("version: {e}"))?;
-        let yanked = extract_bool(object_text, "yanked").unwrap_or(false);
-        let download_url = extract_string(object_text, "url");
-        let tarball_sha256 = extract_string(object_text, "sha256");
-        let yank_reason = extract_string(object_text, "yank_reason");
-        let signature = extract_string(object_text, "signature");
-        let public_key = extract_string(object_text, "public_key");
+    for (index, entry) in versions_array.iter().enumerate() {
+        let object = entry
+            .as_object()
+            .ok_or_else(|| format!("versions[{index}] is not an object"))?;
+        let version_text = json_required_string(object, "version", index)?;
+        let version = Version::parse(version_text).map_err(|e| format!("version: {e}"))?;
+        let yanked = match object.get("yanked") {
+            Some(value) => value
+                .as_bool()
+                .ok_or_else(|| format!("versions[{index}].yanked is not a boolean"))?,
+            None => false,
+        };
+        let download_url = json_optional_string(object, "url", index)?;
+        let tarball_sha256 = json_optional_string(object, "sha256", index)?;
+        let yank_reason = json_optional_string(object, "yank_reason", index)?;
+        let signature = json_optional_string(object, "signature", index)?;
+        let public_key = json_optional_string(object, "public_key", index)?;
         catalogue.add_entry(
             id,
             CatalogueEntry {
@@ -184,127 +211,79 @@ fn parse_index_json(
     Ok(added)
 }
 
-fn extract_array<'a>(text: &'a str, field: &str) -> Option<&'a str> {
-    let needle = format!("\"{field}\"");
-    let start = text.find(&needle)?;
-    let after = &text[start + needle.len()..];
-    let bracket = after.find('[')?;
-    let array_start = start + needle.len() + bracket;
-    let bytes = text.as_bytes();
-    let mut depth = 0i32;
-    let mut in_string = false;
-    let mut escape = false;
-    let mut idx = array_start;
-    while idx < bytes.len() {
-        let b = bytes[idx];
-        if in_string {
-            if escape {
-                escape = false;
-            } else if b == b'\\' {
-                escape = true;
-            } else if b == b'"' {
-                in_string = false;
-            }
-        } else {
-            match b {
-                b'"' => in_string = true,
-                b'[' => depth += 1,
-                b']' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(&text[array_start + 1..idx]);
-                    }
-                }
-                _ => {}
-            }
-        }
-        idx += 1;
-    }
-    None
+fn json_required_string<'a>(
+    object: &'a serde_json::Map<String, JsonValue>,
+    field: &str,
+    index: usize,
+) -> Result<&'a str, String> {
+    object
+        .get(field)
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| format!("versions[{index}].{field} is missing or not a string"))
 }
 
-fn iter_objects(text: &str) -> Vec<&str> {
-    let bytes = text.as_bytes();
-    let mut out: Vec<&str> = Vec::new();
-    let mut depth = 0i32;
-    let mut start: Option<usize> = None;
-    let mut in_string = false;
-    let mut escape = false;
-    for (i, &b) in bytes.iter().enumerate() {
-        if in_string {
-            if escape {
-                escape = false;
-            } else if b == b'\\' {
-                escape = true;
-            } else if b == b'"' {
-                in_string = false;
-            }
-            continue;
-        }
-        match b {
-            b'"' => in_string = true,
-            b'{' => {
-                if depth == 0 {
-                    start = Some(i);
-                }
-                depth += 1;
-            }
-            b'}' => {
-                depth -= 1;
-                if depth == 0
-                    && let Some(s) = start.take()
-                {
-                    out.push(&text[s..=i]);
-                }
-            }
-            _ => {}
-        }
+fn json_optional_string(
+    object: &serde_json::Map<String, JsonValue>,
+    field: &str,
+    index: usize,
+) -> Result<Option<String>, String> {
+    match object.get(field) {
+        Some(value) => value
+            .as_str()
+            .map(str::to_string)
+            .map(Some)
+            .ok_or_else(|| format!("versions[{index}].{field} is not a string")),
+        None => Ok(None),
     }
-    out
 }
 
-fn extract_string(text: &str, field: &str) -> Option<String> {
-    let needle = format!("\"{field}\"");
-    let mut cursor = text.find(&needle)?;
-    cursor += needle.len();
-    let bytes = text.as_bytes();
-    while cursor < bytes.len() && (bytes[cursor] == b' ' || bytes[cursor] == b':') {
-        cursor += 1;
-    }
-    if cursor >= bytes.len() || bytes[cursor] != b'"' {
-        return None;
-    }
-    cursor += 1;
-    let value_start = cursor;
-    let mut escape = false;
-    while cursor < bytes.len() {
-        if escape {
-            escape = false;
-        } else if bytes[cursor] == b'\\' {
-            escape = true;
-        } else if bytes[cursor] == b'"' {
-            return Some(text[value_start..cursor].to_string());
-        }
-        cursor += 1;
-    }
-    None
-}
+#[cfg(test)]
+mod index_tests {
+    use super::*;
 
-fn extract_bool(text: &str, field: &str) -> Option<bool> {
-    let needle = format!("\"{field}\"");
-    let mut cursor = text.find(&needle)?;
-    cursor += needle.len();
-    let bytes = text.as_bytes();
-    while cursor < bytes.len() && (bytes[cursor] == b' ' || bytes[cursor] == b':') {
-        cursor += 1;
+    #[test]
+    fn registry_index_uses_json_decoding_and_populates_catalogue() {
+        let id = ProjectId::parse("example.com/widget").unwrap();
+        let mut catalogue = VersionCatalogue::new();
+        let index = br#"{
+            "versions": [{
+                "version": "1.2.3",
+                "url": "https://registry.example/packages/widget%2D1.2.3.tar",
+                "sha256": "abc",
+                "yanked": false,
+                "yank_reason": "no \"longer\" supported"
+            }]
+        }"#;
+
+        assert!(parse_index_json(index, &id, &mut catalogue).unwrap());
+        let entry = catalogue
+            .entry(&id, Version::parse("1.2.3").unwrap())
+            .unwrap();
+        assert_eq!(
+            entry.yank_reason.as_deref(),
+            Some("no \"longer\" supported")
+        );
+        assert_eq!(
+            entry.download_url.as_deref(),
+            Some("https://registry.example/packages/widget%2D1.2.3.tar")
+        );
     }
-    let rest = &text[cursor..];
-    if rest.starts_with("true") {
-        Some(true)
-    } else if rest.starts_with("false") {
-        Some(false)
-    } else {
-        None
+
+    #[test]
+    fn registry_index_rejects_wrong_field_types_and_oversized_documents() {
+        let id = ProjectId::parse("example.com/widget").unwrap();
+        let mut catalogue = VersionCatalogue::new();
+        assert!(
+            parse_index_json(
+                br#"{"versions":[{"version":"1.2.3","yanked":"false"}]}"#,
+                &id,
+                &mut catalogue
+            )
+            .is_err()
+        );
+
+        let oversized = vec![b' '; MAX_REGISTRY_INDEX_BYTES + 1];
+        assert!(parse_index_json(&oversized, &id, &mut catalogue).is_err());
     }
 }
 

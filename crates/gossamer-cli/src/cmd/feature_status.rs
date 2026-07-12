@@ -4,7 +4,7 @@
 //!
 //! The lifecycle data is the single source of truth in
 //! `gossamer_std::manifest::feature_status::FEATURE_STATUS` merged
-//! with the implicit `Shipped` defaults from
+//! with the implicit `Experimental` defaults from
 //! `manifest::ALL_MODULES`. The per-tier test status comes from
 //! `target/debug/.feature-status.json`, written by
 //! `gos test --tier-parity --report=status`. Missing file is

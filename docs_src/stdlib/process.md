@@ -1,8 +1,8 @@
 # `std::process`
 
-Status: shipped
+Status: experimental
 
-Spawn child processes, exit the current process (Rust std::process shape).
+Canonical process control and child-process API; std::os::exec is compatibility-only.
 
 ## Public items
 

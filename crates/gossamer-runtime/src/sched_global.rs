@@ -26,6 +26,7 @@
 //! calls [`MultiScheduler::unpark`] when ready.
 
 use std::io;
+use std::panic::AssertUnwindSafe;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
@@ -202,11 +203,6 @@ fn deliver_event(ev: Readiness) {
     let waker = globals().wakers.lock().remove(&ev.gid);
     if let Some(w) = waker {
         w();
-    } else {
-        // No waker registered - likely an unparked-then-resubscribed
-        // race. Falling back to a direct unpark gives the goroutine
-        // a chance to re-arm itself.
-        globals().scheduler.unpark(ev.gid);
     }
 }
 
@@ -382,6 +378,7 @@ pub fn wait_io<S: mio::event::Source + ?Sized>(
         return Ok(());
     }
     let mut result: io::Result<()> = Ok(());
+    let mut source = None;
     park(ParkReason::Io, |parker| {
         let gid = parker.gid;
         register_waker(
@@ -390,14 +387,79 @@ pub fn wait_io<S: mio::event::Source + ?Sized>(
                 scheduler().unpark(gid);
             }),
         );
-        if let Err(e) = with_poller(|p| p.register_io(io, interest, gid)).map(|_| ()) {
-            result = Err(e);
+        match with_poller(|p| p.register_io(io, interest, gid)) {
+            Ok(registered) => source = Some(registered),
+            Err(e) => {
+                result = Err(e);
+                // `park` still runs after its arming closure. Publish an
+                // immediate wake so the coroutine can observe the error
+                // instead of remaining parked forever.
+                scheduler().unpark(gid);
+            }
         }
     });
     if let Some(gid) = current_gid() {
         forget_waker(gid);
     }
+    if let Some(source) = source {
+        let _ = with_poller(|p| p.deregister_io(io, source, interest));
+    }
     result
+}
+
+/// Waits for an I/O readiness event until `deadline`.
+///
+/// Returns `Ok(true)` when the source woke before the deadline and
+/// `Ok(false)` when the deadline elapsed.  Both registrations are removed on
+/// resume, so a former read deadline cannot wake a later keep-alive request.
+/// This is the deadline-aware primitive used by the compiled HTTP/1 server.
+pub fn wait_io_until<S: mio::event::Source + ?Sized>(
+    io: &mut S,
+    interest: crate::sched::Interest,
+    deadline: Instant,
+) -> io::Result<bool> {
+    if deadline <= Instant::now() {
+        return Ok(false);
+    }
+    if !gossamer_coro::in_goroutine() {
+        std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+        return Ok(false);
+    }
+
+    let gid = current_gid().expect("goroutine lost its gid while waiting for I/O");
+    let mut result = Ok(());
+    let mut io_source = None;
+    let mut timer_source = None;
+    park(ParkReason::Io, |parker| {
+        register_waker(
+            parker.gid,
+            Box::new(move || {
+                scheduler().unpark(gid);
+            }),
+        );
+        match with_poller(|p| {
+            let io_source = p.register_io(io, interest, gid)?;
+            let timer_source = p.add_timer(deadline, gid);
+            Ok::<_, io::Error>((io_source, timer_source))
+        }) {
+            Ok((registered_io, registered_timer)) => {
+                io_source = Some(registered_io);
+                timer_source = Some(registered_timer);
+            }
+            Err(e) => {
+                result = Err(e);
+                scheduler().unpark(gid);
+            }
+        }
+    });
+    forget_waker(gid);
+    if let Some(source) = io_source {
+        let _ = with_poller(|p| p.deregister_io(io, source, interest));
+    }
+    if let Some(source) = timer_source {
+        with_poller(|p| p.cancel_timer(source));
+    }
+    result.map(|()| Instant::now() < deadline)
 }
 
 /// Suspends the current goroutine until `deadline` by registering a
@@ -432,6 +494,55 @@ pub fn sleep_until(deadline: Instant) {
     }
 }
 
+/// Runs a potentially blocking OS operation without pinning a scheduler
+/// worker. When called from a goroutine, the operation moves to a short-lived
+/// OS thread and the goroutine parks until completion; outside the scheduler
+/// the closure runs inline to preserve ordinary blocking semantics.
+pub fn run_blocking<T, F>(label: &'static str, f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
+        if let Some(s) = panic.downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = panic.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "panic".to_string()
+        }
+    }
+
+    let Some(gid) = current_gid() else {
+        return std::panic::catch_unwind(AssertUnwindSafe(f)).map_err(|panic| {
+            format!(
+                "{label}: blocking operation panicked: {}",
+                panic_message(panic)
+            )
+        });
+    };
+
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    thread::Builder::new()
+        .name(format!("gos-blocking-{label}"))
+        .spawn(move || {
+            let result = std::panic::catch_unwind(AssertUnwindSafe(f)).map_err(|panic| {
+                format!(
+                    "{label}: blocking operation panicked: {}",
+                    panic_message(panic)
+                )
+            });
+            let _ = tx.send(result);
+            scheduler().unpark(gid);
+        })
+        .map_err(|e| format!("{label}: spawn blocking worker: {e}"))?;
+
+    park(ParkReason::Other, |_parker| {});
+
+    rx.recv()
+        .map_err(|_| format!("{label}: blocking worker ended without a result"))?
+}
+
 /// Spawns `task` on the M:N pool. Returns `None` when the
 /// scheduler's live-goroutine cap would be exceeded; the caller
 /// should surface the refusal to user code instead of silently
@@ -439,7 +550,10 @@ pub fn sleep_until(deadline: Instant) {
 #[must_use]
 pub fn try_spawn(task: Box<dyn FnOnce() + Send + 'static>) -> Option<Gid> {
     let coro = gossamer_coro::Goroutine::new(task);
-    scheduler().try_spawn(GoroutineTask { coro })
+    scheduler().try_spawn(GoroutineTask {
+        coro,
+        arena: crate::c_abi::rc::ArenaState::empty(),
+    })
 }
 
 /// Spawns `task` on the M:N pool. Panics if the live-goroutine cap
@@ -453,7 +567,10 @@ pub fn try_spawn(task: Box<dyn FnOnce() + Send + 'static>) -> Option<Gid> {
 )]
 pub fn spawn(task: Box<dyn FnOnce() + Send + 'static>) -> Gid {
     let coro = gossamer_coro::Goroutine::new(task);
-    scheduler().spawn(GoroutineTask { coro })
+    scheduler().spawn(GoroutineTask {
+        coro,
+        arena: crate::c_abi::rc::ArenaState::empty(),
+    })
 }
 
 /// Adapts a [`gossamer_coro::Goroutine`] into the scheduler's
@@ -465,10 +582,18 @@ pub fn spawn(task: Box<dyn FnOnce() + Send + 'static>) -> Gid {
 /// or move it to the parked map.
 struct GoroutineTask {
     coro: gossamer_coro::Goroutine,
+    /// Active arena regions travel with the coroutine, not the scheduler
+    /// worker. See `c_abi::rc::ArenaState` for why a worker-local arena is
+    /// unsound when a parked task is resumed after worker retirement.
+    arena: crate::c_abi::rc::ArenaState,
 }
 
 impl crate::sched::Task for GoroutineTask {
     fn step(&mut self) -> Step {
+        crate::c_abi::rc::install_arena_state(std::mem::replace(
+            &mut self.arena,
+            crate::c_abi::rc::ArenaState::empty(),
+        ));
         // The closure inside the coroutine's first `resume()` sets
         // the worker's TLS yielder. Subsequent steps need the
         // worker to re-set it from the slot the closure published.
@@ -477,6 +602,7 @@ impl crate::sched::Task for GoroutineTask {
             gossamer_coro::set_current_yielder(yielder_ptr);
         }
         let done = self.coro.resume();
+        self.arena = crate::c_abi::rc::take_arena_state();
         gossamer_coro::clear_current_yielder();
         if done { Step::Done } else { Step::Yield }
     }

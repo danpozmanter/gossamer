@@ -58,15 +58,15 @@ mod tests {
     #[test]
     fn destructure_pair_let() {
         let (x, y) = (10, 20)
-        testing::check_eq(&x, &10, "first=10")
-        testing::check_eq(&y, &20, "second=20")
+        let _ = testing::check_eq(&x, &10, "first=10")
+        let _ = testing::check_eq(&y, &20, "second=20")
     }
 
     #[test]
     fn destructure_mut_binding() {
         let (mut x, y) = (10, 20)
         x += y
-        testing::check_eq(&x, &30, "mut x += y = 30")
+        let _ = testing::check_eq(&x, &30, "mut x += y = 30")
     }
 
     #[test]
@@ -76,8 +76,8 @@ mod tests {
         for (a, b, c) in triples {
             sums.push(a + b + c)
         }
-        testing::check_eq(&sums[0], &6, "1+2+3=6")
-        testing::check_eq(&sums[1], &15, "4+5+6=15")
+        let _ = testing::check_eq(&sums[0], &6, "1+2+3=6")
+        let _ = testing::check_eq(&sums[1], &15, "4+5+6=15")
     }
 
     #[test]
@@ -88,6 +88,6 @@ mod tests {
             count += 1
             cursor = if n > 1 { Some(n - 1) } else { None }
         }
-        testing::check_eq(&count, &3, "cursor runs 3 times: 3,2,1")
+        let _ = testing::check_eq(&count, &3, "cursor runs 3 times: 3,2,1")
     }
 }

@@ -48,18 +48,18 @@ mod tests {
     #[test]
     fn default_is_black() {
         let c = super::default_color()
-        testing::check(c.r == 0 && c.g == 0 && c.b == 0, "default Color is all-zero")
+        let _ = testing::check(c.r == 0 && c.g == 0 && c.b == 0, "default Color is all-zero")
     }
 
     #[test]
     fn equality_is_structural() {
-        testing::check(super::rgb(1, 2, 3) == super::rgb(1, 2, 3), "same fields compare equal")
-        testing::check(super::rgb(1, 2, 3) != super::rgb(9, 2, 3), "a differing field compares unequal")
+        let _ = testing::check(super::rgb(1, 2, 3) == super::rgb(1, 2, 3), "same fields compare equal")
+        let _ = testing::check(super::rgb(1, 2, 3) != super::rgb(9, 2, 3), "a differing field compares unequal")
     }
 
     #[test]
     fn clone_equals_source() {
         let a = super::rgb(10, 20, 30)
-        testing::check(a.clone() == a, "a clone equals its source")
+        let _ = testing::check(a.clone() == a, "a clone equals its source")
     }
 }

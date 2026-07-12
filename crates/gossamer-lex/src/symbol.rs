@@ -1,88 +1,50 @@
-//! Process-global string interner backing [`Symbol`] handles.
+//! Session-scoped string interning backing [`Symbol`] handles.
 //!
-//! Hot data structures across resolve / typeck / LSP key on
-//! identifier names. Storing each occurrence as `String` (24 B
-//! header + heap copy of the bytes) duplicates the same name
-//! across scope frames, type tables, and per-document indexes -
-//! ~5× duplication on a non-trivial project per the RAM analysis.
+//! A compiler daemon must not retain every identifier it has ever seen.
+//! Earlier versions used a process-global interner and leaked each spelling
+//! in order to make `Symbol::as_str` return `&'static str`.  That made the
+//! resident set grow monotonically for the lifetime of the REPL, LSP, and
+//! long-running build processes.
 //!
-//! The interner deduplicates: each distinct string maps to one
-//! immutable allocation, and a `Symbol(u32)` carries the handle.
-//! Comparison is integer equality, hashing is fast, and the
-//! resolved `&'static str` is recovered without further locking.
-//!
-//! Storage strategy - Bytes are appended to a leak-on-purpose
-//! arena (`Vec<Box<str>>`) so the slices the interner hands out
-//! live for the process. The arena sits behind a `RwLock`; the
-//! `lookup` map (string → symbol) sits inside the same lock. The
-//! two-level layout (write under exclusive lock, read under
-//! shared lock) keeps the hot `Symbol::as_str` path lock-free
-//! after the first store.
+//! [`SymbolInterner`] is deliberately owned by its caller.  Symbols keep an
+//! `Arc` to their spelling, so they remain valid when the interner is dropped;
+//! the interner only owns the deduplication index.  Once both the session and
+//! its symbols are dropped, all associated identifier storage is reclaimed.
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Arc, Weak};
 
-use parking_lot::RwLock;
-
-/// Interned identifier handle. Comparison and hashing are
-/// integer-cheap; the original spelling is recovered via
-/// [`Symbol::as_str`].
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub struct Symbol(u32);
+/// Interned identifier handle.
+///
+/// Equality, ordering, and hashing use the spelling rather than a
+/// session-local numeric index.  Symbols may therefore safely cross session
+/// boundaries (for example, in a diagnostic retained after a frontend pass).
+#[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
+pub struct Symbol(Arc<str>);
 
 impl Symbol {
-    /// Looks up or installs `s` in the global interner and
-    /// returns its `Symbol`. Repeated calls with the same spelling
-    /// are guaranteed to return the same `Symbol`.
+    /// Creates an owned symbol without retaining it in a process-global
+    /// interner.
+    ///
+    /// Prefer [`SymbolInterner::intern`] for repeated names in one compiler
+    /// session.  This compatibility constructor intentionally does not share
+    /// state: callers that do not own an interner must not silently extend a
+    /// process-lifetime allocation arena.
     #[must_use]
     pub fn intern(s: &str) -> Self {
-        let interner = global();
-        // Read-side fast path: most identifiers are already
-        // present after the first parse pass on the program.
-        {
-            let inner = interner.read();
-            if let Some(&sym) = inner.lookup.get(s) {
-                return sym;
-            }
-        }
-        // Slow path: take the write lock, re-check (another
-        // thread may have inserted between drop-read and
-        // acquire-write), then install.
-        let mut inner = interner.write();
-        if let Some(&sym) = inner.lookup.get(s) {
-            return sym;
-        }
-        let id = u32::try_from(inner.spellings.len()).expect("symbol interner overflow");
-        let owned: Box<str> = Box::from(s);
-        // SAFETY-equivalent (no `unsafe`): the `Box<str>` is
-        // moved into `spellings` and never reallocated; the
-        // lifetime of its bytes is therefore process-wide as
-        // long as the interner itself lives, which is forever.
-        // The `&'static str` we hand out points into that
-        // owned allocation.
-        let static_ref: &'static str = Box::leak(owned);
-        inner.spellings.push(static_ref);
-        inner.lookup.insert(static_ref.to_string(), Symbol(id));
-        Symbol(id)
+        Self(Arc::from(s))
     }
 
-    /// Returns the original spelling of this symbol. The returned
-    /// reference is valid for the rest of the process.
+    /// Returns the original spelling.
     #[must_use]
-    pub fn as_str(self) -> &'static str {
-        global().read().spellings[self.0 as usize]
-    }
-
-    /// Numeric handle. Exposed for tracing / cache-key use.
-    #[must_use]
-    pub const fn as_u32(self) -> u32 {
-        self.0
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
 impl std::fmt::Debug for Symbol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Symbol({}, {:?})", self.0, self.as_str())
+        write!(f, "Symbol({:?})", self.as_str())
     }
 }
 
@@ -110,77 +72,110 @@ impl From<&String> for Symbol {
     }
 }
 
-/// Clears the global interner, freeing every interned spelling.
+/// Compatibility hook for callers that previously cleared the global
+/// interner between independent inputs.
 ///
-/// The interner hands out `&'static str` slices into a leak-on-purpose
-/// arena, so without this its footprint grows for the life of the
-/// process - unbounded in a host that compiles many independent
-/// programs in one process (the fuzz harnesses). Such a host calls
-/// this at each program boundary to bound the growth.
+/// There is no process-global interner to reset anymore.  Storage is released
+/// by dropping each [`SymbolInterner`] and every outstanding [`Symbol`].
+pub fn reset_interner() {}
+
+/// String interner owned by one compiler, parser, or tooling session.
 ///
-/// # Safety contract
-/// Every outstanding [`Symbol`] indexes the spellings table by
-/// position, and the freed slices are dangling afterward. The caller
-/// must guarantee no `Symbol` handle or `as_str` slice from a prior
-/// interning round is read after this returns. The fuzz harnesses
-/// satisfy this by resetting before each independent input, when no
-/// handle from the previous input is live.
-// Reclaiming a leaked allocation is the one operation in this crate that
-// genuinely requires `unsafe`; it is contained to this function and its
-// safety contract is documented above.
-#[allow(unsafe_code)]
-pub fn reset_interner() {
-    let mut inner = global().write();
-    for s in inner.spellings.drain(..) {
-        // SAFETY: each spelling came from `Box::leak(Box<str>)` in
-        // `intern`; reconstructing the `Box` from the same fat pointer
-        // and dropping it frees exactly that allocation.
-        unsafe {
-            drop(Box::from_raw(std::ptr::from_ref(s).cast_mut()));
-        }
+/// The index holds weak references so [`Self::prune_unused`] can release
+/// spellings no longer referenced by symbols before the whole session ends.
+/// This is useful to a REPL or LSP that keeps its session object while
+/// repeatedly replacing documents.
+#[derive(Default)]
+pub struct SymbolInterner {
+    entries: HashMap<Box<str>, Weak<str>>,
+}
+
+impl SymbolInterner {
+    /// Creates an empty session-local interner.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
     }
-    inner.lookup.clear();
-}
 
-struct Inner {
-    spellings: Vec<&'static str>,
-    lookup: HashMap<String, Symbol>,
-}
+    /// Looks up or installs `spelling` in this session.
+    #[must_use]
+    pub fn intern(&mut self, spelling: &str) -> Symbol {
+        if let Some(symbol) = self.entries.get(spelling).and_then(Weak::upgrade) {
+            return Symbol(symbol);
+        }
 
-fn global() -> &'static RwLock<Inner> {
-    static INTERNER: OnceLock<RwLock<Inner>> = OnceLock::new();
-    INTERNER.get_or_init(|| {
-        RwLock::new(Inner {
-            spellings: Vec::new(),
-            lookup: HashMap::new(),
-        })
-    })
+        let symbol: Arc<str> = Arc::from(spelling);
+        self.entries
+            .insert(Box::from(spelling), Arc::downgrade(&symbol));
+        Symbol(symbol)
+    }
+
+    /// Drops stale index entries for symbols no longer held by the caller.
+    /// Returns the number of entries removed.
+    pub fn prune_unused(&mut self) -> usize {
+        let before = self.entries.len();
+        self.entries
+            .retain(|_, spelling| spelling.strong_count() != 0);
+        before - self.entries.len()
+    }
+
+    /// Number of spellings currently tracked by this session.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns `true` when no spellings are tracked by this session.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Symbol;
+    use super::{Symbol, SymbolInterner};
 
     #[test]
-    fn intern_same_string_twice_returns_same_symbol() {
-        let a = Symbol::intern("foo");
-        let b = Symbol::intern("foo");
+    fn session_interning_deduplicates_a_spelling() {
+        let mut interner = SymbolInterner::new();
+        let a = interner.intern("foo");
+        let b = interner.intern("foo");
         assert_eq!(a, b);
         assert_eq!(a.as_str(), "foo");
+        assert_eq!(interner.len(), 1);
     }
 
     #[test]
-    fn distinct_strings_get_distinct_symbols() {
+    fn symbols_outlive_the_session_index() {
+        let symbol = {
+            let mut interner = SymbolInterner::new();
+            interner.intern("survives")
+        };
+        assert_eq!(symbol.as_str(), "survives");
+    }
+
+    #[test]
+    fn pruning_reclaims_unreferenced_spellings() {
+        let mut interner = SymbolInterner::new();
+        let symbol = interner.intern("temporary");
+        drop(symbol);
+        assert_eq!(interner.prune_unused(), 1);
+        assert!(interner.is_empty());
+    }
+
+    #[test]
+    fn compatibility_constructor_is_not_global() {
         let a = Symbol::intern("alpha");
-        let b = Symbol::intern("beta");
-        assert_ne!(a, b);
+        let b = Symbol::intern("alpha");
+        assert_eq!(a, b);
         assert_eq!(a.as_str(), "alpha");
-        assert_eq!(b.as_str(), "beta");
     }
 
     #[test]
-    fn empty_string_is_a_valid_symbol() {
-        let a = Symbol::intern("");
-        assert_eq!(a.as_str(), "");
+    fn symbols_from_independent_sessions_compare_by_spelling() {
+        let mut first = SymbolInterner::new();
+        let mut second = SymbolInterner::new();
+        assert_eq!(first.intern("shared"), second.intern("shared"));
     }
 }

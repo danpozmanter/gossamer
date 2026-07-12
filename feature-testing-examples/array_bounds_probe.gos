@@ -42,27 +42,27 @@ mod tests {
         for i in 0..arr.len() {
             s += arr[i]
         }
-        testing::check_eq(&s, &150, "10+20+30+40+50=150")
+        let _ = testing::check_eq(&s, &150, "10+20+30+40+50=150")
     }
 
     #[test]
     fn fixed_array_access() {
         let fixed: [i64; 3] = [1, 2, 3]
-        testing::check_eq(&fixed[0], &1, "fixed[0]=1")
-        testing::check_eq(&fixed[2], &3, "fixed[2]=3")
+        let _ = testing::check_eq(&fixed[0], &1, "fixed[0]=1")
+        let _ = testing::check_eq(&fixed[2], &3, "fixed[2]=3")
     }
 
     #[test]
     fn mid_element() {
         let arr: [i64] = [10, 20, 30, 40, 50]
         let idx: i64 = (arr.len() / 2)
-        testing::check_eq(&arr[idx], &30, "mid=30")
+        let _ = testing::check_eq(&arr[idx], &30, "mid=30")
     }
 
     #[test]
     fn last_element() {
         let arr: [i64] = [10, 20, 30, 40, 50]
         let last = arr.len() - 1
-        testing::check_eq(&arr[last], &50, "last=50")
+        let _ = testing::check_eq(&arr[last], &50, "last=50")
     }
 }

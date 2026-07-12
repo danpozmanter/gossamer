@@ -1,5 +1,7 @@
 #!/bin/sh
-# Cross-build the canonical fixture list for a Linux target.
+# Cross-build the canonical fixture list for a Linux target. The list includes
+# the independent Stable all-tier contract fixtures, so cross AOT validation
+# cannot drift from native VM/JIT/AOT conformance.
 # Usage: scripts/cross_build_fixtures.sh <target-triple> <out-base>
 #
 # Binaries land in <out-base>/<target-triple>/ so several targets can

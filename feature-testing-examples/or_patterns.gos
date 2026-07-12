@@ -26,7 +26,7 @@ mod or_patterns_tests {
     fn circle_area() {
         let got = super::area(super::Shape::Circle(1.0))
         let want = 3.14159
-        testing::check(
+        let _ = testing::check(
             &((got - want).abs() < 0.001),
             "circle area",
         )
@@ -34,12 +34,12 @@ mod or_patterns_tests {
 
     #[test]
     fn square_area() {
-        testing::check_eq(&super::area(super::Shape::Square(2.0)), &4.0, "square area")
+        let _ = testing::check_eq(&super::area(super::Shape::Square(2.0)), &4.0, "square area")
     }
 
     #[test]
     fn rectangle_uses_first_side() {
-        testing::check_eq(
+        let _ = testing::check_eq(
             &super::area(super::Shape::Rectangle(3.0, 4.0)),
             &9.0,
             "rectangle side*side",

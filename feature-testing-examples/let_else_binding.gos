@@ -49,22 +49,22 @@ mod tests {
 
     #[test]
     fn binds_on_match() {
-        testing::check(super::double_or_zero(Some(5)) == 10, "Some(5) doubles to 10")
+        let _ = testing::check(super::double_or_zero(Some(5)) == 10, "Some(5) doubles to 10")
     }
 
     #[test]
     fn diverges_on_no_match() {
-        testing::check(super::double_or_zero(None) == 0, "None takes the else arm")
+        let _ = testing::check(super::double_or_zero(None) == 0, "None takes the else arm")
     }
 
     #[test]
     fn chained_let_else() {
-        testing::check(super::sum_or_zero(Some(10), Some(32)) == 42, "both Some sums")
-        testing::check(super::sum_or_zero(Some(10), None) == 0, "a None bails to 0")
+        let _ = testing::check(super::sum_or_zero(Some(10), Some(32)) == 42, "both Some sums")
+        let _ = testing::check(super::sum_or_zero(Some(10), None) == 0, "a None bails to 0")
     }
 
     #[test]
     fn else_continue_over_slice() {
-        testing::check(super::first_half(&[3, 5, 8, 9]) == 4, "first even (8) halves to 4")
+        let _ = testing::check(super::first_half(&[3, 5, 8, 9]) == 4, "first even (8) halves to 4")
     }
 }

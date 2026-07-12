@@ -20,7 +20,7 @@
 use crate::errors::Error;
 use crate::http::{Headers, Method, Request, Response, StatusCode};
 
-pub use gossamer_http3::H3Error;
+pub use gossamer_http3::{H3Error, ServerConfig};
 
 impl From<H3Error> for Error {
     fn from(err: H3Error) -> Self {
@@ -88,9 +88,31 @@ pub fn serve<H>(addr: &str, cert_path: &str, key_path: &str, handler: H) -> Resu
 where
     H: Handler + Clone + 'static,
 {
-    gossamer_http3::serve_files(addr, cert_path, key_path, move |wire| {
-        response_to_wire(handler.serve(request_from_wire(wire)))
-    })
+    serve_with_config(addr, cert_path, key_path, handler, ServerConfig::default())
+}
+
+/// Like [`serve`], with explicit QUIC connection, stream, memory, and I/O
+/// limits. HTTP/3 remains Experimental: this adapter deliberately accepts and
+/// returns complete bodies, and does not expose a fake streaming facade.
+/// Handler execution is synchronous, so the engine can bound wire I/O but
+/// cannot forcibly preempt a handler that ignores its own cancellation policy.
+pub fn serve_with_config<H>(
+    addr: &str,
+    cert_path: &str,
+    key_path: &str,
+    handler: H,
+    config: ServerConfig,
+) -> Result<(), Error>
+where
+    H: Handler + Clone + 'static,
+{
+    gossamer_http3::serve_files_with_config(
+        addr,
+        cert_path,
+        key_path,
+        move |wire| response_to_wire(handler.serve(request_from_wire(wire))),
+        config,
+    )
     .map_err(Error::from)
 }
 

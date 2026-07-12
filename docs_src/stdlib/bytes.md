@@ -1,6 +1,6 @@
 # `std::bytes`
 
-Status: shipped
+Status: experimental
 
 Byte buffers, builders, and slice helpers.
 

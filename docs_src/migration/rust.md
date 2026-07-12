@@ -125,7 +125,7 @@ and exit in `process::*`.
 | `std::path::Path::new(p).join(...)` | `path::join(p, ...)` |
 | `std::sync::Mutex` | `sync::Mutex` |
 | `std::time::Duration::from_millis` | `time::Duration::from_millis` |
-| `std::thread::spawn` | `go expr` (goroutine) or `thread::spawn` (OS thread) |
+| `std::thread::spawn` | `go expr` or `spawn(f)` (goroutine); no user-facing OS-thread spawn API |
 
 HTTP/2 is integrated into `std::http` directly (Go-style) -
 `http::serve_h2c` for cleartext h2c, automatic ALPN negotiation

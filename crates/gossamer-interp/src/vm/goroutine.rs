@@ -46,7 +46,12 @@ fn spawn_goroutine_thread<F: FnOnce() + Send + 'static>(
 /// goroutine costs a queue push rather than a fresh OS thread and a
 /// cold-started `Vm`.
 ///
-/// Pool size: `num_cpus()`. Tasks queue when all workers are busy;
+/// Pool size is deliberately capped below the host CPU count by default.
+/// Each worker owns a large VM stack, and a test or embedding can run many
+/// interpreter processes concurrently; blindly using every visible CPU in
+/// each process multiplies that footprint into hundreds of parked threads.
+/// `GOSSAMER_VM_GOROUTINE_WORKERS` opts into a larger (or smaller) pool.
+/// Tasks queue when all workers are busy;
 /// workers park on a `Condvar` when the queue is empty. `outstanding`
 /// tracks queued + in-flight tasks so [`join_outstanding_goroutines`]
 /// can wait for completion.
@@ -110,7 +115,24 @@ impl GoroutinePool {
                     };
                     match task {
                         Some(task) => {
-                            task();
+                            // A worker task must settle the outstanding counter even
+                            // when an implementation panic escapes its VM boundary.
+                            // Otherwise program exit waits forever after main has
+                            // already printed all of its output. User panics are
+                            // converted to RuntimeError by `spawn_goroutine_native`;
+                            // this catch is the final containment for host panics.
+                            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(task)).is_err()
+                            {
+                                eprintln!("gossamer: goroutine worker panicked");
+                            }
+                            // `drain()` checks `outstanding` while holding
+                            // `inner` and then waits on `drain_cv`.  Update
+                            // the predicate under that same mutex: notifying
+                            // without it admits the classic lost-wakeup race
+                            // where a completed task signals between the
+                            // check and the Condvar wait, stranding program
+                            // shutdown after all user output is printed.
+                            let _inner = p.inner.lock();
                             let prev = p.outstanding.fetch_sub(1, Ordering::AcqRel);
                             if prev == 1 {
                                 // Last in-flight task settled -
@@ -135,8 +157,11 @@ impl GoroutinePool {
     /// Enqueues a task. Wakes one parked worker.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn spawn(&self, task: GoroutineTask) {
-        self.outstanding.fetch_add(1, Ordering::AcqRel);
         let mut inner = self.inner.lock();
+        // Publish the counter and task under the same mutex used by
+        // `drain()`, so a drain cannot observe an empty program while a
+        // concurrent goroutine spawn is about to enqueue work.
+        self.outstanding.fetch_add(1, Ordering::AcqRel);
         inner.queue.push_back(task);
         self.cv.notify_one();
     }
@@ -168,16 +193,96 @@ impl GoroutinePool {
 
 static POOL: OnceLock<Arc<GoroutinePool>> = OnceLock::new();
 
+const DEFAULT_MAX_WORKERS: usize = 4;
+const MAX_WORKERS: usize = 64;
+
+fn default_worker_count() -> usize {
+    if let Ok(raw) = std::env::var("GOSSAMER_VM_GOROUTINE_WORKERS")
+        && let Ok(requested) = raw.parse::<usize>()
+        && requested > 0
+    {
+        return requested.min(MAX_WORKERS);
+    }
+    std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(DEFAULT_MAX_WORKERS)
+        .min(DEFAULT_MAX_WORKERS)
+}
+
 /// Lazily-initialised process-wide goroutine pool. First call
-/// builds the pool with `num_cpus()` workers.
+/// builds the pool with the bounded default worker count.
 pub(crate) fn pool() -> &'static Arc<GoroutinePool> {
-    POOL.get_or_init(|| {
-        // Conservative default: physical cores via `available_parallelism`.
-        // Fall back to 4 when the platform refuses to report.
-        let n = std::thread::available_parallelism()
-            .map(std::num::NonZeroUsize::get)
-            .unwrap_or(4)
-            .min(64);
-        GoroutinePool::new(n)
-    })
+    POOL.get_or_init(|| GoroutinePool::new(default_worker_count()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn panicking_task_does_not_strand_drain() {
+        let pool = GoroutinePool::new(1);
+        let ran = Arc::new(AtomicBool::new(false));
+        pool.spawn(Box::new(|| panic!("intentional worker panic")));
+        let ran_after_panic = Arc::clone(&ran);
+        pool.spawn(Box::new(move || {
+            ran_after_panic.store(true, Ordering::Release);
+        }));
+
+        // Use `drain` itself to observe completion. Polling the atomic can
+        // spuriously time out when another test temporarily starves this
+        // private worker; the condition-variable handoff is the liveness
+        // guarantee this regression is meant to exercise. A bounded helper
+        // prevents a future lost wakeup from hanging the entire test process.
+        let drain_pool = Arc::clone(&pool);
+        let (drained_tx, drained_rx) = mpsc::channel();
+        let drainer = std::thread::spawn(move || {
+            drain_pool.drain();
+            drained_tx.send(()).expect("test receiver remains live");
+        });
+        drained_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("drain must settle panicking and queued tasks");
+        drainer.join().expect("drain helper must not panic");
+        assert_eq!(pool.outstanding.load(Ordering::Acquire), 0);
+        assert!(ran.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn default_worker_count_is_bounded() {
+        assert!((1..=DEFAULT_MAX_WORKERS).contains(&default_worker_count()));
+    }
+
+    #[test]
+    fn drain_cannot_miss_a_last_task_completion() {
+        let pool = GoroutinePool::new(1);
+        // Repeat the check because the old implementation's lost wakeup
+        // depended on a narrow scheduling window.  Each task waits until the
+        // drainer is armed, then becomes the last outstanding task.
+        for _ in 0..128 {
+            let (started_tx, started_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            pool.spawn(Box::new(move || {
+                started_tx.send(()).expect("test receiver remains live");
+                release_rx.recv().expect("test release remains live");
+            }));
+            started_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("worker starts the task");
+
+            let drain_pool = Arc::clone(&pool);
+            let (drained_tx, drained_rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                drain_pool.drain();
+                drained_tx.send(()).expect("test receiver remains live");
+            });
+            release_tx.send(()).expect("worker remains live");
+            drained_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("drain must observe the final completion");
+        }
+    }
 }

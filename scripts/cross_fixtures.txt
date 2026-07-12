@@ -1,3 +1,7 @@
+# Independent Stable all-tier fixtures. Native CI runs them through pure VM,
+# forced JIT, and AOT; cross CI reuses them for AOT-versus-VM differentials.
+conformance/stable/language_core.gos
+conformance/stable/collections_and_result.gos
 examples/hello_world.gos
 examples/fizz_buzz.gos
 examples/function_piping.gos

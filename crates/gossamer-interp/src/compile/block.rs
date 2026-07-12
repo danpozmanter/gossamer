@@ -285,4 +285,65 @@ println!("{}", n)
             chunk.instrs
         );
     }
+
+    #[test]
+    fn large_float_repeat_uses_runtime_repeat_not_register_expansion() {
+        let source = r"
+fn f() -> f64 {
+    let xs: [f64; 40000] = [0.0; 40000]
+    xs[39999]
+}
+";
+        let (chunk, _) = compile_named(source, "f");
+        assert!(
+            chunk.float_count < 64,
+            "large scalar repeat must not reserve one float register per element; \
+             float_count={} instrs={:?}",
+            chunk.float_count,
+            chunk.instrs
+        );
+        assert!(
+            chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::BuildArrayRepeat { .. })),
+            "large scalar repeat should lower to BuildArrayRepeat; chunk: {:?}",
+            chunk.instrs
+        );
+        assert!(
+            !chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::BuildFloatVec { count, .. } if *count > 1024)),
+            "large scalar repeat must not expand through BuildFloatVec; chunk: {:?}",
+            chunk.instrs
+        );
+    }
+
+    #[test]
+    fn i64_struct_fields_read_directly_into_integer_registers() {
+        let source = r"
+struct Cursor { pos: i64, limit: i64 }
+fn advance(c: Cursor) -> i64 { c.pos + c.limit }
+";
+        let (chunk, _) = compile_named(source, "advance");
+        let typed_reads = chunk
+            .instrs
+            .iter()
+            .filter(|op| matches!(op, Op::FieldGetI64 { .. } | Op::FieldGetI64ByOffset { .. }))
+            .count();
+        assert_eq!(
+            typed_reads, 2,
+            "both i64 fields should bypass boxed Value reads: {:?}",
+            chunk.instrs
+        );
+        assert!(
+            !chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::UnboxI64 { .. })),
+            "typed field reads must not be followed by UnboxI64: {:?}",
+            chunk.instrs
+        );
+    }
 }

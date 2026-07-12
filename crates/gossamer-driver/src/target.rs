@@ -1,9 +1,10 @@
 //! Cross-compilation target registry.
-//! Enumerates the primary targets Gossamer ships prebuilt runtime
-//! archives for, per SPEC §11.1. Each entry records the canonical
-//! triple, a short human-readable label, the target's pointer width,
-//! and whether the target needs a scheduler fallback (wasm32 has no
-//! threads yet).
+//! Enumerates triples the driver can recognise for target-specific
+//! compilation work. Registration is intentionally broader than the
+//! supported execution contract; `conformance/target_matrix.tsv` is
+//! authoritative for the latter. Each entry records the canonical triple,
+//! its pointer width, and whether it needs a scheduler fallback (wasm32 has
+//! no threads yet).
 
 #![forbid(unsafe_code)]
 
@@ -52,10 +53,10 @@ impl ObjectFormat {
     }
 }
 
-/// Full list of targets Gossamer ships prebuilt runtime archives for.
-/// Extending the list requires adding a matching prebuilt runtime to
-/// the release pipeline. `*-musl` triples are gated behind the
-/// `musl` Cargo feature; off by default because most dev machines
+/// Full list of triples recognised by the driver. Extending this list does
+/// not make a target supported: it also requires the target-matrix evidence,
+/// runtime archive, and release-pipeline work. `*-musl` triples are gated
+/// behind the `musl` Cargo feature; off by default because most dev machines
 /// do not have a musl sysroot installed.
 #[cfg(not(feature = "musl"))]
 pub const REGISTERED_TARGETS: &[(&str, &str, &str, u32, bool, ObjectFormat)] = &[

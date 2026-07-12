@@ -4,14 +4,109 @@
 )]
 use super::*;
 
+/// How a bytecode frame completed.
+///
+/// A tail call is deliberately returned to [`Vm::apply`] rather than invoked
+/// from this dispatch loop.  That lets the caller discard this frame before
+/// entering the next one, so direct and mutual tail recursion use a constant
+/// amount of native Rust stack.
+pub(crate) enum RunControl {
+    Return(Value),
+    TailCall {
+        chunk: Arc<FnChunk>,
+        args: Vec<Value>,
+    },
+    /// A direct bytecode call whose caller has been moved out of the dispatch
+    /// loop. `Vm::apply` drives the callee and resumes `parent` without
+    /// growing the Rust call stack.
+    Call {
+        chunk: Arc<FnChunk>,
+        args: Vec<Value>,
+        dst: u16,
+        parent: SuspendedFrame,
+    },
+}
+
+/// A paused bytecode frame. Register files are moved, rather than cloned,
+/// out of `FrameGuard` at a direct bytecode call and re-wrapped on resume.
+pub(crate) struct SuspendedFrame {
+    pub(crate) chunk: Arc<FnChunk>,
+    pub(crate) registers: Vec<Value>,
+    pub(crate) floats: Vec<f64>,
+    pub(crate) ints: Vec<i64>,
+    pub(crate) ref_cells: Vec<(usize, Arc<parking_lot::Mutex<Value>>)>,
+    pub(crate) pc: u32,
+    #[cfg(feature = "fuel")]
+    pub(crate) prev_pc: u32,
+}
+
 impl Vm {
     pub(crate) fn run(
         &self,
-        chunk: &FnChunk,
+        chunk: Arc<FnChunk>,
+        state: &ChunkState,
+        args: Vec<Value>,
+    ) -> RuntimeResult<RunControl> {
+        self.run_with_frame(chunk, state, args, None, true)
+    }
+
+    /// Executes a short-lived chunk whose `ChunkState` is not installed in
+    /// the VM arena (currently compile-time initializers). Such a chunk cannot
+    /// safely install its state in the VM arena because its chunk is dropped
+    /// immediately after evaluation. It still uses explicit frames: each
+    /// bytecode child is driven by the ordinary trampoline, then the local
+    /// initializer frame is resumed from its moved register files.
+    pub(crate) fn run_local(
+        &self,
+        chunk: Arc<FnChunk>,
         state: &ChunkState,
         args: Vec<Value>,
     ) -> RuntimeResult<Value> {
-        if chunk.arity as usize != args.len() {
+        let mut control = self.run_with_frame(chunk, state, args, None, true)?;
+        loop {
+            match control {
+                RunControl::Return(value) => return Ok(value),
+                RunControl::TailCall { chunk, args } => {
+                    // The initializer's frame has been discarded at this
+                    // point. The tail body owns the rest of the execution.
+                    return self.apply(Global::Fn(chunk), args);
+                }
+                RunControl::Call {
+                    chunk,
+                    args,
+                    dst,
+                    mut parent,
+                } => {
+                    // `apply` drives arbitrarily deep bytecode descendants
+                    // from its explicit frame stack. Only this local parent
+                    // remains on the host stack, and it is resumed by moving
+                    // its register files back into `run_with_frame`.
+                    let value = self.apply(Global::Fn(chunk), args)?;
+                    parent.registers[dst as usize] = value;
+                    let parent_chunk = Arc::clone(&parent.chunk);
+                    control =
+                        self.run_with_frame(parent_chunk, state, Vec::new(), Some(parent), true)?;
+                }
+            }
+        }
+    }
+
+    pub(crate) fn resume(&self, frame: SuspendedFrame) -> RuntimeResult<RunControl> {
+        let chunk = Arc::clone(&frame.chunk);
+        let state = self.chunk_state_for(&chunk);
+        self.run_with_frame(chunk, state, Vec::new(), Some(frame), true)
+    }
+
+    fn run_with_frame(
+        &self,
+        chunk: Arc<FnChunk>,
+        state: &ChunkState,
+        args: Vec<Value>,
+        frame: Option<SuspendedFrame>,
+        allow_explicit_frames: bool,
+    ) -> RuntimeResult<RunControl> {
+        let is_resume = frame.is_some();
+        if !is_resume && chunk.arity as usize != args.len() {
             return Err(RuntimeError::Arity {
                 expected: chunk.arity as usize,
                 found: args.len(),
@@ -20,12 +115,30 @@ impl Vm {
         // Pool guard: takes the three register-file `Vec`s on
         // entry and returns them on Drop, so `?` and early
         // returns inside the dispatch loop don't leak buffers.
-        let mut guard = FrameGuard::take(
-            &self.pool,
-            chunk.register_count as usize,
-            chunk.float_count as usize,
-            chunk.int_count as usize,
-        );
+        #[cfg(feature = "fuel")]
+        let mut prev_pc = 0;
+        let (mut guard, mut ref_cells, mut pc) = if let Some(frame) = frame {
+            #[cfg(feature = "fuel")]
+            {
+                prev_pc = frame.prev_pc;
+            }
+            (
+                FrameGuard::from_parts(&self.pool, frame.registers, frame.floats, frame.ints),
+                frame.ref_cells,
+                frame.pc,
+            )
+        } else {
+            (
+                FrameGuard::take(
+                    &self.pool,
+                    chunk.register_count as usize,
+                    chunk.float_count as usize,
+                    chunk.int_count as usize,
+                ),
+                Vec::new(),
+                0,
+            )
+        };
         let registers = &mut guard.registers;
         let floats = &mut guard.floats;
         let ints = &mut guard.ints;
@@ -33,17 +146,18 @@ impl Vm {
         // the pool's `args` free list - most arg Vecs are
         // pool-borrowed in `Op::Call`, and reclaiming them here
         // closes the loop without an extra allocation per call.
-        let mut args = args;
-        for (i, arg) in args.drain(..).enumerate() {
-            registers[i] = arg;
+        if !is_resume {
+            let mut args = args;
+            for (i, arg) in args.drain(..).enumerate() {
+                registers[i] = arg;
+            }
+            self.pool.borrow_mut().give_args(args);
         }
-        self.pool.borrow_mut().give_args(args);
         // Write-back cell protocol for `&mut Vec<T>` / `&mut [T]`
         // parameters: unwrap each incoming `MutCell` into its param
         // register and remember the cell so every return path below
         // publishes the final register value back to the caller.
-        let mut ref_cells: Vec<(usize, Arc<parking_lot::Mutex<Value>>)> = Vec::new();
-        if !chunk.mut_ref_params.is_empty() {
+        if !is_resume && !chunk.mut_ref_params.is_empty() {
             for &idx in &chunk.mut_ref_params {
                 let slot = idx as usize;
                 if let Value::MutCell(cell) = &registers[slot] {
@@ -59,7 +173,9 @@ impl Vm {
                 }
             }
         }
-        crate::profile::enter_frame();
+        if !is_resume {
+            crate::profile::enter_frame();
+        }
         #[cfg(feature = "profile")]
         struct ProfDump(&'static str);
         #[cfg(feature = "profile")]
@@ -72,11 +188,37 @@ impl Vm {
         }
         #[cfg(feature = "profile")]
         let _prof_dump = ProfDump(chunk.name);
-        let mut pc: u32 = 0;
-        #[cfg(feature = "fuel")]
-        let mut prev_pc: u32 = 0;
         let instrs: &[Op] = &chunk.instrs;
         let instr_count = instrs.len();
+        // Several specialized opcodes have a generic method-call fallback.
+        // A user-defined method resolves to `Global::Fn`; it must use the
+        // same suspended-frame protocol as `Op::Call`, not recurse through
+        // `apply` from this dispatch frame.
+        macro_rules! apply_or_suspend_bytecode {
+            ($dst:expr, $target:expr, $call_args:expr) => {
+                match $target {
+                    Global::Fn(next_chunk) if allow_explicit_frames => {
+                        guard.suspended = true;
+                        return Ok(RunControl::Call {
+                            chunk: next_chunk,
+                            args: $call_args,
+                            dst: $dst,
+                            parent: SuspendedFrame {
+                                chunk: Arc::clone(&chunk),
+                                registers: std::mem::take(registers),
+                                floats: std::mem::take(floats),
+                                ints: std::mem::take(ints),
+                                ref_cells,
+                                pc,
+                                #[cfg(feature = "fuel")]
+                                prev_pc,
+                            },
+                        });
+                    }
+                    target => self.apply(target, $call_args)?,
+                }
+            };
+        }
         loop {
             // Execution budget: a backward (or self) jump is a loop iteration.
             // Counting them bounds total iterations so an unbounded loop aborts
@@ -308,7 +450,41 @@ impl Vm {
                     cache_idx,
                     may_have_cells,
                 } => {
+                    // `Call; Return <same destination>` is a tail position.
+                    // Do not re-enter `apply` from this already-large Rust
+                    // dispatch frame. The outer trampoline resolves the
+                    // bytecode callee after this frame (and its pooled
+                    // registers) has been dropped.
+                    // `main` is the stable root of user-visible panic traces.
+                    // Do not replace it with its final callee: a failing
+                    // `main() { inner() }` must still report both frames.
+                    let tail_position = chunk.name != "main"
+                        && ref_cells.is_empty()
+                        && matches!(instrs.get(pc as usize), Some(Op::Return { value }) if *value == dst);
                     let argc_usz = argc as usize;
+                    if let Value::Variant(inner) = &registers[callee as usize]
+                        && inner.fields.is_empty()
+                    {
+                        let variant_name = inner.name.clone();
+                        let mut fields = Vec::with_capacity(argc_usz);
+                        for i in 0..argc_usz {
+                            // Constructor argument slots are the compiler's
+                            // one-shot call scratch area. Move them into the
+                            // variant payload directly instead of first
+                            // building an arg Vec and then immediately
+                            // re-wrapping it in `apply(Global::Value(..))`.
+                            let raw =
+                                std::mem::replace(&mut registers[args as usize + i], Value::Void);
+                            let v = if may_have_cells {
+                                auto_deref_cell(&raw).unwrap_or(raw)
+                            } else {
+                                raw
+                            };
+                            fields.push(v);
+                        }
+                        registers[dst as usize] = Value::variant(variant_name, fields);
+                        continue;
+                    }
                     let mut arg_values = self.pool.borrow_mut().take_args(argc_usz);
                     for i in 0..argc_usz {
                         // Move the argument out of its scratch slot rather
@@ -336,6 +512,77 @@ impl Vm {
                         arg_values.push(v);
                     }
                     let callee_val = &registers[callee as usize];
+                    // Resolve every bytecode callable before falling through
+                    // to the synchronous dispatcher. In particular, closure
+                    // bodies are bytecode chunks too: calling one from a VM
+                    // frame must suspend that frame rather than grow the Rust
+                    // stack through `invoke_closure -> apply`.
+                    let bytecode_target = match callee_val {
+                        Value::String(name) => match self.lookup_global(name.as_str()) {
+                            Some(Global::Fn(chunk)) => Some((chunk, None)),
+                            _ => None,
+                        },
+                        Value::Closure(closure) => {
+                            Some((Arc::clone(&closure.chunk), Some(closure)))
+                        }
+                        _ => None,
+                    };
+                    if let Some((next_chunk, closure)) = bytecode_target {
+                        let next_args = if let Some(closure) = closure {
+                            let expected = next_chunk.arity as usize - closure.capture_values.len();
+                            if expected != arg_values.len() {
+                                return Err(RuntimeError::Arity {
+                                    expected,
+                                    found: arg_values.len(),
+                                });
+                            }
+                            // Keep the call-argument pool in the ownership
+                            // loop: the child receives `full`, which its
+                            // entry drains and returns, while the now-empty
+                            // source buffer is immediately reusable here.
+                            let mut full = self
+                                .pool
+                                .borrow_mut()
+                                .take_args(closure.capture_values.len() + arg_values.len());
+                            full.extend(closure.capture_values.iter().cloned());
+                            full.append(&mut arg_values);
+                            self.pool.borrow_mut().give_args(arg_values);
+                            full
+                        } else {
+                            arg_values
+                        };
+                        if tail_position {
+                            publish_ref_cells(&ref_cells, registers);
+                            return Ok(RunControl::TailCall {
+                                chunk: next_chunk,
+                                args: next_args,
+                            });
+                        }
+                        if !allow_explicit_frames {
+                            // Kept for callers that deliberately request the
+                            // old direct path; local initializers now opt in.
+                            let result = self.apply(Global::Fn(next_chunk), next_args)?;
+                            registers[dst as usize] = result;
+                            continue;
+                        }
+                        let parent = SuspendedFrame {
+                            chunk: Arc::clone(&chunk),
+                            registers: std::mem::take(registers),
+                            floats: std::mem::take(floats),
+                            ints: std::mem::take(ints),
+                            ref_cells,
+                            pc,
+                            #[cfg(feature = "fuel")]
+                            prev_pc,
+                        };
+                        guard.suspended = true;
+                        return Ok(RunControl::Call {
+                            chunk: next_chunk,
+                            args: next_args,
+                            dst,
+                            parent,
+                        });
+                    }
                     // Inline-cache probe. The slot is keyed by the
                     // *callee* identity (the resolved name for a
                     // `Value::String(SmolStr::from("foo"))` callee). Cache hit
@@ -343,6 +590,10 @@ impl Vm {
                     // probe - typically the dominant cost in tight
                     // loops calling small helper functions.
                     let token = call_token(callee_val);
+                    let callee_name = match callee_val {
+                        Value::String(name) => Some(name),
+                        _ => None,
+                    };
                     let live_generation = self.globals_generation();
                     // Two-tier IC probe (same shape as MethodCall): a
                     // resolved builtin is returned as a raw `fn` pointer so
@@ -359,7 +610,10 @@ impl Vm {
                             // same RefCell.
                             let cache = state.call_caches.borrow();
                             let slot = &cache[cache_idx as usize];
-                            if slot.type_token == token && slot.generation == live_generation {
+                            if slot.type_token == token
+                                && slot.callee_name.as_ref() == callee_name
+                                && slot.generation == live_generation
+                            {
                                 if let Some(call_fn) = slot.builtin_fn {
                                     (Some(call_fn), None)
                                 } else {
@@ -393,7 +647,8 @@ impl Vm {
                         };
                         if let Some(ref g) = resolved_global {
                             let mut cache = state.call_caches.borrow_mut();
-                            cache[cache_idx as usize] = fill_cache_slot(token, live_generation, g);
+                            cache[cache_idx as usize] =
+                                fill_cache_slot(token, live_generation, callee_name.cloned(), g);
                         }
                         match resolved_global {
                             Some(g) => self.apply(g, arg_values)?,
@@ -413,11 +668,11 @@ impl Vm {
                     // moves that register's value into the cell.
                     let ret = registers[value as usize].clone();
                     publish_ref_cells(&ref_cells, registers);
-                    return Ok(ret);
+                    return Ok(RunControl::Return(ret));
                 }
                 Op::ReturnUnit => {
                     publish_ref_cells(&ref_cells, registers);
-                    return Ok(Value::Unit);
+                    return Ok(RunControl::Return(Value::Unit));
                 }
                 Op::ClearRegs { start, count } => {
                     let from = start as usize;
@@ -508,17 +763,18 @@ impl Vm {
                         } else if let Some(g) = cached {
                             // Cached non-builtin (closure / JIT).
                             let v: Vec<Value> = buf[..total].to_vec();
-                            self.apply(g, v)?
+                            apply_or_suspend_bytecode!(dst, g, v)
                         } else {
                             // Miss: full resolution + cache fill.
-                            let r = qualified_key(&buf[0], name)
-                                .and_then(|qual: &str| self.lookup_global(qual))
+                            let r = self
+                                .qualified_key(&buf[0], name)
+                                .and_then(|qual| self.lookup_global(qual.as_ref()))
                                 .or_else(|| self.lookup_global(name.as_str()));
                             if recv_token != 0 {
                                 if let Some(ref g) = r {
                                     let mut cache = state.call_caches.borrow_mut();
                                     cache[cache_idx as usize] =
-                                        fill_cache_slot(recv_token, live_generation, g);
+                                        fill_cache_slot(recv_token, live_generation, None, g);
                                 }
                             }
                             match r {
@@ -527,7 +783,7 @@ impl Vm {
                                 }
                                 Some(g) => {
                                     let v: Vec<Value> = buf[..total].to_vec();
-                                    self.apply(g, v)?
+                                    apply_or_suspend_bytecode!(dst, g, v)
                                 }
                                 None => {
                                     return Err(RuntimeError::UnresolvedName(name.clone()));
@@ -547,23 +803,24 @@ impl Vm {
                         if let Some(call_fn) = cached_builtin {
                             call_fn(&call_args)?
                         } else if let Some(g) = cached {
-                            self.apply(g, call_args)?
+                            apply_or_suspend_bytecode!(dst, g, call_args)
                         } else {
-                            let r = qualified_key(&call_args[0], name)
-                                .and_then(|qual: &str| self.lookup_global(qual))
+                            let r = self
+                                .qualified_key(&call_args[0], name)
+                                .and_then(|qual| self.lookup_global(qual.as_ref()))
                                 .or_else(|| self.lookup_global(name.as_str()));
                             if recv_token != 0 {
                                 if let Some(ref g) = r {
                                     let mut cache = state.call_caches.borrow_mut();
                                     cache[cache_idx as usize] =
-                                        fill_cache_slot(recv_token, live_generation, g);
+                                        fill_cache_slot(recv_token, live_generation, None, g);
                                 }
                             }
                             match r {
                                 Some(Global::Value(Value::Builtin(builtin_inner))) => {
                                     (builtin_inner.call)(&call_args)?
                                 }
-                                Some(g) => self.apply(g, call_args)?,
+                                Some(g) => apply_or_suspend_bytecode!(dst, g, call_args),
                                 None => {
                                     return Err(RuntimeError::UnresolvedName(name.clone()));
                                 }
@@ -625,10 +882,9 @@ impl Vm {
                         let recv_clone = recv.clone();
                         let byte_clone = byte_val.clone();
                         let resolved = match &recv_clone {
-                            Value::Struct(_) | Value::Channel(_) => {
-                                qualified_key(&recv_clone, "write_byte")
-                                    .and_then(|q| self.lookup_global(q))
-                            }
+                            Value::Struct(_) | Value::Channel(_) => self
+                                .qualified_key(&recv_clone, "write_byte")
+                                .and_then(|q| self.lookup_global(q.as_ref())),
                             _ => None,
                         }
                         .or_else(|| self.lookup_global("write_byte"));
@@ -637,7 +893,7 @@ impl Vm {
                             Some(Global::Value(Value::Builtin(builtin_inner))) => {
                                 (builtin_inner.call)(&args)?
                             }
-                            Some(g) => self.apply(g, args)?,
+                            Some(g) => apply_or_suspend_bytecode!(dst, g, args),
                             None => {
                                 return Err(RuntimeError::UnresolvedName("write_byte".to_string()));
                             }
@@ -702,8 +958,9 @@ impl Vm {
                     let idx_clone = idx_val.clone();
                     let byte_clone = byte_val.clone();
                     let resolved = match &recv_clone {
-                        Value::Struct(_) => qualified_key(&recv_clone, "set_byte")
-                            .and_then(|q| self.lookup_global(q)),
+                        Value::Struct(_) => self
+                            .qualified_key(&recv_clone, "set_byte")
+                            .and_then(|q| self.lookup_global(q.as_ref())),
                         _ => None,
                     }
                     .or_else(|| self.lookup_global("set_byte"));
@@ -712,7 +969,7 @@ impl Vm {
                         Some(Global::Value(Value::Builtin(builtin_inner))) => {
                             (builtin_inner.call)(&args)?
                         }
-                        Some(g) => self.apply(g, args)?,
+                        Some(g) => apply_or_suspend_bytecode!(dst, g, args),
                         None => {
                             return Err(RuntimeError::UnresolvedName("set_byte".to_string()));
                         }
@@ -765,8 +1022,9 @@ impl Vm {
                     let recv_clone = recv.clone();
                     let idx_clone = idx_val.clone();
                     let resolved = match &recv_clone {
-                        Value::Struct(_) => qualified_key(&recv_clone, "get_byte")
-                            .and_then(|q| self.lookup_global(q)),
+                        Value::Struct(_) => self
+                            .qualified_key(&recv_clone, "get_byte")
+                            .and_then(|q| self.lookup_global(q.as_ref())),
                         _ => None,
                     }
                     .or_else(|| self.lookup_global("get_byte"));
@@ -819,8 +1077,9 @@ impl Vm {
                     let start_clone = registers[start_reg as usize].clone();
                     let end_clone = registers[end_reg as usize].clone();
                     let resolved = match &recv_clone {
-                        Value::Struct(_) => qualified_key(&recv_clone, "substring")
-                            .and_then(|q| self.lookup_global(q)),
+                        Value::Struct(_) => self
+                            .qualified_key(&recv_clone, "substring")
+                            .and_then(|q| self.lookup_global(q.as_ref())),
                         _ => None,
                     }
                     .or_else(|| self.lookup_global("substring"));
@@ -829,7 +1088,7 @@ impl Vm {
                         Some(Global::Value(Value::Builtin(builtin_inner))) => {
                             (builtin_inner.call)(&args)?
                         }
-                        Some(g) => self.apply(g, args)?,
+                        Some(g) => apply_or_suspend_bytecode!(dst, g, args),
                         None => {
                             return Err(RuntimeError::UnresolvedName("substring".to_string()));
                         }
@@ -897,9 +1156,9 @@ impl Vm {
                     let key_clone = registers[key_reg as usize].clone();
                     let by_clone = registers[by_reg as usize].clone();
                     let resolved = match &map_clone {
-                        Value::Struct(_) => {
-                            qualified_key(&map_clone, "inc").and_then(|q| self.lookup_global(q))
-                        }
+                        Value::Struct(_) => self
+                            .qualified_key(&map_clone, "inc")
+                            .and_then(|q| self.lookup_global(q.as_ref())),
                         _ => None,
                     }
                     .or_else(|| self.lookup_global("inc"));
@@ -908,7 +1167,7 @@ impl Vm {
                         Some(Global::Value(Value::Builtin(builtin_inner))) => {
                             (builtin_inner.call)(&args)?
                         }
-                        Some(g) => self.apply(g, args)?,
+                        Some(g) => apply_or_suspend_bytecode!(dst, g, args),
                         None => {
                             return Err(RuntimeError::UnresolvedName("inc".to_string()));
                         }
@@ -1256,6 +1515,25 @@ impl Vm {
                     let new_value = registers[value as usize].clone();
                     let recv = &mut registers[receiver as usize];
                     field_set(recv, field_name.as_str(), new_value)?;
+                }
+                Op::FieldSetI64ByOffset {
+                    receiver,
+                    offset,
+                    value_i,
+                } => {
+                    let recv = &mut registers[receiver as usize];
+                    let Value::Struct(inner) = recv else {
+                        return Err(RuntimeError::Type(format!(
+                            "field assignment on non-struct `{recv}`"
+                        )));
+                    };
+                    let inner = Arc::make_mut(inner);
+                    let Some((_, field)) = inner.fields.get_mut(offset as usize) else {
+                        return Err(RuntimeError::Panic(
+                            "struct field offset out of bounds".to_string(),
+                        ));
+                    };
+                    *field = Value::Int(ints[value_i as usize]);
                 }
                 Op::VecPush { receiver, value } => {
                     let new_value = registers[value as usize].clone();
@@ -2077,6 +2355,35 @@ impl Vm {
                     }
                     floats[dst_f as usize] = val;
                 }
+                Op::FieldGetI64 {
+                    dst_i,
+                    receiver,
+                    name_idx,
+                } => {
+                    let Value::String(field_name) = &chunk.consts[name_idx as usize] else {
+                        return Err(RuntimeError::Panic(
+                            "FieldGetI64: name must be string const".to_string(),
+                        ));
+                    };
+                    let recv = &registers[receiver as usize];
+                    let Value::Struct(struct_inner) = recv else {
+                        return Err(RuntimeError::Type(format!(
+                            "field access on non-struct `{recv}`"
+                        )));
+                    };
+                    let mut val = 0i64;
+                    for (ident, v) in &struct_inner.fields {
+                        if (*ident) == field_name.as_str() {
+                            val = match v {
+                                Value::Int(n) => *n,
+                                Value::Uint(n) => *n as i64,
+                                _ => 0,
+                            };
+                            break;
+                        }
+                    }
+                    ints[dst_i as usize] = val;
+                }
                 Op::IndexedFieldGet {
                     dst,
                     base,
@@ -2471,6 +2778,24 @@ impl Vm {
                     };
                     floats[dst_f as usize] = f;
                 }
+                Op::FieldGetI64ByOffset {
+                    dst_i,
+                    receiver,
+                    offset,
+                } => {
+                    let recv = &registers[receiver as usize];
+                    let Value::Struct(struct_inner) = recv else {
+                        return Err(RuntimeError::Type(format!(
+                            "field access on non-struct `{recv}`"
+                        )));
+                    };
+                    let n = match struct_inner.fields.get(offset as usize).map(|(_, v)| v) {
+                        Some(Value::Int(n)) => *n,
+                        Some(Value::Uint(n)) => *n as i64,
+                        _ => 0,
+                    };
+                    ints[dst_i as usize] = n;
+                }
                 Op::FlatGetF64 {
                     dst_f,
                     base,
@@ -2761,7 +3086,7 @@ impl Vm {
                             inner.name.as_str() == expected && inner.fields.len() == arity as usize
                         }
                         Value::NativeEnum(owner) => {
-                            let disc = crate::value::native_enum_disc(owner.ptr, owner.shape);
+                            let disc = crate::value::native_enum_disc(owner.ptr, &owner.shape);
                             owner.shape.variants.get(disc).is_some_and(|v| {
                                 std::ptr::eq(v.name, expected) && v.fields.len() == arity as usize
                             })
@@ -3180,8 +3505,9 @@ impl Vm {
                     // resolved global is what the spawned goroutine
                     // applies; the receiver is prepended to the arg
                     // vector so the callee sees `[receiver, a0, a1, …]`.
-                    let resolved = qualified_key(&recv, name)
-                        .and_then(|qual| self.lookup_global(qual))
+                    let resolved = self
+                        .qualified_key(&recv, name)
+                        .and_then(|qual| self.lookup_global(qual.as_ref()))
                         .or_else(|| self.lookup_global(name));
                     let mut arg_values: Vec<Value> = Vec::with_capacity(argc as usize + 1);
                     arg_values.push(recv);

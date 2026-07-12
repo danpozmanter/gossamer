@@ -53,13 +53,13 @@ mod tests {
         let a = "hello"
         let b = "world"
         let c = a + ", " + &b
-        testing::check_eq(&c, &"hello, world", "plus concat")
+        let _ = testing::check_eq(&c, &"hello, world", "plus concat")
     }
 
     #[test]
     fn format_numbers() {
         let s = format!("{} {} {}", 1, 2, 3)
-        testing::check_eq(&s, &"1 2 3", "format numbers")
+        let _ = testing::check_eq(&s, &"1 2 3", "format numbers")
     }
 
     #[test]
@@ -71,7 +71,7 @@ mod tests {
             }
             acc += w
         }
-        testing::check_eq(&acc, &"a b c", "accumulated words")
+        let _ = testing::check_eq(&acc, &"a b c", "accumulated words")
     }
 
     #[test]
@@ -80,6 +80,6 @@ mod tests {
         s += "x"
         s += "-"
         s += "y"
-        testing::check_eq(&s, &"x-y", "mut append chain")
+        let _ = testing::check_eq(&s, &"x-y", "mut append chain")
     }
 }

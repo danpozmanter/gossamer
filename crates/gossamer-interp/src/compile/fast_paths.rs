@@ -1169,10 +1169,14 @@ impl<'tcx> FnBuilder<'tcx> {
     }
 
     /// Repeat-form variant of [`Self::try_build_float_vec`] for
-    /// `[value; count]` shapes where the count is a literal that
-    /// fits in `u16`. Evaluates `value` once into an f64 register
-    /// and broadcasts it across the `FloatVec`'s storage with a
-    /// constant-fill loop.
+    /// `[value; count]` shapes. Evaluates `value` once, then lets
+    /// `Op::BuildArrayRepeat` materialise the flat `FloatVec` at
+    /// runtime.
+    ///
+    /// Do not expand this into one float register per element. A fixed
+    /// `[0.0; 40000]` scratch buffer otherwise emits 40k `MoveF64` ops and
+    /// forces validator/dataflow state into gigabytes before the program
+    /// starts running.
     pub(crate) fn try_build_float_vec_repeat(
         &mut self,
         array_ty: Ty,
@@ -1184,32 +1188,14 @@ impl<'tcx> FnBuilder<'tcx> {
         }) {
             return Ok(None);
         }
-        let Some(n) = resolve_const_count(count) else {
-            return Ok(None);
-        };
-        let Ok(count_u) = u16::try_from(n) else {
-            return Ok(None);
-        };
-        let first_f = self.next_float_reg;
-        if u32::from(count_u) > u32::from(u16::MAX - first_f) {
-            return Ok(None);
-        }
-        self.next_float_reg = first_f + count_u;
-        // Compile the source value once; broadcast into every slot.
         let src_tr = self.compile_expr_ex(value)?;
-        let src_f = self.as_f64(src_tr);
-        for i in 0..count_u {
-            let target = first_f + i;
-            self.emit(Op::MoveF64 {
-                dst_f: target,
-                src_f,
-            });
-        }
+        let value_reg = self.as_value(src_tr);
+        let count_reg = self.compile_expr(count)?;
         let dst = self.alloc_reg();
-        self.emit(Op::BuildFloatVec {
-            dst_v: dst,
-            first_f,
-            count: count_u,
+        self.emit(Op::BuildArrayRepeat {
+            dst,
+            value: value_reg,
+            count: count_reg,
         });
         self.flat_float_locals.insert(dst);
         Ok(Some(TypedReg {
@@ -1232,31 +1218,14 @@ impl<'tcx> FnBuilder<'tcx> {
         }) {
             return Ok(None);
         }
-        let Some(n) = resolve_const_count(count) else {
-            return Ok(None);
-        };
-        let Ok(count_u) = u16::try_from(n) else {
-            return Ok(None);
-        };
-        let first_i = self.next_int_reg;
-        if u32::from(count_u) > u32::from(u16::MAX - first_i) {
-            return Ok(None);
-        }
-        self.next_int_reg = first_i + count_u;
         let src_tr = self.compile_expr_ex(value)?;
-        let src_i = self.as_i64(src_tr);
-        for i in 0..count_u {
-            let target = first_i + i;
-            self.emit(Op::MoveI64 {
-                dst_i: target,
-                src_i,
-            });
-        }
+        let value_reg = self.as_value(src_tr);
+        let count_reg = self.compile_expr(count)?;
         let dst = self.alloc_reg();
-        self.emit(Op::BuildIntArray {
-            dst_v: dst,
-            first_i,
-            count: count_u,
+        self.emit(Op::BuildArrayRepeat {
+            dst,
+            value: value_reg,
+            count: count_reg,
         });
         self.flat_int_locals.insert(dst);
         Ok(Some(TypedReg {

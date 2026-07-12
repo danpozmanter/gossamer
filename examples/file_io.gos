@@ -23,7 +23,7 @@ fn main() -> Result<(), errors::Error> {
     fs::create_dir_all(&dir).map_err(|e| errors::wrap(e, "mkdir"))?
 
     // --- text ---
-    fs::write(&text_path, &"hello, gossamer\n")
+    fs::write(&text_path, "hello, gossamer\n".to_string().as_bytes())
         .map_err(|e| errors::wrap(e, "write text"))?
     let contents = fs::read_to_string(&text_path)
         .map_err(|e| errors::wrap(e, "read text"))?
@@ -40,7 +40,7 @@ fn main() -> Result<(), errors::Error> {
         ("features", json::Value::Array(features)),
     ])
     let rendered = json::render(&payload)
-    fs::write(&json_path, &rendered)
+    fs::write(&json_path, rendered.as_bytes())
         .map_err(|e| errors::wrap(e, "write json"))?
 
     let parsed_text = fs::read_to_string(&json_path)

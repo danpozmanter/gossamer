@@ -135,11 +135,11 @@ struct TypeChecker<'a> {
     table: TypeTable,
     diagnostics: Vec<TypeDiagnostic>,
     resolutions: &'a Resolutions,
-    scopes: Vec<HashMap<gossamer_lex::Symbol, Ty>>,
+    scopes: Vec<HashMap<Box<str>, Ty>>,
     /// Declared mutability of each in-scope value binding, kept in
     /// lockstep with `scopes`. A place rooted at an immutable binding
     /// cannot be assigned to (GT0030).
-    mut_scopes: Vec<HashMap<gossamer_lex::Symbol, bool>>,
+    mut_scopes: Vec<HashMap<Box<str>, bool>>,
     binding_types: HashMap<NodeId, Ty>,
     /// The `Self` type of the `impl` block currently being checked,
     /// so a method's `self` receiver binds to the concrete type
@@ -971,7 +971,7 @@ impl<'a> TypeChecker<'a> {
 
     fn bind_local(&mut self, name: &str, ty: Ty) {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(gossamer_lex::Symbol::intern(name), ty);
+            scope.insert(Box::from(name), ty);
         }
     }
 
@@ -979,14 +979,13 @@ impl<'a> TypeChecker<'a> {
     /// scope, so an assignment can reject a write to an immutable place.
     fn bind_local_mutability(&mut self, name: &str, mutable: bool) {
         if let Some(scope) = self.mut_scopes.last_mut() {
-            scope.insert(gossamer_lex::Symbol::intern(name), mutable);
+            scope.insert(Box::from(name), mutable);
         }
     }
 
     fn lookup_local(&self, name: &str) -> Option<Ty> {
-        let sym = gossamer_lex::Symbol::intern(name);
         for scope in self.scopes.iter().rev() {
-            if let Some(ty) = scope.get(&sym) {
+            if let Some(ty) = scope.get(name) {
                 return Some(*ty);
             }
         }
@@ -997,9 +996,8 @@ impl<'a> TypeChecker<'a> {
     /// `None` when the name is not a tracked local (a `const`, `static`,
     /// module item, or unresolved name), where mutability is not checked.
     fn lookup_local_mutability(&self, name: &str) -> Option<bool> {
-        let sym = gossamer_lex::Symbol::intern(name);
         for scope in self.mut_scopes.iter().rev() {
-            if let Some(mutable) = scope.get(&sym) {
+            if let Some(mutable) = scope.get(name) {
                 return Some(*mutable);
             }
         }
@@ -2482,7 +2480,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
         }
-        None
+        self.stdlib_signature_arg_expectations(path, n_args)
     }
 
     /// Rejects `json::render` / `json::encode` of an enum value
@@ -2681,6 +2679,16 @@ impl<'a> TypeChecker<'a> {
             let Some(last) = last.first().copied() else {
                 return self.fresh();
             };
+            if !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. })) {
+                self.check_stdlib_signature_arity(
+                    module,
+                    last,
+                    args.len(),
+                    usize::from(self.pipe_stage_callees.contains(&callee.id)),
+                    callee.span,
+                );
+                self.check_stdlib_signature_args(module, last, args, arg_tys);
+            }
             // `strings::` free functions have no `FnSig` to unify
             // against, so validate their string-typed argument slots
             // here. Skipped when the callee resolves to a user `FnDef`
@@ -2692,7 +2700,7 @@ impl<'a> TypeChecker<'a> {
                 && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
                 && !self.pipe_stage_callees.contains(&callee.id)
             {
-                self.check_strings_free_call_args(last, args, arg_tys);
+                self.check_strings_free_call_args(last, args, arg_tys, callee.span);
             }
             // Data-last std combinators (`result::map_err(f, r)`,
             // `iter::map(f, xs)`, ...): the signature table pins
@@ -2730,6 +2738,9 @@ impl<'a> TypeChecker<'a> {
                 return self.result_adt_ty(vec_u8, e);
             }
             if let Some(ty) = self.check_stdlib_module_ret_ty(module, last, callee, args, arg_tys) {
+                return ty;
+            }
+            if let Some(ty) = self.stdlib_signature_return_ty(module, last) {
                 return ty;
             }
             // Built-in intrinsics emitted by the parser's macro
@@ -2823,7 +2834,13 @@ impl<'a> TypeChecker<'a> {
     /// `FnSig` to unify against, so without this the checker accepts an
     /// integer where a `String` is expected and the compiled string
     /// shims dereference it as a pointer (a SIGSEGV the VM masks).
-    fn check_strings_free_call_args(&mut self, name: &str, args: &[Expr], arg_tys: &[Ty]) {
+    fn check_strings_free_call_args(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        _callee_span: Span,
+    ) {
         let Some(shapes) = strings_fn_str_params(name) else {
             return;
         };
@@ -2833,6 +2850,7 @@ impl<'a> TypeChecker<'a> {
             };
             self.check_str_param_arg(shape, arg_ty, arg.span);
         }
+        self.check_strings_int_args(name, args, arg_tys, 0);
     }
 
     /// Unifies one call argument against its declared parameter type,
@@ -2841,6 +2859,8 @@ impl<'a> TypeChecker<'a> {
     /// memory), so a `&Shape` parameter accepts a `Shape` argument and
     /// vice versa.
     fn check_sig_param_arg(&mut self, param: Ty, arg_ty: Ty, span: Span) {
+        let param = self.infer.resolve(self.tcx, param);
+        let arg_ty = self.infer.resolve(self.tcx, arg_ty);
         let param_inner = match self.tcx.kind(param) {
             Some(TyKind::Ref { inner, .. }) => Some(*inner),
             _ => None,
@@ -2874,7 +2894,14 @@ impl<'a> TypeChecker<'a> {
     /// (`s.contains(x)`). The method dispatches to the same `strings::`
     /// shim as the free function with the receiver as the implicit first
     /// argument, so the explicit args occupy parameter positions 1..
-    fn check_strings_method_call_args(&mut self, method: &str, args: &[Expr], arg_tys: &[Ty]) {
+    fn check_strings_method_call_args(
+        &mut self,
+        method: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        receiver_span: Span,
+    ) {
+        self.check_strings_arity(method, args.len(), 1, receiver_span);
         let Some(shapes) = strings_fn_str_params(method) else {
             return;
         };
@@ -2887,6 +2914,58 @@ impl<'a> TypeChecker<'a> {
                 continue;
             };
             self.check_str_param_arg(shape, arg_ty, arg.span);
+        }
+        self.check_strings_int_args(method, args, arg_tys, 1);
+    }
+
+    /// Validates the complete fixed arity of a known string operation. The
+    /// runtime shims historically treated omitted arguments as zero/empty,
+    /// which turned a source error such as `s.slice(1)` into a misleading
+    /// range operation. Keep this beside the string-slot checks so free and
+    /// method syntax share exactly one contract.
+    fn check_strings_arity(
+        &mut self,
+        name: &str,
+        supplied: usize,
+        implicit_receiver: usize,
+        span: Span,
+    ) {
+        let Some(total) = strings_fn_arity(name) else {
+            return;
+        };
+        let expected = total.saturating_sub(implicit_receiver);
+        if supplied != expected {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: format!("strings::{name}"),
+                    expected,
+                    found: supplied,
+                },
+                span,
+            );
+        }
+    }
+
+    /// Validates integer slots in the same string operation catalogue. Unlike
+    /// string slots, these are all specified as `i64`; this catches ranges,
+    /// strings, and floats rather than letting runtime helpers coerce them to
+    /// zero.
+    fn check_strings_int_args(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        implicit_receiver: usize,
+    ) {
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        for &position in strings_fn_int_params(name) {
+            let Some(index) = position.checked_sub(implicit_receiver) else {
+                continue;
+            };
+            let (Some(arg), Some(&arg_ty)) = (args.get(index), arg_tys.get(index)) else {
+                continue;
+            };
+            self.check_sig_param_arg(i64_ty, arg_ty, arg.span);
         }
     }
 
@@ -3262,6 +3341,181 @@ impl<'a> TypeChecker<'a> {
         let vec_u8 = self.tcx.intern(TyKind::Vec(u8_ty));
         let pair = self.tcx.intern(TyKind::Tuple(vec![s, vec_u8]));
         self.tcx.intern(TyKind::Vec(pair))
+    }
+
+    /// Shapes stdlib call arguments from the checker-owned source signature
+    /// catalogue when the parameter type is concrete enough to enforce safely.
+    /// Generic, callable, and JSON-value slots are left unshaped so existing
+    /// inference-sensitive paths keep their current semantics.
+    fn stdlib_signature_arg_expectations(
+        &mut self,
+        path: &gossamer_ast::PathExpr,
+        n_args: usize,
+    ) -> Option<Vec<Expectation>> {
+        let names: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
+        let (module, last) = names.split_at(names.len().saturating_sub(1));
+        let name = last.first().copied()?;
+        let shape = crate::stdlib_signatures::function_shape_for_path(module, name)?;
+        if shape.params.len() != n_args {
+            return None;
+        }
+        Some(
+            shape
+                .params
+                .iter()
+                .map(|param| {
+                    self.stdlib_signature_arg_ty(param.ty)
+                        .map_or(Expectation::None, Expectation::Coerce)
+                })
+                .collect(),
+        )
+    }
+
+    /// Emits the arity diagnostic for stdlib free functions from the same
+    /// signature row `%help` displays.
+    fn check_stdlib_signature_arity(
+        &mut self,
+        module: &[&str],
+        name: &str,
+        supplied: usize,
+        pipe_extra: usize,
+        span: Span,
+    ) {
+        if matches!(module, ["slog"] | ["std", "slog"]) {
+            return;
+        }
+        let Some(shape) = crate::stdlib_signatures::function_shape_for_path(module, name) else {
+            return;
+        };
+        let found = supplied + pipe_extra;
+        let expected = shape.params.len();
+        if found != expected {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: if module.is_empty() {
+                        name.to_string()
+                    } else {
+                        format!("{}::{name}", module.join("::"))
+                    },
+                    expected,
+                    found,
+                },
+                span,
+            );
+        }
+    }
+
+    /// Validates concrete stdlib parameter slots after argument synthesis.
+    /// The expectation path shapes literals before checking; this pass catches
+    /// non-literal mismatches and scalar/string literals whose checker path
+    /// does not unify against expectations directly.
+    fn check_stdlib_signature_args(
+        &mut self,
+        module: &[&str],
+        name: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+    ) {
+        if matches!(module, ["slog"] | ["std", "slog"]) {
+            return;
+        }
+        let Some(shape) = crate::stdlib_signatures::function_shape_for_path(module, name) else {
+            return;
+        };
+        if shape.params.len() != arg_tys.len() {
+            return;
+        }
+        for (param, (arg, &arg_ty)) in shape.params.iter().zip(args.iter().zip(arg_tys)) {
+            if let Some(param_ty) = self.stdlib_signature_arg_ty(param.ty) {
+                self.check_sig_param_arg(param_ty, arg_ty, arg.span);
+            }
+        }
+    }
+
+    /// Return type for a stdlib free function from the checker-owned signature
+    /// catalogue. Rows with generics or opaque nominal stdlib handles that the
+    /// checker cannot represent yet fall back to the existing specialised paths
+    /// or a fresh variable.
+    fn stdlib_signature_return_ty(&mut self, module: &[&str], name: &str) -> Option<Ty> {
+        let shape = crate::stdlib_signatures::function_shape_for_path(module, name)?;
+        self.stdlib_signature_ty(shape.return_ty)
+    }
+
+    fn stdlib_signature_arg_ty(&mut self, src: &str) -> Option<Ty> {
+        // `json::encode` / `json::render` accept scalars and structs in
+        // addition to `json::Value`; pinning those slots to the opaque JSON
+        // handle would reject valid calls. Return typing can still use it.
+        if src.trim() == "json::Value" {
+            return None;
+        }
+        self.stdlib_signature_ty(src)
+    }
+
+    fn stdlib_signature_ty(&mut self, src: &str) -> Option<Ty> {
+        let src = src.trim();
+        if src.is_empty()
+            || src.contains('|')
+            || src.starts_with("Fn(")
+            || is_catalog_type_param(src)
+        {
+            return None;
+        }
+        let src = src.strip_prefix('&').unwrap_or(src).trim();
+        match src {
+            "String" => return Some(self.tcx.string_ty()),
+            "bool" => return Some(self.tcx.bool_ty()),
+            "char" => return Some(self.tcx.char_ty()),
+            "i8" => return Some(self.tcx.int_ty(IntTy::I8)),
+            "i16" => return Some(self.tcx.int_ty(IntTy::I16)),
+            "i32" => return Some(self.tcx.int_ty(IntTy::I32)),
+            "i64" => return Some(self.tcx.int_ty(IntTy::I64)),
+            "i128" => return Some(self.tcx.int_ty(IntTy::I128)),
+            "isize" => return Some(self.tcx.int_ty(IntTy::Isize)),
+            "u8" => return Some(self.tcx.int_ty(IntTy::U8)),
+            "u16" => return Some(self.tcx.int_ty(IntTy::U16)),
+            "u32" => return Some(self.tcx.int_ty(IntTy::U32)),
+            "u64" => return Some(self.tcx.int_ty(IntTy::U64)),
+            "u128" => return Some(self.tcx.int_ty(IntTy::U128)),
+            "usize" => return Some(self.tcx.int_ty(IntTy::Usize)),
+            "f32" => return Some(self.tcx.float_ty(FloatTy::F32)),
+            "f64" => return Some(self.tcx.float_ty(FloatTy::F64)),
+            "()" => return Some(self.tcx.unit()),
+            "!" => return Some(self.tcx.intern(TyKind::Never)),
+            "json::Value" => return Some(self.tcx.json_value_ty()),
+            "errors::Error" | "io::Error" => return Some(self.tcx.dyn_error_ty()),
+            _ if src.ends_with("::Error") || src.ends_with("ParseError") => {
+                return Some(self.tcx.dyn_error_ty());
+            }
+            _ => {}
+        }
+        if let Some(inner) = strip_catalog_wrapper(src, "Vec") {
+            let elem = self.stdlib_signature_ty(inner)?;
+            return Some(self.tcx.intern(TyKind::Vec(elem)));
+        }
+        if let Some(inner) = strip_catalog_wrapper(src, "Option") {
+            let elem = self.stdlib_signature_ty(inner)?;
+            return Some(self.option_adt_ty(elem));
+        }
+        if let Some(inner) = strip_catalog_wrapper(src, "Result") {
+            let parts = crate::stdlib_signatures::split_top_level(inner, ',');
+            let [ok_src, err_src] = parts.as_slice() else {
+                return None;
+            };
+            let ok = self.stdlib_signature_ty(ok_src)?;
+            let err = self.stdlib_signature_ty(err_src)?;
+            return Some(self.result_adt_ty(ok, err));
+        }
+        if let Some(inner) = src.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+            if inner.trim().is_empty() {
+                return Some(self.tcx.unit());
+            }
+            let elems = crate::stdlib_signatures::split_top_level(inner, ',')
+                .into_iter()
+                .map(|part| self.stdlib_signature_ty(part))
+                .collect::<Option<Vec<_>>>()?;
+            return Some(self.tcx.intern(TyKind::Tuple(elems)));
+        }
+        None
     }
 
     /// Re-records literal nodes to a type discovered by *joining*
@@ -3754,7 +4008,7 @@ impl<'a> TypeChecker<'a> {
             // string slot is rejected here too. Skipped under `|>`,
             // which appends the piped value as a trailing argument.
             if !self.pipe_stage_callees.contains(&call_id) {
-                self.check_strings_method_call_args(method, args, &arg_tys);
+                self.check_strings_method_call_args(method, args, &arg_tys, receiver.span);
             }
             return self.string_method_ret(method, receiver.span);
         }
@@ -6999,6 +7253,43 @@ fn strings_fn_str_params(name: &str) -> Option<&'static [(usize, StrArgShape)]> 
     })
 }
 
+/// Full fixed arity of each string operation.  These are source-level arities
+/// (including the string receiver / first free-function argument), so callers
+/// subtract one for method syntax.  Keeping the table complete prevents an
+/// omitted argument from silently becoming an empty pattern or zero index in
+/// the VM implementation.
+fn strings_fn_arity(name: &str) -> Option<usize> {
+    Some(match name {
+        "split" | "contains" | "find" | "rfind" | "split_once" | "rsplit_once" | "count"
+        | "trim_start_matches" | "trim_end_matches" | "starts_with" | "ends_with"
+        | "strip_prefix" | "strip_suffix" | "contains_any" | "find_any" | "rfind_any"
+        | "equal_fold" | "trim_matches" => 2,
+        "splitn" | "center" | "replace" | "pad_left" | "pad_right" | "slice" | "substring" => 3,
+        "replacen" => 4,
+        "split_whitespace" | "trim" | "trim_start" | "trim_end" | "to_lowercase"
+        | "to_uppercase" | "to_title" | "to_i64" | "to_f64" | "to_bool" | "lines" | "chars"
+        | "bytes" => 1,
+        "repeat" | "byte_at" => 2,
+        // `join(parts, sep)` is installed on `Vec` rather than `String`, but
+        // it remains a `strings` free function and therefore belongs in the
+        // same public arity catalogue.
+        "join" => 2,
+        _ => return None,
+    })
+}
+
+/// `i64` parameter positions for the string-operation catalogue.  String and
+/// pattern slots live in [`strings_fn_str_params`]; keeping numeric slots
+/// separate preserves the accepted `String | char` pattern behaviour.
+fn strings_fn_int_params(name: &str) -> &'static [usize] {
+    match name {
+        "splitn" | "center" | "pad_left" | "pad_right" | "repeat" | "byte_at" => &[1],
+        "slice" | "substring" => &[1, 2],
+        "replacen" => &[3],
+        _ => &[],
+    }
+}
+
 fn combinator_module_name(module: &[&str]) -> Option<&'static str> {
     match module {
         ["result"] | ["std", "result"] => Some("result"),
@@ -7006,6 +7297,18 @@ fn combinator_module_name(module: &[&str]) -> Option<&'static str> {
         ["iter"] | ["std", "iter"] => Some("iter"),
         _ => None,
     }
+}
+
+fn strip_catalog_wrapper<'a>(src: &'a str, name: &str) -> Option<&'a str> {
+    src.strip_prefix(name)?
+        .strip_prefix('<')?
+        .strip_suffix('>')
+        .map(str::trim)
+}
+
+fn is_catalog_type_param(src: &str) -> bool {
+    let mut chars = src.chars();
+    matches!((chars.next(), chars.next()), (Some(ch), None) if ch.is_ascii_uppercase())
 }
 
 /// Pre-registers field types for stdlib structs that user source can

@@ -12,10 +12,10 @@ use std::http::router
 
 fn main() {
     let r = router::new()
-    router::add(r, "GET", "/users/{id}")
-    router::add(r, "POST", "/users")
-    router::add(r, "GET", "/files/{rest...}")
-    router::add(r, "GET", "/health")
+    let _ = router::add(r, "GET", "/users/{id}")
+    let _ = router::add(r, "POST", "/users")
+    let _ = router::add(r, "GET", "/files/{rest...}")
+    let _ = router::add(r, "GET", "/health")
 
     match router::lookup(r, "GET", "/users/42") {
         Some(i) => println!("a={}", i),

@@ -10,14 +10,14 @@ use std::compress
 
 fn main() {
     let plain = "hello bzip2 world, hello bzip2 world, hello bzip2 world"
-    match compress::bzip2::compress(plain, 6) {
+    match compress::bzip2::compress(plain.as_bytes(), 6) {
         Ok(c) => match compress::bzip2::decompress(c) {
             Ok(b) => println!("rt ok in={} c={} back={}", plain.len(), c.len(), b.len()),
             Err(e) => println!("decompress err {}", e),
         },
         Err(e) => println!("compress err {}", e),
     }
-    match compress::bzip2::compress(plain, 1) {
+    match compress::bzip2::compress(plain.as_bytes(), 1) {
         Ok(c) => println!("lvl1 c={}", c.len()),
         Err(e) => println!("lvl err {}", e),
     }

@@ -1,6 +1,6 @@
 # `std::bufio`
 
-Status: shipped
+Status: experimental
 
 Buffered readers, writers, and line scanners.
 

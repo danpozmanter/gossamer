@@ -1,6 +1,6 @@
 # `std::crypto::rand`
 
-Status: shipped
+Status: experimental
 
 Secure random bytes from the host CSPRNG.
 

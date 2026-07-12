@@ -1,6 +1,6 @@
 # `std::math::bits`
 
-Status: shipped
+Status: experimental
 
 Integer bit-manipulation operations (Go's math/bits shape).
 

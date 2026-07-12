@@ -97,6 +97,28 @@ fn main() {
 }
 
 #[test]
+fn deep_non_tail_method_calls_suspend_vm_frames() {
+    // A user method resolves through `Op::MethodCall`, not the ordinary
+    // `Op::Call` path. Its recursive call must therefore suspend the caller
+    // before entering the next bytecode body.
+    let src = r#"
+struct Counter { base: i64 }
+impl Counter {
+    fn count(&self, n: i64) -> i64 {
+        if n <= 0i64 { return self.base }
+        let below = self.count(n - 1i64)
+        return below + 1i64
+    }
+}
+fn main() {
+    let c = Counter { base: 0i64 }
+    println!("{}", c.count(1000i64))
+}
+"#;
+    assert_eq!(run_main(src), "1000\n");
+}
+
+#[test]
 fn mut_self_with_string_field_rc_is_sound() {
     // The receiver carries an RC-managed String; repeated `&mut self`
     // writeback must keep the aggregate intact (no leak / UAF).

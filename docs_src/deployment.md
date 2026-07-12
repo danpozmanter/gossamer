@@ -15,21 +15,18 @@ Pre-built `gos` toolchain binaries ship for:
 
 | Triple | Notes |
 |---|---|
-| `x86_64-unknown-linux-gnu` | Default Linux server target. |
-| `aarch64-unknown-linux-gnu` | ARM64 servers (Graviton, Ampere). |
-| `x86_64-apple-darwin` | Intel macOS (development). |
-| `aarch64-apple-darwin` | Apple Silicon macOS (development). |
-| `x86_64-pc-windows-msvc` | Windows servers (best-effort). |
+| `x86_64-unknown-linux-gnu` | Tier 1 Linux server target. |
+| `aarch64-unknown-linux-gnu` | Tier 1 ARM64 Linux server target. |
+| `x86_64-apple-darwin` | Artifact-only; no all-tier execution evidence yet. |
+| `aarch64-apple-darwin` | Tier 1 Apple Silicon development target. |
+| `x86_64-pc-windows-msvc` | Tier 1 Windows server target. |
 
-Compiled programs default to the host triple. Cross-ISA compilation -
-`gos build --target <triple>` - now produces a real, runnable native binary
-for any Linux target: `{x86_64,aarch64}-unknown-linux-{gnu,musl}`, from a
-Linux, macOS, or Windows host. Cross output is validated against the bytecode
-VM under QEMU in CI on all three host OSes. The musl-static path is
-host-agnostic (rustup's self-contained CRT + `ld.lld`); the gnu-dynamic path
-uses the matching `*-linux-gnu-gcc` on a Linux host, or a `GOS_CROSS_SYSROOT`
-on macOS/Windows. Cross-compiling *to* macOS or Windows as a target remains
-out of scope (needs external SDKs). The release matrix in
+Compiled programs default to the host triple. The supported cross-ISA path is
+Linux-musl AOT output for `{x86_64,aarch64}-unknown-linux-musl`: CI executes
+those binaries natively or under QEMU and compares them with the pure bytecode
+VM. Cross-host glibc links can be configured with an external sysroot but are
+not part of the supported contract. Cross-compiling *to* macOS or Windows as a
+target remains out of scope (needs external SDKs). The release matrix in
 [`.github/workflows/release.yml`](https://github.com/danpozmanter/gossamer/blob/main/.github/workflows/release.yml)
 is the source of truth for what we test on.
 

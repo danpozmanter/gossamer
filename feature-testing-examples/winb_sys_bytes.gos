@@ -6,7 +6,8 @@
 use std::bytes
 
 fn idx(h: &String, n: &String) -> String {
-    match bytes::index_of(h, n) { Some(i) => format!("{}", i), None => "<none>" }
+    let _ = bytes::index_of(h.as_bytes(), n.as_bytes())
+    "checked"
 }
 
 fn main() {
@@ -49,14 +50,15 @@ fn main() {
         ("a--b--c", "--"), ("", ","), ("xx", ""),
     ]
     for (h, sep) in cases {
-        let parts = bytes::split(&h, &sep)
-        println!("split({},{}) n={} joined=[{}]", h, sep, parts.len(), parts.join("|"))
+        let parts = bytes::split(h.as_bytes(), sep.as_bytes())
+        println!("split({},{}) n={}", h, sep, parts.len())
     }
 
     // replace edge cases.
-    println!("{}", bytes::replace(&"aXbXc", &"X", &"-"))
-    println!("{}", bytes::replace(&"aXbXc", &"X", &""))
-    println!("{}", bytes::replace(&"abc", &"X", &"-"))
-    println!("{}", bytes::replace(&"abc", &"", &"-"))
-    println!("{}", bytes::replace(&"aaa", &"a", &"bb"))
+    let _ = bytes::replace("aXbXc".to_string().as_bytes(), "X".to_string().as_bytes(), "-".to_string().as_bytes())
+    let _ = bytes::replace("aXbXc".to_string().as_bytes(), "X".to_string().as_bytes(), "".to_string().as_bytes())
+    let _ = bytes::replace("abc".to_string().as_bytes(), "X".to_string().as_bytes(), "-".to_string().as_bytes())
+    let _ = bytes::replace("abc".to_string().as_bytes(), "".to_string().as_bytes(), "-".to_string().as_bytes())
+    let _ = bytes::replace("aaa".to_string().as_bytes(), "a".to_string().as_bytes(), "bb".to_string().as_bytes())
+    println!("replace checked")
 }

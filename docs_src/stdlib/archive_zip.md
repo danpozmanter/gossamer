@@ -1,6 +1,6 @@
 # `std::archive::zip`
 
-Status: shipped
+Status: experimental
 
 ZIP archive reader and writer.
 

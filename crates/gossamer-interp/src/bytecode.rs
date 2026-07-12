@@ -703,6 +703,16 @@ pub enum Op {
         /// Register holding the value to store.
         value: Reg,
     },
+    /// Writes an integer register directly into a declaration-order struct
+    /// field, avoiding `BoxI64` and a field-name lookup.
+    FieldSetI64ByOffset {
+        /// Register holding the struct value.
+        receiver: Reg,
+        /// Declaration-order field offset.
+        offset: u16,
+        /// Source integer register.
+        value_i: Reg,
+    },
     /// `receiver.push(value)` - in-place append. `Arc::make_mut`s the
     /// receiver register's backing storage (`Array` / `IntArray` /
     /// `FloatVec`) and pushes, retaining spare capacity for amortized
@@ -972,6 +982,16 @@ pub enum Op {
         /// Const-pool index of the field-name string.
         name_idx: ConstIdx,
     },
+    /// Typed integer counterpart of [`Self::FieldGetF64`]. Reads an `i64`
+    /// struct field directly into the integer register file.
+    FieldGetI64 {
+        /// Destination integer register.
+        dst_i: Reg,
+        /// Register holding the struct value.
+        receiver: Reg,
+        /// Const-pool index of the field-name string.
+        name_idx: ConstIdx,
+    },
     /// `dst = base[index].field_name` - fused indexed field
     /// read. Avoids cloning the inner struct `Arc` that a
     /// separate `IndexGet` + `FieldGet` would produce; reads
@@ -1125,6 +1145,16 @@ pub enum Op {
         /// Register holding the struct value.
         receiver: Reg,
         /// Declaration-order offset.
+        offset: u16,
+    },
+    /// Compile-time-offset integer field read, avoiding both the name lookup
+    /// and the boxed `Value::Int` intermediate.
+    FieldGetI64ByOffset {
+        /// Destination integer register.
+        dst_i: Reg,
+        /// Register holding the struct value.
+        receiver: Reg,
+        /// Declaration-order field offset.
         offset: u16,
     },
 
@@ -1368,8 +1398,9 @@ pub(crate) type BuiltinFnPtr =
 /// "non-cacheable receiver" (primitives, etc.) the same way by
 /// returning a zero token.
 ///
-/// Layout target: 24 B (3 × 8 B) so 16-aligned `Vec<CacheSlot>`
-/// fits two slots per cache line. Pre-D8 the `resolved`
+/// The optional `SmolStr` keeps named calls exact without a global interner;
+/// it adds one word only to the per-VM cache, not to bytecode or `Value`.
+/// Pre-D8 the `resolved`
 /// field stored a full `Option<Global>` (~24 B by itself) for
 /// 40 B total per slot; we now cache only the resolved
 /// `Arc<FnChunk>` (the dominant hit shape) and let closures /
@@ -1380,6 +1411,12 @@ pub(crate) struct CacheSlot {
     /// Stable identity for the receiver / callee the slot last
     /// resolved against. `0` means empty / non-cacheable.
     pub type_token: u64,
+    /// Exact named-callee spelling for [`Op::Call`]. Method-call slots leave
+    /// this empty and key solely on the receiver type token. Keeping this
+    /// value in the per-`Vm` cache makes dynamically-created callable names
+    /// reclaimable at VM teardown instead of leaking them into a thread-local
+    /// `&'static str` interner.
+    pub callee_name: Option<crate::value::SmolStr>,
     /// Snapshot of the owning `Vm`'s `globals_generation` when the
     /// slot was populated. The dispatch arm compares this against
     /// the live counter on every hit; a mismatch (i.e. globals

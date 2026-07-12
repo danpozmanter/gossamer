@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.27.0 - Stabilization, optimization
+
+- Strengthened release truth: stdlib status is evidence-backed, generated docs
+  and `gos feature-status` expose it, and retained fuzz findings replay as
+  named regressions.
+- Hardened bytecode and VM execution with release-time validation, definite
+  register initialization, explicit call frames, controlled RC exhaustion,
+  and session-owned type/shape descriptor lifetimes.
+- Renamed REPL `%dir` to `%ls` and expanded the shared stdlib catalog:
+  `%help` shows documentation plus checker-owned full signatures, while `%ls`
+  lists modules and their contents, never function members.
+- Tightened HTTP servers: bounded admission, queues, framing, headers, bodies,
+  deadlines, and graceful 503 backpressure; compiled HTTP/TLS/WebSocket
+  connections use scheduler readiness and the interpreter admits normal
+  256-connection keep-alive fanout.
+- Hardened packages and credentials with redaction, structured URL/manifest
+  parsing, transport limits, atomic cache/lockfile writes, archive/path limits,
+  immutable git pins, and trusted-publisher verification.
+- Hardened web auth with validated cookies, strong session/CSRF keys,
+  authenticated expiry, and session-bound cookie CSRF tokens.
+- Reduced VM and release overhead with runtime/std `opt-level=3`, typed
+  struct-field access, direct typed-string scanning, compact large repeats,
+  nested native JIT dispatch, and reclaimable type/shape compatibility handles.
+- Reduced memory pressure by streaming source/cache hashing and JSON decoding,
+  bounding package/cache trees, releasing JIT snapshots promptly, and fixing
+  recursive-AST, JSON, and large-repeat VM RSS regressions.
+- Added JIT RSS admission controls and metrics, plus time-and-RSS benchmark
+  reporting and representative regression gates.
+- Clarified stable versus Experimental surface and core namespace policy,
+  split the specification accordingly, and added all-tier conformance and
+  supported-target matrix checks.
+
 ## 0.26.0 - REPL help, stability, concurrency, performance, stdlib
 
 ### Performance
@@ -30,8 +62,8 @@
 ### REPL and docs
 
 - **The REPL now has searchable help and directory commands.** `%help`,
-  `%help <symbol>`, `%help /regex/`, `%dir`, `%dir <namespace-or-symbol>`, and
-  `%dir /regex/` expose stdlib modules, stdlib items, language feature status,
+  `%help <symbol>`, `%help /regex/`, `%ls`, `%ls <namespace-or-symbol>`, and
+  `%ls /regex/` expose stdlib modules, stdlib items, language feature status,
   and current command guidance without pretending to be Gossamer code.
 - **Stdlib item metadata has one registry source.** Module/item docs, feature
   status, and REPL discovery now share sorted item records instead of parallel

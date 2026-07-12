@@ -66,33 +66,33 @@ mod tests {
 
     #[test]
     fn bare_method_trims() {
-        testing::check(("  hi  " |> _.trim) == "hi", "_.trim => x.trim()")
+        let _ = testing::check(("  hi  " |> _.trim) == "hi", "_.trim => x.trim()")
     }
 
     #[test]
     fn method_with_args() {
-        testing::check(("a,b" |> _.replace(",", "-")) == "a-b", "_.replace threads receiver")
+        let _ = testing::check(("a,b" |> _.replace(",", "-")) == "a-b", "_.replace threads receiver")
     }
 
     #[test]
     fn chained_methods() {
-        testing::check(("go" |> _.to_uppercase |> _.repeat(2)) == "GOGO", "chains compose")
+        let _ = testing::check(("go" |> _.to_uppercase |> _.repeat(2)) == "GOGO", "chains compose")
     }
 
     #[test]
     fn tuple_and_index() {
-        testing::check(((1, 2) |> _.1) == 2, "_.1 tuple index")
-        testing::check(([7, 8, 9] |> _[2]) == 9, "_[i] index")
+        let _ = testing::check(((1, 2) |> _.1) == 2, "_.1 tuple index")
+        let _ = testing::check(([7, 8, 9] |> _[2]) == 9, "_[i] index")
     }
 
     #[test]
     fn identity_pipe() {
-        testing::check((99 |> _) == 99, "x |> _ is identity")
+        let _ = testing::check((99 |> _) == 99, "x |> _ is identity")
     }
 
     #[test]
     fn mixed_with_iter() {
         let n = [1, 2, 3, 4] |> iter::filter(|x: i64| x % 2 == 0) |> _.len()
-        testing::check(n == 2, "_.len() consumes an iter result")
+        let _ = testing::check(n == 2, "_.len() consumes an iter result")
     }
 }

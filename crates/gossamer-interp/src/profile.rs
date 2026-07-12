@@ -208,6 +208,8 @@ pub fn reset() {}
 /// Render a textual report of the counters collected on this
 /// thread. Empty when the `profile` feature is disabled.
 #[cfg(feature = "profile")]
+#[must_use]
+#[allow(clippy::too_many_lines, clippy::uninlined_format_args)]
 pub fn dump_report() -> String {
     CTRS.with(|c| {
         let c = c.borrow();
@@ -230,7 +232,7 @@ pub fn dump_report() -> String {
             .map(|i| (i, c.ops[i]))
             .filter(|(_, n)| *n > 0)
             .collect();
-        op_pairs.sort_by(|a, b| b.1.cmp(&a.1));
+        op_pairs.sort_by_key(|entry| std::cmp::Reverse(entry.1));
         for (i, (tag, count)) in op_pairs.iter().take(25).enumerate() {
             let pct = if c.instr_count > 0 {
                 100.0 * (*count as f64) / (c.instr_count as f64)
@@ -258,7 +260,7 @@ pub fn dump_report() -> String {
                 .filter(|(_, n)| **n > 0)
                 .map(|(i, n)| (i / MAX_OPS, i % MAX_OPS, *n))
                 .collect();
-            pair_v.sort_by(|a, b| b.2.cmp(&a.2));
+            pair_v.sort_by_key(|entry| std::cmp::Reverse(entry.2));
             for (i, (p, c2, count)) in pair_v.iter().take(25).enumerate() {
                 let _ = writeln!(
                     out,
@@ -348,6 +350,7 @@ pub fn dump_report() -> String {
 /// match so adding a variant without updating here is a compile
 /// error inside the `profile` build.
 #[cfg(feature = "profile")]
+#[allow(clippy::too_many_lines)]
 fn op_label(tag: usize) -> &'static str {
     use crate::bytecode::Op as O;
     // Build a once-cell array indexed by tag → variant name. We

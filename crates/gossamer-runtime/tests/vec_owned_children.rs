@@ -85,7 +85,8 @@ fn regex_find_all_free_without_iteration_reclaims_match_strings() {
     assert_eq!(vec.len, 3);
     assert_eq!(vec.elem_bytes, 24);
     assert_eq!(vec.elem_kind, vec_elem_kind::AGGR_OWNED);
-    let layout = vec_slot_children(v).expect("find_all registers a slot-children layout");
+    let layout =
+        vec_slot_children(unsafe { &*v }).expect("find_all registers a slot-children layout");
     assert_eq!(layout.len(), 1);
     assert_eq!(layout[0].gate, -1);
     assert_eq!(layout[0].word, 2);
@@ -111,7 +112,8 @@ fn regex_captures_free_without_iteration_reclaims_some_groups() {
     assert_eq!(vec.len, 3);
     assert_eq!(vec.elem_bytes, 16);
     assert_eq!(vec.elem_kind, vec_elem_kind::AGGR_OWNED);
-    let layout = vec_slot_children(inner).expect("captures registers a slot-children layout");
+    let layout =
+        vec_slot_children(unsafe { &*inner }).expect("captures registers a slot-children layout");
     assert_eq!(layout.len(), 1);
     assert_eq!(layout[0].gate, 0);
     assert_eq!(layout[0].disc_word, 0);
@@ -196,7 +198,8 @@ fn pem_decode_all_free_reclaims_labels_and_body_vecs() {
     let vec = unsafe { &*v };
     assert_eq!(vec.len, 2);
     assert_eq!(vec.elem_kind, vec_elem_kind::AGGR_OWNED);
-    let layout = vec_slot_children(v).expect("pem blocks register a slot-children layout");
+    let layout =
+        vec_slot_children(unsafe { &*v }).expect("pem blocks register a slot-children layout");
     assert_eq!(layout.len(), 2);
     assert_eq!(layout[1].kind, vec_elem_kind::VEC);
     unsafe { gos_rt_vec_free(v) };
@@ -297,7 +300,10 @@ fn clone_of_aggr_owned_vec_shares_then_frees_balanced() {
     let v = build_pair_vec(&[("k1", "v1"), ("k2", "v2")]);
     let c = unsafe { gos_rt_vec_clone(v) };
     assert_eq!(unsafe { (*c).elem_kind }, vec_elem_kind::AGGR_OWNED);
-    assert!(vec_slot_children(c).is_some(), "clone inherits the layout");
+    assert!(
+        vec_slot_children(unsafe { &*c }).is_some(),
+        "clone inherits the layout"
+    );
     unsafe { gos_rt_vec_free(v) };
     let p0 = first_slot_cstr(c);
     assert_eq!(

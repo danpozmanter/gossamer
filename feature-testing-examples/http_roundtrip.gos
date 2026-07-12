@@ -102,8 +102,14 @@ fn run_proxy() {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, []) {
-            return
+        // A TCP/HTTP response alone is not readiness for the proxy: while
+        // its upstream is still coming online it deliberately returns a
+        // well-formed 502. Waiting for a successful response prevents the
+        // next assertion from racing that transient application state.
+        if let Ok(response) = http::get(url, []) {
+            if response.status == 200 {
+                return
+            }
         }
         time::sleep(25)
         tries += 1

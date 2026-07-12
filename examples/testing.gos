@@ -55,13 +55,13 @@ mod tests {
         for i in 0..10 {
             let got = super::fibonacci(i)
             let want = expected[i]
-            testing::check_eq(&got, &want, &format!("fib({i})"))
+            let _ = testing::check_eq(&got, &want, &format!("fib({i})"))
         }
     }
 
     #[test]
     fn fibonacci_handles_big_input() {
-        testing::check(super::fibonacci(50) > 0, "50th fibonacci term is positive")
+        let _ = testing::check(super::fibonacci(50) > 0, "50th fibonacci term is positive")
     }
 
     #[test]
@@ -72,7 +72,7 @@ mod tests {
             super::parse_sequence(&"1, 2, 3, 5"),
             "parse happy path",
         ).expect("parse failed")
-        testing::check_eq(&values.len(), &4, "parsed length matches input")
+        let _ = testing::check_eq(&values.len(), &4, "parsed length matches input")
     }
 
     #[test]
@@ -81,7 +81,7 @@ mod tests {
         match result {
             Ok(_) => panic!("expected failure"),
             Err(e) => {
-                testing::check(
+                let _ = testing::check(
                     e.message().contains("bad number"),
                     "error surfaces the bad input",
                 ).expect("wrong message")

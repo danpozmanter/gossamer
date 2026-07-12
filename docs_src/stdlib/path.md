@@ -1,8 +1,8 @@
 # `std::path`
 
-Status: shipped
+Status: experimental
 
-POSIX-style path manipulation.
+Lexical filesystem-path operations; platform path grammar, no URL parsing or I/O.
 
 ## Public items
 

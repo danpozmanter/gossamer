@@ -50,31 +50,31 @@ mod string_match_patterns_tests {
 
     #[test]
     fn ref_string_classify() {
-        testing::check_eq(&super::classify(&"GET".to_string()), &"read", "GET=read")
-        testing::check_eq(&super::classify(&"POST".to_string()), &"write", "POST=write")
-        testing::check_eq(&super::classify(&"DELETE".to_string()), &"other", "DELETE=other")
+        let _ = testing::check_eq(&super::classify(&"GET".to_string()), &"read", "GET=read")
+        let _ = testing::check_eq(&super::classify(&"POST".to_string()), &"write", "POST=write")
+        let _ = testing::check_eq(&super::classify(&"DELETE".to_string()), &"other", "DELETE=other")
     }
 
     #[test]
     fn owned_string_describe() {
-        testing::check_eq(&super::describe("SELECT".to_string()), &"query", "SELECT=query")
-        testing::check_eq(&super::describe("INSERT".to_string()), &"write", "INSERT=write")
-        testing::check_eq(&super::describe("UPDATE".to_string()), &"unknown", "UPDATE=unknown")
+        let _ = testing::check_eq(&super::describe("SELECT".to_string()), &"query", "SELECT=query")
+        let _ = testing::check_eq(&super::describe("INSERT".to_string()), &"write", "INSERT=write")
+        let _ = testing::check_eq(&super::describe("UPDATE".to_string()), &"unknown", "UPDATE=unknown")
     }
 
     #[test]
     fn string_pattern_with_guard() {
-        testing::check_eq(
+        let _ = testing::check_eq(
             &super::guarded(&"big".to_string(), 200),
             &"big and large",
             "big+200",
         )
-        testing::check_eq(
+        let _ = testing::check_eq(
             &super::guarded(&"big".to_string(), 50),
             &"big but small",
             "big+50",
         )
-        testing::check_eq(
+        let _ = testing::check_eq(
             &super::guarded(&"small".to_string(), 200),
             &"other",
             "small+200",

@@ -86,11 +86,11 @@ mod tests {
 
     #[test]
     fn equal_struct_keys_collide() {
-        testing::check(super::equal_keys_len() == 1, "an equal-valued key overwrites")
+        let _ = testing::check(super::equal_keys_len() == 1, "an equal-valued key overwrites")
     }
 
     #[test]
     fn distinct_struct_keys_separate() {
-        testing::check(super::distinct_keys_len() == 2, "distinct keys are distinct slots")
+        let _ = testing::check(super::distinct_keys_len() == 2, "distinct keys are distinct slots")
     }
 }

@@ -209,6 +209,7 @@ struct Shared {
     /// match.
     target_workers: AtomicUsize,
     /// `true` once the watchdog thread has been spawned.
+    #[cfg_attr(miri, allow(dead_code))]
     watchdog_started: AtomicBool,
     /// Set when the scheduler should request that all goroutines
     /// reach a safepoint (used by the GC).
@@ -417,14 +418,24 @@ impl MultiScheduler {
     }
 
     fn start_watchdog(&self) {
-        if self.inner.watchdog_started.swap(true, Ordering::AcqRel) {
+        #[cfg(miri)]
+        {
+            // Miri has no OS-signal model and no benefit from a background
+            // wall-clock watchdog; safepoint behaviour stays testable through
+            // explicit cooperative yield requests.
             return;
         }
-        let inner = Arc::clone(&self.inner);
-        thread::Builder::new()
-            .name("gos-preempt-watchdog".to_string())
-            .spawn(move || watchdog_loop(inner))
-            .expect("spawn watchdog");
+        #[cfg(not(miri))]
+        {
+            if self.inner.watchdog_started.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            let inner = Arc::clone(&self.inner);
+            thread::Builder::new()
+                .name("gos-preempt-watchdog".to_string())
+                .spawn(move || watchdog_loop(inner))
+                .expect("spawn watchdog");
+        }
     }
 
     /// Signals every worker to exit once their deques drain, then
@@ -873,6 +884,7 @@ fn default_max_live() -> usize {
 /// OS thread. The cooperative bump alone is silent if the worker is
 /// inside a tight C-side loop or a blocking syscall; the kernel
 /// signal interrupts both.
+#[cfg_attr(miri, allow(dead_code))]
 fn watchdog_loop(shared: Arc<Shared>) {
     let preempt_threshold = Duration::from_millis(10);
     let kill_threshold = Duration::from_millis(100);

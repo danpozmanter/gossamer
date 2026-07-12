@@ -85,7 +85,7 @@ Names available without any import - the print macros, `min`/`max`/`clamp`, `spa
 | [`std::http::state`](#stdhttpstate) | 2 | Handler-side dependency injection via a typed AppState. |
 | [`std::http::static_files`](#stdhttpstatic_files) | 3 | Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff. |
 | [`std::http::websocket`](#stdhttpwebsocket) | 12 | RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close. |
-| [`std::http_h3`](#stdhttp_h3) | 4 | First-party HTTP/3 server + client over QUIC (RFC 9114; quinn + h3). Each `serve` and `Client` instance owns a private tokio runtime; callers see only synchronous entry points. |
+| [`std::http_h3`](#stdhttp_h3) | 4 | Experimental HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias yet. |
 | [`std::io`](#stdio) | 10 | Stream-oriented I/O abstractions and process standard streams. |
 | [`std::iter`](#stditer) | 46 | Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc. |
 | [`std::jwt`](#stdjwt) | 10 | RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens. |
@@ -99,15 +99,15 @@ Names available without any import - the print macros, `min`/`max`/`clamp`, `spa
 | [`std::net`](#stdnet) | 4 | TCP/UDP networking primitives. |
 | [`std::net::ip`](#stdnetip) | 10 | String-level IPv4 / IPv6 parsing and classification helpers. |
 | [`std::net::netip`](#stdnetnetip) | 11 | Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape). |
-| [`std::net::url`](#stdneturl) | 5 | URL parsing, rendering, and query escaping. |
+| [`std::net::url`](#stdneturl) | 5 | Network URL parsing and component escaping; never use filesystem-path rules. |
 | [`std::option`](#stdoption) | 12 | Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc. |
 | [`std::os`](#stdos) | 2 | Operating-system identity. |
-| [`std::os::exec`](#stdosexec) | 11 | Spawn / wait for child processes (Go's os/exec shape). |
+| [`std::os::exec`](#stdosexec) | 11 | Deprecated compatibility facade for child processes; new code uses std::process. |
 | [`std::os::signal`](#stdossignal) | 5 | POSIX-style signal subscription (Go's os/signal shape). |
 | [`std::os::user`](#stdosuser) | 6 | POSIX user / group lookup. Unix-backed by `nix`; Windows falls back to env vars. |
 | [`std::panic`](#stdpanic) | 1 | Panic / `catch_unwind` integration. |
-| [`std::path`](#stdpath) | 9 | POSIX-style path manipulation. |
-| [`std::process`](#stdprocess) | 12 | Spawn child processes, exit the current process (Rust std::process shape). |
+| [`std::path`](#stdpath) | 9 | Lexical filesystem-path operations; platform path grammar, no URL parsing or I/O. |
+| [`std::process`](#stdprocess) | 12 | Canonical process control and child-process API; std::os::exec is compatibility-only. |
 | [`std::regex`](#stdregex) | 10 | Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around). |
 | [`std::result`](#stdresult) | 10 | Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc. |
 | [`std::runtime`](#stdruntime) | 5 | Goroutine / scheduler introspection and tuning. |
@@ -116,7 +116,7 @@ Names available without any import - the print macros, `min`/`max`/`clamp`, `spa
 | [`std::strings`](#stdstrings) | 40 | Polished `String` operations. |
 | [`std::sync`](#stdsync) | 10 | Synchronisation primitives beyond channels. |
 | [`std::testing`](#stdtesting) | 5 | Assertions and sub-test harness helpers. |
-| [`std::thread`](#stdthread) | 3 | Native OS threads. For goroutines use the `go expr` syntax. |
+| [`std::thread`](#stdthread) | 2 | OS-thread scheduling hints and CPU introspection; user concurrency uses goroutines, not thread spawning. |
 | [`std::time`](#stdtime) | 13 | Wall-clock and monotonic time facilities. |
 | [`std::tls`](#stdtls) | 5 | TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed. |
 | [`std::trace`](#stdtrace) | 8 | W3C trace-context-compatible distributed tracing. Identifier types, request-scoped SpanContext, process-level Tracer, and OTLP JSON export. |
@@ -988,7 +988,7 @@ RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping 
 
 ## `std::http_h3`
 
-First-party HTTP/3 server + client over QUIC (RFC 9114; quinn + h3). Each `serve` and `Client` instance owns a private tokio runtime; callers see only synchronous entry points.
+Experimental HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias yet.
 
 | Item | Kind | Doc |
 |------|------|-----|
@@ -1290,7 +1290,7 @@ Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip 
 
 ## `std::net::url`
 
-URL parsing, rendering, and query escaping.
+Network URL parsing and component escaping; never use filesystem-path rules.
 
 | Item | Kind | Doc |
 |------|------|-----|
@@ -1330,7 +1330,7 @@ Operating-system identity.
 
 ## `std::os::exec`
 
-Spawn / wait for child processes (Go's os/exec shape).
+Deprecated compatibility facade for child processes; new code uses std::process.
 
 | Item | Kind | Doc |
 |------|------|-----|
@@ -1381,7 +1381,7 @@ Panic / `catch_unwind` integration.
 
 ## `std::path`
 
-POSIX-style path manipulation.
+Lexical filesystem-path operations; platform path grammar, no URL parsing or I/O.
 
 | Item | Kind | Doc |
 |------|------|-----|
@@ -1397,7 +1397,7 @@ POSIX-style path manipulation.
 
 ## `std::process`
 
-Spawn child processes, exit the current process (Rust std::process shape).
+Canonical process control and child-process API; std::os::exec is compatibility-only.
 
 | Item | Kind | Doc |
 |------|------|-----|
@@ -1456,7 +1456,7 @@ Goroutine / scheduler introspection and tuning.
 |------|------|-----|
 | `arena_pop` | fn | Closes the innermost arena region, freeing its slabs. |
 | `arena_push` | fn | Opens an arena region for bump allocation. |
-| `collect_cycles` | fn | Runs the reference-cycle collector and returns objects reclaimed. |
+| `collect_cycles` | fn | Requests collection of unreachable reference cycles; returns `()`. |
 | `scheduler_stats_json` | fn | Returns a compact JSON snapshot of goroutine scheduler counters. |
 | `set_panic_hook` | fn | Installs a hook invoked with the message on panic. |
 
@@ -1570,11 +1570,10 @@ Assertions and sub-test harness helpers.
 
 ## `std::thread`
 
-Native OS threads. For goroutines use the `go expr` syntax.
+OS-thread scheduling hints and CPU introspection; user concurrency uses goroutines, not thread spawning.
 
 | Item | Kind | Doc |
 |------|------|-----|
-| `JoinHandle` | type | Owned handle to a spawned OS thread. |
 | `num_cpus` | fn | Returns the number of logical CPUs available. |
 | `yield_now` | fn | Hints to the scheduler to switch to another runnable thread. |
 

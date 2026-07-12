@@ -59,6 +59,14 @@ impl Vm {
     pub(crate) fn apply(&self, global: Global, args: Vec<Value>) -> RuntimeResult<Value> {
         match global {
             Global::Fn(chunk) => {
+                let mut chunk = chunk;
+                let mut args = args;
+                // Direct named bytecode calls suspend their caller here rather
+                // than recursively entering `apply -> run`. The destination
+                // register belongs to the suspended frame; the child result
+                // is written just before that frame resumes.
+                let mut suspended: Vec<(u16, crate::vm::run::SuspendedFrame)> = Vec::new();
+                let mut resumed: Option<crate::vm::run::SuspendedFrame> = None;
                 // Byte-precise native-stack guard, consulted before the frame
                 // count. A JIT-compiled body recurses on the real OS stack
                 // (not the heap frame pool `MAX_CALL_DEPTH` bounds), so a
@@ -70,11 +78,10 @@ impl Vm {
                 if gossamer_coro::stack_guard_tripped() {
                     return Err(RuntimeError::StackOverflow(MAX_CALL_DEPTH));
                 }
-                // Refuse calls beyond the goroutine call-depth cap. The VM
-                // allocates Gossamer frames on the heap (not on the OS stack),
-                // so without this check a program like `fn f(n) { f(n+1) }`
-                // would spin indefinitely consuming CPU and heap rather than
-                // crashing with a clear message.
+                // Refuse non-tail calls beyond the goroutine call-depth cap.
+                // Every ordinary call still adds an `apply()` + `run()` pair
+                // to the native stack; direct named tail calls are replaced
+                // by the loop below after their old frame is dropped.
                 let depth = self.call_depth.get();
                 if depth >= MAX_CALL_DEPTH {
                     return Err(RuntimeError::StackOverflow(MAX_CALL_DEPTH));
@@ -93,119 +100,255 @@ impl Vm {
                 if pushed_frame {
                     self.call_stack.borrow_mut().push(chunk.name);
                 }
-                let state = self.chunk_state_for(&chunk);
-                // Tier D2 - decrement the per-`Vm` hot counter and
-                // trigger a deferred JIT compile when the budget is
-                // spent. The counter is per-thread (in `ChunkState`),
-                // so each goroutine independently warms up. `main`
-                // participates like any body: sret covers every
-                // aggregate-return shape, so a hot loop living
-                // directly in the implicit top-level `main` promotes.
-                // A loop-bearing `main` sits in the eager set (counter
-                // starts at 1) and compiles on its single call; a
-                // loop-free `main` never trips its size-scaled
-                // threshold on one call, keeping short scripts off
-                // the Cranelift compile pass entirely.
-                let hot = state.hot_counter.get();
-                if hot > 0 && hot != crate::bytecode::HOT_DISABLED {
-                    state.jit_observed_work.set(
-                        state
-                            .jit_observed_work
-                            .get()
-                            .saturating_add(state.instr_count.max(1)),
-                    );
-                    let next = hot - 1;
-                    state.hot_counter.set(next);
-                    if next == 0 {
-                        if state.jit_observed_work.get() >= state.jit_min_work {
-                            self.try_compile_jit_lazy();
+                // Tail calls reuse the native frame but retain their logical
+                // frames for panic diagnostics. Successful completion removes
+                // this many entries at once; an error intentionally leaves
+                // them available to the caller's traceback renderer.
+                let mut tail_frames = 0usize;
+                loop {
+                    // A resumed frame has already crossed its entry boundary:
+                    // it must neither consume another JIT hot-count tick nor
+                    // attempt to marshal an empty `args` vector into native
+                    // code. Its live arguments remain in the suspended
+                    // register file.
+                    let resuming = resumed.is_some();
+                    let state = self.chunk_state_for(&chunk);
+                    // Tier D2 - decrement the per-`Vm` hot counter and
+                    // trigger a deferred JIT compile when the budget is
+                    // spent. The counter is per-thread (in `ChunkState`),
+                    // so each goroutine independently warms up. `main`
+                    // participates like any body: sret covers every
+                    // aggregate-return shape, so a hot loop living
+                    // directly in the implicit top-level `main` promotes.
+                    // A loop-bearing `main` sits in the eager set (counter
+                    // starts at 1) and compiles on its single call; a
+                    // loop-free `main` never trips its size-scaled
+                    // threshold on one call, keeping short scripts off
+                    // the Cranelift compile pass entirely.
+                    let hot = state.hot_counter.get();
+                    if !resuming && hot > 0 && hot != crate::bytecode::HOT_DISABLED {
+                        state.jit_observed_work.set(
+                            state
+                                .jit_observed_work
+                                .get()
+                                .saturating_add(state.instr_count.max(1)),
+                        );
+                        let next = hot - 1;
+                        state.hot_counter.set(next);
+                        if next == 0 {
+                            self.jit_counters.tier_up_requested();
+                            if state.jit_observed_work.get() >= state.jit_min_work {
+                                self.try_compile_jit_lazy();
+                            } else {
+                                self.jit_counters.work_floor_deferred();
+                                state.hot_counter.set(1);
+                            }
+                        }
+                    }
+                    // Tier D1 - if the deferred compile produced a
+                    // native entry for this chunk, route through the
+                    // trampoline first. The override map is shared
+                    // across goroutines via `Arc<RwLock<JitState>>`, so
+                    // a child goroutine that tripped the hot counter
+                    // installs entries every other thread sees.
+                    //
+                    // Fast path: skip the RwLock probe entirely when no
+                    // overrides are installed. The atomic load is a
+                    // single ~1 ns instruction; the RwLock read costs
+                    // ~6-8 ns of CAS that compounds across recursive
+                    // call chains where every leaf fires through `apply`.
+                    let jit_opt =
+                        if resuming || self.jit_override_count.load(Ordering::Acquire) == 0 {
+                            None
                         } else {
-                            state.hot_counter.set(1);
-                        }
-                    }
-                }
-                // Tier D1 - if the deferred compile produced a
-                // native entry for this chunk, route through the
-                // trampoline first. The override map is shared
-                // across goroutines via `Arc<RwLock<JitState>>`, so
-                // a child goroutine that tripped the hot counter
-                // installs entries every other thread sees.
-                //
-                // Fast path: skip the RwLock probe entirely when no
-                // overrides are installed. The atomic load is a
-                // single ~1 ns instruction; the RwLock read costs
-                // ~6-8 ns of CAS that compounds across recursive
-                // call chains where every leaf fires through `apply`.
-                let jit_opt = if self.jit_override_count.load(Ordering::Acquire) == 0 {
-                    None
-                } else {
-                    // Resolve once per ChunkState, then read a plain
-                    // field - no lock, no string hash. Sound because
-                    // JIT install is one-shot and the map only shrinks.
-                    let mut slot = state.jit_resolve.borrow_mut();
-                    if matches!(&*slot, crate::vm::JitResolve::Unresolved) {
-                        let chunk_key = Arc::as_ptr(&chunk) as usize;
-                        let override_jit = {
-                            let jit = self.jit.read();
-                            jit.chunk_overrides
-                                .get(&chunk_key)
-                                .or_else(|| jit.overrides.get(chunk.name))
-                                .cloned()
+                            // Resolve once per ChunkState, then read a plain
+                            // field - no lock, no string hash. Sound because
+                            // JIT install is one-shot and the map only shrinks.
+                            let mut slot = state.jit_resolve.borrow_mut();
+                            if matches!(&*slot, crate::vm::JitResolve::Unresolved) {
+                                let chunk_key = Arc::as_ptr(&chunk) as usize;
+                                let override_jit = {
+                                    let jit = self.jit.read();
+                                    jit.chunk_overrides
+                                        .get(&chunk_key)
+                                        .or_else(|| jit.overrides.get(chunk.name))
+                                        .cloned()
+                                };
+                                let resolved = match override_jit {
+                                    Some(j) => match jit_call::prepare(j) {
+                                        Some(p) => crate::vm::JitResolve::Some(std::rc::Rc::new(p)),
+                                        None => crate::vm::JitResolve::None,
+                                    },
+                                    None => crate::vm::JitResolve::None,
+                                };
+                                *slot = resolved;
+                            }
+                            match &*slot {
+                                crate::vm::JitResolve::Some(p) => Some(p.clone()),
+                                _ => None,
+                            }
                         };
-                        let resolved = match override_jit {
-                            Some(j) => match jit_call::prepare(j) {
-                                Some(p) => crate::vm::JitResolve::Some(std::rc::Rc::new(p)),
-                                None => crate::vm::JitResolve::None,
-                            },
-                            None => crate::vm::JitResolve::None,
-                        };
-                        *slot = resolved;
-                    }
-                    match &*slot {
-                        crate::vm::JitResolve::Some(p) => Some(p.clone()),
-                        _ => None,
-                    }
-                };
-                if let Some(prepared) = jit_opt {
-                    match jit_call::invoke_prepared(&prepared, &args, &self.jit_graph_cache) {
-                        jit_call::Dispatch::Ok(value) => {
-                            prepared.record_hit();
-                            if jit_call::jit_trace() {
-                                eprintln!("jit: native hit {}", prepared.jit.name);
-                            }
-                            self.call_depth.set(self.call_depth.get().saturating_sub(1));
-                            if pushed_frame {
-                                self.call_stack.borrow_mut().pop();
-                            }
-                            return Ok(value);
-                        }
-                        jit_call::Dispatch::Fallback => {
-                            if jit_call::jit_trace() {
-                                eprintln!("jit: fallback to bytecode for {}", prepared.jit.name);
-                            }
-                            // A body whose args never marshal (enum values
-                            // arriving as bytecode `Value::Variant`) wastes a
-                            // marshal attempt on every call. After enough
-                            // consecutive misses with no native hit, demote
-                            // the ChunkState slot to bytecode-only so the
-                            // attempt stops.
-                            if prepared.record_fallback_should_demote() {
-                                *state.jit_resolve.borrow_mut() = crate::vm::JitResolve::None;
+                    if let Some(prepared) = jit_opt {
+                        match jit_call::invoke_prepared(&prepared, &args, &self.jit_graph_cache) {
+                            jit_call::Dispatch::Ok(value) => {
+                                prepared.record_hit();
                                 if jit_call::jit_trace() {
-                                    eprintln!("jit: demote {} (bytecode-only)", prepared.jit.name);
+                                    eprintln!("jit: native hit {}", prepared.jit.name);
+                                }
+                                if let Some((dst, mut parent)) = suspended.pop() {
+                                    // A nested native body completes exactly
+                                    // like `RunControl::Return`: publish its
+                                    // result into the suspended bytecode
+                                    // caller, retire the child's logical
+                                    // frame, and continue the trampoline.
+                                    self.call_depth.set(self.call_depth.get().saturating_sub(1));
+                                    let mut stack = self.call_stack.borrow_mut();
+                                    for _ in 0..=tail_frames {
+                                        stack.pop();
+                                    }
+                                    drop(stack);
+                                    tail_frames = 0;
+                                    parent.registers[dst as usize] = value;
+                                    chunk = Arc::clone(&parent.chunk);
+                                    resumed = Some(parent);
+                                    args = Vec::new();
+                                    continue;
+                                }
+                                self.call_depth.set(self.call_depth.get().saturating_sub(1));
+                                let cleanup_frames = tail_frames + usize::from(pushed_frame);
+                                if cleanup_frames > 0 {
+                                    let mut stack = self.call_stack.borrow_mut();
+                                    for _ in 0..cleanup_frames {
+                                        stack.pop();
+                                    }
+                                }
+                                return Ok(value);
+                            }
+                            jit_call::Dispatch::Fallback => {
+                                if jit_call::jit_trace() {
+                                    eprintln!(
+                                        "jit: fallback to bytecode for {}",
+                                        prepared.jit.name
+                                    );
+                                }
+                                // A body whose args never marshal (enum values
+                                // arriving as bytecode `Value::Variant`) wastes a
+                                // marshal attempt on every call. After enough
+                                // consecutive misses with no native hit, demote
+                                // the ChunkState slot to bytecode-only so the
+                                // attempt stops.
+                                if prepared.record_fallback_should_demote() {
+                                    *state.jit_resolve.borrow_mut() = crate::vm::JitResolve::None;
+                                    if jit_call::jit_trace() {
+                                        eprintln!(
+                                            "jit: demote {} (bytecode-only)",
+                                            prepared.jit.name
+                                        );
+                                    }
                                 }
                             }
                         }
                     }
+                    let run_result = match resumed.take() {
+                        Some(frame) => self.resume(frame),
+                        None => self.run(Arc::clone(&chunk), state, args),
+                    };
+                    let control = match run_result {
+                        Ok(control) => control,
+                        Err(err) => {
+                            // The explicit parents will not get individual
+                            // Rust unwinds. Retire all their logical depth
+                            // slots here while intentionally retaining the
+                            // call-stack names for the traceback.
+                            let released = suspended.len().saturating_add(1);
+                            self.call_depth
+                                .set(self.call_depth.get().saturating_sub(released));
+                            // Preserve the failing frame for traceback parity
+                            // with the non-trampolined call path.
+                            return Err(err);
+                        }
+                    };
+                    match control {
+                        crate::vm::run::RunControl::Return(value) => {
+                            if let Some((dst, mut parent)) = suspended.pop() {
+                                // The child completed successfully. Its
+                                // logical frame (and any tail frames it grew)
+                                // can disappear before the parent resumes.
+                                self.call_depth.set(self.call_depth.get().saturating_sub(1));
+                                let mut stack = self.call_stack.borrow_mut();
+                                for _ in 0..=tail_frames {
+                                    stack.pop();
+                                }
+                                drop(stack);
+                                tail_frames = 0;
+                                parent.registers[dst as usize] = value;
+                                chunk = Arc::clone(&parent.chunk);
+                                resumed = Some(parent);
+                                args = Vec::new();
+                                continue;
+                            }
+                            // Decrement depth unconditionally on completion so
+                            // ordinary recursion and early-return paths both
+                            // release their slot. A tail-call chain shares this
+                            // one logical slot because its old frame is gone.
+                            self.call_depth.set(self.call_depth.get().saturating_sub(1));
+                            let cleanup_frames = tail_frames + usize::from(pushed_frame);
+                            if cleanup_frames > 0 {
+                                let mut stack = self.call_stack.borrow_mut();
+                                for _ in 0..cleanup_frames {
+                                    stack.pop();
+                                }
+                            }
+                            return Ok(value);
+                        }
+                        crate::vm::run::RunControl::TailCall {
+                            chunk: next_chunk,
+                            args: tail_args,
+                        } => {
+                            // The dispatch loop resolved this chunk before it
+                            // discarded the old frame, so a tail position is
+                            // equally safe for a named function and a closure.
+                            // Keep the logical frame for diagnostics while
+                            // reusing this trampoline iteration.
+                            if tail_frames >= MAX_TAIL_CALL_DEPTH {
+                                // Tail calls share one physical depth slot,
+                                // so the ordinary call-depth guard cannot
+                                // stop an unbounded `fn f() { f() }` loop.
+                                // Retire the active explicit frames exactly
+                                // as the run-error path does, but retain the
+                                // logical names for the diagnostic snapshot.
+                                let released = suspended.len().saturating_add(1);
+                                self.call_depth
+                                    .set(self.call_depth.get().saturating_sub(released));
+                                return Err(RuntimeError::StackOverflow(MAX_TAIL_CALL_DEPTH));
+                            }
+                            self.call_stack.borrow_mut().push(next_chunk.name);
+                            tail_frames += 1;
+                            chunk = next_chunk;
+                            args = tail_args;
+                        }
+                        crate::vm::run::RunControl::Call {
+                            chunk: next_chunk,
+                            args: call_args,
+                            dst,
+                            parent,
+                        } => {
+                            let depth = self.call_depth.get();
+                            if depth >= MAX_CALL_DEPTH {
+                                let released = suspended.len().saturating_add(1);
+                                self.call_depth
+                                    .set(self.call_depth.get().saturating_sub(released));
+                                return Err(RuntimeError::StackOverflow(MAX_CALL_DEPTH));
+                            }
+                            self.call_depth.set(depth + 1);
+                            self.call_stack.borrow_mut().push(next_chunk.name);
+                            suspended.push((dst, parent));
+                            chunk = next_chunk;
+                            args = call_args;
+                            tail_frames = 0;
+                        }
+                    }
                 }
-                let result = self.run(&chunk, state, args);
-                // Decrement depth unconditionally on return so mutual
-                // recursion and early-return paths both release their slot.
-                self.call_depth.set(self.call_depth.get().saturating_sub(1));
-                if result.is_ok() && pushed_frame {
-                    self.call_stack.borrow_mut().pop();
-                }
-                result
             }
             Global::Value(value) => match value {
                 // Builtins / natives take aggregates by value -
@@ -223,7 +366,7 @@ impl Vm {
                 }
                 Value::Closure(closure) => self.invoke_closure(&closure, args),
                 Value::Variant(inner) if inner.fields.is_empty() => Ok(Value::variant(
-                    inner.name,
+                    inner.name.clone(),
                     Arc::unwrap_or_clone(std::sync::Arc::new(args)),
                 )),
                 _ => Err(RuntimeError::Type(
@@ -261,7 +404,11 @@ impl Vm {
         let mir_bodies = self.mir_bodies.borrow().clone();
         let tcx_snapshot = self.tcx_snapshot.borrow().clone();
         let enum_shape_defs = self.enum_shape_defs.borrow().clone();
+        let enum_shape_handles = self.enum_shape_handles.borrow().clone();
         let struct_shape_defs = self.struct_shape_defs.borrow().clone();
+        let struct_shape_handles = self.struct_shape_handles.borrow().clone();
+        let jit_eager_names = Arc::clone(&self.jit_eager_names.borrow());
+        let jit_cache_key = self.jit_cache_key.borrow().clone();
         crate::vm::goroutine::pool().spawn(Box::new(move || {
             thread_local! {
                 static THREAD_VM: std::cell::OnceCell<std::cell::RefCell<Option<Vm>>> =
@@ -288,7 +435,11 @@ impl Vm {
                         mir_bodies,
                         tcx_snapshot,
                         enum_shape_defs,
+                        enum_shape_handles,
                         struct_shape_defs,
+                        struct_shape_handles,
+                        jit_eager_names,
+                        jit_cache_key,
                     ));
                 }
                 let vm = slot.as_mut().expect("THREAD_VM init");
@@ -370,7 +521,7 @@ impl Vm {
             // constructor: `Circle(1.5)` produces
             // `Value::variant("Circle", [1.5])`.
             Value::Variant(inner) if inner.fields.is_empty() => Ok(Value::variant(
-                inner.name,
+                inner.name.clone(),
                 Arc::unwrap_or_clone(std::sync::Arc::new(args)),
             )),
             other => Err(RuntimeError::Type(format!(

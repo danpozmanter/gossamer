@@ -30,6 +30,9 @@ use crate::errors::Error;
 use crate::http::{Request, Response};
 use crate::http_cookie::{Cookie, SameSite, parse_cookie_header};
 
+const MIN_CSRF_KEY_BYTES: usize = 32;
+const MAX_CSRF_TOKEN_BYTES: usize = 512;
+
 /// Route-marker enum a handler attaches to declare its auth model.
 ///
 /// CSRF middleware reads this to decide whether to enforce a token
@@ -79,10 +82,21 @@ pub struct Config {
 }
 
 impl Config {
-    /// Constructs a config from an existing key. Empty `key` defers
-    /// random generation to the caller (or use [`Config::random`]).
+    /// Constructs a config from an existing key.
+    ///
+    /// Panics when the key is too short. Prefer [`Self::try_new`] when
+    /// configuration errors should be returned to the caller.
     pub fn new(key: Vec<u8>) -> Self {
-        Self {
+        match Self::try_new(key) {
+            Ok(config) => config,
+            Err(err) => panic!("csrf config: {}", err.message()),
+        }
+    }
+
+    /// Constructs a config from an existing cryptographic key.
+    pub fn try_new(key: Vec<u8>) -> Result<Self, Error> {
+        validate_key(&key)?;
+        Ok(Self {
             cookie_name: "gos_csrf".to_string(),
             header_name: "X-CSRF-Token".to_string(),
             form_field: "_csrf".to_string(),
@@ -98,13 +112,13 @@ impl Config {
             ],
             exempt_prefixes: Vec::new(),
             max_age_secs: 86_400,
-        }
+        })
     }
 
     /// Constructs a config with a freshly generated 32-byte key.
     pub fn random() -> Result<Self, Error> {
         let key = rand::bytes(32)?;
-        Ok(Self::new(key))
+        Self::try_new(key)
     }
 
     /// Appends an entry to [`Config::trusted_origins`].
@@ -149,9 +163,20 @@ impl Config {
 /// Call once per session and stash in the user-visible (non-HttpOnly)
 /// cookie; reissue when rotating.
 pub fn issue_token(key: &[u8]) -> Result<String, Error> {
+    validate_key(key)?;
     let nonce = rand::bytes(32)?;
     let mac = sha256_mac(key, &nonce);
     Ok(format!("{}.{}", b64url_encode(&nonce), b64url_encode(&mac)))
+}
+
+/// Issues a CSRF token bound to one authenticated session identifier.
+///
+/// The session identifier is never sent in the CSRF cookie. It derives a
+/// per-session HMAC key, so replaying a token from one signed-in session in
+/// another fails even when both users share the same server-wide CSRF key.
+pub fn issue_token_for_session(key: &[u8], session_id: &str) -> Result<String, Error> {
+    let session_key = derive_session_key(key, session_id)?;
+    issue_token(&session_key)
 }
 
 /// Verifies a token round-trip.
@@ -165,6 +190,7 @@ pub fn verify_token(
     token_from_header_or_form: &str,
     key: &[u8],
 ) -> Result<(), Error> {
+    validate_key(key)?;
     let (cookie_nonce_b64, cookie_sig_b64) = split_token(token_from_cookie)?;
     let (header_nonce_b64, _) = split_token(token_from_header_or_form)?;
 
@@ -184,6 +210,17 @@ pub fn verify_token(
         return Err(Error::new("csrf: signature mismatch"));
     }
     Ok(())
+}
+
+/// Verifies a CSRF token bound to one authenticated session identifier.
+pub fn verify_token_for_session(
+    token_from_cookie: &str,
+    token_from_header_or_form: &str,
+    key: &[u8],
+    session_id: &str,
+) -> Result<(), Error> {
+    let session_key = derive_session_key(key, session_id)?;
+    verify_token(token_from_cookie, token_from_header_or_form, &session_key)
 }
 
 /// Pulls the CSRF token from a request: header first, then the form
@@ -260,6 +297,20 @@ pub fn origin_allowed(request: &Request, config: &Config) -> bool {
 /// The main guard: returns `Ok(())` if the request passes CSRF,
 /// otherwise `Err` with a description of which check failed.
 pub fn check(request: &Request, route_auth: RouteAuth, config: &Config) -> Result<(), Error> {
+    check_with_session(request, route_auth, config, None)
+}
+
+/// CSRF guard with optional binding to an authenticated session identifier.
+///
+/// Cookie-session routes must provide their stable authenticated session ID.
+/// Public and bearer-only routes retain the same exemption behavior as
+/// [`check`].
+pub fn check_with_session(
+    request: &Request,
+    route_auth: RouteAuth,
+    config: &Config,
+    session_id: Option<&str>,
+) -> Result<(), Error> {
     if route_auth == RouteAuth::BearerOnly {
         return Ok(());
     }
@@ -300,7 +351,12 @@ pub fn check(request: &Request, route_auth: RouteAuth, config: &Config) -> Resul
     let supplied =
         extract_token(request, config).ok_or_else(|| Error::new("csrf: missing csrf token"))?;
 
-    verify_token(&cookie_token, &supplied, &config.key)
+    if route_auth == RouteAuth::CookieSession {
+        let session_id = session_id.ok_or_else(|| Error::new("csrf: session binding required"))?;
+        verify_token_for_session(&cookie_token, &supplied, &config.key, session_id)
+    } else {
+        verify_token(&cookie_token, &supplied, &config.key)
+    }
 }
 
 /// Attaches a freshly issued CSRF cookie to `response`.
@@ -327,6 +383,9 @@ pub fn attach_cookie(response: &mut Response, token: &str, config: &Config) {
 // -- helpers --------------------------------------------------------------
 
 fn split_token(token: &str) -> Result<(&str, &str), Error> {
+    if token.len() > MAX_CSRF_TOKEN_BYTES {
+        return Err(Error::new("csrf: token exceeds size limit"));
+    }
     let (a, b) = token
         .split_once('.')
         .ok_or_else(|| Error::new("csrf: token missing separator"))?;
@@ -334,6 +393,23 @@ fn split_token(token: &str) -> Result<(&str, &str), Error> {
         return Err(Error::new("csrf: token has empty component"));
     }
     Ok((a, b))
+}
+
+fn derive_session_key(key: &[u8], session_id: &str) -> Result<[u8; 32], Error> {
+    validate_key(key)?;
+    if session_id.is_empty() || session_id.len() > MAX_CSRF_TOKEN_BYTES {
+        return Err(Error::new("csrf: invalid session binding"));
+    }
+    Ok(sha256_mac(key, session_id.as_bytes()))
+}
+
+fn validate_key(key: &[u8]) -> Result<(), Error> {
+    if key.len() < MIN_CSRF_KEY_BYTES {
+        return Err(Error::new(format!(
+            "csrf: key must be at least {MIN_CSRF_KEY_BYTES} bytes"
+        )));
+    }
+    Ok(())
 }
 
 fn origin_from_referer(referer: &str) -> Option<String> {
@@ -494,6 +570,14 @@ mod tests {
     }
 
     #[test]
+    fn session_bound_tokens_do_not_cross_authenticated_sessions() {
+        let k = key();
+        let token = issue_token_for_session(&k, "session-a").unwrap();
+        verify_token_for_session(&token, &token, &k, "session-a").unwrap();
+        assert!(verify_token_for_session(&token, &token, &k, "session-b").is_err());
+    }
+
+    #[test]
     fn tampered_cookie_portion_fails_verify() {
         let k = key();
         let t = issue_token(&k).expect("issue");
@@ -507,6 +591,14 @@ mod tests {
         // And self-pairing the tampered token still fails because
         // the signature no longer covers the new nonce.
         assert!(verify_token(&tampered, &tampered, &k).is_err());
+    }
+
+    #[test]
+    fn weak_keys_and_oversized_tokens_are_rejected() {
+        assert!(Config::try_new(vec![0; 31]).is_err());
+        assert!(issue_token(&[0; 31]).is_err());
+        let oversized = "a".repeat(MAX_CSRF_TOKEN_BYTES + 1);
+        assert!(verify_token(&oversized, &oversized, &key()).is_err());
     }
 
     #[test]
@@ -544,7 +636,8 @@ mod tests {
     #[test]
     fn check_post_with_valid_token_and_origin_passes() {
         let cfg = Config::new(key()).trust_origin("https://app.example.com");
-        let token = issue_token(&cfg.key).expect("issue");
+        let session_id = "authenticated-session";
+        let token = issue_token_for_session(&cfg.key, session_id).expect("issue");
 
         let mut req = make_request(Method::Post, "/api/do");
         req.headers.insert("origin", "https://app.example.com");
@@ -552,7 +645,10 @@ mod tests {
             .insert("cookie", &format!("{}={}", cfg.cookie_name, token));
         req.headers.insert(&cfg.header_name, &token);
 
-        check(&req, RouteAuth::CookieSession, &cfg).expect("valid POST passes");
+        check_with_session(&req, RouteAuth::CookieSession, &cfg, Some(session_id))
+            .expect("valid POST passes");
+        let err = check(&req, RouteAuth::CookieSession, &cfg).unwrap_err();
+        assert!(err.message().contains("session binding"));
     }
 
     #[test]
@@ -588,8 +684,9 @@ mod tests {
     #[test]
     fn check_post_mismatched_header_vs_cookie_fails() {
         let cfg = Config::new(key()).trust_origin("https://app.example.com");
-        let token_a = issue_token(&cfg.key).expect("a");
-        let token_b = issue_token(&cfg.key).expect("b");
+        let session_id = "authenticated-session";
+        let token_a = issue_token_for_session(&cfg.key, session_id).expect("a");
+        let token_b = issue_token_for_session(&cfg.key, session_id).expect("b");
 
         let mut req = make_request(Method::Post, "/api/do");
         req.headers.insert("origin", "https://app.example.com");
@@ -597,7 +694,8 @@ mod tests {
             .insert("cookie", &format!("{}={}", cfg.cookie_name, token_a));
         req.headers.insert(&cfg.header_name, &token_b);
 
-        let err = check(&req, RouteAuth::CookieSession, &cfg).unwrap_err();
+        let err =
+            check_with_session(&req, RouteAuth::CookieSession, &cfg, Some(session_id)).unwrap_err();
         assert!(err.message().contains("mismatch"), "got: {}", err.message());
     }
 

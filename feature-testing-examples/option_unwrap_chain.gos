@@ -75,40 +75,40 @@ mod tests {
     #[test]
     fn maybe_double_positive() {
         match super::maybe_double(5) {
-            Some(v) => testing::check_eq(&v, &10, "double(5)=10"),
-            None => testing::check(false, "expected Some"),
+            Some(v) => { let _ = testing::check_eq(&v, &10, "double(5)=10"); },
+            None => { let _ = testing::check(false, "expected Some"); },
         }
     }
 
     #[test]
     fn maybe_double_negative_gives_none() {
         match super::maybe_double(-1) {
-            Some(_) => testing::check(false, "expected None"),
-            None => testing::check(true, "None for negative"),
+            Some(_) => { let _ = testing::check(false, "expected None"); },
+            None => { let _ = testing::check(true, "None for negative"); },
         }
     }
 
     #[test]
     fn safe_divide_ok() {
         match super::safe_divide(10, 2) {
-            Ok(v) => testing::check_eq(&v, &5, "10/2=5"),
-            Err(_) => testing::check(false, "unexpected error"),
+            Ok(v) => { let _ = testing::check_eq(&v, &5, "10/2=5"); },
+            Err(_) => { let _ = testing::check(false, "unexpected error"); },
         }
     }
 
     #[test]
     fn safe_divide_zero() {
         match super::safe_divide(10, 0) {
-            Ok(_) => testing::check(false, "expected error"),
-            Err(e) => testing::check(e.message().contains("zero"), "div zero error"),
+            Ok(_) => { let _ = testing::check(false, "expected error"); },
+            Err(e) => { let _ = testing::check(e.message().contains("zero"), "div zero error"); },
         }
     }
 
     #[test]
     fn pipeline_happy_path() {
         match super::pipeline(6, 3) {
-            Ok(v) => testing::check_eq(&v, &12, "6*2/3*2=12"),
-            Err(_) => testing::check(false, "unexpected error"),
+            Ok(v) => { let _ = testing::check_eq(&v, &12, "6*2/3*2=12"); },
+            Err(_) => { let _ = testing::check(false, "unexpected error"); },
         }
     }
 }

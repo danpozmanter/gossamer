@@ -79,11 +79,11 @@ mod tests {
     fn parse_and_get_string() {
         let obj = match json::parse("{\"hello\":\"world\"}") {
             Ok(o) => o,
-            Err(e) => { testing::check(false, e); return }
+            Err(e) => { let _ = testing::check(false, e); return }
         }
         match json::as_str(json::get(obj, "hello").unwrap()) {
-            Some(s) => testing::check_eq(&s, &"world", "get hello"),
-            None => testing::check(false, "expected string value"),
+            Some(s) => { let _ = testing::check_eq(&s, &"world", "get hello"); },
+            None => { let _ = testing::check(false, "expected string value"); },
         }
     }
 
@@ -91,11 +91,11 @@ mod tests {
     fn array_index_access() {
         let arr = match json::parse("[10,20,30]") {
             Ok(a) => a,
-            Err(e) => { testing::check(false, e); return }
+            Err(e) => { let _ = testing::check(false, e); return }
         }
         match json::as_i64(json::at(arr, 1)) {
-            Some(n) => testing::check_eq(&n, &20, "array[1]"),
-            None => testing::check(false, "expected integer at index 1"),
+            Some(n) => { let _ = testing::check_eq(&n, &20, "array[1]"); },
+            None => { let _ = testing::check(false, "expected integer at index 1"); },
         }
     }
 
@@ -103,8 +103,8 @@ mod tests {
     fn null_detection() {
         let obj = match json::parse("{\"a\":null}") {
             Ok(o) => o,
-            Err(e) => { testing::check(false, e); return }
+            Err(e) => { let _ = testing::check(false, e); return }
         }
-        testing::check(json::is_null(json::get(obj, "a").unwrap()), "a is null")
+        let _ = testing::check(json::is_null(json::get(obj, "a").unwrap()), "a is null")
     }
 }

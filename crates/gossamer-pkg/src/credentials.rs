@@ -17,10 +17,13 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use thiserror::Error;
+
+static CREDENTIAL_WRITE_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Errors raised by the credential store.
 #[derive(Debug, Error)]
@@ -113,9 +116,31 @@ impl CredentialStore {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| CredentialStoreError::Io(e.to_string()))?;
         }
-        let tmp = path.with_extension("toml.new");
+        let tmp = path.with_file_name(format!(
+            ".{}.tmp-{}-{}",
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("credentials"),
+            std::process::id(),
+            CREDENTIAL_WRITE_ID.fetch_add(1, Ordering::Relaxed),
+        ));
         let text = self.render();
-        fs::write(&tmp, text.as_bytes()).map_err(|e| CredentialStoreError::Io(e.to_string()))?;
+        let result = (|| {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)
+                .map_err(|e| CredentialStoreError::Io(e.to_string()))?;
+            file.write_all(text.as_bytes())
+                .map_err(|e| CredentialStoreError::Io(e.to_string()))?;
+            file.sync_all()
+                .map_err(|e| CredentialStoreError::Io(e.to_string()))?;
+            Ok::<(), CredentialStoreError>(())
+        })();
+        if let Err(err) = result {
+            let _ = fs::remove_file(&tmp);
+            return Err(err);
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -130,7 +155,10 @@ impl CredentialStore {
         {
             restrict_to_owner(&tmp).map_err(|e| CredentialStoreError::Io(e.to_string()))?;
         }
-        fs::rename(&tmp, path).map_err(|e| CredentialStoreError::Io(e.to_string()))?;
+        if let Err(err) = fs::rename(&tmp, path) {
+            let _ = fs::remove_file(&tmp);
+            return Err(CredentialStoreError::Io(err.to_string()));
+        }
         Ok(())
     }
 

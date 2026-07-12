@@ -87,7 +87,7 @@ mod tests {
     #[test]
     fn leaf_sum() {
         let t = super::Tree::Leaf(42)
-        testing::check_eq(&super::sum(&t), &42, "leaf sum=42")
+        let _ = testing::check_eq(&super::sum(&t), &42, "leaf sum=42")
     }
 
     #[test]
@@ -97,22 +97,22 @@ mod tests {
             Box::new(super::Tree::Leaf(5)),
             Box::new(super::Tree::Leaf(7)),
         )
-        testing::check_eq(&super::sum(&t), &22, "10+5+7=22")
-        testing::check_eq(&super::count(&t), &3, "3 nodes")
-        testing::check_eq(&super::max_depth(&t), &2, "depth 2")
+        let _ = testing::check_eq(&super::sum(&t), &22, "10+5+7=22")
+        let _ = testing::check_eq(&super::count(&t), &3, "3 nodes")
+        let _ = testing::check_eq(&super::max_depth(&t), &2, "depth 2")
     }
 
     #[test]
     fn list_sum_len() {
         let l = super::cons(1, super::cons(2, super::cons(3, super::List::Nil)))
-        testing::check_eq(&super::list_sum(&l), &6, "1+2+3=6")
-        testing::check_eq(&super::list_len(&l), &3, "len=3")
+        let _ = testing::check_eq(&super::list_sum(&l), &6, "1+2+3=6")
+        let _ = testing::check_eq(&super::list_len(&l), &3, "len=3")
     }
 
     #[test]
     fn empty_list() {
         let l = super::List::Nil
-        testing::check_eq(&super::list_sum(&l), &0, "nil sum=0")
-        testing::check_eq(&super::list_len(&l), &0, "nil len=0")
+        let _ = testing::check_eq(&super::list_sum(&l), &0, "nil sum=0")
+        let _ = testing::check_eq(&super::list_len(&l), &0, "nil len=0")
     }
 }

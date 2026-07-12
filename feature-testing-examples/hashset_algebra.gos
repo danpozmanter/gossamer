@@ -56,22 +56,22 @@ mod tests {
     fn union_and_intersection() {
         let (a, b) = pair()
         let u = a.union(b)
-        testing::check(u.len() == 4, "union has 4 elements")
-        testing::check(u.contains("a") && u.contains("d"), "union holds both extremes")
+        let _ = testing::check(u.len() == 4, "union has 4 elements")
+        let _ = testing::check(u.contains("a") && u.contains("d"), "union holds both extremes")
         let (a2, b2) = pair()
         let i = a2.intersection(b2)
-        testing::check(i.len() == 2 && i.contains("b") && !i.contains("a"), "intersection is {b,c}")
+        let _ = testing::check(i.len() == 2 && i.contains("b") && !i.contains("a"), "intersection is {b,c}")
     }
 
     #[test]
     fn difference_and_predicates() {
         let (a, b) = pair()
         let d = a.difference(b)
-        testing::check(d.len() == 1 && d.contains("a"), "difference is {a}")
+        let _ = testing::check(d.len() == 1 && d.contains("a"), "difference is {a}")
         let (a2, b2) = pair()
-        testing::check(!a2.is_disjoint(b2), "sharing b,c is not disjoint")
+        let _ = testing::check(!a2.is_disjoint(b2), "sharing b,c is not disjoint")
         let mut sub = HashSet::new()
         sub.insert("b")
-        testing::check(sub.is_subset(a2) && a2.is_superset(sub), "{b} subset of a")
+        let _ = testing::check(sub.is_subset(a2) && a2.is_superset(sub), "{b} subset of a")
     }
 }

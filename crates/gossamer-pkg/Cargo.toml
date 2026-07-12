@@ -34,6 +34,9 @@ webpki-roots = "1"
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast", "rand_core"] }
 rand_core = { version = "0.6", features = ["std", "getrandom"] }
 parking_lot = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+url = "2"
 
 # Owner-only DACL on the credentials file (the Windows equivalent of the
 # POSIX `chmod 0600`). Bindings-only crate, no C build.

@@ -19,6 +19,7 @@
 
 use std::cell::Cell;
 use std::io;
+use std::panic::AssertUnwindSafe;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
@@ -141,10 +142,39 @@ pub fn wait_io<S: ?Sized>(_io: &mut S, _interest: Interest) -> io::Result<()> {
     Ok(())
 }
 
+/// Wasm has no OS netpoller.  This follows [`wait_io`] and diverges through
+/// the documented unsupported-blocking path when reached.
+pub fn wait_io_until<S: ?Sized>(
+    _io: &mut S,
+    _interest: Interest,
+    _deadline: Instant,
+) -> io::Result<bool> {
+    park(ParkReason::Io, |_parker| {});
+    Ok(false)
+}
+
 /// Returns immediately. Cooperative single-threaded time cannot block
 /// the only thread; programs that depend on real sleeping should run
 /// with `gos run` locally.
 pub fn sleep_until(_deadline: Instant) {}
+
+/// Wasm has no worker threads. Run the closure inline; callers that need true
+/// blocking already reach the documented unsupported-blocking path elsewhere.
+pub fn run_blocking<T, F>(label: &'static str, f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    std::panic::catch_unwind(AssertUnwindSafe(f)).map_err(|panic| {
+        if let Some(s) = panic.downcast_ref::<&str>() {
+            format!("{label}: blocking operation panicked: {s}")
+        } else if let Some(s) = panic.downcast_ref::<String>() {
+            format!("{label}: blocking operation panicked: {s}")
+        } else {
+            format!("{label}: blocking operation panicked: panic")
+        }
+    })
+}
 
 /// Runs `task` to completion immediately, returning `Some(gid)`.
 #[must_use]

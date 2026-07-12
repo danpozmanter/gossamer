@@ -1,6 +1,6 @@
 # `std::http::native_client`
 
-Status: shipped
+Status: experimental
 
 Goroutine-driven HTTP/1.1 client over std::net (no ureq, no blocking pool).
 

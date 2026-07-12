@@ -13,4 +13,6 @@ fuzz_target!(|data: &[u8]| {
     }
     let _ = http::parse_request_line(line);
     let _ = http::parse_status_line(line);
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = http::server::fuzz_parse_request_head(data);
 });

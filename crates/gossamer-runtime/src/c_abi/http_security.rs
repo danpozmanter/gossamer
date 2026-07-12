@@ -301,6 +301,12 @@ pub unsafe extern "C" fn gos_rt_http_cookie_serialize(
 
 // -- csrf ----------------------------------------------------------------
 
+const MIN_CSRF_KEY_BYTES: usize = 32;
+
+fn csrf_key_is_strong_enough(key: &[u8]) -> bool {
+    key.len() >= MIN_CSRF_KEY_BYTES
+}
+
 fn split_token(token: &str) -> Option<(&str, &str)> {
     let (a, b) = token.split_once('.')?;
     if a.is_empty() || b.is_empty() {
@@ -316,6 +322,9 @@ fn split_token(token: &str) -> Option<(&str, &str)> {
 pub unsafe extern "C" fn gos_rt_http_csrf_issue_token(key: *const GosVec) -> i128 {
     ffi_entry!(0i128, {
         let key = unsafe { gosvec_u8(key) };
+        if !csrf_key_is_strong_enough(&key) {
+            return sec_err("csrf: key must be at least 32 bytes");
+        }
         let mut nonce = [0u8; 32];
         if getrandom::fill(&mut nonce).is_err() {
             return sec_err("csrf: rng failure");
@@ -340,6 +349,9 @@ pub unsafe extern "C" fn gos_rt_http_csrf_verify_token(
         let cookie_token = unsafe { cstr_str(cookie_token) };
         let supplied_token = unsafe { cstr_str(supplied_token) };
         let key = unsafe { gosvec_u8(key) };
+        if !csrf_key_is_strong_enough(&key) {
+            return sec_err("csrf: key must be at least 32 bytes");
+        }
 
         let Some((cookie_nonce_b64, cookie_sig_b64)) = split_token(cookie_token) else {
             return sec_err("csrf: token missing separator");

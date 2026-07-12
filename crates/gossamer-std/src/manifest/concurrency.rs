@@ -81,13 +81,8 @@ pub const CONTEXT: StdModule = StdModule {
 
 pub const THREAD: StdModule = StdModule {
     path: "std::thread",
-    summary: "Native OS threads. For goroutines use the `go expr` syntax.",
+    summary: "OS-thread scheduling hints and CPU introspection; user concurrency uses goroutines, not thread spawning.",
     items: &[
-        StdItem {
-            name: "JoinHandle",
-            kind: StdItemKind::Type,
-            doc: "Owned handle to a spawned OS thread.",
-        },
         StdItem {
             name: "yield_now",
             kind: StdItemKind::Function,

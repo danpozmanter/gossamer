@@ -13,7 +13,7 @@ fn main() {
     let dir = path::join(&env::temp_dir(), &"gossamer-fs-metadata-demo")
     let _ = fs::create_dir_all(&dir)
     let file = path::join(&dir, &"probe.txt")
-    let _ = fs::write(&file, &"hello, gossamer\n")
+    let _ = fs::write(&file, "hello, gossamer\n".to_string().as_bytes())
 
     let m = fs::metadata(&file).unwrap()
     println!(

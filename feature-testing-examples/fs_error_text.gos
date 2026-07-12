@@ -8,7 +8,7 @@
 use std::fs
 
 fn main() {
-    match fs::write("/nonexistent-dir-gosfixture/file.txt", "hi") {
+    match fs::write("/nonexistent-dir-gosfixture/file.txt", "hi".to_string().as_bytes()) {
         Ok(_) => println!("write ok"),
         Err(e) => println!("write err: {}", e),
     }

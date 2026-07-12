@@ -314,7 +314,7 @@ fn encoding_base64_roundtrip_lowers() {
         r#"
 use std::encoding
 fn main() {
-    let enc = encoding::base64::encode("Hello, Gossamer!")
+    let enc = encoding::base64::encode("Hello, Gossamer!".to_string().as_bytes())
     println!("enc={}", enc)
     match encoding::base64::decode(enc) {
         Ok(bytes) => println!("dec={}", bytes.len()),

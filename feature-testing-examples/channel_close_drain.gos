@@ -100,7 +100,7 @@ mod tests {
         while let Some(_) = rx.recv() {
             count += 1
         }
-        testing::check_eq(&count, &7, "7 items drained")
+        let _ = testing::check_eq(&count, &7, "7 items drained")
     }
 
     #[test]
@@ -112,7 +112,7 @@ mod tests {
         while let Some(v) = rx.recv() {
             total += v
         }
-        testing::check_eq(&total, &10, "0+1+2+3+4=10")
+        let _ = testing::check_eq(&total, &10, "0+1+2+3+4=10")
     }
 
     #[test]
@@ -124,10 +124,10 @@ mod tests {
         while let Some(v) = rx.recv() {
             fibs.push(v)
         }
-        testing::check(fibs.len() >= 6, "at least 6 fibs up to 20")
-        testing::check_eq(&fibs[0], &0, "fib[0]=0")
-        testing::check_eq(&fibs[1], &1, "fib[1]=1")
-        testing::check_eq(&fibs[2], &1, "fib[2]=1")
-        testing::check_eq(&fibs[5], &5, "fib[5]=5")
+        let _ = testing::check(fibs.len() >= 6, "at least 6 fibs up to 20")
+        let _ = testing::check_eq(&fibs[0], &0, "fib[0]=0")
+        let _ = testing::check_eq(&fibs[1], &1, "fib[1]=1")
+        let _ = testing::check_eq(&fibs[2], &1, "fib[2]=1")
+        let _ = testing::check_eq(&fibs[5], &5, "fib[5]=5")
     }
 }

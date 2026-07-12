@@ -133,3 +133,20 @@ fn main() {
     // h(4) = (4 * 3) + 5 = 17
     assert_eq!(run_main(src), "17\n");
 }
+
+#[test]
+fn deep_non_tail_closure_calls_use_explicit_vm_frames() {
+    // Every recursive step first calls a closure, then performs work after
+    // that call. This used to build `run -> dispatch_call -> invoke_closure`
+    // chains on the Rust stack; the closure call is now a suspended VM frame.
+    let src = r#"
+fn count_down(n: i64) -> i64 {
+    if n <= 0i64 { return 0i64 }
+    let recurse = |x: i64| count_down(x)
+    let below = recurse(n - 1i64)
+    return below + 1i64
+}
+fn main() { println!("{}", count_down(1000)) }
+"#;
+    assert_eq!(run_main(src), "1000\n");
+}

@@ -1,6 +1,6 @@
 # `std::regex`
 
-Status: shipped
+Status: experimental
 
 Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around).
 

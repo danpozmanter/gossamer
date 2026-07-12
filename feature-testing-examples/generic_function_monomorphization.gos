@@ -82,26 +82,26 @@ mod tests {
     fn map_i64_squares() {
         let xs = [1, 2, 3, 4]
         let r = super::map_i64(xs, |x| x * x)
-        testing::check_eq(&r[0], &1, "1^2")
-        testing::check_eq(&r[3], &16, "4^2")
+        let _ = testing::check_eq(&r[0], &1, "1^2")
+        let _ = testing::check_eq(&r[3], &16, "4^2")
     }
 
     #[test]
     fn reduce_i64_sum() {
         let s = super::reduce_i64([1, 2, 3, 4, 5], 0, |acc, x| acc + x)
-        testing::check_eq(&s, &15, "sum 1..5")
+        let _ = testing::check_eq(&s, &15, "sum 1..5")
     }
 
     #[test]
     fn reduce_f64_product() {
         let p = super::reduce_f64([1.0, 2.0, 3.0], 1.0, |acc, x| acc * x)
-        testing::check(p > 5.9 && p < 6.1, "1.0*2.0*3.0≈6.0")
+        let _ = testing::check(p > 5.9 && p < 6.1, "1.0*2.0*3.0≈6.0")
     }
 
     #[test]
     fn clamp_bounds() {
-        testing::check_eq(&super::clamp_i64(0, 10, -5), &0, "below lo")
-        testing::check_eq(&super::clamp_i64(0, 10, 15), &10, "above hi")
-        testing::check_eq(&super::clamp_i64(0, 10, 7), &7, "within")
+        let _ = testing::check_eq(&super::clamp_i64(0, 10, -5), &0, "below lo")
+        let _ = testing::check_eq(&super::clamp_i64(0, 10, 15), &10, "above hi")
+        let _ = testing::check_eq(&super::clamp_i64(0, 10, 7), &7, "within")
     }
 }
