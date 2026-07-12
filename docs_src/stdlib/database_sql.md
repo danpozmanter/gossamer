@@ -8,8 +8,8 @@ Driver-pluggable SQL database access. No driver ships in the box; bring your own
 
 | Name | Kind | Description |
 |---|---|---|
-| `Driver` | trait | Database driver - opens connections. Implementations call `register` at startup. |
-| `register` | fn | Registers a `Driver` under its canonical name in the process-wide registry. |
+| `Driver` | trait | Host-side database driver contract. Rust bindings register implementations before the Gossamer program starts. |
+| `register_native` | fn | Registers a Gossamer-native driver under its canonical name. The driver must provide the SQL dispatch surface used by the runtime. |
 | `drivers` | fn | Lists every currently-registered driver name. |
 | `open` | fn | Opens a database connection by driver name + URL. |
 | `Conn` | type | Open database connection. `prepare`, `execute`, `query`, `query_each`, `begin`, `begin_with`, `ping`, `execute_many`, `execute_ctx`, `query_ctx`, `interrupt`, `close` (closing sweeps any cursors still open on the connection). |
@@ -24,5 +24,4 @@ Driver-pluggable SQL database access. No driver ships in the box; bring your own
 | `PoolConfig` | type | Pool tuning: `min`, `max`, `idle_timeout`, `max_lifetime`, `acquire_timeout`, `statement_cache`. Fluent `with_*` builders. |
 | `PooledConn` | type | Connection checked out from a `Pool`; returned on drop. |
 | `Select` | type | Fluent SELECT builder. `Select::new(table).columns(&[..]).where_eq(col, sql::Value::Int(...))...render() -> String`; `.params()` returns the bound parameters. Emits Postgres-style `$N` placeholders. |
-| `migrate` | fn | Forward-only schema migrations from a directory of `<version>_<slug>.sql` files. `migrate::up(&mut conn, dir)` applies pending migrations, each in its own transaction; `migrate::discover`, `migrate::applied`, `migrate::plan`, `migrate::init` round out the surface. |
-
+| `migrate_up` | fn | Applies pending forward-only schema migrations from a directory of `<version>_<slug>.sql` files. `migrate::up(&mut conn, dir)` is an equivalent namespaced spelling. |

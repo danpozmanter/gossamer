@@ -71,34 +71,8 @@ use super::*;
 
 pub const TLS: StdModule = StdModule {
     path: "std::tls",
-    summary: "TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed.",
-    items: &[
-        StdItem {
-            name: "CertKey",
-            kind: StdItemKind::Type,
-            doc: "PEM-encoded certificate chain + private key.",
-        },
-        StdItem {
-            name: "ServerConfig",
-            kind: StdItemKind::Type,
-            doc: "Opaque server-side TLS configuration.",
-        },
-        StdItem {
-            name: "ClientConfig",
-            kind: StdItemKind::Type,
-            doc: "Opaque client-side TLS configuration.",
-        },
-        StdItem {
-            name: "server_config",
-            kind: StdItemKind::Function,
-            doc: "Builds a rustls-backed server config from a CertKey.",
-        },
-        StdItem {
-            name: "client_config",
-            kind: StdItemKind::Function,
-            doc: "Builds a rustls-backed client config.",
-        },
-    ],
+    summary: "Rustls-backed TLS support exposed through `http::serve_tls` and `net::TcpStream` TLS upgrades. The configuration constructors are host-runtime internals, not Gossamer callables.",
+    items: &[],
 };
 
 pub const HTML_TEMPLATE: StdModule = StdModule {

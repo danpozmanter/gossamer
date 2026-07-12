@@ -490,8 +490,8 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::database::sql",
-        name: "migrate",
-        signature: "fn migrate(conn: database::sql::Conn, dir: String) -> Result<Vec<database::sql::Migration>, errors::Error>",
+        name: "migrate_up",
+        signature: "fn migrate_up(conn: database::sql::Conn, dir: String) -> Result<i64, errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::database::sql",
@@ -500,8 +500,8 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::database::sql",
-        name: "register",
-        signature: "fn register(name: String, driver: database::sql::Driver) -> ()",
+        name: "register_native",
+        signature: "fn register_native(name: String, driver: database::sql::Driver) -> ()",
     },
     StdFunctionSignature {
         module_path: "std::encoding::ascii85",
@@ -2947,16 +2947,6 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         module_path: "std::time",
         name: "unix_ms",
         signature: "fn unix_ms() -> i64",
-    },
-    StdFunctionSignature {
-        module_path: "std::tls",
-        name: "client_config",
-        signature: "fn client_config(ca_pem: String) -> Result<tls::ClientConfig, errors::Error>",
-    },
-    StdFunctionSignature {
-        module_path: "std::tls",
-        name: "server_config",
-        signature: "fn server_config(cert_pem: String, key_pem: String) -> Result<tls::ServerConfig, errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::unicode",

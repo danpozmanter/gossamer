@@ -1745,7 +1745,7 @@
 
 <h1 id="stdtls"><code>std::tls</code><a class="headerlink" href="#stdtls" title="Permanent link">&para;</a></h1>
 <p>Status: shipped</p>
-<p>TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed.</p>
+<p>Rustls-backed TLS support exposed through <code>http::serve_tls</code> and <code>net::TcpStream</code> TLS upgrades. The configuration constructors are host-runtime internals, not Gossamer callables.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1757,29 +1757,9 @@
 </thead>
 <tbody>
 <tr>
-<td><code>CertKey</code></td>
-<td>type</td>
-<td>PEM-encoded certificate chain + private key.</td>
-</tr>
-<tr>
-<td><code>ServerConfig</code></td>
-<td>type</td>
-<td>Opaque server-side TLS configuration.</td>
-</tr>
-<tr>
-<td><code>ClientConfig</code></td>
-<td>type</td>
-<td>Opaque client-side TLS configuration.</td>
-</tr>
-<tr>
-<td><code>server_config</code></td>
-<td>fn</td>
-<td>Builds a rustls-backed server config from a CertKey.</td>
-</tr>
-<tr>
-<td><code>client_config</code></td>
-<td>fn</td>
-<td>Builds a rustls-backed client config.</td>
+<td></td>
+<td></td>
+<td></td>
 </tr>
 </tbody>
 </table>

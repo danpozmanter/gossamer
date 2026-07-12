@@ -107,11 +107,10 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::testing`](testing.md) | Assertions and sub-test harness helpers. |
 | [`std::thread`](thread.md) | OS-thread scheduling hints and CPU introspection; user concurrency uses goroutines, not thread spawning. |
 | [`std::time`](time.md) | Wall-clock and monotonic time facilities. |
-| [`std::tls`](tls.md) | TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed. |
+| [`std::tls`](tls.md) | Rustls-backed TLS support exposed through `http::serve_tls` and `net::TcpStream` TLS upgrades. The configuration constructors are host-runtime internals, not Gossamer callables. |
 | [`std::trace`](trace.md) | W3C trace-context-compatible distributed tracing. Identifier types, request-scoped SpanContext, process-level Tracer, and OTLP JSON export. |
 | [`std::unicode`](unicode.md) | Unicode general-category predicates, casing, normalization, and segmentation. |
 | [`std::utf16`](utf16.md) | UTF-16 encoding/decoding and surrogate pair helpers. |
 | [`std::utf8`](utf8.md) | UTF-8 validation and scalar decoding. |
 | [`std::uuid`](uuid.md) | UUID v4 (random) and v7 (timestamp-ordered) generation, parse, and normalize. |
 | [`std::validate`](validate.md) | Trait-based field validation: implement Validate, collect FieldErrors into Errors. |
-

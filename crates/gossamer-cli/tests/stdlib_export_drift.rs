@@ -144,6 +144,13 @@ const MANIFEST_IMPL_VIA_REWRITE: &[&str] = &[
     "http::csrf::attach_cookie",
     "http::session::with_session",
     "http::multipart::parse",
+    // `rewrite_stdlib_struct_surface` maps the public SQL facade to
+    // injected `__gos_sql_*` wrappers. Those wrappers reach the same
+    // interpreter, C-ABI, Cranelift, and LLVM implementations.
+    "database::sql::register_native",
+    "database::sql::drivers",
+    "database::sql::open",
+    "database::sql::migrate_up",
 ];
 
 #[test]

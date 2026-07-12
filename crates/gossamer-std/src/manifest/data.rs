@@ -76,12 +76,12 @@ pub const DATABASE_SQL: StdModule = StdModule {
         StdItem {
             name: "Driver",
             kind: StdItemKind::Trait,
-            doc: "Database driver - opens connections. Implementations call `register` at startup.",
+            doc: "Host-side database driver contract. Rust bindings register implementations before the Gossamer program starts.",
         },
         StdItem {
-            name: "register",
+            name: "register_native",
             kind: StdItemKind::Function,
-            doc: "Registers a `Driver` under its canonical name in the process-wide registry.",
+            doc: "Registers a Gossamer-native driver under its canonical name. The driver must provide the SQL dispatch surface used by the runtime.",
         },
         StdItem {
             name: "drivers",
@@ -154,9 +154,9 @@ pub const DATABASE_SQL: StdModule = StdModule {
             doc: "Fluent SELECT builder. `Select::new(table).columns(&[..]).where_eq(col, sql::Value::Int(...))...render() -> String`; `.params()` returns the bound parameters. Emits Postgres-style `$N` placeholders.",
         },
         StdItem {
-            name: "migrate",
+            name: "migrate_up",
             kind: StdItemKind::Function,
-            doc: "Forward-only schema migrations from a directory of `<version>_<slug>.sql` files. `migrate::up(&mut conn, dir)` applies pending migrations, each in its own transaction; `migrate::discover`, `migrate::applied`, `migrate::plan`, `migrate::init` round out the surface.",
+            doc: "Applies pending forward-only schema migrations from a directory of `<version>_<slug>.sql` files. `migrate::up(&mut conn, dir)` is an equivalent namespaced spelling.",
         },
     ],
 };

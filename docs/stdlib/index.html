@@ -2154,7 +2154,7 @@
 </tr>
 <tr>
 <td><a href="tls/"><code>std::tls</code></a></td>
-<td>TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed.</td>
+<td>Rustls-backed TLS support exposed through <code>http::serve_tls</code> and <code>net::TcpStream</code> TLS upgrades. The configuration constructors are host-runtime internals, not Gossamer callables.</td>
 </tr>
 <tr>
 <td><a href="trace/"><code>std::trace</code></a></td>

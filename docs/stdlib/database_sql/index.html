@@ -1759,12 +1759,12 @@
 <tr>
 <td><code>Driver</code></td>
 <td>trait</td>
-<td>Database driver - opens connections. Implementations call <code>register</code> at startup.</td>
+<td>Host-side database driver contract. Rust bindings register implementations before the Gossamer program starts.</td>
 </tr>
 <tr>
-<td><code>register</code></td>
+<td><code>register_native</code></td>
 <td>fn</td>
-<td>Registers a <code>Driver</code> under its canonical name in the process-wide registry.</td>
+<td>Registers a Gossamer-native driver under its canonical name. The driver must provide the SQL dispatch surface used by the runtime.</td>
 </tr>
 <tr>
 <td><code>drivers</code></td>
@@ -1837,9 +1837,9 @@
 <td>Fluent SELECT builder. <code>Select::new(table).columns(&amp;[..]).where_eq(col, sql::Value::Int(...))...render() -&gt; String</code>; <code>.params()</code> returns the bound parameters. Emits Postgres-style <code>$N</code> placeholders.</td>
 </tr>
 <tr>
-<td><code>migrate</code></td>
+<td><code>migrate_up</code></td>
 <td>fn</td>
-<td>Forward-only schema migrations from a directory of <code>&lt;version&gt;_&lt;slug&gt;.sql</code> files. <code>migrate::up(&amp;mut conn, dir)</code> applies pending migrations, each in its own transaction; <code>migrate::discover</code>, <code>migrate::applied</code>, <code>migrate::plan</code>, <code>migrate::init</code> round out the surface.</td>
+<td>Applies pending forward-only schema migrations from a directory of <code>&lt;version&gt;_&lt;slug&gt;.sql</code> files. <code>migrate::up(&amp;mut conn, dir)</code> is an equivalent namespaced spelling.</td>
 </tr>
 </tbody>
 </table>

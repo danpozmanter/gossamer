@@ -465,11 +465,11 @@ Driver-pluggable SQL database access. No driver ships in the box; bring your own
 | `Stmt` | type | Prepared statement. |
 | `Tx` | type | Active transaction. `commit`, `rollback`, `savepoint`, `release_savepoint`, `rollback_to_savepoint`, `execute`. |
 | `Value` | type | Bound or fetched value. Null / Bool / Int / Float / Text / Blob. |
-| `Driver` | trait | Database driver - opens connections. Implementations call `register` at startup. |
+| `Driver` | trait | Host-side database driver contract. Rust bindings register implementations before the Gossamer program starts. |
 | `drivers` | fn | Lists every currently-registered driver name. |
-| `migrate` | fn | Forward-only schema migrations from a directory of `<version>_<slug>.sql` files. `migrate::up(&mut conn, dir)` applies pending migrations, each in its own transaction; `migrate::discover`, `migrate::applied`, `migrate::plan`, `migrate::init` round out the surface. |
+| `migrate_up` | fn | Applies pending forward-only schema migrations from a directory of `<version>_<slug>.sql` files. `migrate::up(&mut conn, dir)` is an equivalent namespaced spelling. |
 | `open` | fn | Opens a database connection by driver name + URL. |
-| `register` | fn | Registers a `Driver` under its canonical name in the process-wide registry. |
+| `register_native` | fn | Registers a Gossamer-native driver under its canonical name. The driver must provide the SQL dispatch surface used by the runtime. |
 
 ## `std::encoding::ascii85`
 
@@ -1599,15 +1599,10 @@ Wall-clock and monotonic time facilities.
 
 ## `std::tls`
 
-TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed.
+Rustls-backed TLS support exposed through `http::serve_tls` and `net::TcpStream` TLS upgrades. The configuration constructors are host-runtime internals, not Gossamer callables.
 
 | Item | Kind | Doc |
 |------|------|-----|
-| `CertKey` | type | PEM-encoded certificate chain + private key. |
-| `ClientConfig` | type | Opaque client-side TLS configuration. |
-| `ServerConfig` | type | Opaque server-side TLS configuration. |
-| `client_config` | fn | Builds a rustls-backed client config. |
-| `server_config` | fn | Builds a rustls-backed server config from a CertKey. |
 
 ## `std::trace`
 
@@ -1722,4 +1717,3 @@ Trait-based field validation: implement Validate, collect FieldErrors into Error
 | `Errors` | type | Aggregated FieldError set, indexable by dotted path. |
 | `FieldError` | type | One field-scoped validation failure: dotted path, message, optional code. |
 | `Validate` | trait | Implement on a struct to declare field-level validation rules. |
-
