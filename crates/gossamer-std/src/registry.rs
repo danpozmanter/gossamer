@@ -150,10 +150,13 @@ mod tests {
     #[test]
     fn item_records_inherit_module_status() {
         let records = item_records();
-        let tls = records
+        let sql_migrate = records
             .iter()
-            .find(|record| record.path == "std::tls::ServerConfig")
-            .expect("std::tls::ServerConfig is manifest-listed");
-        assert_eq!(tls.status, crate::manifest::feature_status::Status::Shipped);
+            .find(|record| record.path == "std::database::sql::migrate_up")
+            .expect("std::database::sql::migrate_up is manifest-listed");
+        assert_eq!(
+            sql_migrate.status,
+            crate::manifest::feature_status::Status::Shipped
+        );
     }
 }

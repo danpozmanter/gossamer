@@ -200,7 +200,7 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     FeatureStatus {
         path: "std::database::sql",
         status: Status::Shipped,
-        doc: "Driver-pluggable SQL access (Conn, Tx, Stmt, Rows, Pool, migrate, query::Select). Drivers register at startup via gossamer_runtime::sql::register; no driver ships in the box.",
+        doc: "Driver-pluggable SQL access (Conn, Tx, Stmt, Rows, Pool, migrate_up, query::Select). Host drivers register at startup via gossamer_runtime::sql::register; Gossamer-native drivers use sql::register_native. No driver ships in the box.",
     },
     FeatureStatus {
         path: "std::html::template",

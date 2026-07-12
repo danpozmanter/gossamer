@@ -85,7 +85,7 @@ Names available without any import - the print macros, `min`/`max`/`clamp`, `spa
 | [`std::http::state`](#stdhttpstate) | 2 | Handler-side dependency injection via a typed AppState. |
 | [`std::http::static_files`](#stdhttpstatic_files) | 3 | Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff. |
 | [`std::http::websocket`](#stdhttpwebsocket) | 12 | RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close. |
-| [`std::http_h3`](#stdhttp_h3) | 4 | Experimental HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias yet. |
+| [`std::http_h3`](#stdhttp_h3) | 4 | HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias. |
 | [`std::io`](#stdio) | 10 | Stream-oriented I/O abstractions and process standard streams. |
 | [`std::iter`](#stditer) | 46 | Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc. |
 | [`std::jwt`](#stdjwt) | 10 | RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens. |
@@ -113,12 +113,12 @@ Names available without any import - the print macros, `min`/`max`/`clamp`, `spa
 | [`std::runtime`](#stdruntime) | 5 | Goroutine / scheduler introspection and tuning. |
 | [`std::slog`](#stdslog) | 8 | Structured, levelled logging. |
 | [`std::strconv`](#stdstrconv) | 10 | Conversions between strings and primitive numeric types. |
-| [`std::strings`](#stdstrings) | 40 | Polished `String` operations. |
+| [`std::strings`](#stdstrings) | 40 | String operations. |
 | [`std::sync`](#stdsync) | 10 | Synchronisation primitives beyond channels. |
 | [`std::testing`](#stdtesting) | 5 | Assertions and sub-test harness helpers. |
 | [`std::thread`](#stdthread) | 2 | OS-thread scheduling hints and CPU introspection; user concurrency uses goroutines, not thread spawning. |
 | [`std::time`](#stdtime) | 13 | Wall-clock and monotonic time facilities. |
-| [`std::tls`](#stdtls) | 5 | TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed. |
+| [`std::tls`](#stdtls) | 0 | Rustls-backed TLS support exposed through `http::serve_tls` and `net::TcpStream` TLS upgrades. The configuration constructors are host-runtime internals, not Gossamer callables. |
 | [`std::trace`](#stdtrace) | 8 | W3C trace-context-compatible distributed tracing. Identifier types, request-scoped SpanContext, process-level Tracer, and OTLP JSON export. |
 | [`std::unicode`](#stdunicode) | 37 | Unicode general-category predicates, casing, normalization, and segmentation. |
 | [`std::utf16`](#stdutf16) | 5 | UTF-16 encoding/decoding and surrogate pair helpers. |
@@ -988,7 +988,7 @@ RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping 
 
 ## `std::http_h3`
 
-Experimental HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias yet.
+HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias.
 
 | Item | Kind | Doc |
 |------|------|-----|
@@ -1494,7 +1494,7 @@ Conversions between strings and primitive numeric types.
 
 ## `std::strings`
 
-Polished `String` operations.
+String operations.
 
 | Item | Kind | Doc |
 |------|------|-----|
@@ -1601,8 +1601,7 @@ Wall-clock and monotonic time facilities.
 
 Rustls-backed TLS support exposed through `http::serve_tls` and `net::TcpStream` TLS upgrades. The configuration constructors are host-runtime internals, not Gossamer callables.
 
-| Item | Kind | Doc |
-|------|------|-----|
+*No items exported yet.*
 
 ## `std::trace`
 
@@ -1717,3 +1716,4 @@ Trait-based field validation: implement Validate, collect FieldErrors into Error
 | `Errors` | type | Aggregated FieldError set, indexable by dotted path. |
 | `FieldError` | type | One field-scoped validation failure: dotted path, message, optional code. |
 | `Validate` | trait | Implement on a struct to declare field-level validation rules. |
+

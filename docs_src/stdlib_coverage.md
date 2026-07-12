@@ -50,7 +50,7 @@ Glyphs: ✓ supported · ◑ partial · ✗ missing.
 | `std::math::rand` | ✓ | ✓ | ✓ | Rng (SplitMix64). |
 | `std::testing` | ✓ | ✓ | ✓ | Runner, check, check_eq, check_ok. |
 | `std::runtime` | ✓ | ✓ | ✓ | max_procs, set_max_procs, num_cpus, caller, stack, set_finalizer. |
-| `std::tls` | ✓ | ✓ | ✓ | rustls-backed; ServerConfig, ClientConfig. |
+| `std::tls` | ✓ | ✓ | ✓ | rustls-backed via `http::serve_tls` and `net::TcpStream` TLS upgrades; config constructors are host-runtime internals. |
 | `std::regex` | ✓ | ✓ | ✓ | compile, is_match, find, find_all, captures, replace, split. |
 | `std::compress::gzip` | ✓ | ✓ | ✓ | encode/decode + Level. Wired through builtins, MIR lower, and C ABI. |
 

@@ -39,9 +39,9 @@ know:
   and `max_body_bytes` (default 1 MiB). Tune via `http::Config`
   if your traffic justifies a larger envelope; the defaults
   are deliberately conservative.
-- `std::tls` is wired through `http::Server::bind_and_run_tls`
-  and `http::Client::tls(...)`. mTLS, ALPN, and SNI are
-  exposed. Reverse-proxy termination is no longer required.
+- `std::tls` is wired through `http::serve_tls` and
+  `net::TcpStream` TLS upgrades. TLS configuration constructors
+  are host-runtime internals, not Gossamer callables.
 - `crypto::rand::fill` uses `getrandom` and returns an explicit
   error if the OS RNG is unavailable. Callers must not
   silently discard that error in security-sensitive code.
