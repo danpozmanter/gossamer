@@ -2197,8 +2197,29 @@ mod tests {
         super::super::vec::pack_result(0, resp as i64)
     }
 
-    /// Runs `handle_http_conn` for one accepted connection, returns
-    /// everything the client read until the server closed.
+    /// Blocking adapter for tests that exercise HTTP framing rather than the
+    /// non-blocking netpoller. Keeping those concerns separate prevents a
+    /// parallel scheduler/netpoll test from delaying a framing assertion until
+    /// the connection's 30-second idle deadline.
+    struct BlockingTcpConn(TcpStream);
+
+    impl HttpIo for BlockingTcpConn {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            use std::io::Read;
+
+            self.0.read(buf)
+        }
+
+        fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+            use std::io::Write;
+
+            self.0.write_all(buf)
+        }
+    }
+
+    /// Runs the HTTP framing core for one accepted connection and returns
+    /// everything the client read until the server closed. Non-blocking
+    /// transport behaviour is covered by its dedicated netpoll tests.
     fn roundtrip_raw_bytes(client_bytes: &[u8], fn_addr: usize) -> Vec<u8> {
         use std::io::{Read, Write};
 
@@ -2206,7 +2227,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
-            let mut conn = HttpConn::wrap(stream).expect("wrap");
+            let mut conn = BlockingTcpConn(stream);
             handle_http_conn(&mut conn, 0, fn_addr);
         });
         let mut sock = std::net::TcpStream::connect(addr).unwrap();
