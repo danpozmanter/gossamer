@@ -50,12 +50,13 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_0(fn_addr: usize) {
         );
         spawn_task(Box::new(move || {
             // SAFETY: the caller promises `fn_addr` is the address of
-            // an `extern "C" fn() -> i64` - the SysV-ABI convention
-            // native codegen emits for every Gossamer function. The
-            // typed registry verify above rejects mismatched kinds.
-            type Fn0 = unsafe extern "C" fn() -> i64;
+            // a goroutine entry function emitted by native codegen. `go`
+            // statements discard the callee result, and codegen emits these
+            // entries as `extern "C" fn(...)` returning void. The typed
+            // registry verify above rejects mismatched arities.
+            type Fn0 = unsafe extern "C" fn();
             let f: Fn0 = unsafe { std::mem::transmute(fn_addr) };
-            let _ = unsafe { f() };
+            unsafe { f() };
         }));
     });
 }
@@ -75,9 +76,9 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_1(fn_addr: usize, arg0: i64) {
             super::fn_registry::FnKind::GoSpawnEntry { arity: 1 },
         );
         spawn_task(Box::new(move || {
-            type Fn1 = unsafe extern "C" fn(i64) -> i64;
+            type Fn1 = unsafe extern "C" fn(i64);
             let f: Fn1 = unsafe { std::mem::transmute(fn_addr) };
-            let _ = unsafe { f(arg0) };
+            unsafe { f(arg0) };
         }));
     });
 }
@@ -94,9 +95,9 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_2(fn_addr: usize, arg0: i64, arg1:
             super::fn_registry::FnKind::GoSpawnEntry { arity: 2 },
         );
         spawn_task(Box::new(move || {
-            type Fn2 = unsafe extern "C" fn(i64, i64) -> i64;
+            type Fn2 = unsafe extern "C" fn(i64, i64);
             let f: Fn2 = unsafe { std::mem::transmute(fn_addr) };
-            let _ = unsafe { f(arg0, arg1) };
+            unsafe { f(arg0, arg1) };
         }));
     });
 }
@@ -113,9 +114,9 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_3(fn_addr: usize, arg0: i64, arg1:
             super::fn_registry::FnKind::GoSpawnEntry { arity: 3 },
         );
         spawn_task(Box::new(move || {
-            type Fn3 = unsafe extern "C" fn(i64, i64, i64) -> i64;
+            type Fn3 = unsafe extern "C" fn(i64, i64, i64);
             let f: Fn3 = unsafe { std::mem::transmute(fn_addr) };
-            let _ = unsafe { f(arg0, arg1, arg2) };
+            unsafe { f(arg0, arg1, arg2) };
         }));
     });
 }
@@ -138,9 +139,9 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_4(
             super::fn_registry::FnKind::GoSpawnEntry { arity: 4 },
         );
         spawn_task(Box::new(move || {
-            type Fn4 = unsafe extern "C" fn(i64, i64, i64, i64) -> i64;
+            type Fn4 = unsafe extern "C" fn(i64, i64, i64, i64);
             let f: Fn4 = unsafe { std::mem::transmute(fn_addr) };
-            let _ = unsafe { f(arg0, arg1, arg2, arg3) };
+            unsafe { f(arg0, arg1, arg2, arg3) };
         }));
     });
 }
@@ -164,9 +165,9 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_5(
             super::fn_registry::FnKind::GoSpawnEntry { arity: 5 },
         );
         spawn_task(Box::new(move || {
-            type Fn5 = unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64;
+            type Fn5 = unsafe extern "C" fn(i64, i64, i64, i64, i64);
             let f: Fn5 = unsafe { std::mem::transmute(fn_addr) };
-            let _ = unsafe { f(arg0, arg1, arg2, arg3, arg4) };
+            unsafe { f(arg0, arg1, arg2, arg3, arg4) };
         }));
     });
 }
@@ -191,9 +192,9 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_6(
             super::fn_registry::FnKind::GoSpawnEntry { arity: 6 },
         );
         spawn_task(Box::new(move || {
-            type Fn6 = unsafe extern "C" fn(i64, i64, i64, i64, i64, i64) -> i64;
+            type Fn6 = unsafe extern "C" fn(i64, i64, i64, i64, i64, i64);
             let f: Fn6 = unsafe { std::mem::transmute(fn_addr) };
-            let _ = unsafe { f(arg0, arg1, arg2, arg3, arg4, arg5) };
+            unsafe { f(arg0, arg1, arg2, arg3, arg4, arg5) };
         }));
     });
 }
