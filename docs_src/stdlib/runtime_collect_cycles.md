@@ -1,6 +1,6 @@
 # `std::runtime::collect_cycles`
 
-Status: experimental
+Status: shipped
 
 Requests collection of unreachable reference cycles.
 

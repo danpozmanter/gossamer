@@ -1,6 +1,6 @@
 # `std::html`
 
-Status: experimental
+Status: shipped
 
 HTML text escaping and unescaping.
 

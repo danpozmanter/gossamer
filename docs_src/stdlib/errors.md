@@ -1,6 +1,6 @@
 # `std::errors`
 
-Status: experimental
+Status: shipped
 
 Error construction, wrapping, and chain traversal.
 

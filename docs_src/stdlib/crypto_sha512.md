@@ -1,6 +1,6 @@
 # `std::crypto::sha512`
 
-Status: experimental
+Status: shipped
 
 SHA-512 hashing.
 

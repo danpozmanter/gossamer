@@ -1,6 +1,6 @@
 # `std::http::query`
 
-Status: experimental
+Status: shipped
 
 Typed wrapper over URL query strings.
 

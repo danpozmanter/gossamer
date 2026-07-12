@@ -1,8 +1,8 @@
 # `std::strings`
 
-Status: experimental
+Status: shipped
 
-Polished `String` operations.
+String operations.
 
 ## Public items
 

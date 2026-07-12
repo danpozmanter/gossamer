@@ -1,6 +1,6 @@
 # `std::fs`
 
-Status: experimental
+Status: shipped
 
 Filesystem reading, writing, and traversal (Rust std::fs shape).
 

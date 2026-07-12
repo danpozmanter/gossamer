@@ -1,6 +1,6 @@
 # `std::strconv`
 
-Status: experimental
+Status: shipped
 
 Conversions between strings and primitive numeric types.
 

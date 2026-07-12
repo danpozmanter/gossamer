@@ -1,6 +1,6 @@
 # `std::encoding::json`
 
-Status: experimental
+Status: shipped
 
 JSON parser, emitter, and derive support.
 

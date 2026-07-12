@@ -1,6 +1,6 @@
 # `std::jwt`
 
-Status: experimental
+Status: shipped
 
 RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens.
 

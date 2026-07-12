@@ -1,6 +1,6 @@
 # `std::crypto::kdf`
 
-Status: experimental
+Status: shipped
 
 Password-based key-derivation functions.
 

@@ -1,6 +1,6 @@
 # `std::net::url`
 
-Status: experimental
+Status: shipped
 
 Network URL parsing and component escaping; never use filesystem-path rules.
 

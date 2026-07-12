@@ -3191,6 +3191,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "40k cross-thread contention rounds are covered by native/TSan; Miri scheduling is prohibitively slow"
+    )]
     fn arena_overflow_recycler_does_not_duplicate_a_slab_under_contention() {
         const SLOTS: usize = 8;
         const WORKERS: usize = 4;
@@ -4079,6 +4083,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "million-node stack-safety stress is covered natively; Miri allocator smoke tests remain enabled"
+    )]
     fn deep_list_release_is_iterative() {
         // Struct list node: one child pointer at payload word 0.
         //   kind=STRUCT, V=1, [disc0 cc1 off0]
@@ -4086,14 +4094,7 @@ mod tests {
 
         let _g = count_guard();
         let base = rc_live_count();
-        // Miri interprets every node alloc/release, so the 1M-node
-        // native stress would take hours; a shallower list still
-        // exercises the iterative (non-recursive) release path there.
-        let depth = if cfg!(miri) {
-            10_000usize
-        } else {
-            1_000_000usize
-        };
+        let depth = 1_000_000usize;
         unsafe {
             let mut head = std::ptr::null_mut::<u8>();
             for _ in 0..depth {

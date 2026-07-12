@@ -1,6 +1,6 @@
 # `std::os::signal`
 
-Status: experimental
+Status: shipped
 
 POSIX-style signal subscription (Go's os/signal shape).
 

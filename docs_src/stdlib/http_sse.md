@@ -1,6 +1,6 @@
 # `std::http::sse`
 
-Status: experimental
+Status: shipped
 
 Server-Sent Events (text/event-stream) emitter with heartbeat ticks and retry hint.
 

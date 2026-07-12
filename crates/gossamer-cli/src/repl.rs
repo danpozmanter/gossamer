@@ -412,9 +412,7 @@ fn push_module_items(out: &mut String, module: &StdModule) {
 }
 
 fn push_module_help(out: &mut String, module: &StdModule) {
-    let status = gossamer_std::manifest::feature_status::lookup(module.path)
-        .map_or("experimental", |entry| entry.status.tag());
-    out.push_str(&format!("{} ({status})\n", module.path));
+    out.push_str(&format!("{}\n", module.path));
     out.push_str(&format!("  {}\n", module.summary));
     out.push_str(&format!("  items: {}\n\n", module.items.len()));
 }
@@ -438,12 +436,7 @@ fn push_feature_help(out: &mut String, feature: gossamer_std::manifest::FeatureS
 }
 
 fn push_module_dir_line(out: &mut String, module: &StdModule) {
-    let status = gossamer_std::manifest::feature_status::lookup(module.path)
-        .map_or("experimental", |entry| entry.status.tag());
-    out.push_str(&format!(
-        "{:<32} module  {:<12} {}\n",
-        module.path, status, module.summary
-    ));
+    out.push_str(&format!("{:<32} module  {}\n", module.path, module.summary));
 }
 
 fn push_item_dir(out: &mut String, module: &StdModule, item: &StdItem) {

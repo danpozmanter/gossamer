@@ -1,6 +1,6 @@
 # `std::collections::ordered_set`
 
-Status: experimental
+Status: shipped
 
 Sorted set of i64 with binary-search lookups. Re-bind shape on every mutator.
 

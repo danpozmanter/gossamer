@@ -74,7 +74,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::http::state`](http_state.md) | Handler-side dependency injection via a typed AppState. |
 | [`std::http::static_files`](http_static_files.md) | Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff. |
 | [`std::http::websocket`](http_websocket.md) | RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close. |
-| [`std::http_h3`](http_h3.md) | Experimental HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias yet. |
+| [`std::http_h3`](http_h3.md) | HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias. |
 | [`std::io`](io.md) | Stream-oriented I/O abstractions and process standard streams. |
 | [`std::iter`](iter.md) | Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc. |
 | [`std::jwt`](jwt.md) | RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens. |
@@ -102,7 +102,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::runtime`](runtime.md) | Goroutine / scheduler introspection and tuning. |
 | [`std::slog`](slog.md) | Structured, levelled logging. |
 | [`std::strconv`](strconv.md) | Conversions between strings and primitive numeric types. |
-| [`std::strings`](strings.md) | Polished `String` operations. |
+| [`std::strings`](strings.md) | String operations. |
 | [`std::sync`](sync.md) | Synchronisation primitives beyond channels. |
 | [`std::testing`](testing.md) | Assertions and sub-test harness helpers. |
 | [`std::thread`](thread.md) | OS-thread scheduling hints and CPU introspection; user concurrency uses goroutines, not thread spawning. |

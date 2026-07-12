@@ -1,6 +1,6 @@
 # `std::http::cookie`
 
-Status: experimental
+Status: shipped
 
 RFC 6265 cookie parser and Set-Cookie builder.
 

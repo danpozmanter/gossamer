@@ -1,6 +1,6 @@
 # `std::net::netip`
 
-Status: experimental
+Status: shipped
 
 Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape).
 

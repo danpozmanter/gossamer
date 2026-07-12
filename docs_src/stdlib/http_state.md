@@ -1,6 +1,6 @@
 # `std::http::state`
 
-Status: experimental
+Status: shipped
 
 Handler-side dependency injection via a typed AppState.
 

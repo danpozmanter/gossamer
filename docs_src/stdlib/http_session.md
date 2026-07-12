@@ -1,6 +1,6 @@
 # `std::http::session`
 
-Status: experimental
+Status: shipped
 
 Signed-cookie session store with pluggable backend trait.
 

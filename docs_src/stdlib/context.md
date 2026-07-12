@@ -1,6 +1,6 @@
 # `std::context`
 
-Status: experimental
+Status: shipped
 
 Request-scoped cancellation, deadlines, and timeouts.
 

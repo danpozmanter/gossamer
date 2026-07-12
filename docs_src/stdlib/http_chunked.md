@@ -1,6 +1,6 @@
 # `std::http::chunked`
 
-Status: experimental
+Status: shipped
 
 RFC 7230 §4.1 chunked transfer-encoding reader and writer.
 

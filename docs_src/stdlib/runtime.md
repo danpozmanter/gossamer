@@ -1,6 +1,6 @@
 # `std::runtime`
 
-Status: experimental
+Status: shipped
 
 Goroutine / scheduler introspection and tuning.
 

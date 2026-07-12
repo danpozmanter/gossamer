@@ -1,6 +1,6 @@
 # `std::thread`
 
-Status: experimental
+Status: shipped
 
 OS-thread scheduling hints and CPU introspection; user concurrency uses goroutines, not thread spawning.
 

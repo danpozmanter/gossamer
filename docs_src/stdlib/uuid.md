@@ -1,6 +1,6 @@
 # `std::uuid`
 
-Status: experimental
+Status: shipped
 
 UUID v4 (random) and v7 (timestamp-ordered) generation, parse, and normalize.
 

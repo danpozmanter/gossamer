@@ -1,6 +1,6 @@
 # `std::http::csrf`
 
-Status: experimental
+Status: shipped
 
 Double-submit-cookie CSRF protection with Origin / Referer allowlist.
 

@@ -1,6 +1,6 @@
 # `std::encoding::yaml`
 
-Status: experimental
+Status: shipped
 
 YAML 1.2 parser/emitter (serde_norway-backed).
 

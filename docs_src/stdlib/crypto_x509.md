@@ -1,6 +1,6 @@
 # `std::crypto::x509`
 
-Status: experimental
+Status: shipped
 
 X.509 certificate parsing.
 

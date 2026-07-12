@@ -1,6 +1,6 @@
 # `std::lifecycle`
 
-Status: experimental
+Status: shipped
 
 Graceful-shutdown coordinator with signal handling and sd_notify support.
 

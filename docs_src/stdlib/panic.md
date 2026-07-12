@@ -1,6 +1,6 @@
 # `std::panic`
 
-Status: experimental
+Status: shipped
 
 Panic / `catch_unwind` integration.
 

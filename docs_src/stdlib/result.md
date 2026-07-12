@@ -1,6 +1,6 @@
 # `std::result`
 
-Status: experimental
+Status: shipped
 
 Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc.
 

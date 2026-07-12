@@ -1,6 +1,6 @@
 # `std::encoding::ascii85`
 
-Status: experimental
+Status: shipped
 
 ASCII85 / base85 encode / decode.
 

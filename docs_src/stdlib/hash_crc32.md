@@ -1,6 +1,6 @@
 # `std::hash::crc32`
 
-Status: experimental
+Status: shipped
 
 CRC-32 (IEEE) checksums.
 

@@ -1,6 +1,6 @@
 # `std::crypto::aead`
 
-Status: experimental
+Status: shipped
 
 Authenticated encryption with associated data.
 

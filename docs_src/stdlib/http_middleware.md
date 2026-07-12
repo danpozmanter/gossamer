@@ -1,6 +1,6 @@
 # `std::http::middleware`
 
-Status: experimental
+Status: shipped
 
 Composable middleware: logger, recoverer, request_id, cors, basic_auth, compress_gzip.
 

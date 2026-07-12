@@ -1,6 +1,6 @@
 # `std::path`
 
-Status: experimental
+Status: shipped
 
 Lexical filesystem-path operations; platform path grammar, no URL parsing or I/O.
 

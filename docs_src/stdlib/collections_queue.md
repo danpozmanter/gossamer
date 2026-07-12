@@ -1,6 +1,6 @@
 # `std::collections::queue`
 
-Status: experimental
+Status: shipped
 
 FIFO queue over Vec<i64>. Re-bind shape: `let q = queue::push(q, v)`.
 

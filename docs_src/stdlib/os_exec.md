@@ -1,6 +1,6 @@
 # `std::os::exec`
 
-Status: experimental
+Status: shipped
 
 Deprecated compatibility facade for child processes; new code uses std::process.
 

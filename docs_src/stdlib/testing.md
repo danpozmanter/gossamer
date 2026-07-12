@@ -1,6 +1,6 @@
 # `std::testing`
 
-Status: experimental
+Status: shipped
 
 Assertions and sub-test harness helpers.
 

@@ -1,8 +1,8 @@
 # `std::http_h3`
 
-Status: experimental
+Status: shipped
 
-Experimental HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias yet.
+HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias.
 
 ## Public items
 

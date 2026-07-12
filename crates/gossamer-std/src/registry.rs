@@ -106,10 +106,10 @@ pub fn item(qualified: &str) -> Option<(&'static StdModule, &'static StdItem)> {
 pub fn item_records() -> Vec<StdItemRecord> {
     let mut out = Vec::new();
     for module in modules() {
-        let status = crate::manifest::feature_status::lookup(module.path).map_or(
-            crate::manifest::feature_status::Status::Experimental,
-            |entry| entry.status,
-        );
+        let status = crate::manifest::feature_status::lookup(module.path)
+            .map_or(crate::manifest::feature_status::Status::Shipped, |entry| {
+                entry.status
+            });
         for item in module.items {
             out.push(StdItemRecord {
                 path: format!("{}::{}", module.path, item.name),
@@ -154,9 +154,6 @@ mod tests {
             .iter()
             .find(|record| record.path == "std::tls::ServerConfig")
             .expect("std::tls::ServerConfig is manifest-listed");
-        assert_eq!(
-            tls.status,
-            crate::manifest::feature_status::Status::Experimental
-        );
+        assert_eq!(tls.status, crate::manifest::feature_status::Status::Shipped);
     }
 }

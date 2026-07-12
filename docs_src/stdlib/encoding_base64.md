@@ -1,6 +1,6 @@
 # `std::encoding::base64`
 
-Status: experimental
+Status: shipped
 
 RFC 4648 base64 encode/decode.
 

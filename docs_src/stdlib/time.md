@@ -1,6 +1,6 @@
 # `std::time`
 
-Status: experimental
+Status: shipped
 
 Wall-clock and monotonic time facilities.
 

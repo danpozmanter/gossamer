@@ -1,6 +1,6 @@
 # `std::metrics`
 
-Status: experimental
+Status: shipped
 
 Prometheus-compatible primitives (Counter, Gauge, Histogram) and a Registry rendering the standard text-exposition format.
 

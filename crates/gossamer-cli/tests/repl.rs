@@ -312,6 +312,11 @@ fn repl_meta_ls_lists_modules() {
         "expected module rows; stdout: {}",
         out.stdout
     );
+    assert!(
+        !out.stdout.contains("experimental"),
+        "%ls must not render feature status for modules; stdout: {}",
+        out.stdout
+    );
 }
 
 #[test]

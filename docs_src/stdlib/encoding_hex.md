@@ -1,6 +1,6 @@
 # `std::encoding::hex`
 
-Status: experimental
+Status: shipped
 
 Lowercase hex encode/decode.
 

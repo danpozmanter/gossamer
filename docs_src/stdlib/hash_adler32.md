@@ -1,6 +1,6 @@
 # `std::hash::adler32`
 
-Status: experimental
+Status: shipped
 
 Adler-32 checksums.
 

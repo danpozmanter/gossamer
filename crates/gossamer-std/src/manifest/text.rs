@@ -257,7 +257,7 @@ pub const FMT: StdModule = StdModule {
 
 pub const STRINGS: StdModule = StdModule {
     path: "std::strings",
-    summary: "Polished `String` operations.",
+    summary: "String operations.",
     items: &[
         StdItem {
             name: "split",

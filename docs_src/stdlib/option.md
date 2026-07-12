@@ -1,6 +1,6 @@
 # `std::option`
 
-Status: experimental
+Status: shipped
 
 Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc.
 

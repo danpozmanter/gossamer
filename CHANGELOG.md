@@ -2,9 +2,9 @@
 
 ## 0.27.0 - Stabilization, optimization
 
-- Strengthened release truth: stdlib status is evidence-backed, generated docs
-  and `gos feature-status` expose it, and retained fuzz findings replay as
-  named regressions.
+- Strengthened release truth: stdlib modules are shipped catalog surface,
+  generated docs and `gos feature-status` expose their status, and retained
+  fuzz findings replay as named regressions.
 - Hardened bytecode and VM execution with release-time validation, definite
   register initialization, explicit call frames, controlled RC exhaustion,
   and session-owned type/shape descriptor lifetimes.

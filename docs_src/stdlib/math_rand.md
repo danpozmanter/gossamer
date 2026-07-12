@@ -1,6 +1,6 @@
 # `std::math::rand`
 
-Status: experimental
+Status: shipped
 
 Deterministic pseudo-random number generation.
 

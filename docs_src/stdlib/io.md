@@ -1,6 +1,6 @@
 # `std::io`
 
-Status: experimental
+Status: shipped
 
 Stream-oriented I/O abstractions and process standard streams.
 

@@ -1,6 +1,6 @@
 # `std::utf16`
 
-Status: experimental
+Status: shipped
 
 UTF-16 encoding/decoding and surrogate pair helpers.
 

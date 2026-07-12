@@ -1,6 +1,6 @@
 # `std::process`
 
-Status: experimental
+Status: shipped
 
 Canonical process control and child-process API; std::os::exec is compatibility-only.
 

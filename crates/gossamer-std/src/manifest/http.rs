@@ -828,7 +828,7 @@ pub const JWT: StdModule = StdModule {
 
 pub const HTTP_H3: StdModule = StdModule {
     path: "std::http_h3",
-    summary: "Experimental HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias yet.",
+    summary: "HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias.",
     items: &[
         StdItem {
             name: "Handler",

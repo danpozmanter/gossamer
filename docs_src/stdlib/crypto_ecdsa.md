@@ -1,6 +1,6 @@
 # `std::crypto::ecdsa`
 
-Status: experimental
+Status: shipped
 
 ECDSA over the NIST P-256 curve.
 

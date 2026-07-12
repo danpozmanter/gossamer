@@ -1,6 +1,6 @@
 # `std::hash::fnv`
 
-Status: experimental
+Status: shipped
 
 FNV-1a non-cryptographic hash (32-bit, 64-bit).
 
