@@ -86,25 +86,19 @@ jobs:
           GOS=./target/release/gos
           mkdir -p .perf
 
-          # measure LABEL ARGS... records the fastest elapsed time and the
-          # highest peak RSS across representative warm samples as
+          # measure_process LABEL ARGS... records a smoke-test elapsed time and
+          # the highest peak RSS across representative warm samples as
           # "LABEL <minimum-nanoseconds> <max-rss-kib>". Time isolates
-          # steady-state execution; the RSS high-water catches allocator and
-          # retention regressions that a startup-only timing gate misses.
+          # catastrophic startup regressions; the RSS high-water catches
+          # allocator and retention regressions that a timing gate misses.
           #
           # One discarded warmup run pages in the binary and primes the OS
-          # cache; the fastest of PERF_RUNS timed runs is then recorded. The
-          # minimum is the run least perturbed by scheduler preemption, CPU
-          # frequency scaling, and cache misses, so it isolates the program's
-          # cost from one-off machine noise. A genuine regression slows every
-          # run including the fastest, so the minimum still trips the gate;
-          # only transient blips are filtered out. These programs finish in a
-          # few milliseconds, dominated by process startup - a single cold
-          # sample of one is mostly noise. The baseline keeps the per-benchmark
-          # minimum across main pushes (see "Update baseline on main"), so
-          # recording the minimum here compares like with like.
+          # cache; the fastest process sample is recorded because these smoke
+          # programs are intentionally tiny and process launch noise dominates.
+          # Real VM throughput is measured below with `gos bench`, which
+          # calibrates inside the interpreter and reports ns/op.
           PERF_RUNS="${PERF_RUNS:-7}"
-          measure() {
+          measure_process() {
             local label=$1; shift
             "$@" >/dev/null 2>&1
             local i start end ns rss best= max_rss= rss_file
@@ -129,14 +123,46 @@ jobs:
 
           rm -f .perf/current.txt
 
+          # Calibrated VM throughput. Repeat the `gos bench` harness and record
+          # the median ns/op per label so one lucky or unlucky hosted-runner
+          # sample does not define the gate.
+          BENCH_RUNS="${BENCH_RUNS:-5}"
+          for ((i = 0; i < BENCH_RUNS; i++)); do
+            "$GOS" bench benchmarks/perf --parallel 1 | tee ".perf/gos-bench-$i.txt"
+          done
+          python3 - .perf/gos-bench-*.txt <<'PY' | tee -a .perf/current.txt
+          import re
+          import statistics
+          import sys
+          from collections import defaultdict
+
+          records = defaultdict(list)
+          line_re = re.compile(r"^(?P<label>\S+)\s+\.\.\.\s+(?P<ns>[0-9]+)\s+ns/op$")
+          for path in sys.argv[1:]:
+              for line in open(path):
+                  m = line_re.match(line.strip())
+                  if m:
+                      records[m.group("label")].append(int(m.group("ns")))
+
+          if not records:
+              raise SystemExit("gos bench produced no parseable ns/op records")
+
+          for label in sorted(records):
+              samples = records[label]
+              if len(samples) < 3:
+                  raise SystemExit(f"{label}: expected at least 3 samples, got {len(samples)}")
+              safe_label = "bench:" + label.replace("::", "/")
+              print(f"{safe_label} {int(statistics.median(samples))}")
+          PY
+
           # Arithmetic-heavy: factorial via recursion
-          [[ -f examples/factorial.gos ]] && measure factorial "$GOS" run examples/factorial.gos
+          [[ -f examples/factorial.gos ]] && measure_process factorial "$GOS" run examples/factorial.gos
 
           # String + I/O: hello world (baseline for interpreter startup)
-          [[ -f examples/hello_world.gos ]] && measure hello_world "$GOS" run examples/hello_world.gos
+          [[ -f examples/hello_world.gos ]] && measure_process hello_world "$GOS" run examples/hello_world.gos
 
           # Struct + field arithmetic: generic struct instantiation
-          [[ -f examples/generic_struct.gos ]] && measure generic_struct "$GOS" run examples/generic_struct.gos
+          [[ -f examples/generic_struct.gos ]] && measure_process generic_struct "$GOS" run examples/generic_struct.gos
 
       - name: Compare against baseline
         shell: bash
@@ -150,7 +176,7 @@ jobs:
             exit 0
           fi
 
-          # Hard wall-clock cap: 30 s per benchmark.
+          # Hard cap for process smoke tests and any absurd calibrated ns/op.
           awk '{
             if ($2 > 30000000000) {
               print "PERF ABORT: " $1 " took " int($2/1000000) "ms (> 30 s limit)"
@@ -164,9 +190,12 @@ jobs:
             exit 0
           fi
 
-          # Time and peak-RSS regression check. Existing two-column
-          # baselines remain readable; RSS begins gating once a current
-          # baseline entry has been written on main.
+          # Time and peak-RSS regression check. `bench:` lines are calibrated
+          # ns/op from `gos bench` and gate VM throughput tightly. The legacy
+          # process-smoke lines are tiny end-to-end programs, so they need a
+          # larger absolute wall-clock delta before the ratio matters. Existing
+          # two-column baselines remain readable; RSS begins gating once a
+          # three-column baseline entry has been written on main.
           python3 - "$BASELINE" "$CURRENT" <<'PY'
           import sys, collections
 
@@ -183,19 +212,31 @@ jobs:
           regressions = []
           for name, (ns, rss) in curr.items():
               if name not in base:
+                  print(f"  {name}: no baseline yet [NEW]")
                   continue
               base_ns, base_rss = base[name]
               ratio = ns / base_ns
-              ms_curr = ns // 1_000_000
-              ms_base = base_ns // 1_000_000
+              time_delta = ns - base_ns
               rss_ratio = rss / base_rss if rss is not None and base_rss else None
-              status = "OK" if ratio < 1.5 and (rss_ratio is None or rss_ratio < 1.5) else "REGRESSION"
+              if name.startswith("bench:"):
+                  limit_ratio = 1.25
+                  min_delta = max(500, int(base_ns * 0.05))
+                  value_text = f"{ns} ns/op (baseline {base_ns} ns/op, {ratio:.2f}x)"
+              else:
+                  limit_ratio = 1.5
+                  min_delta = 10_000_000
+                  value_text = f"{ns // 1_000_000}ms (baseline {base_ns // 1_000_000}ms, {ratio:.2f}x)"
+              time_regressed = ratio >= limit_ratio and time_delta >= min_delta
+              rss_regressed = rss_ratio is not None and rss_ratio >= 1.5
+              status = "REGRESSION" if time_regressed or rss_regressed else "OK"
               rss_text = "RSS baseline pending" if rss_ratio is None else f"RSS {rss}KiB (baseline {base_rss}KiB, {rss_ratio:.2f}x)"
-              print(f"  {name}: {ms_curr}ms (baseline {ms_base}ms, {ratio:.2f}x); {rss_text} [{status}]")
-              if ratio >= 1.5 or (rss_ratio is not None and rss_ratio >= 1.5):
+              print(f"  {name}: {value_text}; {rss_text} [{status}]")
+              if time_regressed or rss_regressed:
                   regressions.append(name)
           if regressions:
-              print(f"\nPerf regressions (>=1.5x time or RSS baseline): {', '.join(regressions)}")
+              print("\nPerf regressions:")
+              for name in regressions:
+                  print(f"  {name}")
               sys.exit(1)
           PY
 
@@ -203,38 +244,12 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         shell: bash
         run: |
-          # Merge current results into the baseline: keep the minimum
-          # (fastest observed) per benchmark so a one-off slow run on
-          # main doesn't permanently raise the bar.
+          # The cache restore key gives PRs the latest accepted main baseline.
+          # Keep that baseline representative of current main, not the fastest
+          # run ever seen on any hosted runner.
           CURRENT=.perf/current.txt
           BASELINE=.perf/baseline.txt
-          python3 - "$BASELINE" "$CURRENT" <<'PY'
-          import sys
-
-          def load(path):
-              d = {}
-              try:
-                  for line in open(path):
-                      parts = line.split()
-                      if len(parts) >= 2:
-                          d[parts[0]] = (int(parts[1]), int(parts[2]) if len(parts) >= 3 else None)
-              except FileNotFoundError:
-                  pass
-              return d
-
-          base = load(sys.argv[1])
-          curr = load(sys.argv[2])
-          merged = {**base, **curr}
-          # Take the fastest time and highest observed RSS for matching
-          # entries. A missing legacy RSS is upgraded from the current run.
-          for k in set(base) & set(curr):
-              base_ns, base_rss = base[k]
-              curr_ns, curr_rss = curr[k]
-              merged[k] = (min(base_ns, curr_ns), max(v for v in (base_rss, curr_rss) if v is not None))
-          with open(sys.argv[1], 'w') as f:
-              for k, (ns, rss) in sorted(merged.items()):
-                  f.write(f"{k} {ns}" + (f" {rss}" if rss is not None else "") + "\n")
-          PY
+          cp "$CURRENT" "$BASELINE"
 
       - name: Save updated baseline
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'

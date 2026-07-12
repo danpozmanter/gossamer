@@ -1,0 +1,68 @@
+struct Pair {
+    left: i64,
+    right: i64,
+}
+
+fn arithmetic_work(n: i64) -> i64 {
+    let mut acc = 17
+    for i in 0..n {
+        acc = (acc * 31 + i * 7) % 1_000_003
+    }
+    acc
+}
+
+fn vec_work(n: i64) -> i64 {
+    let mut xs: [i64] = []
+    for i in 0..n {
+        xs.push((i * 13 + 5) % 97)
+    }
+
+    let mut sum = 0
+    for i in 0..xs.len() {
+        sum += xs[i] * (i as i64 + 1)
+    }
+    sum
+}
+
+fn struct_work(n: i64) -> i64 {
+    let mut pair = Pair { left: 1, right: 2 }
+    let mut acc = 0
+    for i in 0..n {
+        pair = Pair {
+            left: pair.right + i,
+            right: pair.left + pair.right,
+        }
+        acc += pair.left - pair.right
+    }
+    acc
+}
+
+fn string_work(n: i64) -> i64 {
+    let mut out = String::new()
+    for i in 0..n {
+        out.push_str(&format!("{}:", i % 17))
+    }
+    out.len() as i64
+}
+
+#[bench]
+fn bench_arithmetic_loop() {
+    let _ = arithmetic_work(2_000)
+}
+
+#[bench]
+fn bench_vec_growth_scan() {
+    let _ = vec_work(500)
+}
+
+#[bench]
+fn bench_struct_fields() {
+    let _ = struct_work(2_000)
+}
+
+#[bench]
+fn bench_string_format() {
+    let _ = string_work(200)
+}
+
+fn main() { }
