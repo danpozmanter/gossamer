@@ -31,7 +31,12 @@ struct GosJitGuard {
 
 impl GosJitGuard {
     fn new() -> Self {
-        let lock = JIT_ENV_LOCK.lock().expect("JIT environment lock poisoned");
+        // A failing JIT assertion must not turn every later test into an
+        // unrelated lock-poison failure. The prior guard restores its env
+        // changes during unwinding, so recovering the mutex is safe here.
+        let lock = JIT_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let previous = std::env::var_os("GOS_JIT");
         // SAFETY: `lock` serializes all JIT environment mutations in this
         // integration-test process, and `Drop` restores the prior value.

@@ -1559,10 +1559,12 @@ dependencies = [
  "gossamer-types",
  "gossamer-ws",
  "indexmap",
+ "libc",
  "parking_lot",
  "rustc-hash",
  "smallvec",
  "thiserror",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

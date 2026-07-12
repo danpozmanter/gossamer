@@ -35,6 +35,17 @@ thiserror = { workspace = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 gossamer-codegen-cranelift = { workspace = true }
 
+# The JIT admission policy samples the process RSS before compiling native
+# code. Linux reads procfs; macOS and Windows need their platform APIs.
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+] }
+
 [features]
 default = []
 profile = []

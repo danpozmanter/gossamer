@@ -1096,7 +1096,44 @@ fn current_process_rss_bytes() -> Option<u64> {
     None
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+fn current_process_rss_bytes() -> Option<u64> {
+    // macOS reports `ru_maxrss` in bytes (unlike Linux's KiB convention).
+    // It is a high-water mark, which is conservative for a JIT admission cap:
+    // a process that has already exceeded the cap must not start another
+    // native compilation merely because a few pages were later released.
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+    // SAFETY: `usage` points to valid writable storage for the duration of
+    // the call, and RUSAGE_SELF requests statistics for this process only.
+    if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    // SAFETY: a zero return from `getrusage` initializes the complete rusage.
+    let rss = unsafe { usage.assume_init() }.ru_maxrss;
+    u64::try_from(rss).ok()
+}
+
+#[cfg(windows)]
+fn current_process_rss_bytes() -> Option<u64> {
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    let mut counters = PROCESS_MEMORY_COUNTERS {
+        cb: u32::try_from(std::mem::size_of::<PROCESS_MEMORY_COUNTERS>()).ok()?,
+        ..Default::default()
+    };
+    // SAFETY: `counters` is a valid PROCESS_MEMORY_COUNTERS buffer whose
+    // `cb` advertises its exact size; GetCurrentProcess returns a valid
+    // pseudo-handle for the current process.
+    if unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) } == 0 {
+        return None;
+    }
+    u64::try_from(counters.WorkingSetSize).ok()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn current_process_rss_bytes() -> Option<u64> {
     None
 }

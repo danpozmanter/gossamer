@@ -4,8 +4,24 @@ Cargo.lock
 
 # Crashes / leaks libFuzzer reports - produced ad-hoc by `cargo fuzz
 # run` and reduced into the seed corpus with a descriptive name
-# before being committed.
-artifacts/
+# before being committed. Keep the unbounded output ignored, but retain
+# the small, named reproductions compiled into regression tests below.
+artifacts/*
+!artifacts/lex/
+artifacts/lex/*
+!artifacts/lex/slow-unit-98933ced9c46a1b83be6b11010757e1d749042ed
+!artifacts/lex/slow-unit-9544eea0e361237c2e1c66926039c4e00540c090
+!artifacts/lex/slow-unit-3b4f9c4a30cacc63bab2fe0cd2f84f6372393793
+!artifacts/mir_lower/
+artifacts/mir_lower/*
+!artifacts/mir_lower/oom-73482b7de2d0447f96f167d9ecf35dabf9628704
+!artifacts/mir_lower/oom-da39a3ee5e6b4b0d3255bfef95601890afd80709
+!artifacts/parse/
+artifacts/parse/*
+!artifacts/parse/oom-97f06d27482345e26b63de65f5dc42de1cfc4a1c
+!artifacts/resolve/
+artifacts/resolve/*
+!artifacts/resolve/oom-14d3e69bb91be48852f7693451d6081e1ef06af7
 
 # libFuzzer's engine-grown corpus. Each input it discovers lands in
 # `corpus/<target>/<40-hex-char-sha1>` - the engine regenerates
