@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.27.1 - %ls REPL command sorting
+- `%ls` sorted alphabetically.
+
 ## 0.27.0 - Stabilization, optimization
 
 - Strengthened release truth: stdlib modules are shipped catalog surface,

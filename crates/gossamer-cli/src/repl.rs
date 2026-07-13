@@ -368,16 +368,19 @@ fn render_help_matches(pattern: &Regex) -> String {
 }
 
 fn render_dir_matches(pattern: &Regex) -> String {
-    let mut out = String::new();
+    let mut lines = Vec::new();
     for module in gossamer_std::registry::modules() {
         if module_matches_regex(pattern, module) {
-            push_module_dir_line(&mut out, module);
+            let mut line = String::new();
+            push_module_dir_line(&mut line, module);
+            lines.push(line);
         }
     }
-    if out.is_empty() {
+    if lines.is_empty() {
         "no stdlib modules match".to_string()
     } else {
-        out.trim_end().to_string()
+        lines.sort_unstable();
+        lines.concat().trim_end().to_string()
     }
 }
 
@@ -402,7 +405,9 @@ fn render_module_dir(modules: &[StdModule]) -> String {
             }
         }
     }
-    out.trim_end().to_string()
+    let mut lines = out.lines().collect::<Vec<_>>();
+    lines.sort_unstable();
+    lines.join("\n")
 }
 
 fn push_module_items(out: &mut String, module: &StdModule) {
