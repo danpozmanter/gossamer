@@ -1836,12 +1836,12 @@
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>replace</code></a></td>
-<td><code>fn replace(text: String, from: String, to: String) -&gt; String</code></td>
+<td><code>fn replace(text: String, from: String | char, to: String | char) -&gt; String</code></td>
 <td>Replaces every occurrence of <code>from</code> with <code>to</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>replacen</code></a></td>
-<td><code>fn replacen(text: String, from: String, to: String, n: i64) -&gt; String</code></td>
+<td><code>fn replacen(text: String, from: String | char, to: String | char, n: i64) -&gt; String</code></td>
 <td>Replaces the first n occurrences of a substring.</td>
 </tr>
 <tr>
@@ -1856,7 +1856,7 @@
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>rsplit_once</code></a></td>
-<td><code>fn rsplit_once(text: String, sep: String) -&gt; Option&lt;(String, String)&gt;</code></td>
+<td><code>fn rsplit_once(text: String, sep: String | char) -&gt; Option&lt;(String, String)&gt;</code></td>
 <td>Splits on the last occurrence of <code>sep</code>; returns Option&lt;(String, String)&gt;.</td>
 </tr>
 <tr>
@@ -1866,12 +1866,12 @@
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>split</code></a></td>
-<td><code>fn split(text: String, sep: String) -&gt; Vec&lt;String&gt;</code></td>
+<td><code>fn split(text: String, sep: String | char) -&gt; Vec&lt;String&gt;</code></td>
 <td>Splits a string by a delimiter.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>split_once</code></a></td>
-<td><code>fn split_once(text: String, sep: String) -&gt; Option&lt;(String, String)&gt;</code></td>
+<td><code>fn split_once(text: String, sep: String | char) -&gt; Option&lt;(String, String)&gt;</code></td>
 <td>Splits on the first occurrence of <code>sep</code>; returns Option&lt;(String, String)&gt;.</td>
 </tr>
 <tr>
@@ -1881,7 +1881,7 @@
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>splitn</code></a></td>
-<td><code>fn splitn(text: String, n: i64, sep: String) -&gt; Vec&lt;String&gt;</code></td>
+<td><code>fn splitn(text: String, n: i64, sep: String | char) -&gt; Vec&lt;String&gt;</code></td>
 <td>Splits a string into at most <code>n</code> parts.</td>
 </tr>
 <tr>
@@ -1891,12 +1891,12 @@
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>strip_prefix</code></a></td>
-<td><code>fn strip_prefix(text: String, prefix: String) -&gt; Option&lt;String&gt;</code></td>
+<td><code>fn strip_prefix(text: String, prefix: String | char) -&gt; Option&lt;String&gt;</code></td>
 <td>Removes a leading prefix if present.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>strip_suffix</code></a></td>
-<td><code>fn strip_suffix(text: String, prefix: String) -&gt; Option&lt;String&gt;</code></td>
+<td><code>fn strip_suffix(text: String, suffix: String | char) -&gt; Option&lt;String&gt;</code></td>
 <td>Removes a trailing suffix if present.</td>
 </tr>
 <tr>
@@ -1941,12 +1941,12 @@
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>trim_end_matches</code></a></td>
-<td><code>fn trim_end_matches(text: String, cutset: String) -&gt; String</code></td>
+<td><code>fn trim_end_matches(text: String, cutset: String | char) -&gt; String</code></td>
 <td>Removes trailing characters in the given set.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>trim_matches</code></a></td>
-<td><code>fn trim_matches(text: String, cutset: String) -&gt; String</code></td>
+<td><code>fn trim_matches(text: String, cutset: String | char) -&gt; String</code></td>
 <td>Removes characters in the given set from both ends.</td>
 </tr>
 <tr>
@@ -1956,7 +1956,7 @@
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>trim_start_matches</code></a></td>
-<td><code>fn trim_start_matches(text: String, cutset: String) -&gt; String</code></td>
+<td><code>fn trim_start_matches(text: String, cutset: String | char) -&gt; String</code></td>
 <td>Removes leading characters in the given set.</td>
 </tr>
 </tbody>

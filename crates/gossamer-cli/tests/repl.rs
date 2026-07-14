@@ -455,7 +455,7 @@ fn repl_reports_each_invalid_string_argument_once_with_its_value() {
     );
     assert_eq!(
         out.stderr
-            .matches("parameter `pattern` of `strings::count`")
+            .matches("parameter `needle` of `strings::count`")
             .count(),
         1,
         "the second invalid argument must be reported exactly once: {}",

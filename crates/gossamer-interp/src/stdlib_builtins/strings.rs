@@ -190,8 +190,8 @@ pub(crate) fn builtin_strings_splitn(args: &[Value]) -> RuntimeResult<Value> {
         .get(1)
         .and_then(value_to_int)
         .map_or(0, |x| usize::try_from(x.max(0)).unwrap_or(0));
-    let sep = args.get(2).and_then(as_str).unwrap_or("");
-    Ok(string_array(strings_std::splitn(text, n, sep)))
+    let sep = pattern_arg(args.get(2));
+    Ok(string_array(strings_std::splitn(text, n, &sep)))
 }
 
 pub(crate) fn builtin_strings_split_ws(args: &[Value]) -> RuntimeResult<Value> {
@@ -516,14 +516,14 @@ pub(crate) fn builtin_strings_pad_right(args: &[Value]) -> RuntimeResult<Value> 
 
 pub(crate) fn builtin_strings_contains_any(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let chars = args.get(1).and_then(as_str).unwrap_or("");
-    Ok(Value::Bool(strings_std::contains_any(text, chars)))
+    let chars = pattern_arg(args.get(1));
+    Ok(Value::Bool(strings_std::contains_any(text, &chars)))
 }
 
 pub(crate) fn builtin_strings_index_any(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let chars = args.get(1).and_then(as_str).unwrap_or("");
-    match strings_std::index_any(text, chars) {
+    let chars = pattern_arg(args.get(1));
+    match strings_std::index_any(text, &chars) {
         Some(i) => Ok(some_variant(Value::Int(i as i64))),
         None => Ok(none_variant()),
     }
@@ -531,8 +531,8 @@ pub(crate) fn builtin_strings_index_any(args: &[Value]) -> RuntimeResult<Value> 
 
 pub(crate) fn builtin_strings_last_index_any(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let chars = args.get(1).and_then(as_str).unwrap_or("");
-    match strings_std::last_index_any(text, chars) {
+    let chars = pattern_arg(args.get(1));
+    match strings_std::last_index_any(text, &chars) {
         Some(i) => Ok(some_variant(Value::Int(i as i64))),
         None => Ok(none_variant()),
     }
@@ -540,8 +540,8 @@ pub(crate) fn builtin_strings_last_index_any(args: &[Value]) -> RuntimeResult<Va
 
 pub(crate) fn builtin_strings_equal_fold(args: &[Value]) -> RuntimeResult<Value> {
     let a = args.first().and_then(as_str).unwrap_or("");
-    let b = args.get(1).and_then(as_str).unwrap_or("");
-    Ok(Value::Bool(strings_std::equal_fold(a, b)))
+    let b = pattern_arg(args.get(1));
+    Ok(Value::Bool(strings_std::equal_fold(a, &b)))
 }
 
 pub(crate) fn builtin_strings_trim_matches(args: &[Value]) -> RuntimeResult<Value> {

@@ -1015,7 +1015,7 @@ fn strings_free_fn_rejects_integer_in_string_slot() {
     assert!(
         d.iter().any(
             |x| matches!(&x.error, TypeError::ArgumentTypeMismatch { callee, parameter, expected, found, .. }
-                if callee == "strings::contains" && parameter == "pattern"
+                if callee == "strings::contains" && parameter == "needle"
                     && expected == "String | char" && found == "{integer}")
         ),
         "expected String/{{integer}} mismatch, got {d:?}"
@@ -1046,7 +1046,7 @@ fn strings_free_fn_rejects_float_in_string_slot() {
     assert!(
         d.iter().any(
             |x| matches!(&x.error, TypeError::ArgumentTypeMismatch { callee, parameter, expected, found, .. }
-                if callee == "strings::contains" && parameter == "pattern"
+                if callee == "strings::contains" && parameter == "needle"
                     && expected == "String | char" && found == "{float}")
         ),
         "expected String/{{float}} mismatch, got {d:?}"
@@ -1077,7 +1077,7 @@ fn string_method_rejects_integer_in_string_slot() {
     assert!(
         d.iter().any(
             |x| matches!(&x.error, TypeError::ArgumentTypeMismatch { callee, parameter, expected, found, .. }
-                if callee == "String::contains" && parameter == "pattern"
+                if callee == "String::contains" && parameter == "needle"
                     && expected == "String | char" && found == "{integer}")
         ),
         "expected String/{{integer}} mismatch, got {d:?}"
@@ -1308,10 +1308,10 @@ fn strings_count_rejects_every_non_string_or_char_argument_with_parameter_names(
         named,
         vec![
             ("strings::count", "text"),
-            ("strings::count", "pattern"),
+            ("strings::count", "needle"),
             ("strings::count", "text"),
             ("strings::count", "text"),
-            ("String::count", "pattern"),
+            ("String::count", "needle"),
         ],
         "every invalid count parameter must be rejected and identified: {d:?}"
     );
@@ -1327,7 +1327,7 @@ fn named_string_argument_mismatch_includes_the_actual_literal_value() {
             found,
             actual,
             ..
-        } if callee == "strings::count" && parameter == "pattern" => Some((found, actual)),
+        } if callee == "strings::count" && parameter == "needle" => Some((found, actual)),
         _ => None,
     }) else {
         panic!("missing named argument mismatch: {d:?}");
@@ -1338,6 +1338,52 @@ fn named_string_argument_mismatch_includes_the_actual_literal_value() {
         d.len(),
         1,
         "one invalid parameter must produce exactly one error: {d:?}"
+    );
+}
+
+#[test]
+fn strings_count_issue_27_reports_exact_parameter_types_and_names() {
+    let d = diagnostics_for(
+        "use std::strings\n\
+         fn main() {\n\
+         let _ = strings::count([1, 2], \"a\")\n\
+         let _ = strings::count('a', \"a\")\n\
+         let _ = strings::count(\"a\", 1)\n\
+         }\n",
+    );
+    let mismatches: Vec<_> = d
+        .iter()
+        .filter_map(|diag| match &diag.error {
+            TypeError::ArgumentTypeMismatch {
+                callee,
+                parameter,
+                expected,
+                found,
+                actual,
+            } => Some((
+                callee.as_str(),
+                parameter.as_str(),
+                expected.as_str(),
+                found.as_str(),
+                actual.as_str(),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        mismatches,
+        vec![
+            ("strings::count", "text", "String", "array", "[1, 2]"),
+            ("strings::count", "text", "String", "char", "'a'"),
+            (
+                "strings::count",
+                "needle",
+                "String | char",
+                "{integer}",
+                "1"
+            ),
+        ],
+        "issue 27 diagnostics must match the source-facing signature: {d:?}"
     );
 }
 

@@ -2854,16 +2854,18 @@ impl<'a> TypeChecker<'a> {
             let (Some(arg), Some(&arg_ty)) = (args.get(idx), arg_tys.get(idx)) else {
                 continue;
             };
+            let meta = strings_fn_param_metadata(name, idx, shape);
             self.check_str_param_arg(
                 shape,
                 arg,
                 arg_ty,
                 arg.span,
                 &format!("strings::{name}"),
-                strings_fn_param_name(name, idx),
+                meta,
             );
         }
         self.check_strings_int_args(name, args, arg_tys, 0);
+        self.check_strings_char_args(name, args, arg_tys, 0);
     }
 
     /// Unifies one call argument against its declared parameter type,
@@ -2926,16 +2928,18 @@ impl<'a> TypeChecker<'a> {
             let (Some(arg), Some(&arg_ty)) = (args.get(idx), arg_tys.get(idx)) else {
                 continue;
             };
+            let meta = strings_fn_param_metadata(method, pos, shape);
             self.check_str_param_arg(
                 shape,
                 arg,
                 arg_ty,
                 arg.span,
                 &format!("String::{method}"),
-                strings_fn_param_name(method, pos),
+                meta,
             );
         }
         self.check_strings_int_args(method, args, arg_tys, 1);
+        self.check_strings_char_args(method, args, arg_tys, 1);
     }
 
     /// Validates the complete fixed arity of a known string operation. The
@@ -2989,6 +2993,26 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Validates char-only slots such as `pad_left(text, width, fill)`.
+    fn check_strings_char_args(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        implicit_receiver: usize,
+    ) {
+        let char_ty = self.tcx.char_ty();
+        for &position in strings_fn_char_params(name) {
+            let Some(index) = position.checked_sub(implicit_receiver) else {
+                continue;
+            };
+            let (Some(arg), Some(&arg_ty)) = (args.get(index), arg_tys.get(index)) else {
+                continue;
+            };
+            self.check_sig_param_arg(char_ty, arg_ty, arg.span);
+        }
+    }
+
     /// Validates one argument against a string-shaped parameter slot.
     fn check_str_param_arg(
         &mut self,
@@ -2997,7 +3021,7 @@ impl<'a> TypeChecker<'a> {
         arg_ty: Ty,
         span: Span,
         callee: &str,
-        parameter: &'static str,
+        param: StringParamMeta,
     ) {
         // `&"hi"` (a `Ref<String>`) is layout-transparent to its inner
         // `String` at every call boundary; validate the referent.
@@ -3012,11 +3036,25 @@ impl<'a> TypeChecker<'a> {
         // shape - so a `5` / `1.5` in a string position is rejected with
         // the same `{integer}` / `{float}` rendering a user call shows.
         if self.infer.is_integer_constrained_var(self.tcx, inner) {
-            self.emit_named_str_slot_mismatch(callee, parameter, "{integer}", arg, span);
+            self.emit_named_str_slot_mismatch(
+                callee,
+                param.name,
+                param.expected,
+                "{integer}",
+                arg,
+                span,
+            );
             return;
         }
         if self.infer.is_float_literal_var(self.tcx, inner) {
-            self.emit_named_str_slot_mismatch(callee, parameter, "{float}", arg, span);
+            self.emit_named_str_slot_mismatch(
+                callee,
+                param.name,
+                param.expected,
+                "{float}",
+                arg,
+                span,
+            );
             return;
         }
         match shape {
@@ -3035,7 +3073,8 @@ impl<'a> TypeChecker<'a> {
                 } else if self.tcx.kind(r).is_some() {
                     self.emit_named_str_slot_mismatch(
                         callee,
-                        parameter,
+                        param.name,
+                        param.expected,
                         &string_argument_found_type(arg, self.tcx, r),
                         arg,
                         span,
@@ -3046,7 +3085,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             StrArgShape::StrOrChar => {
-                // A pattern / pad slot also admits a `char`, so the
+                // A pattern slot also admits a `char`, so the
                 // unifier (single expected type) is too strict. Report every
                 // non-string / non-char shape through the named argument path.
                 let r = self.infer.resolve(self.tcx, inner);
@@ -3056,7 +3095,8 @@ impl<'a> TypeChecker<'a> {
                 if !matches!(self.tcx.kind(r), Some(TyKind::String | TyKind::Char)) {
                     self.emit_named_str_slot_mismatch(
                         callee,
-                        parameter,
+                        param.name,
+                        param.expected,
                         &string_argument_found_type(arg, self.tcx, r),
                         arg,
                         span,
@@ -3080,6 +3120,7 @@ impl<'a> TypeChecker<'a> {
         &mut self,
         callee: &str,
         parameter: &str,
+        expected: &str,
         found: &str,
         arg: &Expr,
         span: Span,
@@ -3088,7 +3129,7 @@ impl<'a> TypeChecker<'a> {
             TypeError::ArgumentTypeMismatch {
                 callee: callee.to_string(),
                 parameter: parameter.to_string(),
-                expected: "String | char".to_string(),
+                expected: expected.to_string(),
                 found: found.to_string(),
                 actual: argument_value_display(arg),
             },
@@ -7330,6 +7371,12 @@ enum StrArgShape {
     StrOrChar,
 }
 
+#[derive(Clone, Copy)]
+struct StringParamMeta {
+    name: &'static str,
+    expected: &'static str,
+}
+
 /// String-typed parameter positions of the canonical `strings::` free
 /// functions, keyed by function name. Only positions that must hold a
 /// string-shaped value are listed; integer width / count positions are
@@ -7347,8 +7394,8 @@ fn strings_fn_str_params(name: &str) -> Option<&'static [(usize, StrArgShape)]> 
         }
         "splitn" => &[(0, Str), (2, StrOrChar)],
         "replace" | "replacen" => &[(0, Str), (1, StrOrChar), (2, StrOrChar)],
-        "equal_fold" => &[(0, Str), (1, Str)],
-        "center" | "pad_left" | "pad_right" => &[(0, Str), (2, StrOrChar)],
+        "equal_fold" => &[(0, Str), (1, StrOrChar)],
+        "center" | "pad_left" | "pad_right" => &[(0, Str)],
         "split_whitespace" | "trim" | "trim_start" | "trim_end" | "to_lowercase"
         | "to_uppercase" | "to_title" | "lines" | "repeat" | "slice" | "substring" | "byte_at" => {
             &[(0, Str)]
@@ -7357,16 +7404,27 @@ fn strings_fn_str_params(name: &str) -> Option<&'static [(usize, StrArgShape)]> 
     })
 }
 
-/// Source parameter names for diagnostics emitted by the string-operation
-/// catalogue. Every indexed string slot has a stable, user-facing label.
-fn strings_fn_param_name(name: &str, position: usize) -> &'static str {
-    match (name, position) {
-        (_, 0) => "text",
-        ("replace" | "replacen", 1) => "from",
-        ("replace" | "replacen", 2) => "to",
-        ("center" | "pad_left" | "pad_right", 2) => "fill",
-        _ => "pattern",
+/// Source parameter metadata for string diagnostics. The stdlib signature
+/// catalogue is the source of truth used by `%help`, so diagnostics must use
+/// the same parameter names and expected type text.
+fn strings_fn_param_metadata(name: &str, position: usize, shape: StrArgShape) -> StringParamMeta {
+    if let Some(signature) = crate::stdlib_signatures::function("std::strings", name)
+        && let Some(shape) = crate::stdlib_signatures::parse_signature(signature.signature)
+        && let Some(param) = shape.params.get(position)
+    {
+        return StringParamMeta {
+            name: param.name,
+            expected: param.ty,
+        };
     }
+    let (name, expected) = match (name, position, shape) {
+        (_, 0, _) => ("text", "String"),
+        ("replace" | "replacen", 1, _) => ("from", "String | char"),
+        ("replace" | "replacen", 2, _) => ("to", "String | char"),
+        (_, _, StrArgShape::Str) => ("value", "String"),
+        (_, _, StrArgShape::StrOrChar) => ("needle", "String | char"),
+    };
+    StringParamMeta { name, expected }
 }
 
 /// Concise source-like text for an invalid argument. Literals retain their
@@ -7453,6 +7511,14 @@ fn strings_fn_int_params(name: &str) -> &'static [usize] {
         "splitn" | "center" | "pad_left" | "pad_right" | "repeat" | "byte_at" => &[1],
         "slice" | "substring" => &[1, 2],
         "replacen" => &[3],
+        _ => &[],
+    }
+}
+
+/// `char` parameter positions for the string-operation catalogue.
+fn strings_fn_char_params(name: &str) -> &'static [usize] {
+    match name {
+        "center" | "pad_left" | "pad_right" => &[2],
         _ => &[],
     }
 }

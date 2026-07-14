@@ -2756,12 +2756,12 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::strings",
         name: "replace",
-        signature: "fn replace(text: String, from: String, to: String) -> String",
+        signature: "fn replace(text: String, from: String | char, to: String | char) -> String",
     },
     StdFunctionSignature {
         module_path: "std::strings",
         name: "replacen",
-        signature: "fn replacen(text: String, from: String, to: String, n: i64) -> String",
+        signature: "fn replacen(text: String, from: String | char, to: String | char, n: i64) -> String",
     },
     StdFunctionSignature {
         module_path: "std::strings",
@@ -2776,7 +2776,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::strings",
         name: "rsplit_once",
-        signature: "fn rsplit_once(text: String, sep: String) -> Option<(String, String)>",
+        signature: "fn rsplit_once(text: String, sep: String | char) -> Option<(String, String)>",
     },
     StdFunctionSignature {
         module_path: "std::strings",
@@ -2786,12 +2786,12 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::strings",
         name: "split",
-        signature: "fn split(text: String, sep: String) -> Vec<String>",
+        signature: "fn split(text: String, sep: String | char) -> Vec<String>",
     },
     StdFunctionSignature {
         module_path: "std::strings",
         name: "split_once",
-        signature: "fn split_once(text: String, sep: String) -> Option<(String, String)>",
+        signature: "fn split_once(text: String, sep: String | char) -> Option<(String, String)>",
     },
     StdFunctionSignature {
         module_path: "std::strings",
@@ -2801,7 +2801,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::strings",
         name: "splitn",
-        signature: "fn splitn(text: String, n: i64, sep: String) -> Vec<String>",
+        signature: "fn splitn(text: String, n: i64, sep: String | char) -> Vec<String>",
     },
     StdFunctionSignature {
         module_path: "std::strings",
@@ -2811,12 +2811,12 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::strings",
         name: "strip_prefix",
-        signature: "fn strip_prefix(text: String, prefix: String) -> Option<String>",
+        signature: "fn strip_prefix(text: String, prefix: String | char) -> Option<String>",
     },
     StdFunctionSignature {
         module_path: "std::strings",
         name: "strip_suffix",
-        signature: "fn strip_suffix(text: String, prefix: String) -> Option<String>",
+        signature: "fn strip_suffix(text: String, suffix: String | char) -> Option<String>",
     },
     StdFunctionSignature {
         module_path: "std::strings",
@@ -2861,12 +2861,12 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::strings",
         name: "trim_end_matches",
-        signature: "fn trim_end_matches(text: String, cutset: String) -> String",
+        signature: "fn trim_end_matches(text: String, cutset: String | char) -> String",
     },
     StdFunctionSignature {
         module_path: "std::strings",
         name: "trim_matches",
-        signature: "fn trim_matches(text: String, cutset: String) -> String",
+        signature: "fn trim_matches(text: String, cutset: String | char) -> String",
     },
     StdFunctionSignature {
         module_path: "std::strings",
@@ -2876,7 +2876,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::strings",
         name: "trim_start_matches",
-        signature: "fn trim_start_matches(text: String, cutset: String) -> String",
+        signature: "fn trim_start_matches(text: String, cutset: String | char) -> String",
     },
     StdFunctionSignature {
         module_path: "std::sync",
