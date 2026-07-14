@@ -4,20 +4,11 @@ Status: experimental
 
 TOML 1.0 parsing + emission. Pair with the turbofish `from_toml::<Type>` for typed decoding (struct auto-derive).
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `to_json` | fn | Convert TOML text to JSON text; returns Result<String, errors::Error>. |
-| `from_json` | fn | Render JSON text as TOML text; returns Result<String, errors::Error>. |
-| `is_valid` | fn | Return true iff the string parses as TOML. |
-| `pretty` | fn | Round-trip TOML through the pretty-printer. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding_toml.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding_toml.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

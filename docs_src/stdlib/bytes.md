@@ -4,21 +4,11 @@ Status: experimental
 
 Byte buffers, builders, and slice helpers.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `Buffer` | type | Growable byte buffer. |
-| `Builder` | type | Incremental string builder. |
-| `index_of` | fn | First occurrence of a byte needle. |
-| `split` | fn | Splits on every separator occurrence. |
-| `replace` | fn | Replaces every occurrence of a byte needle. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/bytes.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/bytes.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

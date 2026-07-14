@@ -49,6 +49,11 @@ theme:
 extra_css:
   - stylesheets/extra.css
 
+extra_javascript:
+  - js/repo_button.js
+  - js/scroll_top.js
+  - js/hljs_gossamer.js
+
 hooks:
   - mkdocs_hooks.py
 

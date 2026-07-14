@@ -83,25 +83,6 @@ pub fn render_module_markdown(module: &StdModule) -> String {
         super::feature_status::lookup(module.path).map_or("experimental", |e| e.status.tag());
     out.push_str(&format!("Status: {status}\n\n"));
     out.push_str(&format!("{}\n\n", module.summary));
-    out.push_str("## Public items\n\n");
-    out.push_str("| Name | Kind | Description |\n");
-    out.push_str("|---|---|---|\n");
-    for item in module.items {
-        let kind = match item.kind {
-            StdItemKind::Function => "fn",
-            StdItemKind::Type => "type",
-            StdItemKind::Trait => "trait",
-            StdItemKind::Macro => "macro",
-            StdItemKind::Const => "const",
-        };
-        out.push_str(&format!(
-            "| `{}` | {} | {} |\n",
-            item.name,
-            kind,
-            item.doc.replace('|', "\\|"),
-        ));
-    }
-    out.push('\n');
     out
 }
 
@@ -129,7 +110,9 @@ this index is regenerated from `manifest::ALL_MODULES` by \
         let slug = module_slug(m.path);
         out.push_str(&format!(
             "| [`{}`]({}.md) | {} |\n",
-            m.path, slug, m.summary
+            m.path,
+            slug,
+            escape_table_cell(m.summary)
         ));
     }
     out.push('\n');
@@ -191,7 +174,7 @@ is regenerated from `manifest::FEATURE_STATUS` by \
             entry.path,
             language_slug(entry.path),
             entry.status.tag(),
-            entry.doc.replace('|', "\\|"),
+            escape_table_cell(entry.doc),
         ));
     }
     out.push('\n');
@@ -259,4 +242,47 @@ pub fn render_all_docs() -> Vec<(String, String)> {
         out.push((module_slug(path), render_module_markdown(&synthetic)));
     }
     out
+}
+
+/// Escapes Markdown table delimiters in prose while preserving inline-code
+/// content. A pipe inside backticks is literal text, and escaping it there
+/// leaks a visible backslash into rendered signatures such as `String | char`.
+fn escape_table_cell(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_code = false;
+    for ch in text.chars() {
+        if ch == '`' {
+            in_code = !in_code;
+        }
+        if ch == '|' && !in_code {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::escape_table_cell;
+
+    #[test]
+    fn table_cell_escaping_preserves_pipes_in_inline_code() {
+        assert_eq!(
+            escape_table_cell("Accepts `String | char` in prose | tables."),
+            "Accepts `String | char` in prose \\| tables."
+        );
+    }
+
+    #[test]
+    fn module_pages_leave_item_tables_to_the_canonical_api_section() {
+        let module = crate::registry::StdModule {
+            path: "std::sample",
+            summary: "Sample module.",
+            items: &[],
+        };
+        let page = super::render_module_markdown(&module);
+        assert!(!page.contains("Public items"));
+        assert!(!page.contains("| Name | Kind | Description |"));
+    }
 }

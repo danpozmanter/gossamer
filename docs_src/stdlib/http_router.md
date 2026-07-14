@@ -4,28 +4,17 @@ Status: experimental
 
 Go 1.22-class ServeMux: method-aware path patterns with parameter captures + prefix routes.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `Router` | type | Routing table. Build with `Router::new()`, register routes via the verb methods, then pass to `http::serve`. Verb methods return the router so they chain with `\|>`. |
-| `Params` | type | Captured path parameters. Read inside a handler with `r.path_value(name) -> String`; returns `""` for an undeclared name. All tiers. |
-| `Handler` | trait | Anything callable as `Fn(&Request, &Params) -> Response`. |
-| `new` | fn | Allocate a fresh Router handle. |
-| `add` | fn | Register a pattern-only route: `(router, method, pattern)`. Used with `lookup` for low-level dispatch. |
-| `lookup` | fn | Find the index of the first route matching `(method, path)`. Returns `Option<i64>`. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
 | [`Handler`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs) | `trait Handler` | Anything callable as `Fn(&Request, &Params) -> Response`. |
 | [`Params`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs) | `type Params` | Captured path parameters. Read inside a handler with `r.path_value(name) -> String`; returns `""` for an undeclared name. All tiers. |
-| [`Router`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs) | `type Router` | Routing table. Build with `Router::new()`, register routes via the verb methods, then pass to `http::serve`. Verb methods return the router so they chain with `\|>`. |
+| [`Router`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs) | `type Router` | Routing table. Build with `Router::new()`, register routes via the verb methods, then pass to `http::serve`. Verb methods return the router so they chain with `|>`. |
 | [`add`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs) | `fn add(router: http::router::Router, method: String, pattern: String) -> Result<(), errors::Error>` | Register a pattern-only route: `(router, method, pattern)`. Used with `lookup` for low-level dispatch. |
 | [`lookup`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs) | `fn lookup(router: http::router::Router, method: String, path: String) -> Option<http::router::Match>` | Find the index of the first route matching `(method, path)`. Returns `Option<i64>`. |
 | [`new`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs) | `fn new() -> http::router::Router` | Allocate a fresh Router handle. |

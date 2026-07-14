@@ -41,6 +41,22 @@ pub enum TypeError {
         /// Found type, rendered via [`crate::render_ty`].
         found: String,
     },
+    /// A named call parameter received a value of an incompatible type.
+    #[error(
+        "type mismatch for parameter `{parameter}` of `{callee}`: expected `{expected}`, found `{found}` (value `{actual}`)"
+    )]
+    ArgumentTypeMismatch {
+        /// Fully-qualified callable name.
+        callee: String,
+        /// Source-level parameter name.
+        parameter: String,
+        /// Expected type, rendered via [`crate::render_ty`].
+        expected: String,
+        /// Found type, rendered via [`crate::render_ty`].
+        found: String,
+        /// Source-level rendering of the supplied value or expression.
+        actual: String,
+    },
     /// A method call could not be resolved to any known definition.
     #[error("no method named `{name}` found for type `{ty}`")]
     UnresolvedMethod {
@@ -359,6 +375,7 @@ impl TypeError {
     pub const fn tag(&self) -> &'static str {
         match self {
             Self::TypeMismatch { .. } => "type-mismatch",
+            Self::ArgumentTypeMismatch { .. } => "argument-type-mismatch",
             Self::UnresolvedMethod { .. } => "unresolved-method",
             Self::UnresolvedOp { .. } => "unresolved-op",
             Self::UnresolvedOpImpl { .. } => "unresolved-op-impl",
@@ -396,6 +413,7 @@ impl TypeError {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::TypeMismatch { .. } => "GT0001",
+            Self::ArgumentTypeMismatch { .. } => "GT0001",
             Self::UnresolvedMethod { .. } => "GT0002",
             Self::UnresolvedOp { .. } | Self::UnresolvedOpImpl { .. } => "GT0003",
             Self::NonExhaustiveMatch { .. } => "GT0004",
@@ -512,6 +530,20 @@ impl TypeDiagnostic {
         match &self.error {
             TypeError::TypeMismatch { expected, found } => {
                 out = out.with_note(format!("expected `{expected}`, found `{found}`"));
+                if let Some(suggestion) = mismatch_suggestion(expected, found) {
+                    out = out.with_help(suggestion);
+                }
+            }
+            TypeError::ArgumentTypeMismatch {
+                callee,
+                parameter,
+                expected,
+                found,
+                actual,
+            } => {
+                out = out.with_note(format!(
+                    "parameter `{parameter}` of `{callee}` expects `{expected}`, found `{found}` from `{actual}`"
+                ));
                 if let Some(suggestion) = mismatch_suggestion(expected, found) {
                     out = out.with_help(suggestion);
                 }

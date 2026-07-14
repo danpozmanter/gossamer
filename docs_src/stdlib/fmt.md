@@ -4,25 +4,11 @@ Status: experimental
 
 Formatted printing and string interpolation.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `Display` | trait | Trait for human-readable string conversion. |
-| `Debug` | trait | Trait for debugging-oriented string conversion. |
-| `println` | macro | Prints to stdout followed by a newline. |
-| `print` | macro | Prints to stdout without a trailing newline. |
-| `eprintln` | macro | Prints to stderr followed by a newline. |
-| `eprint` | macro | Prints to stderr without a trailing newline. |
-| `format` | macro | Formats arguments into an owned `String`. |
-| `write` | macro | Writes formatted output into a `Writer`. |
-| `writeln` | macro | Writes formatted output into a `Writer` followed by a newline. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fmt.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fmt.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

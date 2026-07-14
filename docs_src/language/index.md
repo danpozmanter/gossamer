@@ -16,8 +16,8 @@ One page per language feature. Source is `crates/gossamer-std/src/manifest/featu
 | [`lang::continue`](continue.md) | shipped | Skip to the next iteration of the innermost loop. |
 | [`lang::return`](return.md) | shipped | Exit the enclosing function with a value. |
 | [`lang::question_mark`](question_mark.md) | shipped | Short-circuit Result / Option propagation operator. |
-| [`lang::pipe`](pipe.md) | shipped | Forward-pipe operator `\|>`. |
-| [`lang::closure`](closure.md) | shipped | Lambda expression `\|args\| body`. |
+| [`lang::pipe`](pipe.md) | shipped | Forward-pipe operator `|>`. |
+| [`lang::closure`](closure.md) | shipped | Lambda expression `|args| body`. |
 | [`lang::fn`](fn.md) | shipped | Function declaration. |
 | [`lang::struct`](struct.md) | shipped | Product type declaration. |
 | [`lang::enum`](enum.md) | shipped | Sum type declaration with payload-carrying variants. |

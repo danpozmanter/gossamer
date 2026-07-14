@@ -4,19 +4,11 @@ Status: experimental
 
 Adler-32 checksums.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `checksum` | fn | Adler-32 checksum of a byte slice. |
-| `checksum_string` | fn | Adler-32 checksum of a String. |
-| `update` | fn | Continues an Adler-32 from a running value over more bytes. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/hash/adler32.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/hash/adler32.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

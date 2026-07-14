@@ -4,21 +4,11 @@ Status: experimental
 
 Goroutine / scheduler introspection and tuning.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `collect_cycles` | fn | Requests collection of unreachable reference cycles; returns `()`. |
-| `scheduler_stats_json` | fn | Returns a compact JSON snapshot of goroutine scheduler counters. |
-| `arena_push` | fn | Opens an arena region for bump allocation. |
-| `arena_pop` | fn | Closes the innermost arena region, freeing its slabs. |
-| `set_panic_hook` | fn | Installs a hook invoked with the message on panic. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/runtime.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/runtime.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

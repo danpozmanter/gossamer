@@ -4,20 +4,11 @@ Status: experimental
 
 RFC 7230 §4.1 chunked transfer-encoding reader and writer.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `Reader` | type | Decodes a chunked body from any Read source (Rust-side; streaming). |
-| `Writer` | type | Encodes raw bytes into chunked frames over any Write sink (Rust-side; streaming). |
-| `encode` | fn | One-shot: wraps a buffer in chunked transfer-encoding with terminator. Available in interp + compiled. |
-| `decode` | fn | One-shot: concatenates data chunks from a complete chunked body. Available in interp + compiled. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_chunked.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_chunked.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

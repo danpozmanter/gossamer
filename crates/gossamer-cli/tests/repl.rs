@@ -90,6 +90,44 @@ fn repl_persists_bindings_across_lines() {
 }
 
 #[test]
+fn repl_uses_repr_for_results_and_display_for_explicit_printing() {
+    let out = run_repl(
+        "let x = \"wow\"\n\
+         x\n\
+         println(x)\n\
+         [x, \"ok\"]\n\
+         \"ab\".chars()\n\
+         \"ab\".bytes()\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Out[2]: \"wow\""),
+        "bare string must be quoted: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("wow\n"),
+        "println must use unquoted display text: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("Out[4]: [\"wow\", \"ok\"]"),
+        "nested string repr is wrong: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("Out[5]: ['a', 'b']"),
+        "char vectors must use char literals: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("Out[6]: [97, 98]"),
+        "String::bytes method must execute: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_mutable_assignment_persists_across_lines() {
     // Regression (issue #14): reassigning a `let mut` binding from an earlier
     // input was applied in a throwaway frame and discarded, so a later read
@@ -97,7 +135,7 @@ fn repl_mutable_assignment_persists_across_lines() {
     let out = run_repl("let mut name = \"Steven\"\nname = \"Mark\"\nname\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("Out[3]: Mark"),
+        out.stdout.contains("Out[3]: \"Mark\""),
         "reassignment to `name` did not persist; stdout: {}",
         out.stdout
     );
@@ -400,6 +438,49 @@ fn repl_rejects_invalid_string_call_arguments_before_execution() {
         out.stdout.contains("Out[5]: Ok(\"bc\")"),
         "valid slice call should still run: {}",
         out.stdout
+    );
+}
+
+#[test]
+fn repl_reports_each_invalid_string_argument_once_with_its_value() {
+    let out = run_repl("strings::count(1, \"a\")\nstrings::count(\"ab\", 1)\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert_eq!(
+        out.stderr
+            .matches("parameter `text` of `strings::count`")
+            .count(),
+        1,
+        "the first invalid argument must be reported exactly once: {}",
+        out.stderr
+    );
+    assert_eq!(
+        out.stderr
+            .matches("parameter `pattern` of `strings::count`")
+            .count(),
+        1,
+        "the second invalid argument must be reported exactly once: {}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("found `{integer}` (value `1`)"),
+        "the diagnostic must include the supplied literal: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn repl_reports_array_arguments_without_inference_variable_types() {
+    let out = run_repl("strings::slice([1, 2, 3], 1, 2)\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("found `array`"),
+        "array type should be user-facing: {}",
+        out.stderr
+    );
+    assert!(
+        !out.stderr.contains('?'),
+        "diagnostic must not expose inference variables: {}",
+        out.stderr
     );
 }
 

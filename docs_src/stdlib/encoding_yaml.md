@@ -4,23 +4,11 @@ Status: experimental
 
 YAML 1.2 parser/emitter (serde_norway-backed).
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `Value` | type | Dynamically typed YAML value. |
-| `parse` | fn | Parses a YAML document into a Value. |
-| `encode` | fn | Encodes a Value as a YAML document. |
-| `parse_all` | fn | Parses a multi-document YAML stream into a Vec<Value>. |
-| `to_json` | fn | Converts a YAML document to JSON text. |
-| `from_json` | fn | Converts JSON text to a YAML document. |
-| `is_valid` | fn | Reports whether the text is well-formed YAML. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/yaml.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/yaml.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

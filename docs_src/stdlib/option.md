@@ -4,28 +4,11 @@ Status: experimental
 
 Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `and_then` | fn | Chains a fallible step: Some(v) -> f(v), None stays None. |
-| `unwrap_or` | fn | Unwraps with a fallback value for None. |
-| `unwrap_or_else` | fn | Unwraps with a lazily computed fallback for None. |
-| `filter` | fn | Keeps Some(v) only when the predicate holds. |
-| `flatten` | fn | Collapses Option<Option<T>> one level. |
-| `is_none` | fn | True for None. |
-| `is_some` | fn | True for Some. |
-| `iter` | fn | Zero-or-one element sequence view. |
-| `map` | fn | Transforms the Some payload, None stays None. |
-| `or` | fn | First Some of self and the alternative. |
-| `or_else` | fn | First Some of self and a lazily built alternative. |
-| `zip` | fn | Pairs two Somes into Some((a, b)). |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/option.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/option.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

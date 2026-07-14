@@ -4,21 +4,11 @@ Status: shipped
 
 Network URL parsing and component escaping; never use filesystem-path rules.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `Url` | type | Parsed URL. |
-| `query_escape` | fn | Percent-encodes a query parameter. |
-| `query_unescape` | fn | Inverse of `query_escape`. |
-| `path_escape` | fn | Percent-encodes a URL path segment. |
-| `path_unescape` | fn | Inverse of `path_escape`. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/url.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/url.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

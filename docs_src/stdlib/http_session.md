@@ -4,24 +4,11 @@ Status: experimental
 
 Signed-cookie session store with pluggable backend trait.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `Session` | type | Per-request session view; mutations persist on response. |
-| `SessionConfig` | type | Cookie name, domain, signing key, serialization mode. |
-| `SessionStore` | trait | Backend interface: load / save / delete by session id. |
-| `SignedCookieStore` | type | Cookie-backed store with HMAC signature; no server state. |
-| `SerializationMode` | type | Session payload encoding: Json or Bincode. |
-| `with_session` | fn | Run a closure with the session bound; persist any mutations. |
-| `sign` | fn | Sign session data into a tamper-evident cookie value. |
-| `verify` | fn | Verify and decode a signed session cookie value. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_session.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_session.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

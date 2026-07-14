@@ -4,20 +4,11 @@ Status: experimental
 
 TCP/UDP networking primitives.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `TcpListener` | type | Accepts incoming TCP connections. |
-| `TcpStream` | type | Bidirectional TCP byte stream; supports read/write, TLS upgrade, close, and read/write timeout setters. |
-| `UdpSocket` | type | Bound UDP socket for datagram I/O. |
-| `lookup` | fn | Resolves a hostname to its IP addresses. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

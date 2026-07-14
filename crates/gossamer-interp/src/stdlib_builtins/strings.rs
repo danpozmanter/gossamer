@@ -107,13 +107,13 @@ use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
 use super::*;
 
 pub(crate) fn install_strings(globals: &mut Vec<(&'static str, Value)>) {
-    // The canonical string surface, registered under both `strings::`
+    // The receiver-shaped string surface, registered under both `strings::`
     // (the free-function path) and `String::` (the method path). The
     // `String::` keys give receiver-typed method dispatch a name that
-    // can't collide with another module's bare free function - e.g.
+    // can't collide with another module's bare free function, e.g.
     // `s.to_title()` resolves to the string-wise title-caser instead of
     // `unicode::to_title`, which titlecases a single char.
-    const TABLE: &[(&str, BuiltinFnPub)] = &[
+    const STRING_METHODS: &[(&str, BuiltinFnPub)] = &[
         ("split", builtin_strings_split),
         ("splitn", builtin_strings_splitn),
         ("split_whitespace", builtin_strings_split_ws),
@@ -141,7 +141,6 @@ pub(crate) fn install_strings(globals: &mut Vec<(&'static str, Value)>) {
         ("ends_with", builtin_strings_ends_with),
         ("repeat", builtin_strings_repeat),
         ("lines", builtin_strings_lines),
-        ("join", builtin_strings_join),
         ("strip_prefix", builtin_strings_strip_prefix),
         ("strip_suffix", builtin_strings_strip_suffix),
         ("pad_left", builtin_strings_pad_left),
@@ -155,8 +154,9 @@ pub(crate) fn install_strings(globals: &mut Vec<(&'static str, Value)>) {
         ("chars", builtin_strings_chars),
         ("bytes", builtin_strings_bytes),
     ];
-    install_module_pub("strings", TABLE, globals);
-    install_module_pub("String", TABLE, globals);
+    install_module_pub("strings", STRING_METHODS, globals);
+    install_module_pub("strings", &[("join", builtin_strings_join)], globals);
+    install_module_pub("String", STRING_METHODS, globals);
     // `parts.join(sep)` as a method on a `Vec<String>` receiver. Registered
     // under the `Vec::` key so receiver-typed dispatch resolves it ahead of
     // the bare `join` name shared with `path::join`.

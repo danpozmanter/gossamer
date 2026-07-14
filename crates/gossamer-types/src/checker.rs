@@ -2679,6 +2679,7 @@ impl<'a> TypeChecker<'a> {
             let Some(last) = last.first().copied() else {
                 return self.fresh();
             };
+            let is_strings_call = matches!(module, ["strings"] | ["std", "strings"]);
             if !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. })) {
                 self.check_stdlib_signature_arity(
                     module,
@@ -2687,7 +2688,12 @@ impl<'a> TypeChecker<'a> {
                     usize::from(self.pipe_stage_callees.contains(&callee.id)),
                     callee.span,
                 );
-                self.check_stdlib_signature_args(module, last, args, arg_tys);
+                // `strings::*` has a dedicated validator below. Running the
+                // generic signature catalogue too reports the same bad slot
+                // twice, once without its parameter name.
+                if !is_strings_call {
+                    self.check_stdlib_signature_args(module, last, args, arg_tys);
+                }
             }
             // `strings::` free functions have no `FnSig` to unify
             // against, so validate their string-typed argument slots
@@ -2696,7 +2702,7 @@ impl<'a> TypeChecker<'a> {
             // when the value is piped in (`|>` appends the data argument
             // during lowering, shifting the positions this table keys
             // on).
-            if matches!(module, ["strings"] | ["std", "strings"])
+            if is_strings_call
                 && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
                 && !self.pipe_stage_callees.contains(&callee.id)
             {
@@ -2848,7 +2854,14 @@ impl<'a> TypeChecker<'a> {
             let (Some(arg), Some(&arg_ty)) = (args.get(idx), arg_tys.get(idx)) else {
                 continue;
             };
-            self.check_str_param_arg(shape, arg_ty, arg.span);
+            self.check_str_param_arg(
+                shape,
+                arg,
+                arg_ty,
+                arg.span,
+                &format!("strings::{name}"),
+                strings_fn_param_name(name, idx),
+            );
         }
         self.check_strings_int_args(name, args, arg_tys, 0);
     }
@@ -2913,7 +2926,14 @@ impl<'a> TypeChecker<'a> {
             let (Some(arg), Some(&arg_ty)) = (args.get(idx), arg_tys.get(idx)) else {
                 continue;
             };
-            self.check_str_param_arg(shape, arg_ty, arg.span);
+            self.check_str_param_arg(
+                shape,
+                arg,
+                arg_ty,
+                arg.span,
+                &format!("String::{method}"),
+                strings_fn_param_name(method, pos),
+            );
         }
         self.check_strings_int_args(method, args, arg_tys, 1);
     }
@@ -2970,7 +2990,15 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// Validates one argument against a string-shaped parameter slot.
-    fn check_str_param_arg(&mut self, shape: StrArgShape, arg_ty: Ty, span: Span) {
+    fn check_str_param_arg(
+        &mut self,
+        shape: StrArgShape,
+        arg: &Expr,
+        arg_ty: Ty,
+        span: Span,
+        callee: &str,
+        parameter: &'static str,
+    ) {
         // `&"hi"` (a `Ref<String>`) is layout-transparent to its inner
         // `String` at every call boundary; validate the referent.
         let resolved = self.infer.resolve(self.tcx, arg_ty);
@@ -2984,32 +3012,55 @@ impl<'a> TypeChecker<'a> {
         // shape - so a `5` / `1.5` in a string position is rejected with
         // the same `{integer}` / `{float}` rendering a user call shows.
         if self.infer.is_integer_constrained_var(self.tcx, inner) {
-            self.emit_str_slot_mismatch("{integer}", span);
+            self.emit_named_str_slot_mismatch(callee, parameter, "{integer}", arg, span);
             return;
         }
         if self.infer.is_float_literal_var(self.tcx, inner) {
-            self.emit_str_slot_mismatch("{float}", span);
+            self.emit_named_str_slot_mismatch(callee, parameter, "{float}", arg, span);
             return;
         }
         match shape {
             StrArgShape::Str => {
-                // A `String` slot admits only a real string; reuse the
-                // unifier to reject every other concrete type (`char`,
-                // `bool`, an `Adt`, ...) with a precise mismatch.
-                let s = self.tcx.string_ty();
-                self.unify(s, inner, span);
+                // A `String` slot admits only a real string. Keep an
+                // unresolved inference variable unifiable for valid generic
+                // expressions, but report every concrete wrong shape with
+                // the parameter name instead of a context-free mismatch.
+                let r = self.infer.resolve(self.tcx, inner);
+                if matches!(self.tcx.kind(r), Some(TyKind::String)) {
+                    return;
+                }
+                if matches!(self.tcx.kind(r), Some(TyKind::Var(_))) {
+                    let s = self.tcx.string_ty();
+                    self.unify(s, inner, span);
+                } else if self.tcx.kind(r).is_some() {
+                    self.emit_named_str_slot_mismatch(
+                        callee,
+                        parameter,
+                        &string_argument_found_type(arg, self.tcx, r),
+                        arg,
+                        span,
+                    );
+                } else {
+                    let s = self.tcx.string_ty();
+                    self.unify(s, inner, span);
+                }
             }
             StrArgShape::StrOrChar => {
                 // A pattern / pad slot also admits a `char`, so the
-                // unifier (single expected type) is too strict; reject
-                // only the numeric / bool shapes the backend would
-                // misread as a string pointer.
+                // unifier (single expected type) is too strict. Report every
+                // non-string / non-char shape through the named argument path.
                 let r = self.infer.resolve(self.tcx, inner);
-                if matches!(
-                    self.tcx.kind(r),
-                    Some(TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool)
-                ) {
-                    self.emit_str_slot_mismatch(&render_ty(self.tcx, r), span);
+                if matches!(self.tcx.kind(r), Some(TyKind::Var(_))) {
+                    return;
+                }
+                if !matches!(self.tcx.kind(r), Some(TyKind::String | TyKind::Char)) {
+                    self.emit_named_str_slot_mismatch(
+                        callee,
+                        parameter,
+                        &string_argument_found_type(arg, self.tcx, r),
+                        arg,
+                        span,
+                    );
                 }
             }
         }
@@ -3020,6 +3071,26 @@ impl<'a> TypeChecker<'a> {
             TypeError::TypeMismatch {
                 expected: "String".to_string(),
                 found: found.to_string(),
+            },
+            span,
+        );
+    }
+
+    fn emit_named_str_slot_mismatch(
+        &mut self,
+        callee: &str,
+        parameter: &str,
+        found: &str,
+        arg: &Expr,
+        span: Span,
+    ) {
+        self.emit(
+            TypeError::ArgumentTypeMismatch {
+                callee: callee.to_string(),
+                parameter: parameter.to_string(),
+                expected: "String | char".to_string(),
+                found: found.to_string(),
+                actual: argument_value_display(arg),
             },
             span,
         );
@@ -3355,6 +3426,12 @@ impl<'a> TypeChecker<'a> {
         let names: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
         let (module, last) = names.split_at(names.len().saturating_sub(1));
         let name = last.first().copied()?;
+        // String functions have String|char pattern slots that the generic
+        // signature parser cannot model precisely. Their dedicated validator
+        // both enforces the complete contract and emits one named diagnostic.
+        if matches!(module, ["strings"] | ["std", "strings"]) {
+            return None;
+        }
         let shape = crate::stdlib_signatures::function_shape_for_path(module, name)?;
         if shape.params.len() != n_args {
             return None;
@@ -4377,6 +4454,10 @@ impl<'a> TypeChecker<'a> {
             "chars" => {
                 let c = self.tcx.intern(TyKind::Char);
                 self.tcx.intern(TyKind::Vec(c))
+            }
+            "bytes" => {
+                let u8_ty = self.tcx.int_ty(IntTy::U8);
+                self.tcx.intern(TyKind::Vec(u8_ty))
             }
             // `Option<i64>` byte offsets - the P0-4 shape.
             "find" | "rfind" | "find_any" | "rfind_any" | "index_rune" => {
@@ -7276,6 +7357,69 @@ fn strings_fn_str_params(name: &str) -> Option<&'static [(usize, StrArgShape)]> 
     })
 }
 
+/// Source parameter names for diagnostics emitted by the string-operation
+/// catalogue. Every indexed string slot has a stable, user-facing label.
+fn strings_fn_param_name(name: &str, position: usize) -> &'static str {
+    match (name, position) {
+        (_, 0) => "text",
+        ("replace" | "replacen", 1) => "from",
+        ("replace" | "replacen", 2) => "to",
+        ("center" | "pad_left" | "pad_right", 2) => "fill",
+        _ => "pattern",
+    }
+}
+
+/// Concise source-like text for an invalid argument. Literals retain their
+/// exact value, while paths remain useful without requiring the source map.
+fn argument_value_display(arg: &Expr) -> String {
+    match &arg.kind {
+        ExprKind::Array(ArrayExpr::List(values)) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(argument_value_display)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ExprKind::Array(ArrayExpr::Repeat { value, count }) => {
+            format!(
+                "[{}; {}]",
+                argument_value_display(value),
+                argument_value_display(count)
+            )
+        }
+        ExprKind::Literal(Literal::Int(value) | Literal::Float(value)) => value.clone(),
+        ExprKind::Literal(Literal::String(value)) => format!("{value:?}"),
+        ExprKind::Literal(Literal::Char(value)) => format!("{value:?}"),
+        ExprKind::Literal(Literal::Bool(value)) => value.to_string(),
+        ExprKind::Literal(Literal::Unit) => "()".to_string(),
+        ExprKind::Path(path) => path
+            .segments
+            .iter()
+            .map(|segment| segment.name.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::"),
+        _ => "<expression>".to_string(),
+    }
+}
+
+/// Renders container-like invalid arguments without leaking unresolved
+/// inference variables such as `[?1; 3]` into diagnostics. The expression
+/// shape is more useful here than a partially inferred element type.
+fn string_argument_found_type(arg: &Expr, tcx: &TyCtxt, ty: Ty) -> String {
+    match &arg.kind {
+        ExprKind::Array(_) => "array".to_string(),
+        ExprKind::Range { .. } => "range".to_string(),
+        ExprKind::Tuple(_) => "tuple".to_string(),
+        _ => match tcx.kind(ty) {
+            Some(TyKind::Array { .. }) => "array".to_string(),
+            Some(TyKind::Vec(_)) => "Vec".to_string(),
+            Some(TyKind::Tuple(_)) => "tuple".to_string(),
+            _ => render_ty(tcx, ty),
+        },
+    }
+}
+
 /// Full fixed arity of each string operation.  These are source-level arities
 /// (including the string receiver / first free-function argument), so callers
 /// subtract one for method syntax.  Keeping the table complete prevents an
@@ -7938,6 +8082,7 @@ fn is_string_method(name: &str) -> bool {
         "len"
             | "is_empty"
             | "as_bytes"
+            | "bytes"
             | "chars"
             | "split"
             | "splitn"
@@ -7970,8 +8115,10 @@ fn is_string_method(name: &str) -> bool {
             | "to_lowercase"
             | "to_uppercase"
             | "to_title"
+            | "to_i64"
+            | "to_f64"
+            | "to_bool"
             | "repeat"
-            | "join"
             | "strip_prefix"
             | "strip_suffix"
             | "pad_left"
@@ -8078,5 +8225,62 @@ impl gossamer_ast::visitor::Visitor for WriteArgPathCollector {
             }
         }
         gossamer_ast::visitor::walk_expr(self, expr);
+    }
+}
+
+#[cfg(test)]
+mod string_method_tests {
+    use super::is_string_method;
+
+    #[test]
+    fn receiver_shaped_strings_functions_are_string_methods() {
+        for name in [
+            "bytes",
+            "center",
+            "chars",
+            "contains",
+            "contains_any",
+            "count",
+            "ends_with",
+            "equal_fold",
+            "find",
+            "find_any",
+            "lines",
+            "pad_left",
+            "pad_right",
+            "repeat",
+            "replace",
+            "replacen",
+            "rfind",
+            "rfind_any",
+            "rsplit_once",
+            "slice",
+            "split",
+            "split_once",
+            "split_whitespace",
+            "splitn",
+            "starts_with",
+            "strip_prefix",
+            "strip_suffix",
+            "to_bool",
+            "to_f64",
+            "to_i64",
+            "to_lowercase",
+            "to_title",
+            "to_uppercase",
+            "trim",
+            "trim_end",
+            "trim_end_matches",
+            "trim_matches",
+            "trim_start",
+            "trim_start_matches",
+        ] {
+            assert!(is_string_method(name), "{name} should be a String method");
+        }
+    }
+
+    #[test]
+    fn strings_join_stays_vec_only() {
+        assert!(!is_string_method("join"));
     }
 }

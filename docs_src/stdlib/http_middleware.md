@@ -4,23 +4,11 @@ Status: experimental
 
 Composable middleware: logger, recoverer, request_id, cors, basic_auth, compress_gzip.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `Handler` | trait | Anything serving (Request, Params) -> Response. |
-| `Chain` | type | Helper for composing middleware in a single value. |
-| `new_request_id` | fn | Generate a process-monotonic request id string. Available in interp + compiled. |
-| `tag` | fn | Wrap a handler (`tag(inner) -> Handler`), prepending `mw:` to each response body. Deterministic composition primitive; available in interp + compiled. |
-| `accepts_gzip` | fn | Check an Accept-Encoding header for a gzip token. Available in interp + compiled. |
-| `decode_basic_auth` | fn | Decode a Basic-auth Authorization header into (user, password). Interp tier. |
-| `bearer_ok` | fn | Run a verify closure on the request's Bearer token; false (without calling verify) when no Bearer header is present. Available in interp + compiled. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

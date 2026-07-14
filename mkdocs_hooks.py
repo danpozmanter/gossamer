@@ -8,6 +8,10 @@ covers every fenced block the theme renders.
 
 Also patches the version tag in landing/index.html to match the
 workspace version in Cargo.toml so the two never drift.
+
+Finally, strips trailing spaces from generated HTML. Material's
+script-tag rendering can emit whitespace-only lines, and checked-in
+docs should stay clean under `git diff --check`.
 """
 
 import os
@@ -43,6 +47,23 @@ def _patch_landing_version(config_file_path: str, version: str) -> None:
         open(landing, "w", encoding="utf-8").write(patched)
 
 
+def _strip_trailing_html_whitespace(site_dir: str) -> None:
+    """Remove trailing spaces and tabs from generated HTML files."""
+    for root, _, files in os.walk(site_dir):
+        for name in files:
+            if not name.endswith(".html"):
+                continue
+            path = os.path.join(root, name)
+            original = open(path, encoding="utf-8").read()
+            lines = original.splitlines(keepends=True)
+            stripped = "".join(
+                line.rstrip(" \t\r\n") + ("\n" if line.endswith(("\n", "\r")) else "")
+                for line in lines
+            )
+            if stripped != original:
+                open(path, "w", encoding="utf-8").write(stripped)
+
+
 def on_config(config):
     import pymdownx.highlight as highlight
 
@@ -59,3 +80,7 @@ def on_config(config):
     _patch_landing_version(config["config_file_path"], version)
 
     return config
+
+
+def on_post_build(config):
+    _strip_trailing_html_whitespace(config["site_dir"])

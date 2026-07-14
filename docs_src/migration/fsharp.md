@@ -27,8 +27,8 @@ but the argument position differs:
 
 | Language | Desugaring |
 |----------|------------|
-| F# | `x \|> f` → `f x` (data is **first** arg) |
-| Gossamer | `x \|> f` → `f(x)` where x fills the **last** positional slot |
+| F# | `x |> f` → `f x` (data is **first** arg) |
+| Gossamer | `x |> f` → `f(x)` where x fills the **last** positional slot |
 
 F#:
 
@@ -58,11 +58,11 @@ left-to-right visual shape.
 | `let x = 5` | `let x = 5` | Same. |
 | `let mutable x = 5` | `let mut x = 5` | Same meaning. |
 | `let f x y = x + y` | `fn f(x: i64, y: i64) -> i64 { x + y }` | Named params, explicit types. |
-| `fun x -> x + 1` | `\|x: i64\| x + 1` | Closure syntax. |
+| `fun x -> x + 1` | `|x: i64| x + 1` | Closure syntax. |
 | `if cond then a else b` | `if cond { a } else { b }` | Braces required. |
-| `match x with \| A -> … \| B -> …` | `match x { A => …, B => … }` | Exhaustive. |
+| `match x with | A -> … | B -> …` | `match x { A => …, B => … }` | Exhaustive. |
 | `type Point = { X: int; Y: int }` | `struct Point { x: i64, y: i64 }` | |
-| `type Shape = Circle of float \| Rect of float * float` | `enum Shape { Circle(f64), Rect(f64, f64) }` | |
+| `type Shape = Circle of float | Rect of float * float` | `enum Shape { Circle(f64), Rect(f64, f64) }` | |
 | `printfn "%d" n` | `println!("{n}")` | |
 | `sprintf "%s world" "hello"` | `format!("{} world", "hello")` or `format!("hello world")` | |
 | `[1; 2; 3]` | `[1, 2, 3]` | Growable `Vec<i64>`. |
@@ -346,10 +346,10 @@ let evens = iter::range_inclusive(0, 100)
 | `System.Console.WriteLine` | `println!(...)` |
 | `printfn "%d" n` | `println!("{n}")` |
 | `sprintf "%s %d" s n` | `format!("{s} {n}")` |
-| `List.map f xs` | `xs \|> iter::map(f)` |
-| `List.filter f xs` | `xs \|> iter::filter(f)` |
-| `List.fold f init xs` | `xs \|> iter::fold(init, f)` |
-| `List.sum xs` | `xs \|> iter::sum()` |
+| `List.map f xs` | `xs |> iter::map(f)` |
+| `List.filter f xs` | `xs |> iter::filter(f)` |
+| `List.fold f init xs` | `xs |> iter::fold(init, f)` |
+| `List.sum xs` | `xs |> iter::sum()` |
 | `Seq.length xs` | `xs.len()` |
 | `Map.find k m` | `m.get(&k)` (returns `Option<&V>`) |
 | `Set.contains x s` | `s.contains(&x)` |

@@ -4,18 +4,11 @@ Status: shipped
 
 OS-thread scheduling hints and CPU introspection; user concurrency uses goroutines, not thread spawning.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `yield_now` | fn | Hints to the scheduler to switch to another runnable thread. |
-| `num_cpus` | fn | Returns the number of logical CPUs available. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/thread.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/thread.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

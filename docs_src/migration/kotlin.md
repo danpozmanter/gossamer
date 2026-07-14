@@ -27,7 +27,7 @@ every absent value is explicit and every blocking call is safe.
 | `val x = 5` | `let x = 5` | Immutable binding. |
 | `var x = 5` | `let mut x = 5` | Mutable binding. |
 | `fun f(x: Int): Int = x + 1` | `fn f(x: i64) -> i64 { x + 1 }` | |
-| `{ x: Int -> x + 1 }` | `\|x: i64\| x + 1` | Lambda / closure. |
+| `{ x: Int -> x + 1 }` | `|x: i64| x + 1` | Lambda / closure. |
 | `if (cond) a else b` | `if cond { a } else { b }` | No parens required. |
 | `when (x) { 1 -> … else -> … }` | `match x { 1 => …, _ => … }` | Exhaustive. |
 | `data class Point(val x: Int, val y: Int)` | `struct Point { x: i64, y: i64 }` | |
@@ -355,10 +355,10 @@ fn read_config(path: &String) -> Result<Config, errors::Error> {
 | `mutableListOf(...)` | `let mut xs = [...]` |
 | `mapOf(k to v)` | `HashMap::from([(k, v)])` |
 | `setOf(...)` | `HashSet::from([...])` |
-| `list.map { }` | `list \|> iter::map(\|x\| …)` |
-| `list.filter { }` | `list \|> iter::filter(\|x\| …)` |
-| `list.fold(init) { acc, x -> }` | `list \|> iter::fold(init, \|acc, x\| …)` |
-| `list.sortedBy { }` | `xs.sort_by_key(\|x\| …)` |
+| `list.map { }` | `list |> iter::map(|x| …)` |
+| `list.filter { }` | `list |> iter::filter(|x| …)` |
+| `list.fold(init) { acc, x -> }` | `list |> iter::fold(init, |acc, x| …)` |
+| `list.sortedBy { }` | `xs.sort_by_key(|x| …)` |
 | `OkHttp / Ktor HttpClient` | `http::Client::new()` |
 | `ktor server { }` | `http::serve(addr, handler)` |
 | `kotlinx.serialization` | `encoding::json::encode(v)` |

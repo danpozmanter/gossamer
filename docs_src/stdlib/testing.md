@@ -4,21 +4,11 @@ Status: experimental
 
 Assertions and sub-test harness helpers.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `Runner` | type | Sub-test collector. |
-| `check` | fn | Asserts a condition. |
-| `check_eq` | fn | Asserts equality, rendering a diff on failure. |
-| `check_ok` | fn | Asserts a Result is Ok, recording without panicking. |
-| `wait_for_scheduler_idle` | fn | Waits for the scheduler to become idle within a timeout. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

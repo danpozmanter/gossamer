@@ -4,45 +4,11 @@ Status: experimental
 
 HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `Request` | type | HTTP request value passed to a handler. |
-| `Response` | type | HTTP response value returned from a handler. |
-| `Method` | type | HTTP method enumeration. |
-| `StatusCode` | type | HTTP status code. |
-| `Headers` | type | Case-insensitive header map. |
-| `Server` | type | HTTP server bound to a TCP listener. |
-| `serve` | fn | Convenience: bind and serve an HTTP handler. `Result<(), Error>` - a bind failure is an Err value. |
-| `serve_tls` | fn | TLS-terminating server: `serve_tls(addr, cert_pem, key_pem, handler) -> Result<(), Error>`. Builds a rustls config from the PEM cert chain + key and serves HTTPS with the same handler contract as `serve`. |
-| `Client` | type | HTTP client; configure redirects and timeout via `Client::builder()`. |
-| `ResponseStream` | type | Streaming response body from `http::stream`; `next_line` / `next_chunk`, consumed by `Response::stream`. |
-| `request` | fn | One-shot request with a string body: `(method, url, body, headers) -> Result<Response, Error>`. |
-| `request_bytes` | fn | One-shot request with a byte body: `(method, url, body: [u8], headers) -> Result<Response, Error>`. |
-| `stream` | fn | One-shot request read incrementally: `(method, url, body, headers) -> Result<ResponseStream, Error>`. |
-| `get` | fn | One-shot GET: `(url, headers) -> Result<Response, Error>`. |
-| `post` | fn | One-shot POST: `(url, body, content_type) -> Result<Response, Error>`. |
-| `put` | fn | One-shot PUT: `(url, body, content_type) -> Result<Response, Error>`. |
-| `delete` | fn | One-shot DELETE: `(url, body, headers) -> Result<Response, Error>`. |
-| `head` | fn | One-shot HEAD: `(url, headers) -> Result<Response, Error>`. |
-| `options` | fn | One-shot OPTIONS: `(url, headers) -> Result<Response, Error>`. |
-| `Http2Handler` | trait | Bounded-body HTTP/2 handler: serve(Request) -> Response. |
-| `Http2StreamingHandler` | trait | Chunked-body HTTP/2 handler: serve(Request, StreamingResponseWriter) -> Result. |
-| `StreamingResponseWriter` | type | Streaming HTTP/2 response writer; set_status / header / write_chunk / finish. |
-| `Http2Config` | type | Per-connection HTTP/2 tuning (window sizes, max concurrent streams, frame caps). |
-| `Http2ServerHandle` | type | Handle to a running HTTP/2 connection for shutdown / in-flight counts. |
-| `Http2Error` | type | HTTP/2 server error: Io, Protocol, Handler. |
-| `serve_h2c` | fn | Bind a plain-TCP listener and serve h2c (HTTP/2 cleartext). |
-| `Trailers` | type | HTTP/2 trailing HEADERS (alias for Headers) - used by `ResponseWriter::write_trailers` and `Request::trailers`. |
-| `PushOptions` | type | Prioritization knobs for `ResponseWriter::push_promise` (weight, depends_on, exclusive). |
-| `PushStream` | type | Server-initiated push stream returned by `ResponseWriter::push_promise`. Supports send_head / write / write_trailers / end. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
@@ -116,7 +82,7 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 | [`request_bytes`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn request_bytes(method: String, url: String, body: Vec<u8>, headers: Vec<(String, String)>) -> Result<http::Response, errors::Error>` | One-shot request with a byte body: `(method, url, body: [u8], headers) -> Result<Response, Error>`. |
 | [`Handler`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `trait Handler` | Anything callable as `Fn(&Request, &Params) -> Response`. |
 | [`Params`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `type Params` | Captured path parameters. Read inside a handler with `r.path_value(name) -> String`; returns `""` for an undeclared name. All tiers. |
-| [`Router`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `type Router` | Routing table. Build with `Router::new()`, register routes via the verb methods, then pass to `http::serve`. Verb methods return the router so they chain with `\|>`. |
+| [`Router`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `type Router` | Routing table. Build with `Router::new()`, register routes via the verb methods, then pass to `http::serve`. Verb methods return the router so they chain with `|>`. |
 | [`add`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn add(router: http::router::Router, method: String, pattern: String) -> Result<(), errors::Error>` | Register a pattern-only route: `(router, method, pattern)`. Used with `lookup` for low-level dispatch. |
 | [`lookup`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn lookup(router: http::router::Router, method: String, path: String) -> Option<http::router::Match>` | Find the index of the first route matching `(method, path)`. Returns `Option<i64>`. |
 | [`new`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn new() -> http::router::Router` | Allocate a fresh Router handle. |

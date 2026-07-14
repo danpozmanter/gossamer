@@ -4,21 +4,11 @@ Status: experimental
 
 Server-Sent Events (text/event-stream) emitter with heartbeat ticks and retry hint.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `Stream` | type | Active SSE stream - handler writes events through it (Rust-side). |
-| `Event` | type | One SSE event (id, event, data, retry). |
-| `encode_event` | fn | Render one event block as a string: `(event, data, id) -> String`. Available in interp + compiled. |
-| `encode_comment` | fn | Render a `:`-prefixed keepalive line. Available in interp + compiled. |
-| `encode_retry` | fn | Render a `retry:` reconnect-hint directive in milliseconds. Available in interp + compiled. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

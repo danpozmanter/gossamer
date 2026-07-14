@@ -244,34 +244,11 @@ pub(crate) fn cmd_repl() -> Result<()> {
     }
 }
 
-/// REPL results use literal syntax for strings nested in a variant.  Plain
-/// string results remain unquoted for the existing interactive ergonomics,
-/// while `Ok("bc")` is no longer indistinguishable from a hypothetical
-/// identifier/value named `bc`.
+/// REPL results use source-like representation, while explicit `print` and
+/// `println` retain `Display` formatting. This keeps a bare string distinct
+/// from an identifier and applies recursively to aggregate values.
 fn render_repl_value(value: &gossamer_interp::Value) -> String {
-    match value {
-        gossamer_interp::Value::Variant(inner) => {
-            let fields = inner
-                .fields
-                .iter()
-                .map(render_repl_nested_value)
-                .collect::<Vec<_>>();
-            match fields.as_slice() {
-                [] => inner.name.as_str().to_string(),
-                [field] => format!("{}({field})", inner.name.as_str()),
-                _ => format!("{}({})", inner.name.as_str(), fields.join(", ")),
-            }
-        }
-        _ => value.to_string(),
-    }
-}
-
-fn render_repl_nested_value(value: &gossamer_interp::Value) -> String {
-    match value {
-        gossamer_interp::Value::String(text) => format!("{:?}", text.as_str()),
-        gossamer_interp::Value::Variant(_) => render_repl_value(value),
-        _ => value.to_string(),
-    }
+    value.repr()
 }
 
 fn split_meta_command(input: &str) -> (&str, &str) {

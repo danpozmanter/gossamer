@@ -4,20 +4,11 @@ Status: experimental
 
 Password-based key-derivation functions.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `pbkdf2_sha256` | fn | PBKDF2-HMAC-SHA256 KDF. |
-| `scrypt_interactive` | fn | scrypt with the standard interactive parameters. |
-| `argon2id_hash` | fn | Argon2id PHC-format password hash. |
-| `argon2id_verify` | fn | Verifies a password against an Argon2id PHC string. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/crypto.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/crypto.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

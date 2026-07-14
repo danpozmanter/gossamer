@@ -209,6 +209,13 @@ pub enum Value {
 }
 
 impl Value {
+    /// Renders this value as a source-like representation for interactive
+    /// inspection. Unlike [`fmt::Display`], strings and chars are quoted.
+    #[must_use]
+    pub fn repr(&self) -> String {
+        repr_value(self)
+    }
+
     /// Borrows the elements of an `Array` or `Tuple` as a slice - both back
     /// onto `[Value]`, so read-only element access shares one path.
     #[must_use]
@@ -2174,6 +2181,78 @@ impl fmt::Display for Value {
     }
 }
 
+fn repr_value(value: &Value) -> String {
+    match value {
+        Value::String(text) => format!("{:?}", text.as_str()),
+        Value::Char(ch) => format!("{ch:?}"),
+        Value::Tuple(parts) => {
+            let mut rendered: Vec<String> = parts.iter().map(repr_value).collect();
+            if rendered.len() == 1 {
+                rendered[0].push(',');
+            }
+            format!("({})", rendered.join(", "))
+        }
+        Value::Array(parts) => format!(
+            "[{}]",
+            parts.iter().map(repr_value).collect::<Vec<_>>().join(", ")
+        ),
+        Value::FloatArray(_) => repr_value(&Value::Array(Arc::new(value.float_array_elems()))),
+        Value::IntArray(data) => format!("{:?}", data.as_slice()),
+        Value::FloatVec(data) => format!("{:?}", data.as_slice()),
+        Value::Variant(inner) => {
+            let fields = inner.fields.iter().map(repr_value).collect::<Vec<_>>();
+            if fields.is_empty() {
+                inner.name.as_str().to_string()
+            } else {
+                format!("{}({})", inner.name.as_str(), fields.join(", "))
+            }
+        }
+        Value::Struct(inner) => format!(
+            "{} {{ {} }}",
+            inner.name.as_str(),
+            inner
+                .fields
+                .iter()
+                .map(|(name, field)| format!("{name}: {}", repr_value(field)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Map(map) => {
+            let map = map.lock();
+            let mut entries: Vec<_> = map.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            format!(
+                "{{{}}}",
+                entries
+                    .iter()
+                    .map(|(key, item)| format!(
+                        "{}: {}",
+                        repr_value(&key.to_value()),
+                        repr_value(item)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+        Value::StrIntMap(map) => {
+            let map = map.lock();
+            let mut entries: Vec<_> = map.iter().collect();
+            entries.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+            format!(
+                "{{{}}}",
+                entries
+                    .iter()
+                    .map(|(key, item)| format!("{:?}: {item}", key.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+        Value::MutCell(cell) => repr_value(&cell.lock()),
+        Value::NativeEnum(owner) => repr_value(&native_enum_to_variant(owner)),
+        _ => value.to_string(),
+    }
+}
+
 fn write_tuple(out: &mut fmt::Formatter<'_>, parts: &[Value]) -> fmt::Result {
     out.write_str("(")?;
     for (i, part) in parts.iter().enumerate() {
@@ -3288,6 +3367,37 @@ mod smolstr_tests {
         text.push_str("reserved text");
         assert_eq!(text.as_str(), "reserved text");
         assert_eq!(text.capacity(), 64);
+    }
+}
+
+#[cfg(test)]
+mod repr_tests {
+    use std::sync::Arc;
+
+    use smallvec::smallvec;
+
+    use super::{StructInner, Value, VariantInner, intern_type_tag};
+
+    #[test]
+    fn repr_quotes_strings_and_chars_recursively() {
+        let list = Value::Array(Arc::new(vec![
+            Value::String("wow".into()),
+            Value::Char('a'),
+        ]));
+        let variant = Value::Variant(Arc::new(VariantInner {
+            name: intern_type_tag("Ok"),
+            fields: smallvec![list],
+        }));
+        let record = Value::Struct(Arc::new(StructInner {
+            name: intern_type_tag("Message"),
+            fields: Box::new([("text", Value::String("hello".into())), ("value", variant)]),
+        }));
+
+        assert_eq!(
+            record.repr(),
+            "Message { text: \"hello\", value: Ok([\"wow\", 'a']) }"
+        );
+        assert_eq!(Value::String("wow".into()).to_string(), "wow");
     }
 }
 

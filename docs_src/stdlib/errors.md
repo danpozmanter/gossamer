@@ -4,22 +4,11 @@ Status: experimental
 
 Error construction, wrapping, and chain traversal.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `Error` | type | Reference-counted error value with optional cause chain. |
-| `new` | fn | Constructs a fresh error from a message. |
-| `newf` | fn | Constructs a fresh error from a format template, e.g. `newf("status {}", code)`. |
-| `wrap` | fn | Wraps a cause with a higher-level message. |
-| `is` | fn | Checks whether an error's chain contains a matching message. |
-| `join` | fn | Joins a list of errors into one; messages are joined with "; " (None for an empty list). |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/errors.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/errors.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

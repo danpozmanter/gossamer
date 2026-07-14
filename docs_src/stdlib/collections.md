@@ -4,21 +4,11 @@ Status: experimental
 
 Built-in container types.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `Vec` | type | Growable contiguous sequence. |
-| `VecDeque` | type | Double-ended queue backed by a ring buffer. |
-| `HashMap` | type | Hash map backed by the swiss-table layout. |
-| `BTreeMap` | type | Ordered map. |
-| `HashSet` | type | Unordered set built on top of `HashMap`. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

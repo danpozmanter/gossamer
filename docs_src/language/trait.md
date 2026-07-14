@@ -36,7 +36,7 @@ a dot product (`Mul -> f64`) types correctly. Compound assignment
 | `a % b` | `Rem` | `rem` |
 | `-a` (unary) | `Neg` | `neg` |
 | `a[i]` | `Index` | `index` |
-| `a \| b` / `a & b` / `a ^ b` | `BitOr` / `BitAnd` / `BitXor` | `bitor` / `bitand` / `bitxor` |
+| `a | b` / `a & b` / `a ^ b` | `BitOr` / `BitAnd` / `BitXor` | `bitor` / `bitand` / `bitxor` |
 | `a << b` / `a >> b` | `Shl` / `Shr` | `shl` / `shr` |
 
 ```gossamer

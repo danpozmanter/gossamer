@@ -4,25 +4,11 @@ Status: experimental
 
 RFC 2045 media type parsing, parameter extraction, and extension lookup.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `parse` | fn | Canonical `type/subtype` form of the input, or empty on parse failure. |
-| `top` | fn | Top-level type (e.g. `text`) of a media type, or empty. |
-| `sub` | fn | Subtype (e.g. `html`) of a media type, or empty. |
-| `charset` | fn | Return the `charset` parameter, or empty. |
-| `boundary` | fn | Return the multipart `boundary` parameter, or empty. |
-| `param` | fn | Return an arbitrary parameter by key, or empty. |
-| `type_by_extension` | fn | Canonical media type for a filename extension (dot optional), or empty. |
-| `extension_by_type` | fn | Canonical extension (no leading dot) for a media type, or empty. |
-| `is_valid` | fn | Return true iff the string parses as a valid media type. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/mime_types.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/mime_types.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

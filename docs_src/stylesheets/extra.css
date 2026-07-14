@@ -34,6 +34,31 @@
   background-color: #000000;
 }
 
+.gos-source-name,
+.gos-source-facts {
+  display: block;
+  line-height: 1.2;
+}
+
+.gos-source-facts {
+  color: var(--md-default-fg-color--light);
+  font-size: 0.64rem;
+  white-space: nowrap;
+}
+
+#gos-repo-button {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+#gos-repo-button svg {
+  fill: currentColor;
+  height: 1rem;
+  width: 1rem;
+}
+
 /* Code blocks get the same hairline-bordered, rounded panel as the
  * landing's <pre>. */
 [data-md-color-scheme="slate"] .md-typeset pre > code,
@@ -54,4 +79,32 @@
 [data-md-color-scheme="slate"] .md-typeset details {
   background: #0b0d11;
   border-color: #1f2937;
+}
+
+/* Keep API names intact and let wide signatures scroll as one table instead
+ * of collapsing the first column into unreadable wrapped fragments. */
+.md-typeset__table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.md-typeset table:not([class]) {
+  min-width: max-content;
+}
+
+.md-typeset table:not([class]) th:first-child,
+.md-typeset table:not([class]) td:first-child {
+  min-width: 10rem;
+  white-space: nowrap;
+}
+
+@media screen and (max-width: 76.234375em) {
+  .md-sidebar--secondary {
+    display: none;
+  }
+
+  .md-main__inner {
+    margin-right: 0;
+  }
 }

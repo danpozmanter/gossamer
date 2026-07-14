@@ -4,20 +4,11 @@ Status: experimental
 
 LIFO stack over Vec<i64>. Re-bind shape: `let s = stack::push(s, v)`.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `push` | fn | Push an i64 onto the top; returns the new stack. |
-| `pop` | fn | Drop the top; returns the new stack. |
-| `peek` | fn | Top element, or 0 if empty. |
-| `len` | fn | Element count. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

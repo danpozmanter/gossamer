@@ -4,22 +4,11 @@ Status: experimental
 
 Goroutine-driven HTTP/1.1 client over std::net (no ureq, no blocking pool).
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `Client` | type | Native h1 client (Rust-side; full builder surface). |
-| `Error` | type | Connect / Tls / Http / Redirect / Timeout / Io. |
-| `get` | fn | One-shot GET → Result<Response, Error>. Interp tier (compiled tier shares http::get). |
-| `post` | fn | One-shot POST: `(url, body, content_type)`. Interp tier. |
-| `put` | fn | One-shot PUT: `(url, body, content_type)`. Interp tier. |
-| `delete` | fn | One-shot DELETE → Result<Response, Error>. Interp tier. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_native_client.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_native_client.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

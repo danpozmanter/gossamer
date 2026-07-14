@@ -1486,6 +1486,18 @@ const fn status_reason(status: i64) -> &'static str {
 mod tests {
     use super::*;
 
+    #[cfg(not(tsan))]
+    fn scheduler_wait_timeout() -> std::time::Duration {
+        std::time::Duration::from_secs(2)
+    }
+
+    #[cfg(tsan)]
+    fn scheduler_wait_timeout() -> std::time::Duration {
+        // TSan instrumentation substantially slows the scheduler and netpoll
+        // wake paths these tests exercise.
+        std::time::Duration::from_secs(20)
+    }
+
     /// In-memory `HttpIo` for driving `handle_http_conn` in tests:
     /// serves `input` to `read`, records every `write_all` in `written`.
     struct MockConn {
@@ -1572,7 +1584,6 @@ mod tests {
         use std::sync::Arc;
         use std::sync::atomic::AtomicUsize;
         use std::sync::mpsc;
-        use std::time::Duration;
 
         let resumed = Arc::new(AtomicUsize::new(0));
         let env = Arc::as_ptr(&resumed) as usize;
@@ -1593,7 +1604,7 @@ mod tests {
             .is_some()
         );
         done_rx
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(scheduler_wait_timeout())
             .expect("suspended handler must resume and finish");
         assert_eq!(
             resumed.load(Ordering::Acquire),
@@ -2240,7 +2251,7 @@ mod tests {
             .is_some()
         );
         done_rx
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(scheduler_wait_timeout())
             .expect("connection goroutine must resume from netpoll readiness");
         let response = client.join().unwrap();
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
@@ -2273,7 +2284,7 @@ mod tests {
         );
         assert!(
             !done_rx
-                .recv_timeout(Duration::from_secs(2))
+                .recv_timeout(scheduler_wait_timeout())
                 .expect("deadline must wake connection goroutine"),
             "an idle socket must report a deadline rather than false readiness"
         );

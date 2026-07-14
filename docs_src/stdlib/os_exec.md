@@ -4,27 +4,11 @@ Status: shipped
 
 Deprecated compatibility facade for child processes; new code uses std::process.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `Child` | type | Handle to a still-running child supporting wait / kill. |
-| `Pipeline` | type | Multi-stage subprocess pipeline (stdout-to-stdin chain). |
-| `Signal` | type | Portable signal selector (Term/Kill/Stop/Cont/Hup/Int/Usr1/Usr2/Pipe/Quit). |
-| `run` | fn | One-shot: runs a program with args, captures stdout/stderr, returns Result<{stdout, stderr, code}, String>. |
-| `spawn` | fn | Non-blocking launch; returns the child PID as Result<i64, errors::Error>. |
-| `spawn_piped` | fn | Spawns a child with piped stdin/stdout; returns Result<Child, errors::Error>. The Child's write_stdin / close_stdin / read_line / read_stdout / wait / kill methods drive it interactively. |
-| `kill` | fn | Best-effort SIGTERM by pid; returns true on success. |
-| `signal` | fn | Send an arbitrary signal number to a pid; returns true on success. |
-| `kill_group` | fn | Send SIGTERM to the entire process group (Unix); best-effort TerminateProcess on Windows. |
-| `wait_timeout` | fn | Wait up to N ms for a pid to exit; returns exit code, -1 on timeout, -2 on error. |
-| `pipeline_run` | fn | Run a Vec<String> of shell-tokenised commands as a stdout-to-stdin pipeline. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

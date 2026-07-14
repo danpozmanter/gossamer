@@ -4,23 +4,11 @@ Status: experimental
 
 Sorted-on-insert Vec<i64> with binary-search lookups.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `insert` | fn | Insert at the unique sorted position. |
-| `remove_at` | fn | Remove the element at index `i`. |
-| `contains` | fn | Return true iff `value` is present. |
-| `index_of` | fn | Return the index of `value`, or -1. |
-| `peek_min` | fn | Smallest element, or 0. |
-| `peek_max` | fn | Largest element, or 0. |
-| `len` | fn | Element count. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_ordered.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_ordered.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

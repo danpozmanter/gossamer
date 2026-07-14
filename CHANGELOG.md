@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.28.3 - Type errors, REPL display, and docs polish
+
+- Fixed `strings::bytes()` typechecking and tightened stdlib string argument
+  validation so wrong arguments produce one named error with the actual value.
+- Aligned the `std::strings` method surface: receiver-shaped functions are
+  accepted on `String`, while `join(parts, sep)` stays on `Vec`.
+- Made REPL value display Python-like: bare strings and chars are quoted,
+  while explicit `println!` output remains unquoted.
+- Cleaned stdlib docs by removing redundant public-item tables, preserving
+  `|` inside inline code, and improving table wrapping.
+- Made docs repo header facts load uncached from GitHub instead of relying on
+  stale session-cached source facts.
+
 ## 0.28.2 - Stability, correctness, and docs
 
 - Made compiled callback teardown wait for in-flight calls before 

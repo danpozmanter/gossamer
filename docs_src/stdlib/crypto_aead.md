@@ -4,20 +4,11 @@ Status: experimental
 
 Authenticated encryption with associated data.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `aes_256_gcm_seal` | fn | AES-256-GCM seal: encrypts plaintext with key, nonce, and AAD. |
-| `aes_256_gcm_open` | fn | AES-256-GCM open: decrypts and authenticates ciphertext. |
-| `chacha20_poly1305_seal` | fn | ChaCha20-Poly1305 seal. |
-| `chacha20_poly1305_open` | fn | ChaCha20-Poly1305 open. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/crypto.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/crypto.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

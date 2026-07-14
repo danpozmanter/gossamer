@@ -4,21 +4,11 @@ Status: experimental
 
 UUID v4 (random) and v7 (timestamp-ordered) generation, parse, and normalize.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `v4` | fn | Generate a fresh random v4 UUID as a canonical hyphenated string. |
-| `v7` | fn | Generate a fresh v7 (timestamp-ordered) UUID. |
-| `is_valid` | fn | Return true iff the string parses as a canonical UUID. |
-| `normalize` | fn | Lowercase canonical UUID form of the input, or empty string on parse failure. |
-| `simple` | fn | 32-character unhyphenated form of the input, or empty string on parse failure. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/uuid.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/uuid.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|

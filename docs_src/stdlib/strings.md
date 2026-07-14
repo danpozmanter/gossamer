@@ -4,69 +4,24 @@ Status: experimental
 
 String operations.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `split` | fn | Splits a string by a delimiter. |
-| `splitn` | fn | Splits a string into at most `n` parts. |
-| `trim` | fn | Removes leading and trailing whitespace. |
-| `contains` | fn | Returns whether the string contains a substring. |
-| `find` | fn | Returns the byte position of the first match. |
-| `replace` | fn | Replaces every occurrence of `from` with `to`. |
-| `to_lowercase` | fn | Lowercases every character. |
-| `to_uppercase` | fn | Uppercases every character. |
-| `starts_with` | fn | Returns whether the string starts with the given prefix. |
-| `ends_with` | fn | Returns whether the string ends with the given suffix. |
-| `split_once` | fn | Splits on the first occurrence of `sep`; returns Option<(String, String)>. |
-| `rsplit_once` | fn | Splits on the last occurrence of `sep`; returns Option<(String, String)>. |
-| `count` | fn | Counts non-overlapping occurrences of `needle`. |
-| `bytes` | fn | Returns the UTF-8 bytes of the string. |
-| `chars` | fn | Returns the Unicode scalar values of the string. |
-| `center` | fn | Symmetric pad to `width` using the given pad character. |
-| `slice` | fn | Safe byte-range slice returning Result<String, errors::Error>. |
-| `split_whitespace` | fn | Splits on runs of whitespace, dropping empty fields. |
-| `trim_start` | fn | Removes leading whitespace. |
-| `trim_end` | fn | Removes trailing whitespace. |
-| `rfind` | fn | Byte index of the last occurrence of a needle, or -1. |
-| `trim_start_matches` | fn | Removes leading characters in the given set. |
-| `trim_end_matches` | fn | Removes trailing characters in the given set. |
-| `replacen` | fn | Replaces the first n occurrences of a substring. |
-| `repeat` | fn | Concatenates n copies of the string. |
-| `lines` | fn | Splits into lines, dropping line terminators. |
-| `join` | fn | Joins string parts with a separator. |
-| `strip_prefix` | fn | Removes a leading prefix if present. |
-| `strip_suffix` | fn | Removes a trailing suffix if present. |
-| `pad_left` | fn | Left-pads to `width` with the given character. |
-| `pad_right` | fn | Right-pads to `width` with the given character. |
-| `contains_any` | fn | Reports whether the string contains any rune in a set. |
-| `find_any` | fn | Byte index of the first rune in a set, or None. |
-| `rfind_any` | fn | Byte index of the last rune in a set, or None. |
-| `equal_fold` | fn | Case-insensitive Unicode string equality. |
-| `trim_matches` | fn | Removes characters in the given set from both ends. |
-| `to_title` | fn | Title-cases the first letter of each word. |
-| `to_i64` | fn | Strict full-string parse to Option<i64>. |
-| `to_f64` | fn | Strict full-string parse to Option<f64>. |
-| `to_bool` | fn | Parses exactly `true` / `false` to Option<bool>. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
 | [`bytes`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn bytes(text: String) -> Vec<u8>` | Returns the UTF-8 bytes of the string. |
 | [`center`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn center(text: String, width: i64, fill: char) -> String` | Symmetric pad to `width` using the given pad character. |
 | [`chars`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn chars(text: String) -> Vec<char>` | Returns the Unicode scalar values of the string. |
-| [`contains`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn contains(text: String, needle: String \| char) -> bool` | Returns whether the string contains a substring. |
-| [`contains_any`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn contains_any(text: String, needle: String \| char) -> bool` | Reports whether the string contains any rune in a set. |
-| [`count`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn count(text: String, needle: String \| char) -> i64` | Counts non-overlapping occurrences of `needle`. |
-| [`ends_with`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn ends_with(text: String, needle: String \| char) -> bool` | Returns whether the string ends with the given suffix. |
-| [`equal_fold`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn equal_fold(text: String, needle: String \| char) -> bool` | Case-insensitive Unicode string equality. |
-| [`find`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn find(text: String, needle: String \| char) -> Option<i64>` | Returns the byte position of the first match. |
-| [`find_any`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn find_any(text: String, needle: String \| char) -> Option<i64>` | Byte index of the first rune in a set, or None. |
+| [`contains`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn contains(text: String, needle: String | char) -> bool` | Returns whether the string contains a substring. |
+| [`contains_any`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn contains_any(text: String, needle: String | char) -> bool` | Reports whether the string contains any rune in a set. |
+| [`count`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn count(text: String, needle: String | char) -> i64` | Counts non-overlapping occurrences of `needle`. |
+| [`ends_with`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn ends_with(text: String, needle: String | char) -> bool` | Returns whether the string ends with the given suffix. |
+| [`equal_fold`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn equal_fold(text: String, needle: String | char) -> bool` | Case-insensitive Unicode string equality. |
+| [`find`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn find(text: String, needle: String | char) -> Option<i64>` | Returns the byte position of the first match. |
+| [`find_any`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn find_any(text: String, needle: String | char) -> Option<i64>` | Byte index of the first rune in a set, or None. |
 | [`join`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn join(parts: Vec<String>, sep: String) -> String` | Joins string parts with a separator. |
 | [`lines`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn lines(text: String) -> Vec<String>` | Splits into lines, dropping line terminators. |
 | [`pad_left`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn pad_left(text: String, width: i64, fill: char) -> String` | Left-pads to `width` with the given character. |
@@ -74,15 +29,15 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 | [`repeat`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn repeat(text: String, count: i64) -> String` | Concatenates n copies of the string. |
 | [`replace`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn replace(text: String, from: String, to: String) -> String` | Replaces every occurrence of `from` with `to`. |
 | [`replacen`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn replacen(text: String, from: String, to: String, n: i64) -> String` | Replaces the first n occurrences of a substring. |
-| [`rfind`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn rfind(text: String, needle: String \| char) -> Option<i64>` | Byte index of the last occurrence of a needle, or -1. |
-| [`rfind_any`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn rfind_any(text: String, needle: String \| char) -> Option<i64>` | Byte index of the last rune in a set, or None. |
+| [`rfind`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn rfind(text: String, needle: String | char) -> Option<i64>` | Byte index of the last occurrence of a needle, or -1. |
+| [`rfind_any`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn rfind_any(text: String, needle: String | char) -> Option<i64>` | Byte index of the last rune in a set, or None. |
 | [`rsplit_once`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn rsplit_once(text: String, sep: String) -> Option<(String, String)>` | Splits on the last occurrence of `sep`; returns Option<(String, String)>. |
 | [`slice`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn slice(text: String, start: i64, end: i64) -> Result<String, errors::Error>` | Safe byte-range slice returning Result<String, errors::Error>. |
 | [`split`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn split(text: String, sep: String) -> Vec<String>` | Splits a string by a delimiter. |
 | [`split_once`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn split_once(text: String, sep: String) -> Option<(String, String)>` | Splits on the first occurrence of `sep`; returns Option<(String, String)>. |
 | [`split_whitespace`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn split_whitespace(text: String) -> Vec<String>` | Splits on runs of whitespace, dropping empty fields. |
 | [`splitn`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn splitn(text: String, n: i64, sep: String) -> Vec<String>` | Splits a string into at most `n` parts. |
-| [`starts_with`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn starts_with(text: String, needle: String \| char) -> bool` | Returns whether the string starts with the given prefix. |
+| [`starts_with`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn starts_with(text: String, needle: String | char) -> bool` | Returns whether the string starts with the given prefix. |
 | [`strip_prefix`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn strip_prefix(text: String, prefix: String) -> Option<String>` | Removes a leading prefix if present. |
 | [`strip_suffix`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn strip_suffix(text: String, prefix: String) -> Option<String>` | Removes a trailing suffix if present. |
 | [`to_bool`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs) | `fn to_bool(text: String) -> Result<bool, errors::Error>` | Parses exactly `true` / `false` to Option<bool>. |

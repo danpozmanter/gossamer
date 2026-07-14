@@ -1014,8 +1014,9 @@ fn strings_free_fn_rejects_integer_in_string_slot() {
     );
     assert!(
         d.iter().any(
-            |x| matches!(&x.error, TypeError::TypeMismatch { expected, found }
-                if expected == "String" && found == "{integer}")
+            |x| matches!(&x.error, TypeError::ArgumentTypeMismatch { callee, parameter, expected, found, .. }
+                if callee == "strings::contains" && parameter == "pattern"
+                    && expected == "String | char" && found == "{integer}")
         ),
         "expected String/{{integer}} mismatch, got {d:?}"
     );
@@ -1030,7 +1031,7 @@ fn strings_free_fn_rejects_misordered_integer_argument() {
     );
     assert!(
         d.iter()
-            .any(|x| matches!(&x.error, TypeError::TypeMismatch { .. })),
+            .any(|x| matches!(&x.error, TypeError::ArgumentTypeMismatch { .. })),
         "expected a type mismatch for the integer separator, got {d:?}"
     );
 }
@@ -1044,8 +1045,9 @@ fn strings_free_fn_rejects_float_in_string_slot() {
     );
     assert!(
         d.iter().any(
-            |x| matches!(&x.error, TypeError::TypeMismatch { expected, found }
-                if expected == "String" && found == "{float}")
+            |x| matches!(&x.error, TypeError::ArgumentTypeMismatch { callee, parameter, expected, found, .. }
+                if callee == "strings::contains" && parameter == "pattern"
+                    && expected == "String | char" && found == "{float}")
         ),
         "expected String/{{float}} mismatch, got {d:?}"
     );
@@ -1074,8 +1076,9 @@ fn string_method_rejects_integer_in_string_slot() {
     );
     assert!(
         d.iter().any(
-            |x| matches!(&x.error, TypeError::TypeMismatch { expected, found }
-                if expected == "String" && found == "{integer}")
+            |x| matches!(&x.error, TypeError::ArgumentTypeMismatch { callee, parameter, expected, found, .. }
+                if callee == "String::contains" && parameter == "pattern"
+                    && expected == "String | char" && found == "{integer}")
         ),
         "expected String/{{integer}} mismatch, got {d:?}"
     );
@@ -1100,6 +1103,77 @@ fn string_method_accepts_string_and_char_patterns() {
 }
 
 #[test]
+fn string_method_surface_covers_receiver_shaped_strings_functions() {
+    let d = diagnostics_for(
+        "fn main() {\n\
+         let s = \" hello world \"\n\
+         let _ = s.bytes()\n\
+         let _ = s.center(15, ' ')\n\
+         let _ = s.chars()\n\
+         let _ = s.contains(\"world\")\n\
+         let _ = s.contains_any(\"aeiou\")\n\
+         let _ = s.count('l')\n\
+         let _ = s.ends_with(\" \")\n\
+         let _ = s.equal_fold(\" HELLO WORLD \")\n\
+         let _ = s.find(\"world\")\n\
+         let _ = s.find_any(\"od\")\n\
+         let _ = s.lines()\n\
+         let _ = s.pad_left(16, '.')\n\
+         let _ = s.pad_right(16, '.')\n\
+         let _ = s.repeat(2)\n\
+         let _ = s.replace(\"l\", \"L\")\n\
+         let _ = s.replacen(\"l\", \"L\", 1)\n\
+         let _ = s.rfind(\"l\")\n\
+         let _ = s.rfind_any(\"le\")\n\
+         let _ = s.rsplit_once(\" \")\n\
+         let _ = s.slice(1, 5)\n\
+         let _ = s.split(\" \")\n\
+         let _ = s.split_once(\" \")\n\
+         let _ = s.split_whitespace()\n\
+         let _ = s.splitn(2, \" \")\n\
+         let _ = s.starts_with(\" \")\n\
+         let _ = s.strip_prefix(\" \")\n\
+         let _ = s.strip_suffix(\" \")\n\
+         let _ = s.to_bool()\n\
+         let _ = s.to_f64()\n\
+         let _ = s.to_i64()\n\
+         let _ = s.to_lowercase()\n\
+         let _ = s.to_title()\n\
+         let _ = s.to_uppercase()\n\
+         let _ = s.trim()\n\
+         let _ = s.trim_end()\n\
+         let _ = s.trim_end_matches(\" \")\n\
+         let _ = s.trim_matches(\" \")\n\
+         let _ = s.trim_start()\n\
+         let _ = s.trim_start_matches(\" \")\n\
+         }\n",
+    );
+    assert!(
+        !d.iter().any(|x| matches!(
+            &x.error,
+            TypeError::UnresolvedMethod { ty, .. } if ty == "String"
+        )),
+        "all receiver-shaped strings functions must work as String methods: {d:?}"
+    );
+    assert!(
+        d.is_empty(),
+        "valid string method surface must type clean: {d:?}"
+    );
+}
+
+#[test]
+fn strings_join_is_not_a_string_method() {
+    let d = diagnostics_for("fn main() { let _ = \"a\".join(\"-\") }\n");
+    assert!(
+        d.iter().any(|x| matches!(
+            &x.error,
+            TypeError::UnresolvedMethod { ty, name } if ty == "String" && name == "join"
+        )),
+        "`strings::join(parts, sep)` belongs to Vec, not String: {d:?}"
+    );
+}
+
+#[test]
 fn strings_free_fn_accepts_string_and_char_patterns() {
     // A real string needle, a `char` needle, and a `char` pad all type
     // cleanly - the validation must not reject the legitimate shapes.
@@ -1117,6 +1191,37 @@ fn strings_free_fn_accepts_string_and_char_patterns() {
         !d.iter()
             .any(|x| matches!(&x.error, TypeError::TypeMismatch { .. })),
         "valid string-function calls must type clean, got {d:?}"
+    );
+}
+
+#[test]
+fn strings_free_fn_accepts_inferred_borrowed_text_values() {
+    let d = diagnostics_for(
+        "use std::{metrics, strings, trace}\n\
+         fn main() {\n\
+         let c = metrics::Counter::new(\"requests_total\", \"total requests\")\n\
+         let r = metrics::Registry::new()\n\
+         r.register(c)\n\
+         let text = r.render()\n\
+         let _ = strings::contains(&text, \"requests_total\")\n\
+         let tracer = trace::Tracer::new()\n\
+         let span = tracer.start_span(\"checkout\")\n\
+         let ended = span.end()\n\
+         let json = ended.to_otlp_json()\n\
+         let _ = strings::contains(&json, \"checkout\")\n\
+         }\n",
+    );
+    assert!(
+        !d.iter().any(|x| matches!(
+            &x.error,
+            TypeError::ArgumentTypeMismatch { callee, parameter, found, .. }
+                if callee == "strings::contains" && parameter == "text" && found.starts_with('?')
+        )),
+        "borrowed inferred String values must not be reported as unresolved variables: {d:?}"
+    );
+    assert!(
+        d.is_empty(),
+        "valid inferred string calls must type clean: {d:?}"
     );
 }
 
@@ -1175,6 +1280,89 @@ fn strings_free_calls_enforce_complete_arity() {
             TypeError::CallArityMismatch { ref callee, .. } if callee == "strings::slice"
         )),
         "valid string slice must retain its three-argument contract: {d:?}"
+    );
+}
+
+#[test]
+fn strings_count_rejects_every_non_string_or_char_argument_with_parameter_names() {
+    let d = diagnostics_for(
+        "use std::strings\n\
+         fn main() {\n\
+         let _ = strings::count(1, \"a\")\n\
+         let _ = strings::count(\"abc\", [1, 2])\n\
+         let _ = strings::count((1, 2), \"a\")\n\
+         let _ = strings::count(1..2, \"a\")\n\
+         let _ = \"abc\".count([1, 2])\n\
+         }\n",
+    );
+    let named: Vec<_> = d
+        .iter()
+        .filter_map(|diag| match &diag.error {
+            TypeError::ArgumentTypeMismatch {
+                callee, parameter, ..
+            } => Some((callee.as_str(), parameter.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        named,
+        vec![
+            ("strings::count", "text"),
+            ("strings::count", "pattern"),
+            ("strings::count", "text"),
+            ("strings::count", "text"),
+            ("String::count", "pattern"),
+        ],
+        "every invalid count parameter must be rejected and identified: {d:?}"
+    );
+}
+
+#[test]
+fn named_string_argument_mismatch_includes_the_actual_literal_value() {
+    let d = diagnostics_for("use std::strings\nfn main() { let _ = strings::count(\"ab\", 1) }\n");
+    let Some(error) = d.iter().find_map(|diag| match &diag.error {
+        TypeError::ArgumentTypeMismatch {
+            callee,
+            parameter,
+            found,
+            actual,
+            ..
+        } if callee == "strings::count" && parameter == "pattern" => Some((found, actual)),
+        _ => None,
+    }) else {
+        panic!("missing named argument mismatch: {d:?}");
+    };
+    assert_eq!(error.0, "{integer}");
+    assert_eq!(error.1, "1");
+    assert_eq!(
+        d.len(),
+        1,
+        "one invalid parameter must produce exactly one error: {d:?}"
+    );
+}
+
+#[test]
+fn named_string_argument_mismatch_uses_a_user_facing_container_type() {
+    let d = diagnostics_for(
+        "use std::strings\nfn main() { let _ = strings::slice([1, 2, 3], 1, 2) }\n",
+    );
+    assert!(
+        d.iter().any(|diag| matches!(
+            &diag.error,
+            TypeError::ArgumentTypeMismatch { parameter, found, actual, .. }
+                if parameter == "text" && found == "array" && actual == "[1, 2, 3]"
+        )),
+        "array mismatch must not expose an inference variable: {d:?}"
+    );
+}
+
+#[test]
+fn string_bytes_method_is_typed_as_byte_vector() {
+    let d =
+        diagnostics_for("fn main() { let bytes: Vec<u8> = \"ab\".bytes(); let _ = bytes[1] }\n");
+    assert!(
+        d.is_empty(),
+        "String::bytes must typecheck as Vec<u8>: {d:?}"
     );
 }
 

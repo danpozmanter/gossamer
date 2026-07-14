@@ -4,20 +4,11 @@ Status: experimental
 
 Sorted set of i64 with binary-search lookups. Re-bind shape on every mutator.
 
-## Public items
-
-| Name | Kind | Description |
-|---|---|---|
-| `insert` | fn | Insert (sorted, no duplicates). |
-| `remove` | fn | Remove a value. |
-| `contains` | fn | Membership test. |
-| `len` | fn | Element count. |
-
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_set_map.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_set_map.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
