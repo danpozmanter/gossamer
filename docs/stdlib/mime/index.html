@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdmime"><code>std::mime</code><a class="headerlink" href="#stdmime" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>RFC 2045 media type parsing, parameter extraction, and extension lookup.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1800,6 +1871,66 @@
 <td><code>is_valid</code></td>
 <td>fn</td>
 <td>Return true iff the string parses as a valid media type.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/mime_types.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/mime_types.rs"><code>boundary</code></a></td>
+<td><code>fn boundary(mime: String) -&gt; String</code></td>
+<td>Return the multipart <code>boundary</code> parameter, or empty.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/mime_types.rs"><code>charset</code></a></td>
+<td><code>fn charset(mime: String) -&gt; String</code></td>
+<td>Return the <code>charset</code> parameter, or empty.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/mime_types.rs"><code>extension_by_type</code></a></td>
+<td><code>fn extension_by_type(mime: String) -&gt; Option&lt;String&gt;</code></td>
+<td>Canonical extension (no leading dot) for a media type, or empty.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/mime_types.rs"><code>is_valid</code></a></td>
+<td><code>fn is_valid(value: String) -&gt; bool</code></td>
+<td>Return true iff the string parses as a valid media type.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/mime_types.rs"><code>param</code></a></td>
+<td><code>fn param(mime: String, name: String) -&gt; Option&lt;String&gt;</code></td>
+<td>Return an arbitrary parameter by key, or empty.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/mime_types.rs"><code>parse</code></a></td>
+<td><code>fn parse(value: String) -&gt; Result&lt;mime::Mime, errors::Error&gt;</code></td>
+<td>Canonical <code>type/subtype</code> form of the input, or empty on parse failure.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/mime_types.rs"><code>sub</code></a></td>
+<td><code>fn sub(mime: String) -&gt; String</code></td>
+<td>Subtype (e.g. <code>html</code>) of a media type, or empty.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/mime_types.rs"><code>top</code></a></td>
+<td><code>fn top(mime: String) -&gt; String</code></td>
+<td>Top-level type (e.g. <code>text</code>) of a media type, or empty.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/mime_types.rs"><code>type_by_extension</code></a></td>
+<td><code>fn type_by_extension(ext: String) -&gt; Option&lt;String&gt;</code></td>
+<td>Canonical media type for a filename extension (dot optional), or empty.</td>
 </tr>
 </tbody>
 </table>

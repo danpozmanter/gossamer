@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdsync"><code>std::sync</code><a class="headerlink" href="#stdsync" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Synchronisation primitives beyond channels.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1804,6 +1875,71 @@
 <tr>
 <td><code>channel_unbounded</code></td>
 <td>fn</td>
+<td>Creates an explicit unbounded typed channel, returning (Sender, Receiver).</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/sync.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/sync.rs"><code>AtomicBool</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Atomic boolean.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/sync.rs"><code>AtomicI64</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Atomic 64-bit signed integer.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/sync.rs"><code>AtomicU64</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Atomic 64-bit unsigned integer.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/sync.rs"><code>Barrier</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Synchronisation barrier across goroutines.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/sync.rs"><code>Mutex</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Mutual-exclusion lock.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/sync.rs"><code>Once</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>One-shot initialisation latch.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/sync.rs"><code>RwLock</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Reader-writer lock.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/sync.rs"><code>WaitGroup</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Counts goroutines and waits for them to finish.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/sync.rs"><code>channel</code></a></td>
+<td><code>fn channel&lt;T&gt;(capacity: i64) -&gt; sync::Channel&lt;T&gt;</code></td>
+<td>Creates a typed channel, returning (Sender, Receiver).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/sync.rs"><code>channel_unbounded</code></a></td>
+<td><code>fn channel_unbounded&lt;T&gt;() -&gt; sync::Channel&lt;T&gt;</code></td>
 <td>Creates an explicit unbounded typed channel, returning (Sender, Receiver).</td>
 </tr>
 </tbody>

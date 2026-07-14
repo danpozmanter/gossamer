@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdslog"><code>std::slog</code><a class="headerlink" href="#stdslog" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Structured, levelled logging.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1795,6 +1866,61 @@
 <td><code>debug</code></td>
 <td>fn</td>
 <td>Logs a JSON record at DEBUG level.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/slog.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/slog.rs"><code>Field</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Key/value pair threaded through a logger.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/slog.rs"><code>JsonHandler</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>JSON-lines handler.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/slog.rs"><code>Logger</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Logger handle.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/slog.rs"><code>TextHandler</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Line-oriented handler.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/slog.rs"><code>debug</code></a></td>
+<td><code>fn debug(message: String) -&gt; ()</code></td>
+<td>Logs a JSON record at DEBUG level.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/slog.rs"><code>error</code></a></td>
+<td><code>fn error(message: String) -&gt; ()</code></td>
+<td>Logs a JSON record at ERROR level.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/slog.rs"><code>info</code></a></td>
+<td><code>fn info(message: String) -&gt; ()</code></td>
+<td>Logs a JSON record at INFO level. Trailing args are key/value pairs.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/slog.rs"><code>warn</code></a></td>
+<td><code>fn warn(message: String) -&gt; ()</code></td>
+<td>Logs a JSON record at WARN level.</td>
 </tr>
 </tbody>
 </table>

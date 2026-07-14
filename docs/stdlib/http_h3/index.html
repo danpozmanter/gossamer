@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdhttp_h3"><code>std::http_h3</code><a class="headerlink" href="#stdhttp_h3" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1775,6 +1846,41 @@
 <td><code>Client</code></td>
 <td>type</td>
 <td>HTTP/3 client. <code>new</code> validates against the Mozilla root store; <code>insecure</code> skips verification (dev only). Methods: <code>get</code>, <code>post</code>, <code>put</code>, <code>delete</code>, <code>head</code>, <code>request</code>.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_h3.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_h3.rs"><code>Client</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>HTTP/3 client. <code>new</code> validates against the Mozilla root store; <code>insecure</code> skips verification (dev only). Methods: <code>get</code>, <code>post</code>, <code>put</code>, <code>delete</code>, <code>head</code>, <code>request</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_h3.rs"><code>H3Error</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Transport / protocol error variants surfaced from quinn + h3.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_h3.rs"><code>Handler</code></a></td>
+<td><code>trait</code> — see the source declaration</td>
+<td>Per-request handler. <code>fn serve(&amp;self, request: Request) -&gt; Response</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_h3.rs"><code>serve</code></a></td>
+<td><code>fn serve(addr: String, cert_path: String, key_path: String, handler: http_h3::Handler) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>Run an HTTP/3 server bound to <code>addr</code> with TLS certificate + key paths and the supplied handler.</td>
 </tr>
 </tbody>
 </table>

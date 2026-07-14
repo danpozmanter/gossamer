@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1727,6 +1787,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#writing-a-passthrough-proxy-in-gossamer" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1794,7 +1865,7 @@
 
 
 <h1 id="stdhttpproxy"><code>std::http::proxy</code><a class="headerlink" href="#stdhttpproxy" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Reverse proxy on top of http::Client. Director-style request mutator + hop-by-hop strip + error handler.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1825,6 +1896,34 @@
 </table>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_proxy.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_proxy.rs"><code>Director</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Fn(&amp;mut Request) request mutator (Rust-side).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_proxy.rs"><code>Proxy</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Reverse-proxy handler (Rust-side).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_proxy.rs"><code>forward</code></a></td>
+<td><code>fn forward(url: String, method: String, body: Vec&lt;u8&gt;) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot upstream forward: <code>(url, method, body) -&gt; Result&lt;Response, Error&gt;</code>. Interp tier.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="writing-a-passthrough-proxy-in-gossamer">Writing a passthrough proxy in Gossamer<a class="headerlink" href="#writing-a-passthrough-proxy-in-gossamer" title="Permanent link">&para;</a></h2>
 <p>The whole proxy shape is expressible directly on the <code>std::http</code>
 surface: forward the inbound <code>raw_body</code> and headers upstream, relay the

@@ -815,7 +815,9 @@ pub fn synthetic_source_for_test(resolved: &Resolved, seed: &str) -> CachedSourc
 
 #[cfg(test)]
 mod git_source_tests {
-    use super::{create_tarball_spool, validate_git_source};
+    #[cfg(unix)]
+    use super::create_tarball_spool;
+    use super::validate_git_source;
 
     const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 

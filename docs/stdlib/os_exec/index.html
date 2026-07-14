@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1810,6 +1881,76 @@
 <td><code>pipeline_run</code></td>
 <td>fn</td>
 <td>Run a Vec<String> of shell-tokenised commands as a stdout-to-stdin pipeline.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs"><code>Child</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Handle to a still-running child supporting wait / kill.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs"><code>Pipeline</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Multi-stage subprocess pipeline (stdout-to-stdin chain).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs"><code>Signal</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Portable signal selector (Term/Kill/Stop/Cont/Hup/Int/Usr1/Usr2/Pipe/Quit).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs"><code>kill</code></a></td>
+<td><code>fn kill(pid: i64) -&gt; bool</code></td>
+<td>Best-effort SIGTERM by pid; returns true on success.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs"><code>kill_group</code></a></td>
+<td><code>fn kill_group(pid: i64) -&gt; bool</code></td>
+<td>Send SIGTERM to the entire process group (Unix); best-effort TerminateProcess on Windows.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs"><code>pipeline_run</code></a></td>
+<td><code>fn pipeline_run(commands: Vec&lt;String&gt;) -&gt; Result&lt;process::Output, errors::Error&gt;</code></td>
+<td>Run a Vec<String> of shell-tokenised commands as a stdout-to-stdin pipeline.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs"><code>run</code></a></td>
+<td><code>fn run(program: String, args: Vec&lt;String&gt;) -&gt; Result&lt;process::Output, errors::Error&gt;</code></td>
+<td>One-shot: runs a program with args, captures stdout/stderr, returns Result&lt;{stdout, stderr, code}, String&gt;.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs"><code>signal</code></a></td>
+<td><code>fn signal(pid: i64, signum: i64) -&gt; bool</code></td>
+<td>Send an arbitrary signal number to a pid; returns true on success.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs"><code>spawn</code></a></td>
+<td><code>fn spawn(program: String, args: Vec&lt;String&gt;) -&gt; Result&lt;i64, errors::Error&gt;</code></td>
+<td>Non-blocking launch; returns the child PID as Result<i64, errors::Error>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs"><code>spawn_piped</code></a></td>
+<td><code>fn spawn_piped(program: String, args: Vec&lt;String&gt;) -&gt; Result&lt;process::Child, errors::Error&gt;</code></td>
+<td>Spawns a child with piped stdin/stdout; returns Result<Child, errors::Error>. The Child's write_stdin / close_stdin / read_line / read_stdout / wait / kill methods drive it interactively.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs"><code>wait_timeout</code></a></td>
+<td><code>fn wait_timeout(pid: i64, ms: i64) -&gt; i64</code></td>
+<td>Wait up to N ms for a pid to exit; returns exit code, -1 on timeout, -2 on error.</td>
 </tr>
 </tbody>
 </table>

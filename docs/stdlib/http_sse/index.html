@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdhttpsse"><code>std::http::sse</code><a class="headerlink" href="#stdhttpsse" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Server-Sent Events (text/event-stream) emitter with heartbeat ticks and retry hint.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1779,6 +1850,46 @@
 <tr>
 <td><code>encode_retry</code></td>
 <td>fn</td>
+<td>Render a <code>retry:</code> reconnect-hint directive in milliseconds. Available in interp + compiled.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs"><code>Event</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>One SSE event (id, event, data, retry).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs"><code>Stream</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Active SSE stream - handler writes events through it (Rust-side).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs"><code>encode_comment</code></a></td>
+<td><code>fn encode_comment(comment: String) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Render a <code>:</code>-prefixed keepalive line. Available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs"><code>encode_event</code></a></td>
+<td><code>fn encode_event(event: String, data: String, id: String) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Render one event block as a string: <code>(event, data, id) -&gt; String</code>. Available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs"><code>encode_retry</code></a></td>
+<td><code>fn encode_retry(ms: i64) -&gt; Vec&lt;u8&gt;</code></td>
 <td>Render a <code>retry:</code> reconnect-hint directive in milliseconds. Available in interp + compiled.</td>
 </tr>
 </tbody>

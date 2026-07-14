@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdcryptokdf"><code>std::crypto::kdf</code><a class="headerlink" href="#stdcryptokdf" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Password-based key-derivation functions.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1775,6 +1846,41 @@
 <td><code>argon2id_verify</code></td>
 <td>fn</td>
 <td>Verifies a password against an Argon2id PHC string.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/crypto.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/crypto.rs"><code>argon2id_hash</code></a></td>
+<td><code>fn argon2id_hash(password: Vec&lt;u8&gt;) -&gt; Result&lt;String, errors::Error&gt;</code></td>
+<td>Argon2id PHC-format password hash.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/crypto.rs"><code>argon2id_verify</code></a></td>
+<td><code>fn argon2id_verify(password: Vec&lt;u8&gt;, phc: String) -&gt; Result&lt;bool, errors::Error&gt;</code></td>
+<td>Verifies a password against an Argon2id PHC string.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/crypto.rs"><code>pbkdf2_sha256</code></a></td>
+<td><code>fn pbkdf2_sha256(password: Vec&lt;u8&gt;, salt: Vec&lt;u8&gt;, iterations: i64, length: i64) -&gt; Vec&lt;u8&gt;</code></td>
+<td>PBKDF2-HMAC-SHA256 KDF.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/crypto.rs"><code>scrypt_interactive</code></a></td>
+<td><code>fn scrypt_interactive(password: Vec&lt;u8&gt;, salt: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;, errors::Error&gt;</code></td>
+<td>scrypt with the standard interactive parameters.</td>
 </tr>
 </tbody>
 </table>

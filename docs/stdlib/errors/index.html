@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1727,6 +1787,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rendering" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1755,7 +1826,7 @@
 
 
 <h1 id="stderrors"><code>std::errors</code><a class="headerlink" href="#stderrors" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Error construction, wrapping, and chain traversal.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1801,6 +1872,49 @@
 </table>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/errors.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/errors.rs"><code>Error</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Reference-counted error value with optional cause chain.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/errors.rs"><code>is</code></a></td>
+<td><code>fn is(error: errors::Error, needle: String) -&gt; bool</code></td>
+<td>Checks whether an error's chain contains a matching message.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/errors.rs"><code>join</code></a></td>
+<td><code>fn join(errors: Vec&lt;errors::Error&gt;) -&gt; Option&lt;errors::Error&gt;</code></td>
+<td>Joins a list of errors into one; messages are joined with "; " (None for an empty list).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/errors.rs"><code>new</code></a></td>
+<td><code>fn new(message: String) -&gt; errors::Error</code></td>
+<td>Constructs a fresh error from a message.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/errors.rs"><code>newf</code></a></td>
+<td><code>fn newf(format: String, args: Vec&lt;String&gt;) -&gt; errors::Error</code></td>
+<td>Constructs a fresh error from a format template, e.g. <code>newf("status {}", code)</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/errors.rs"><code>wrap</code></a></td>
+<td><code>fn wrap(error: errors::Error, context: String) -&gt; errors::Error</code></td>
+<td>Wraps a cause with a higher-level message.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="rendering">Rendering<a class="headerlink" href="#rendering" title="Permanent link">&para;</a></h2>
 <p>Displaying an error renders the full cause chain, colon-joined from the
 outermost wrap down to the root cause:</p>

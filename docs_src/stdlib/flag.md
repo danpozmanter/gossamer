@@ -1,6 +1,6 @@
 # `std::flag`
 
-Status: shipped
+Status: experimental
 
 Batteries-included CLI argument parsing.
 

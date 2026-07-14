@@ -15,7 +15,7 @@
         <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/skill_card/">
       
       
-        <link rel="prev" href="../design/selfhosting/">
+        <link rel="prev" href="../design/unfinished_027_reevaluation/">
       
       
         <link rel="next" href="../security/">
@@ -1420,6 +1420,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1592,6 +1596,62 @@
     
   
     Self-hosting study
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
   
 
     
@@ -2148,9 +2208,10 @@ collection, plus <code>arena { }</code> regions - no borrow checker, no
 lifetimes, no tracing-GC pauses). Syntax is Rust-flavoured; the
 runtime is Go-shaped (goroutines, channels). Source files end in
 <code>.gos</code>, the toolchain binary is <code>gos</code>, projects carry a
-<code>project.toml</code> manifest. Pre-1.0.0: the surface is stable to write
-against, and every feature ships across all three tiers (bytecode
-VM, in-process JIT, LLVM AOT).</p>
+<code>project.toml</code> manifest. Pre-1.0.0: APIs may change. Most documented
+surface is available on the bytecode VM, in-process JIT, and LLVM AOT,
+but support is item- and platform-specific; check <code>gos feature-status</code>
+and validate the target tier before relying on an API in production.</p>
 <h2 id="2-lean-on-the-toolchain">2. Lean on the toolchain<a class="headerlink" href="#2-lean-on-the-toolchain" title="Permanent link">&para;</a></h2>
 <p>Run code early and often - the toolchain is the reference, not this
 card:</p>
@@ -2213,10 +2274,12 @@ card:</p>
 <li><strong>Tuple destructuring everywhere</strong>: <code>let (a, b) = pair</code>, <code>for (k, v)
   in m.iter()</code>, <code>let (tx, rx) = channel()</code>.</li>
 <li><strong><code>for x in xs</code></strong> over collections - no <code>.iter()</code>, no <code>*x</code>.</li>
-<li><strong>Bare integer indices</strong> - <code>arr[i]</code> takes <code>i64</code>, no <code>as usize</code>. A
-  scalar-element index outside <code>[0, len)</code> yields the element's ZERO
-  value (guard with <code>len()</code> when absence must differ from zero); an
-  aggregate-element OOB access panics. Same on every tier.</li>
+<li><strong>Bare integer indices</strong> - <code>arr[i]</code> takes <code>i64</code>, no <code>as usize</code>.
+  Reads and writes outside <code>[0, len)</code> panic on every tier. Method-form
+  Vec <code>insert</code> accepts <code>0..=len</code>; method-form <code>remove</code> accepts
+  <code>0..len</code>; invalid indices panic. Use <code>len()</code> guards or the
+  Result-returning <code>Vec::insert</code> / <code>Vec::remove</code> APIs when absence is
+  recoverable.</li>
 <li><strong><code>m.inc(k)</code> / <code>m.inc(k, by)</code></strong> for counters; <code>m.or_insert(k,
   default)</code> for get-or-fill (<code>m.or_insert(k, d).method(args)</code> writes
   the mutation back into the stored value). <code>arr.swap(i, j)</code>.</li>
@@ -2390,12 +2453,13 @@ blocks until a value or every sender is gone; producers <code>close()</code>.</p
 poll in source order; <code>default</code> makes it non-blocking). One-shot
 timer: <code>time::after(d) -&gt; Receiver</code> as a select timeout arm.
 <code>std::sync</code> also has <code>Mutex</code>, <code>RwLock</code>, atomics, <code>Once</code>, <code>WaitGroup</code>,
-<code>Barrier</code>, and <code>Map</code> (concurrent string-&gt;string); <code>std::thread</code> is
-real OS threads.</p>
+<code>Barrier</code>, and <code>Map</code> (concurrent string-&gt;string). <code>std::thread</code>
+provides scheduling hints and CPU introspection only: user code has no
+OS-thread spawn API. Use <code>go expr</code> or <code>spawn(f)</code> for concurrency.</p>
 <p><strong>Closures</strong>: <code>|x: T| body</code>; capture is automatic (no <code>move</code>).
 Use <code>Fn(args) -&gt; ret</code> for callback parameters. Plain <code>fn(args) -&gt; ret</code>
-is a raw pointer shape; named function item coercion is not implemented
-(no FnMut/FnOnce distinction in practice).</p>
+is a raw pointer shape; bare named functions coerce to <code>Fn(...) -&gt; ...</code>
+at callback sites (no FnMut/FnOnce distinction in practice).</p>
 <p><strong>Iterators</strong>: any type with <code>fn next(&amp;mut self) -&gt; Option&lt;T&gt;</code> works
 in <code>for</code>. Sequence combinators (<code>map</code>/<code>filter</code>/<code>take</code>/<code>skip</code>/<code>step_by</code>)
 are callable as methods/free functions and materialize results.</p>
@@ -2404,9 +2468,12 @@ are callable as methods/free functions and materialize results.</p>
 <li><code>[T]</code> growable (push/pop/swap/sort/sort_by, <code>contains</code>, <code>index_of</code>,
   <code>first</code>/<code>last</code>, <code>rev</code>, <code>slice(a, b) -&gt; Result</code>); <code>[T; N]</code>
   fixed; tuples <code>.0</code>/<code>.1</code>; tuple structs fully usable. Method-call
-  <code>xs.insert/remove</code> are silent in-place; the Result-returning forms
-  are the qualified <code>Vec::insert(xs, i, v)</code> / <code>Vec::remove(xs, i)</code>.</li>
+  <code>xs.insert/remove</code> mutate in place and panic when the index is out of
+  bounds; the Result-returning forms are the qualified
+  <code>Vec::insert(xs, i, v)</code> / <code>Vec::remove(xs, i)</code>.</li>
 <li><code>std::collections</code>: <code>Vec</code>, <code>HashMap</code> (struct/tuple keys by value;
+  aggregate-key maps use <code>iter()</code> rather than <code>keys()</code> until typed key
+  snapshots are available;
   <code>iter()</code> yields <code>[(K, V)]</code>, <code>keys</code>, <code>values</code>, <code>HashMap::pop</code>),
   <code>HashSet</code> (full set algebra), <code>BTreeMap</code> (sorted; <code>String</code> or <code>i64</code>
   keys), <code>VecDeque</code>. A separate i64-only <code>queue</code>/<code>stack</code>/<code>deque</code>/
@@ -2512,15 +2579,13 @@ build</code>. Known sharp edges:</p>
 <ul>
 <li><code>+</code> on <code>String</code> copies; heavy assembly wants <code>bytes::Builder</code> or a
   <code>mut String</code> with <code>+=</code>.</li>
-<li>Method dispatch is name-global in places: qualified paths
-  (<code>Point::origin()</code>) always work; <code>String</code>/<code>HashMap</code>/<code>Vec</code> receivers
-  dispatch by type; don't shadow built-in method names.</li>
-<li><code>u64</code>/<code>usize</code> at or above 2^63: the VM and LLVM tiers compare/
-  shift/display by declared type, but the in-process JIT still
-  treats them as signed - cross-check hot large-<code>u64</code> code with
-  <code>gos build</code>.</li>
+<li>Method dispatch is type-directed for user methods, core
+  <code>String</code>/<code>HashMap</code>/<code>Vec</code> receivers, and typed stdlib receivers.
+  Qualified paths (<code>Point::origin()</code>) remain the most explicit form
+  when several types intentionally share a method name.</li>
 <li>Per-file test modules need unique names (GR0003; section 11).</li>
-<li><code>Weak</code> into a strong cycle diverges across tiers (section 10).</li>
+<li><code>Weak</code> into a strong cycle is Experimental (section 10); break real
+  cycles explicitly and do not depend on liveness inside a cycle.</li>
 <li>Not implemented (parse or reject cleanly): <code>async</code>/<code>await</code>,
   explicit lifetimes, the <code>move</code> keyword (capture is automatic).
   <code>gos feature-status</code> lists Experimental/Planned surface.</li>

@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdhttpcookie"><code>std::http::cookie</code><a class="headerlink" href="#stdhttpcookie" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>RFC 6265 cookie parser and Set-Cookie builder.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1779,6 +1850,46 @@
 <tr>
 <td><code>serialize</code></td>
 <td>fn</td>
+<td>Render a Cookie as a Set-Cookie header value.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_cookie.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_cookie.rs"><code>Cookie</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Parsed cookie with name, value, and Set-Cookie attributes.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_cookie.rs"><code>CookieBuilder</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Fluent builder for Set-Cookie response headers.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_cookie.rs"><code>SameSite</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>SameSite attribute: Strict / Lax / None.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_cookie.rs"><code>parse_cookie_header</code></a></td>
+<td><code>fn parse_cookie_header(header: String) -&gt; Vec&lt;http::cookie::Cookie&gt;</code></td>
+<td>Parse a Cookie request header into (name, value) pairs.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_cookie.rs"><code>serialize</code></a></td>
+<td><code>fn serialize(name: String, value: String) -&gt; String</code></td>
 <td>Render a Cookie as a Set-Cookie header value.</td>
 </tr>
 </tbody>

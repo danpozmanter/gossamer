@@ -1,6 +1,6 @@
 # `std::strings`
 
-Status: shipped
+Status: experimental
 
 String operations.
 

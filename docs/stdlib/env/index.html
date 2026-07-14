@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdenv"><code>std::env</code><a class="headerlink" href="#stdenv" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Process environment, command-line arguments, working directory.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1800,6 +1871,66 @@
 <td><code>temp_dir</code></td>
 <td>fn</td>
 <td>Returns the system's temporary directory.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/env.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/env.rs"><code>args</code></a></td>
+<td><code>fn args() -&gt; Vec&lt;String&gt;</code></td>
+<td>Returns the program's command-line arguments.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/env.rs"><code>current_dir</code></a></td>
+<td><code>fn current_dir() -&gt; Result&lt;String, io::Error&gt;</code></td>
+<td>Returns the current working directory.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/env.rs"><code>home_dir</code></a></td>
+<td><code>fn home_dir() -&gt; Option&lt;String&gt;</code></td>
+<td>Returns the calling user's home directory if known.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/env.rs"><code>program_name</code></a></td>
+<td><code>fn program_name() -&gt; String</code></td>
+<td>Returns the path used to invoke the program (argv[0]).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/env.rs"><code>set_current_dir</code></a></td>
+<td><code>fn set_current_dir(path: String) -&gt; Result&lt;(), io::Error&gt;</code></td>
+<td>Changes the current working directory.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/env.rs"><code>set_var</code></a></td>
+<td><code>fn set_var(name: String, value: String) -&gt; ()</code></td>
+<td>Sets an environment variable in the current process.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/env.rs"><code>temp_dir</code></a></td>
+<td><code>fn temp_dir() -&gt; String</code></td>
+<td>Returns the system's temporary directory.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/env.rs"><code>unset_var</code></a></td>
+<td><code>fn unset_var(name: String) -&gt; ()</code></td>
+<td>Removes an environment variable from the current process.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/env.rs"><code>var</code></a></td>
+<td><code>fn var(name: String) -&gt; Option&lt;String&gt;</code></td>
+<td>Returns the value of an environment variable.</td>
 </tr>
 </tbody>
 </table>

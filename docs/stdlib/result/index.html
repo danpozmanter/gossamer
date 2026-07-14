@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdresult"><code>std::result</code><a class="headerlink" href="#stdresult" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1805,6 +1876,71 @@
 <td><code>or_else</code></td>
 <td>fn</td>
 <td>Recovers from Err with a fallback computation.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/result.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/result.rs"><code>and_then</code></a></td>
+<td><code>fn and_then&lt;T, E, U&gt;(f: Fn(T) -&gt; Result&lt;U, E&gt;, value: Result&lt;T, E&gt;) -&gt; Result&lt;U, E&gt;</code></td>
+<td>Chains a fallible step on the Ok payload.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/result.rs"><code>err</code></a></td>
+<td><code>fn err&lt;T, E&gt;(value: Result&lt;T, E&gt;) -&gt; Option&lt;E&gt;</code></td>
+<td>Err payload as an Option.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/result.rs"><code>is_err</code></a></td>
+<td><code>fn is_err&lt;T, E&gt;(value: Result&lt;T, E&gt;) -&gt; bool</code></td>
+<td>True for Err.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/result.rs"><code>is_ok</code></a></td>
+<td><code>fn is_ok&lt;T, E&gt;(value: Result&lt;T, E&gt;) -&gt; bool</code></td>
+<td>True for Ok.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/result.rs"><code>map</code></a></td>
+<td><code>fn map&lt;T, E, U&gt;(f: Fn(T) -&gt; U, value: Result&lt;T, E&gt;) -&gt; Result&lt;U, E&gt;</code></td>
+<td>Transforms the Ok payload, Err passes through.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/result.rs"><code>map_err</code></a></td>
+<td><code>fn map_err&lt;T, E, F&gt;(f: Fn(E) -&gt; F, value: Result&lt;T, E&gt;) -&gt; Result&lt;T, F&gt;</code></td>
+<td>Transforms the Err payload, Ok passes through.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/result.rs"><code>ok</code></a></td>
+<td><code>fn ok&lt;T, E&gt;(value: Result&lt;T, E&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td>Ok payload as an Option.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/result.rs"><code>or_else</code></a></td>
+<td><code>fn or_else&lt;T, E, F&gt;(f: Fn(E) -&gt; Result&lt;T, F&gt;, value: Result&lt;T, E&gt;) -&gt; Result&lt;T, F&gt;</code></td>
+<td>Recovers from Err with a fallback computation.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/result.rs"><code>unwrap_or</code></a></td>
+<td><code>fn unwrap_or&lt;T, E&gt;(fallback: T, value: Result&lt;T, E&gt;) -&gt; T</code></td>
+<td>Unwraps Ok with a fallback value for Err.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/result.rs"><code>unwrap_or_else</code></a></td>
+<td><code>fn unwrap_or_else&lt;T, E&gt;(f: Fn(E) -&gt; T, value: Result&lt;T, E&gt;) -&gt; T</code></td>
+<td>Consumes the result, handling Err with a callback.</td>
 </tr>
 </tbody>
 </table>

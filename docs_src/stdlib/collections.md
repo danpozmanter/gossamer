@@ -1,6 +1,6 @@
 # `std::collections`
 
-Status: shipped
+Status: experimental
 
 Built-in container types.
 

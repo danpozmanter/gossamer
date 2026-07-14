@@ -1,6 +1,6 @@
 # `std::http::health`
 
-Status: shipped
+Status: experimental
 
 Liveness / readiness probes for HTTP health endpoints.
 

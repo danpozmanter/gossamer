@@ -104,6 +104,8 @@ pub struct JitFn {
 pub struct JitArtifact {
     /// Compiled functions keyed by Gossamer source name.
     pub functions: HashMap<String, std::sync::Arc<JitFn>>,
+    /// Native code emitted for this artifact. The wasm stub emits none.
+    pub code_bytes: u64,
 }
 
 /// wasm never promotes a body to native code.

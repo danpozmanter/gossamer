@@ -1,6 +1,6 @@
 # `std::crypto::sha256`
 
-Status: shipped
+Status: experimental
 
 SHA-256 hashing.
 

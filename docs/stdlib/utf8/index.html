@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdutf8"><code>std::utf8</code><a class="headerlink" href="#stdutf8" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>UTF-8 validation and scalar decoding.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1825,6 +1896,91 @@
 <td><code>append_rune</code></td>
 <td>fn</td>
 <td>Appends the UTF-8 encoding of a rune to a byte Vec.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/utf8.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/utf8.rs"><code>append_rune</code></a></td>
+<td><code>fn append_rune(bytes: Vec&lt;u8&gt;, rune: char) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Appends the UTF-8 encoding of a rune to a byte Vec.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/utf8.rs"><code>decode_last_rune</code></a></td>
+<td><code>fn decode_last_rune(bytes: Vec&lt;u8&gt;) -&gt; (char, i64)</code></td>
+<td>Decodes the last rune from bytes, returning (rune, width).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/utf8.rs"><code>decode_last_rune_in_string</code></a></td>
+<td><code>fn decode_last_rune_in_string(text: String) -&gt; (char, i64)</code></td>
+<td>Decodes the last rune from a String, returning (rune, width).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/utf8.rs"><code>decode_rune</code></a></td>
+<td><code>fn decode_rune(bytes: Vec&lt;u8&gt;) -&gt; (char, i64)</code></td>
+<td>Decodes the first rune from bytes, returning (rune, width).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/utf8.rs"><code>decode_rune_in_string</code></a></td>
+<td><code>fn decode_rune_in_string(text: String) -&gt; (char, i64)</code></td>
+<td>Decodes the first rune from a String, returning (rune, width).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/utf8.rs"><code>full_rune</code></a></td>
+<td><code>fn full_rune(bytes: Vec&lt;u8&gt;) -&gt; bool</code></td>
+<td>Reports whether the bytes begin with a full rune.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/utf8.rs"><code>full_rune_in_string</code></a></td>
+<td><code>fn full_rune_in_string(text: String) -&gt; bool</code></td>
+<td>Reports whether the String begins with a full rune.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/utf8.rs"><code>is_valid</code></a></td>
+<td><code>fn is_valid(bytes: Vec&lt;u8&gt;) -&gt; bool</code></td>
+<td>Validates a byte slice as UTF-8.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/utf8.rs"><code>rune_count</code></a></td>
+<td><code>fn rune_count(bytes: Vec&lt;u8&gt;) -&gt; i64</code></td>
+<td>Counts Unicode scalar values.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/utf8.rs"><code>rune_count_in_string</code></a></td>
+<td><code>fn rune_count_in_string(text: String) -&gt; i64</code></td>
+<td>Counts the runes in a String.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/utf8.rs"><code>rune_len</code></a></td>
+<td><code>fn rune_len(rune: char) -&gt; i64</code></td>
+<td>Number of bytes needed to encode a rune.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/utf8.rs"><code>rune_start</code></a></td>
+<td><code>fn rune_start(byte: u8) -&gt; bool</code></td>
+<td>Reports whether the byte could be the first of a rune.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/utf8.rs"><code>valid_rune</code></a></td>
+<td><code>fn valid_rune(rune: char) -&gt; bool</code></td>
+<td>Reports whether a code point can be legally encoded.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/utf8.rs"><code>valid_string</code></a></td>
+<td><code>fn valid_string(text: String) -&gt; bool</code></td>
+<td>Reports whether a String is valid UTF-8.</td>
 </tr>
 </tbody>
 </table>

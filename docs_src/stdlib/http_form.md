@@ -1,6 +1,6 @@
 # `std::http::form`
 
-Status: shipped
+Status: experimental
 
 application/x-www-form-urlencoded parser and builder.
 

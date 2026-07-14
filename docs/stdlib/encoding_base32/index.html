@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdencodingbase32"><code>std::encoding::base32</code><a class="headerlink" href="#stdencodingbase32" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>RFC 4648 base32 (uppercase) encode / decode.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1785,6 +1856,51 @@
 <td><code>decode_hex</code></td>
 <td>fn</td>
 <td>Decodes extended-hex base32 text into a String.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/base32.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/base32.rs"><code>decode</code></a></td>
+<td><code>fn decode(text: String) -&gt; Result&lt;Vec&lt;u8&gt;, errors::Error&gt;</code></td>
+<td>Base32 string -&gt; bytes.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/base32.rs"><code>decode_hex</code></a></td>
+<td><code>fn decode_hex(text: String) -&gt; Result&lt;Vec&lt;u8&gt;, errors::Error&gt;</code></td>
+<td>Decodes extended-hex base32 text into a String.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/base32.rs"><code>decode_string</code></a></td>
+<td><code>fn decode_string(text: String) -&gt; Result&lt;String, errors::Error&gt;</code></td>
+<td>Decodes standard base32 text into a String.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/base32.rs"><code>encode</code></a></td>
+<td><code>fn encode(data: Vec&lt;u8&gt;) -&gt; String</code></td>
+<td>Bytes -&gt; base32 string.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/base32.rs"><code>encode_hex</code></a></td>
+<td><code>fn encode_hex(data: Vec&lt;u8&gt;) -&gt; String</code></td>
+<td>Encodes a String as extended-hex base32 text.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/base32.rs"><code>encode_string</code></a></td>
+<td><code>fn encode_string(text: String) -&gt; String</code></td>
+<td>Encodes a String as standard base32 text.</td>
 </tr>
 </tbody>
 </table>

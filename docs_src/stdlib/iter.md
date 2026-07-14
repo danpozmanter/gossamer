@@ -1,6 +1,6 @@
 # `std::iter`
 
-Status: shipped
+Status: experimental
 
 Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.
 

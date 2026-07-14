@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1773,9 +1833,10 @@
 </code></pre></div>
 <p>A method takes <code>self</code>, <code>&amp;self</code>, or <code>&amp;mut self</code>; <code>&amp;self</code> reads, <code>&amp;mut self</code>
 writes through to the caller's storage. Qualified-path calls
-(<code>Point::origin()</code>) always resolve; bare-name method dispatch is
-name-global in places, so prefer the qualified form when a name could
-collide.</p>
+(<code>Point::origin()</code>) always resolve; method-call dispatch is type-directed for
+user impls, core collection/String receivers, and typed stdlib receivers.
+Prefer the qualified form when several types intentionally share an associated
+function name and you want the call target to be explicit.</p>
 <h2 id="generic-impls">Generic impls<a class="headerlink" href="#generic-impls" title="Permanent link">&para;</a></h2>
 <p>Methods on a generic struct use the <code>impl&lt;T&gt;</code> form, and each receiver type
 specialises the method (so <code>-&gt; T</code> returns the real instantiated type):</p>

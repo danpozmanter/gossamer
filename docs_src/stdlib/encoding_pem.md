@@ -1,6 +1,6 @@
 # `std::encoding::pem`
 
-Status: shipped
+Status: experimental
 
 PEM block encoder and decoder.
 

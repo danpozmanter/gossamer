@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1727,6 +1787,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#configured-clients-clientbuilder" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1788,7 +1859,7 @@
 
 
 <h1 id="stdhttpnative_client"><code>std::http::native_client</code><a class="headerlink" href="#stdhttpnative_client" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Goroutine-driven HTTP/1.1 client over std::net (no ureq, no blocking pool).</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1834,6 +1905,49 @@
 </table>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_native_client.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_native_client.rs"><code>Client</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Native h1 client (Rust-side; full builder surface).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_native_client.rs"><code>Error</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Connect / Tls / Http / Redirect / Timeout / Io.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_native_client.rs"><code>delete</code></a></td>
+<td><code>fn delete(url: String) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot DELETE → Result<Response, Error>. Interp tier.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_native_client.rs"><code>get</code></a></td>
+<td><code>fn get(url: String) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot GET → Result<Response, Error>. Interp tier (compiled tier shares http::get).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_native_client.rs"><code>post</code></a></td>
+<td><code>fn post(url: String, body: Vec&lt;u8&gt;, content_type: String) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot POST: <code>(url, body, content_type)</code>. Interp tier.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_native_client.rs"><code>put</code></a></td>
+<td><code>fn put(url: String, body: Vec&lt;u8&gt;, content_type: String) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot PUT: <code>(url, body, content_type)</code>. Interp tier.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="configured-clients-clientbuilder">Configured clients - <code>Client::builder()</code><a class="headerlink" href="#configured-clients-clientbuilder" title="Permanent link">&para;</a></h2>
 <p>The Gossamer-visible client surface lives on <code>http::Client</code>. A client is
 configured through a builder chain and then reused for any number of

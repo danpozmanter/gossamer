@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdjwt"><code>std::jwt</code><a class="headerlink" href="#stdjwt" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1805,6 +1876,71 @@
 <td><code>verify_eddsa</code></td>
 <td>fn</td>
 <td>Verify an EdDSA token against a PEM-encoded public key.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs"><code>Alg</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Signing algorithm: HS256 / HS384 / HS512 / ES256 / EdDSA.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs"><code>Claims</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Standard registered claims plus a free-form custom map.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs"><code>Header</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>JWS / JWT header (alg, kid, typ).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs"><code>VerifyOpts</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Expected issuer / audience / clock leeway used by verify.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs"><code>sign_eddsa</code></a></td>
+<td><code>fn sign_eddsa(claims_json: String, signing_key_pem: String) -&gt; Result&lt;String, errors::Error&gt;</code></td>
+<td>Sign with Ed25519 from a PEM-encoded private key.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs"><code>sign_es256</code></a></td>
+<td><code>fn sign_es256(claims_json: String, signing_key_pem: String) -&gt; Result&lt;String, errors::Error&gt;</code></td>
+<td>Sign with ECDSA P-256 from a PEM-encoded private key.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs"><code>sign_hs</code></a></td>
+<td><code>fn sign_hs(alg: String, claims_json: String, key: Vec&lt;u8&gt;) -&gt; Result&lt;String, errors::Error&gt;</code></td>
+<td>Sign claims with HMAC-SHA family using a shared key.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs"><code>verify_eddsa</code></a></td>
+<td><code>fn verify_eddsa(token: String, verifying_key_pem: String, leeway_secs: i64) -&gt; Result&lt;String, errors::Error&gt;</code></td>
+<td>Verify an EdDSA token against a PEM-encoded public key.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs"><code>verify_es256</code></a></td>
+<td><code>fn verify_es256(token: String, verifying_key_pem: String, leeway_secs: i64) -&gt; Result&lt;String, errors::Error&gt;</code></td>
+<td>Verify an ES256 token against a PEM-encoded public key.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs"><code>verify_hs</code></a></td>
+<td><code>fn verify_hs(token: String, alg: String, key: Vec&lt;u8&gt;, leeway_secs: i64) -&gt; Result&lt;String, errors::Error&gt;</code></td>
+<td>Verify an HS* token; checks signature plus VerifyOpts.</td>
 </tr>
 </tbody>
 </table>

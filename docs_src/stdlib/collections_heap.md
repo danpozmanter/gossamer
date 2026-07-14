@@ -1,6 +1,6 @@
 # `std::collections::heap`
 
-Status: shipped
+Status: experimental
 
 Binary min-heap (priority queue) over Vec<i64>. Re-bind shape: `let h = heap::push(h, v)`.
 

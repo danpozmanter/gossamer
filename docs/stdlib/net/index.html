@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdnet"><code>std::net</code><a class="headerlink" href="#stdnet" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>TCP/UDP networking primitives.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1775,6 +1846,171 @@
 <td><code>lookup</code></td>
 <td>fn</td>
 <td>Resolves a hostname to its IP addresses.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>TcpListener</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Accepts incoming TCP connections.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>TcpStream</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Bidirectional TCP byte stream; supports read/write, TLS upgrade, close, and read/write timeout setters.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>UdpSocket</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Bound UDP socket for datagram I/O.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>is_loopback</code></a></td>
+<td><code>fn is_loopback(addr: String) -&gt; bool</code></td>
+<td>Reports whether the IP is a loopback address.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>is_multicast</code></a></td>
+<td><code>fn is_multicast(addr: String) -&gt; bool</code></td>
+<td>Reports whether the IP is a multicast address.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>is_private</code></a></td>
+<td><code>fn is_private(addr: String) -&gt; bool</code></td>
+<td>Reports whether the IP is in a private range.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>is_unspecified</code></a></td>
+<td><code>fn is_unspecified(addr: String) -&gt; bool</code></td>
+<td>Reports whether the IP is the unspecified address.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>is_v4</code></a></td>
+<td><code>fn is_v4(addr: String) -&gt; bool</code></td>
+<td>Reports whether the string is a valid v4 IP.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>is_v6</code></a></td>
+<td><code>fn is_v6(addr: String) -&gt; bool</code></td>
+<td>Reports whether the string is a valid v6 IP.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>is_valid</code></a></td>
+<td><code>fn is_valid(addr: String) -&gt; bool</code></td>
+<td>Reports whether the string is a valid v4 or v6 IP.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>octets</code></a></td>
+<td><code>fn octets(addr: net::ip::Addr) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Byte octets of the IP as a Vec.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>parse</code></a></td>
+<td><code>fn parse(addr: String) -&gt; Result&lt;net::ip::Addr, errors::Error&gt;</code></td>
+<td>Parses an IP string, returning its canonical form or None.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>to_string</code></a></td>
+<td><code>fn to_string(addr: net::ip::Addr) -&gt; String</code></td>
+<td>Canonical lowercase string form of the IP.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>lookup</code></a></td>
+<td><code>fn lookup(host: String) -&gt; Result&lt;Vec&lt;String&gt;, errors::Error&gt;</code></td>
+<td>Resolves a hostname to its IP addresses.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>host_of</code></a></td>
+<td><code>fn host_of(addr_port: String) -&gt; String</code></td>
+<td>Host portion of an addr:port string, or empty on parse failure.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>is_loopback</code></a></td>
+<td><code>fn is_loopback(addr: String) -&gt; bool</code></td>
+<td>Return true iff the string parses as a loopback IP (127.0.0.1 / ::1).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>is_multicast</code></a></td>
+<td><code>fn is_multicast(addr: String) -&gt; bool</code></td>
+<td>Return true iff the string parses as a multicast IP.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>is_private</code></a></td>
+<td><code>fn is_private(addr: String) -&gt; bool</code></td>
+<td>Return true iff the IP is RFC1918 (v4) or ULA fc00::/7 (v6).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>is_unspecified</code></a></td>
+<td><code>fn is_unspecified(addr: String) -&gt; bool</code></td>
+<td>Return true iff the string parses as the unspecified IP (0.0.0.0 / ::).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>is_v4</code></a></td>
+<td><code>fn is_v4(addr: String) -&gt; bool</code></td>
+<td>Return true iff the string parses as a v4 IP.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>is_v6</code></a></td>
+<td><code>fn is_v6(addr: String) -&gt; bool</code></td>
+<td>Return true iff the string parses as a v6 IP.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>is_valid</code></a></td>
+<td><code>fn is_valid(addr: String) -&gt; bool</code></td>
+<td>Return true iff the string parses as a v4 or v6 IP.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>join_addr_port</code></a></td>
+<td><code>fn join_addr_port(addr: String, port: i64) -&gt; String</code></td>
+<td>Compose an addr:port string from host and port, or empty on failure.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>normalize</code></a></td>
+<td><code>fn normalize(addr: String) -&gt; Result&lt;String, errors::Error&gt;</code></td>
+<td>Canonical lowercase form of the IP, or empty string on parse failure.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>port_of</code></a></td>
+<td><code>fn port_of(addr_port: String) -&gt; i64</code></td>
+<td>Port portion of an addr:port string, or -1 on parse failure.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>Url</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Parsed URL.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>path_escape</code></a></td>
+<td><code>fn path_escape(text: String) -&gt; String</code></td>
+<td>Percent-encodes a URL path segment.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>path_unescape</code></a></td>
+<td><code>fn path_unescape(text: String) -&gt; String</code></td>
+<td>Inverse of <code>path_escape</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>query_escape</code></a></td>
+<td><code>fn query_escape(text: String) -&gt; String</code></td>
+<td>Percent-encodes a query parameter.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs"><code>query_unescape</code></a></td>
+<td><code>fn query_unescape(text: String) -&gt; String</code></td>
+<td>Inverse of <code>query_escape</code>.</td>
 </tr>
 </tbody>
 </table>

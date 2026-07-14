@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdtime"><code>std::time</code><a class="headerlink" href="#stdtime" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Wall-clock and monotonic time facilities.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1820,6 +1891,86 @@
 <td><code>since_ms</code></td>
 <td>fn</td>
 <td>Milliseconds elapsed since an earlier monotonic reading.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs"><code>Duration</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Difference between two <code>Instant</code>s.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs"><code>Instant</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Monotonic point-in-time.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs"><code>SystemTime</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Wall-clock point-in-time.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs"><code>format_rfc3339</code></a></td>
+<td><code>fn format_rfc3339(ms: i64) -&gt; Result&lt;String, errors::Error&gt;</code></td>
+<td>Formats a <code>SystemTime</code> in RFC 3339 (<code>YYYY-MM-DDTHH:MM:SSZ</code>).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs"><code>monotonic_ms</code></a></td>
+<td><code>fn monotonic_ms() -&gt; i64</code></td>
+<td>Monotonic clock reading in milliseconds.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs"><code>monotonic_nanos</code></a></td>
+<td><code>fn monotonic_nanos() -&gt; i64</code></td>
+<td>Monotonic clock reading in nanoseconds.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs"><code>now</code></a></td>
+<td><code>fn now() -&gt; time::Instant</code></td>
+<td>Returns the current monotonic <code>Instant</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs"><code>now_ms</code></a></td>
+<td><code>fn now_ms() -&gt; i64</code></td>
+<td>Wall-clock milliseconds since the Unix epoch.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs"><code>now_nanos</code></a></td>
+<td><code>fn now_nanos() -&gt; i64</code></td>
+<td>Wall-clock nanoseconds since the Unix epoch.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs"><code>parse_rfc3339</code></a></td>
+<td><code>fn parse_rfc3339(text: String) -&gt; Result&lt;i64, errors::Error&gt;</code></td>
+<td>Parses an RFC 3339 timestamp into a <code>SystemTime</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs"><code>since_ms</code></a></td>
+<td><code>fn since_ms(instant: time::Instant) -&gt; i64</code></td>
+<td>Milliseconds elapsed since an earlier monotonic reading.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs"><code>sleep</code></a></td>
+<td><code>fn sleep(ms: i64) -&gt; ()</code></td>
+<td>Suspends the current goroutine for <code>Duration</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs"><code>unix_ms</code></a></td>
+<td><code>fn unix_ms() -&gt; i64</code></td>
+<td>Current Unix time in milliseconds.</td>
 </tr>
 </tbody>
 </table>

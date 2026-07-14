@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdnetip"><code>std::net::ip</code><a class="headerlink" href="#stdnetip" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>String-level IPv4 / IPv6 parsing and classification helpers.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1805,6 +1876,71 @@
 <td><code>octets</code></td>
 <td>fn</td>
 <td>Byte octets of the IP as a Vec.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net/ip.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net/ip.rs"><code>is_loopback</code></a></td>
+<td><code>fn is_loopback(addr: String) -&gt; bool</code></td>
+<td>Reports whether the IP is a loopback address.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net/ip.rs"><code>is_multicast</code></a></td>
+<td><code>fn is_multicast(addr: String) -&gt; bool</code></td>
+<td>Reports whether the IP is a multicast address.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net/ip.rs"><code>is_private</code></a></td>
+<td><code>fn is_private(addr: String) -&gt; bool</code></td>
+<td>Reports whether the IP is in a private range.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net/ip.rs"><code>is_unspecified</code></a></td>
+<td><code>fn is_unspecified(addr: String) -&gt; bool</code></td>
+<td>Reports whether the IP is the unspecified address.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net/ip.rs"><code>is_v4</code></a></td>
+<td><code>fn is_v4(addr: String) -&gt; bool</code></td>
+<td>Reports whether the string is a valid v4 IP.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net/ip.rs"><code>is_v6</code></a></td>
+<td><code>fn is_v6(addr: String) -&gt; bool</code></td>
+<td>Reports whether the string is a valid v6 IP.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net/ip.rs"><code>is_valid</code></a></td>
+<td><code>fn is_valid(addr: String) -&gt; bool</code></td>
+<td>Reports whether the string is a valid v4 or v6 IP.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net/ip.rs"><code>octets</code></a></td>
+<td><code>fn octets(addr: net::ip::Addr) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Byte octets of the IP as a Vec.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net/ip.rs"><code>parse</code></a></td>
+<td><code>fn parse(addr: String) -&gt; Result&lt;net::ip::Addr, errors::Error&gt;</code></td>
+<td>Parses an IP string, returning its canonical form or None.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net/ip.rs"><code>to_string</code></a></td>
+<td><code>fn to_string(addr: net::ip::Addr) -&gt; String</code></td>
+<td>Canonical lowercase string form of the IP.</td>
 </tr>
 </tbody>
 </table>

@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1727,6 +1787,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#routing-syntax" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1777,7 +1848,7 @@
 
 
 <h1 id="stdhttprouter"><code>std::http::router</code><a class="headerlink" href="#stdhttprouter" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Go 1.22-class ServeMux: method-aware path patterns with parameter captures + prefix routes.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1823,6 +1894,49 @@
 </table>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs"><code>Handler</code></a></td>
+<td><code>trait</code> — see the source declaration</td>
+<td>Anything callable as <code>Fn(&amp;Request, &amp;Params) -&gt; Response</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs"><code>Params</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Captured path parameters. Read inside a handler with <code>r.path_value(name) -&gt; String</code>; returns <code>""</code> for an undeclared name. All tiers.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs"><code>Router</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Routing table. Build with <code>Router::new()</code>, register routes via the verb methods, then pass to <code>http::serve</code>. Verb methods return the router so they chain with <code>\|&gt;</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs"><code>add</code></a></td>
+<td><code>fn add(router: http::router::Router, method: String, pattern: String) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>Register a pattern-only route: <code>(router, method, pattern)</code>. Used with <code>lookup</code> for low-level dispatch.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs"><code>lookup</code></a></td>
+<td><code>fn lookup(router: http::router::Router, method: String, path: String) -&gt; Option&lt;http::router::Match&gt;</code></td>
+<td>Find the index of the first route matching <code>(method, path)</code>. Returns <code>Option&lt;i64&gt;</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs"><code>new</code></a></td>
+<td><code>fn new() -&gt; http::router::Router</code></td>
+<td>Allocate a fresh Router handle.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="routing-syntax">Routing syntax<a class="headerlink" href="#routing-syntax" title="Permanent link">&para;</a></h2>
 <p>Patterns follow Go 1.22 <code>http.ServeMux</code> style:</p>
 <div class="language-text highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/users/{id}          single-segment capture (no /).

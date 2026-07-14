@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdencodingbinary"><code>std::encoding::binary</code><a class="headerlink" href="#stdencodingbinary" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Big/little-endian integer packing and varint codecs.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1845,6 +1916,111 @@
 <td><code>put_varint</code></td>
 <td>fn</td>
 <td>Encodes a signed varint (zigzag).</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>get_u16_be</code></a></td>
+<td><code>fn get_u16_be(bytes: Vec&lt;u8&gt;) -&gt; Result&lt;i64, errors::Error&gt;</code></td>
+<td>Reads a big-endian u16.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>get_u16_le</code></a></td>
+<td><code>fn get_u16_le(bytes: Vec&lt;u8&gt;) -&gt; Result&lt;i64, errors::Error&gt;</code></td>
+<td>Reads a little-endian u16.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>get_u32_be</code></a></td>
+<td><code>fn get_u32_be(bytes: Vec&lt;u8&gt;) -&gt; Result&lt;i64, errors::Error&gt;</code></td>
+<td>Reads a big-endian u32.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>get_u32_le</code></a></td>
+<td><code>fn get_u32_le(bytes: Vec&lt;u8&gt;) -&gt; Result&lt;i64, errors::Error&gt;</code></td>
+<td>Reads a little-endian u32.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>get_u64_be</code></a></td>
+<td><code>fn get_u64_be(bytes: Vec&lt;u8&gt;) -&gt; Result&lt;i64, errors::Error&gt;</code></td>
+<td>Reads a big-endian u64.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>get_u64_le</code></a></td>
+<td><code>fn get_u64_le(bytes: Vec&lt;u8&gt;) -&gt; Result&lt;i64, errors::Error&gt;</code></td>
+<td>Reads a little-endian u64.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>get_u8</code></a></td>
+<td><code>fn get_u8(bytes: Vec&lt;u8&gt;) -&gt; Result&lt;i64, errors::Error&gt;</code></td>
+<td>Reads a single byte.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>put_u16_be</code></a></td>
+<td><code>fn put_u16_be(buf: Vec&lt;u8&gt;, value: i64) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Writes a big-endian u16.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>put_u16_le</code></a></td>
+<td><code>fn put_u16_le(buf: Vec&lt;u8&gt;, value: i64) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Writes a little-endian u16.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>put_u32_be</code></a></td>
+<td><code>fn put_u32_be(buf: Vec&lt;u8&gt;, value: i64) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Writes a big-endian u32.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>put_u32_le</code></a></td>
+<td><code>fn put_u32_le(buf: Vec&lt;u8&gt;, value: i64) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Writes a little-endian u32.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>put_u64_be</code></a></td>
+<td><code>fn put_u64_be(buf: Vec&lt;u8&gt;, value: i64) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Writes a big-endian u64.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>put_u64_le</code></a></td>
+<td><code>fn put_u64_le(buf: Vec&lt;u8&gt;, value: i64) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Writes a little-endian u64.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>put_u8</code></a></td>
+<td><code>fn put_u8(buf: Vec&lt;u8&gt;, value: i64) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Writes a single byte.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>put_uvarint</code></a></td>
+<td><code>fn put_uvarint(buf: Vec&lt;u8&gt;, value: i64) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Encodes an unsigned varint.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>put_varint</code></a></td>
+<td><code>fn put_varint(buf: Vec&lt;u8&gt;, value: i64) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Encodes a signed varint (zigzag).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>uvarint</code></a></td>
+<td><code>fn uvarint(bytes: Vec&lt;u8&gt;) -&gt; Result&lt;i64, errors::Error&gt;</code></td>
+<td>Decodes an unsigned varint.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs"><code>varint</code></a></td>
+<td><code>fn varint(bytes: Vec&lt;u8&gt;) -&gt; Result&lt;i64, errors::Error&gt;</code></td>
+<td>Decodes a signed varint (zigzag).</td>
 </tr>
 </tbody>
 </table>

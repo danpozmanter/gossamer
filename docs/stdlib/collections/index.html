@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdcollections"><code>std::collections</code><a class="headerlink" href="#stdcollections" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Built-in container types.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1780,6 +1851,221 @@
 <td><code>HashSet</code></td>
 <td>type</td>
 <td>Unordered set built on top of <code>HashMap</code>.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>BTreeMap</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Ordered map.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>HashMap</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Hash map backed by the swiss-table layout.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>HashSet</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Unordered set built on top of <code>HashMap</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>Vec</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Growable contiguous sequence.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>VecDeque</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Double-ended queue backed by a ring buffer.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>len</code></a></td>
+<td><code>fn len(xs: Deque&lt;i64&gt;) -&gt; i64</code></td>
+<td>Element count.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>peek_back</code></a></td>
+<td><code>fn peek_back(xs: Deque&lt;i64&gt;) -&gt; i64</code></td>
+<td>Back element, or 0 if empty.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>peek_front</code></a></td>
+<td><code>fn peek_front(xs: Deque&lt;i64&gt;) -&gt; i64</code></td>
+<td>Front element, or 0 if empty.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>pop_back</code></a></td>
+<td><code>fn pop_back(xs: Deque&lt;i64&gt;) -&gt; Deque&lt;i64&gt;</code></td>
+<td>Drop the back.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>pop_front</code></a></td>
+<td><code>fn pop_front(xs: Deque&lt;i64&gt;) -&gt; Deque&lt;i64&gt;</code></td>
+<td>Drop the front.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>push_back</code></a></td>
+<td><code>fn push_back(xs: Deque&lt;i64&gt;, value: i64) -&gt; Deque&lt;i64&gt;</code></td>
+<td>Append to the back.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>push_front</code></a></td>
+<td><code>fn push_front(xs: Deque&lt;i64&gt;, value: i64) -&gt; Deque&lt;i64&gt;</code></td>
+<td>Prepend to the front.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>len</code></a></td>
+<td><code>fn len(xs: Heap&lt;i64&gt;) -&gt; i64</code></td>
+<td>Element count.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>peek</code></a></td>
+<td><code>fn peek(xs: Heap&lt;i64&gt;) -&gt; i64</code></td>
+<td>Smallest element of the heap, or 0 if empty.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>pop</code></a></td>
+<td><code>fn pop(xs: Heap&lt;i64&gt;) -&gt; Heap&lt;i64&gt;</code></td>
+<td>Drop the root from the heap; returns the new heap (use <code>peek</code> first to read the value).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>push</code></a></td>
+<td><code>fn push(xs: Heap&lt;i64&gt;, value: i64) -&gt; Heap&lt;i64&gt;</code></td>
+<td>Push an i64 onto the min-heap; returns the new heap.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>contains_key</code></a></td>
+<td><code>fn contains_key(map: OrderedMap&lt;String, i64&gt;, key: String) -&gt; bool</code></td>
+<td>Key-membership test.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>get</code></a></td>
+<td><code>fn get(map: OrderedMap&lt;String, i64&gt;, key: String) -&gt; Option&lt;i64&gt;</code></td>
+<td>Lookup; returns 0 if absent.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>insert</code></a></td>
+<td><code>fn insert(map: OrderedMap&lt;String, i64&gt;, key: String, value: i64) -&gt; OrderedMap&lt;String, i64&gt;</code></td>
+<td>Set key =&gt; value.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>len</code></a></td>
+<td><code>fn len(map: OrderedMap&lt;String, i64&gt;) -&gt; i64</code></td>
+<td>Pair count.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>remove</code></a></td>
+<td><code>fn remove(map: OrderedMap&lt;String, i64&gt;, key: String) -&gt; OrderedMap&lt;String, i64&gt;</code></td>
+<td>Remove a key.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>contains</code></a></td>
+<td><code>fn contains(xs: OrderedSet&lt;i64&gt;, value: i64) -&gt; bool</code></td>
+<td>Membership test.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>insert</code></a></td>
+<td><code>fn insert(xs: OrderedSet&lt;i64&gt;, value: i64) -&gt; OrderedSet&lt;i64&gt;</code></td>
+<td>Insert (sorted, no duplicates).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>len</code></a></td>
+<td><code>fn len(xs: OrderedSet&lt;i64&gt;) -&gt; i64</code></td>
+<td>Element count.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>remove</code></a></td>
+<td><code>fn remove(xs: OrderedSet&lt;i64&gt;, value: i64) -&gt; OrderedSet&lt;i64&gt;</code></td>
+<td>Remove a value.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>contains</code></a></td>
+<td><code>fn contains(xs: Vec&lt;i64&gt;, value: i64) -&gt; bool</code></td>
+<td>Return true iff <code>value</code> is present.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>index_of</code></a></td>
+<td><code>fn index_of(xs: Vec&lt;i64&gt;, value: i64) -&gt; Option&lt;i64&gt;</code></td>
+<td>Return the index of <code>value</code>, or -1.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>insert</code></a></td>
+<td><code>fn insert(xs: Vec&lt;i64&gt;, value: i64) -&gt; Vec&lt;i64&gt;</code></td>
+<td>Insert at the unique sorted position.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>len</code></a></td>
+<td><code>fn len(xs: Vec&lt;i64&gt;) -&gt; i64</code></td>
+<td>Element count.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>peek_max</code></a></td>
+<td><code>fn peek_max(xs: Vec&lt;i64&gt;) -&gt; i64</code></td>
+<td>Largest element, or 0.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>peek_min</code></a></td>
+<td><code>fn peek_min(xs: Vec&lt;i64&gt;) -&gt; i64</code></td>
+<td>Smallest element, or 0.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>remove_at</code></a></td>
+<td><code>fn remove_at(xs: Vec&lt;i64&gt;, index: i64) -&gt; Vec&lt;i64&gt;</code></td>
+<td>Remove the element at index <code>i</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>len</code></a></td>
+<td><code>fn len(xs: Queue&lt;i64&gt;) -&gt; i64</code></td>
+<td>Element count.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>peek</code></a></td>
+<td><code>fn peek(xs: Queue&lt;i64&gt;) -&gt; i64</code></td>
+<td>Front element, or 0 if empty.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>pop</code></a></td>
+<td><code>fn pop(xs: Queue&lt;i64&gt;) -&gt; Queue&lt;i64&gt;</code></td>
+<td>Drop the front element; returns the new queue.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>push</code></a></td>
+<td><code>fn push(xs: Queue&lt;i64&gt;, value: i64) -&gt; Queue&lt;i64&gt;</code></td>
+<td>Append an i64 to the back; returns the new queue.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>len</code></a></td>
+<td><code>fn len(xs: Stack&lt;i64&gt;) -&gt; i64</code></td>
+<td>Element count.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>peek</code></a></td>
+<td><code>fn peek(xs: Stack&lt;i64&gt;) -&gt; i64</code></td>
+<td>Top element, or 0 if empty.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>pop</code></a></td>
+<td><code>fn pop(xs: Stack&lt;i64&gt;) -&gt; Stack&lt;i64&gt;</code></td>
+<td>Drop the top; returns the new stack.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>push</code></a></td>
+<td><code>fn push(xs: Stack&lt;i64&gt;, value: i64) -&gt; Stack&lt;i64&gt;</code></td>
+<td>Push an i64 onto the top; returns the new stack.</td>
 </tr>
 </tbody>
 </table>

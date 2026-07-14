@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdhttpwebsocket"><code>std::http::websocket</code><a class="headerlink" href="#stdhttpwebsocket" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1815,6 +1886,81 @@
 <td><code>close</code></td>
 <td>fn</td>
 <td>close(ws) -&gt; Result&lt;(), Error&gt;: send a close frame and release the handle.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs"><code>Error</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Io / Protocol / BadHandshake.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs"><code>Message</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Text / Binary / Ping / Pong / Close.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs"><code>WebSocket</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Accepted WebSocket connection (Rust-side framing).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs"><code>accept</code></a></td>
+<td><code>fn accept(request: http::Request) -&gt; Result&lt;http::websocket::Conn, errors::Error&gt;</code></td>
+<td>Upgrade an incoming Request to a WebSocket (Rust-side).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs"><code>accept_key</code></a></td>
+<td><code>fn accept_key(key: String) -&gt; String</code></td>
+<td>Compute RFC 6455 Sec-WebSocket-Accept from a client nonce. Available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs"><code>close</code></a></td>
+<td><code>fn close(conn: http::websocket::Conn) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>close(ws) -&gt; Result&lt;(), Error&gt;: send a close frame and release the handle.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs"><code>connect</code></a></td>
+<td><code>fn connect(url: String) -&gt; Result&lt;http::websocket::Conn, errors::Error&gt;</code></td>
+<td>connect(url) -&gt; Result<i64, Error>: client TCP connect + RFC 6455 upgrade; returns a WebSocket handle.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs"><code>is_websocket_upgrade</code></a></td>
+<td><code>fn is_websocket_upgrade(request: http::Request) -&gt; bool</code></td>
+<td>Test whether an incoming Request carries a WebSocket upgrade handshake. Interp tier.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs"><code>recv</code></a></td>
+<td><code>fn recv(conn: http::websocket::Conn) -&gt; Result&lt;http::websocket::Message, errors::Error&gt;</code></td>
+<td>recv(ws) -&gt; Result<String, Error>: next text message; Err on close/error.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs"><code>send_binary</code></a></td>
+<td><code>fn send_binary(conn: http::websocket::Conn, data: Vec&lt;u8&gt;) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>send_binary(ws, data) -&gt; Result&lt;(), Error&gt;: send one binary frame.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs"><code>send_text</code></a></td>
+<td><code>fn send_text(conn: http::websocket::Conn, text: String) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>send_text(ws, s) -&gt; Result&lt;(), Error&gt;: send one text frame.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs"><code>serve</code></a></td>
+<td><code>fn serve(addr: String, handler: Fn(http::websocket::Conn) -&gt; ()) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>serve(addr, handler) -&gt; Result&lt;(), Error&gt;: bind, upgrade each connection, dispatch the handler's handle(&amp;self, ws) per connection.</td>
 </tr>
 </tbody>
 </table>

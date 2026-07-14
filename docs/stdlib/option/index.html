@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdoption"><code>std::option</code><a class="headerlink" href="#stdoption" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1814,6 +1885,81 @@
 <tr>
 <td><code>zip</code></td>
 <td>fn</td>
+<td>Pairs two Somes into Some((a, b)).</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/option.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>and_then</code></a></td>
+<td><code>fn and_then&lt;T, U&gt;(f: Fn(T) -&gt; Option&lt;U&gt;, value: Option&lt;T&gt;) -&gt; Option&lt;U&gt;</code></td>
+<td>Chains a fallible step: Some(v) -&gt; f(v), None stays None.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>filter</code></a></td>
+<td><code>fn filter&lt;T&gt;(predicate: Fn(T) -&gt; bool, value: Option&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td>Keeps Some(v) only when the predicate holds.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>flatten</code></a></td>
+<td><code>fn flatten&lt;T&gt;(value: Option&lt;Option&lt;T&gt;&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td>Collapses Option<Option\<T>> one level.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>is_none</code></a></td>
+<td><code>fn is_none&lt;T&gt;(value: Option&lt;T&gt;) -&gt; bool</code></td>
+<td>True for None.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>is_some</code></a></td>
+<td><code>fn is_some&lt;T&gt;(value: Option&lt;T&gt;) -&gt; bool</code></td>
+<td>True for Some.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>iter</code></a></td>
+<td><code>fn iter&lt;T&gt;(value: Option&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td>Zero-or-one element sequence view.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>map</code></a></td>
+<td><code>fn map&lt;T, U&gt;(f: Fn(T) -&gt; U, value: Option&lt;T&gt;) -&gt; Option&lt;U&gt;</code></td>
+<td>Transforms the Some payload, None stays None.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>or</code></a></td>
+<td><code>fn or&lt;T&gt;(fallback: Option&lt;T&gt;, value: Option&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td>First Some of self and the alternative.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>or_else</code></a></td>
+<td><code>fn or_else&lt;T&gt;(fallback: Fn() -&gt; Option&lt;T&gt;, value: Option&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td>First Some of self and a lazily built alternative.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>unwrap_or</code></a></td>
+<td><code>fn unwrap_or&lt;T&gt;(fallback: T, value: Option&lt;T&gt;) -&gt; T</code></td>
+<td>Unwraps with a fallback value for None.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>unwrap_or_else</code></a></td>
+<td><code>fn unwrap_or_else&lt;T&gt;(fallback: Fn() -&gt; T, value: Option&lt;T&gt;) -&gt; T</code></td>
+<td>Unwraps with a lazily computed fallback for None.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>zip</code></a></td>
+<td><code>fn zip&lt;T, U&gt;(other: Option&lt;U&gt;, value: Option&lt;T&gt;) -&gt; Option&lt;(T, U)&gt;</code></td>
 <td>Pairs two Somes into Some((a, b)).</td>
 </tr>
 </tbody>

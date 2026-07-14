@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdflag"><code>std::flag</code><a class="headerlink" href="#stdflag" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Batteries-included CLI argument parsing.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1790,6 +1861,56 @@
 <td><code>define</code></td>
 <td>fn</td>
 <td>Registers a flag definition on the default set.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/flag.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/flag.rs"><code>Error</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Error produced while parsing flags.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/flag.rs"><code>Set</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Flag definition + parsing set.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/flag.rs"><code>bool</code></a></td>
+<td><code>fn bool(name: String, default: bool, usage: String, short: char) -&gt; flag::Flag</code></td>
+<td>Defines a boolean flag on the default set.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/flag.rs"><code>define</code></a></td>
+<td><code>fn define(name: String, flags: Vec&lt;flag::Flag&gt;) -&gt; flag::FlagSet</code></td>
+<td>Registers a flag definition on the default set.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/flag.rs"><code>int</code></a></td>
+<td><code>fn int(name: String, default: i64, usage: String, short: char) -&gt; flag::Flag</code></td>
+<td>Defines an integer flag on the default set.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/flag.rs"><code>parse</code></a></td>
+<td><code>fn parse(args: Vec&lt;String&gt;) -&gt; Result&lt;Vec&lt;String&gt;, errors::Error&gt;</code></td>
+<td>Parses the default flag set against the given args.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/flag.rs"><code>string</code></a></td>
+<td><code>fn string(name: String, default: String, usage: String, short: char) -&gt; flag::Flag</code></td>
+<td>Defines a string flag on the default set.</td>
 </tr>
 </tbody>
 </table>

@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1727,6 +1787,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#request" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1799,6 +1870,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#http2-request-streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HTTP/2 request streaming
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#handlers-and-serve" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1849,7 +1931,7 @@
 
 
 <h1 id="stdhttp"><code>std::http</code><a class="headerlink" href="#stdhttp" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -2010,6 +2092,559 @@
 </table>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Client</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>HTTP client; configure redirects and timeout via <code>Client::builder()</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Headers</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Case-insensitive header map.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Http2Config</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Per-connection HTTP/2 tuning (window sizes, max concurrent streams, frame caps).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Http2Error</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>HTTP/2 server error: Io, Protocol, Handler.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Http2Handler</code></a></td>
+<td><code>trait</code> — see the source declaration</td>
+<td>Bounded-body HTTP/2 handler: serve(Request) -&gt; Response.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Http2ServerHandle</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Handle to a running HTTP/2 connection for shutdown / in-flight counts.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Http2StreamingHandler</code></a></td>
+<td><code>trait</code> — see the source declaration</td>
+<td>Chunked-body HTTP/2 handler: serve(Request, StreamingResponseWriter) -&gt; Result.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Method</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>HTTP method enumeration.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>PushOptions</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Prioritization knobs for <code>ResponseWriter::push_promise</code> (weight, depends_on, exclusive).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>PushStream</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Server-initiated push stream returned by <code>ResponseWriter::push_promise</code>. Supports send_head / write / write_trailers / end.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Request</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>HTTP request value passed to a handler.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Response</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>HTTP response value returned from a handler.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>ResponseStream</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Streaming response body from <code>http::stream</code>; <code>next_line</code> / <code>next_chunk</code>, consumed by <code>Response::stream</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Server</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>HTTP server bound to a TCP listener.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>StatusCode</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>HTTP status code.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>StreamingResponseWriter</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Streaming HTTP/2 response writer; set_status / header / write_chunk / finish.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Trailers</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>HTTP/2 trailing HEADERS (alias for Headers) - used by <code>ResponseWriter::write_trailers</code> and <code>Request::trailers</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Reader</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Decodes a chunked body from any Read source (Rust-side; streaming).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Writer</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Encodes raw bytes into chunked frames over any Write sink (Rust-side; streaming).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>decode</code></a></td>
+<td><code>fn decode(body: String) -&gt; String</code></td>
+<td>One-shot: concatenates data chunks from a complete chunked body. Available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>encode</code></a></td>
+<td><code>fn encode(body: String) -&gt; String</code></td>
+<td>One-shot: wraps a buffer in chunked transfer-encoding with terminator. Available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Cookie</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Parsed cookie with name, value, and Set-Cookie attributes.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>CookieBuilder</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Fluent builder for Set-Cookie response headers.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>SameSite</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>SameSite attribute: Strict / Lax / None.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>parse_cookie_header</code></a></td>
+<td><code>fn parse_cookie_header(header: String) -&gt; Vec&lt;http::cookie::Cookie&gt;</code></td>
+<td>Parse a Cookie request header into (name, value) pairs.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>serialize</code></a></td>
+<td><code>fn serialize(name: String, value: String) -&gt; String</code></td>
+<td>Render a Cookie as a Set-Cookie header value.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Config</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Signing key, cookie / header names, and origin allowlist.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>RouteAuth</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Per-route policy: Required, Optional, or Skipped.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>attach_cookie</code></a></td>
+<td><code>fn attach_cookie(request: http::Request, secret: String) -&gt; Result&lt;http::Request, errors::Error&gt;</code></td>
+<td>Set the CSRF cookie on a Response.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>check</code></a></td>
+<td><code>fn check(request: http::Request, secret: String) -&gt; Result&lt;http::Request, errors::Error&gt;</code></td>
+<td>Combined origin + token gate; returns Err on failure.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>extract_token</code></a></td>
+<td><code>fn extract_token(request: http::Request, secret: String) -&gt; Result&lt;http::Request, errors::Error&gt;</code></td>
+<td>Pull a token from the configured header or form field.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>issue_token</code></a></td>
+<td><code>fn issue_token(secret: Vec&lt;u8&gt;) -&gt; Result&lt;String, errors::Error&gt;</code></td>
+<td>Mint a fresh CSRF token bound to the configured signing key.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>origin_allowed</code></a></td>
+<td><code>fn origin_allowed(request: http::Request, secret: String) -&gt; Result&lt;http::Request, errors::Error&gt;</code></td>
+<td>Origin / Referer allowlist check for unsafe methods.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>verify_token</code></a></td>
+<td><code>fn verify_token(cookie_token: String, supplied_token: String, secret: Vec&lt;u8&gt;) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>Constant-time verify of a presented token against the cookie value.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>delete</code></a></td>
+<td><code>fn delete(url: String, body: String, headers: Vec&lt;(String, String)&gt;) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot DELETE: <code>(url, body, headers) -&gt; Result&lt;Response, Error&gt;</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Form</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Parsed url-encoded body, queryable by field name.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>FormBuilder</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Builder for url-encoded request bodies.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>get</code></a></td>
+<td><code>fn get(url: String, headers: Vec&lt;(String, String)&gt;) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot GET: <code>(url, headers) -&gt; Result&lt;Response, Error&gt;</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>head</code></a></td>
+<td><code>fn head(url: String, headers: Vec&lt;(String, String)&gt;) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot HEAD: <code>(url, headers) -&gt; Result&lt;Response, Error&gt;</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Health</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Aggregates a set of named probes into a single status.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Probe</code></a></td>
+<td><code>trait</code> — see the source declaration</td>
+<td>One health check returning Ok or Err with a short message.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Chain</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Helper for composing middleware in a single value.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Handler</code></a></td>
+<td><code>trait</code> — see the source declaration</td>
+<td>Anything serving (Request, Params) -&gt; Response.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>accepts_gzip</code></a></td>
+<td><code>fn accepts_gzip(request: http::Request) -&gt; bool</code></td>
+<td>Check an Accept-Encoding header for a gzip token. Available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>bearer_ok</code></a></td>
+<td><code>fn bearer_ok(request: http::Request, verify: Fn(String) -&gt; bool) -&gt; bool</code></td>
+<td>Run a verify closure on the request's Bearer token; false (without calling verify) when no Bearer header is present. Available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>decode_basic_auth</code></a></td>
+<td><code>fn decode_basic_auth(request: http::Request) -&gt; Option&lt;(String, String)&gt;</code></td>
+<td>Decode a Basic-auth Authorization header into (user, password). Interp tier.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>new_request_id</code></a></td>
+<td><code>fn new_request_id() -&gt; String</code></td>
+<td>Generate a process-monotonic request id string. Available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>tag</code></a></td>
+<td><code>fn tag(handler: http::Handler) -&gt; http::Handler</code></td>
+<td>Wrap a handler (<code>tag(inner) -&gt; Handler</code>), prepending <code>mw:</code> to each response body. Deterministic composition primitive; available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Config</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Per-form size, part-count, and disk-spill limits.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Form</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Parsed multipart envelope: fields + file parts.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Part</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>One field or file entry from a multipart body.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>PartData</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>In-memory bytes or spilled-to-disk path for a part.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>parse</code></a></td>
+<td><code>fn parse(request: http::Request) -&gt; Result&lt;http::multipart::Form, errors::Error&gt;</code></td>
+<td>Stream-parse from any Read source into a Form.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Client</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Native h1 client (Rust-side; full builder surface).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Error</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Connect / Tls / Http / Redirect / Timeout / Io.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>delete</code></a></td>
+<td><code>fn delete(url: String) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot DELETE → Result<Response, Error>. Interp tier.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>get</code></a></td>
+<td><code>fn get(url: String) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot GET → Result<Response, Error>. Interp tier (compiled tier shares http::get).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>post</code></a></td>
+<td><code>fn post(url: String, body: Vec&lt;u8&gt;, content_type: String) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot POST: <code>(url, body, content_type)</code>. Interp tier.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>put</code></a></td>
+<td><code>fn put(url: String, body: Vec&lt;u8&gt;, content_type: String) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot PUT: <code>(url, body, content_type)</code>. Interp tier.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>options</code></a></td>
+<td><code>fn options(url: String, headers: Vec&lt;(String, String)&gt;) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot OPTIONS: <code>(url, headers) -&gt; Result&lt;Response, Error&gt;</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>post</code></a></td>
+<td><code>fn post(url: String, body: String, content_type: String) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot POST: <code>(url, body, content_type) -&gt; Result&lt;Response, Error&gt;</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Director</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Fn(&amp;mut Request) request mutator (Rust-side).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Proxy</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Reverse-proxy handler (Rust-side).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>forward</code></a></td>
+<td><code>fn forward(url: String, method: String, body: Vec&lt;u8&gt;) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot upstream forward: <code>(url, method, body) -&gt; Result&lt;Response, Error&gt;</code>. Interp tier.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>put</code></a></td>
+<td><code>fn put(url: String, body: String, content_type: String) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot PUT: <code>(url, body, content_type) -&gt; Result&lt;Response, Error&gt;</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Query</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Parsed query string with typed get / get_all / contains.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>request</code></a></td>
+<td><code>fn request(method: String, url: String, body: String, headers: Vec&lt;(String, String)&gt;) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot request with a string body: <code>(method, url, body, headers) -&gt; Result&lt;Response, Error&gt;</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>request_bytes</code></a></td>
+<td><code>fn request_bytes(method: String, url: String, body: Vec&lt;u8&gt;, headers: Vec&lt;(String, String)&gt;) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>One-shot request with a byte body: <code>(method, url, body: [u8], headers) -&gt; Result&lt;Response, Error&gt;</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Handler</code></a></td>
+<td><code>trait</code> — see the source declaration</td>
+<td>Anything callable as <code>Fn(&amp;Request, &amp;Params) -&gt; Response</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Params</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Captured path parameters. Read inside a handler with <code>r.path_value(name) -&gt; String</code>; returns <code>""</code> for an undeclared name. All tiers.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Router</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Routing table. Build with <code>Router::new()</code>, register routes via the verb methods, then pass to <code>http::serve</code>. Verb methods return the router so they chain with <code>\|&gt;</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>add</code></a></td>
+<td><code>fn add(router: http::router::Router, method: String, pattern: String) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>Register a pattern-only route: <code>(router, method, pattern)</code>. Used with <code>lookup</code> for low-level dispatch.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>lookup</code></a></td>
+<td><code>fn lookup(router: http::router::Router, method: String, path: String) -&gt; Option&lt;http::router::Match&gt;</code></td>
+<td>Find the index of the first route matching <code>(method, path)</code>. Returns <code>Option&lt;i64&gt;</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>new</code></a></td>
+<td><code>fn new() -&gt; http::router::Router</code></td>
+<td>Allocate a fresh Router handle.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>serve</code></a></td>
+<td><code>fn serve(addr: String, handler: http::Handler) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>Convenience: bind and serve an HTTP handler. <code>Result&lt;(), Error&gt;</code> - a bind failure is an Err value.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>serve_h2c</code></a></td>
+<td><code>fn serve_h2c(addr: String, handler: http::Handler) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>Bind a plain-TCP listener and serve h2c (HTTP/2 cleartext).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>serve_tls</code></a></td>
+<td><code>fn serve_tls(addr: String, cert_pem: String, key_pem: String, handler: http::Handler) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>TLS-terminating server: <code>serve_tls(addr, cert_pem, key_pem, handler) -&gt; Result&lt;(), Error&gt;</code>. Builds a rustls config from the PEM cert chain + key and serves HTTPS with the same handler contract as <code>serve</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>SerializationMode</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Session payload encoding: Json or Bincode.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Session</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Per-request session view; mutations persist on response.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>SessionConfig</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Cookie name, domain, signing key, serialization mode.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>SessionStore</code></a></td>
+<td><code>trait</code> — see the source declaration</td>
+<td>Backend interface: load / save / delete by session id.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>SignedCookieStore</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Cookie-backed store with HMAC signature; no server state.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>sign</code></a></td>
+<td><code>fn sign(value: String, secret: Vec&lt;u8&gt;) -&gt; String</code></td>
+<td>Sign session data into a tamper-evident cookie value.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>verify</code></a></td>
+<td><code>fn verify(value: String, secret: Vec&lt;u8&gt;) -&gt; Result&lt;String, errors::Error&gt;</code></td>
+<td>Verify and decode a signed session cookie value.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>with_session</code></a></td>
+<td><code>fn with_session(request: http::Request, secret: String) -&gt; Result&lt;http::Request, errors::Error&gt;</code></td>
+<td>Run a closure with the session bound; persist any mutations.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Event</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>One SSE event (id, event, data, retry).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Stream</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Active SSE stream - handler writes events through it (Rust-side).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>encode_comment</code></a></td>
+<td><code>fn encode_comment(comment: String) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Render a <code>:</code>-prefixed keepalive line. Available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>encode_event</code></a></td>
+<td><code>fn encode_event(event: String, data: String, id: String) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Render one event block as a string: <code>(event, data, id) -&gt; String</code>. Available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>encode_retry</code></a></td>
+<td><code>fn encode_retry(ms: i64) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Render a <code>retry:</code> reconnect-hint directive in milliseconds. Available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>AppState</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>TypeMap of Arc<T> values shared across handlers.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>State</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Newtype wrapper Arc<T> for ergonomic handler arguments.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>FileServer</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Static-file handler rooted at a directory (Rust-side; streaming).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>mime_for_path</code></a></td>
+<td><code>fn mime_for_path(path: String) -&gt; String</code></td>
+<td>Guess a MIME type from a file path's extension. Available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>serve_file</code></a></td>
+<td><code>fn serve_file(path: String) -&gt; Result&lt;http::Response, errors::Error&gt;</code></td>
+<td>Read a single file and return it as a Response struct. Interp tier.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>stream</code></a></td>
+<td><code>fn stream(method: String, url: String, body: String, headers: Vec&lt;(String, String)&gt;) -&gt; Result&lt;http::ResponseStream, errors::Error&gt;</code></td>
+<td>One-shot request read incrementally: <code>(method, url, body, headers) -&gt; Result&lt;ResponseStream, Error&gt;</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Error</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Io / Protocol / BadHandshake.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Message</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Text / Binary / Ping / Pong / Close.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>WebSocket</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Accepted WebSocket connection (Rust-side framing).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>accept</code></a></td>
+<td><code>fn accept(request: http::Request) -&gt; Result&lt;http::websocket::Conn, errors::Error&gt;</code></td>
+<td>Upgrade an incoming Request to a WebSocket (Rust-side).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>accept_key</code></a></td>
+<td><code>fn accept_key(key: String) -&gt; String</code></td>
+<td>Compute RFC 6455 Sec-WebSocket-Accept from a client nonce. Available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>close</code></a></td>
+<td><code>fn close(conn: http::websocket::Conn) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>close(ws) -&gt; Result&lt;(), Error&gt;: send a close frame and release the handle.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>connect</code></a></td>
+<td><code>fn connect(url: String) -&gt; Result&lt;http::websocket::Conn, errors::Error&gt;</code></td>
+<td>connect(url) -&gt; Result<i64, Error>: client TCP connect + RFC 6455 upgrade; returns a WebSocket handle.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>is_websocket_upgrade</code></a></td>
+<td><code>fn is_websocket_upgrade(request: http::Request) -&gt; bool</code></td>
+<td>Test whether an incoming Request carries a WebSocket upgrade handshake. Interp tier.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>recv</code></a></td>
+<td><code>fn recv(conn: http::websocket::Conn) -&gt; Result&lt;http::websocket::Message, errors::Error&gt;</code></td>
+<td>recv(ws) -&gt; Result<String, Error>: next text message; Err on close/error.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>send_binary</code></a></td>
+<td><code>fn send_binary(conn: http::websocket::Conn, data: Vec&lt;u8&gt;) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>send_binary(ws, data) -&gt; Result&lt;(), Error&gt;: send one binary frame.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>send_text</code></a></td>
+<td><code>fn send_text(conn: http::websocket::Conn, text: String) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>send_text(ws, s) -&gt; Result&lt;(), Error&gt;: send one text frame.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>serve</code></a></td>
+<td><code>fn serve(addr: String, handler: Fn(http::websocket::Conn) -&gt; ()) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>serve(addr, handler) -&gt; Result&lt;(), Error&gt;: bind, upgrade each connection, dispatch the handler's handle(&amp;self, ws) per connection.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="request"><code>Request</code><a class="headerlink" href="#request" title="Permanent link">&para;</a></h2>
 <p>The value a handler receives. Identical fields on every tier.</p>
 <table>
@@ -2155,6 +2790,15 @@ the same stream to a second <code>Response::stream</code> produces an empty body
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    }
 <a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>}
 </code></pre></div>
+<h2 id="http2-request-streaming">HTTP/2 request streaming<a class="headerlink" href="#http2-request-streaming" title="Permanent link">&para;</a></h2>
+<p>Status: experimental.</p>
+<p>The Rust-side HTTP/2 module contains a bounded, flow-control-aware
+<code>RequestStreamingHandler</code> scaffold for incremental request bodies, including
+chunk reads, trailers, stream deadlines, and receive-capacity release. The
+public Gossamer handler contract still receives a complete bounded <code>Request</code>
+on VM and AOT, so request-body streaming is not a shipped cross-tier API yet.
+Use <code>Request.raw_body</code> for bounded uploads and keep handlers within the
+configured body cap until the public streaming handler ABI lands.</p>
 <h2 id="handlers-and-serve">Handlers and <code>serve</code><a class="headerlink" href="#handlers-and-serve" title="Permanent link">&para;</a></h2>
 <p>A handler is a struct implementing <code>http::Handler</code> with a
 <code>serve(&amp;self, Request)</code> method. Both return shapes work, on every tier:</p>

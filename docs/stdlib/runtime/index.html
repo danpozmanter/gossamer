@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1727,6 +1787,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#cycle-collection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1755,7 +1826,7 @@
 
 
 <h1 id="stdruntime"><code>std::runtime</code><a class="headerlink" href="#stdruntime" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Goroutine / scheduler introspection and tuning.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1796,6 +1867,44 @@
 </table>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/runtime.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/runtime.rs"><code>arena_pop</code></a></td>
+<td><code>fn arena_pop() -&gt; ()</code></td>
+<td>Closes the innermost arena region, freeing its slabs.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/runtime.rs"><code>arena_push</code></a></td>
+<td><code>fn arena_push() -&gt; ()</code></td>
+<td>Opens an arena region for bump allocation.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/runtime.rs"><code>collect_cycles</code></a></td>
+<td><code>fn collect_cycles() -&gt; ()</code></td>
+<td>Requests collection of unreachable reference cycles; returns <code>()</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/runtime.rs"><code>scheduler_stats_json</code></a></td>
+<td><code>fn scheduler_stats_json() -&gt; String</code></td>
+<td>Returns a compact JSON snapshot of goroutine scheduler counters.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/runtime.rs"><code>set_panic_hook</code></a></td>
+<td><code>fn set_panic_hook(hook: Fn(String) -&gt; ()) -&gt; ()</code></td>
+<td>Installs a hook invoked with the message on panic.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="cycle-collection">Cycle collection<a class="headerlink" href="#cycle-collection" title="Permanent link">&para;</a></h2>
 <p><code>collect_cycles()</code> is experimental. The compiled runtime collects
 thread-local RC graphs; values that have crossed a goroutine boundary are

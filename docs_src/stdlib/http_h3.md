@@ -4,12 +4,6 @@ Status: experimental
 
 HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias.
 
-Public client and handler bodies are fully buffered today. Connection, stream,
-header, body, QUIC receive-window, send-window, idle-timeout, and per-stream
-I/O limits are enforced, but HTTP/3 request/response body streaming and
-backpressure parity with HTTP/2 remain experimental and are not part of the
-shipped contract.
-
 ## Public items
 
 | Name | Kind | Description |

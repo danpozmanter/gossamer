@@ -1,6 +1,6 @@
 # `std::http`
 
-Status: shipped
+Status: experimental
 
 HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit.
 

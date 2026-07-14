@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdstrings"><code>std::strings</code><a class="headerlink" href="#stdstrings" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>String operations.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1955,6 +2026,221 @@
 <td><code>to_bool</code></td>
 <td>fn</td>
 <td>Parses exactly <code>true</code> / <code>false</code> to Option<bool>.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>bytes</code></a></td>
+<td><code>fn bytes(text: String) -&gt; Vec&lt;u8&gt;</code></td>
+<td>Returns the UTF-8 bytes of the string.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>center</code></a></td>
+<td><code>fn center(text: String, width: i64, fill: char) -&gt; String</code></td>
+<td>Symmetric pad to <code>width</code> using the given pad character.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>chars</code></a></td>
+<td><code>fn chars(text: String) -&gt; Vec&lt;char&gt;</code></td>
+<td>Returns the Unicode scalar values of the string.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>contains</code></a></td>
+<td><code>fn contains(text: String, needle: String \| char) -&gt; bool</code></td>
+<td>Returns whether the string contains a substring.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>contains_any</code></a></td>
+<td><code>fn contains_any(text: String, needle: String \| char) -&gt; bool</code></td>
+<td>Reports whether the string contains any rune in a set.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>count</code></a></td>
+<td><code>fn count(text: String, needle: String \| char) -&gt; i64</code></td>
+<td>Counts non-overlapping occurrences of <code>needle</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>ends_with</code></a></td>
+<td><code>fn ends_with(text: String, needle: String \| char) -&gt; bool</code></td>
+<td>Returns whether the string ends with the given suffix.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>equal_fold</code></a></td>
+<td><code>fn equal_fold(text: String, needle: String \| char) -&gt; bool</code></td>
+<td>Case-insensitive Unicode string equality.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>find</code></a></td>
+<td><code>fn find(text: String, needle: String \| char) -&gt; Option&lt;i64&gt;</code></td>
+<td>Returns the byte position of the first match.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>find_any</code></a></td>
+<td><code>fn find_any(text: String, needle: String \| char) -&gt; Option&lt;i64&gt;</code></td>
+<td>Byte index of the first rune in a set, or None.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>join</code></a></td>
+<td><code>fn join(parts: Vec&lt;String&gt;, sep: String) -&gt; String</code></td>
+<td>Joins string parts with a separator.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>lines</code></a></td>
+<td><code>fn lines(text: String) -&gt; Vec&lt;String&gt;</code></td>
+<td>Splits into lines, dropping line terminators.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>pad_left</code></a></td>
+<td><code>fn pad_left(text: String, width: i64, fill: char) -&gt; String</code></td>
+<td>Left-pads to <code>width</code> with the given character.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>pad_right</code></a></td>
+<td><code>fn pad_right(text: String, width: i64, fill: char) -&gt; String</code></td>
+<td>Right-pads to <code>width</code> with the given character.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>repeat</code></a></td>
+<td><code>fn repeat(text: String, count: i64) -&gt; String</code></td>
+<td>Concatenates n copies of the string.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>replace</code></a></td>
+<td><code>fn replace(text: String, from: String, to: String) -&gt; String</code></td>
+<td>Replaces every occurrence of <code>from</code> with <code>to</code>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>replacen</code></a></td>
+<td><code>fn replacen(text: String, from: String, to: String, n: i64) -&gt; String</code></td>
+<td>Replaces the first n occurrences of a substring.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>rfind</code></a></td>
+<td><code>fn rfind(text: String, needle: String \| char) -&gt; Option&lt;i64&gt;</code></td>
+<td>Byte index of the last occurrence of a needle, or -1.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>rfind_any</code></a></td>
+<td><code>fn rfind_any(text: String, needle: String \| char) -&gt; Option&lt;i64&gt;</code></td>
+<td>Byte index of the last rune in a set, or None.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>rsplit_once</code></a></td>
+<td><code>fn rsplit_once(text: String, sep: String) -&gt; Option&lt;(String, String)&gt;</code></td>
+<td>Splits on the last occurrence of <code>sep</code>; returns Option&lt;(String, String)&gt;.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>slice</code></a></td>
+<td><code>fn slice(text: String, start: i64, end: i64) -&gt; Result&lt;String, errors::Error&gt;</code></td>
+<td>Safe byte-range slice returning Result<String, errors::Error>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>split</code></a></td>
+<td><code>fn split(text: String, sep: String) -&gt; Vec&lt;String&gt;</code></td>
+<td>Splits a string by a delimiter.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>split_once</code></a></td>
+<td><code>fn split_once(text: String, sep: String) -&gt; Option&lt;(String, String)&gt;</code></td>
+<td>Splits on the first occurrence of <code>sep</code>; returns Option&lt;(String, String)&gt;.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>split_whitespace</code></a></td>
+<td><code>fn split_whitespace(text: String) -&gt; Vec&lt;String&gt;</code></td>
+<td>Splits on runs of whitespace, dropping empty fields.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>splitn</code></a></td>
+<td><code>fn splitn(text: String, n: i64, sep: String) -&gt; Vec&lt;String&gt;</code></td>
+<td>Splits a string into at most <code>n</code> parts.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>starts_with</code></a></td>
+<td><code>fn starts_with(text: String, needle: String \| char) -&gt; bool</code></td>
+<td>Returns whether the string starts with the given prefix.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>strip_prefix</code></a></td>
+<td><code>fn strip_prefix(text: String, prefix: String) -&gt; Option&lt;String&gt;</code></td>
+<td>Removes a leading prefix if present.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>strip_suffix</code></a></td>
+<td><code>fn strip_suffix(text: String, prefix: String) -&gt; Option&lt;String&gt;</code></td>
+<td>Removes a trailing suffix if present.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>to_bool</code></a></td>
+<td><code>fn to_bool(text: String) -&gt; Result&lt;bool, errors::Error&gt;</code></td>
+<td>Parses exactly <code>true</code> / <code>false</code> to Option<bool>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>to_f64</code></a></td>
+<td><code>fn to_f64(text: String) -&gt; Result&lt;f64, errors::Error&gt;</code></td>
+<td>Strict full-string parse to Option<f64>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>to_i64</code></a></td>
+<td><code>fn to_i64(text: String) -&gt; Result&lt;i64, errors::Error&gt;</code></td>
+<td>Strict full-string parse to Option<i64>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>to_lowercase</code></a></td>
+<td><code>fn to_lowercase(text: String) -&gt; String</code></td>
+<td>Lowercases every character.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>to_title</code></a></td>
+<td><code>fn to_title(text: String) -&gt; String</code></td>
+<td>Title-cases the first letter of each word.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>to_uppercase</code></a></td>
+<td><code>fn to_uppercase(text: String) -&gt; String</code></td>
+<td>Uppercases every character.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>trim</code></a></td>
+<td><code>fn trim(text: String) -&gt; String</code></td>
+<td>Removes leading and trailing whitespace.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>trim_end</code></a></td>
+<td><code>fn trim_end(text: String) -&gt; String</code></td>
+<td>Removes trailing whitespace.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>trim_end_matches</code></a></td>
+<td><code>fn trim_end_matches(text: String, cutset: String) -&gt; String</code></td>
+<td>Removes trailing characters in the given set.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>trim_matches</code></a></td>
+<td><code>fn trim_matches(text: String, cutset: String) -&gt; String</code></td>
+<td>Removes characters in the given set from both ends.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>trim_start</code></a></td>
+<td><code>fn trim_start(text: String) -&gt; String</code></td>
+<td>Removes leading whitespace.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>trim_start_matches</code></a></td>
+<td><code>fn trim_start_matches(text: String, cutset: String) -&gt; String</code></td>
+<td>Removes leading characters in the given set.</td>
 </tr>
 </tbody>
 </table>

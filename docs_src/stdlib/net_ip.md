@@ -1,6 +1,6 @@
 # `std::net::ip`
 
-Status: shipped
+Status: experimental
 
 String-level IPv4 / IPv6 parsing and classification helpers.
 

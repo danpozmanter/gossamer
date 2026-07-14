@@ -1524,6 +1524,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1696,6 +1700,62 @@
     
   
     Self-hosting study
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
   
 
     
@@ -1920,7 +1980,7 @@ interpreter, MIR lowering, compiled runtime ABI, docs, and parity tests agree.</
 <tr>
 <td><code>String::with_capacity(n)</code></td>
 <td><code>String</code></td>
-<td>Capacity hint is accepted for Rust familiarity; current string values are immutable/runtime-owned, so the hint is advisory.</td>
+<td>Reserves mutable builder storage; mutating String methods retain that reservation when it is sufficient.</td>
 </tr>
 <tr>
 <td><code>String::from(value)</code></td>
@@ -2089,7 +2149,7 @@ interpreter, MIR lowering, compiled runtime ABI, docs, and parity tests agree.</
 <tbody>
 <tr>
 <td><code>HashMap&lt;K, V&gt;</code></td>
-<td><code>insert</code>, <code>get</code>, <code>get_or</code>, <code>contains_key</code>, <code>contains</code>, <code>remove</code>, <code>pop</code>, <code>or_insert</code>, <code>inc</code>, <code>len</code>, <code>iter</code>, <code>keys</code>, <code>values</code></td>
+<td><code>insert</code>, <code>get</code>, <code>get_or</code>, <code>contains_key</code>, <code>contains</code>, <code>remove</code>, <code>pop</code>, <code>or_insert</code>, <code>inc</code>, <code>len</code>, <code>iter</code>, <code>keys</code>, <code>values</code> (<code>keys</code> is rejected for struct, tuple, and array keys; use <code>iter</code>)</td>
 </tr>
 <tr>
 <td><code>HashSet&lt;T&gt;</code></td>

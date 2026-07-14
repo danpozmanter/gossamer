@@ -1,6 +1,6 @@
 # `std::http::multipart`
 
-Status: shipped
+Status: experimental
 
 RFC 7578 multipart/form-data streaming parser.
 

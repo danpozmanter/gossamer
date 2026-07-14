@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdhttpmiddleware"><code>std::http::middleware</code><a class="headerlink" href="#stdhttpmiddleware" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Composable middleware: logger, recoverer, request_id, cors, basic_auth, compress_gzip.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1790,6 +1861,56 @@
 <td><code>bearer_ok</code></td>
 <td>fn</td>
 <td>Run a verify closure on the request's Bearer token; false (without calling verify) when no Bearer header is present. Available in interp + compiled.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs"><code>Chain</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Helper for composing middleware in a single value.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs"><code>Handler</code></a></td>
+<td><code>trait</code> — see the source declaration</td>
+<td>Anything serving (Request, Params) -&gt; Response.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs"><code>accepts_gzip</code></a></td>
+<td><code>fn accepts_gzip(request: http::Request) -&gt; bool</code></td>
+<td>Check an Accept-Encoding header for a gzip token. Available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs"><code>bearer_ok</code></a></td>
+<td><code>fn bearer_ok(request: http::Request, verify: Fn(String) -&gt; bool) -&gt; bool</code></td>
+<td>Run a verify closure on the request's Bearer token; false (without calling verify) when no Bearer header is present. Available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs"><code>decode_basic_auth</code></a></td>
+<td><code>fn decode_basic_auth(request: http::Request) -&gt; Option&lt;(String, String)&gt;</code></td>
+<td>Decode a Basic-auth Authorization header into (user, password). Interp tier.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs"><code>new_request_id</code></a></td>
+<td><code>fn new_request_id() -&gt; String</code></td>
+<td>Generate a process-monotonic request id string. Available in interp + compiled.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs"><code>tag</code></a></td>
+<td><code>fn tag(handler: http::Handler) -&gt; http::Handler</code></td>
+<td>Wrap a handler (<code>tag(inner) -&gt; Handler</code>), prepending <code>mw:</code> to each response body. Deterministic composition primitive; available in interp + compiled.</td>
 </tr>
 </tbody>
 </table>

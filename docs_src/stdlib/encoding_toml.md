@@ -1,6 +1,6 @@
 # `std::encoding::toml`
 
-Status: shipped
+Status: experimental
 
 TOML 1.0 parsing + emission. Pair with the turbofish `from_toml::<Type>` for typed decoding (struct auto-derive).
 

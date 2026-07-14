@@ -1,6 +1,6 @@
 # `std::validate`
 
-Status: shipped
+Status: experimental
 
 Trait-based field validation: implement Validate, collect FieldErrors into Errors.
 

@@ -1,6 +1,6 @@
 # `std::http::static_files`
 
-Status: shipped
+Status: experimental
 
 Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff.
 

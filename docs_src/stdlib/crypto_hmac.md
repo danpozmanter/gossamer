@@ -1,6 +1,6 @@
 # `std::crypto::hmac`
 
-Status: shipped
+Status: experimental
 
 HMAC-SHA-256 keyed MACs.
 

@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdtesting"><code>std::testing</code><a class="headerlink" href="#stdtesting" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Assertions and sub-test harness helpers.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1779,6 +1850,46 @@
 <tr>
 <td><code>wait_for_scheduler_idle</code></td>
 <td>fn</td>
+<td>Waits for the scheduler to become idle within a timeout.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs"><code>Runner</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Sub-test collector.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs"><code>check</code></a></td>
+<td><code>fn check(cond: bool, message: String) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>Asserts a condition.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs"><code>check_eq</code></a></td>
+<td><code>fn check_eq&lt;T: Debug + Eq&gt;(left: T, right: T, message: String) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>Asserts equality, rendering a diff on failure.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs"><code>check_ok</code></a></td>
+<td><code>fn check_ok&lt;T, E: Debug&gt;(result: Result&lt;T, E&gt;, message: String) -&gt; Result&lt;T, errors::Error&gt;</code></td>
+<td>Asserts a Result is Ok, recording without panicking.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs"><code>wait_for_scheduler_idle</code></a></td>
+<td><code>fn wait_for_scheduler_idle(timeout_ms: i64) -&gt; bool</code></td>
 <td>Waits for the scheduler to become idle within a timeout.</td>
 </tr>
 </tbody>

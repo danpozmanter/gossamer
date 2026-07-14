@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stditer"><code>std::iter</code><a class="headerlink" href="#stditer" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1985,6 +2056,251 @@
 <td><code>count_by</code></td>
 <td>fn</td>
 <td>Counts elements per key derived by f.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>all</code></a></td>
+<td><code>fn all&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; bool</code></td>
+<td>True if every element satisfies f.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>any</code></a></td>
+<td><code>fn any&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; bool</code></td>
+<td>True if any element satisfies f.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>chain</code></a></td>
+<td><code>fn chain&lt;T&gt;(left: Vec&lt;T&gt;, right: Vec&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td>Concatenates two sequences.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>chunk_by</code></a></td>
+<td><code>fn chunk_by&lt;T, K: Eq&gt;(key: Fn(T) -&gt; K, items: Vec&lt;T&gt;) -&gt; Vec&lt;Vec&lt;T&gt;&gt;</code></td>
+<td>Groups elements into a map keyed by f.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>chunks</code></a></td>
+<td><code>fn chunks&lt;T&gt;(items: Vec&lt;T&gt;, n: i64) -&gt; Vec&lt;T&gt;</code></td>
+<td>Non-overlapping chunks of length n.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>count</code></a></td>
+<td><code>fn count&lt;T&gt;(items: Vec&lt;T&gt;) -&gt; i64</code></td>
+<td>Number of elements.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>count_by</code></a></td>
+<td><code>fn count_by&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; i64</code></td>
+<td>Counts elements per key derived by f.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>dedup</code></a></td>
+<td><code>fn dedup&lt;T: Eq&gt;(items: Vec&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td>Removes consecutive duplicate elements.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>enumerate</code></a></td>
+<td><code>fn enumerate&lt;T&gt;(items: Vec&lt;T&gt;) -&gt; Vec&lt;(i64, T)&gt;</code></td>
+<td>Pairs each element with its index.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>filter</code></a></td>
+<td><code>fn filter&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td>Returns elements where f is true.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>filter_map</code></a></td>
+<td><code>fn filter_map&lt;T, U&gt;(f: Fn(T) -&gt; Option&lt;U&gt;, items: Vec&lt;T&gt;) -&gt; Vec&lt;U&gt;</code></td>
+<td>Maps each element and keeps the Some results.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>find</code></a></td>
+<td><code>fn find&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td>First element satisfying f, or None.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>find_map</code></a></td>
+<td><code>fn find_map&lt;T, U&gt;(f: Fn(T) -&gt; Option&lt;U&gt;, items: Vec&lt;T&gt;) -&gt; Option&lt;U&gt;</code></td>
+<td>First Some result of f over the sequence.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>flat_map</code></a></td>
+<td><code>fn flat_map&lt;T, U&gt;(f: Fn(T) -&gt; Vec&lt;U&gt;, items: Vec&lt;T&gt;) -&gt; Vec&lt;U&gt;</code></td>
+<td>Maps f and flattens one level.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>flatten</code></a></td>
+<td><code>fn flatten&lt;T&gt;(items: Vec&lt;Vec&lt;T&gt;&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td>Flattens a Vec<Vec\<T>> into Vec<T>.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>fold</code></a></td>
+<td><code>fn fold&lt;T, U&gt;(f: Fn(U, T) -&gt; U, init: U, items: Vec&lt;T&gt;) -&gt; U</code></td>
+<td>Reduces a sequence with an accumulator.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>for_each</code></a></td>
+<td><code>fn for_each&lt;T&gt;(f: Fn(T) -&gt; (), items: Vec&lt;T&gt;) -&gt; ()</code></td>
+<td>Applies f to each element for its side effect.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>map</code></a></td>
+<td><code>fn map&lt;T, U&gt;(f: Fn(T) -&gt; U, items: Vec&lt;T&gt;) -&gt; Vec&lt;U&gt;</code></td>
+<td>Applies f to each element, returning a new Vec.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>max</code></a></td>
+<td><code>fn max&lt;T: Ord&gt;(items: Vec&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td>Largest element, or None when empty.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>max_by</code></a></td>
+<td><code>fn max_by&lt;T&gt;(compare: Fn(T, T) -&gt; i64, items: Vec&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td>Largest element by the comparison closure.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>max_by_key</code></a></td>
+<td><code>fn max_by_key&lt;T, K: Ord&gt;(key: Fn(T) -&gt; K, items: Vec&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td>Element with the largest derived key.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>min</code></a></td>
+<td><code>fn min&lt;T: Ord&gt;(items: Vec&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td>Smallest element, or None when empty.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>min_by</code></a></td>
+<td><code>fn min_by&lt;T&gt;(compare: Fn(T, T) -&gt; i64, items: Vec&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td>Smallest element by the comparison closure.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>min_by_key</code></a></td>
+<td><code>fn min_by_key&lt;T, K: Ord&gt;(key: Fn(T) -&gt; K, items: Vec&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td>Element with the smallest derived key.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>pairwise</code></a></td>
+<td><code>fn pairwise&lt;T&gt;(items: Vec&lt;T&gt;) -&gt; Vec&lt;(T, T)&gt;</code></td>
+<td>Consecutive overlapping pairs.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>partition</code></a></td>
+<td><code>fn partition&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; (Vec&lt;T&gt;, Vec&lt;T&gt;)</code></td>
+<td>Splits into (matching, non-matching) by f.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>position</code></a></td>
+<td><code>fn position&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; Option&lt;i64&gt;</code></td>
+<td>Index of the first element satisfying f, or None.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>product</code></a></td>
+<td><code>fn product(items: Vec&lt;i64&gt;) -&gt; i64</code></td>
+<td>Product of i64 or f64 elements.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>product_by</code></a></td>
+<td><code>fn product_by&lt;T&gt;(f: Fn(T) -&gt; i64, items: Vec&lt;T&gt;) -&gt; i64</code></td>
+<td>Product of f(element) over the sequence.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>range</code></a></td>
+<td><code>fn range(start: i64, end: i64) -&gt; Vec&lt;i64&gt;</code></td>
+<td>Half-open integer sequence [start, end).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>range_inclusive</code></a></td>
+<td><code>fn range_inclusive(start: i64, end: i64) -&gt; Vec&lt;i64&gt;</code></td>
+<td>Closed integer sequence [start, end].</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>reduce</code></a></td>
+<td><code>fn reduce&lt;T&gt;(f: Fn(T, T) -&gt; T, items: Vec&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td>Folds with the first element as the initial accumulator.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>repeat</code></a></td>
+<td><code>fn repeat&lt;T&gt;(value: T, count: i64) -&gt; Vec&lt;T&gt;</code></td>
+<td>A value repeated n times.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>rev</code></a></td>
+<td><code>fn rev&lt;T&gt;(items: Vec&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td>Returns a rev copy.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>scan</code></a></td>
+<td><code>fn scan&lt;T, S, U&gt;(f: Fn(S, T) -&gt; (S, Option&lt;U&gt;), state: S, items: Vec&lt;T&gt;) -&gt; Vec&lt;U&gt;</code></td>
+<td>Folds while yielding each intermediate accumulator.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>skip</code></a></td>
+<td><code>fn skip&lt;T&gt;(items: Vec&lt;T&gt;, n: i64) -&gt; Vec&lt;T&gt;</code></td>
+<td>All elements after the first n.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>skip_while</code></a></td>
+<td><code>fn skip_while&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td>Elements after the leading run satisfying f.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>sort_by</code></a></td>
+<td><code>fn sort_by&lt;T&gt;(compare: Fn(T, T) -&gt; i64, items: Vec&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td>Sorted copy ordered by the comparison closure.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>sort_by_key</code></a></td>
+<td><code>fn sort_by_key&lt;T, K: Ord&gt;(key: Fn(T) -&gt; K, items: Vec&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td>Sorted copy ordered by a derived key.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>sum</code></a></td>
+<td><code>fn sum(items: Vec&lt;i64&gt;) -&gt; i64</code></td>
+<td>Sum of i64 or f64 elements.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>sum_by</code></a></td>
+<td><code>fn sum_by&lt;T&gt;(f: Fn(T) -&gt; i64, items: Vec&lt;T&gt;) -&gt; i64</code></td>
+<td>Sum of f(element) over the sequence.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>take</code></a></td>
+<td><code>fn take&lt;T&gt;(items: Vec&lt;T&gt;, n: i64) -&gt; Vec&lt;T&gt;</code></td>
+<td>First n elements.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>take_while</code></a></td>
+<td><code>fn take_while&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td>Leading run of elements satisfying f.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>unzip</code></a></td>
+<td><code>fn unzip&lt;A, B&gt;(items: Vec&lt;(A, B)&gt;) -&gt; (Vec&lt;A&gt;, Vec&lt;B&gt;)</code></td>
+<td>Splits a sequence of pairs into two Vecs.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>windows</code></a></td>
+<td><code>fn windows&lt;T&gt;(items: Vec&lt;T&gt;, n: i64) -&gt; Vec&lt;T&gt;</code></td>
+<td>Overlapping windows of width n.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>zip</code></a></td>
+<td><code>fn zip&lt;A, B&gt;(left: Vec&lt;A&gt;, right: Vec&lt;B&gt;) -&gt; Vec&lt;(A, B)&gt;</code></td>
+<td>Pairs elements from two sequences.</td>
 </tr>
 </tbody>
 </table>

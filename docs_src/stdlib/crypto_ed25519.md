@@ -1,6 +1,6 @@
 # `std::crypto::ed25519`
 
-Status: shipped
+Status: experimental
 
 Ed25519 digital signatures.
 

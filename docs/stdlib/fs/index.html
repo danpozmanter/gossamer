@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdfs"><code>std::fs</code><a class="headerlink" href="#stdfs" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Filesystem reading, writing, and traversal (Rust std::fs shape).</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1870,6 +1941,136 @@
 <td><code>canonicalize</code></td>
 <td>fn</td>
 <td>Resolves a path to an absolute, symlink-free canonical form.</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>File</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Streaming file handle; supports read, read_to_string, write, flush, and close.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>OpenOptions</code></a></td>
+<td><code>type</code> — see the source declaration</td>
+<td>Builder for opening files with read/write/append/create/truncate flags.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>canonicalize</code></a></td>
+<td><code>fn canonicalize(path: String) -&gt; Result&lt;String, io::Error&gt;</code></td>
+<td>Resolves a path to an absolute, symlink-free canonical form.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>copy</code></a></td>
+<td><code>fn copy(src: String, dst: String) -&gt; Result&lt;i64, io::Error&gt;</code></td>
+<td>Copies a file, creating parent dirs as needed.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>create</code></a></td>
+<td><code>fn create(path: String) -&gt; Result&lt;fs::File, io::Error&gt;</code></td>
+<td>Creates or truncates a file and returns a streaming file handle.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>create_dir</code></a></td>
+<td><code>fn create_dir(path: String) -&gt; Result&lt;(), io::Error&gt;</code></td>
+<td>Creates a single directory. Fails if any parent is missing.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>create_dir_all</code></a></td>
+<td><code>fn create_dir_all(path: String) -&gt; Result&lt;(), io::Error&gt;</code></td>
+<td>Creates a directory and any missing ancestors.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>exists</code></a></td>
+<td><code>fn exists(path: String) -&gt; bool</code></td>
+<td>Returns whether a path exists on the filesystem.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>file_size</code></a></td>
+<td><code>fn file_size(path: String) -&gt; i64</code></td>
+<td>Returns the file's size in bytes; 0 on error.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>is_dir</code></a></td>
+<td><code>fn is_dir(path: String) -&gt; bool</code></td>
+<td>Returns whether a path exists and is a directory.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>is_file</code></a></td>
+<td><code>fn is_file(path: String) -&gt; bool</code></td>
+<td>Returns whether a path exists and is a regular file.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>is_symlink</code></a></td>
+<td><code>fn is_symlink(path: String) -&gt; bool</code></td>
+<td>Returns whether a path exists and is a symbolic link.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>metadata</code></a></td>
+<td><code>fn metadata(path: String) -&gt; Result&lt;fs::Metadata, io::Error&gt;</code></td>
+<td>Returns filesystem metadata for a path.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>open</code></a></td>
+<td><code>fn open(path: String) -&gt; Result&lt;fs::File, io::Error&gt;</code></td>
+<td>Opens a file for streaming reads.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>read</code></a></td>
+<td><code>fn read(path: String) -&gt; Result&lt;Vec&lt;u8&gt;, io::Error&gt;</code></td>
+<td>Reads an entire file into memory as bytes.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>read_dir</code></a></td>
+<td><code>fn read_dir(path: String) -&gt; Result&lt;Vec&lt;fs::DirInfo&gt;, io::Error&gt;</code></td>
+<td>Returns DirInfo metadata for the immediate children of a directory.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>read_to_string</code></a></td>
+<td><code>fn read_to_string(path: String) -&gt; Result&lt;String, io::Error&gt;</code></td>
+<td>Reads an entire file into memory as UTF-8 text.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>remove_dir</code></a></td>
+<td><code>fn remove_dir(path: String) -&gt; Result&lt;(), io::Error&gt;</code></td>
+<td>Removes an empty directory.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>remove_dir_all</code></a></td>
+<td><code>fn remove_dir_all(path: String) -&gt; Result&lt;(), io::Error&gt;</code></td>
+<td>Recursively removes a directory and its contents.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>remove_file</code></a></td>
+<td><code>fn remove_file(path: String) -&gt; Result&lt;(), io::Error&gt;</code></td>
+<td>Removes a single file.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>rename</code></a></td>
+<td><code>fn rename(src: String, dst: String) -&gt; Result&lt;(), io::Error&gt;</code></td>
+<td>Renames a file or directory.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>walk_dir</code></a></td>
+<td><code>fn walk_dir(path: String, visit: Fn(fs::DirInfo) -&gt; Result&lt;(), io::Error&gt;) -&gt; Result&lt;(), io::Error&gt;</code></td>
+<td>Recursively visits every descendant entry.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>write</code></a></td>
+<td><code>fn write(path: String, contents: Vec&lt;u8&gt;) -&gt; Result&lt;(), io::Error&gt;</code></td>
+<td>Writes bytes to a file, creating or truncating it.</td>
 </tr>
 </tbody>
 </table>

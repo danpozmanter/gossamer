@@ -1416,6 +1416,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1601,6 +1605,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/source_visible_surface_audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source-visible surface audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/unfinished_027_reevaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    0.27 unfinished re-evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1726,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API details and source
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1744,7 +1815,7 @@
 
 
 <h1 id="stdmathbits"><code>std::math::bits</code><a class="headerlink" href="#stdmathbits" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Integer bit-manipulation operations (Go's math/bits shape).</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -1820,6 +1891,86 @@
 <td><code>div</code></td>
 <td>fn</td>
 <td>128-bit dividend / 64-bit divisor; returns (quotient, remainder).</td>
+</tr>
+</tbody>
+</table>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs">implementation source</a> contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs"><code>add</code></a></td>
+<td><code>fn add(x: u64, y: u64, carry: u64) -&gt; (u64, u64)</code></td>
+<td>x + y + carry; returns (sum, carry_out).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs"><code>count_ones</code></a></td>
+<td><code>fn count_ones(x: u64) -&gt; i64</code></td>
+<td>Number of set bits (popcount).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs"><code>count_zeros</code></a></td>
+<td><code>fn count_zeros(x: u64) -&gt; i64</code></td>
+<td>Number of clear bits.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs"><code>div</code></a></td>
+<td><code>fn div(hi: u64, lo: u64, y: u64) -&gt; (u64, u64)</code></td>
+<td>128-bit dividend / 64-bit divisor; returns (quotient, remainder).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs"><code>leading_zeros</code></a></td>
+<td><code>fn leading_zeros(x: u64) -&gt; i64</code></td>
+<td>Leading zero bit count.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs"><code>len</code></a></td>
+<td><code>fn len(x: u64) -&gt; i64</code></td>
+<td>Minimum bits required to represent x.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs"><code>mul</code></a></td>
+<td><code>fn mul(x: u64, y: u64) -&gt; (u64, u64)</code></td>
+<td>Full 128-bit product; returns (hi, lo).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs"><code>reverse_bits</code></a></td>
+<td><code>fn reverse_bits(x: u64) -&gt; i64</code></td>
+<td>Reverses bit order of x.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs"><code>reverse_bytes</code></a></td>
+<td><code>fn reverse_bytes(x: u64) -&gt; i64</code></td>
+<td>Reverses byte order of x.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs"><code>rotate_left</code></a></td>
+<td><code>fn rotate_left(x: u64, n: i64) -&gt; u64</code></td>
+<td>Rotates x left by n bits.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs"><code>rotate_right</code></a></td>
+<td><code>fn rotate_right(x: u64, n: i64) -&gt; u64</code></td>
+<td>Rotates x right by n bits.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs"><code>sub</code></a></td>
+<td><code>fn sub(x: u64, y: u64, borrow: u64) -&gt; (u64, u64)</code></td>
+<td>x - y - borrow; returns (diff, borrow_out).</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs"><code>trailing_zeros</code></a></td>
+<td><code>fn trailing_zeros(x: u64) -&gt; i64</code></td>
+<td>Trailing zero bit count.</td>
 </tr>
 </tbody>
 </table>

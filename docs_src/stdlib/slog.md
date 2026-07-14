@@ -1,6 +1,6 @@
 # `std::slog`
 
-Status: shipped
+Status: experimental
 
 Structured, levelled logging.
 

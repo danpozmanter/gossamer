@@ -272,14 +272,13 @@ pub(crate) struct PackedRows {
     pub(crate) _data: Box<[u64]>,
 }
 
-#[cfg(all(feature = "inline-vec-words-6", feature = "inline-vec-words-8"))]
-compile_error!("inline-vec-words-6 and inline-vec-words-8 are mutually exclusive");
-
 /// Element words held inline, immediately after the [`GosVec`] header, in a
 /// single [`InlineVec`] allocation. Six words is the selected default from the
-/// audited game/stress matrix; the eight-word feature remains available for
-/// explicit A/B checks. The trailing buffer is private to this runtime
-/// allocation, while `GosVec`'s stable native ABI header remains unchanged.
+/// audited game/stress matrix; `inline-vec-words-8` remains available for
+/// explicit A/B checks and wins when Cargo's `--all-features` also enables the
+/// compatibility `inline-vec-words-6` flag. The trailing buffer is private to
+/// this runtime allocation, while `GosVec`'s stable native ABI header remains
+/// unchanged.
 #[cfg(feature = "inline-vec-words-8")]
 const INLINE_BUF_WORDS: usize = 8;
 #[cfg(not(feature = "inline-vec-words-8"))]

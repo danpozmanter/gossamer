@@ -1,6 +1,6 @@
 # `std::os::user`
 
-Status: shipped
+Status: experimental
 
 POSIX user / group lookup. Unix-backed by `nix`; Windows falls back to env vars.
 
