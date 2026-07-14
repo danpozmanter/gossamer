@@ -114,4 +114,3 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::utf8`](utf8.md) | UTF-8 validation and scalar decoding. |
 | [`std::uuid`](uuid.md) | UUID v4 (random) and v7 (timestamp-ordered) generation, parse, and normalize. |
 | [`std::validate`](validate.md) | Trait-based field validation: implement Validate, collect FieldErrors into Errors. |
-

@@ -12,31 +12,27 @@
         <meta name="author" content="Gossamer contributors">
       
       
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/stdlib/">
+        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/stdlib/http_request_streaming/">
       
       
-        <link rel="prev" href="../libraries/">
-      
-      
-        <link rel="next" href="./">
       
       
         
       
       
-      <link rel="icon" href="../img/GossamerLogo.png">
+      <link rel="icon" href="../../img/GossamerLogo.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>Gossamer standard library - Gossamer</title>
+        <title>std::http::request_streaming - Gossamer</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -55,9 +51,9 @@
       
     
     
-      <link rel="stylesheet" href="../stylesheets/extra.css">
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -82,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#gossamer-standard-library" class="md-skip">
+        <a href="#stdhttprequest_streaming" class="md-skip">
           Skip to content
         </a>
       
@@ -98,9 +94,9 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="Gossamer" class="md-header__button md-logo" aria-label="Gossamer" data-md-component="logo">
+    <a href="../.." title="Gossamer" class="md-header__button md-logo" aria-label="Gossamer" data-md-component="logo">
       
-  <img src="../img/GossamerLogo.png" alt="logo">
+  <img src="../../img/GossamerLogo.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -117,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Gossamer standard library
+              std::http::request_streaming
             
           </span>
         </div>
@@ -235,9 +231,9 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="Gossamer" class="md-nav__button md-logo" aria-label="Gossamer" data-md-component="logo">
+    <a href="../.." title="Gossamer" class="md-nav__button md-logo" aria-label="Gossamer" data-md-component="logo">
       
-  <img src="../img/GossamerLogo.png" alt="logo">
+  <img src="../../img/GossamerLogo.png" alt="logo">
 
     </a>
     Gossamer
@@ -264,7 +260,7 @@
   
   
     <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -291,7 +287,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../install/" class="md-nav__link">
+      <a href="../../install/" class="md-nav__link">
         
   
   
@@ -318,7 +314,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../running/" class="md-nav__link">
+      <a href="../../running/" class="md-nav__link">
         
   
   
@@ -345,7 +341,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../supported_targets/" class="md-nav__link">
+      <a href="../../supported_targets/" class="md-nav__link">
         
   
   
@@ -372,7 +368,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../wasm/" class="md-nav__link">
+      <a href="../../wasm/" class="md-nav__link">
         
   
   
@@ -399,7 +395,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../syntax/" class="md-nav__link">
+      <a href="../../syntax/" class="md-nav__link">
         
   
   
@@ -455,7 +451,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/" class="md-nav__link ">
+            <a href="../../language/" class="md-nav__link ">
               
   
   
@@ -499,7 +495,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/top_level_statements/" class="md-nav__link">
+      <a href="../../language/top_level_statements/" class="md-nav__link">
         
   
   
@@ -527,7 +523,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/arena/" class="md-nav__link">
+      <a href="../../language/arena/" class="md-nav__link">
         
   
   
@@ -555,7 +551,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/comptime/" class="md-nav__link">
+      <a href="../../language/comptime/" class="md-nav__link">
         
   
   
@@ -590,7 +586,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../memory/" class="md-nav__link">
+      <a href="../../memory/" class="md-nav__link">
         
   
   
@@ -617,7 +613,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../libraries/" class="md-nav__link">
+      <a href="../../libraries/" class="md-nav__link">
         
   
   
@@ -641,8 +637,6 @@
       
   
   
-    
-  
   
   
     
@@ -671,15 +665,15 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" >
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="./" class="md-nav__link md-nav__link--active">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -697,13 +691,13 @@
             </a>
             
               
-              <label class="md-nav__link md-nav__link--active" for="__nav_10" id="__nav_10_label" tabindex="">
+              <label class="md-nav__link " for="__nav_10" id="__nav_10_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_10">
             <span class="md-nav__icon md-icon"></span>
             
@@ -723,7 +717,7 @@
   
   
     <li class="md-nav__item">
-      <a href="./" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -751,7 +745,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../prelude/" class="md-nav__link">
+      <a href="../../prelude/" class="md-nav__link">
         
   
   
@@ -779,7 +773,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../core_method_contract/" class="md-nav__link">
+      <a href="../../core_method_contract/" class="md-nav__link">
         
   
   
@@ -807,7 +801,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../method_support/" class="md-nav__link">
+      <a href="../../method_support/" class="md-nav__link">
         
   
   
@@ -835,7 +829,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../stdlib_coverage/" class="md-nav__link">
+      <a href="../../stdlib_coverage/" class="md-nav__link">
         
   
   
@@ -932,7 +926,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../toolchain/" class="md-nav__link">
+      <a href="../../toolchain/" class="md-nav__link">
         
   
   
@@ -960,7 +954,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../toolchain/lints/" class="md-nav__link">
+      <a href="../../toolchain/lints/" class="md-nav__link">
         
   
   
@@ -988,7 +982,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../toolchain/diagnostics/" class="md-nav__link">
+      <a href="../../toolchain/diagnostics/" class="md-nav__link">
         
   
   
@@ -1016,7 +1010,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../toolchain/zig/" class="md-nav__link">
+      <a href="../../toolchain/zig/" class="md-nav__link">
         
   
   
@@ -1051,7 +1045,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../examples/" class="md-nav__link">
+      <a href="../../examples/" class="md-nav__link">
         
   
   
@@ -1136,7 +1130,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../deployment/" class="md-nav__link">
+      <a href="../../deployment/" class="md-nav__link">
         
   
   
@@ -1164,7 +1158,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../codegen_abi/" class="md-nav__link">
+      <a href="../../codegen_abi/" class="md-nav__link">
         
   
   
@@ -1263,7 +1257,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../migration/rust/" class="md-nav__link">
+      <a href="../../migration/rust/" class="md-nav__link">
         
   
   
@@ -1291,7 +1285,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../migration/go/" class="md-nav__link">
+      <a href="../../migration/go/" class="md-nav__link">
         
   
   
@@ -1319,7 +1313,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../migration/python/" class="md-nav__link">
+      <a href="../../migration/python/" class="md-nav__link">
         
   
   
@@ -1347,7 +1341,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../migration/fsharp/" class="md-nav__link">
+      <a href="../../migration/fsharp/" class="md-nav__link">
         
   
   
@@ -1375,7 +1369,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../migration/kotlin/" class="md-nav__link">
+      <a href="../../migration/kotlin/" class="md-nav__link">
         
   
   
@@ -1474,7 +1468,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/diagnostics/" class="md-nav__link">
+      <a href="../../design/diagnostics/" class="md-nav__link">
         
   
   
@@ -1502,7 +1496,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/runtime/" class="md-nav__link">
+      <a href="../../design/runtime/" class="md-nav__link">
         
   
   
@@ -1530,7 +1524,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/memory_model/" class="md-nav__link">
+      <a href="../../design/memory_model/" class="md-nav__link">
         
   
   
@@ -1558,7 +1552,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/goroutine_stacks/" class="md-nav__link">
+      <a href="../../design/goroutine_stacks/" class="md-nav__link">
         
   
   
@@ -1586,7 +1580,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/selfhosting/" class="md-nav__link">
+      <a href="../../design/selfhosting/" class="md-nav__link">
         
   
   
@@ -1621,7 +1615,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../skill_card/" class="md-nav__link">
+      <a href="../../skill_card/" class="md-nav__link">
         
   
   
@@ -1648,7 +1642,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../security/" class="md-nav__link">
+      <a href="../../security/" class="md-nav__link">
         
   
   
@@ -1675,7 +1669,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/" class="md-nav__link">
+      <a href="../../contributing/" class="md-nav__link">
         
   
   
@@ -1730,462 +1724,19 @@
 
 
 
-<h1 id="gossamer-standard-library">Gossamer standard library<a class="headerlink" href="#gossamer-standard-library" title="Permanent link">&para;</a></h1>
-<p>One page per module. Source is <code>crates/gossamer-std/src/</code>; this index is regenerated from <code>manifest::ALL_MODULES</code> by <code>gos doc --emit-stdlib</code>.</p>
-<table>
-<thead>
-<tr>
-<th>Module</th>
-<th>Summary</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><a href="archive_tar/"><code>std::archive::tar</code></a></td>
-<td>Unix tar reader and writer (USTAR / PAX-aware decode).</td>
-</tr>
-<tr>
-<td><a href="archive_zip/"><code>std::archive::zip</code></a></td>
-<td>ZIP archive reader and writer.</td>
-</tr>
-<tr>
-<td><a href="bufio/"><code>std::bufio</code></a></td>
-<td>Buffered readers, writers, and line scanners.</td>
-</tr>
-<tr>
-<td><a href="bytes/"><code>std::bytes</code></a></td>
-<td>Byte buffers, builders, and slice helpers.</td>
-</tr>
-<tr>
-<td><a href="collections/"><code>std::collections</code></a></td>
-<td>Built-in container types.</td>
-</tr>
-<tr>
-<td><a href="collections_deque/"><code>std::collections::deque</code></a></td>
-<td>Double-ended queue over Vec<i64>. Re-bind shape on every mutator.</td>
-</tr>
-<tr>
-<td><a href="collections_heap/"><code>std::collections::heap</code></a></td>
-<td>Binary min-heap (priority queue) over Vec<i64>. Re-bind shape: <code>let h = heap::push(h, v)</code>.</td>
-</tr>
-<tr>
-<td><a href="collections_ordered_map/"><code>std::collections::ordered_map</code></a></td>
-<td>Sorted key/value map (i64 -&gt; i64) backed by a flat pair Vec. Re-bind on every mutator.</td>
-</tr>
-<tr>
-<td><a href="collections_ordered_set/"><code>std::collections::ordered_set</code></a></td>
-<td>Sorted set of i64 with binary-search lookups. Re-bind shape on every mutator.</td>
-</tr>
-<tr>
-<td><a href="collections_ordered_vec/"><code>std::collections::ordered_vec</code></a></td>
-<td>Sorted-on-insert Vec<i64> with binary-search lookups.</td>
-</tr>
-<tr>
-<td><a href="collections_queue/"><code>std::collections::queue</code></a></td>
-<td>FIFO queue over Vec<i64>. Re-bind shape: <code>let q = queue::push(q, v)</code>.</td>
-</tr>
-<tr>
-<td><a href="collections_stack/"><code>std::collections::stack</code></a></td>
-<td>LIFO stack over Vec<i64>. Re-bind shape: <code>let s = stack::push(s, v)</code>.</td>
-</tr>
-<tr>
-<td><a href="compress_bzip2/"><code>std::compress::bzip2</code></a></td>
-<td>bzip2 encoder / decoder (BZh format).</td>
-</tr>
-<tr>
-<td><a href="compress_flate/"><code>std::compress::flate</code></a></td>
-<td>Raw DEFLATE (RFC 1951) encoder / decoder.</td>
-</tr>
-<tr>
-<td><a href="compress_gzip/"><code>std::compress::gzip</code></a></td>
-<td>gzip encoder / decoder (RFC 1952; flate2-backed).</td>
-</tr>
-<tr>
-<td><a href="compress_zlib/"><code>std::compress::zlib</code></a></td>
-<td>zlib (RFC 1950) encoder / decoder.</td>
-</tr>
-<tr>
-<td><a href="compress_zstd/"><code>std::compress::zstd</code></a></td>
-<td>Zstandard encoder / decoder (RFC 8478; libzstd-vendored).</td>
-</tr>
-<tr>
-<td><a href="context/"><code>std::context</code></a></td>
-<td>Request-scoped cancellation, deadlines, and timeouts.</td>
-</tr>
-<tr>
-<td><a href="crypto_aead/"><code>std::crypto::aead</code></a></td>
-<td>Authenticated encryption with associated data.</td>
-</tr>
-<tr>
-<td><a href="crypto_blake3/"><code>std::crypto::blake3</code></a></td>
-<td>BLAKE3 hashing.</td>
-</tr>
-<tr>
-<td><a href="crypto_ecdsa/"><code>std::crypto::ecdsa</code></a></td>
-<td>ECDSA over the NIST P-256 curve.</td>
-</tr>
-<tr>
-<td><a href="crypto_ed25519/"><code>std::crypto::ed25519</code></a></td>
-<td>Ed25519 digital signatures.</td>
-</tr>
-<tr>
-<td><a href="crypto_hmac/"><code>std::crypto::hmac</code></a></td>
-<td>HMAC-SHA-256 keyed MACs.</td>
-</tr>
-<tr>
-<td><a href="crypto_insecure/"><code>std::crypto::insecure</code></a></td>
-<td>Legacy / broken hashes (MD5, SHA-1). Compat only - never use for new code.</td>
-</tr>
-<tr>
-<td><a href="crypto_kdf/"><code>std::crypto::kdf</code></a></td>
-<td>Password-based key-derivation functions.</td>
-</tr>
-<tr>
-<td><a href="crypto_password/"><code>std::crypto::password</code></a></td>
-<td>Argon2id password hashing facade: PHC-string hash / verify / re-hash policy.</td>
-</tr>
-<tr>
-<td><a href="crypto_rand/"><code>std::crypto::rand</code></a></td>
-<td>Secure random bytes from the host CSPRNG.</td>
-</tr>
-<tr>
-<td><a href="crypto_sha256/"><code>std::crypto::sha256</code></a></td>
-<td>SHA-256 hashing.</td>
-</tr>
-<tr>
-<td><a href="crypto_sha512/"><code>std::crypto::sha512</code></a></td>
-<td>SHA-512 hashing.</td>
-</tr>
-<tr>
-<td><a href="crypto_subtle/"><code>std::crypto::subtle</code></a></td>
-<td>Constant-time comparison helpers.</td>
-</tr>
-<tr>
-<td><a href="crypto_x509/"><code>std::crypto::x509</code></a></td>
-<td>X.509 certificate parsing.</td>
-</tr>
-<tr>
-<td><a href="database_sql/"><code>std::database::sql</code></a></td>
-<td>Driver-pluggable SQL database access. No driver ships in the box; bring your own (Postgres, MySQL, SQLite, ...) by registering one at startup.</td>
-</tr>
-<tr>
-<td><a href="encoding_ascii85/"><code>std::encoding::ascii85</code></a></td>
-<td>ASCII85 / base85 encode / decode.</td>
-</tr>
-<tr>
-<td><a href="encoding_base32/"><code>std::encoding::base32</code></a></td>
-<td>RFC 4648 base32 (uppercase) encode / decode.</td>
-</tr>
-<tr>
-<td><a href="encoding_base64/"><code>std::encoding::base64</code></a></td>
-<td>RFC 4648 base64 encode/decode.</td>
-</tr>
-<tr>
-<td><a href="encoding_binary/"><code>std::encoding::binary</code></a></td>
-<td>Big/little-endian integer packing and varint codecs.</td>
-</tr>
-<tr>
-<td><a href="encoding_csv/"><code>std::encoding::csv</code></a></td>
-<td>CSV record reader and writer.</td>
-</tr>
-<tr>
-<td><a href="encoding_hex/"><code>std::encoding::hex</code></a></td>
-<td>Lowercase hex encode/decode.</td>
-</tr>
-<tr>
-<td><a href="encoding_json/"><code>std::encoding::json</code></a></td>
-<td>JSON parser, emitter, and derive support.</td>
-</tr>
-<tr>
-<td><a href="encoding_pem/"><code>std::encoding::pem</code></a></td>
-<td>PEM block encoder and decoder.</td>
-</tr>
-<tr>
-<td><a href="encoding_toml/"><code>std::encoding::toml</code></a></td>
-<td>TOML 1.0 parsing + emission. Pair with the turbofish <code>from_toml::&lt;Type&gt;</code> for typed decoding (struct auto-derive).</td>
-</tr>
-<tr>
-<td><a href="encoding_xml/"><code>std::encoding::xml</code></a></td>
-<td>Streaming XML decoder + builder (quick-xml).</td>
-</tr>
-<tr>
-<td><a href="encoding_yaml/"><code>std::encoding::yaml</code></a></td>
-<td>YAML 1.2 parser/emitter (serde_norway-backed).</td>
-</tr>
-<tr>
-<td><a href="env/"><code>std::env</code></a></td>
-<td>Process environment, command-line arguments, working directory.</td>
-</tr>
-<tr>
-<td><a href="errors/"><code>std::errors</code></a></td>
-<td>Error construction, wrapping, and chain traversal.</td>
-</tr>
-<tr>
-<td><a href="flag/"><code>std::flag</code></a></td>
-<td>Batteries-included CLI argument parsing.</td>
-</tr>
-<tr>
-<td><a href="fmt/"><code>std::fmt</code></a></td>
-<td>Formatted printing and string interpolation.</td>
-</tr>
-<tr>
-<td><a href="fs/"><code>std::fs</code></a></td>
-<td>Filesystem reading, writing, and traversal (Rust std::fs shape).</td>
-</tr>
-<tr>
-<td><a href="hash_adler32/"><code>std::hash::adler32</code></a></td>
-<td>Adler-32 checksums.</td>
-</tr>
-<tr>
-<td><a href="hash_crc32/"><code>std::hash::crc32</code></a></td>
-<td>CRC-32 (IEEE) checksums.</td>
-</tr>
-<tr>
-<td><a href="hash_fnv/"><code>std::hash::fnv</code></a></td>
-<td>FNV-1a non-cryptographic hash (32-bit, 64-bit).</td>
-</tr>
-<tr>
-<td><a href="html/"><code>std::html</code></a></td>
-<td>HTML text escaping and unescaping.</td>
-</tr>
-<tr>
-<td><a href="html_template/"><code>std::html::template</code></a></td>
-<td>Context-aware HTML templates with auto-escape (text/attr/URL/JS). The context classifier is heuristic - sound for typical server-rendered responses but NOT a content-security-policy substitute; sanitize untrusted HTML fragments with a dedicated sanitizer.</td>
-</tr>
-<tr>
-<td><a href="http/"><code>std::http</code></a></td>
-<td>HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit.</td>
-</tr>
-<tr>
-<td><a href="http_chunked/"><code>std::http::chunked</code></a></td>
-<td>RFC 7230 §4.1 chunked transfer-encoding reader and writer.</td>
-</tr>
-<tr>
-<td><a href="http_cookie/"><code>std::http::cookie</code></a></td>
-<td>RFC 6265 cookie parser and Set-Cookie builder.</td>
-</tr>
-<tr>
-<td><a href="http_csrf/"><code>std::http::csrf</code></a></td>
-<td>Double-submit-cookie CSRF protection with Origin / Referer allowlist.</td>
-</tr>
-<tr>
-<td><a href="http_form/"><code>std::http::form</code></a></td>
-<td>application/x-www-form-urlencoded parser and builder.</td>
-</tr>
-<tr>
-<td><a href="http_health/"><code>std::http::health</code></a></td>
-<td>Liveness / readiness probes for HTTP health endpoints.</td>
-</tr>
-<tr>
-<td><a href="http_middleware/"><code>std::http::middleware</code></a></td>
-<td>Composable middleware: logger, recoverer, request_id, cors, basic_auth, compress_gzip.</td>
-</tr>
-<tr>
-<td><a href="http_multipart/"><code>std::http::multipart</code></a></td>
-<td>RFC 7578 multipart/form-data streaming parser.</td>
-</tr>
-<tr>
-<td><a href="http_native_client/"><code>std::http::native_client</code></a></td>
-<td>Goroutine-driven HTTP/1.1 client over std::net (no ureq, no blocking pool).</td>
-</tr>
-<tr>
-<td><a href="http_proxy/"><code>std::http::proxy</code></a></td>
-<td>Reverse proxy on top of http::Client. Director-style request mutator + hop-by-hop strip + error handler.</td>
-</tr>
-<tr>
-<td><a href="http_query/"><code>std::http::query</code></a></td>
-<td>Typed wrapper over URL query strings.</td>
-</tr>
-<tr>
-<td><a href="http_request_streaming/"><code>std::http::request_streaming</code></a></td>
-<td>Experimental Rust-side HTTP/2 request-body streaming scaffold; Gossamer handlers still receive bounded complete Request bodies.</td>
-</tr>
-<tr>
-<td><a href="http_router/"><code>std::http::router</code></a></td>
-<td>Go 1.22-class ServeMux: method-aware path patterns with parameter captures + prefix routes.</td>
-</tr>
-<tr>
-<td><a href="http_session/"><code>std::http::session</code></a></td>
-<td>Signed-cookie session store with pluggable backend trait.</td>
-</tr>
-<tr>
-<td><a href="http_sse/"><code>std::http::sse</code></a></td>
-<td>Server-Sent Events (text/event-stream) emitter with heartbeat ticks and retry hint.</td>
-</tr>
-<tr>
-<td><a href="http_state/"><code>std::http::state</code></a></td>
-<td>Handler-side dependency injection via a typed AppState.</td>
-</tr>
-<tr>
-<td><a href="http_static_files/"><code>std::http::static_files</code></a></td>
-<td>Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff.</td>
-</tr>
-<tr>
-<td><a href="http_websocket/"><code>std::http::websocket</code></a></td>
-<td>RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close.</td>
-</tr>
-<tr>
-<td><a href="http_h3/"><code>std::http_h3</code></a></td>
-<td>HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias.</td>
-</tr>
-<tr>
-<td><a href="io/"><code>std::io</code></a></td>
-<td>Stream-oriented I/O abstractions and process standard streams.</td>
-</tr>
-<tr>
-<td><a href="iter/"><code>std::iter</code></a></td>
-<td>Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.</td>
-</tr>
-<tr>
-<td><a href="jwt/"><code>std::jwt</code></a></td>
-<td>RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens.</td>
-</tr>
-<tr>
-<td><a href="lifecycle/"><code>std::lifecycle</code></a></td>
-<td>Graceful-shutdown coordinator with signal handling and sd_notify support.</td>
-</tr>
-<tr>
-<td><a href="math/"><code>std::math</code></a></td>
-<td>Mathematical constants and f64 functions (Go's math package shape).</td>
-</tr>
-<tr>
-<td><a href="math_big/"><code>std::math::big</code></a></td>
-<td>Arbitrary-precision integers (num-bigint).</td>
-</tr>
-<tr>
-<td><a href="math_bits/"><code>std::math::bits</code></a></td>
-<td>Integer bit-manipulation operations (Go's math/bits shape).</td>
-</tr>
-<tr>
-<td><a href="math_rand/"><code>std::math::rand</code></a></td>
-<td>Deterministic pseudo-random number generation.</td>
-</tr>
-<tr>
-<td><a href="metrics/"><code>std::metrics</code></a></td>
-<td>Prometheus-compatible primitives (Counter, Gauge, Histogram) and a Registry rendering the standard text-exposition format.</td>
-</tr>
-<tr>
-<td><a href="mime/"><code>std::mime</code></a></td>
-<td>RFC 2045 media type parsing, parameter extraction, and extension lookup.</td>
-</tr>
-<tr>
-<td><a href="net/"><code>std::net</code></a></td>
-<td>TCP/UDP networking primitives.</td>
-</tr>
-<tr>
-<td><a href="net_ip/"><code>std::net::ip</code></a></td>
-<td>String-level IPv4 / IPv6 parsing and classification helpers.</td>
-</tr>
-<tr>
-<td><a href="net_netip/"><code>std::net::netip</code></a></td>
-<td>Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape).</td>
-</tr>
-<tr>
-<td><a href="net_url/"><code>std::net::url</code></a></td>
-<td>Network URL parsing and component escaping; never use filesystem-path rules.</td>
-</tr>
-<tr>
-<td><a href="option/"><code>std::option</code></a></td>
-<td>Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc.</td>
-</tr>
-<tr>
-<td><a href="os/"><code>std::os</code></a></td>
-<td>Operating-system identity.</td>
-</tr>
-<tr>
-<td><a href="os_exec/"><code>std::os::exec</code></a></td>
-<td>Deprecated compatibility facade for child processes; new code uses std::process.</td>
-</tr>
-<tr>
-<td><a href="os_signal/"><code>std::os::signal</code></a></td>
-<td>POSIX-style signal subscription (Go's os/signal shape).</td>
-</tr>
-<tr>
-<td><a href="os_user/"><code>std::os::user</code></a></td>
-<td>POSIX user / group lookup. Unix-backed by <code>nix</code>; Windows falls back to env vars.</td>
-</tr>
-<tr>
-<td><a href="panic/"><code>std::panic</code></a></td>
-<td>Panic / <code>catch_unwind</code> integration.</td>
-</tr>
-<tr>
-<td><a href="path/"><code>std::path</code></a></td>
-<td>Lexical filesystem-path operations; platform path grammar, no URL parsing or I/O.</td>
-</tr>
-<tr>
-<td><a href="process/"><code>std::process</code></a></td>
-<td>Canonical process control and child-process API; std::os::exec is compatibility-only.</td>
-</tr>
-<tr>
-<td><a href="regex/"><code>std::regex</code></a></td>
-<td>Compiled regular expressions (Rust <code>regex</code> crate syntax; no backreferences or look-around).</td>
-</tr>
-<tr>
-<td><a href="result/"><code>std::result</code></a></td>
-<td>Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc.</td>
-</tr>
-<tr>
-<td><a href="runtime/"><code>std::runtime</code></a></td>
-<td>Goroutine / scheduler introspection and tuning.</td>
-</tr>
-<tr>
-<td><a href="slog/"><code>std::slog</code></a></td>
-<td>Structured, levelled logging.</td>
-</tr>
-<tr>
-<td><a href="strconv/"><code>std::strconv</code></a></td>
-<td>Conversions between strings and primitive numeric types.</td>
-</tr>
-<tr>
-<td><a href="strings/"><code>std::strings</code></a></td>
-<td>String operations.</td>
-</tr>
-<tr>
-<td><a href="sync/"><code>std::sync</code></a></td>
-<td>Synchronisation primitives beyond channels.</td>
-</tr>
-<tr>
-<td><a href="testing/"><code>std::testing</code></a></td>
-<td>Assertions and sub-test harness helpers.</td>
-</tr>
-<tr>
-<td><a href="thread/"><code>std::thread</code></a></td>
-<td>OS-thread scheduling hints and CPU introspection; user concurrency uses goroutines, not thread spawning.</td>
-</tr>
-<tr>
-<td><a href="time/"><code>std::time</code></a></td>
-<td>Wall-clock and monotonic time facilities.</td>
-</tr>
-<tr>
-<td><a href="tls/"><code>std::tls</code></a></td>
-<td>Rustls-backed TLS support exposed through <code>http::serve_tls</code> and <code>net::TcpStream</code> TLS upgrades. The configuration constructors are host-runtime internals, not Gossamer callables.</td>
-</tr>
-<tr>
-<td><a href="trace/"><code>std::trace</code></a></td>
-<td>W3C trace-context-compatible distributed tracing. Identifier types, request-scoped SpanContext, process-level Tracer, and OTLP JSON export.</td>
-</tr>
-<tr>
-<td><a href="unicode/"><code>std::unicode</code></a></td>
-<td>Unicode general-category predicates, casing, normalization, and segmentation.</td>
-</tr>
-<tr>
-<td><a href="utf16/"><code>std::utf16</code></a></td>
-<td>UTF-16 encoding/decoding and surrogate pair helpers.</td>
-</tr>
-<tr>
-<td><a href="utf8/"><code>std::utf8</code></a></td>
-<td>UTF-8 validation and scalar decoding.</td>
-</tr>
-<tr>
-<td><a href="uuid/"><code>std::uuid</code></a></td>
-<td>UUID v4 (random) and v7 (timestamp-ordered) generation, parse, and normalize.</td>
-</tr>
-<tr>
-<td><a href="validate/"><code>std::validate</code></a></td>
-<td>Trait-based field validation: implement Validate, collect FieldErrors into Errors.</td>
-</tr>
-</tbody>
-</table>
+<h1 id="stdhttprequest_streaming"><code>std::http::request_streaming</code><a class="headerlink" href="#stdhttprequest_streaming" title="Permanent link">&para;</a></h1>
+<p>Status: experimental</p>
+<p>HTTP/2 request-body streaming is currently a Rust-side server scaffold, not a
+stable Gossamer handler ABI.</p>
+<p>The runtime can drive a bounded, flow-control-aware
+<code>RequestStreamingHandler</code> for HTTP/2 request bodies. That path supports
+incremental chunk reads, trailers, stream deadlines, and receive-capacity
+release.</p>
+<p>Gossamer handlers still receive a complete bounded <code>http::Request</code> on the VM
+and AOT tiers. Use <code>Request.raw_body</code> for bounded uploads until the public
+streaming handler ABI is exposed across tiers.</p>
+<p>See <a href="../http/#http2-request-streaming"><code>std::http</code></a> for the HTTP server context
+and current request-body limits.</p>
 
 
 
@@ -2243,10 +1794,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "navigation.sections", "navigation.indexes", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "navigation.sections", "navigation.indexes", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>

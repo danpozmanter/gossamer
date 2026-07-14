@@ -129,6 +129,12 @@ pub use gossamer_abi::rc::{
 /// `RC_LIVE_AT_EXIT`).
 static RC_LIVE: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(test)]
+static RC_LIVE_TEST_ISOLATION: (
+    std::sync::Mutex<Option<std::thread::ThreadId>>,
+    std::sync::Condvar,
+) = (std::sync::Mutex::new(None), std::sync::Condvar::new());
+
 #[cfg(not(test))]
 static RC_LIVE_ENABLED: std::sync::LazyLock<bool> =
     std::sync::LazyLock::new(|| std::env::var_os("GOS_RC_DEBUG").is_some());
@@ -151,9 +157,57 @@ pub fn rc_live_count() -> usize {
     RC_LIVE.load(Ordering::Relaxed)
 }
 
+#[cfg(test)]
+fn rc_live_mutation_guard() -> std::sync::MutexGuard<'static, Option<std::thread::ThreadId>> {
+    let current = std::thread::current().id();
+    let (lock, cvar) = &RC_LIVE_TEST_ISOLATION;
+    let mut owner = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    while owner.is_some_and(|id| id != current) {
+        owner = cvar
+            .wait(owner)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    }
+    owner
+}
+
+#[cfg(test)]
+struct RcLiveCountGuard;
+
+#[cfg(test)]
+impl Drop for RcLiveCountGuard {
+    fn drop(&mut self) {
+        let (lock, cvar) = &RC_LIVE_TEST_ISOLATION;
+        let mut owner = lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *owner = None;
+        cvar.notify_all();
+    }
+}
+
+#[cfg(test)]
+fn rc_live_count_guard() -> RcLiveCountGuard {
+    let current = std::thread::current().id();
+    let (lock, cvar) = &RC_LIVE_TEST_ISOLATION;
+    let mut owner = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    while owner.is_some() {
+        owner = cvar
+            .wait(owner)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    }
+    *owner = Some(current);
+    RcLiveCountGuard
+}
+
 #[inline]
 fn rc_live_inc() {
     if rc_live_enabled() {
+        #[cfg(test)]
+        let _guard = rc_live_mutation_guard();
         RC_LIVE.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -161,6 +215,8 @@ fn rc_live_inc() {
 #[inline]
 fn rc_live_dec() {
     if rc_live_enabled() {
+        #[cfg(test)]
+        let _guard = rc_live_mutation_guard();
         RC_LIVE.fetch_sub(1, Ordering::Relaxed);
     }
 }
@@ -1544,6 +1600,8 @@ pub extern "C" fn gos_rt_arena_pop() {
         let mut regions = r.borrow_mut();
         let region = regions.pop()?;
         if rc_live_enabled() {
+            #[cfg(test)]
+            let _guard = rc_live_mutation_guard();
             RC_LIVE.fetch_sub(region.objs + pending_objs, Ordering::Relaxed);
         }
         for (base, size) in region.slabs {
@@ -3193,7 +3251,7 @@ pub unsafe extern "C" fn gos_rt_collect_cycles() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex, PoisonError};
+    use std::sync::Arc;
 
     #[test]
     #[cfg_attr(miri, ignore)] // arena uses mmap with non-RW protections; Miri can't model it
@@ -3288,12 +3346,8 @@ mod tests {
         assert_eq!(recycler.pop(), None);
     }
 
-    // `RC_LIVE` is process-global; tests that assert exact live-count
-    // deltas must not run concurrently with each other's allocations.
-    static COUNT_LOCK: Mutex<()> = Mutex::new(());
-
-    fn count_guard() -> std::sync::MutexGuard<'static, ()> {
-        COUNT_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+    fn count_guard() -> RcLiveCountGuard {
+        rc_live_count_guard()
     }
 
     #[test]
