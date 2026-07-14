@@ -31,6 +31,14 @@ fn examples_dir() -> PathBuf {
         .join("examples")
 }
 
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("workspace root")
+        .to_path_buf()
+}
+
 #[test]
 fn version_flag_prints_package_version() {
     let out = Command::new(gos_bin())
@@ -874,6 +882,30 @@ fn main() { }
         .unwrap_or_else(|| panic!("missing bench line in stdout: {stdout}"));
     assert!(line.contains("ns/op"));
     let _ = std::fs::remove_file(&fixture);
+}
+
+#[test]
+fn perf_gate_benchmarks_keep_work_observable() {
+    let source = std::fs::read_to_string(workspace_root().join("benchmarks/perf/core.gos"))
+        .expect("read perf benchmark fixture");
+    for name in [
+        "bench_arithmetic_loop_observed",
+        "bench_vec_growth_scan_observed",
+        "bench_struct_fields_observed",
+        "bench_string_format_observed",
+    ] {
+        assert!(
+            source.contains(&format!("fn {name}() -> i64")),
+            "{name} must return the computed value so the perf gate measures real work",
+        );
+    }
+    assert!(
+        !source.contains("let _ = arithmetic_work(")
+            && !source.contains("let _ = vec_work(")
+            && !source.contains("let _ = struct_work(")
+            && !source.contains("let _ = string_work("),
+        "perf benchmark workloads must not be discarded with `let _ = ...`",
+    );
 }
 
 #[test]

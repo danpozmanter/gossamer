@@ -29,10 +29,10 @@ fn struct_work(n: i64) -> i64 {
     let mut acc = 0
     for i in 0..n {
         pair = Pair {
-            left: pair.right + i,
-            right: pair.left + pair.right,
+            left: (pair.right + i) % 1_000_003,
+            right: (pair.left + pair.right) % 1_000_003,
         }
-        acc += pair.left - pair.right
+        acc = (acc + pair.left - pair.right) % 1_000_003
     }
     acc
 }
@@ -46,23 +46,23 @@ fn string_work(n: i64) -> i64 {
 }
 
 #[bench]
-fn bench_arithmetic_loop() {
-    let _ = arithmetic_work(2_000)
+fn bench_arithmetic_loop_observed() -> i64 {
+    arithmetic_work(2_000)
 }
 
 #[bench]
-fn bench_vec_growth_scan() {
-    let _ = vec_work(500)
+fn bench_vec_growth_scan_observed() -> i64 {
+    vec_work(500)
 }
 
 #[bench]
-fn bench_struct_fields() {
-    let _ = struct_work(2_000)
+fn bench_struct_fields_observed() -> i64 {
+    struct_work(2_000)
 }
 
 #[bench]
-fn bench_string_format() {
-    let _ = string_work(200)
+fn bench_string_format_observed() -> i64 {
+    string_work(200)
 }
 
 fn main() { }
