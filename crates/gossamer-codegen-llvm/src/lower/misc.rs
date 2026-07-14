@@ -262,7 +262,7 @@ impl<'a> Lowerer<'a> {
     /// `Ok(Bag { ... })` doesn't return a pointer to a struct
     /// that lives only on the producer's stack.
     pub(crate) fn maybe_heap_copy_aggregate(&mut self, arg: &Operand) -> Option<String> {
-        self.maybe_heap_copy_aggregate_with(arg, /* leak */ false)
+        self.maybe_heap_copy_aggregate_with(arg, /* leak */ false, /* map_owned */ false)
     }
 
     /// Heap-copies a 2-word by-value enum payload (sentinel
@@ -303,15 +303,19 @@ impl<'a> Lowerer<'a> {
 
     /// Same shape as [`Self::maybe_heap_copy_aggregate`] but routes the
     /// heap allocation through `gos_rt_aggr_alloc_leak` instead of
-    /// the GC-tracked `gos_rt_aggr_alloc`. Used when the surviving
-    /// handle escapes the GC's reachability graph - HashMap inserts
-    /// store the pointer as a bare i64 in MapStorage, which the
-    /// tracing collector cannot walk through, so the GC-tracked
-    /// allocation would be reclaimed mid-program. The leak variant
-    /// keeps the bytes live until process exit at the cost of not
-    /// reclaiming HashMap entries when their map drops.
+    /// the GC-tracked `gos_rt_aggr_alloc`. This is reserved for legacy
+    /// escape paths that do not report their stored pointers to the GC.
+    /// HashMap inserts use [`Self::maybe_heap_copy_aggregate_for_map`], whose
+    /// reference-counted structural copy is reclaimed with the map entry.
     pub(crate) fn maybe_heap_copy_aggregate_leak(&mut self, arg: &Operand) -> Option<String> {
-        self.maybe_heap_copy_aggregate_with(arg, /* leak */ true)
+        self.maybe_heap_copy_aggregate_with(arg, /* leak */ true, /* map_owned */ false)
+    }
+
+    /// Heap-copies an aggregate that becomes a `HashMap` entry. Structural
+    /// metadata is preferred over the guarded copy-blob metadata because the
+    /// map owns direct `String` / `Vec` fields as well as the outer blob.
+    pub(crate) fn maybe_heap_copy_aggregate_for_map(&mut self, arg: &Operand) -> Option<String> {
+        self.maybe_heap_copy_aggregate_with(arg, /* leak */ false, /* map_owned */ true)
     }
 
     /// Lowers the guarded copy-blob walk intrinsics emitted by the MIR
@@ -330,8 +334,11 @@ impl<'a> Lowerer<'a> {
         // Bare local: the alloca is the slot address. Projected place
         // (an option field being overwritten in place): resolve the
         // field address - the walk reads/writes the slot words there.
-        // `map_set_blob_values` takes the map POINTER VALUE.
-        if name == "gos_rt_map_set_blob_values" {
+        // Map ownership markers take the map POINTER VALUE.
+        if matches!(
+            name,
+            "gos_rt_map_set_blob_values" | "gos_rt_map_set_vec_values"
+        ) {
             if !p.projection.is_empty() {
                 return Ok(());
             }
@@ -343,7 +350,7 @@ impl<'a> Lowerer<'a> {
             )
             .unwrap();
             declare_rt(&mut self.runtime_refs, name);
-            writeln!(self.out, "  call void @gos_rt_map_set_blob_values(ptr {v})").unwrap();
+            writeln!(self.out, "  call void @{name}(ptr {v})").unwrap();
             return Ok(());
         }
         // `vec_set_elem_meta` takes the vec POINTER VALUE; the walk
@@ -420,7 +427,12 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    fn maybe_heap_copy_aggregate_with(&mut self, arg: &Operand, leak: bool) -> Option<String> {
+    fn maybe_heap_copy_aggregate_with(
+        &mut self,
+        arg: &Operand,
+        leak: bool,
+        map_owned: bool,
+    ) -> Option<String> {
         let Operand::Copy(place) = arg else {
             return None;
         };
@@ -446,13 +458,20 @@ impl<'a> Lowerer<'a> {
         let bytes = u64::from(slots) * 8;
         // Aggregate types with a registered copy-blob meta become
         // reference-counted copies (`gos_rt_rc_alloc_copy`): the blob
-        // retains the guarded children it now shares, registers in the
-        // copy-blob provenance set, and is reclaimed deterministically
-        // when its owning slot's guarded walk releases it. Map inserts
-        // (the `leak` variant) keep the unmanaged allocator: map
-        // storage never releases values, and an RC header under a
-        // pointer the map hands back out would be mis-freed.
-        if !leak && let Some(sym) = self.tcx.aggr_copy_meta(local_ty) {
+        // retains its children, registers in the copy-blob provenance set,
+        // and is reclaimed deterministically by its owning slot or map entry.
+        // The explicit `leak` variant remains only for legacy escape paths
+        // whose storage does not participate in deterministic teardown.
+        let copy_meta = if map_owned {
+            let structural = format!("gos_rc_meta_boxaggr_{}", local_ty.as_u32());
+            self.tcx
+                .rc_meta(&structural)
+                .map(|_| structural)
+                .or_else(|| self.tcx.aggr_copy_meta(local_ty).map(str::to_owned))
+        } else {
+            self.tcx.aggr_copy_meta(local_ty).map(str::to_owned)
+        };
+        if !leak && let Some(sym) = copy_meta {
             let meta = if sym.is_empty() {
                 "null".to_string()
             } else {

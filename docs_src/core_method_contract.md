@@ -14,7 +14,7 @@ Shipped:
 | Method or associated function | Returns | Notes |
 |---|---|---|
 | `String::new()` | `String` | Empty owned string. |
-| `String::with_capacity(n)` | `String` | Capacity hint is accepted for Rust familiarity; current string values are immutable/runtime-owned, so the hint is advisory. |
+| `String::with_capacity(n)` | `String` | Reserves mutable builder storage; mutating String methods retain that reservation when it is sufficient. |
 | `String::from(value)` | `String` | Identity for strings; display conversion for scalar values. |
 | `String::from_utf8(bytes)` | `Result<String, errors::Error>` | Decodes a byte vector as UTF-8; invalid sequences return `Err`. |
 | `s.len()` | `i64` | Byte length. |
@@ -57,7 +57,7 @@ Shipped:
 
 | Type | Methods |
 |---|---|
-| `HashMap<K, V>` | `insert`, `get`, `get_or`, `contains_key`, `contains`, `remove`, `pop`, `or_insert`, `inc`, `len`, `iter`, `keys`, `values` |
+| `HashMap<K, V>` | `insert`, `get`, `get_or`, `contains_key`, `contains`, `remove`, `pop`, `or_insert`, `inc`, `len`, `iter`, `keys`, `values` (`keys` is rejected for struct, tuple, and array keys; use `iter`) |
 | `HashSet<T>` | `insert`, `contains`, `remove`, `len`, `clear`, `to_vec`, `union`, `intersection`, `difference`, `symmetric_difference`, `is_subset`, `is_superset`, `is_disjoint` |
 | `BTreeMap<K, V>` | `insert`, `get`, `get_or`, `contains`, `contains_key`, `remove`, `len`, `iter`, `keys`, `values` |
 | `VecDeque<T>` | `push_back`, `push_front`, `pop_back`, `pop_front`, `peek_back`, `peek_front`, `len`, `is_empty` |

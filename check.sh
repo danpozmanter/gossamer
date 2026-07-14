@@ -108,6 +108,7 @@ phase "tooling and documentation gates"
 # so the check uses the freshly built crate.
 run_step "cargo build --bin gos"                           cargo build --bin gos
 run_step "gos doc --emit-stdlib --check"                   ./target/debug/gos doc --emit-stdlib docs_src/stdlib --check
+run_step "cargo xtask docs-llm --check"                    cargo xtask docs-llm --check
 # Feature-status sanity - every `Experimental` registry entry has a
 # doc page on disk. (Shipped items also need a passing tier-parity
 # sidecar; that requires the full cross-tier walk and is gated by

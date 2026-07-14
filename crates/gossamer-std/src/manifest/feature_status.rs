@@ -74,8 +74,9 @@ pub struct FeatureStatus {
 }
 
 /// Explicit lifecycle entries for documented language features and
-/// non-default stdlib module statuses. Manifest modules default to `Shipped`
-/// when materialized from `manifest::ALL_MODULES`.
+/// audited stdlib module statuses. Manifest modules default to
+/// `Experimental` when materialized from `manifest::ALL_MODULES`;
+/// `Shipped` must be explicit here.
 pub const FEATURE_STATUS: &[FeatureStatus] = &[
     // -----------------------------------------------------------------
     // Language features. All `lang::*` so the namespace never collides
@@ -230,8 +231,8 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     },
     FeatureStatus {
         path: "std::http_h3",
-        status: Status::Shipped,
-        doc: "HTTP/3 over QUIC with bounded connections, streams, headers, bodies, and wire I/O; public handler/client bodies are fully buffered and `std::http::h3` is not an alias.",
+        status: Status::Experimental,
+        doc: "HTTP/3 over QUIC with bounded connections, streams, headers, bodies, and wire I/O. Public handler/client bodies remain fully buffered; streaming and backpressure parity with HTTP/2 are not yet shipped. `std::http::h3` is not an alias.",
     },
     FeatureStatus {
         path: "std::thread",
@@ -263,6 +264,10 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
         "std::http::streaming_responses",
         "`Response::stream` chunked server streaming plus `ResponseStream::next_chunk` client byte reads.",
     ),
+    experimental(
+        "std::http::request_streaming",
+        "HTTP/2 request bodies can be consumed incrementally by the Rust-side RequestStreamingHandler scaffold; the public Gossamer handler ABI still receives bounded complete Request bodies on VM and AOT.",
+    ),
     shipped(
         "std::http::server_request_headers",
         "Inbound `Request.headers` populated on every tier; `path` strips the query string.",
@@ -289,11 +294,19 @@ const fn shipped(path: &'static str, doc: &'static str) -> FeatureStatus {
     }
 }
 
+const fn experimental(path: &'static str, doc: &'static str) -> FeatureStatus {
+    FeatureStatus {
+        path,
+        status: Status::Experimental,
+        doc,
+    }
+}
+
 /// Returns the registered status for `path`, falling back to
-/// `Shipped` when `path` is a stdlib module present in
+/// `Experimental` when `path` is a stdlib module present in
 /// `manifest::ALL_MODULES` and to `None` otherwise. Callers wanting
-/// the synthesised default-Shipped view over the full stdlib +
-/// language surface should iterate `all_entries` instead.
+/// the synthesised full stdlib + language surface should iterate
+/// `all_entries` instead.
 #[must_use]
 pub fn lookup(path: &str) -> Option<FeatureStatus> {
     if let Some(entry) = FEATURE_STATUS.iter().find(|e| e.path == path) {
@@ -302,7 +315,7 @@ pub fn lookup(path: &str) -> Option<FeatureStatus> {
     if let Some(module) = super::ALL_MODULES.iter().find(|m| m.path == path) {
         return Some(FeatureStatus {
             path: module.path,
-            status: Status::Shipped,
+            status: Status::Experimental,
             doc: module.summary,
         });
     }
@@ -311,7 +324,7 @@ pub fn lookup(path: &str) -> Option<FeatureStatus> {
 
 /// Returns every entry in the registry merged with the implicit
 /// stdlib defaults. Stdlib modules that don't appear in
-/// `FEATURE_STATUS` are synthesised as `Shipped`. Entries are
+/// `FEATURE_STATUS` are synthesised as `Experimental`. Entries are
 /// returned in a stable order: registry entries first (declaration
 /// order), then the synthesised stdlib defaults (manifest order).
 #[must_use]
@@ -326,7 +339,7 @@ pub fn all_entries() -> Vec<FeatureStatus> {
         }
         out.push(FeatureStatus {
             path: module.path,
-            status: Status::Shipped,
+            status: Status::Experimental,
             doc: module.summary,
         });
     }
@@ -358,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn namespace_boundaries_are_explicit_and_shipped() {
+    fn namespace_boundaries_are_explicit_and_lifecycle_accurate() {
         let expected = [
             ("std::process", "Canonical"),
             ("std::os::exec", "Deprecated"),
@@ -369,7 +382,12 @@ mod tests {
         ];
         for (path, contract) in expected {
             let entry = lookup(path).unwrap_or_else(|| panic!("missing status for {path}"));
-            assert_eq!(entry.status, Status::Shipped, "{path}");
+            let expected_status = if path == "std::http_h3" {
+                Status::Experimental
+            } else {
+                Status::Shipped
+            };
+            assert_eq!(entry.status, expected_status, "{path}");
             assert!(entry.doc.contains(contract), "{path}: {}", entry.doc);
         }
     }
@@ -385,9 +403,9 @@ mod tests {
     }
 
     #[test]
-    fn lookup_defaults_stdlib_modules_to_shipped() {
+    fn lookup_defaults_stdlib_modules_to_experimental() {
         let entry = lookup("std::fmt").expect("fmt in manifest");
-        assert_eq!(entry.status, Status::Shipped);
+        assert_eq!(entry.status, Status::Experimental);
     }
 
     #[test]
@@ -401,10 +419,20 @@ mod tests {
         for module in super::super::ALL_MODULES {
             assert!(
                 entries.iter().any(|e| e.path == module.path),
-                "missing default-Shipped entry for {}",
+                "missing default-Experimental entry for {}",
                 module.path,
             );
         }
+    }
+
+    #[test]
+    fn unaudited_manifest_modules_are_not_synthesized_as_shipped() {
+        let entries = all_entries();
+        let fmt = entries
+            .iter()
+            .find(|entry| entry.path == "std::fmt")
+            .expect("std::fmt synthesized");
+        assert_eq!(fmt.status, Status::Experimental);
     }
 
     #[test]

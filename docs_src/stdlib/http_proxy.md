@@ -14,6 +14,17 @@ Reverse proxy on top of http::Client. Director-style request mutator + hop-by-ho
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
+## API details and source
+
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_proxy.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+
+| Item | Canonical signature or declaration | Description |
+|---|---|---|
+| [`Director`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_proxy.rs) | `type` — see the source declaration | Fn(&mut Request) request mutator (Rust-side). |
+| [`Proxy`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_proxy.rs) | `type` — see the source declaration | Reverse-proxy handler (Rust-side). |
+| [`forward`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_proxy.rs) | `fn forward(url: String, method: String, body: Vec<u8>) -> Result<http::Response, errors::Error>` | One-shot upstream forward: `(url, method, body) -> Result<Response, Error>`. Interp tier. |
+
+
 ## Writing a passthrough proxy in Gossamer
 
 The whole proxy shape is expressible directly on the `std::http`

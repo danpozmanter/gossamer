@@ -53,6 +53,7 @@ gossamer-binding-macros = { workspace = true }
 gossamer-codegen-cranelift = { workspace = true }
 gossamer-interp = { workspace = true }
 gossamer-resolve = { workspace = true }
+gossamer-std = { workspace = true }
 linkme = "0.3"
 pastey = "0.1"
 parking_lot = "0.12"

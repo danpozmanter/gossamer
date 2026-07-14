@@ -191,6 +191,86 @@ fn main() {
 }
 
 #[test]
+fn vec_valued_map_overwrite_and_remove_balance_ownership() {
+    // A map owns a Vec share per stored entry. This exercises the complete
+    // lifecycle: source binding cleanup, overwrite of the old map entry,
+    // explicit removal, and final map teardown. Run enough repetitions to
+    // make an old leak-suppression implementation observable under the native
+    // allocator checks as well as comparing VM/AOT output.
+    assert_vm_matches_native(
+        "map-vec",
+        r#"
+use std::collections::HashMap
+
+fn main() {
+    let mut total = 0i64
+    let mut round = 0i64
+    while round < 100i64 {
+        let mut m: HashMap<i64, Vec<i64>> = HashMap::new()
+        let first: Vec<i64> = [round, round + 1i64]
+        m.insert(1i64, first)
+        m.insert(1i64, [round + 2i64, round + 3i64])
+        if let Some(v) = m.get(1i64) { total += v[0] }
+        m.remove(1i64)
+        round += 1i64
+    }
+    println!("{}", total)
+}
+"#,
+    );
+}
+
+#[test]
+fn container_pop_and_error_exit_release_every_owner_once() {
+    // Covers the two transition edges that are easiest to get wrong when a
+    // container value changes hands: `pop` transfers the map/Vec share to the
+    // receiving binding, while an early `Err` must release every still-local
+    // owner without touching an entry that was already popped. Repetition and
+    // the no-pool allocator mode make both leaks and double releases visible.
+    assert_vm_matches_native(
+        "pop-error",
+        r#"
+use std::{collections::{HashMap, HashSet}, errors}
+
+fn one_round(round: i64) -> Result<i64, errors::Error> {
+    let mut rows: Vec<Vec<i64>> = []
+    let first: Vec<i64> = [round, round + 1i64]
+    rows.push(first)
+    let tail: Vec<i64> = [round + 2i64, round + 3i64]
+    rows.push(tail)
+    let popped_row = rows.pop().unwrap()
+
+    let mut m: HashMap<i64, Vec<i64>> = HashMap::new()
+    m.insert(1i64, popped_row)
+    let retained: Vec<i64> = [round + 4i64]
+    m.insert(2i64, retained)
+    let popped_map = HashMap::pop(m, 1i64).unwrap()
+    let mut tags: HashSet<String> = HashSet::new()
+    tags.insert(format!("round-{}", round))
+    tags.insert(format!("next-{}", round + 1i64))
+    if round % 2i64 == 0i64 {
+        return Err(errors::new("expected short-circuit"))
+    }
+    Ok(popped_map[0] + rows[0][1])
+}
+
+fn main() {
+    let mut total = 0i64
+    let mut round = 0i64
+    while round < 200i64 {
+        match one_round(round) {
+            Ok(v) => total += v,
+            Err(_) => total += 1i64,
+        }
+        round += 1i64
+    }
+    println!("{}", total)
+}
+"#,
+    );
+}
+
+#[test]
 fn result_returning_recursive_builder_keeps_payload() {
     // Bug 4: a value wrapped in `Ok(...)` and returned (the
     // `self.parse()?` recursive-descent shape) had its RC payload

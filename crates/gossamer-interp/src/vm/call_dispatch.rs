@@ -192,6 +192,12 @@ impl Vm {
                         match jit_call::invoke_prepared(&prepared, &args, &self.jit_graph_cache) {
                             jit_call::Dispatch::Ok(value) => {
                                 prepared.record_hit();
+                                // This is an intentionally conservative
+                                // payback signal: one direct native dispatch
+                                // bypasses this chunk's bytecode body. Native
+                                // intra-JIT calls may avoid additional VM
+                                // instructions, but we do not estimate them.
+                                self.jit_counters.saved_vm_instructions(state.instr_count);
                                 if jit_call::jit_trace() {
                                     eprintln!("jit: native hit {}", prepared.jit.name);
                                 }

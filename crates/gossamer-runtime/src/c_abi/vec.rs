@@ -81,6 +81,13 @@ pub mod vec_elem_kind {
     /// via [`super::vec::gos_rt_vec_mark_rc_elems`], emitted by the MIR
     /// lowering right after constructing a vec of payload-enum elements.
     pub const RC_ENUM: u8 = 8;
+    /// A runtime-owned, fixed-width primitive `Vec<Vec<i64>>` payload. The
+    /// outer `GosVec` points at a `PackedRows` descriptor instead of an array
+    /// of child pointers; indexed access returns one stable row header from
+    /// that descriptor. This is intentionally distinct from `VEC` so normal
+    /// deep-free and pointer-slot paths can never mistake the descriptor for
+    /// a child Vec pointer.
+    pub const PACKED_ROWS: u8 = 9;
 }
 
 #[repr(C)]
@@ -109,26 +116,28 @@ pub struct GosVec {
     /// replaces, so `ptr` stays at offset 24 and the layout is unchanged.
     pub rc: std::sync::atomic::AtomicU16,
     pub ptr: SyncRawPtr<u8>,
-    /// Versioned ownership carrier. This is deliberately appended after the
-    /// legacy 32-byte prefix, whose offsets are part of the native ABI.
-    /// Runtime-created Vecs always carry a non-null owner; region Vecs are
-    /// bulk-owned by their region and leave this null.
+    /// Unique allocation identity, deliberately appended after the legacy
+    /// 32-byte prefix whose offsets are part of the native ABI. Heap Vecs get
+    /// this directly in the header; region Vecs are bulk-owned and use zero.
+    pub generation: u64,
+    /// Guarded-aggregate element metadata. Primitive Vecs keep this null, so
+    /// their common path carries no separately allocated ownership state.
+    pub elem_meta: SyncRawPtr<i64>,
+    /// Lazily allocated metadata only for aggregate-owned element layouts.
+    /// This remains an owned carrier rather than an address-keyed registry.
     pub owner: SyncRawPtr<VecOwner>,
 }
 
-/// ABI-versioned ownership state for a heap Vec.
+/// ABI-versioned optional ownership state for aggregate-owned Vec elements.
 ///
 /// Unlike the former address-keyed metadata maps, this allocation is owned by
-/// the Vec header and dies with it. `generation` identifies this particular
-/// allocation instance, and `destructor` makes the release protocol explicit
-/// at ABI boundaries instead of inferring it from an address.
+/// the Vec header and dies with it. Primitive and guarded-aggregate Vecs do
+/// not allocate it; their identity and guarded metadata are in [`GosVec`].
 #[repr(C)]
 pub struct VecOwner {
     abi_version: u16,
     kind: u16,
     destructor: u32,
-    generation: u64,
-    elem_meta: SyncRawPtr<i64>,
     slot_children: Option<Box<[VecSlotChild]>>,
 }
 
@@ -138,16 +147,38 @@ const ABI_OWNER_DTOR_VEC: u32 = 1;
 static NEXT_VEC_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 fn new_vec_owner() -> SyncRawPtr<VecOwner> {
-    let generation = NEXT_VEC_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let owner = Box::new(VecOwner {
         abi_version: ABI_OWNER_VERSION,
         kind: ABI_OWNER_KIND_VEC,
         destructor: ABI_OWNER_DTOR_VEC,
-        generation,
-        elem_meta: SyncRawPtr::NULL,
         slot_children: None,
     });
-    SyncRawPtr::new(Box::into_raw(owner))
+    let owner = Box::into_raw(owner);
+    crate::c_abi::ledger::vec_owner_alloc(
+        std::mem::size_of::<VecOwner>(),
+        allocator_usable_bytes(owner.cast(), std::mem::size_of::<VecOwner>()),
+    );
+    SyncRawPtr::new(owner)
+}
+
+/// Allocation capacity returned by the allocator that owns runtime Vec
+/// storage. The runtime deliberately uses the system allocator under TSan,
+/// Miri, fuzzing, and wasm, where a mimalloc query would be invalid; those
+/// configurations report the exact requested layout size instead.
+#[inline]
+fn allocator_usable_bytes(ptr: *const u8, requested: usize) -> usize {
+    #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
+    {
+        let _ = requested;
+        // SAFETY: `ptr` was just returned by the process-wide mimalloc-backed
+        // global allocator and remains live for this query.
+        unsafe { libmimalloc_sys::mi_usable_size(ptr.cast_mut().cast()) }
+    }
+    #[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
+    {
+        let _ = ptr;
+        requested
+    }
 }
 
 #[inline]
@@ -165,12 +196,11 @@ fn vec_owner(v: &GosVec) -> Option<&VecOwner> {
         .then_some(owner)
 }
 
-/// Generation of this Vec allocation's owner carrier, or zero for a region
-/// Vec. This is a diagnostic/testing hook; ABI consumers use the opaque owner
-/// pointer rather than fabricating a generation from an address.
+/// Generation of this Vec allocation, or zero for a region Vec. This is a
+/// diagnostic/testing hook; it is stored independently of header address.
 #[must_use]
 pub fn vec_owner_generation(v: &GosVec) -> u64 {
-    vec_owner(v).map_or(0, |owner| owner.generation)
+    v.generation
 }
 
 #[inline]
@@ -185,6 +215,16 @@ fn vec_owner_mut(v: &mut GosVec) -> Option<&mut VecOwner> {
         && owner.kind == ABI_OWNER_KIND_VEC
         && owner.destructor == ABI_OWNER_DTOR_VEC)
         .then_some(owner)
+}
+
+/// Returns the lazily-created aggregate-owned metadata carrier. The header
+/// holds generation and guarded metadata directly, so this allocation is only
+/// paid by Vecs that need a dynamic slot-child layout.
+fn ensure_vec_owner(v: &mut GosVec) -> &mut VecOwner {
+    if v.owner.is_null() {
+        v.owner = new_vec_owner();
+    }
+    vec_owner_mut(v).expect("fresh Vec owner must use the current ABI")
 }
 
 pub(crate) unsafe fn drop_vec_owner(v: &mut GosVec) {
@@ -210,12 +250,40 @@ const VEC_REGION_FLAG: u8 = 1;
 /// a split vec; an inline vec's buffer is freed with the header block.
 const VEC_SPLIT_FLAG: u8 = 2;
 
+/// Header flag for a row owned by [`PackedRows`]. Such rows borrow their
+/// header and initial payload from the descriptor; freeing an observed row is
+/// therefore a no-op and the descriptor releases all rows together.
+const VEC_PACKED_ROW_FLAG: u8 = 4;
+
+/// Minimum row count at which replacing one allocation per row with a packed
+/// descriptor amortises the conversion. The eligibility checks below remain
+/// semantic rather than benchmark-specific: any sufficiently large, uniform,
+/// primitive nested Vec can use it.
+const PACKED_ROWS_MIN_ROWS: i64 = 1024;
+
+/// Runtime storage for a uniform primitive nested Vec. `rows` supplies real
+/// `GosVec` headers so every existing read-only Vec ABI consumer continues to
+/// see an ordinary row pointer; `data` is one contiguous row-major payload.
+/// The descriptor owns both allocations and is reached only through an outer
+/// Vec tagged [`vec_elem_kind::PACKED_ROWS`].
+pub(crate) struct PackedRows {
+    pub(crate) rows: Box<[GosVec]>,
+    // Retains the row-major allocation addressed by `rows[*].ptr`.
+    pub(crate) _data: Box<[u64]>,
+}
+
+#[cfg(all(feature = "inline-vec-words-6", feature = "inline-vec-words-8"))]
+compile_error!("inline-vec-words-6 and inline-vec-words-8 are mutually exclusive");
+
 /// Element words held inline, immediately after the [`GosVec`] header, in a
-/// single [`InlineVec`] allocation. Sized so a small vec (the common
-/// `graph[node]` adjacency list) keeps its header and first elements in one
-/// cache line, removing the separate-buffer dependent load: 64 bytes = 8
-/// i64 slots.
+/// single [`InlineVec`] allocation. Six words is the selected default from the
+/// audited game/stress matrix; the eight-word feature remains available for
+/// explicit A/B checks. The trailing buffer is private to this runtime
+/// allocation, while `GosVec`'s stable native ABI header remains unchanged.
+#[cfg(feature = "inline-vec-words-8")]
 const INLINE_BUF_WORDS: usize = 8;
+#[cfg(not(feature = "inline-vec-words-8"))]
+const INLINE_BUF_WORDS: usize = 6;
 const INLINE_BUF_BYTES: usize = INLINE_BUF_WORDS * 8;
 
 /// A non-region `GosVec` header physically followed by its initial element
@@ -281,11 +349,26 @@ pub(crate) unsafe fn alloc_box_vec(
             region_flag: flag,
             rc: std::sync::atomic::AtomicU16::new(1),
             ptr: init_ptr,
-            owner: new_vec_owner(),
+            generation: NEXT_VEC_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            elem_meta: SyncRawPtr::NULL,
+            owner: SyncRawPtr::NULL,
         },
         buf: [0u64; INLINE_BUF_WORDS],
     });
     let boxed_ptr = Box::into_raw(boxed);
+    crate::c_abi::ledger::vec_inline_alloc(
+        std::mem::size_of::<InlineVec>(),
+        allocator_usable_bytes(boxed_ptr.cast(), std::mem::size_of::<InlineVec>()),
+    );
+    if flag != 0 {
+        crate::c_abi::ledger::vec_split_alloc(
+            checked_buffer_bytes(cap as usize, elem_bytes as usize),
+            allocator_usable_bytes(
+                init_ptr.as_const_ptr(),
+                checked_buffer_bytes(cap as usize, elem_bytes as usize),
+            ),
+        );
+    }
     if flag == 0 {
         // Inline: point `header.ptr` at this block's own contiguous buffer.
         // The self-pointer is derived from the raw allocation after
@@ -311,6 +394,145 @@ pub(crate) fn vec_is_split(v: &GosVec) -> bool {
     v.region_flag & VEC_SPLIT_FLAG != 0
 }
 
+/// Replaces a large uniform `Vec<Vec<i64>>` with contiguous fixed-width row
+/// storage. The conversion is deliberately conservative and is performed at
+/// the first indexed read, after construction is complete: every row must be
+/// uniquely owned, primitive, eight-byte wide, and have the same length.
+/// Anything that does not meet those conditions remains an ordinary Vec.
+///
+/// The returned descriptor keeps stable `GosVec` row headers, so read-only
+/// indexing and iteration need no new source-level type or ABI. A later row
+/// growth detaches that row through the existing split-buffer path and is
+/// released when the descriptor dies.
+pub(crate) unsafe fn try_pack_primitive_rows(outer: *mut GosVec) -> bool {
+    if outer.is_null() {
+        return false;
+    }
+    let outer_ref = unsafe { &mut *outer };
+    if outer_ref.elem_kind != vec_elem_kind::VEC
+        || outer_ref.len < PACKED_ROWS_MIN_ROWS
+        || vec_is_region(outer_ref)
+    {
+        return false;
+    }
+    let row_count = outer_ref.len as usize;
+    let mut width: Option<usize> = None;
+    for i in 0..row_count {
+        let slot = unsafe {
+            outer_ref
+                .ptr
+                .as_ptr()
+                .add(i * 8)
+                .cast::<usize>()
+                .read_unaligned()
+        };
+        if slot == 0 {
+            return false;
+        }
+        let row = unsafe { &*(std::ptr::with_exposed_provenance::<GosVec>(slot)) };
+        if row.elem_kind != vec_elem_kind::PRIMITIVE
+            || row.elem_bytes != 8
+            || row.len < 0
+            || row.rc.load(std::sync::atomic::Ordering::Acquire) != 1
+        {
+            return false;
+        }
+        match width {
+            Some(expected) if expected != row.len as usize => return false,
+            None => width = Some(row.len as usize),
+            _ => {}
+        }
+    }
+    let width = width.unwrap_or(0);
+    let Some(words) = row_count.checked_mul(width) else {
+        return false;
+    };
+    let mut data = vec![0u64; words].into_boxed_slice();
+    let mut rows = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        let slot = unsafe {
+            outer_ref
+                .ptr
+                .as_ptr()
+                .add(i * 8)
+                .cast::<usize>()
+                .read_unaligned()
+        };
+        let row_ptr = std::ptr::with_exposed_provenance_mut::<GosVec>(slot);
+        let row = unsafe { &*row_ptr };
+        for col in 0..width {
+            data[i * width + col] = unsafe { vec_elem_load_i64(row, col as i64) } as u64;
+        }
+        let data_ptr = if width == 0 {
+            std::ptr::NonNull::<u64>::dangling().as_ptr().cast::<u8>()
+        } else {
+            unsafe { data.as_mut_ptr().add(i * width).cast::<u8>() }
+        };
+        rows.push(GosVec {
+            len: width as i64,
+            cap: width as i64,
+            elem_bytes: 8,
+            elem_kind: vec_elem_kind::PRIMITIVE,
+            region_flag: VEC_PACKED_ROW_FLAG,
+            rc: std::sync::atomic::AtomicU16::new(1),
+            ptr: SyncRawPtr::new(data_ptr),
+            generation: 0,
+            elem_meta: SyncRawPtr::NULL,
+            owner: SyncRawPtr::NULL,
+        });
+        // The outer Vec owns the sole share of every eligible row. Release
+        // it only after copying the primitive payload into the descriptor.
+        unsafe { crate::c_abi::map::gos_rt_vec_free(row_ptr) };
+    }
+    if vec_is_split(outer_ref) {
+        let bytes = checked_buffer_bytes(outer_ref.cap as usize, outer_ref.elem_bytes as usize);
+        unsafe { free_vec_buffer(outer_ref.ptr.as_ptr(), bytes) };
+    }
+    let packed = Box::new(PackedRows {
+        rows: rows.into_boxed_slice(),
+        _data: data,
+    });
+    outer_ref.ptr = SyncRawPtr::new(Box::into_raw(packed).cast::<u8>());
+    outer_ref.cap = outer_ref.len;
+    outer_ref.elem_kind = vec_elem_kind::PACKED_ROWS;
+    outer_ref.region_flag &= !VEC_SPLIT_FLAG;
+    true
+}
+
+/// Returns the stable row header for a packed outer Vec.
+pub(crate) unsafe fn packed_row_at(outer: *const GosVec, idx: i64) -> *mut u8 {
+    if outer.is_null() || idx < 0 {
+        return std::ptr::null_mut();
+    }
+    let outer = unsafe { &*outer };
+    if outer.elem_kind != vec_elem_kind::PACKED_ROWS || idx >= outer.len || outer.ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let packed = unsafe { &*outer.ptr.as_ptr().cast::<PackedRows>() };
+    packed
+        .rows
+        .get(idx as usize)
+        .map_or(std::ptr::null_mut(), |row| {
+            std::ptr::from_ref(row).cast_mut().cast::<u8>()
+        })
+}
+
+/// Releases a packed descriptor and any row which detached to a normal split
+/// buffer after a mutation. Initial row data is owned by `PackedRows::data`.
+pub(crate) unsafe fn free_packed_rows(outer: &GosVec) {
+    if outer.ptr.is_null() {
+        return;
+    }
+    let packed = unsafe { Box::from_raw(outer.ptr.as_ptr().cast::<PackedRows>()) };
+    for row in &packed.rows {
+        if vec_is_split(row) {
+            let bytes = checked_buffer_bytes(row.cap as usize, row.elem_bytes as usize);
+            unsafe { free_vec_buffer(row.ptr.as_ptr(), bytes) };
+        }
+    }
+    drop(packed);
+}
+
 /// Allocate a GosVec header from the active region if one is open (so it is
 /// freed wholesale at pop and `gos_rt_vec_free` skips it), else from the
 /// global allocator as a single `Box<InlineVec>` via [`alloc_box_vec`].
@@ -319,6 +541,7 @@ unsafe fn alloc_vec_header(mut v: GosVec) -> *mut GosVec {
     if p.is_null() {
         unsafe { alloc_box_vec(v.elem_bytes, v.elem_kind, v.cap, v.len) }
     } else {
+        crate::c_abi::ledger::vec_region_alloc(std::mem::size_of::<GosVec>());
         v.region_flag = VEC_REGION_FLAG;
         let hp = p.cast::<GosVec>();
         unsafe { std::ptr::write(hp, v) };
@@ -326,12 +549,40 @@ unsafe fn alloc_vec_header(mut v: GosVec) -> *mut GosVec {
     }
 }
 
+/// Constructs a Vec with a requested capacity while preserving the active
+/// region allocation path.  `alloc_box_vec` is deliberately the non-region
+/// implementation (it uses a boxed inline header), so calling it directly
+/// from `with_capacity` bypasses the arena even when the caller's loop is
+/// regioned.  Start from the ordinary region-aware empty constructor, then
+/// reserve the requested capacity through the shared growth path.
+unsafe fn alloc_vec_with_capacity(elem_bytes: u32, elem_kind: u8, cap: i64) -> *mut GosVec {
+    let v = unsafe {
+        alloc_vec_header(GosVec {
+            len: 0,
+            cap: 0,
+            elem_bytes,
+            elem_kind,
+            region_flag: 0,
+            rc: std::sync::atomic::AtomicU16::new(0),
+            ptr: SyncRawPtr::NULL,
+            generation: 0,
+            elem_meta: SyncRawPtr::NULL,
+            owner: SyncRawPtr::NULL,
+        })
+    };
+    if !v.is_null() && cap > 0 {
+        unsafe { vec_reserve_to(&mut *v, cap, true) };
+    }
+    v
+}
+
 pub(crate) fn vec_elem_meta(v: *const GosVec) -> *const i64 {
     if v.is_null() {
         return std::ptr::null();
     }
     // SAFETY: callers only query live Vec headers.
-    vec_owner(unsafe { &*v }).map_or(std::ptr::null(), |owner| owner.elem_meta.as_const_ptr())
+    // SAFETY: callers only query live Vec headers.
+    unsafe { (*v).elem_meta.as_const_ptr() }
 }
 
 /// One owned heap child inside each element slot of an
@@ -380,9 +631,7 @@ pub fn vec_set_slot_children(v: *mut GosVec, children: &'static [VecSlotChild]) 
         return;
     }
     vec.elem_kind = vec_elem_kind::AGGR_OWNED;
-    if let Some(owner) = vec_owner_mut(vec) {
-        owner.slot_children = Some(children.into());
-    }
+    ensure_vec_owner(vec).slot_children = Some(children.into());
 }
 
 /// Calls `f` with each live, non-null child pointer (and its kind)
@@ -523,11 +772,14 @@ pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosV
         return;
     }
     let s = unsafe { &*src };
-    let o = unsafe { &mut *out };
     match s.elem_kind {
         vec_elem_kind::STRING | vec_elem_kind::VEC | vec_elem_kind::RC_ENUM
             if s.elem_bytes == 8 =>
         {
+            // This branch mutates the output tag but never calls another
+            // helper that borrows the output header, so one exclusive borrow
+            // may cover the whole operation.
+            let o = unsafe { &mut *out };
             o.elem_kind = s.elem_kind;
             for i in 0..o.len.max(0) as usize {
                 // Exposed-integer slot (flat-slot ABI); recover provenance.
@@ -549,7 +801,12 @@ pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosV
         }
         vec_elem_kind::AGGR_OWNED => {
             if let Some(children) = vec_slot_children(s) {
+                // `vec_set_slot_children` takes its own exclusive header
+                // borrow to create the lazy metadata carrier. Do not retain a
+                // prior `&mut GosVec` across that call: doing so violates
+                // Stacked Borrows when the clone path later reads its fields.
                 vec_set_slot_children(out, children);
+                let o = unsafe { &*out };
                 let stride = o.elem_bytes as usize;
                 if stride == 0 || o.ptr.is_null() {
                     return;
@@ -560,6 +817,7 @@ pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosV
             } else {
                 // Layout unknown (cannot happen for live vecs; defensive):
                 // fall back to a shallow copy that never double-frees.
+                let o = unsafe { &mut *out };
                 o.elem_kind = vec_elem_kind::PRIMITIVE;
             }
         }
@@ -619,9 +877,7 @@ pub unsafe extern "C" fn gos_rt_vec_set_elem_meta(v: *mut GosVec, meta: *const i
         return;
     }
     vec.elem_kind = vec_elem_kind::AGGR_GUARDED;
-    if let Some(owner) = vec_owner_mut(vec) {
-        owner.elem_meta = SyncRawPtr::from_const(meta);
-    }
+    vec.elem_meta = SyncRawPtr::from_const(meta);
 }
 
 /// Tags `v` as an [`vec_elem_kind::AGGR_OWNED`] vec carrying inline
@@ -651,9 +907,7 @@ pub unsafe extern "C" fn gos_rt_vec_set_slot_children(v: *mut GosVec, meta: *con
     let vec = unsafe { &mut *v };
     if !vec_is_region(vec) {
         vec.elem_kind = vec_elem_kind::AGGR_OWNED;
-        if let Some(owner) = vec_owner_mut(vec) {
-            owner.slot_children = Some(children.into_boxed_slice());
-        }
+        ensure_vec_owner(vec).slot_children = Some(children.into_boxed_slice());
     }
 }
 
@@ -770,6 +1024,8 @@ pub unsafe extern "C" fn gos_rt_vec_new(elem_bytes: u32) -> *mut GosVec {
                 region_flag: 0,
                 rc: std::sync::atomic::AtomicU16::new(0),
                 ptr: SyncRawPtr::NULL,
+                generation: 0,
+                elem_meta: SyncRawPtr::NULL,
                 owner: SyncRawPtr::NULL,
             })
         }
@@ -801,6 +1057,8 @@ pub unsafe extern "C" fn gos_rt_vec_new_typed(elem_bytes: u32, elem_kind: u8) ->
                 region_flag: 0,
                 rc: std::sync::atomic::AtomicU16::new(0),
                 ptr: SyncRawPtr::NULL,
+                generation: 0,
+                elem_meta: SyncRawPtr::NULL,
                 owner: SyncRawPtr::NULL,
             })
         }
@@ -862,7 +1120,7 @@ pub unsafe extern "C" fn gos_rt_vec_with_capacity(elem_bytes: u32, cap: i64) -> 
         // separate buffer for a capacity larger than the inline slot). Only
         // initialized slots below len are readable; spare split capacity is
         // intentionally not zero-filled.
-        unsafe { alloc_box_vec(elem_bytes, vec_elem_kind::PRIMITIVE, cap, 0) }
+        unsafe { alloc_vec_with_capacity(elem_bytes, vec_elem_kind::PRIMITIVE, cap) }
     })
 }
 
@@ -886,7 +1144,7 @@ pub unsafe extern "C" fn gos_rt_vec_with_capacity_typed(
         } else {
             elem_kind
         };
-        unsafe { alloc_box_vec(elem_bytes, kind, cap, 0) }
+        unsafe { alloc_vec_with_capacity(elem_bytes, kind, cap) }
     })
 }
 
@@ -1065,8 +1323,14 @@ unsafe fn vec_reserve_to(vec: &mut GosVec, min_cap: i64, exact: bool) {
         // old one to the enclosing region's wholesale reclamation.
         let region_buf = crate::c_abi::rc::region_alloc_bytes(new_bytes);
         let new_buf = if region_buf.is_null() {
-            alloc_vec_buffer(new_bytes)
+            let new_buf = alloc_vec_buffer(new_bytes);
+            crate::c_abi::ledger::vec_split_alloc(
+                new_bytes,
+                allocator_usable_bytes(new_buf, new_bytes),
+            );
+            new_buf
         } else {
+            crate::c_abi::ledger::vec_region_alloc(new_bytes);
             region_buf
         };
         if !vec.ptr.is_null() && old_bytes > 0 {
@@ -1082,6 +1346,7 @@ unsafe fn vec_reserve_to(vec: &mut GosVec, min_cap: i64, exact: bool) {
     // Spare split capacity is intentionally uninitialised; only the old live
     // slots copied below are readable.
     let new_buf = alloc_vec_buffer(new_bytes);
+    crate::c_abi::ledger::vec_split_alloc(new_bytes, allocator_usable_bytes(new_buf, new_bytes));
     let was_split = vec.region_flag & VEC_SPLIT_FLAG != 0;
     if !vec.ptr.is_null() && old_bytes > 0 {
         unsafe {

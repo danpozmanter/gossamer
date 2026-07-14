@@ -1,6 +1,6 @@
 //! Vec scalar swap runtime tests.
 
-use gossamer_runtime::c_abi::vec::vec_owner_generation;
+use gossamer_runtime::c_abi::vec::{GosVec, vec_owner_generation};
 use gossamer_runtime::c_abi::{
     gos_rt_vec_free, gos_rt_vec_get_i64, gos_rt_vec_new, gos_rt_vec_push_i64, gos_rt_vec_swap_i64,
 };
@@ -63,6 +63,27 @@ fn vec_owner_generation_is_distinct_from_the_header_address() {
         assert_ne!(second_generation, 0);
         assert_ne!(first_generation, second_generation);
         gos_rt_vec_free(second);
+    }
+}
+
+#[test]
+fn vec_prefix_is_pinned_and_primitive_vec_needs_no_owner_carrier() {
+    assert_eq!(std::mem::offset_of!(GosVec, len), 0);
+    assert_eq!(std::mem::offset_of!(GosVec, cap), 8);
+    assert_eq!(std::mem::offset_of!(GosVec, elem_bytes), 16);
+    assert_eq!(std::mem::offset_of!(GosVec, ptr), 24);
+    assert_eq!(std::mem::offset_of!(GosVec, generation), 32);
+    assert_eq!(std::mem::offset_of!(GosVec, elem_meta), 40);
+    assert_eq!(std::mem::offset_of!(GosVec, owner), 48);
+    assert_eq!(std::mem::size_of::<GosVec>(), 56);
+
+    unsafe {
+        let v = gos_rt_vec_new(8);
+        assert!(
+            (*v).owner.is_null(),
+            "primitive Vecs must not allocate optional ownership metadata"
+        );
+        gos_rt_vec_free(v);
     }
 }
 

@@ -193,6 +193,28 @@ fn jit_metrics_report_promotion_and_snapshot_release() {
         promoted.resident_functions >= 1,
         "a successful promotion must retain a callable native entry: {promoted:?}"
     );
+    assert!(
+        promoted.promoted_functions >= 1 && promoted.last_promoted_functions >= 1,
+        "promotion accounting must report installed callable entries: {promoted:?}"
+    );
+    assert!(
+        promoted.emitted_code_bytes > 0
+            && promoted.last_emitted_code_bytes > 0
+            && promoted.emitted_code_bytes >= promoted.last_emitted_code_bytes,
+        "successful promotion must report exact Cranelift code bytes: {promoted:?}"
+    );
+    assert!(
+        promoted.total_compile_time_us >= promoted.last_compile_time_us,
+        "compile duration totals must include the latest compile: {promoted:?}"
+    );
+    assert!(
+        promoted.peak_observed_rss_bytes >= promoted.last_observed_rss_bytes,
+        "peak RSS must dominate the latest sample: {promoted:?}"
+    );
+    assert!(
+        promoted.saved_vm_instructions > 0,
+        "successful native dispatch must record bytecode work bypassed: {promoted:?}"
+    );
 
     assert!(
         promoted.released_snapshots >= 1,
@@ -211,6 +233,37 @@ fn jit_metrics_report_promotion_and_snapshot_release() {
     assert!(
         matches!(result, Value::Int(55)),
         "releasing MIR metadata must not release the installed artifact: {result:?}"
+    );
+}
+
+#[test]
+fn short_loop_defers_jit_until_it_has_paid_back_its_compile_cost() {
+    let _g = GosJitGuard::new();
+    // The loop makes this body JIT-eligible, but one hundred executions are
+    // deliberately below the default 8,192-instruction admission floor. The
+    // policy must keep the program on bytecode rather than retaining a
+    // Cranelift module for a short command whose native compile tax cannot
+    // plausibly be repaid.
+    let source = "fn tick(n: i64) -> i64 {\n  let mut out = n\n  let mut i = 0\n  while i < 1 { out += 1\n    i += 1 }\n  out\n}\nfn main() -> i64 { tick(1) }\n";
+    let (vm, _) = build_vm(source);
+
+    for _ in 0..100 {
+        let value = vm.call("tick", vec![Value::Int(41)]).expect("tick");
+        assert!(matches!(value, Value::Int(42)));
+    }
+
+    let metrics = vm.jit_metrics();
+    assert!(
+        metrics.tier_up_requests >= 1 && metrics.work_floor_deferrals >= 1,
+        "eligible short work must reach and defer the admission gate: {metrics:?}"
+    );
+    assert_eq!(
+        metrics.compile_attempts, 0,
+        "below-floor work must not retain a native artifact: {metrics:?}"
+    );
+    assert_eq!(
+        metrics.resident_functions, 0,
+        "deferred short work must remain on bytecode: {metrics:?}"
     );
 }
 

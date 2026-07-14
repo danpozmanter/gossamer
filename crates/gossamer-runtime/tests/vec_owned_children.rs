@@ -10,14 +10,19 @@
 //! The ledger counters are process-global, so every test serialises on
 //! [`LEDGER_LOCK`].
 
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::sync::atomic::Ordering;
 
 use gossamer_runtime::c_abi::encoding::gos_rt_pem_decode_all_raw;
 use gossamer_runtime::c_abi::ledger::{STR_LIVE, VEC_LIVE};
 use gossamer_runtime::c_abi::map::{
-    gos_rt_map_free, gos_rt_map_insert_str_i64, gos_rt_map_keys_str, gos_rt_map_new,
-    gos_rt_vec_free,
+    gos_rt_map_free, gos_rt_map_insert_i64_i64, gos_rt_map_insert_str_i64, gos_rt_map_keys_str,
+    gos_rt_map_new, gos_rt_map_or_insert_str_i64, gos_rt_map_pop_i64, gos_rt_map_remove_i64,
+    gos_rt_map_set_vec_values, gos_rt_vec_free,
+};
+use gossamer_runtime::c_abi::rc::{
+    gos_rt_arena_pop, gos_rt_arena_push, gos_rt_rc_alloc_copy, gos_rt_rc_release, gos_rt_rc_retain,
+    region_is_active,
 };
 use gossamer_runtime::c_abi::regex::{
     gos_rt_regex_captures, gos_rt_regex_captures_all, gos_rt_regex_compile, gos_rt_regex_find_all,
@@ -25,11 +30,12 @@ use gossamer_runtime::c_abi::regex::{
 };
 use gossamer_runtime::c_abi::signal::gos_rt_vec_slice;
 use gossamer_runtime::c_abi::string::{
-    alloc_cstring, gos_rt_str_lines, gos_rt_str_split, gos_rt_vec_clone,
+    alloc_cstring, gos_rt_str_free, gos_rt_str_lines, gos_rt_str_split, gos_rt_vec_clone,
 };
 use gossamer_runtime::c_abi::vec::{
     GosVec, VecSlotChild, gos_rt_result_disc, gos_rt_result_payload, gos_rt_vec_push,
-    gos_rt_vec_with_capacity, vec_elem_kind, vec_set_slot_children, vec_slot_children,
+    gos_rt_vec_retain, gos_rt_vec_with_capacity, gos_rt_vec_with_capacity_typed, vec_elem_kind,
+    vec_is_region, vec_set_slot_children, vec_slot_children,
 };
 
 static LEDGER_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
@@ -42,6 +48,175 @@ fn vec_live() -> i64 {
     VEC_LIVE.load(Ordering::SeqCst)
 }
 
+#[test]
+fn with_capacity_uses_the_active_region() {
+    let _guard = LEDGER_LOCK.lock();
+    gos_rt_arena_push();
+    if !region_is_active() {
+        // Targets without virtual-memory reservations intentionally fall back
+        // to ordinary reference-counted allocation.
+        return;
+    }
+    unsafe {
+        let v = gos_rt_vec_with_capacity(8, 16);
+        assert!(!v.is_null());
+        assert!(
+            vec_is_region(&*v),
+            "with_capacity must not bypass an active arena"
+        );
+        assert!((*v).cap >= 16);
+        let typed = gos_rt_vec_with_capacity_typed(8, 24, vec_elem_kind::STRING);
+        assert!(!typed.is_null());
+        assert!(
+            vec_is_region(&*typed),
+            "typed with_capacity must not bypass an active arena"
+        );
+        assert!((*typed).cap >= 24);
+        // Region Vec frees are intentionally no-ops; the matching pop owns it.
+        gos_rt_vec_free(v);
+        gos_rt_vec_free(typed);
+    }
+    gos_rt_arena_pop();
+}
+
+#[test]
+fn vec_valued_map_releases_replaced_and_removed_entries() {
+    let _guard = LEDGER_LOCK.lock();
+    let base = vec_live();
+    unsafe {
+        let map = gos_rt_map_new(8, 8);
+        gos_rt_map_set_vec_values(map);
+
+        let first = gos_rt_vec_with_capacity(8, 1);
+        gos_rt_vec_retain(first); // the map's share, emitted by MIR for insert
+        gos_rt_map_insert_i64_i64(map, 1, first as i64);
+        gos_rt_vec_free(first); // source binding's normal scope cleanup
+        assert_eq!(vec_live(), base + 1, "map must own the first Vec share");
+
+        let second = gos_rt_vec_with_capacity(8, 1);
+        gos_rt_vec_retain(second); // map's replacement share
+        gos_rt_map_insert_i64_i64(map, 1, second as i64);
+        gos_rt_vec_free(second); // source cleanup
+        assert_eq!(
+            vec_live(),
+            base + 1,
+            "overwriting must release the old entry before retaining only the replacement"
+        );
+
+        assert!(gos_rt_map_remove_i64(map, 1));
+        assert_eq!(vec_live(), base, "remove must release the map-owned Vec");
+
+        let popped = gos_rt_vec_with_capacity(8, 1);
+        gos_rt_vec_retain(popped); // map's share
+        gos_rt_map_insert_i64_i64(map, 2, popped as i64);
+        gos_rt_vec_free(popped); // source cleanup
+        let popped_result = gos_rt_map_pop_i64(map, 2);
+        assert_eq!(gos_rt_result_disc(popped_result), 0, "pop must return Some");
+        let popped_value = gos_rt_result_payload(popped_result) as *mut GosVec;
+        assert_eq!(
+            vec_live(),
+            base + 1,
+            "pop transfers the map share to its result"
+        );
+        gos_rt_vec_free(popped_value); // receiver consumes the transferred share
+        assert_eq!(
+            vec_live(),
+            base,
+            "popped Vec must be released by its receiver"
+        );
+        gos_rt_map_free(map);
+    }
+    assert_eq!(vec_live(), base, "map teardown must not leak Vec entries");
+}
+
+#[test]
+fn vec_valued_map_or_insert_transfers_only_the_map_share() {
+    let _guard = LEDGER_LOCK.lock();
+    let base = vec_live();
+    unsafe {
+        let map = gos_rt_map_new(8, 8);
+        gos_rt_map_set_vec_values(map);
+
+        // This is the exact compiled-tier ownership protocol: the lowering
+        // retains the consuming value argument for the map, while `or_insert`
+        // returns only an interior borrow of the stored Vec.
+        let first = gos_rt_vec_with_capacity(8, 1);
+        gos_rt_vec_retain(first);
+        let first_key = alloc_cstring(b"first");
+        gos_rt_rc_retain(first_key.cast());
+        assert_eq!(
+            gos_rt_map_or_insert_str_i64(map, first_key, first as i64),
+            first as i64
+        );
+        gos_rt_str_free(first_key); // caller's source share
+        gos_rt_vec_free(first); // caller's source share
+        assert_eq!(vec_live(), base + 1, "map must retain the inserted Vec");
+
+        // A present-key call discards the prospective map share of the new
+        // default and returns the existing interior borrow without retaining
+        // it for a caller that must not free it.
+        let unused = gos_rt_vec_with_capacity(8, 1);
+        gos_rt_vec_retain(unused);
+        let present_key = alloc_cstring(b"first");
+        gos_rt_rc_retain(present_key.cast());
+        assert_eq!(
+            gos_rt_map_or_insert_str_i64(map, present_key, unused as i64),
+            first as i64
+        );
+        gos_rt_str_free(present_key); // caller's source share
+        gos_rt_vec_free(unused); // caller's source share
+        assert_eq!(
+            vec_live(),
+            base + 1,
+            "present default must not leak a Vec share"
+        );
+
+        gos_rt_map_free(map);
+    }
+    assert_eq!(vec_live(), base, "or_insert map teardown must be balanced");
+}
+
+#[test]
+fn structural_copy_blob_retains_and_releases_string_and_vec_children() {
+    let _guard = LEDGER_LOCK.lock();
+    let str_base = str_live();
+    let vec_base = vec_live();
+    let meta = [
+        gossamer_abi::rc::RC_KIND_STRUCT,
+        1,
+        0,
+        2,
+        0,
+        (gossamer_abi::rc::RC_CHILD_VEC << gossamer_abi::rc::RC_CHILD_KIND_SHIFT) | 1,
+    ];
+    unsafe {
+        let name = alloc_cstring(b"copied-name");
+        let tags = gos_rt_vec_with_capacity(8, 1);
+        // Aggregate ABI slots intentionally carry exposed pointer words.
+        let source = [
+            name.expose_provenance() as i64,
+            tags.expose_provenance() as i64,
+        ];
+        let blob = gos_rt_rc_alloc_copy(16, meta.as_ptr(), source.as_ptr().cast());
+        assert!(!blob.is_null());
+
+        // The copy holds its own shares after the source aggregate dies.
+        gos_rt_str_free(name);
+        gos_rt_vec_free(tags);
+        assert_eq!(str_live(), str_base + 1);
+        assert_eq!(vec_live(), vec_base + 1);
+        let copied_name = std::ptr::with_exposed_provenance(blob.cast::<usize>().read_unaligned());
+        let copied_tags: *mut GosVec =
+            std::ptr::with_exposed_provenance_mut(blob.add(8).cast::<usize>().read_unaligned());
+        assert_eq!(CStr::from_ptr(copied_name).to_bytes(), b"copied-name");
+        assert_eq!((*copied_tags).len, 0, "the copied Vec remains live");
+
+        gos_rt_rc_release(blob);
+    }
+    assert_eq!(str_live(), str_base, "copy blob leaked its String child");
+    assert_eq!(vec_live(), vec_base, "copy blob leaked its Vec child");
+}
+
 fn cstr(s: &str) -> CString {
     CString::new(s).unwrap()
 }
@@ -51,7 +226,11 @@ fn cstr(s: &str) -> CString {
 /// read unaligned (the allocation is 8-byte aligned in practice).
 fn first_slot_cstr(v: *const GosVec) -> *const std::ffi::c_char {
     let vec = unsafe { &*v };
-    unsafe { std::ptr::read_unaligned(vec.ptr.as_ptr().cast::<*const std::ffi::c_char>()) }
+    let raw = unsafe { std::ptr::read_unaligned(vec.ptr.as_ptr().cast::<usize>()) };
+    // Aggregate ABI slots intentionally carry pointer words. Recover the
+    // provenance explicitly so Miri validates the same raw-slot contract
+    // rather than treating the test's integer round trip as a dangling ptr.
+    std::ptr::with_exposed_provenance(raw)
 }
 
 #[test]
@@ -227,10 +406,9 @@ static PAIR_SLOTS: [VecSlotChild; 2] = [
 fn build_pair_vec(pairs: &[(&str, &str)]) -> *mut GosVec {
     let v = unsafe { gos_rt_vec_with_capacity(16, pairs.len() as i64) };
     for (a, b) in pairs {
-        let slot: [i64; 2] = [
-            alloc_cstring(a.as_bytes()) as i64,
-            alloc_cstring(b.as_bytes()) as i64,
-        ];
+        let a = alloc_cstring(a.as_bytes());
+        let b = alloc_cstring(b.as_bytes());
+        let slot: [i64; 2] = [a.expose_provenance() as i64, b.expose_provenance() as i64];
         unsafe { gos_rt_vec_push(v, slot.as_ptr().cast::<u8>()) };
     }
     vec_set_slot_children(v, &PAIR_SLOTS);

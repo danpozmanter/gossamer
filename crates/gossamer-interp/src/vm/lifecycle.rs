@@ -122,6 +122,14 @@ impl Vm {
             reused_artifacts: self.jit_counters.reused_artifacts.get(),
             ram_skipped_compiles: self.jit_counters.ram_skipped_compiles.get(),
             last_observed_rss_bytes: self.jit_counters.last_observed_rss_bytes.get(),
+            peak_observed_rss_bytes: self.jit_counters.peak_observed_rss_bytes.get(),
+            total_compile_time_us: self.jit_counters.total_compile_time_us.get(),
+            last_compile_time_us: self.jit_counters.last_compile_time_us.get(),
+            promoted_functions: self.jit_counters.promoted_functions.get(),
+            last_promoted_functions: self.jit_counters.last_promoted_functions.get(),
+            emitted_code_bytes: self.jit_counters.emitted_code_bytes.get(),
+            last_emitted_code_bytes: self.jit_counters.last_emitted_code_bytes.get(),
+            saved_vm_instructions: self.jit_counters.saved_vm_instructions.get(),
         }
     }
 
@@ -690,6 +698,9 @@ impl Vm {
         let tcx = &tcx;
         let trace = jit_call::jit_trace();
         let started = std::time::Instant::now();
+        if let Some(rss_bytes) = current_process_rss_bytes() {
+            self.jit_counters.observed_rss(rss_bytes);
+        }
         let empty = std::collections::HashMap::new();
         let shape_defs_arc = self.enum_shape_defs.borrow().clone();
         let shape_defs: &std::collections::HashMap<u32, u32> =
@@ -701,7 +712,7 @@ impl Vm {
         if let Some(cache_key) = cache_key.as_deref()
             && let Some(artifact) = thread_jit_artifact(cache_key)
         {
-            if self.install_jit_artifact(artifact) {
+            if self.install_jit_artifact(artifact) > 0 {
                 self.jit_counters.artifact_reused();
             }
             self.release_terminal_jit_snapshot();
@@ -709,12 +720,14 @@ impl Vm {
         }
 
         self.jit_counters.compile_started();
-        let artifact = match jit_backend::compile_to_jit_for_promotion(
-            bodies,
-            tcx,
-            shape_defs,
-            struct_shape_defs,
-        ) {
+        let artifact_result =
+            jit_backend::compile_to_jit_for_promotion(bodies, tcx, shape_defs, struct_shape_defs);
+        let elapsed = started.elapsed();
+        self.jit_counters.compile_finished(elapsed);
+        if let Some(rss_bytes) = current_process_rss_bytes() {
+            self.jit_counters.observed_rss(rss_bytes);
+        }
+        let artifact = match artifact_result {
             Ok(art) => art,
             Err(err) => {
                 if trace {
@@ -725,7 +738,7 @@ impl Vm {
                 return;
             }
         };
-        let compile_ms = started.elapsed().as_millis();
+        let compile_ms = elapsed.as_millis();
         if trace {
             eprintln!(
                 "jit: compiled {} functions in {compile_ms} ms",
@@ -737,12 +750,14 @@ impl Vm {
             self.release_terminal_jit_snapshot();
             return;
         }
+        let emitted_code_bytes = artifact.code_bytes;
         let artifact = Rc::new(artifact);
         if let Some(cache_key) = cache_key {
             cache_thread_jit_artifact(cache_key, &artifact);
         }
-        if self.install_jit_artifact(artifact) {
+        if self.install_jit_artifact(artifact) > 0 {
             self.jit_counters.compile_succeeded();
+            self.jit_counters.emitted_code_bytes(emitted_code_bytes);
         } else {
             self.jit_counters.artifact_discarded();
         }
@@ -753,9 +768,10 @@ impl Vm {
     /// Installs callable entries from an immutable artifact. The artifact is
     /// held by this VM before its raw entry pointers become reachable through
     /// `overrides`, so a cache eviction can never invalidate a dispatch.
-    fn install_jit_artifact(&self, artifact: Rc<JitArtifact>) -> bool {
+    fn install_jit_artifact(&self, artifact: Rc<JitArtifact>) -> usize {
         let trace = jit_call::jit_trace();
         let mut state = self.jit.write();
+        let mut installed_count = 0usize;
         for (name, jit_fn) in &artifact.functions {
             let Some(Global::Fn(chunk)) = self.lookup_global_ref(name.as_str()) else {
                 continue;
@@ -777,8 +793,9 @@ impl Vm {
             state
                 .chunk_overrides
                 .insert(Arc::as_ptr(chunk) as usize, jit_arc);
+            installed_count = installed_count.saturating_add(1);
         }
-        let installed = !state.overrides.is_empty();
+        let installed = installed_count > 0;
         if installed {
             self.jit_override_count
                 .store(state.overrides.len(), Ordering::Release);
@@ -788,10 +805,11 @@ impl Vm {
             state.compiled = JitCompileState::Failed;
         }
         drop(state);
+        self.jit_counters.promoted_functions(installed_count);
         for chunk_state in self.chunk_state_map.borrow().values() {
             *chunk_state.jit_resolve.borrow_mut() = crate::vm::JitResolve::Unresolved;
         }
-        installed
+        installed_count
     }
 
     /// A terminal tier-up result has no future use for compiler snapshots in

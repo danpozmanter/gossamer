@@ -1,0 +1,26 @@
+// Fixed-size arrays passed to `&mut [T]` / `&mut Vec<T>` parameters are
+// call-boundary copies. The callee may mutate the copy, but write-through is
+// guaranteed only for growable Vec / slice storage.
+
+fn set_first(v: &mut [i64]) {
+    v[0] = 99
+}
+
+fn push_one(v: &mut Vec<i64>) {
+    v.push(4)
+}
+
+fn main() {
+    let mut fixed: [i64; 3] = [1, 2, 3]
+    set_first(&mut fixed)
+    println!("fixed_after_set: {} {} {}", fixed[0], fixed[1], fixed[2])
+
+    let mut fixed_push: [i64; 3] = [1, 2, 3]
+    push_one(&mut fixed_push)
+    println!("fixed_after_push: len={} last={}", fixed_push.len(), fixed_push[2])
+
+    let mut grow: Vec<i64> = [1, 2, 3]
+    set_first(&mut grow)
+    push_one(&mut grow)
+    println!("vec_after: len={} first={} last={}", grow.len(), grow[0], grow[3])
+}

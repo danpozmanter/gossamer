@@ -50,6 +50,23 @@ use super::Builder;
 
 impl<'a> Builder<'a> {
     pub(crate) fn lower_block(&mut self, block: &HirBlock) -> Option<Local> {
+        // Function bodies begin with Builder's one root scope. Only nested
+        // blocks may acquire an implicit lexical region: a function's result
+        // is an externally visible escape boundary, while a nested block is
+        // accepted only when its tail is Copy (checked by the analysis).
+        // Never layer an automatic region inside a source-visible one.
+        let lexical_region = self.scopes.len() > 1
+            && self.region_depth == 0
+            && matches!(
+                crate::lower::helpers::LoopEligibility::new(&*self.tcx, self.region_unsafe)
+                    .decide_lexical_block(block),
+                crate::lower::helpers::RegionDecision::Region
+            );
+        if lexical_region {
+            self.emit_region_call("gos_rt_arena_push", block.span);
+            self.region_depth += 1;
+            self.deferred_auto_region_collections.push(false);
+        }
         self.push_scope();
         self.defer_stack.push(Vec::new());
         for stmt in &block.stmts {
@@ -60,6 +77,10 @@ impl<'a> Builder<'a> {
                 // needed; drop this frame without re-emitting.
                 self.defer_stack.pop();
                 self.pop_scope();
+                // Eligibility rejects all early exits, so this is defensive
+                // only; keeping the pop here preserves the region stack if a
+                // future lowering rule gains another diverging expression.
+                self.end_loop_region(lexical_region, block.span);
                 return None;
             }
         }
@@ -107,6 +128,7 @@ impl<'a> Builder<'a> {
             self.emit_defer_frame(&frame);
         }
         self.pop_scope();
+        self.end_loop_region(lexical_region, block.span);
         if self.current.is_none() { None } else { result }
     }
 

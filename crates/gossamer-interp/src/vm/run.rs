@@ -1381,52 +1381,35 @@ impl Vm {
                     }
                     match b {
                         Value::Array(items) | Value::Tuple(items) => {
-                            // A whole-element indexed write is a lenient no-op
-                            // out of range on both tiers (the compiled inline
-                            // vec store is bounds-guarded for scalar and
-                            // aggregate elements alike; only `v[i].field = x`
-                            // field projection panics, via a separate op).
-                            if raw >= 0 && (raw as usize) < items.len() {
-                                Arc::make_mut(items)[raw as usize] = new_value;
+                            if raw < 0 || (raw as usize) >= items.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
                             }
+                            Arc::make_mut(items)[raw as usize] = new_value;
                         }
-                        // Scalar arrays specialize to `IntArray` / `FloatVec`,
-                        // which the compiled tier indexes with an inline
-                        // bounds-guarded store: an out-of-range write (negative
-                        // or past the end) is a lenient no-op on both tiers,
-                        // matching the lenient zero-value read contract.
                         Value::IntArray(data) => {
-                            if raw >= 0 {
-                                let v = Arc::make_mut(data);
-                                let idx = raw as usize;
-                                if idx < v.len() {
-                                    match new_value {
-                                        Value::Int(n) => v[idx] = n,
-                                        _ => {
-                                            return Err(RuntimeError::Type(
-                                                "IndexSet on IntArray expects i64 value"
-                                                    .to_string(),
-                                            ));
-                                        }
-                                    }
+                            if raw < 0 || (raw as usize) >= data.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                            match new_value {
+                                Value::Int(n) => Arc::make_mut(data)[raw as usize] = n,
+                                _ => {
+                                    return Err(RuntimeError::Type(
+                                        "IndexSet on IntArray expects i64 value".to_string(),
+                                    ));
                                 }
                             }
                         }
                         Value::FloatVec(data) => {
-                            if raw >= 0 {
-                                let v = Arc::make_mut(data);
-                                let idx = raw as usize;
-                                if idx < v.len() {
-                                    match new_value {
-                                        Value::Float(f) => v[idx] = f,
-                                        Value::Int(n) => v[idx] = n as f64,
-                                        _ => {
-                                            return Err(RuntimeError::Type(
-                                                "IndexSet on FloatVec expects f64 value"
-                                                    .to_string(),
-                                            ));
-                                        }
-                                    }
+                            if raw < 0 || (raw as usize) >= data.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                            match new_value {
+                                Value::Float(f) => Arc::make_mut(data)[raw as usize] = f,
+                                Value::Int(n) => Arc::make_mut(data)[raw as usize] = n as f64,
+                                _ => {
+                                    return Err(RuntimeError::Type(
+                                        "IndexSet on FloatVec expects f64 value".to_string(),
+                                    ));
                                 }
                             }
                         }
@@ -1589,13 +1572,21 @@ impl Vm {
                     index,
                     value,
                 } => {
-                    // A negative index is a no-op, matching the
-                    // `builtin_insert` fallback; a positive index past
-                    // the end clamps to the length (an append).
                     let idx = match &registers[index as usize] {
-                        Value::Int(n) if *n >= 0 => *n as usize,
-                        _ => continue,
+                        Value::Int(n) => *n,
+                        _ => return Err(RuntimeError::Type("index must be integer".to_string())),
                     };
+                    let len = match &registers[receiver as usize] {
+                        Value::Array(items) => items.len() as i64,
+                        Value::IntArray(data) => data.len() as i64,
+                        Value::FloatVec(data) => data.len() as i64,
+                        _ => 0,
+                    };
+                    if idx < 0 || idx > len {
+                        return Err(RuntimeError::Panic(format!(
+                            "insert: index {idx} out of bounds for length {len}"
+                        )));
+                    }
                     let new_value = registers[value as usize].clone();
                     let recv = &mut registers[receiver as usize];
                     // Same typed-storage routing as `Op::VecPush`: a scalar
@@ -1618,12 +1609,12 @@ impl Vm {
                     match recv {
                         Value::Array(items) => {
                             let v = Arc::make_mut(items);
-                            v.insert(idx.min(v.len()), new_value);
+                            v.insert(idx as usize, new_value);
                         }
                         Value::IntArray(data) => {
                             if let Value::Int(n) = new_value {
                                 let v = Arc::make_mut(data);
-                                v.insert(idx.min(v.len()), n);
+                                v.insert(idx as usize, n);
                             }
                         }
                         Value::FloatVec(data) => {
@@ -1634,7 +1625,7 @@ impl Vm {
                             };
                             if let Some(f) = f {
                                 let v = Arc::make_mut(data);
-                                v.insert(idx.min(v.len()), f);
+                                v.insert(idx as usize, f);
                             }
                         }
                         _ => {}
@@ -1642,27 +1633,33 @@ impl Vm {
                 }
                 Op::VecRemove { receiver, index } => {
                     let idx = match &registers[index as usize] {
-                        Value::Int(n) if *n >= 0 => *n as usize,
-                        _ => continue,
+                        Value::Int(n) => *n,
+                        _ => return Err(RuntimeError::Type("index must be integer".to_string())),
                     };
+                    let len = match &registers[receiver as usize] {
+                        Value::Array(items) => items.len() as i64,
+                        Value::IntArray(data) => data.len() as i64,
+                        Value::FloatVec(data) => data.len() as i64,
+                        _ => 0,
+                    };
+                    if idx < 0 || idx >= len {
+                        return Err(RuntimeError::Panic(format!(
+                            "remove: index {idx} out of bounds for length {len}"
+                        )));
+                    }
+                    let idx = idx as usize;
                     match &mut registers[receiver as usize] {
                         Value::Array(items) => {
                             let v = Arc::make_mut(items);
-                            if idx < v.len() {
-                                v.remove(idx);
-                            }
+                            v.remove(idx);
                         }
                         Value::IntArray(data) => {
                             let v = Arc::make_mut(data);
-                            if idx < v.len() {
-                                v.remove(idx);
-                            }
+                            v.remove(idx);
                         }
                         Value::FloatVec(data) => {
                             let v = Arc::make_mut(data);
-                            if idx < v.len() {
-                                v.remove(idx);
-                            }
+                            v.remove(idx);
                         }
                         _ => {}
                     }
@@ -3196,45 +3193,21 @@ impl Vm {
                 } => unsafe {
                     let idx = *ints.get_unchecked(index_i as usize);
                     let b = registers.get_unchecked(base as usize);
-                    // `IntArrayGetI64` is the typed fast path that the
-                    // bytecode compiler emits when `flat_int_locals`
-                    // tracks the base register as an `IntArray`. On a
-                    // call shape like `fn slide(arr: [i64; 4])`,
-                    // `arr` is a parameter register whose tracking
-                    // can outlive its actual `Value::IntArray`
-                    // payload - e.g. when the caller passes a
-                    // generic `Value::Array` (an ABI shape the
-                    // call-args path doesn't typed-promote). Rather
-                    // than panic, fall back to a generic array read
-                    // when the receiver isn't the expected typed
-                    // shape; the surrounding hot loop pays one
-                    // discriminant match per index instead of
-                    // aborting.
-                    //
-                    // An out-of-range index (negative or past the end) yields
-                    // the lenient zero value, matching the generic `IndexGet`,
-                    // the compiled tiers' bounds-guarded read, and the sibling
-                    // `IntArraySetI64` no-op write.
-                    let value = if idx < 0 {
-                        0
-                    } else {
-                        let i = idx as usize;
-                        match b {
-                            Value::IntArray(data) => data.get(i).copied().unwrap_or(0),
-                            Value::Array(items) => match items.get(i) {
-                                Some(Value::Int(n)) => *n,
-                                _ => 0,
-                            },
-                            Value::FloatVec(_) | Value::FloatArray(_) => {
-                                return Err(RuntimeError::Type(
-                                    "IntArrayGetI64: receiver is a float array".to_string(),
-                                ));
-                            }
-                            _ => {
-                                return Err(RuntimeError::Type(
-                                    "IntArrayGetI64: receiver lost flat invariant".to_string(),
-                                ));
-                            }
+                    let i = usize::try_from(idx)
+                        .map_err(|_| RuntimeError::Panic("index out of bounds".to_string()))?;
+                    let value = match b {
+                        Value::IntArray(data) => data.get(i).copied().ok_or_else(|| {
+                            RuntimeError::Panic("index out of bounds".to_string())
+                        })?,
+                        Value::FloatVec(_) | Value::FloatArray(_) => {
+                            return Err(RuntimeError::Type(
+                                "IntArrayGetI64: receiver is a float array".to_string(),
+                            ));
+                        }
+                        _ => {
+                            return Err(RuntimeError::Type(
+                                "IntArrayGetI64: receiver lost flat invariant".to_string(),
+                            ));
                         }
                     };
                     *ints.get_unchecked_mut(dst_i as usize) = value;
@@ -3247,24 +3220,14 @@ impl Vm {
                     let idx = *ints.get_unchecked(index_i as usize);
                     let new_val = *ints.get_unchecked(value_i as usize);
                     let b = registers.get_unchecked_mut(base as usize);
-                    // Like `IntArrayGetI64`, the `flat_int_locals` tracking
-                    // on a `&mut Vec<i64>` parameter can outlive the actual
-                    // `Value::IntArray` payload when the caller passes a
-                    // generic `Value::Array` (a struct-field or call-arg
-                    // literal). Fall back to a generic element write rather
-                    // than aborting the hot loop. An out-of-range index (negative
-                    // or past the end) is a lenient no-op, matching the compiled
-                    // tier's bounds-guarded store and the zero-value read contract.
+                    let i = usize::try_from(idx)
+                        .map_err(|_| RuntimeError::Panic("index out of bounds".to_string()))?;
                     match b {
                         Value::IntArray(data) => {
-                            if idx >= 0 && (idx as usize) < data.len() {
-                                *Arc::make_mut(data).get_unchecked_mut(idx as usize) = new_val;
+                            if i >= data.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
                             }
-                        }
-                        Value::Array(items) => {
-                            if idx >= 0 && (idx as usize) < items.len() {
-                                Arc::make_mut(items)[idx as usize] = Value::Int(new_val);
-                            }
+                            *Arc::make_mut(data).get_unchecked_mut(i) = new_val;
                         }
                         _ => {
                             return Err(RuntimeError::Type(
@@ -3342,31 +3305,16 @@ impl Vm {
                 } => unsafe {
                     let idx = *ints.get_unchecked(index_i as usize);
                     let b = registers.get_unchecked(base as usize);
-                    // Tolerate generic `Value::Array(Vec<Value::Float>)`
-                    // alongside `Value::FloatVec(Vec<f64>)` - same
-                    // tracking-vs-actual-shape skew the IntArray fast
-                    // path has to handle when a typed receiver passes
-                    // through a non-promoting ABI boundary.
-                    //
-                    // An out-of-range index (negative or past the end) yields
-                    // the lenient zero value, matching the generic `IndexGet`,
-                    // the compiled tiers' bounds-guarded read, and the sibling
-                    // `FloatVecSetF64` no-op write.
-                    let value = if idx < 0 {
-                        0.0
-                    } else {
-                        let i = idx as usize;
-                        match b {
-                            Value::FloatVec(data) => data.get(i).copied().unwrap_or(0.0),
-                            Value::Array(items) => match items.get(i) {
-                                Some(Value::Float(f)) => *f,
-                                _ => 0.0,
-                            },
-                            _ => {
-                                return Err(RuntimeError::Type(
-                                    "FloatVecGetF64: receiver lost flat invariant".to_string(),
-                                ));
-                            }
+                    let i = usize::try_from(idx)
+                        .map_err(|_| RuntimeError::Panic("index out of bounds".to_string()))?;
+                    let value = match b {
+                        Value::FloatVec(data) => data.get(i).copied().ok_or_else(|| {
+                            RuntimeError::Panic("index out of bounds".to_string())
+                        })?,
+                        _ => {
+                            return Err(RuntimeError::Type(
+                                "FloatVecGetF64: receiver lost flat invariant".to_string(),
+                            ));
                         }
                     };
                     *floats.get_unchecked_mut(dst_f as usize) = value;
@@ -3384,15 +3332,13 @@ impl Vm {
                             "FloatVecSetF64: receiver lost flat invariant".to_string(),
                         ));
                     };
-                    // Out-of-range whole-element write is a lenient no-op, like
-                    // the compiled tier's bounds-guarded store.
-                    if idx >= 0 {
-                        let buf = Arc::make_mut(data_arc);
-                        let i = idx as usize;
-                        if i < buf.len() {
-                            *buf.get_unchecked_mut(i) = new_f;
-                        }
+                    let i = usize::try_from(idx)
+                        .map_err(|_| RuntimeError::Panic("index out of bounds".to_string()))?;
+                    let buf = Arc::make_mut(data_arc);
+                    if i >= buf.len() {
+                        return Err(RuntimeError::Panic("index out of bounds".to_string()));
                     }
+                    *buf.get_unchecked_mut(i) = new_f;
                 },
                 Op::BuildIntMap { dst_v } => {
                     registers[dst_v as usize] = Value::IntMap(Arc::new(parking_lot::Mutex::new(

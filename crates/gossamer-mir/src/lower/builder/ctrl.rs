@@ -2426,6 +2426,7 @@ impl<'a> Builder<'a> {
         if regioned {
             self.emit_region_call("gos_rt_arena_push", span);
             self.region_depth += 1;
+            self.deferred_auto_region_collections.push(false);
         }
         regioned
     }
@@ -2435,8 +2436,15 @@ impl<'a> Builder<'a> {
     pub(crate) fn end_loop_region(&mut self, regioned: bool, span: Span) {
         if regioned {
             self.region_depth = self.region_depth.saturating_sub(1);
+            let collect_after_pop = self
+                .deferred_auto_region_collections
+                .pop()
+                .expect("automatic region collection stack underflow");
             if self.current.is_some() {
                 self.emit_region_call("gos_rt_arena_pop", span);
+                if collect_after_pop {
+                    self.emit_region_call("gos_rt_collect_cycles", span);
+                }
             }
         }
     }

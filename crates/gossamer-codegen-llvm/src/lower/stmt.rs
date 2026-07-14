@@ -221,6 +221,7 @@ impl<'a> Lowerer<'a> {
                         | "gos_rt_vec_set_elem_meta"
                         | "gos_rt_vec_set_slot_children"
                         | "gos_rt_map_set_blob_values"
+                        | "gos_rt_map_set_vec_values"
                 )
             {
                 return self.lower_guarded_walk_intrinsic(name, args);

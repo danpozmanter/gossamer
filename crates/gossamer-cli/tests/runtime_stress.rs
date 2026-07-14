@@ -173,6 +173,67 @@ fn assert_three_tier_parity(tag: &str, source: &str, expected: &str) {
 }
 
 #[test]
+fn auto_region_defers_cycle_collection_until_after_the_iteration() {
+    // `collect_cycles` is deliberately in the allocating loop. The MIR
+    // lowerer must defer it until after the automatic arena pop: collecting
+    // while region-owned nodes are still live can retain a region pointer in
+    // cycle bookkeeping, while dropping the call would change the public
+    // runtime contract. Run the source through the default VM/deferred-JIT
+    // command and both native tiers so the ordering stays tier-safe.
+    let src = r"
+use std::runtime
+
+enum Node {
+    Leaf(i64),
+    Pair(Node, Node),
+}
+
+fn build(depth: i64) -> Node {
+    if depth == 0 { return Node::Leaf(1) }
+    Node::Pair(build(depth - 1), build(depth - 1))
+}
+
+fn count(n: &Node) -> i64 {
+    match n {
+        Node::Leaf(_) => 1,
+        Node::Pair(left, right) => 1 + count(left) + count(right),
+    }
+}
+
+fn main() {
+    let mut total = 0
+    for _ in 0..3 {
+        let tree = build(5)
+        total += count(&tree)
+        runtime::collect_cycles()
+    }
+    println(total)
+}
+";
+    assert_three_tier_parity("auto_region_collect_cycles", src, "189");
+}
+
+#[test]
+fn lexical_nonescaping_region_has_vm_and_native_parity() {
+    let src = r"
+enum Node { Leaf(i64), Pair(Node, Node) }
+
+fn count(n: &Node) -> i64 {
+    match n { Node::Leaf(_) => 1, Node::Pair(a, b) => count(a) + count(b) }
+}
+
+fn main() {
+    let answer = {
+        let tree = Node::Pair(Node::Leaf(1), Node::Pair(Node::Leaf(2), Node::Leaf(3)))
+        count(&tree)
+    }
+    println(answer)
+}
+";
+    assert_three_tier_parity("lexical_auto_region", src, "3");
+}
+
+#[test]
 fn ten_thousand_goroutines_send_one_value_each_and_join() {
     // 10_000 goroutines each send one i64 down a shared
     // channel; the main goroutine sums them. The channel is

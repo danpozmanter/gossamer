@@ -139,3 +139,22 @@ fn main() {
 "#;
     assert_eq!(run_main(src), "timeout=1\n");
 }
+
+#[test]
+fn context_timeout_cancels_recv_ctx() {
+    let src = r#"
+use std::context
+use std::sync::channel
+
+fn main() {
+    let root = context::Context::background()
+    let ctx = context::Context::with_timeout(root, 1)
+    let (_tx, rx) = channel()
+    match rx.recv_ctx(ctx) {
+        Some(_) => println!("value"),
+        None => println!("cancelled"),
+    }
+}
+"#;
+    assert_eq!(run_main(src), "cancelled\n");
+}

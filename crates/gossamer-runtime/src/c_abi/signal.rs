@@ -549,19 +549,19 @@ pub unsafe extern "C" fn gos_rt_arr_iter_free(iter: *mut GosArrIter) {
 }
 
 /// Reads an `i64`-shaped element from a `Vec` (or any
-/// 8-byte-elem `GosVec`) by index. Returns `0` when the receiver
-/// is null or `idx` is out of range. Used by the MIR-side Vec
-/// indexing path so `xs[0]` reads the data buffer instead of the
-/// `GosVec` header's `len` field.
+/// 8-byte-elem `GosVec`) by index. Invalid scalar indexing is a
+/// bounds panic, matching fixed-array and aggregate Vec indexing on
+/// every execution tier. Use an explicit `get`-style API where a
+/// non-panicking probe is intended.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_get_i64(v: *const GosVec, idx: i64) -> i64 {
     ffi_entry!(-1, {
         if v.is_null() {
-            return 0;
+            unsafe { gos_rt_panic_oob(c"vec index".as_ptr(), idx, 0) };
         }
         let vec = unsafe { &*v };
         if idx < 0 || idx >= vec.len {
-            return 0;
+            unsafe { gos_rt_panic_oob(c"vec index".as_ptr(), idx, vec.len) };
         }
         unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, idx) }
     })
@@ -583,18 +583,17 @@ pub unsafe extern "C" fn gos_rt_vec_get_i64_unchecked(v: *const GosVec, idx: i64
     })
 }
 
-/// Writes an `i64`-shaped element to a `Vec` at `idx`. No-op for
-/// null receivers or out-of-range indices (so a stale `xs[i] = v`
-/// after a shrink doesn't trash unrelated memory).
+/// Writes an `i64`-shaped element to a `Vec` at `idx`. Invalid scalar
+/// indexing is a bounds panic; it is never silently ignored.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_set_i64(v: *mut GosVec, idx: i64, value: i64) {
     ffi_entry!((), {
         if v.is_null() {
-            return;
+            unsafe { gos_rt_panic_oob(c"vec index".as_ptr(), idx, 0) };
         }
         let vec = unsafe { &mut *v };
         if idx < 0 || idx >= vec.len {
-            return;
+            unsafe { gos_rt_panic_oob(c"vec index".as_ptr(), idx, vec.len) };
         }
         unsafe { crate::c_abi::vec::vec_elem_store_i64(vec, idx, value) };
     });
@@ -648,6 +647,14 @@ pub unsafe extern "C" fn gos_rt_vec_get_ptr(v: *const GosVec, idx: i64) -> *mut 
         let vec = unsafe { &*v };
         if idx < 0 || idx >= vec.len {
             return std::ptr::null_mut();
+        }
+        if vec.elem_kind == crate::c_abi::vec::vec_elem_kind::PACKED_ROWS {
+            return unsafe { crate::c_abi::vec::packed_row_at(v, idx) };
+        }
+        if vec.elem_kind == crate::c_abi::vec::vec_elem_kind::VEC
+            && unsafe { crate::c_abi::vec::try_pack_primitive_rows(v.cast_mut()) }
+        {
+            return unsafe { crate::c_abi::vec::packed_row_at(v, idx) };
         }
         unsafe { vec.ptr.add((idx as usize) * (vec.elem_bytes as usize)) }
     })
@@ -1101,19 +1108,18 @@ pub unsafe extern "C" fn gos_rt_vec_insert_safe(v: *const GosVec, idx: i64, valu
 }
 
 /// `xs.insert(i, v)` - in-place insert at `idx`, shifting the tail up
-/// one slot. The method form has silent in-place semantics (unlike the
-/// `Result`-returning `gos_rt_vec_insert_safe`, which builds a fresh
-/// Vec); an out-of-range index is a no-op, matching the VM. `value` is
-/// the raw 8-byte payload (i64 / `*const c_char` cast to i64), as
-/// elsewhere in the i64-erased Vec ABI.
+/// one slot. The method form panics on invalid indices; callers wanting
+/// recoverable failure use the `Result`-returning `gos_rt_vec_insert_safe`,
+/// which builds a fresh Vec. `value` is the raw 8-byte payload (i64 /
+/// `*const c_char` cast to i64), as elsewhere in the i64-erased Vec ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_insert_at(v: *mut GosVec, idx: i64, value: i64) {
     ffi_entry!((), {
-        if v.is_null() {
-            return;
-        }
-        let len = unsafe { (*v).len };
-        if idx < 0 || idx > len {
+        let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
+        if v.is_null() || idx < 0 || idx > len {
+            let msg = format!("insert: index {idx} out of bounds for length {len}");
+            let cs = std::ffi::CString::new(msg).unwrap_or_default();
+            unsafe { gos_rt_panic(cs.as_ptr()) };
             return;
         }
         // Grow by one (handling region/global reallocation) with the new
@@ -1160,6 +1166,32 @@ pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *mut GosVec, idx: i64) -> i12
         vec.len = len - 1;
         unsafe { gos_rt_result_new(0, removed) }
     })
+}
+
+/// `xs.remove(i)` - in-place method-form removal. Invalid indices are
+/// invariant violations and panic; use `gos_rt_vec_remove_safe` for
+/// recoverable `Result` behavior.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_remove_at(v: *mut GosVec, idx: i64) {
+    ffi_entry!((), {
+        let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
+        if v.is_null() || idx < 0 || idx >= len {
+            let msg = format!("remove: index {idx} out of bounds for length {len}");
+            let cs = std::ffi::CString::new(msg).unwrap_or_default();
+            unsafe { gos_rt_panic(cs.as_ptr()) };
+            return;
+        }
+        let vec = unsafe { &mut *v };
+        let stride = vec.elem_bytes as usize;
+        if !vec.ptr.is_null() && idx + 1 < len {
+            let base = vec.ptr.as_ptr();
+            let dst = unsafe { base.add(idx as usize * stride) };
+            let src = unsafe { base.add((idx as usize + 1) * stride) };
+            let count = ((len - idx - 1) as usize) * stride;
+            unsafe { std::ptr::copy(src, dst, count) };
+        }
+        vec.len = len - 1;
+    });
 }
 
 /// `xs.pop() -> Option<T>` - removes the last element and returns it

@@ -180,6 +180,11 @@ pub struct JitArtifact {
     /// Keeping one `Arc<JitFn>` per native entry avoids duplicating the
     /// signature vectors and names merely to install an override.
     pub functions: HashMap<String, std::sync::Arc<JitFn>>,
+    /// Exact number of bytes Cranelift generated for the lowered user bodies
+    /// in this artifact. It includes machine code, jump tables, and constant
+    /// data in each function's finalized code buffer; it deliberately does
+    /// not estimate executable-page allocation or unrelated runtime code.
+    pub code_bytes: u64,
 }
 
 impl std::fmt::Debug for JitArtifact {
@@ -190,6 +195,7 @@ impl std::fmt::Debug for JitArtifact {
         // skip in a clippy-blessed way.
         f.debug_struct("JitArtifact")
             .field("functions", &self.functions.keys().collect::<Vec<_>>())
+            .field("code_bytes", &self.code_bytes)
             .finish_non_exhaustive()
     }
 }
@@ -605,6 +611,7 @@ pub fn compile_to_jit(
         return Ok(JitArtifact {
             module: None,
             functions: HashMap::new(),
+            code_bytes: 0,
         });
     }
     compile_bodies(bodies, tcx, enum_shapes, struct_shapes)
@@ -638,6 +645,7 @@ pub fn compile_to_jit_for_promotion(
         return Ok(JitArtifact {
             module: None,
             functions: HashMap::new(),
+            code_bytes: 0,
         });
     }
 
@@ -681,6 +689,7 @@ pub fn compile_to_jit_for_promotion(
                 return Ok(JitArtifact {
                     module: None,
                     functions: HashMap::new(),
+                    code_bytes: 0,
                 });
             }
             compile_bodies(&without_main, tcx, enum_shapes, struct_shapes)
@@ -822,6 +831,7 @@ fn compile_bodies(
     Ok(JitArtifact {
         module: Some(module),
         functions,
+        code_bytes: lowered.emitted_code_bytes,
     })
 }
 
@@ -1489,6 +1499,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_bytearr_slice_result" => rt::gos_rt_bytearr_slice_result,
         "gos_rt_floatarr_slice_result" => rt::gos_rt_floatarr_slice_result,
         "gos_rt_vec_insert_safe"     => rt::gos_rt_vec_insert_safe,
+        "gos_rt_vec_remove_at"       => rt::gos_rt_vec_remove_at,
         "gos_rt_vec_remove_safe"     => rt::gos_rt_vec_remove_safe,
         "gos_rt_map_keys_vec"        => rt::gos_rt_map_keys_vec,
         "gos_rt_map_values_vec"      => rt::gos_rt_map_values_vec,

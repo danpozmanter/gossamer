@@ -275,7 +275,7 @@ Higher-order parameters distinguish two callable types:
 
 | Type | Accepts | Representation |
 |------|---------|----------------|
-| `fn(args) -> ret` | raw pointer shape; named item coercion is not implemented | raw code pointer |
+| `fn(args) -> ret` | raw pointer shape | raw code pointer |
 | `Fn(args) -> ret` | bare items **and** capturing closures | env+code fat pointer |
 
 ```gossamer

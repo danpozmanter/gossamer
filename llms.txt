@@ -1,0 +1,15 @@
+# Gossamer
+
+Gossamer is a Rust-flavoured language with goroutines and deterministic memory management; use `gos` to check, run, build, test, format, and query programs. This generated index points models and agents at the reviewed primer and canonical API data for Gossamer 0.28.0.
+
+- [Compact LLM reference](llms-full.txt)
+- [Reviewed skill card](SKILL.md)
+- [Machine-readable stdlib API catalog](docs/api/stdlib.json) (822 entries)
+- [Cookbook registry](docs/api/cookbook.json) (recipes appear only after fixture verification)
+- [Language specification](SPEC.md)
+- [Examples](examples/)
+- [Examples guide](docs_src/examples.md)
+
+## Tooling
+
+Use `gos check FILE` before `gos run FILE`; validate compiled behavior with `gos build FILE`. For agent integration, run `gos mcp` over stdio, then use its `check`, `run`, `build`, `doc`, `explain`, and semantic-navigation tools.

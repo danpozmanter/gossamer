@@ -11,6 +11,7 @@
 #![allow(clippy::must_use_candidate, clippy::manual_is_multiple_of)]
 
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use ed25519_dalek::{Signature, Signer, SigningKey as DalekSigningKey, Verifier};
@@ -156,6 +157,42 @@ impl VerifyingKey {
             .verify(message, &sig)
             .map_err(|_| SigningError::BadSignature)
     }
+
+    /// Verifies a normal Ed25519 signature while reading `reader` in bounded
+    /// chunks. This is intentionally not Ed25519ph: registry signatures keep
+    /// their existing wire format and verify the exact tarball bytes.
+    pub fn verify_reader<R: Read>(
+        &self,
+        reader: &mut R,
+        signature_bytes: &[u8],
+    ) -> Result<(), SigningError> {
+        if signature_bytes.len() != 64 {
+            return Err(SigningError::Malformed(format!(
+                "expected 64-byte ed25519 signature, got {}",
+                signature_bytes.len()
+            )));
+        }
+        let mut arr = [0u8; 64];
+        arr.copy_from_slice(signature_bytes);
+        let signature = Signature::from_bytes(&arr);
+        let mut verifier = self
+            .inner
+            .verify_stream(&signature)
+            .map_err(|_| SigningError::BadSignature)?;
+        let mut buffer = [0u8; 8192];
+        loop {
+            let read = reader
+                .read(&mut buffer)
+                .map_err(|error| SigningError::Io(error.to_string()))?;
+            if read == 0 {
+                break;
+            }
+            verifier.update(&buffer[..read]);
+        }
+        verifier
+            .finalize_and_verify()
+            .map_err(|_| SigningError::BadSignature)
+    }
 }
 
 /// Locates the project's signing key, in order:
@@ -210,6 +247,17 @@ pub fn verify_signature_hex(
     let key = VerifyingKey::from_hex(public_key_hex)?;
     let signature = hex_decode(signature_hex.trim())?;
     key.verify(message, &signature)
+}
+
+/// Reader-based counterpart to [`verify_signature_hex`].
+pub fn verify_signature_hex_reader<R: Read>(
+    public_key_hex: &str,
+    reader: &mut R,
+    signature_hex: &str,
+) -> Result<(), SigningError> {
+    let key = VerifyingKey::from_hex(public_key_hex)?;
+    let signature = hex_decode(signature_hex.trim())?;
+    key.verify_reader(reader, &signature)
 }
 
 fn hex_decode(text: &str) -> Result<Vec<u8>, SigningError> {
@@ -267,6 +315,25 @@ mod tests {
         verify_bytes(&vk, msg, &sig).expect("verify");
         let tampered = b"the rain in fred";
         assert!(verify_bytes(&vk, tampered, &sig).is_err());
+    }
+
+    #[test]
+    fn stream_verifier_accepts_chunked_standard_ed25519_message() {
+        let mut secret = [0u8; 32];
+        rand_core::RngCore::fill_bytes(&mut OsRng, &mut secret);
+        let key = SigningKey::from_bytes(secret);
+        let verifying = key.verifying_key();
+        let message = vec![0x5au8; 32 * 1024 + 17];
+        let signature = sign_bytes(&key, &message);
+        let mut reader = std::io::Cursor::new(message.clone());
+        verifying
+            .verify_reader(&mut reader, &signature)
+            .expect("stream verifier must accept the ordinary Ed25519 signature");
+
+        let mut tampered = message;
+        tampered[8192] ^= 1;
+        let mut reader = std::io::Cursor::new(tampered);
+        assert!(verifying.verify_reader(&mut reader, &signature).is_err());
     }
 
     #[test]

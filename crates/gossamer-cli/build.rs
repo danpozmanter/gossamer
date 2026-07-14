@@ -225,6 +225,14 @@ fn build_runtime_into(
         .arg("--target-dir")
         .arg(&inner_target)
         .current_dir(workspace_root);
+    // Keep the static archive used by `gos build` in step with the runtime
+    // linked into the CLI itself.
+    if env::var_os("CARGO_FEATURE_INLINE_VEC_WORDS_6").is_some() {
+        cmd.arg("--features").arg("inline-vec-words-6");
+    }
+    if env::var_os("CARGO_FEATURE_INLINE_VEC_WORDS_8").is_some() {
+        cmd.arg("--features").arg("inline-vec-words-8");
+    }
     if let Some(t) = triple {
         cmd.arg("--target").arg(t);
     }

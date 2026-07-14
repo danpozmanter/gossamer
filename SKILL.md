@@ -12,9 +12,10 @@ collection, plus `arena { }` regions - no borrow checker, no
 lifetimes, no tracing-GC pauses). Syntax is Rust-flavoured; the
 runtime is Go-shaped (goroutines, channels). Source files end in
 `.gos`, the toolchain binary is `gos`, projects carry a
-`project.toml` manifest. Pre-1.0.0: the surface is stable to write
-against, and every feature ships across all three tiers (bytecode
-VM, in-process JIT, LLVM AOT).
+`project.toml` manifest. Pre-1.0.0: APIs may change. Most documented
+surface is available on the bytecode VM, in-process JIT, and LLVM AOT,
+but support is item- and platform-specific; check `gos feature-status`
+and validate the target tier before relying on an API in production.
 
 ## 2. Lean on the toolchain
 
@@ -83,10 +84,12 @@ Write clear, low-complexity, concise code.
 - **Tuple destructuring everywhere**: `let (a, b) = pair`, `for (k, v)
   in m.iter()`, `let (tx, rx) = channel()`.
 - **`for x in xs`** over collections - no `.iter()`, no `*x`.
-- **Bare integer indices** - `arr[i]` takes `i64`, no `as usize`. A
-  scalar-element index outside `[0, len)` yields the element's ZERO
-  value (guard with `len()` when absence must differ from zero); an
-  aggregate-element OOB access panics. Same on every tier.
+- **Bare integer indices** - `arr[i]` takes `i64`, no `as usize`.
+  Reads and writes outside `[0, len)` panic on every tier. Method-form
+  Vec `insert` accepts `0..=len`; method-form `remove` accepts
+  `0..len`; invalid indices panic. Use `len()` guards or the
+  Result-returning `Vec::insert` / `Vec::remove` APIs when absence is
+  recoverable.
 - **`m.inc(k)` / `m.inc(k, by)`** for counters; `m.or_insert(k,
   default)` for get-or-fill (`m.or_insert(k, d).method(args)` writes
   the mutation back into the stored value). `arr.swap(i, j)`.
@@ -275,13 +278,14 @@ fn main() {
 poll in source order; `default` makes it non-blocking). One-shot
 timer: `time::after(d) -> Receiver` as a select timeout arm.
 `std::sync` also has `Mutex`, `RwLock`, atomics, `Once`, `WaitGroup`,
-`Barrier`, and `Map` (concurrent string->string); `std::thread` is
-real OS threads.
+`Barrier`, and `Map` (concurrent string->string). `std::thread`
+provides scheduling hints and CPU introspection only: user code has no
+OS-thread spawn API. Use `go expr` or `spawn(f)` for concurrency.
 
 **Closures**: `|x: T| body`; capture is automatic (no `move`).
 Use `Fn(args) -> ret` for callback parameters. Plain `fn(args) -> ret`
-is a raw pointer shape; named function item coercion is not implemented
-(no FnMut/FnOnce distinction in practice).
+is a raw pointer shape; bare named functions coerce to `Fn(...) -> ...`
+at callback sites (no FnMut/FnOnce distinction in practice).
 
 **Iterators**: any type with `fn next(&mut self) -> Option<T>` works
 in `for`. Sequence combinators (`map`/`filter`/`take`/`skip`/`step_by`)
@@ -292,9 +296,12 @@ are callable as methods/free functions and materialize results.
 - `[T]` growable (push/pop/swap/sort/sort_by, `contains`, `index_of`,
   `first`/`last`, `rev`, `slice(a, b) -> Result`); `[T; N]`
   fixed; tuples `.0`/`.1`; tuple structs fully usable. Method-call
-  `xs.insert/remove` are silent in-place; the Result-returning forms
-  are the qualified `Vec::insert(xs, i, v)` / `Vec::remove(xs, i)`.
+  `xs.insert/remove` mutate in place and panic when the index is out of
+  bounds; the Result-returning forms are the qualified
+  `Vec::insert(xs, i, v)` / `Vec::remove(xs, i)`.
 - `std::collections`: `Vec`, `HashMap` (struct/tuple keys by value;
+  aggregate-key maps use `iter()` rather than `keys()` until typed key
+  snapshots are available;
   `iter()` yields `[(K, V)]`, `keys`, `values`, `HashMap::pop`),
   `HashSet` (full set algebra), `BTreeMap` (sorted; `String` or `i64`
   keys), `VecDeque`. A separate i64-only `queue`/`stack`/`deque`/
@@ -412,15 +419,13 @@ build`. Known sharp edges:
 
 - `+` on `String` copies; heavy assembly wants `bytes::Builder` or a
   `mut String` with `+=`.
-- Method dispatch is name-global in places: qualified paths
-  (`Point::origin()`) always work; `String`/`HashMap`/`Vec` receivers
-  dispatch by type; don't shadow built-in method names.
-- `u64`/`usize` at or above 2^63: the VM and LLVM tiers compare/
-  shift/display by declared type, but the in-process JIT still
-  treats them as signed - cross-check hot large-`u64` code with
-  `gos build`.
+- Method dispatch is type-directed for user methods, core
+  `String`/`HashMap`/`Vec` receivers, and typed stdlib receivers.
+  Qualified paths (`Point::origin()`) remain the most explicit form
+  when several types intentionally share a method name.
 - Per-file test modules need unique names (GR0003; section 11).
-- `Weak` into a strong cycle diverges across tiers (section 10).
+- `Weak` into a strong cycle is Experimental (section 10); break real
+  cycles explicitly and do not depend on liveness inside a cycle.
 - Not implemented (parse or reject cleanly): `async`/`await`,
   explicit lifetimes, the `move` keyword (capture is automatic).
   `gos feature-status` lists Experimental/Planned surface.

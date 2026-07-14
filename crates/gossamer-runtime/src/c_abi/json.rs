@@ -1000,6 +1000,23 @@ mod tests {
     }
 
     #[test]
+    fn json_render_preserves_parsed_number_spelling() {
+        let text = std::ffi::CString::new(r#"{"score":12.100000000000001,"short":20.9}"#).unwrap();
+        let parsed = unsafe { gos_rt_json_parse(text.as_ptr()) };
+        assert_eq!(crate::c_abi::vec::gos_rt_result_disc(parsed), 0);
+        let json = crate::c_abi::vec::gos_rt_result_payload(parsed) as *mut GosJson;
+        let rendered_ptr = unsafe { gos_rt_json_render(json) };
+        let rendered = unsafe { CStr::from_ptr(rendered_ptr) }.to_str().unwrap();
+        assert!(
+            rendered.contains("\"score\":12.100000000000001"),
+            "rendered JSON must retain the original numeric spelling: {rendered}"
+        );
+        assert!(rendered.contains("\"short\":20.9"));
+        unsafe { crate::c_abi::string::gos_rt_str_free(rendered_ptr) };
+        unsafe { gos_rt_json_free(json) };
+    }
+
+    #[test]
     fn json_collection_projections_reserve_the_source_length() {
         let text = std::ffi::CString::new(
             r#"{"k0":0,"k1":1,"k2":2,"k3":3,"k4":4,"k5":5,"k6":6,"k7":7,"k8":8}"#,

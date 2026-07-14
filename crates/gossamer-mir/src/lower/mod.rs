@@ -210,6 +210,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
         propagate_copy_types(body, tcx);
         rewrite_str_concat_consuming(body);
         crate::opt::reserve_vecs_for_counted_push_loops(body);
+        crate::opt::reserve_hashmaps_for_counted_insert_loops(body, tcx);
         // Fuse `seq.substring(i, i+k)` + `m.inc(kmer)` into the borrowed-slice
         // probe before the RC passes, so the eliminated scratch String gets no
         // retain/release.
@@ -221,7 +222,12 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
         insert_vec_elem_metas(body, tcx);
         insert_early_releases(body, tcx);
         hoist_loop_carried_releases(body, tcx);
-        crate::opt::suppress_container_moved_releases(body);
+        // `insert_*` calls are ownership-acquiring operations: the drop pass
+        // emitted a retain for the container's share immediately before the
+        // call, and it must retain the source binding's ordinary release.
+        // Keeping both sides balanced covers overwrite, removal, early return,
+        // and container teardown without a post-hoc "suppress the drop"
+        // escape hatch (which used to turn every inserted value into a leak).
         crate::opt::fuse_slice_parse_ranges(body);
         if std::env::var("GOS_DUMP_MIR_RC").is_ok() {
             eprintln!("=== MIR(post-rc) {} ===", body.name);

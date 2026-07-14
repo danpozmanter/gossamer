@@ -14,3 +14,16 @@ Assertions and sub-test harness helpers.
 | `check_ok` | fn | Asserts a Result is Ok, recording without panicking. |
 | `wait_for_scheduler_idle` | fn | Waits for the scheduler to become idle within a timeout. |
 
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+## API details and source
+
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+
+| Item | Canonical signature or declaration | Description |
+|---|---|---|
+| [`Runner`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs) | `type` — see the source declaration | Sub-test collector. |
+| [`check`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs) | `fn check(cond: bool, message: String) -> Result<(), errors::Error>` | Asserts a condition. |
+| [`check_eq`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs) | `fn check_eq<T: Debug + Eq>(left: T, right: T, message: String) -> Result<(), errors::Error>` | Asserts equality, rendering a diff on failure. |
+| [`check_ok`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs) | `fn check_ok<T, E: Debug>(result: Result<T, E>, message: String) -> Result<T, errors::Error>` | Asserts a Result is Ok, recording without panicking. |
+| [`wait_for_scheduler_idle`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs) | `fn wait_for_scheduler_idle(timeout_ms: i64) -> bool` | Waits for the scheduler to become idle within a timeout. |

@@ -94,6 +94,7 @@ impl<'a> Builder<'a> {
             grows_bindings: std::collections::HashSet::new(),
             grows_elem_ty: HashMap::new(),
             region_depth: 0,
+            deferred_auto_region_collections: Vec::new(),
             defer_stack: Vec::new(),
         }
     }
@@ -1205,20 +1206,18 @@ impl<'a> Builder<'a> {
         Some(symbol)
     }
 
-    /// Word offsets of every RC-managed child (`String` or RC-node) of a
-    /// by-value aggregate `ty`, recursing through inline sub-structs / tuples
-    /// at absolute word offsets. The same field set the drop pass releases
-    /// (`aggregate_rc_field_paths`): `Vec` / `Slice` fields and inline-enum /
-    /// sentinel ADTs are excluded (a `Vec` carries no `RcHeader`, and those
-    /// ADTs run their own teardown). One word per child - RC-managed fields
-    /// are a single pointer slot.
-    pub(crate) fn aggr_rc_child_words(&self, ty: Ty) -> Vec<i64> {
+    /// Encoded child entries for a by-value aggregate `ty`, recursing through
+    /// inline sub-structs / tuples at absolute word offsets. Both RC-managed
+    /// children (`String` / enum nodes) and `Vec` children must be named: an
+    /// escaped aggregate copy owns a share of each and releases them through
+    /// their respective runtime paths.
+    pub(crate) fn aggr_child_entries(&self, ty: Ty) -> Vec<i64> {
         let mut out = Vec::new();
-        self.collect_aggr_rc_words(ty, 0, 0, &mut out);
+        self.collect_aggr_child_entries(ty, 0, 0, &mut out);
         out
     }
 
-    fn collect_aggr_rc_words(&self, ty: Ty, base_word: i64, depth: u32, out: &mut Vec<i64>) {
+    fn collect_aggr_child_entries(&self, ty: Ty, base_word: i64, depth: u32, out: &mut Vec<i64>) {
         use gossamer_types::TyKind;
         if depth > 16 {
             return;
@@ -1238,13 +1237,18 @@ impl<'a> Builder<'a> {
         let mut word = base_word;
         for fty in field_tys {
             let fwords = i64::from(self.type_slot_bytes(fty).max(8) / 8);
-            if self.tcx.is_rc_managed(fty)
-                && !matches!(self.tcx.kind_of(fty), TyKind::Vec(_) | TyKind::Slice(_))
-            {
-                out.push(word);
+            if matches!(self.tcx.kind_of(fty), TyKind::Vec(_) | TyKind::Slice(_)) {
+                out.push(
+                    (gossamer_abi::rc::RC_CHILD_VEC << gossamer_abi::rc::RC_CHILD_KIND_SHIFT)
+                        | word,
+                );
+            } else if self.tcx.is_rc_managed(fty) {
+                out.push(
+                    (gossamer_abi::rc::RC_CHILD_RC << gossamer_abi::rc::RC_CHILD_KIND_SHIFT) | word,
+                );
             } else if matches!(self.tcx.kind_of(fty), TyKind::Tuple(_) | TyKind::Adt { .. }) {
                 // Inline sub-struct / tuple: its fields occupy these slots.
-                self.collect_aggr_rc_words(fty, word, depth + 1, out);
+                self.collect_aggr_child_entries(fty, word, depth + 1, out);
             }
             word += fwords;
         }
@@ -1252,19 +1256,19 @@ impl<'a> Builder<'a> {
 
     /// Registers (idempotently) the `RC_KIND_STRUCT` child-word meta for an
     /// enum-payload box of aggregate type `ty`, returning its symbol, or
-    /// `None` when the aggregate has no RC children (a scalar struct like
+    /// `None` when the aggregate has no owning children (a scalar struct like
     /// `Point` - its box is a meta-less leaf the release walk frees directly).
     pub(crate) fn ensure_aggr_struct_meta(&mut self, ty: Ty) -> Option<String> {
-        let words = self.aggr_rc_child_words(ty);
-        if words.is_empty() {
+        let entries = self.aggr_child_entries(ty);
+        if entries.is_empty() {
             return None;
         }
         let symbol = format!("gos_rc_meta_boxaggr_{}", ty.as_u32());
         if self.tcx.rc_meta(&symbol).is_some() {
             return Some(symbol);
         }
-        let mut blob = vec![gossamer_abi::rc::RC_KIND_STRUCT, 1, 0, words.len() as i64];
-        blob.extend_from_slice(&words);
+        let mut blob = vec![gossamer_abi::rc::RC_KIND_STRUCT, 1, 0, entries.len() as i64];
+        blob.extend_from_slice(&entries);
         self.tcx.register_rc_meta(symbol.clone(), blob);
         Some(symbol)
     }

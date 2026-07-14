@@ -1,0 +1,16 @@
+// Scalar source indexing is checked on every tier. This must terminate with a
+// GX0005 bounds panic rather than yielding an integer zero or silently
+// ignoring the preceding out-of-range write.
+
+fn main() {
+    let mut fixed: [i64] = [1, 2, 3]
+    fixed[1] = 7
+    println!("fixed-in-range={}", fixed[1])
+
+    let mut dynamic: Vec<i64> = Vec::new()
+    dynamic.push(4)
+    dynamic.push(5)
+    println!("dynamic-in-range={}", dynamic[1])
+    dynamic[99] = 6
+    println!("unreachable={}", dynamic[99])
+}

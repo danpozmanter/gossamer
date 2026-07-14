@@ -31,9 +31,8 @@ pub use build::{
 };
 pub use frontend::{FrontendOutcome, check_frontend};
 pub use frontend_cache::{
-    FrontendCacheKey, cache_dir, load_blob, load_blob_in, mark_success, mark_success_in,
-    observe_hit, observe_hit_in, raw_blob_path, raw_blob_path_in, store_blob, store_blob_in,
-    store_raw, store_raw_in,
+    FrontendCacheKey, cache_dir, load_blob, load_blob_in, raw_blob_path, raw_blob_path_in,
+    store_blob, store_blob_in, store_raw, store_raw_in,
 };
 pub use link::{
     ARTIFACT_MAGIC, Artifact, LinkerOptions, Symbol, TargetTriple, TranslationUnit, fingerprint,

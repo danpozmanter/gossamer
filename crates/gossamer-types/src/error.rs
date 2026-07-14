@@ -522,6 +522,13 @@ impl TypeDiagnostic {
                         .with_note(
                             "`set` is the `json::Value` field-update helper, not a map method",
                         )
+                } else if name == "keys for aggregate HashMap keys" && ty.starts_with("HashMap") {
+                    out.with_help(
+                        "iterate the map with `for (key, value) in map.iter()` instead",
+                    )
+                    .with_note(
+                        "`HashMap::keys()` is unavailable for struct, tuple, and array key types until aggregate key snapshots preserve their layout",
+                    )
                 } else {
                     out.with_help(format!("`{ty}` has no method named `{name}`"))
                         .with_note("check for a typo or an impl block missing from scope")

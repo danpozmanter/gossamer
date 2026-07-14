@@ -16,7 +16,7 @@ gaps are one-line additions to the dispatch table.
 | Method | Returns | Notes |
 |---|---|---|
 | `String::new()` | `String` | Associated function; empty owned string. |
-| `String::with_capacity(n)` | `String` | Associated function; accepts a capacity hint, currently advisory for VM strings. |
+| `String::with_capacity(n)` | `String` | Associated function; reserves mutable builder storage in the VM and native runtime. |
 | `String::from(value)` | `String` | Associated function; identity for strings, display conversion for scalars. |
 | `String::from_utf8(bytes)` | `Result<String, errors::Error>` | Associated function; decodes a byte vector, returning `Err` for invalid UTF-8. |
 | `s.len()` | `i64` | Byte length, not codepoint count. Use `utf8::rune_count` for code points. |

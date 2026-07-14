@@ -1,0 +1,11 @@
+// Method-form Vec insert/remove are invariant operations: invalid indices
+// panic on every tier. Use the qualified `Vec::insert` / `Vec::remove`
+// free functions when recoverable `Result` behavior is wanted.
+
+fn main() {
+    let mut xs = [1, 2, 3]
+    xs.insert(3, 4)
+    println!("before {}", xs.len())
+    xs.insert(5, 99)
+    println!("unreachable")
+}

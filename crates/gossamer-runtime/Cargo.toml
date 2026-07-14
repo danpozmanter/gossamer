@@ -11,6 +11,13 @@ description = "Runtime support library linked into every Gossamer program."
 [lib]
 crate-type = ["staticlib", "rlib"]
 
+[features]
+# Inline Vec capacity build switches. Six words is the selected default from
+# the 0.28 workload matrix; the explicit eight-word switch keeps future A/B
+# checks available without changing the stable `GosVec` header ABI.
+inline-vec-words-6 = []
+inline-vec-words-8 = []
+
 # The runtime crate is unsafe by design - its C-ABI surface
 # (`#[no_mangle] extern "C"` functions accepting raw pointers)
 # is unsafe at every entry. Override the workspace `deny` to
@@ -52,7 +59,7 @@ num-traits = "0.2"
 parking_lot = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true, features = ["unbounded_depth"] }
+serde_json = { workspace = true, features = ["arbitrary_precision", "unbounded_depth"] }
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 flate2 = "1"
 sha1 = { version = "0.10", default-features = false, features = ["std"] }

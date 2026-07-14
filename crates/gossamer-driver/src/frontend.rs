@@ -21,7 +21,7 @@ use gossamer_types::{
     ExhaustivenessError, TyCtxt, check_arena_escapes, check_exhaustiveness, typecheck_source_file,
 };
 
-use crate::frontend_cache::{FrontendCacheKey, load_blob, mark_success, store_blob};
+use crate::frontend_cache::{FrontendCacheKey, load_blob, store_blob};
 use crate::pipeline::CheckedFrontend;
 
 /// Result of the shared front-end gate.
@@ -65,16 +65,19 @@ impl FrontendOutcome {
 pub fn check_frontend(source: &str, file_id: FileId) -> FrontendOutcome {
     let cache_key = FrontendCacheKey::new(source, env!("CARGO_PKG_VERSION"));
     let trace = std::env::var_os("GOSSAMER_CACHE_TRACE").is_some();
-    let (sf, parse_diags) = if let Some(cached) = load_blob::<SourceFile>(&cache_key) {
-        if trace {
-            eprintln!("cache: parse skipped for {}", cache_key.as_hex());
-        }
-        // The cached blob is the post-augmentation `SourceFile` stored after
-        // a previous successful gate, so the implicit `fn main` is present.
-        (cached, Vec::new())
-    } else {
-        gossamer_parse::autoderive::parse_with_autoderive(source, file_id)
-    };
+    let (sf, parse_diags, parsed_from_source) =
+        if let Some(cached) = load_blob::<SourceFile>(&cache_key) {
+            if trace {
+                eprintln!("cache: parse skipped for {}", cache_key.as_hex());
+            }
+            // The cached blob is the post-augmentation `SourceFile` stored after
+            // a previous successful gate, so the implicit `fn main` is present.
+            (cached, Vec::new(), false)
+        } else {
+            let (parsed, diagnostics) =
+                gossamer_parse::autoderive::parse_with_autoderive(source, file_id);
+            (parsed, diagnostics, true)
+        };
 
     let mut diagnostics: Vec<Diagnostic> = parse_diags
         .iter()
@@ -116,8 +119,11 @@ pub fn check_frontend(source: &str, file_id: FileId) -> FrontendOutcome {
         diagnostics.push(diag.to_diagnostic());
     }
 
-    if diagnostics.is_empty() {
-        mark_success(&cache_key);
+    // The blob is the sole cache-validity marker. Rewriting it after a hit
+    // used to add two atomic, fsync-backed writes (a redundant `.ok` marker
+    // and the same AST) to every successful `gos run`; that dominated small
+    // process startup. Only a clean parse miss publishes a new advisory blob.
+    if diagnostics.is_empty() && parsed_from_source {
         store_blob(&cache_key, &sf);
     }
 

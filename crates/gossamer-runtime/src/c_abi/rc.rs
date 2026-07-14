@@ -1615,6 +1615,7 @@ pub unsafe extern "C" fn gos_rt_rc_alloc_tagged(size: u64, meta: *const i64) -> 
         }
     });
     if let Some(p) = hit {
+        crate::c_abi::ledger::rc_alloc(size as usize, need, true, false);
         return p;
     }
     // Miss: a region is active but its current slab is full / not yet acquired,
@@ -1622,6 +1623,7 @@ pub unsafe extern "C" fn gos_rt_rc_alloc_tagged(size: u64, meta: *const i64) -> 
     if region_active() {
         let p = region_alloc_inner_unzeroed(size as usize, false);
         if !p.is_null() {
+            crate::c_abi::ledger::rc_alloc(size as usize, need, true, false);
             return p;
         }
         // Arena unavailable: fall through to the headered global path.
@@ -1647,6 +1649,12 @@ pub unsafe extern "C" fn gos_rt_rc_alloc_tagged(size: u64, meta: *const i64) -> 
         (*h).meta_id = meta_id;
     }
     rc_live_inc();
+    crate::c_abi::ledger::rc_alloc(
+        size as usize,
+        unsafe { rc_block_usable_size(base) },
+        false,
+        false,
+    );
     unsafe { base.add(RC_HEADER_SIZE) }
 }
 
@@ -1679,6 +1687,16 @@ pub unsafe extern "C" fn gos_rt_rc_alloc(size: u64, meta: *const i64) -> *mut u8
         (*h).meta_id = meta_id;
     }
     rc_live_inc();
+    crate::c_abi::ledger::rc_alloc(
+        size as usize,
+        if in_region {
+            total
+        } else {
+            unsafe { rc_block_usable_size(base) }
+        },
+        in_region,
+        false,
+    );
     unsafe { base.add(RC_HEADER_SIZE) }
 }
 
@@ -1715,6 +1733,7 @@ pub extern "C" fn gos_rt_enum_unit(tag: i64) -> *mut u8 {
             (*h).meta_id = 0;
             let payload = base.add(RC_HEADER_SIZE);
             rc_live_inc();
+            crate::c_abi::ledger::rc_alloc(8, rc_block_usable_size(base), false, false);
             payload
         }
     };
@@ -2208,6 +2227,12 @@ pub unsafe extern "C" fn gos_rt_rc_alloc_reuse(
     let payload = unsafe { token.add(RC_HEADER_SIZE) };
     unsafe { std::ptr::write_bytes(payload, 0, size as usize) };
     rc_reuse_inc();
+    crate::c_abi::ledger::rc_alloc(
+        size as usize,
+        unsafe { rc_block_usable_size(token) },
+        false,
+        true,
+    );
     payload
 }
 
@@ -2475,8 +2500,12 @@ unsafe fn visit_entries(payload: *mut u8, mut f: impl FnMut(i64, *mut u8)) {
                 let entry = unsafe { *meta.add(idx + 2 + j as usize) };
                 let child_kind = entry >> RC_CHILD_KIND_SHIFT;
                 let word = entry & RC_CHILD_WORD_MASK;
-                let slot = unsafe { payload.add((word as usize) * 8) as *const *mut u8 };
-                let child = unsafe { *slot };
+                // Aggregate slots cross the C ABI as pointer-sized integer
+                // words. Reconstruct exposed provenance explicitly instead
+                // of treating those integer bits as a Rust pointer load.
+                let slot = unsafe { payload.add((word as usize) * 8).cast::<usize>() };
+                let raw = unsafe { slot.read_unaligned() };
+                let child: *mut u8 = std::ptr::with_exposed_provenance_mut(raw);
                 if !child.is_null() {
                     f(child_kind, child);
                 }
@@ -2596,7 +2625,9 @@ unsafe fn visit_guarded_children(base: *mut u8, meta: *const i64, mut f: impl Fn
                 continue;
             }
         }
-        let child = unsafe { *(base.add(payload_word as usize * 8) as *const *mut u8) };
+        let slot = unsafe { base.add(payload_word as usize * 8).cast::<usize>() };
+        let raw = unsafe { slot.read_unaligned() };
+        let child: *mut u8 = std::ptr::with_exposed_provenance_mut(raw);
         if !child.is_null() && unsafe { is_copy_blob(child) } {
             f(child);
         }
@@ -2655,9 +2686,23 @@ pub unsafe extern "C" fn gos_rt_rc_alloc_copy(
     }
     unsafe { std::ptr::copy_nonoverlapping(src, payload, size as usize) };
     unsafe {
-        visit_guarded_children(payload, meta, |child| {
-            gos_rt_rc_retain(child);
-        });
+        if *meta == gossamer_abi::rc::RC_KIND_STRUCT_GUARDED {
+            visit_guarded_children(payload, meta, |child| {
+                gos_rt_rc_retain(child);
+            });
+        } else {
+            // Map-owned aggregate copies use ordinary structural metadata so
+            // their direct String / RC and Vec fields are retained along with
+            // the copied words. `visit_entries` reads this blob from the
+            // freshly initialised header and dispatches each child kind.
+            visit_entries(payload, |kind, child| {
+                if kind == gossamer_abi::rc::RC_CHILD_VEC {
+                    crate::c_abi::gos_rt_vec_retain(child.cast());
+                } else {
+                    gos_rt_rc_retain(child);
+                }
+            });
+        }
     }
     payload
 }
@@ -3600,6 +3645,32 @@ mod tests {
             gos_rt_rc_release(p);
             assert_eq!(rc_live_count(), base);
         }
+    }
+
+    #[test]
+    fn allocation_telemetry_separates_payload_header_and_reuse() {
+        let before = crate::c_abi::ledger::rc_alloc_stats();
+        unsafe {
+            let first = gos_rt_rc_alloc(16, std::ptr::null());
+            assert!(!first.is_null());
+            let token = gos_rt_rc_drop_reuse(first);
+            assert!(!token.is_null());
+            let reused = gos_rt_rc_alloc_reuse(token, 16, std::ptr::null());
+            assert!(!reused.is_null());
+            gos_rt_rc_release(reused);
+        }
+        let after = crate::c_abi::ledger::rc_alloc_stats();
+        assert!(after.0 > before.0, "fresh allocation must be counted");
+        assert!(after.2 > before.2, "Perceus reuse must be counted");
+        assert!(
+            after.3 >= before.3 + 32,
+            "both payload requests are retained"
+        );
+        let heap_or_reuse = (after.0 - before.0) + (after.2 - before.2);
+        assert!(
+            after.4 - before.4 >= after.3 - before.3 + heap_or_reuse * RC_HEADER_SIZE as u64,
+            "usable storage includes the fixed RC header"
+        );
     }
 
     #[test]

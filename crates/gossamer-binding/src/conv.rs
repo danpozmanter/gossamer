@@ -43,6 +43,7 @@ fn describe(v: &Value) -> &'static str {
         Value::Float(_) => "f64",
         Value::Char(_) => "char",
         Value::String(_) => "String",
+        Value::Json(_) => "json",
         Value::Tuple(_) => "tuple",
         Value::Array(_) | Value::IntArray(_) | Value::FloatVec(_) | Value::FloatArray(_) => "vec",
         Value::Variant(_) => "enum variant",
@@ -715,6 +716,7 @@ fn value_to_dyn(value: &Value) -> DynValue {
         Value::Float(f) => DynValue::Float(*f),
         Value::Char(c) => DynValue::Char(*c),
         Value::String(s) => DynValue::String(s.as_str().to_string()),
+        Value::Json(json) => json_to_dyn(json.as_value()),
         Value::IntArray(arc) => {
             // Heuristic: an IntArray whose every element is in
             // `u8` range is treated as Bytes (the natural Gossamer
@@ -767,6 +769,25 @@ fn value_to_dyn(value: &Value) -> DynValue {
         | Value::Builtin(_)
         | Value::Native(_)
         | Value::Channel(_) => DynValue::Nil,
+    }
+}
+
+fn json_to_dyn(value: &gossamer_std::json::Value) -> DynValue {
+    match value {
+        gossamer_std::json::Value::Null => DynValue::Nil,
+        gossamer_std::json::Value::Bool(b) => DynValue::Bool(*b),
+        gossamer_std::json::Value::Int(i) => DynValue::Int(*i),
+        gossamer_std::json::Value::Number(f) => DynValue::Float(*f),
+        gossamer_std::json::Value::String(s) => DynValue::String(s.clone()),
+        gossamer_std::json::Value::Array(items) => {
+            DynValue::List(items.iter().map(json_to_dyn).collect())
+        }
+        gossamer_std::json::Value::Object(entries) => DynValue::Map(
+            entries
+                .iter()
+                .map(|(key, value)| (DynValue::String(key.clone()), json_to_dyn(value)))
+                .collect(),
+        ),
     }
 }
 

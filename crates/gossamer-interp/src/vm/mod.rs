@@ -160,10 +160,10 @@ pub struct Vm {
     pub(crate) tcx_snapshot: RefCell<Option<Arc<TyCtxt>>>,
     /// Names of JIT-worthy bodies that contain a loop or recursion (and
     /// that the codegen can actually lower). Their `ChunkState` starts
-    /// with a hot counter of 1 so the first call compiles and dispatches
-    /// native in the same call - a hot loop inside a rarely-called function
-    /// reaches native code without waiting on a call-count threshold it
-    /// would never hit. Computed once at load, before `mir_bodies` may be
+    /// with a hot counter of 1 so the first call reaches the JIT admission
+    /// gate without waiting on a call-count threshold it would never hit.
+    /// The observed-work floor still applies, avoiding compile overhead for
+    /// short loops. Computed once at load, before `mir_bodies` may be
     /// released, so it survives the deferred compile that drops the bodies.
     /// Immutable promotion metadata derived during load. Worker VMs share the
     /// same allocation instead of re-walking MIR when a goroutine starts.
@@ -341,8 +341,31 @@ pub struct JitMetrics {
     /// process was already at or above that resident-memory cap.
     pub ram_skipped_compiles: u64,
     /// Last process RSS observed by the JIT tier-up gate, in bytes. `0` means
-    /// no RSS sample was available or no RAM gate was configured.
+    /// no RSS sample was available.
     pub last_observed_rss_bytes: u64,
+    /// Largest process RSS sample taken while considering or compiling a JIT
+    /// artifact. This is process-wide RSS, not an estimate of code bytes.
+    pub peak_observed_rss_bytes: u64,
+    /// Total time spent inside Cranelift promotion compilation, in microseconds.
+    pub total_compile_time_us: u64,
+    /// Duration of the most recent Cranelift promotion compilation, in
+    /// microseconds. A failed compile is still recorded because it consumed
+    /// compiler work.
+    pub last_compile_time_us: u64,
+    /// Total VM-callable entries installed from promoted artifacts.
+    pub promoted_functions: u64,
+    /// Number of VM-callable entries installed by the latest artifact.
+    pub last_promoted_functions: u64,
+    /// Exact bytes Cranelift generated for successfully installed user bodies,
+    /// including each function's machine code, jump tables, and constants.
+    /// This is distinct from process RSS and executable-page allocation.
+    pub emitted_code_bytes: u64,
+    /// Exact generated-code bytes in the most recently installed artifact.
+    pub last_emitted_code_bytes: u64,
+    /// Lower-bound count of bytecode instructions bypassed by successful
+    /// native dispatches. This counts each directly dispatched chunk; native
+    /// calls made entirely inside JIT code are deliberately not guessed.
+    pub saved_vm_instructions: u64,
 }
 
 /// Interior counters backing [`JitMetrics`]. Kept separate from `JitState`
@@ -358,6 +381,14 @@ pub(crate) struct JitCounters {
     reused_artifacts: Cell<u64>,
     ram_skipped_compiles: Cell<u64>,
     last_observed_rss_bytes: Cell<u64>,
+    peak_observed_rss_bytes: Cell<u64>,
+    total_compile_time_us: Cell<u64>,
+    last_compile_time_us: Cell<u64>,
+    promoted_functions: Cell<u64>,
+    last_promoted_functions: Cell<u64>,
+    emitted_code_bytes: Cell<u64>,
+    last_emitted_code_bytes: Cell<u64>,
+    saved_vm_instructions: Cell<u64>,
 }
 
 impl JitCounters {
@@ -410,6 +441,37 @@ impl JitCounters {
     #[inline]
     pub(crate) fn observed_rss(&self, rss_bytes: u64) {
         self.last_observed_rss_bytes.set(rss_bytes);
+        self.peak_observed_rss_bytes
+            .set(self.peak_observed_rss_bytes.get().max(rss_bytes));
+    }
+
+    #[inline]
+    pub(crate) fn compile_finished(&self, elapsed: std::time::Duration) {
+        let elapsed_us = elapsed.as_micros().try_into().unwrap_or(u64::MAX);
+        self.last_compile_time_us.set(elapsed_us);
+        self.total_compile_time_us
+            .set(self.total_compile_time_us.get().saturating_add(elapsed_us));
+    }
+
+    #[inline]
+    pub(crate) fn promoted_functions(&self, count: usize) {
+        let count = u64::try_from(count).unwrap_or(u64::MAX);
+        self.last_promoted_functions.set(count);
+        self.promoted_functions
+            .set(self.promoted_functions.get().saturating_add(count));
+    }
+
+    #[inline]
+    pub(crate) fn emitted_code_bytes(&self, count: u64) {
+        self.last_emitted_code_bytes.set(count);
+        self.emitted_code_bytes
+            .set(self.emitted_code_bytes.get().saturating_add(count));
+    }
+
+    #[inline]
+    pub(crate) fn saved_vm_instructions(&self, count: u64) {
+        self.saved_vm_instructions
+            .set(self.saved_vm_instructions.get().saturating_add(count));
     }
 }
 
@@ -459,9 +521,9 @@ impl ChunkState {
         let initial = if jit_disabled {
             crate::bytecode::HOT_DISABLED
         } else if eager {
-            // A loop-bearing helper compiles on its first call (and the
-            // same call dispatches native once the override installs), so
-            // it never has to be called a threshold number of times.
+            // A loop-bearing helper reaches the admission gate on its first
+            // call. The gate still enforces `jit_min_work` below: bypassing
+            // that floor compiled one-iteration helpers for short commands.
             1
         } else {
             crate::bytecode::hot_threshold_for(instr_count)
@@ -479,11 +541,9 @@ impl ChunkState {
                 .collect(),
             hot_counter: Cell::new(initial),
             jit_observed_work: Cell::new(0),
-            jit_min_work: if eager {
-                0
-            } else {
-                crate::bytecode::jit_min_work_for(instr_count)
-            },
+            // Eagerness affects only when the first admission check happens,
+            // never whether a body must repay its fixed compile cost.
+            jit_min_work: crate::bytecode::jit_min_work_for(instr_count),
             instr_count: instr_count as u64,
             jit_resolve: RefCell::new(JitResolve::Unresolved),
         }
@@ -1036,29 +1096,8 @@ fn detect_trivial_wrapper(decl: &gossamer_hir::HirFn) -> Option<Vec<String>> {
     Some(segments.iter().map(|s| s.name.clone()).collect())
 }
 
-/// Native indexed read: `base[i]` over arrays, strings, tuples, vecs,
-/// and structs, producing the element type's value (or its zero value
-/// for an out-of-range index).
-/// Indexing where the element is an aggregate: an out-of-range index panics
-/// with `index out of bounds` rather than yielding the lenient zero value,
-/// matching the compiled tiers' bounds assert for aggregate `Vec` elements.
-/// Primitive-element indexing stays lenient via [`index_get`].
+/// Checked source indexing: an out-of-range index always panics.
 fn index_get_checked(base: &Value, idx: &Value) -> RuntimeResult<Value> {
-    let raw = match idx {
-        Value::Int(n) => *n,
-        _ => return Err(RuntimeError::Type("index must be integer".to_string())),
-    };
-    let len = match base {
-        Value::Array(items) => items.len() as i64,
-        Value::Tuple(items) => items.len() as i64,
-        Value::FloatArray(fa) if fa.stride > 0 => (fa.data.len() / fa.stride as usize) as i64,
-        // Non-aggregate bases keep the lenient contract (a checked op is only
-        // emitted for aggregate element types, but be conservative).
-        _ => return index_get(base, idx),
-    };
-    if raw < 0 || raw >= len {
-        return Err(RuntimeError::Panic("index out of bounds".to_string()));
-    }
     index_get(base, idx)
 }
 
@@ -1067,11 +1106,6 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
         Value::Int(n) => *n,
         _ => return Err(RuntimeError::Type("index must be integer".to_string())),
     };
-    // Lenient indexing, matching the compiled tier (the canonical
-    // behaviour): any index outside `[0, len)` - negative or past the end -
-    // yields the element zero value rather than aborting, exactly as the
-    // runtime `gos_rt_vec_get_*` helpers do. This keeps `gos run`
-    // bit-identical to `gos build` on out-of-bounds access.
     let len = match base {
         Value::Array(items) => items.len(),
         Value::Tuple(items) => items.len(),
@@ -1087,10 +1121,7 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
         }
     };
     if raw < 0 || raw as usize >= len {
-        return Ok(match base {
-            Value::FloatVec(_) | Value::FloatArray(_) => Value::Float(0.0),
-            _ => Value::Int(0),
-        });
+        return Err(RuntimeError::Panic("index out of bounds".to_string()));
     }
     let i = raw as usize;
     match base {
@@ -1124,18 +1155,16 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
 
 /// Element read that drains a uniquely-owned `Array` / `Tuple` slot,
 /// leaving `Value::Void` behind, and otherwise mirrors [`index_get`]
-/// exactly. A shared aggregate (refcount > 1), a non-`Array`/`Tuple`
-/// base, or an out-of-range index falls back to the cloning /
-/// lenient-zero read so `Op::IndexGetConsume` stays bit-identical to
-/// `Op::IndexGet` on every path except the unique-owner fast move.
+/// exactly. A shared aggregate (refcount > 1) or a non-`Array`/`Tuple`
+/// base falls back to the checked cloning reader so `Op::IndexGetConsume`
+/// stays bit-identical to `Op::IndexGet` on every path except the unique-owner
+/// fast move.
 fn index_get_consume(base: &mut Value, raw: i64) -> RuntimeResult<Value> {
     match base {
         Value::Array(arc) | Value::Tuple(arc) => {
             let len = arc.len();
             if raw < 0 || raw as usize >= len {
-                // Lenient out-of-range: `index_get` yields `Int(0)` for
-                // these aggregates.
-                return Ok(Value::Int(0));
+                return Err(RuntimeError::Panic("index out of bounds".to_string()));
             }
             let i = raw as usize;
             match std::sync::Arc::get_mut(arc) {
@@ -1545,6 +1574,15 @@ fn compare(
 /// MIR lowering on programs where the JIT cannot improve the current
 /// invocation.
 fn has_jit_eligible_fn(program: &HirProgram) -> bool {
+    // Slice-pattern lowering is correct in the bytecode VM, but the native
+    // JIT still loses a failed rest-pattern branch. Do not prepare a partial
+    // native snapshot for a program containing one: a promoted helper can
+    // otherwise change an ordinary non-match call's observable result. This
+    // is deliberately a program-level admission guard until Cranelift has a
+    // faithful lowering for every slice-pattern shape.
+    if hir_program_has_slice_pattern(program) {
+        return false;
+    }
     program.items.iter().any(|item| match &item.kind {
         HirItemKind::Fn(decl) => decl.body.as_ref().is_some_and(|body| {
             hir_block_has_loop(&body.block)
@@ -1552,6 +1590,136 @@ fn has_jit_eligible_fn(program: &HirProgram) -> bool {
         }),
         _ => false,
     })
+}
+
+fn hir_program_has_slice_pattern(program: &HirProgram) -> bool {
+    program.items.iter().any(|item| match &item.kind {
+        HirItemKind::Fn(decl) => decl
+            .body
+            .as_ref()
+            .is_some_and(|body| hir_block_has_slice_pattern(&body.block)),
+        _ => false,
+    })
+}
+
+fn hir_block_has_slice_pattern(block: &gossamer_hir::HirBlock) -> bool {
+    block.stmts.iter().any(|stmt| match &stmt.kind {
+        gossamer_hir::HirStmtKind::Let { init, .. } => {
+            init.as_ref().is_some_and(hir_expr_has_slice_pattern)
+        }
+        gossamer_hir::HirStmtKind::Expr { expr, .. }
+        | gossamer_hir::HirStmtKind::Defer(expr)
+        | gossamer_hir::HirStmtKind::Go(expr) => hir_expr_has_slice_pattern(expr),
+        gossamer_hir::HirStmtKind::Item(item) => match &item.kind {
+            HirItemKind::Fn(decl) => decl
+                .body
+                .as_ref()
+                .is_some_and(|body| hir_block_has_slice_pattern(&body.block)),
+            _ => false,
+        },
+    }) || block
+        .tail
+        .as_deref()
+        .is_some_and(hir_expr_has_slice_pattern)
+}
+
+fn hir_pat_has_slice_pattern(pat: &gossamer_hir::HirPat) -> bool {
+    use gossamer_hir::HirPatKind as P;
+    match &pat.kind {
+        P::Slice { .. } => true,
+        P::Tuple(parts) | P::Variant { fields: parts, .. } | P::Or(parts) => {
+            parts.iter().any(hir_pat_has_slice_pattern)
+        }
+        P::Struct { fields, .. } => fields.iter().any(|field| {
+            field
+                .pattern
+                .as_ref()
+                .is_some_and(hir_pat_has_slice_pattern)
+        }),
+        P::Ref { inner, .. } | P::At { sub: inner, .. } => hir_pat_has_slice_pattern(inner),
+        P::Wildcard | P::Binding { .. } | P::Literal(_) | P::Rest | P::Range { .. } => false,
+    }
+}
+
+fn hir_expr_has_slice_pattern(expr: &gossamer_hir::HirExpr) -> bool {
+    use gossamer_hir::HirExprKind as K;
+    match &expr.kind {
+        K::Match { scrutinee, arms } => {
+            hir_expr_has_slice_pattern(scrutinee)
+                || arms.iter().any(|arm| {
+                    hir_pat_has_slice_pattern(&arm.pattern)
+                        || arm.guard.as_ref().is_some_and(hir_expr_has_slice_pattern)
+                        || hir_expr_has_slice_pattern(&arm.body)
+                })
+        }
+        K::Call { callee, args } => {
+            hir_expr_has_slice_pattern(callee) || args.iter().any(hir_expr_has_slice_pattern)
+        }
+        K::MethodCall { receiver, args, .. } => {
+            hir_expr_has_slice_pattern(receiver) || args.iter().any(hir_expr_has_slice_pattern)
+        }
+        K::Field { receiver, .. } | K::TupleIndex { receiver, .. } => {
+            hir_expr_has_slice_pattern(receiver)
+        }
+        K::Index { base, index } => {
+            hir_expr_has_slice_pattern(base) || hir_expr_has_slice_pattern(index)
+        }
+        K::Unary { operand, .. } | K::Cast { value: operand, .. } => {
+            hir_expr_has_slice_pattern(operand)
+        }
+        K::Binary { lhs, rhs, .. } => {
+            hir_expr_has_slice_pattern(lhs) || hir_expr_has_slice_pattern(rhs)
+        }
+        K::Assign { place, value } => {
+            hir_expr_has_slice_pattern(place) || hir_expr_has_slice_pattern(value)
+        }
+        K::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            hir_expr_has_slice_pattern(condition)
+                || hir_expr_has_slice_pattern(then_branch)
+                || else_branch
+                    .as_deref()
+                    .is_some_and(hir_expr_has_slice_pattern)
+        }
+        K::Loop { body, .. } => hir_expr_has_slice_pattern(body),
+        K::While {
+            condition, body, ..
+        } => hir_expr_has_slice_pattern(condition) || hir_expr_has_slice_pattern(body),
+        K::Block(block) => hir_block_has_slice_pattern(block),
+        K::Closure { body, .. } => hir_expr_has_slice_pattern(body),
+        K::LiftedClosure { captures, .. } => captures.iter().any(hir_expr_has_slice_pattern),
+        K::Tuple(elems) => elems.iter().any(hir_expr_has_slice_pattern),
+        K::Array(arr) => match arr {
+            gossamer_hir::HirArrayExpr::List(elems) => elems.iter().any(hir_expr_has_slice_pattern),
+            gossamer_hir::HirArrayExpr::Repeat { value, count } => {
+                hir_expr_has_slice_pattern(value) || hir_expr_has_slice_pattern(count)
+            }
+        },
+        K::Go(inner) => hir_expr_has_slice_pattern(inner),
+        K::Range { start, end, .. } => {
+            start.as_deref().is_some_and(hir_expr_has_slice_pattern)
+                || end.as_deref().is_some_and(hir_expr_has_slice_pattern)
+        }
+        K::Return(value) | K::Break { value, .. } => {
+            value.as_deref().is_some_and(hir_expr_has_slice_pattern)
+        }
+        K::Select { arms } => arms.iter().any(|arm| {
+            let op_has_pattern = match &arm.op {
+                gossamer_hir::HirSelectOp::Recv { pattern, channel } => {
+                    hir_pat_has_slice_pattern(pattern) || hir_expr_has_slice_pattern(channel)
+                }
+                gossamer_hir::HirSelectOp::Send { channel, value } => {
+                    hir_expr_has_slice_pattern(channel) || hir_expr_has_slice_pattern(value)
+                }
+                gossamer_hir::HirSelectOp::Default => false,
+            };
+            op_has_pattern || hir_expr_has_slice_pattern(&arm.body)
+        }),
+        K::Path { .. } | K::Literal(_) | K::Continue { .. } | K::Placeholder => false,
+    }
 }
 
 fn hir_block_has_loop(block: &gossamer_hir::HirBlock) -> bool {
@@ -1969,6 +2137,26 @@ mod tests {
     use crate::bytecode::Op;
     use crate::validate::validate_chunk;
 
+    fn hir_for_jit_admission(source: &str) -> HirProgram {
+        let mut map = gossamer_lex::SourceMap::new();
+        let file = map.add_file("jit-admission.gos", source.to_string());
+        let (sf, parse_diagnostics) = gossamer_parse::parse_source_file(source, file);
+        assert!(parse_diagnostics.is_empty(), "parse: {parse_diagnostics:?}");
+        let (resolutions, resolve_diagnostics) = gossamer_resolve::resolve_source_file(&sf);
+        assert!(
+            resolve_diagnostics.is_empty(),
+            "resolve: {resolve_diagnostics:?}"
+        );
+        let mut tcx = gossamer_types::TyCtxt::new();
+        let (table, type_diagnostics) =
+            gossamer_types::typecheck_source_file(&sf, &resolutions, &mut tcx);
+        assert!(
+            type_diagnostics.is_empty(),
+            "typecheck: {type_diagnostics:?}"
+        );
+        gossamer_hir::lower_source_file(&sf, &resolutions, &table, &mut tcx)
+    }
+
     fn empty_chunk(register_count: u16) -> FnChunk {
         FnChunk {
             name: "vm_test",
@@ -2034,5 +2222,25 @@ mod tests {
         };
         // Regression: this used to be an immortal thread-local `Box::leak`.
         assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn jit_hir_admission_requires_a_loop_or_recursion() {
+        assert!(
+            !has_jit_eligible_fn(&hir_for_jit_admission("fn main() -> i64 { 42i64 }")),
+            "straight-line programs must not retain JIT MIR state"
+        );
+        assert!(has_jit_eligible_fn(&hir_for_jit_admission(
+            "fn main() -> i64 { let mut n = 0i64; while n < 2i64 { n += 1i64 }; n }"
+        )));
+        assert!(has_jit_eligible_fn(&hir_for_jit_admission(
+            "fn f(n: i64) -> i64 { if n == 0i64 { 0i64 } else { f(n - 1i64) } } fn main() -> i64 { f(2i64) }"
+        )));
+        assert!(
+            !has_jit_eligible_fn(&hir_for_jit_admission(
+                "fn main() -> i64 { let mut n = 0i64; while n < 2i64 { n += 1i64 }; let xs: Vec<i64> = [1i64]; match xs { [x, ..] => x, _ => 0i64 } }"
+            )),
+            "slice-pattern programs must stay on bytecode until native lowering preserves failed-arm control flow"
+        );
     }
 }

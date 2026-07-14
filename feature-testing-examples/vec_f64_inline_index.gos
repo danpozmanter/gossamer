@@ -3,10 +3,10 @@
 // word-stride `v[i]` read/write to a direct load/store off the GosVec header
 // instead of an opaque `gos_rt_vec_get_i64` / `gos_rt_vec_set_i64` call. This
 // must stay byte-identical to the bytecode VM. Covers: Vec<f64> read + write
-// (the spectral-norm matvec shape), Vec<i64> read + write, nested
-// Vec<Vec<f64>>, scalar out-of-bounds (lenient: read -> zero, write -> no-op),
+// (the spectral-norm matvec shape), Vec<i64> read + write, nested Vec<Vec<f64>>,
 // and an aggregate element type (Vec<Point>, which stays on the runtime
-// get_ptr path and must be unaffected).
+// get_ptr path and must be unaffected). Invalid source indexing is covered by
+// the dedicated all-tier panic fixture.
 
 struct Point { x: f64, y: f64 }
 
@@ -37,11 +37,6 @@ fn main() {
     let mut acc = 0
     while wi < 5 { acc += w[wi]; wi += 1 }
     println!("acc={}", acc)
-
-    // Scalar out-of-bounds: read -> zero, write -> no-op.
-    let oob_read = v[99]
-    v[99] = 7.0
-    println!("oob_read={:.2} len={}", oob_read, v.len())
 
     // Nested Vec<Vec<f64>> read + write.
     let mut grid: Vec<Vec<f64>> = []

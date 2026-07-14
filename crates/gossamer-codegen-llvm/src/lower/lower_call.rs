@@ -641,14 +641,10 @@ impl<'a> Lowerer<'a> {
         // whole element out of the returned address (the generic call-result
         // path's memcpy), which the inline does not reproduce, so that case
         // stays on the opaque call.
-        if name == "gos_rt_vec_get_ptr"
-            && args.len() == 2
-            && render_ty(self.tcx, self.body.local_ty(destination.local)) == "ptr"
-            && !is_aggregate(self.tcx, self.body.local_ty(destination.local))
-        {
-            self.lower_vec_get_ptr_inline(args, destination, target)?;
-            return Ok(());
-        }
+        // Keep `gos_rt_vec_get_ptr` on its runtime path. Besides bounds
+        // handling, it is the representation boundary for packed nested rows:
+        // a direct header-address calculation would treat the descriptor as a
+        // generic element buffer and bypass the one-allocation row layout.
         // Variant constructor stubs: `Ok(v)`, `Some(v)`, `Err(e)`
         // pass the wrapped value through unchanged (the compiled
         // tier flattens Option/Result, so `unwrap` is identity).
@@ -832,12 +828,14 @@ impl<'a> Lowerer<'a> {
             return Ok(());
         }
         // HashMap / collection constructors: MIR emits a 0-arg call but the
-        // runtime function takes (key_bytes: i32, val_bytes: i32). Mirror the
-        // Cranelift backend's hardcoded 8/8 (all GC-managed values are
-        // pointer-sized, so 8 bytes covers every key/value type).
+        // runtime function takes (key_bytes: i32, val_bytes: i32). The widths
+        // are ABI placeholders only: typed insertion selects storage lazily.
         if matches!(
             name.as_str(),
-            "HashMap::new" | "collections::HashMap::new" | "gos_rt_map_new"
+            "HashMap::new"
+                | "collections::HashMap::new"
+                | "std::collections::HashMap::new"
+                | "gos_rt_map_new"
         ) {
             declare_rt(&mut self.runtime_refs, "gos_rt_map_new");
             let dst = local_slot(destination.local);
@@ -853,21 +851,44 @@ impl<'a> Lowerer<'a> {
             name.as_str(),
             "HashMap::with_capacity"
                 | "collections::HashMap::with_capacity"
+                | "std::collections::HashMap::with_capacity"
                 | "gos_rt_map_new_with_capacity"
         ) {
-            declare_rt(&mut self.runtime_refs, "gos_rt_map_new_with_capacity");
             let dst = local_slot(destination.local);
-            let cap = if let Some(a) = args.first() {
-                self.lower_operand(a)?
-            } else {
-                "0".to_string()
-            };
             let tmp = self.fresh();
-            writeln!(
-                self.out,
-                "  {tmp} = call ptr @gos_rt_map_new_with_capacity(i32 8, i32 8, i64 {cap})"
-            )
-            .unwrap();
+            let typed_kinds = self
+                .body
+                .locals
+                .get(destination.local.0 as usize)
+                .and_then(|decl| match self.tcx.kind_of(decl.ty) {
+                    TyKind::HashMap { key, value } => {
+                        let kind = |ty| match self.tcx.kind_of(ty) {
+                            TyKind::Int(_) => Some(0),
+                            TyKind::String => Some(1),
+                            _ => None,
+                        };
+                        Some((kind(*key)?, kind(*value)?))
+                    }
+                    _ => None,
+                });
+            if let Some((key_kind, val_kind)) = typed_kinds {
+                declare_rt(&mut self.runtime_refs, "gos_rt_map_new_with_capacity_typed");
+                let cap = if let Some(a) = args.first() {
+                    self.lower_operand(a)?
+                } else {
+                    "0".to_string()
+                };
+                writeln!(
+                    self.out,
+                    "  {tmp} = call ptr @gos_rt_map_new_with_capacity_typed(i32 {key_kind}, i32 {val_kind}, i64 {cap})"
+                )
+                .unwrap();
+            } else {
+                // Aggregate layouts retain their lazy constructor until their
+                // concrete storage descriptor is part of this ABI.
+                declare_rt(&mut self.runtime_refs, "gos_rt_map_new");
+                writeln!(self.out, "  {tmp} = call ptr @gos_rt_map_new(i32 8, i32 8)").unwrap();
+            }
             writeln!(self.out, "  store ptr {tmp}, ptr {dst}").unwrap();
             if let Some(tgt) = target {
                 writeln!(self.out, "  br label %bb{}", tgt.as_u32()).unwrap();

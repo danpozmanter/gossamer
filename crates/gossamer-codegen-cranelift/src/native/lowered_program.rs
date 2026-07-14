@@ -138,6 +138,10 @@ use super::*;
 
 pub(crate) struct LoweredProgram {
     pub function_ids_by_name: HashMap<String, FuncId>,
+    /// Exact byte count of the machine-code buffers emitted for lowered user
+    /// bodies. This comes from Cranelift after compilation, before the JIT
+    /// module copies the buffers into executable memory.
+    pub emitted_code_bytes: u64,
     /// Reserved for callers that resolve `Operand::FnRef` by
     /// `DefId` rather than name. The JIT only needs name lookup
     /// today; the field stays in the API so the LLVM backend

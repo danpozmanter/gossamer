@@ -747,7 +747,8 @@ pub enum Op {
         receiver: Reg,
     },
     /// `receiver.insert(index, value)` - in-place insert at `index`.
-    /// Mutates the receiver register's backing storage in place.
+    /// Mutates the receiver register's backing storage in place and
+    /// panics when `index` is outside `0..=len`.
     /// Emitted only for a bare-local Vec receiver in statement
     /// position.
     VecInsert {
@@ -759,8 +760,9 @@ pub enum Op {
         value: Reg,
     },
     /// `receiver.remove(index)` - in-place removal at `index`. Mutates
-    /// the receiver register's backing storage in place. Emitted only
-    /// for a bare-local Vec receiver in statement position.
+    /// the receiver register's backing storage in place and panics when
+    /// `index` is outside `0..len`. Emitted only for a bare-local Vec
+    /// receiver in statement position.
     VecRemove {
         /// Register holding the Vec, mutated in place.
         receiver: Reg,

@@ -81,7 +81,7 @@ use std::sync::Arc;
 use gossamer_ast::Ident;
 use std::sync::atomic::{AtomicBool as StdAtomicBool, AtomicI64 as StdAtomicI64, Ordering};
 
-use crate::value::SmolStr;
+use crate::value::{JsonInner, SmolStr};
 
 use gossamer_std::bufio as bufio_std;
 use gossamer_std::math as math_std;
@@ -176,17 +176,31 @@ pub(crate) fn value_to_json_std(v: &Value) -> gossamer_std::json::Value {
 pub(crate) fn builtin_json_std_parse(args: &[Value]) -> RuntimeResult<Value> {
     let src = args.first().and_then(as_str).unwrap_or("");
     match gossamer_std::json::parse(src) {
-        Ok(v) => Ok(ok_variant(json_std_to_value(v))),
+        // Preserve the stdlib parser's tree. The former conversion to
+        // `Value::Map` / `Value::Array` was immediately undone by encode in
+        // the common parse-render path, doubling the live document and its
+        // allocation traffic.
+        Ok(v) => Ok(ok_variant(Value::Json(Arc::new(JsonInner::new(v))))),
         Err(e) => Ok(err_variant(format!("{e}"))),
     }
 }
 
 pub(crate) fn builtin_json_std_encode(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::Json(value)) = args.first() {
+        return Ok(Value::String(
+            gossamer_std::json::encode(value.as_value()).into(),
+        ));
+    }
     let jv = value_to_json_std(args.first().unwrap_or(&Value::Unit));
     Ok(Value::String(gossamer_std::json::encode(&jv).into()))
 }
 
 pub(crate) fn builtin_json_std_encode_pretty(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::Json(value)) = args.first() {
+        return Ok(Value::String(
+            gossamer_std::json::encode_pretty(value.as_value()).into(),
+        ));
+    }
     let jv = value_to_json_std(args.first().unwrap_or(&Value::Unit));
     Ok(Value::String(gossamer_std::json::encode_pretty(&jv).into()))
 }

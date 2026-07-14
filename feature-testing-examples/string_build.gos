@@ -1,5 +1,5 @@
-// Fundamental String-building surface: String::new, push(char),
-// push_str(&str), and chars() driving a for-loop. Output is
+// Fundamental String-building surface: String::new, String::with_capacity,
+// push(char), push_str(&str), and chars() driving a for-loop. Output is
 // deterministic and multibyte-aware (the cedilla 'ç' is two UTF-8
 // bytes, the euro 'EUR' sign three), so the tier-parity harness asserts
 // the rendered strings are bit-identical on VM, Cranelift, and LLVM.
@@ -30,6 +30,14 @@ fn main() {
     s.push('!')
     println!("s={}", s)
     assert_eq(s.len(), 10)
+
+    // `with_capacity` is a real VM builder reservation; its contents remain
+    // ordinary String text on every tier.
+    let mut reserved = String::with_capacity(64)
+    reserved.push_str("reserved")
+    reserved.push('!')
+    println!("reserved={}", reserved)
+    assert_eq(reserved.len(), 9)
 
     // chars() over a multibyte string, rebuilt char-by-char - the
     // round-trip must be identity on every tier.

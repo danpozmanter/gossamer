@@ -507,6 +507,29 @@ impl<'a> LoopEligibility<'a> {
         }
     }
 
+    /// Decides whether a nested lexical block can own one automatic region.
+    /// Unlike a loop body, its tail is observed by the enclosing expression,
+    /// so a non-Copy tail would let a region pointer escape through the block
+    /// result. Function bodies deliberately do not use this entry point: a
+    /// returned value has the same escape hazard.
+    pub fn decide_lexical_block(mut self, block: &HirBlock) -> RegionDecision {
+        self.block(block, true);
+        if block
+            .tail
+            .as_ref()
+            .is_some_and(|tail| !is_copy_ty(self.tcx, tail.ty))
+        {
+            self.reject(RegionReject::EarlyExitOrCapture);
+        }
+        match (self.ok, self.allocates) {
+            (true, true) => RegionDecision::Region,
+            (_, false) => RegionDecision::NoAlloc,
+            (false, true) => {
+                RegionDecision::Reject(self.reject.unwrap_or(RegionReject::EarlyExitOrCapture))
+            }
+        }
+    }
+
     fn block(&mut self, b: &HirBlock, top: bool) {
         for s in &b.stmts {
             match &s.kind {
@@ -591,6 +614,23 @@ impl<'a> LoopEligibility<'a> {
                             self.reject(RegionReject::UnsafeCallee);
                         }
                     }
+                    // Standard-library paths do not have a user-function
+                    // DefId. Whitelist only the no-argument collector: it
+                    // cannot retain a region pointer, and lowering moves it
+                    // to immediately after the matching `arena_pop`.
+                    HirExprKind::Path {
+                        def: None,
+                        segments,
+                    } => {
+                        let names: Vec<&str> = segments
+                            .iter()
+                            .map(|segment| segment.name.as_str())
+                            .collect();
+                        let names = names.strip_prefix(&["std"]).unwrap_or(&names);
+                        if !(args.is_empty() && names == ["runtime", "collect_cycles"]) {
+                            self.reject(RegionReject::UnresolvedCallee);
+                        }
+                    }
                     // Unresolved / non-path callee - cannot vet it.
                     _ => self.reject(RegionReject::UnresolvedCallee),
                 }
@@ -599,8 +639,16 @@ impl<'a> LoopEligibility<'a> {
                     self.expr(a, false);
                 }
             }
-            // A method call could mutate an outer container; too risky to
-            // vet here, so loops containing them are never auto-regioned.
+            // A method call could mutate an outer container. The one audited
+            // exception is zero-argument `len()`: it reads only its receiver,
+            // cannot retain a region pointer, and is needed by the common
+            // build-a-value/consume-its-size loop shape. Keep every other
+            // method (including `get`, callbacks, and all mutators) rejected.
+            HirExprKind::MethodCall {
+                receiver,
+                name,
+                args,
+            } if name.name == "len" && args.is_empty() => self.expr(receiver, false),
             HirExprKind::MethodCall { .. } => self.reject(RegionReject::MethodCall),
             HirExprKind::Assign { place, value } => {
                 // Only Copy-typed places (i64 accumulators, loop counters)

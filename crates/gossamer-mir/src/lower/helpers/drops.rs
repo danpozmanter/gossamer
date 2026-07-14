@@ -286,17 +286,16 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             None
         }
     };
-    // A bare `Vec`/`[T]` PARAMETER operand: not RC-managed, but its
-    // buffer is shared by reference count. A parameter stays owned (and
-    // freed) by the caller, so an aggregate slot that captures one must
-    // mint its own share through `gos_rt_vec_retain` (rc_helper routes
-    // Vec-typed locals to the vec retain/free family). A callee-built
-    // Vec local instead TRANSFERS into the aggregate - the container
-    // pass elides its own free - so it takes no extra share.
+    // A bare `Vec`/`[T]` operand is not RC-managed, but its buffer has an
+    // independent reference count. Every container insertion therefore mints
+    // the container's share before the call; the source's ordinary cleanup
+    // remains in place. This explicit two-owner state handles overwrite,
+    // removal, and every early exit without relying on a leak-prone drop
+    // suppression pass.
     let vec_operand = |op: &Operand| -> Option<Local> {
         if let Operand::Copy(p) = op
             && p.projection.is_empty()
-            && (1..=arity).contains(&(p.local.0 as usize))
+            && (p.local.0 as usize) < n_locals
             && matches!(
                 tcx.kind_of(body.locals[p.local.0 as usize].ty),
                 gossamer_types::TyKind::Vec(_) | gossamer_types::TyKind::Slice(_)
@@ -829,7 +828,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             // gain a stored reference. Retaining the receiver too (now that it
             // is RC-managed) would over-retain it and leak it.
             for arg in args.iter().skip(1) {
-                if let Some(l) = rc_operand(arg) {
+                if let Some(l) = rc_operand(arg).or_else(|| vec_operand(arg)) {
                     terminator_retains.push((block_idx, l));
                 }
             }
@@ -2060,6 +2059,11 @@ fn is_consuming_call(name: &str) -> bool {
         || name.starts_with("gos_rt_set_insert")
         || name.starts_with("gos_rt_btmap_insert")
         || name.starts_with("gos_rt_map_insert")
+        // `HashMap::or_insert` consumes its key and, on an absent key,
+        // stores the supplied value. The retained value share becomes the
+        // map's ownership; the returned value is separately marked as an
+        // interior borrow by `returns_borrowed_pointer`.
+        || name.starts_with("gos_rt_map_or_insert")
         || name.starts_with("gos_rt_omap_insert")
         || name.starts_with("gos_rt_ovec_insert")
         || name.starts_with("gos_rt_chan_send")
@@ -2747,6 +2751,16 @@ pub(crate) fn insert_vec_elem_metas(body: &mut Body, tcx: &mut gossamer_types::T
         }
     }
 
+    // The teardown call to schedule for one vec/map construction.
+    enum VecMeta {
+        Guarded(String),
+        Owned(String),
+        RcElems,
+        VecElems,
+        MapBlob,
+        MapVec,
+    }
+
     // Guarded copy-blob meta of a vec element - but only when the element
     // did NOT take the owned path (the owned layout already covers every
     // RC child, including `Option`/`Result` payloads).
@@ -2763,25 +2777,23 @@ pub(crate) fn insert_vec_elem_metas(body: &mut Body, tcx: &mut gossamer_types::T
             None
         }
     };
-    let map_value_blob = |l: Local| -> bool {
+    let map_value_owner = |l: Local| -> Option<VecMeta> {
         let i = l.0 as usize;
         if i >= n_locals {
-            return false;
+            return None;
         }
         let TyKind::HashMap { value, .. } = tcx.kind_of(body.locals[i].ty) else {
-            return false;
+            return None;
         };
-        tcx.aggr_copy_meta(*value).is_some()
+        if tcx.aggr_copy_meta(*value).is_some() {
+            Some(VecMeta::MapBlob)
+        } else if matches!(tcx.kind_of(*value), TyKind::Vec(_) | TyKind::Slice(_)) {
+            Some(VecMeta::MapVec)
+        } else {
+            None
+        }
     };
 
-    // The teardown call to schedule for one vec/map construction.
-    enum VecMeta {
-        Guarded(String),
-        Owned(String),
-        RcElems,
-        VecElems,
-        MapBlob,
-    }
     let vec_meta_of = |l: Local| -> Option<VecMeta> {
         if let Some(sym) = owned_meta.get(&l.0) {
             return Some(VecMeta::Owned(sym.clone()));
@@ -2826,8 +2838,10 @@ pub(crate) fn insert_vec_elem_metas(body: &mut Body, tcx: &mut gossamer_types::T
                 {
                     stmt_inserts.push((bi, si + 1, place.local, meta));
                 }
-                if is_map_ctor(name) && map_value_blob(place.local) {
-                    stmt_inserts.push((bi, si + 1, place.local, VecMeta::MapBlob));
+                if is_map_ctor(name)
+                    && let Some(meta) = map_value_owner(place.local)
+                {
+                    stmt_inserts.push((bi, si + 1, place.local, meta));
                 }
             }
         }
@@ -2844,8 +2858,10 @@ pub(crate) fn insert_vec_elem_metas(body: &mut Body, tcx: &mut gossamer_types::T
             {
                 head_inserts.push((t.0 as usize, destination.local, meta));
             }
-            if is_map_ctor(name) && map_value_blob(destination.local) {
-                head_inserts.push((t.0 as usize, destination.local, VecMeta::MapBlob));
+            if is_map_ctor(name)
+                && let Some(meta) = map_value_owner(destination.local)
+            {
+                head_inserts.push((t.0 as usize, destination.local, meta));
             }
         }
     }
@@ -2862,6 +2878,10 @@ pub(crate) fn insert_vec_elem_metas(body: &mut Body, tcx: &mut gossamer_types::T
             let rvalue = match meta {
                 VecMeta::MapBlob => Rvalue::CallIntrinsic {
                     name: "gos_rt_map_set_blob_values",
+                    args: vec![Operand::Copy(Place::local(l))],
+                },
+                VecMeta::MapVec => Rvalue::CallIntrinsic {
+                    name: "gos_rt_map_set_vec_values",
                     args: vec![Operand::Copy(Place::local(l))],
                 },
                 VecMeta::Guarded(sym) => Rvalue::CallIntrinsic {

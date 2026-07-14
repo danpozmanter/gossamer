@@ -109,6 +109,78 @@ where
     }
 }
 
+/// Request metadata available before an HTTP/2 request body is read.
+///
+/// Unlike [`Request`], this deliberately does not own a body buffer. Pair it
+/// with [`RequestBody`] in an async streaming handler when uploads must be
+/// processed incrementally.
+#[derive(Debug, Clone)]
+pub struct RequestHead {
+    /// Request method.
+    pub method: Method,
+    /// Decoded path without the query string.
+    pub path: String,
+    /// Raw query string, if present.
+    pub query: Option<String>,
+    /// Request headers.
+    pub headers: Headers,
+    /// Cancellation/deadline context for this stream.
+    pub context: crate::context::Context,
+}
+
+/// Bounded, flow-control-aware HTTP/2 request body reader.
+pub struct RequestBody {
+    stream: RecvStream,
+    deadline: Instant,
+    received: usize,
+    limit: usize,
+}
+
+impl RequestBody {
+    /// Reads the next DATA chunk, releasing its H2 receive capacity before
+    /// returning it. `Ok(None)` denotes end-of-body.
+    pub async fn next_chunk(&mut self) -> Result<Option<Bytes>, Error> {
+        let Some(chunk) = Deadline::new(self.stream.data(), self.deadline).await? else {
+            return Ok(None);
+        };
+        let chunk = chunk.map_err(|error| Error::Protocol(format!("request body: {error}")))?;
+        self.received = self.received.saturating_add(chunk.len());
+        if self.received > self.limit {
+            return Err(Error::Protocol(format!(
+                "request body exceeds {}-byte cap",
+                self.limit
+            )));
+        }
+        let _ = self.stream.flow_control().release_capacity(chunk.len());
+        Ok(Some(chunk))
+    }
+
+    /// Reads final request trailers after [`Self::next_chunk`] returns `None`.
+    pub async fn trailers(&mut self) -> Result<Option<Headers>, Error> {
+        let raw = Deadline::new(self.stream.trailers(), self.deadline).await??;
+        Ok(raw.map(|trailers| {
+            let mut out = Headers::new();
+            for (name, value) in &trailers {
+                if let Ok(value) = value.to_str() {
+                    out.insert(name.as_str(), value);
+                }
+            }
+            out
+        }))
+    }
+}
+
+/// Async handler contract for incremental HTTP/2 request bodies.
+pub trait RequestStreamingHandler: Send + Sync + 'static {
+    /// Serves one request without requiring its body to be buffered first.
+    fn serve(
+        &self,
+        head: RequestHead,
+        body: RequestBody,
+        writer: ResponseWriter,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + '_>>;
+}
+
 /// Incremental response writer threaded into a `StreamingHandler`.
 ///
 /// Lifecycle:

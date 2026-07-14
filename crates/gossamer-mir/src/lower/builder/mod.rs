@@ -141,6 +141,11 @@ pub(crate) struct Builder<'a> {
     /// drop pass must not release them (the region frees them wholesale at
     /// pop; a post-pop release would be a use-after-free).
     pub(crate) region_depth: u32,
+    /// One flag per compiler-inserted loop region. An explicit
+    /// `runtime::collect_cycles()` inside such a loop is delayed until after
+    /// its matching `arena_pop`, so the collector never inspects pointers
+    /// owned by the region being torn down.
+    pub(crate) deferred_auto_region_collections: Vec<bool>,
     /// One frame per lexical block currently being lowered; each frame holds
     /// that block's `defer`red expressions in registration order. Block-scoped
     /// `defer` (Swift/Zig semantics) emits a frame's expressions in LIFO order

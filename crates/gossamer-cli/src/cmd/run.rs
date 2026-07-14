@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 
-use crate::loaders::load_and_check;
+use crate::loaders::{load_and_check, profile_rss_stage};
 use crate::paths::{read_entry_source, resolve_entry_arg};
 
 /// How `gos run` executes a program. Single-variant marker kept so
@@ -60,20 +60,33 @@ fn run_on_vm(file: &PathBuf, forwarded: &[String]) -> Result<()> {
     // now and splice their result literals in, so the VM compiles a
     // constant identical to what the compiled tiers see.
     let source = crate::comptime_fold::fold_comptime(&source, &file.to_string_lossy())?;
+    profile_rss_stage("source_prepared");
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
     // Static checks always run first. A program with parse / resolve /
     // type errors has no business reaching the VM - execution would
     // either crash or produce unsound output.
     let (program, tcx) = load_and_check(&source, file_id, &map)?;
+    // The VM keeps the HIR and type context it needs for bytecode/JIT loading,
+    // but it neither renders source diagnostics nor consults the SourceMap at
+    // runtime. Release the augmented source and parse-time map before the VM
+    // is created so their peak does not overlap bytecode chunks, MIR, and a
+    // deferred Cranelift artifact. Runtime tracebacks use the VM call stack,
+    // not this compile-time map.
+    drop(map);
+    drop(source);
+    profile_rss_stage("frontend_released");
     gossamer_interp::set_program_name(&file.to_string_lossy());
     gossamer_interp::set_program_args(forwarded);
     let mut vm = gossamer_interp::Vm::new();
+    profile_rss_stage("vm_created");
     // `load` consumes `tcx` (moves the interner into the JIT snapshot).
     vm.load(&program, tcx, true)
         .map_err(|err| anyhow!("vm load failed: {err}"))?;
+    profile_rss_stage("vm_loaded");
     drop(program);
     let r = vm.call("main", Vec::new());
+    profile_rss_stage("execution_complete");
     vm.release_jit_prelude();
     gossamer_interp::join_outstanding_goroutines();
     gossamer_interp::flush_runtime_stdout();

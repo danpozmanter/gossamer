@@ -11,6 +11,37 @@ use anyhow::{Result, anyhow};
 
 use crate::paths::stderr_supports_colour;
 
+/// Emits an opt-in resident-memory sample for a compiler/runtime phase.
+///
+/// Kept in the CLI rather than the driver so library users do not acquire a
+/// process-introspection policy. The profiler is deliberately best-effort:
+/// unsupported platforms simply omit the sample, while normal compilation is
+/// never affected.
+pub(crate) fn profile_rss_stage(stage: &str) {
+    if std::env::var_os("GOS_PROFILE_RSS").is_none() {
+        return;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let rss_bytes = std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|status| {
+                status.lines().find_map(|line| {
+                    let rest = line.strip_prefix("VmRSS:")?;
+                    let kib = rest.split_whitespace().next()?.parse::<u64>().ok()?;
+                    Some(kib.saturating_mul(1024))
+                })
+            });
+        if let Some(rss_bytes) = rss_bytes {
+            eprintln!("rss: stage={stage} bytes={rss_bytes}");
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = stage;
+    }
+}
+
 /// Pretty-prints frontend stage timings for `gos check --timings`.
 pub(crate) fn print_timings(
     source_len: usize,
@@ -66,6 +97,7 @@ pub(crate) fn load_and_check_with_sf(
     // rejected by all. `check_frontend` synthesizes the implicit `fn
     // main` for an entry file's top-level statements, so `sf` carries it.
     let outcome = gossamer_driver::check_frontend(source, file_id);
+    profile_rss_stage("frontend_checked");
     if !outcome.diagnostics.is_empty() {
         for diag in &outcome.diagnostics {
             eprintln!("{}", gossamer_diagnostics::render(diag, map, render_opts));
@@ -82,5 +114,6 @@ pub(crate) fn load_and_check_with_sf(
         mut tcx,
     } = outcome.checked;
     let program = gossamer_hir::lower_source_file(&sf, &resolutions, &table, &mut tcx);
+    profile_rss_stage("hir_lowered");
     Ok((program, sf, tcx))
 }

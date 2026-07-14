@@ -864,15 +864,12 @@ impl<'a> Builder<'a> {
         args: &[HirExpr],
         span: Span,
     ) -> MethodLowering {
-        // `b.push_str(s)` on an owned `String` receiver. The runtime
-        // models gos `String` as `*const c_char` (immutable
-        // nul-terminated bytes), so true in-place mutation isn't
-        // representable. Rewrite as `b = __concat(b, s)`: build a new
-        // string into the runtime's concat buffer and update the
-        // receiver local in place. Without this rewrite the call
-        // landed on a typed-zero stub and the receiver kept its
-        // original empty bytes (the `release_owned_string_push_str`
-        // gauge entry).
+        // `b.push_str(s)` on an owned `String` receiver. The runtime takes
+        // ownership of the accumulator and may grow its unique buffer in
+        // place, returning the replacement pointer for receiver writeback.
+        // This is materially different from lowering to `__concat`: callers
+        // using `String::with_capacity` (streaming JSON, encoders, log
+        // builders) must not copy the whole prefix for every append.
         if method.name.as_str() == "push_str"
             && args.len() == 1
             && let Some(recv_local) = self.receiver_local_from_path(receiver)
@@ -883,24 +880,44 @@ impl<'a> Builder<'a> {
                 peeled = *inner;
             }
             if matches!(self.tcx.kind_of(peeled), TyKind::String) {
+                let literal_len = match &args[0].kind {
+                    HirExprKind::Literal(gossamer_hir::HirLiteral::String(text)) => {
+                        Some(text.len() as i128)
+                    }
+                    _ => None,
+                };
                 let Some(arg_local) = self.lower_expr(&args[0]) else {
                     return MethodLowering::Handled(None);
                 };
-                let concat_dest = self.fresh(recv_ty);
+                let dest = self.fresh(recv_ty);
                 let next = self.new_block(span);
+                let (callee, call_args) = match literal_len {
+                    Some(len) => (
+                        "gos_rt_str_append_bytes",
+                        vec![
+                            Operand::Copy(Place::local(recv_local)),
+                            Operand::Copy(Place::local(arg_local)),
+                            Operand::Const(ConstValue::Int(len)),
+                        ],
+                    ),
+                    None => (
+                        "gos_rt_str_concat_drop_a",
+                        vec![
+                            Operand::Copy(Place::local(recv_local)),
+                            Operand::Copy(Place::local(arg_local)),
+                        ],
+                    ),
+                };
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("__concat".to_string())),
-                    args: vec![
-                        Operand::Copy(Place::local(recv_local)),
-                        Operand::Copy(Place::local(arg_local)),
-                    ],
-                    destination: Place::local(concat_dest),
+                    callee: Operand::Const(ConstValue::Str(callee.to_string())),
+                    args: call_args,
+                    destination: Place::local(dest),
                     target: Some(next),
                 });
                 self.set_current(next);
                 self.emit_assign(
                     Place::local(recv_local),
-                    Rvalue::Use(Operand::Copy(Place::local(concat_dest))),
+                    Rvalue::Use(Operand::Copy(Place::local(dest))),
                     span,
                 );
                 return MethodLowering::Handled(Some(self.lower_unit(span)));
@@ -1930,9 +1947,9 @@ impl<'a> Builder<'a> {
                         _ => Some("gos_rt_map_insert_i64_i64"),
                     },
                 },
-                // Method-form `xs.insert(i, v)` on a Vec has silent
-                // in-place semantics (the Result-returning form is the
-                // qualified free function `Vec::insert`).
+                // Method-form `xs.insert(i, v)` on a Vec mutates in place and
+                // panics on invalid indices. The qualified free function
+                // `Vec::insert` is the Result-returning non-panicking API.
                 TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => {
                     Some("gos_rt_vec_insert_at")
                 }
@@ -1985,10 +2002,11 @@ impl<'a> Builder<'a> {
                     Some(MapKeyKind::String) => Some("gos_rt_map_remove_str"),
                     _ => Some("gos_rt_map_remove_i64"),
                 },
-                // Method-form `xs.remove(i)` on a Vec removes in place; the
-                // Result-returning element is discarded by the statement.
+                // Method-form `xs.remove(i)` on a Vec mutates in place and
+                // panics on invalid indices. The qualified free function
+                // `Vec::remove` is the Result-returning non-panicking API.
                 TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => {
-                    Some("gos_rt_vec_remove_safe")
+                    Some("gos_rt_vec_remove_at")
                 }
                 _ => None,
             },
@@ -3350,6 +3368,20 @@ impl<'a> Builder<'a> {
         if runtime_symbol.is_none() {
             runtime_symbol =
                 self.seq_str_method_from_lowered(method.name.as_str(), lowered_recv_ty, args.len());
+        }
+
+        // LLVM copies a multi-slot map value out of the inserting frame. Give
+        // that copy its structural child layout now, so the backend can retain
+        // direct String / Vec children and the map's eventual drop can release
+        // them. The ordinary guarded copy meta is intentionally insufficient:
+        // it only describes conditional Option/Result copy-blob payloads.
+        if matches!(
+            runtime_symbol,
+            Some("gos_rt_map_insert_i64_i64" | "gos_rt_map_insert_str_i64")
+        ) && let TyKind::HashMap { value, .. } = self.tcx.kind_of(lowered_recv_ty)
+            && self.type_slot_bytes(*value) > 8
+        {
+            let _ = self.ensure_aggr_struct_meta(*value);
         }
 
         if let Some(sym) = runtime_symbol {

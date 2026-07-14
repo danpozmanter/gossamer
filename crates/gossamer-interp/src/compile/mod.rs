@@ -366,26 +366,12 @@ pub fn compile_fn(
         {
             builder.mut_ref_params.push(reg);
         }
-        // Track typed-storage parameter shapes so callees can use
-        // the same `IntArrayGetI64` / `FloatVecGetF64` fast paths
-        // they would for a let-binding. The receiver invariant
-        // holds whenever the caller built the argument via
-        // `try_build_int_array` / `try_build_float_vec` - see
-        // `Op::FloatVecGetF64` for the runtime gate.
-        let elem_kind = builder.unwrap_ref(param.ty);
-        if let Some(TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem)) =
-            tcx.kind(elem_kind)
-        {
-            match tcx.kind(*elem) {
-                Some(TyKind::Float(FloatTy::F64)) => {
-                    builder.flat_float_locals.insert(reg);
-                }
-                Some(TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize)) => {
-                    builder.flat_int_locals.insert(reg);
-                }
-                _ => {}
-            }
-        }
+        // Do not mark parameters as flat storage merely from their source
+        // type. Call arguments use the general `Value` ABI, so an otherwise
+        // well-typed `[i64; N]` parameter can arrive as `Value::Array` rather
+        // than `Value::IntArray`. The flat opcodes are reserved for values
+        // constructed by their matching `Build*` opcode; this keeps a broken
+        // storage invariant an error instead of a hidden generic fallback.
     }
     let result = builder.compile_block(&body.block)?;
     if matches!(result, BlockResult::ValueIn(_)) {

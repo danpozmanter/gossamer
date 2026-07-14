@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.28.0 - Correctness, optimization, and tooling
+
+- Stopped rewriting frontend-cache entries on a cache hit; the validated AST
+  blob now replaces the redundant fsync-backed success marker.
+- Counted-loop HashMap construction now reserves a proven upper bound without
+  changing map semantics; skipped-insert paths remain unoptimised.
+- Added opt-in `GOS_VEC_ALLOC_STATS=1` telemetry for compact Vec inline,
+  split-buffer, owner-carrier, and region allocation shapes.
+- Primitive Vecs now keep generation and guarded metadata in the ABI tail,
+  eliminating the separate owner allocation while preserving native prefix
+  offsets; aggregate slot metadata remains lazy.
+- Automatic loop regions now defer `runtime::collect_cycles()` until after
+  `arena_pop`, keeping the collector away from region-owned pointers.
+- Made counted-loop Vec reservation require exactly one push on every proven
+  loop-body path, rejecting skipped, duplicate, cyclic, and exiting paths.
+- Added generated LLM documentation drift checks to local `check.sh` and CI.
+- Reject `HashMap::keys()` for aggregate key types before lowering; use
+  `iter()` until typed aggregate-key snapshots are available across tiers.
+- Document and test deferred-JIT admission: straight-line programs skip JIT
+  MIR preparation, while loop and recursive candidates remain eligible.
+- Expanded JIT accounting with compile duration, peak RSS, installed callable
+  entries, and a conservative count of bytecode instructions bypassed.
+- Added opt-in `GOS_PROFILE_RSS=1` phase samples for `gos run` frontend, HIR,
+  VM-load, and execution lifetime investigations.
+- Propagated a local Vec bounds fact through repeated straight-line accesses
+  after one proven guard, including empty single-predecessor bridge blocks,
+  with conservative mutation/alias/join/branch bail-outs.
+- Made scalar source indexing fail consistently across VM, runtime, and LLVM
+  AOT paths instead of returning zero or silently dropping an out-of-range
+  write.
+- Made typed VM array fast paths require their flat storage representation;
+  general-ABI array parameters now use the generic checked indexing path rather
+  than silently falling back after an invariant mismatch.
+- Routed `Vec::with_capacity` through active arena regions and added an
+  all-tier bounded-RSS regression for returned structs containing Vec fields.
+- Hardened package-download temp spools to be owner-only on Unix while
+  streaming, hashing, and normal-Ed25519 signature-verifying archive bytes
+  before validated extraction.
+- Added typed native HashMap capacity construction for integer/string layouts,
+  fixing `HashMap<String, _>::with_capacity` without selecting integer storage.
+- Marked fully buffered HTTP/3 as Experimental in feature status.
+- Clarified the generated LLM API catalog and interpreter cancellation parity.
+- Made VM `String::with_capacity` reserve and retain mutable builder storage
+  across String method write-back.
+
 ## 0.27.1 - %ls REPL command sorting
 - `%ls` sorted alphabetically.
 

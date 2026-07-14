@@ -2141,6 +2141,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_map_new_with_capacity as *const u8,
         ),
         (
+            "gos_rt_map_new_with_capacity_typed",
+            crate::c_abi::gos_rt_map_new_with_capacity_typed as *const u8,
+        ),
+        (
             "gos_rt_map_or_insert_i64_i64",
             crate::c_abi::gos_rt_map_or_insert_i64_i64 as *const u8,
         ),
@@ -3033,6 +3037,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_map_set_blob_values",
             crate::c_abi::map::gos_rt_map_set_blob_values as *const u8,
+        ),
+        (
+            "gos_rt_map_set_vec_values",
+            crate::c_abi::map::gos_rt_map_set_vec_values as *const u8,
         ),
         (
             "gos_rt_set_panic_hook",
@@ -5145,6 +5153,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_vec_reserve_exact",
             crate::c_abi::gos_rt_vec_reserve_exact as *const u8,
+        ),
+        (
+            "gos_rt_vec_remove_at",
+            crate::c_abi::gos_rt_vec_remove_at as *const u8,
         ),
         (
             "gos_rt_vec_remove_safe",

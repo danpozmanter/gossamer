@@ -106,6 +106,373 @@ fn while_loop_produces_cfg_with_back_edge() {
 }
 
 #[test]
+fn counted_hashmap_insert_loop_reserves_proven_upper_bound() {
+    let source = r"
+use std::collections::HashMap
+
+fn fill(n: i64) -> i64 {
+    let mut m: HashMap<i64, i64> = HashMap::new()
+    let mut i = 0i64
+    while i < n {
+        m.insert(i, i)
+        i += 1i64
+    }
+    m.len()
+}
+";
+
+    let (bodies, _) = build(source);
+    let body = bodies
+        .iter()
+        .find(|body| body.name == "fill")
+        .expect("fill body");
+    let callees: Vec<_> = body
+        .blocks
+        .iter()
+        .filter_map(|block| match &block.terminator {
+            Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                ..
+            } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let call = body
+        .blocks
+        .iter()
+        .find_map(|block| match &block.terminator {
+            Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                args,
+                ..
+            } if name == "gos_rt_map_new_with_capacity" => Some(args),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("counted map constructor must reserve; calls: {callees:?}"));
+    assert_eq!(
+        call.len(),
+        1,
+        "native lowering derives map layout from the destination"
+    );
+    assert!(
+        matches!(call[0], Operand::Copy(_)),
+        "capacity is the loop bound"
+    );
+}
+
+#[test]
+fn branch_guarded_heap_style_repeated_vec_reads_are_unchecked() {
+    // Heap sift and BFS inner loops commonly validate an index once, then
+    // inspect the same slot repeatedly. The MIR proof must carry only through
+    // that straight-line access chain, never through a mutation or another
+    // branch.
+    let source = r"
+fn probe(xs: Vec<i64>) -> i64 {
+    let idx = 0i64
+    let n = xs.len()
+    if idx < n {
+        let first = xs[idx]
+        let second = xs[idx]
+        first + second
+    } else {
+        0i64
+    }
+}
+";
+    let (mut bodies, tcx) = build(source);
+    for body in &mut bodies {
+        optimise(body, &tcx);
+    }
+    let probe = bodies
+        .iter()
+        .find(|body| body.name == "probe")
+        .expect("probe");
+    let unchecked_reads = probe
+        .blocks
+        .iter()
+        .filter(|block| {
+            matches!(
+                &block.terminator,
+                Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(name)),
+                    ..
+                } if name == "gos_rt_vec_get_i64_unchecked"
+            )
+        })
+        .count();
+    let callees: Vec<_> = probe
+        .blocks
+        .iter()
+        .filter_map(|block| match &block.terminator {
+            Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                ..
+            } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        unchecked_reads, 2,
+        "a single idx < len guard must cover its straight-line repeated reads; calls: {callees:?}"
+    );
+}
+
+#[test]
+fn counted_hashmap_reservation_rejects_a_skipped_insert_path() {
+    let source = r"
+use std::collections::HashMap
+
+fn fill(n: i64) -> i64 {
+    let mut m: HashMap<i64, i64> = HashMap::new()
+    let mut i = 0i64
+    while i < n {
+        if i % 2i64 == 0i64 {
+            m.insert(i, i)
+        }
+        i += 1i64
+    }
+    m.len()
+}
+";
+    let (bodies, _) = build(source);
+    let body = bodies
+        .iter()
+        .find(|body| body.name == "fill")
+        .expect("fill body");
+    assert!(body.blocks.iter().any(|block| {
+        matches!(
+            &block.terminator,
+            Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                ..
+            } if name == "HashMap::new"
+        )
+    }));
+    assert!(!body.blocks.iter().any(|block| {
+        matches!(
+            &block.terminator,
+            Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                ..
+            } if name == "gos_rt_map_new_with_capacity"
+        )
+    }));
+}
+
+#[test]
+fn counted_string_hashmap_insert_loop_reserves_with_typed_capacity_backend() {
+    // The MIR planner carries only the proven count. The native backend reads
+    // this map's destination type and selects string-keyed capacity storage.
+    let source = r#"
+use std::collections::HashMap
+
+fn fill(n: i64) -> i64 {
+    let mut m: HashMap<String, i64> = HashMap::new()
+    let mut i = 0i64
+    while i < n {
+        m.insert(format!("key-{}", i), i)
+        i += 1i64
+    }
+    m.len()
+}
+"#;
+    let (bodies, _) = build(source);
+    let body = bodies
+        .iter()
+        .find(|body| body.name == "fill")
+        .expect("fill body");
+    assert!(
+        body.blocks.iter().any(|block| matches!(
+            &block.terminator,
+            Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                ..
+            } if name == "gos_rt_map_new_with_capacity"
+        )),
+        "string map must carry its proven capacity to the typed backend"
+    );
+}
+
+#[test]
+fn container_insert_keeps_balanced_source_and_container_vec_ownership() {
+    // An insert must acquire a share for the map and still release the source
+    // binding at scope exit. The old post-drop MIR pass removed every source
+    // release after an insert, which made this ordinary overwrite/remove shape
+    // leak each value. Keeping both operations also makes the map's overwrite
+    // and teardown releases exactly balance the inserted share.
+    let source = r"
+use std::collections::HashMap
+
+fn replace() -> i64 {
+    let mut m: HashMap<i64, Vec<i64>> = HashMap::new()
+    let value: Vec<i64> = [1i64, 2i64]
+    m.insert(1, value)
+    m.insert(1, [3i64, 4i64])
+    m.remove(1)
+    0i64
+}
+
+";
+    let (bodies, _) = build(source);
+    let body = bodies
+        .iter()
+        .find(|body| body.name == "replace")
+        .expect("replace body");
+    let inserted_source = body
+        .blocks
+        .iter()
+        .find_map(|block| match &block.terminator {
+            Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                args,
+                ..
+            } if name == "gos_rt_map_insert_i64_i64" => args.get(2).and_then(|arg| match arg {
+                Operand::Copy(place) if place.projection.is_empty() => Some(place.local),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .expect("typed Vec-map insertion of the named source");
+
+    let releases = body
+        .blocks
+        .iter()
+        .flat_map(|block| &block.stmts)
+        .filter(|stmt| {
+            matches!(
+                &stmt.kind,
+                StatementKind::Assign {
+                    rvalue: Rvalue::CallIntrinsic { name, args },
+                    ..
+                } if *name == "gos_rt_vec_free"
+                    && matches!(args.first(), Some(Operand::Copy(place))
+                        if place.projection.is_empty() && place.local == inserted_source)
+            )
+        })
+        .count();
+    assert!(
+        releases >= 1,
+        "the source share must be released after insertion; body: {body:#?}"
+    );
+
+    let retains = body
+        .blocks
+        .iter()
+        .flat_map(|block| &block.stmts)
+        .filter(|stmt| {
+            matches!(
+                &stmt.kind,
+                StatementKind::Assign {
+                    rvalue: Rvalue::CallIntrinsic { name, args },
+                    ..
+                } if *name == "gos_rt_vec_retain"
+                    && matches!(args.first(), Some(Operand::Copy(place))
+                        if place.projection.is_empty() && place.local == inserted_source)
+            )
+        })
+        .count();
+    assert!(
+        retains >= 1,
+        "the map must receive an explicit retained share; body: {body:#?}"
+    );
+}
+
+#[test]
+fn container_or_insert_retains_map_vec_share_and_returns_a_borrow() {
+    // `or_insert` consumes its default only on an absent key. The lowering
+    // must still mint the map's Vec share before the call; its result is an
+    // interior borrow and is intentionally not an owning call destination.
+    let source = r#"
+use std::collections::HashMap
+
+fn insert_default() -> i64 {
+    let mut m: HashMap<String, Vec<i64>> = HashMap::new()
+    let stored = m.or_insert("key", [1i64, 2i64])
+    stored.len()
+}
+"#;
+    let (bodies, _) = build(source);
+    let body = bodies
+        .iter()
+        .find(|body| body.name == "insert_default")
+        .expect("insert_default body");
+    let default = body
+        .blocks
+        .iter()
+        .find_map(|block| match &block.terminator {
+            Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                args,
+                ..
+            } if name == "gos_rt_map_or_insert_str_i64" => args.get(2).and_then(|arg| match arg {
+                Operand::Copy(place) if place.projection.is_empty() => Some(place.local),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .expect("or_insert default Vec argument");
+    assert!(
+        body.blocks
+            .iter()
+            .flat_map(|block| &block.stmts)
+            .any(|stmt| {
+                matches!(
+                    &stmt.kind,
+                    StatementKind::Assign {
+                        rvalue: Rvalue::CallIntrinsic { name, args },
+                        ..
+                    } if *name == "gos_rt_vec_retain"
+                        && matches!(args.first(), Some(Operand::Copy(place))
+                            if place.projection.is_empty() && place.local == default)
+                )
+            }),
+        "or_insert must retain the map's Vec share; body: {body:#?}"
+    );
+}
+
+#[test]
+fn map_insert_registers_structural_children_for_aggregate_values() {
+    let source = r#"
+use std::collections::HashMap
+
+struct Item { name: String, tags: [String], n: i64 }
+
+fn insert_item() {
+    let mut m: HashMap<i64, Item> = HashMap::new()
+    m.insert(1i64, Item { name: "item", tags: [], n: 1i64 })
+}
+"#;
+    let (bodies, tcx) = build(source);
+    let body = bodies
+        .iter()
+        .find(|body| body.name == "insert_item")
+        .expect("insert_item body");
+    let value_ty = body
+        .locals
+        .iter()
+        .find_map(|local| match tcx.kind_of(local.ty) {
+            gossamer_types::TyKind::HashMap { value, .. } => Some(*value),
+            _ => None,
+        })
+        .expect("HashMap value type");
+    let symbol = format!("gos_rc_meta_boxaggr_{}", value_ty.as_u32());
+    let meta = tcx
+        .rc_meta(&symbol)
+        .expect("aggregate map values need structural copy metadata");
+    assert_eq!(meta[0], gossamer_abi::rc::RC_KIND_STRUCT);
+    assert!(
+        meta[4..].contains(&0),
+        "String child word missing: {meta:?}"
+    );
+    assert!(
+        meta[4..].contains(
+            &((gossamer_abi::rc::RC_CHILD_VEC << gossamer_abi::rc::RC_CHILD_KIND_SHIFT) | 1)
+        ),
+        "Vec child word missing: {meta:?}"
+    );
+}
+
+#[test]
 fn constant_folding_eliminates_const_arithmetic() {
     let source = r"fn compute() -> i64 { 1i64 + 2i64 }
 ";
@@ -1614,6 +1981,190 @@ fn main() {
     assert!(
         names.iter().any(|n| n == "gos_rt_arena_pop"),
         "allocating loop should close its auto-region: {names:?}"
+    );
+}
+
+#[test]
+fn cycle_collection_inside_auto_region_runs_after_arena_pop() {
+    let source = r"
+use std::runtime
+
+enum Node {
+    Leaf(i64),
+    Pair(Node, Node),
+}
+
+fn build(depth: i64) -> Node {
+    if depth == 0 { return Node::Leaf(1) }
+    Node::Pair(build(depth - 1), build(depth - 1))
+}
+
+fn count(n: &Node) -> i64 {
+    match n {
+        Node::Leaf(_) => 1,
+        Node::Pair(l, r) => 1 + count(l) + count(r),
+    }
+}
+
+fn main() {
+    let mut total = 0
+    for _ in 0..3 {
+        let tree = build(4)
+        total += count(&tree)
+        runtime::collect_cycles()
+    }
+}
+";
+    let (bodies, _) = build(source);
+    let main = bodies.iter().find(|b| b.name == "main").expect("main");
+    let names = call_names(main);
+    let pop = names
+        .iter()
+        .position(|name| name == "gos_rt_arena_pop")
+        .unwrap_or_else(|| panic!("auto region must emit arena_pop: {names:?}"));
+    let collect = names
+        .iter()
+        .position(|name| name == "gos_rt_collect_cycles")
+        .unwrap_or_else(|| panic!("collection must remain in the lowered program: {names:?}"));
+    assert!(pop < collect, "collection must follow arena_pop: {names:?}");
+}
+
+#[test]
+fn auto_regions_reject_early_exit_and_only_region_the_inner_nested_loop() {
+    let early_exit = r"
+enum Node { Leaf(i64), Pair(Node, Node) }
+
+fn build(depth: i64) -> Node {
+    if depth == 0 { return Node::Leaf(1) }
+    Node::Pair(build(depth - 1), build(depth - 1))
+}
+
+fn main() {
+    for i in 0..3 {
+        let tree = build(3)
+        if i == 1 { break }
+        println(tree)
+    }
+}
+";
+    let (bodies, _) = build(early_exit);
+    let main = bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .expect("main");
+    let names = call_names(main);
+    assert!(
+        !names.iter().any(|name| name == "gos_rt_arena_push"),
+        "an early exit must not leave an automatic region open: {names:?}"
+    );
+
+    let nested = r"
+enum Node { Leaf(i64), Pair(Node, Node) }
+
+fn build(depth: i64) -> Node {
+    if depth == 0 { return Node::Leaf(1) }
+    Node::Pair(build(depth - 1), build(depth - 1))
+}
+
+fn count(n: &Node) -> i64 {
+    match n {
+        Node::Leaf(_) => 1,
+        Node::Pair(left, right) => 1 + count(left) + count(right),
+    }
+}
+
+fn main() {
+    let mut total = 0
+    for _ in 0..2 {
+        for _ in 0..2 {
+            let tree = build(3)
+            total += count(&tree)
+        }
+    }
+    println(total)
+}
+";
+    let (bodies, _) = build(nested);
+    let main = bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .expect("main");
+    let names = call_names(main);
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| name.as_str() == "gos_rt_arena_push")
+            .count(),
+        1,
+        "only the allocation-owning inner loop may be regioned: {names:?}"
+    );
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| name.as_str() == "gos_rt_arena_pop")
+            .count(),
+        1,
+        "the one nested region must be closed exactly once: {names:?}"
+    );
+}
+
+#[test]
+fn nested_nonescaping_block_gets_one_automatic_region() {
+    let source = r"
+enum Node { Leaf(i64), Pair(Node, Node) }
+
+fn count(n: &Node) -> i64 {
+    match n { Node::Leaf(_) => 1, Node::Pair(a, b) => count(a) + count(b) }
+}
+
+fn main() {
+    let answer = {
+        let tree = Node::Pair(Node::Leaf(1), Node::Leaf(2))
+        count(&tree)
+    }
+    answer
+}
+";
+    let (bodies, _) = build(source);
+    let main = bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .expect("main");
+    let names = call_names(main);
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| *name == "gos_rt_arena_push")
+            .count(),
+        1,
+        "nested nonescaping allocation block should be regioned: {names:?}"
+    );
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| *name == "gos_rt_arena_pop")
+            .count(),
+        1,
+        "nested nonescaping allocation block should close its region: {names:?}"
+    );
+
+    let escaping = r"
+enum Node { Leaf(i64), Pair(Node, Node) }
+
+fn main() {
+    let tree = { Node::Pair(Node::Leaf(1), Node::Leaf(2)) }
+    match tree { Node::Leaf(n) => n, Node::Pair(_, _) => 2 }
+}
+";
+    let (bodies, _) = build(escaping);
+    let main = bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .expect("main");
+    let names = call_names(main);
+    assert!(
+        !names.iter().any(|name| name == "gos_rt_arena_push"),
+        "a block result that escapes must never be regioned: {names:?}"
     );
 }
 

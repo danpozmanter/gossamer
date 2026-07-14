@@ -9,8 +9,8 @@
 //! `$XDG_CACHE_HOME/gossamer` (or `$HOME/.cache/gossamer` / the
 //! workspace `target/` as a fallback).
 //!
-//! What it does **today**: records that a source was successfully
-//! compiled, and reports cache hits through `observe_hit`.
+//! What it does **today**: persists a successfully parsed source file and
+//! treats a complete, deserializable blob as a cache hit.
 //!
 //! What it does **not yet do**: skip the actual compile. Achieving
 //! that needs the frontend to serialize its intermediate
@@ -123,35 +123,6 @@ pub fn cache_dir() -> PathBuf {
     PathBuf::from("target").join("gossamer-frontend")
 }
 
-/// Writes a zero-byte marker indicating the key was compiled
-/// successfully. Creates the cache directory on demand. Silently
-/// swallows I/O errors - the cache is advisory, never required.
-pub fn mark_success(key: &FrontendCacheKey) {
-    mark_success_in(&cache_dir(), key);
-}
-
-/// Variant of [`mark_success`] that writes into `root` instead of
-/// the shared cache directory. Used by tests and by callers that
-/// want an isolated workspace-local cache.
-pub fn mark_success_in(root: &Path, key: &FrontendCacheKey) {
-    let _ = fs::create_dir_all(root);
-    let _ = write_atomic(&marker_path(root, key), b"");
-}
-
-/// Returns `true` when `key` has a marker recorded by a prior
-/// successful compile.
-#[must_use]
-pub fn observe_hit(key: &FrontendCacheKey) -> bool {
-    observe_hit_in(&cache_dir(), key)
-}
-
-/// Variant of [`observe_hit`] that consults `root` instead of the
-/// shared cache directory.
-#[must_use]
-pub fn observe_hit_in(root: &Path, key: &FrontendCacheKey) -> bool {
-    marker_path(root, key).is_file()
-}
-
 /// Serializes `value` as a postcard blob keyed by `key`. Errors
 /// silently - cache writes are advisory.
 pub fn store_blob<T: serde::Serialize>(key: &FrontendCacheKey, value: &T) {
@@ -221,10 +192,6 @@ pub fn raw_blob_path(key: &FrontendCacheKey) -> Option<PathBuf> {
 pub fn raw_blob_path_in(root: &Path, key: &FrontendCacheKey) -> Option<PathBuf> {
     let p = blob_path(root, key);
     if p.is_file() { Some(p) } else { None }
-}
-
-fn marker_path(dir: &Path, key: &FrontendCacheKey) -> PathBuf {
-    dir.join(format!("{}.ok", key.as_hex()))
 }
 
 fn blob_path(dir: &Path, key: &FrontendCacheKey) -> PathBuf {
@@ -309,16 +276,6 @@ mod tests {
         let a = FrontendCacheKey::new("fn main() {}\n", "0.0.0");
         let b = FrontendCacheKey::new("fn main() { }\n", "0.0.0");
         assert_ne!(a, b);
-    }
-
-    #[test]
-    fn mark_and_observe_round_trip_in_an_isolated_dir() {
-        let tmp = tempdir();
-        let key = FrontendCacheKey::new("fn a() {}\n", "test");
-        assert!(!observe_hit_in(&tmp, &key));
-        mark_success_in(&tmp, &key);
-        assert!(observe_hit_in(&tmp, &key));
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]

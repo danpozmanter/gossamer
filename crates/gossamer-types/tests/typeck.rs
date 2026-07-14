@@ -979,6 +979,32 @@ fn real_method_on_user_struct_is_accepted() {
 }
 
 #[test]
+fn hashmap_keys_with_aggregate_key_is_rejected_before_lowering() {
+    // Native maps hash aggregate keys as flat bytes and cannot reconstruct a
+    // `Vec<K>` snapshot. This used to pass checking and return Unit-shaped
+    // values in the compiled runtime.
+    let d = diagnostics_for(
+        "use std::collections::HashMap\nstruct Point { x: i64, y: i64 }\nfn main() { let m: HashMap<Point, i64> = HashMap::new(); let _ = m.keys(); }\n",
+    );
+    assert!(
+        d.iter().any(|diagnostic| matches!(
+            &diagnostic.error,
+            TypeError::UnresolvedMethod { name, .. }
+                if name == "keys for aggregate HashMap keys"
+        )),
+        "expected aggregate HashMap keys rejection, got {d:?}"
+    );
+}
+
+#[test]
+fn hashmap_keys_with_scalar_key_remains_available() {
+    let d = diagnostics_for(
+        "use std::collections::HashMap\nfn main() { let m: HashMap<i64, i64> = HashMap::new(); let _ = m.keys(); }\n",
+    );
+    assert!(d.is_empty(), "scalar HashMap keys should typecheck: {d:?}");
+}
+
+#[test]
 fn strings_free_fn_rejects_integer_in_string_slot() {
     // 0.18.x: an integer in a `String` parameter of a `strings::` free
     // function passed check, then the compiled string shim dereferenced

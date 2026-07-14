@@ -1,9 +1,9 @@
-//! Tree-walking interpreter for Gossamer.
-//! Accepts an HIR program produced by [`gossamer_hir`] and executes
-//! top-level functions directly, without first lowering to bytecode.
-//! Used as the first executable end-to-end path through the frontend
-//! and as a correctness oracle for the bytecode VM that arrives in
-//!.
+//! Bytecode VM and interpreter support for Gossamer.
+//!
+//! The production execution path compiles HIR from [`gossamer_hir`] to
+//! validated bytecode and executes it in [`Vm`]. Legacy direct-evaluation
+//! helpers remain only for focused compatibility tests; this crate is not a
+//! tree-walking runtime.
 //! Values use reference-counted heap aggregates, mirroring the GC
 //! semantics described in SPEC §3.3 even though the real garbage
 //! collector does not land.

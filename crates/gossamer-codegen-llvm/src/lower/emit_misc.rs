@@ -427,7 +427,7 @@ impl<'a> Lowerer<'a> {
             }
             if map_insert_heap_copy
                 && i == 2
-                && let Some(heap_v) = self.maybe_heap_copy_aggregate(arg)
+                && let Some(heap_v) = self.maybe_heap_copy_aggregate_for_map(arg)
             {
                 let _ = write!(arg_text, "i64 {heap_v}");
                 continue;

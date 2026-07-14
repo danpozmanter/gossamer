@@ -13,3 +13,15 @@ LIFO stack over Vec<i64>. Re-bind shape: `let s = stack::push(s, v)`.
 | `peek` | fn | Top element, or 0 if empty. |
 | `len` | fn | Element count. |
 
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+## API details and source
+
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+
+| Item | Canonical signature or declaration | Description |
+|---|---|---|
+| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn len(xs: Stack<i64>) -> i64` | Element count. |
+| [`peek`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn peek(xs: Stack<i64>) -> i64` | Top element, or 0 if empty. |
+| [`pop`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn pop(xs: Stack<i64>) -> Stack<i64>` | Drop the top; returns the new stack. |
+| [`push`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn push(xs: Stack<i64>, value: i64) -> Stack<i64>` | Push an i64 onto the top; returns the new stack. |

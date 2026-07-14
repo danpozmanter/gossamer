@@ -30,7 +30,7 @@ use super::*;
 // ---------------------------------------------------------------
 
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use rustc_hash::FxHashMap;
 
@@ -125,16 +125,16 @@ impl<T> DerefMut for BiasedGuard<'_, T> {
 pub struct GosMap {
     len_cache: i64,
     storage: BiasedLock<MapStorage>,
-    /// Values are RC copy-blobs (`gos_rt_rc_alloc_copy` results): the
-    /// map owns one share per stored value. Inserts release the
-    /// overwritten value, removals and `gos_rt_map_free` release the
-    /// stored ones, and the `_opt` getters retain before handing the
-    /// pointer out (the receiving option holder releases it). Set by
-    /// `gos_rt_map_set_blob_values` right after construction when the
-    /// declared value type is a guarded aggregate; appended last so
-    /// existing field offsets are unchanged.
-    blob_values: std::sync::atomic::AtomicBool,
+    /// Ownership destructor for pointer-valued entries. The map keeps exactly
+    /// one share per entry, releases overwritten/removed/remaining entries,
+    /// and retains before handing an optional value to the caller. It is set
+    /// immediately after construction from the checked map value type.
+    value_owner: AtomicU8,
 }
+
+const MAP_VALUE_NONE: u8 = 0;
+const MAP_VALUE_RC: u8 = 1;
+const MAP_VALUE_VEC: u8 = 2;
 
 enum MapStorage {
     Empty,
@@ -163,7 +163,7 @@ pub unsafe extern "C" fn gos_rt_map_new(_key_bytes: u32, _val_bytes: u32) -> *mu
         Box::into_raw(Box::new(GosMap {
             len_cache: 0,
             storage: BiasedLock::new(MapStorage::Empty),
-            blob_values: std::sync::atomic::AtomicBool::new(false),
+            value_owner: AtomicU8::new(MAP_VALUE_NONE),
         }))
     })
 }
@@ -181,7 +181,15 @@ pub unsafe extern "C" fn gos_rt_map_new_with_capacity(
     cap: i64,
 ) -> *mut GosMap {
     ffi_entry!(std::ptr::null_mut(), {
-        let cap = if cap < 0 { 0 } else { cap as usize };
+        // An inferred loop bound may ultimately come from untrusted input.
+        // Keep preallocation an optimisation rather than an allocation-DoS;
+        // subsequent inserts retain ordinary map growth semantics.
+        const MAX_PREALLOCATED_CAPACITY: usize = 1 << 24;
+        let cap = if cap < 0 {
+            0
+        } else {
+            (cap as usize).min(MAX_PREALLOCATED_CAPACITY)
+        };
         let storage = if key_bytes == 8 && val_bytes == 8 {
             MapStorage::I64I64(FxHashMap::with_capacity_and_hasher(
                 cap,
@@ -190,10 +198,57 @@ pub unsafe extern "C" fn gos_rt_map_new_with_capacity(
         } else {
             MapStorage::Empty
         };
+        crate::c_abi::ledger::map_inc();
         Box::into_raw(Box::new(GosMap {
             len_cache: 0,
             storage: BiasedLock::new(storage),
-            blob_values: std::sync::atomic::AtomicBool::new(false),
+            value_owner: AtomicU8::new(MAP_VALUE_NONE),
+        }))
+    })
+}
+
+/// Typed pre-sized constructor for the source-visible map layouts. The older
+/// width-only constructor cannot distinguish an `i64` word from a `String`
+/// pointer, so using `(8, 8, cap)` for a string map would select `I64I64` and
+/// make subsequent typed insertion silently fail. Kinds are `0 = word`,
+/// `1 = String`; any other kind retains lazy generic storage.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_new_with_capacity_typed(
+    key_kind: u32,
+    val_kind: u32,
+    cap: i64,
+) -> *mut GosMap {
+    ffi_entry!(std::ptr::null_mut(), {
+        const MAX_PREALLOCATED_CAPACITY: usize = 1 << 24;
+        let cap = if cap < 0 {
+            0
+        } else {
+            (cap as usize).min(MAX_PREALLOCATED_CAPACITY)
+        };
+        let storage = match (key_kind, val_kind) {
+            (0, 0) => MapStorage::I64I64(FxHashMap::with_capacity_and_hasher(
+                cap,
+                rustc_hash::FxBuildHasher,
+            )),
+            (1, 0) => MapStorage::StrI64(FxHashMap::with_capacity_and_hasher(
+                cap,
+                rustc_hash::FxBuildHasher,
+            )),
+            (0, 1) => MapStorage::I64Str(FxHashMap::with_capacity_and_hasher(
+                cap,
+                rustc_hash::FxBuildHasher,
+            )),
+            (1, 1) => MapStorage::StrStr(FxHashMap::with_capacity_and_hasher(
+                cap,
+                rustc_hash::FxBuildHasher,
+            )),
+            _ => MapStorage::Empty,
+        };
+        crate::c_abi::ledger::map_inc();
+        Box::into_raw(Box::new(GosMap {
+            len_cache: 0,
+            storage: BiasedLock::new(storage),
+            value_owner: AtomicU8::new(MAP_VALUE_NONE),
         }))
     })
 }
@@ -286,6 +341,7 @@ pub unsafe extern "C" fn gos_rt_map_get_or_str_i64(
             return default;
         }
         let map = unsafe { &*m };
+        crate::c_abi::ledger::map_str_probe();
         let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let storage = map.storage.lock();
         match &*storage {
@@ -372,13 +428,11 @@ pub unsafe extern "C" fn gos_rt_map_insert_i64_i64(m: *mut GosMap, key: i64, val
         if prev.is_none() {
             map.len_cache += 1;
         }
-        if map_has_blob_values(map)
+        if map_has_owned_values(map)
             && let Some(old) = prev
             && old != val
         {
-            // Overwriting a copy-blob value: the map's share of the old
-            // one is released (set-gated in the RC layer).
-            unsafe { release_blob_value(old) };
+            unsafe { release_owned_value(map, old) };
         }
     });
 }
@@ -450,11 +504,11 @@ pub unsafe extern "C" fn gos_rt_map_insert_skey(
         if prev.is_none() {
             map.len_cache += 1;
         }
-        if map_has_blob_values(map)
+        if map_has_owned_values(map)
             && let Some(old) = prev
             && old != val
         {
-            unsafe { release_blob_value(old) };
+            unsafe { release_owned_value(map, old) };
         }
     });
 }
@@ -482,9 +536,9 @@ pub unsafe extern "C" fn gos_rt_map_get_skey_opt(
             _ => None,
         };
         if let Some(v) = payload
-            && map_has_blob_values(map)
+            && map_has_owned_values(map)
         {
-            unsafe { retain_blob_value(v) };
+            unsafe { retain_owned_value(map, v) };
         }
         match payload {
             Some(v) => unsafe { gos_rt_result_new(0, v) },
@@ -580,8 +634,8 @@ pub unsafe extern "C" fn gos_rt_map_get_i64_opt(m: *const GosMap, key: i64) -> i
             Some(v) => {
                 // Blob values: the caller's option holder receives (and
                 // later releases) its own share; the map keeps its own.
-                if map_has_blob_values(map) {
-                    unsafe { retain_blob_value(v) };
+                if map_has_owned_values(map) {
+                    unsafe { retain_owned_value(map, v) };
                 }
                 unsafe { gos_rt_result_new(0, v) }
             }
@@ -614,12 +668,12 @@ pub unsafe extern "C" fn gos_rt_map_remove_i64(m: *mut GosMap, key: i64) -> bool
         }
         let map = unsafe { &mut *m };
         let mut storage = map.storage.lock();
-        let blob_values = map_has_blob_values(map);
+        let owned_values = map_has_owned_values(map);
         let removed = match &mut *storage {
             MapStorage::I64I64(inner) => match inner.remove(&key) {
                 Some(old) => {
-                    if blob_values {
-                        unsafe { release_blob_value(old) };
+                    if owned_values {
+                        unsafe { release_owned_value(map, old) };
                     }
                     true
                 }
@@ -642,6 +696,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c
             return;
         }
         let map = unsafe { &mut *m };
+        crate::c_abi::ledger::map_str_probe();
         let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
@@ -650,6 +705,9 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c
         let MapStorage::StrI64(inner) = &mut *storage else {
             return;
         };
+        // `boxed_bytes` allocates before `HashMap::insert` can discover an
+        // overwrite, so every call pays this copy (not only fresh keys).
+        crate::c_abi::ledger::map_str_key_copy(key_bytes.len());
         let prev = inner.insert(crate::c_abi::string::boxed_bytes(key_bytes), val);
         if prev.is_none() {
             map.len_cache += 1;
@@ -658,14 +716,14 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c
         // `HashMap<String, Vec<i64>>`): release the map's share of the
         // old word, mirroring the i64/i64 insert path. Gated on the
         // blob-values flag so scalar-valued maps stay untouched.
-        let release_old = if map_has_blob_values(map) && prev != Some(val) {
+        let release_old = if map_has_owned_values(map) && prev != Some(val) {
             prev
         } else {
             None
         };
         drop(storage);
         if let Some(old) = release_old {
-            unsafe { release_blob_value(old) };
+            unsafe { release_owned_value(map, old) };
         }
         // Consuming insert copied the key bytes; release the moved-in gos-string
         // (rc-aware + tag-checked - safe for temps, shared, and literals).
@@ -680,6 +738,7 @@ pub unsafe extern "C" fn gos_rt_map_get_str_i64(m: *const GosMap, key: *const c_
             return 0;
         }
         let map = unsafe { &*m };
+        crate::c_abi::ledger::map_str_probe();
         let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let storage = map.storage.lock();
         match &*storage {
@@ -715,9 +774,9 @@ pub unsafe extern "C" fn gos_rt_map_get_str_opt(m: *const GosMap, key: *const c_
         // and are not blob-values.
         if let Some(v) = payload
             && matches!(&*storage, MapStorage::StrI64(_))
-            && map_has_blob_values(map)
+            && map_has_owned_values(map)
         {
-            unsafe { retain_blob_value(v) };
+            unsafe { retain_owned_value(map, v) };
         }
         match payload {
             Some(v) => unsafe { gos_rt_result_new(0, v) },
@@ -799,6 +858,7 @@ pub unsafe extern "C" fn gos_rt_map_contains_key_str(m: *const GosMap, key: *con
             return false;
         }
         let map = unsafe { &*m };
+        crate::c_abi::ledger::map_str_probe();
         let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let storage = map.storage.lock();
         match &*storage {
@@ -818,12 +878,12 @@ pub unsafe extern "C" fn gos_rt_map_remove_str(m: *mut GosMap, key: *const c_cha
         let map = unsafe { &mut *m };
         let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let mut storage = map.storage.lock();
-        let blob_values = map_has_blob_values(map);
+        let owned_values = map_has_owned_values(map);
         let removed = match &mut *storage {
             MapStorage::StrI64(inner) => match inner.remove(key_bytes) {
                 Some(old) => {
-                    if blob_values {
-                        unsafe { release_blob_value(old) };
+                    if owned_values {
+                        unsafe { release_owned_value(map, old) };
                     }
                     true
                 }
@@ -871,6 +931,7 @@ pub unsafe extern "C" fn gos_rt_map_inc_at_str_i64(
         // UTF-8 before slicing, mirroring the interpreter builtin so an
         // out-of-range or non-boundary `inc_at` yields 0 on every tier
         // instead of reading adjacent heap.
+        crate::c_abi::ledger::map_str_probe();
         let seq_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(seq) };
         let (start_u, len_u) = (start as usize, len as usize);
         let end_u = match start_u.checked_add(len_u) {
@@ -897,6 +958,7 @@ pub unsafe extern "C" fn gos_rt_map_inc_at_str_i64(
             *v += by;
             return *v;
         }
+        crate::c_abi::ledger::map_str_key_copy(key_slice.len());
         inner.insert(crate::c_abi::string::boxed_bytes(key_slice), by);
         map.len_cache += 1;
         by
@@ -918,6 +980,7 @@ pub unsafe extern "C" fn gos_rt_map_inc_str_i64(
         if m.is_null() || key.is_null() {
             return 0;
         }
+        crate::c_abi::ledger::map_str_probe();
         let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let map = unsafe { &mut *m };
         let mut storage = map.storage.lock();
@@ -931,6 +994,7 @@ pub unsafe extern "C" fn gos_rt_map_inc_str_i64(
             *v += by;
             return *v;
         }
+        crate::c_abi::ledger::map_str_key_copy(key_bytes.len());
         inner.insert(crate::c_abi::string::boxed_bytes(key_bytes), by);
         map.len_cache += 1;
         by
@@ -961,26 +1025,28 @@ pub unsafe extern "C" fn gos_rt_map_or_insert_str_i64(
         };
         if let Some(v) = inner.get(key_bytes).copied() {
             // Key present: hand back the stored value. For a copy-blob
-            // value (Vec / struct handle) this is a shared hand-out, so
-            // retain to balance the caller's later drop of the returned
-            // value (mirrors gos_rt_map_get_str_opt). The unused
-            // `default` blob is released here, since or_insert owns it.
-            if map_has_blob_values(map) {
-                unsafe { retain_blob_value(v) };
+            // value (Vec / struct handle) the result remains an interior
+            // borrow, just like Rust's `&mut V`; the caller must not own or
+            // release it. The unused `default` value did receive the normal
+            // container-call retain before this runtime helper ran, so drop
+            // that prospective map share and leave its source owner for its
+            // ordinary scope cleanup.
+            if map_has_owned_values(map) {
                 if default != v {
-                    unsafe { release_blob_value(default) };
+                    unsafe { release_owned_value(map, default) };
                 }
             }
+            // The key was retained as a consuming-call argument and copied
+            // into the map's owned byte key, so release its source share.
+            unsafe { gos_rt_str_free(key.cast_mut()) };
             return v;
         }
-        // Key absent: store `default`. Aggregate (blob) values inserted
-        // here on a previously-absent key currently hang the compiled
-        // tier at teardown (a deeper RC-ownership issue between the
-        // coerced literal, the stored word, and the returned word); the
-        // scalar path and the key-present path are unaffected. The
-        // aggregate_binding fixture exercises the working shapes.
+        // Key absent: the compiler's consuming-call retain supplies the
+        // map's independent value share. The return below is a borrow of
+        // that stored value and therefore does not create another share.
         inner.insert(crate::c_abi::string::boxed_bytes(key_bytes), default);
         map.len_cache += 1;
+        unsafe { gos_rt_str_free(key.cast_mut()) };
         default
     })
 }
@@ -1068,16 +1134,16 @@ pub unsafe extern "C" fn gos_rt_map_clear(m: *mut GosMap) {
         }
         let map = unsafe { &mut *m };
         let mut storage = map.storage.lock();
-        if map_has_blob_values(map) {
+        if map_has_owned_values(map) {
             match &*storage {
                 MapStorage::I64I64(inner) => {
                     for &v in inner.values() {
-                        unsafe { release_blob_value(v) };
+                        unsafe { release_owned_value(map, v) };
                     }
                 }
                 MapStorage::StrI64(inner) | MapStorage::SkeyVal(inner) => {
                     for &v in inner.values() {
-                        unsafe { release_blob_value(v) };
+                        unsafe { release_owned_value(map, v) };
                     }
                 }
                 _ => {}
@@ -1378,6 +1444,16 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
         }
         let map = unsafe { &*m };
         let storage = map.storage.lock();
+        let entries = match &*storage {
+            MapStorage::Empty => 0,
+            MapStorage::I64I64(inner) => inner.len(),
+            MapStorage::StrI64(inner) => inner.len(),
+            MapStorage::StrStr(inner) => inner.len(),
+            MapStorage::I64Str(inner) => inner.len(),
+            MapStorage::Bytes(inner) => inner.len(),
+            MapStorage::SkeyVal(inner) => inner.len(),
+        };
+        crate::c_abi::ledger::map_format(entries);
         let mut out = String::from("{");
         let push_entry = |out: &mut String, first: &mut bool, k: &str, v: &str| {
             if *first {
@@ -1464,21 +1540,41 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
 /// pointers) here would `Box::from_raw` the wrong shape and run
 /// `Mutex::drop` over garbage. Use [`gos_rt_binding_map_free`] for
 /// the binding-shaped aggregate instead.
-/// Marks `m` as holding RC copy-blob values. Emitted by the MIR
-/// lowering right after constructing a map whose declared value type is
-/// a guarded aggregate. Null-safe.
+/// Marks `m` as holding RC copy-blob values. Emitted by the MIR lowering
+/// immediately after construction. Null-safe.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_set_blob_values(m: *mut GosMap) {
     if m.is_null() {
         return;
     }
     unsafe { &*m }
-        .blob_values
-        .store(true, std::sync::atomic::Ordering::Release);
+        .value_owner
+        .store(MAP_VALUE_RC, Ordering::Release);
+}
+
+/// Marks `m` as holding `Vec`/slice values. The map owns one Vec reference
+/// per entry; this is distinct from a copy blob because Vecs have their own
+/// refcount and destructor.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_set_vec_values(m: *mut GosMap) {
+    if m.is_null() {
+        return;
+    }
+    unsafe { &*m }
+        .value_owner
+        .store(MAP_VALUE_VEC, Ordering::Release);
+}
+
+fn map_value_owner(m: &GosMap) -> u8 {
+    m.value_owner.load(Ordering::Acquire)
+}
+
+fn map_has_owned_values(m: &GosMap) -> bool {
+    map_value_owner(m) != MAP_VALUE_NONE
 }
 
 fn map_has_blob_values(m: &GosMap) -> bool {
-    m.blob_values.load(std::sync::atomic::Ordering::Acquire)
+    map_value_owner(m) == MAP_VALUE_RC
 }
 
 /// Release one stored blob value word (set-gated inside the RC layer
@@ -1493,6 +1589,28 @@ unsafe fn release_blob_value(word: i64) {
 unsafe fn retain_blob_value(word: i64) {
     if word != 0 {
         unsafe { crate::c_abi::rc::gos_rt_rc_retain(word as usize as *mut u8) };
+    }
+}
+
+unsafe fn release_owned_value(m: &GosMap, word: i64) {
+    if word == 0 {
+        return;
+    }
+    match map_value_owner(m) {
+        MAP_VALUE_RC => unsafe { release_blob_value(word) },
+        MAP_VALUE_VEC => unsafe { gos_rt_vec_free(word as usize as *mut GosVec) },
+        _ => {}
+    }
+}
+
+unsafe fn retain_owned_value(m: &GosMap, word: i64) {
+    if word == 0 {
+        return;
+    }
+    match map_value_owner(m) {
+        MAP_VALUE_RC => unsafe { retain_blob_value(word) },
+        MAP_VALUE_VEC => unsafe { crate::c_abi::gos_rt_vec_retain(word as usize as *mut GosVec) },
+        _ => {}
     }
 }
 
@@ -1539,17 +1657,17 @@ pub unsafe extern "C" fn gos_rt_map_free(m: *mut GosMap) {
         }
         crate::c_abi::ledger::map_dec();
         let boxed = unsafe { Box::from_raw(m) };
-        if map_has_blob_values(&boxed) {
+        if map_has_owned_values(&boxed) {
             let storage = boxed.storage.lock();
             match &*storage {
                 MapStorage::I64I64(inner) => {
                     for &v in inner.values() {
-                        unsafe { release_blob_value(v) };
+                        unsafe { release_owned_value(&boxed, v) };
                     }
                 }
                 MapStorage::StrI64(inner) | MapStorage::SkeyVal(inner) => {
                     for &v in inner.values() {
-                        unsafe { release_blob_value(v) };
+                        unsafe { release_owned_value(&boxed, v) };
                     }
                 }
                 _ => {}
@@ -1657,6 +1775,11 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
         // `free_vec_buffer`.
         let inline_ptr = v.cast::<crate::c_abi::vec::InlineVec>();
         let boxed = unsafe { &(*inline_ptr).header };
+        if boxed.elem_kind == vec_elem_kind::PACKED_ROWS {
+            unsafe { crate::c_abi::vec::free_packed_rows(boxed) };
+            drop(unsafe { Box::from_raw(inline_ptr) });
+            return;
+        }
         if !boxed.ptr.is_null() && boxed.cap > 0 {
             // Deep-free pointer-bearing element payloads BEFORE
             // reclaiming the backing buffer. Each branch walks the
@@ -1733,12 +1856,11 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
                 }
             }
         }
-        // Side-table entries are keyed by the header address the box
-        // still occupies; removal must run AFTER the deep-free walks
-        // above (which look the metas up by that address) and before
-        // the header drops, so a reused address cannot inherit them.
-        // Pass the `Box`'s own borrow, not the raw `v`, so the read of
-        // `elem_kind` stays under the Box's exclusive ownership.
+        // Drop any lazily allocated aggregate-owned slot metadata after the
+        // deep-free walk and before the header block. Metadata is owned by
+        // the header itself, never an address-keyed side table. Pass the
+        // `Box`'s own borrow, not the raw `v`, so the read of `elem_kind`
+        // stays under the Box's exclusive ownership.
         unsafe { crate::c_abi::vec::drop_vec_owner(&mut *v) };
         // Reconstruct the owning box now that the self-referential walk is
         // done, so its drop reclaims the header block (and any inline buffer).
@@ -2122,6 +2244,18 @@ mod map_iter_tests {
                 .collect();
             keys.sort_unstable();
             assert_eq!(keys, vec![1, 2, 3]);
+        }
+    }
+
+    #[test]
+    fn typed_capacity_constructor_preserves_string_key_layout() {
+        unsafe {
+            let m = gos_rt_map_new_with_capacity_typed(1, 0, 8);
+            let key = c"alpha".as_ptr();
+            gos_rt_map_insert_str_i64(m, key, 7);
+            assert_eq!(gos_rt_map_len(m), 1);
+            assert_eq!(gos_rt_map_get_or_str_i64(m, key, -1), 7);
+            gos_rt_map_free(m);
         }
     }
 }

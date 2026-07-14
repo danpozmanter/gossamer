@@ -2,8 +2,6 @@
 // - `String::from(s)` is identity for a string (was VM error / compiled build-fail).
 // - `s.parse()`'s error type pins to errors::Error so `{}` Display of an Err
 //   lowers correctly on the compiled tier (was a garbage char).
-// - A scalar fixed-array out-of-range index yields the element zero value on
-//   every tier (was a compiled bounds panic vs the VM/SKILL lenient-zero).
 // Output must be bit-identical across the VM, Cranelift, and LLVM tiers.
 
 fn main() {
@@ -22,7 +20,5 @@ fn main() {
     }
 
     let a = [10, 20, 30]
-    let i = 99
-    let j = 1
-    println!("oob={} inb={}", a[i], a[j])
+    println!("inb={}", a[1])
 }

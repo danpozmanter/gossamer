@@ -1,4 +1,5 @@
-//! Runtime value representation for the tree-walking interpreter.
+//! Runtime value representation shared by the bytecode VM and focused
+//! interpreter compatibility helpers.
 //! Every shared aggregate is backed by [`Arc`] rather than
 //! [`std::rc::Rc`] so a [`Value`] can cross thread boundaries - a
 //! prerequisite for real goroutine parallelism per
@@ -20,6 +21,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -43,6 +45,52 @@ pub fn dense_map<K, V>() -> DenseMap<K, V> {
 #[must_use]
 pub fn dense_map_with_capacity<K, V>(capacity: usize) -> DenseMap<K, V> {
     DenseMap::with_capacity_and_hasher(capacity, rustc_hash::FxBuildHasher)
+}
+
+/// Shared JSON tree plus a stable view into one node of that tree.
+///
+/// `json::get` / `json::at` can return a child object or array by cloning this
+/// lightweight handle instead of deep-cloning the selected subtree. Scalars are
+/// still projected into ordinary interpreter values at the query boundary.
+#[derive(Debug, Clone)]
+pub struct JsonInner {
+    tree: Arc<gossamer_std::json::Value>,
+    view: usize,
+}
+
+impl JsonInner {
+    /// Owns `value` as a new canonical JSON tree and views its root.
+    #[must_use]
+    pub fn new(value: gossamer_std::json::Value) -> Self {
+        let tree = Arc::new(value);
+        let view = Arc::as_ptr(&tree) as usize;
+        Self { tree, view }
+    }
+
+    /// Borrows the JSON node viewed by this handle.
+    #[must_use]
+    pub fn as_value(&self) -> &gossamer_std::json::Value {
+        // SAFETY: `view` is either the stable address of `tree`'s root from
+        // `new`, or the address of a child borrowed from the same tree by
+        // `child`. The `Arc` keeps the tree allocation alive for this handle.
+        unsafe { &*(self.view as *const gossamer_std::json::Value) }
+    }
+
+    /// Builds a handle viewing `child`, which must be borrowed from this
+    /// handle's tree.
+    #[must_use]
+    pub fn child(&self, child: &gossamer_std::json::Value) -> Self {
+        Self {
+            tree: Arc::clone(&self.tree),
+            view: std::ptr::from_ref(child) as usize,
+        }
+    }
+
+    /// Clones the viewed JSON node for APIs that genuinely need an owned DOM.
+    #[must_use]
+    pub fn to_owned_value(&self) -> gossamer_std::json::Value {
+        self.as_value().clone()
+    }
 }
 
 /// One runtime value produced or consumed by the interpreter.
@@ -78,6 +126,14 @@ pub enum Value {
     /// allocation); otherwise an `Arc<String>` behind a tag
     /// bit. See [`SmolStr`].
     String(SmolStr),
+    /// A parsed JSON document retained in the stdlib's canonical tree.
+    ///
+    /// Keeping this behind an `Arc` lets `json::parse` hand a document
+    /// directly to `json::render` without first allocating an interpreter
+    /// array/map tree and then rebuilding the same JSON tree for encoding.
+    /// JSON query builtins expose children lazily when a program actually
+    /// traverses the document.
+    Json(Arc<JsonInner>),
     /// Tuple aggregate.
     Tuple(Arc<Vec<Value>>),
     /// Array / Vec aggregate (interpreter treats both as `Vec`).
@@ -774,6 +830,19 @@ impl SmolStr {
         Self { raw: 0 }
     }
 
+    /// Constructs an empty string with space reserved for at least `capacity`
+    /// UTF-8 bytes.  Small hints stay inline; larger hints allocate the same
+    /// thin, copy-on-write buffer used by appended strings so a mutable VM
+    /// `String` can consume the reservation without reallocating.
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        if capacity <= SMOL_INLINE_MAX {
+            Self::new()
+        } else {
+            Self::new_heap_with_capacity(&[], capacity)
+        }
+    }
+
     /// Constructs a [`SmolStr`] from a borrowed `&str`. Strings
     /// up to 7 bytes are stored inline; longer strings allocate
     /// a fresh thin RC byte buffer.
@@ -956,7 +1025,16 @@ impl SmolStr {
                 unsafe { HeapSmolStr::append_unique(ptr, s.as_bytes()) };
                 return;
             }
-            let new_cap = Self::grown_capacity(cap, needed);
+            // A VM builtin receives a cloned receiver before its write-back.
+            // Copy-on-write therefore commonly takes this branch even when a
+            // prior `String::with_capacity` reservation is large enough. Keep
+            // that reservation on the replacement buffer; only grow when the
+            // appended bytes exceed it.
+            let new_cap = if needed <= cap {
+                cap
+            } else {
+                Self::grown_capacity(cap, needed)
+            };
             let mut owned = String::with_capacity(needed);
             owned.push_str(self.as_str());
             owned.push_str(s);
@@ -968,6 +1046,12 @@ impl SmolStr {
         }
     }
 
+    /// Appends one Unicode scalar while retaining any reserved capacity.
+    pub fn push(&mut self, ch: char) {
+        let mut encoded = [0u8; 4];
+        self.push_str(ch.encode_utf8(&mut encoded));
+    }
+
     /// Returns the length in bytes (UTF-8 code units).
     #[must_use]
     pub fn len(&self) -> usize {
@@ -975,6 +1059,17 @@ impl SmolStr {
             (self.raw.to_le_bytes()[7]) as usize
         } else {
             self.as_str().len()
+        }
+    }
+
+    #[cfg(test)]
+    fn capacity(&self) -> usize {
+        if self.raw & SMOL_HEAP_TAG == 0 {
+            SMOL_INLINE_MAX
+        } else {
+            let ptr = (self.raw & SMOL_PTR_MASK) as *const HeapSmolStr;
+            // SAFETY: a heap-tagged SmolStr always owns a live HeapSmolStr.
+            unsafe { (*ptr).cap as usize }
         }
     }
 
@@ -1657,6 +1752,30 @@ impl Channel {
         }
     }
 
+    /// Blocking receive which also observes a caller-provided cancellation
+    /// predicate. A queued value wins over cancellation, matching the native
+    /// runtime's receive ordering. The bounded wait makes cancellation visible
+    /// even though a Context does not share this channel's condvar.
+    #[must_use]
+    pub fn recv_with_cancel(&self, is_cancelled: impl Fn() -> bool) -> Option<Value> {
+        let mut guard = self.inner.state.lock();
+        loop {
+            if let Some(msg) = guard.buf.pop_front() {
+                self.notify_channel_changed(&mut guard);
+                return Some(msg.value);
+            }
+            if guard.closed || is_cancelled() {
+                return None;
+            }
+            guard.waiting_receivers += 1;
+            self.wake_select_waiters(&guard);
+            self.inner
+                .cv
+                .wait_for(&mut guard, Duration::from_millis(50));
+            guard.waiting_receivers = guard.waiting_receivers.saturating_sub(1);
+        }
+    }
+
     /// Returns `true` when the channel currently has at least one
     /// pending value. Used by `select` to pick a ready arm.
     #[must_use]
@@ -1840,6 +1959,10 @@ impl Value {
                 let id = register_heap(RegistryEntry::String(Arc::new(s.as_str().to_string())));
                 from_heap_handle(id)
             }
+            // The compact raw ABI has no JSON-tree representation. JSON
+            // values are intentionally interpreter-local; callers crossing
+            // this boundary receive the same sentinel as other opaque values.
+            Self::Json(_) => from_singleton(SINGLETON_UNIT),
             Self::Tuple(t) => {
                 let id = register_heap(RegistryEntry::Tuple(Arc::clone(t)));
                 from_heap_handle(id)
@@ -1973,6 +2096,7 @@ impl fmt::Display for Value {
             Self::Float(f) => out.write_str(&gossamer_runtime::builtins::format_float(*f)),
             Self::Char(c) => write!(out, "{c}"),
             Self::String(s) => out.write_str(s),
+            Self::Json(value) => out.write_str(&gossamer_std::json::encode(value.as_value())),
             Self::Tuple(parts) => write_tuple(out, parts),
             Self::Array(parts) => write_array(out, parts),
             Self::FloatArray(_) => write_array(out, &self.float_array_elems()),
@@ -3155,6 +3279,15 @@ mod smolstr_tests {
 
         assert_eq!(right.as_str(), "abcdefgh");
         assert_eq!(left.as_str(), "abcdefgh-mutated");
+    }
+
+    #[test]
+    fn reserved_empty_string_reuses_vm_builder_capacity() {
+        let mut text = SmolStr::with_capacity(64);
+        assert_eq!(text.capacity(), 64);
+        text.push_str("reserved text");
+        assert_eq!(text.as_str(), "reserved text");
+        assert_eq!(text.capacity(), 64);
     }
 }
 

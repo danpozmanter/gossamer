@@ -90,7 +90,9 @@ impl FetchOptions {
 
 #[cfg(test)]
 mod tests {
-    use super::FetchOptions;
+    use std::io::Write;
+
+    use super::{FetchOptions, HashingFile, create_tarball_spool};
 
     #[test]
     fn debug_redacts_registry_token() {
@@ -101,6 +103,33 @@ mod tests {
         let rendered = format!("{options:?}");
         assert!(rendered.contains("<redacted>"));
         assert!(!rendered.contains("secret-token"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tarball_spool_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (path, _file) = create_tarball_spool().expect("spool");
+        let mode = std::fs::metadata(&path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+        std::fs::remove_file(path).expect("remove spool");
+    }
+
+    #[test]
+    fn hashing_file_enforces_archive_byte_cap_before_finish() {
+        let (path, file) = create_tarball_spool().expect("spool");
+        let mut writer = HashingFile::new(file, 3);
+        writer.write_all(b"abc").expect("within cap");
+        let err = writer
+            .write_all(b"d")
+            .expect_err("write beyond cap must fail");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        std::fs::remove_file(path).expect("remove spool");
     }
 }
 
@@ -279,16 +308,12 @@ impl Fetcher {
                     found: actual,
                 });
             }
-            // Ed25519 verification accepts a message slice rather than an
-            // incremental reader. Keep this unavoidable one-pass allocation
-            // isolated to signed registry downloads; the archive parser still
-            // reads from the spool and never duplicates that raw buffer.
             if let Some(check) = signature {
-                let bytes = fs::read(&path).map_err(|e| CacheError::CacheIo {
+                let mut file = File::open(&path).map_err(|e| CacheError::CacheIo {
                     path: path.display().to_string(),
                     reason: e.to_string(),
                 })?;
-                check.verify(&resolved.id, &bytes)?;
+                check.verify_reader(&resolved.id, &mut file)?;
             }
             let file = File::open(&path).map_err(|e| CacheError::CacheIo {
                 path: path.display().to_string(),
@@ -425,12 +450,17 @@ fn create_tarball_spool() -> io::Result<(std::path::PathBuf, File)> {
             std::process::id(),
             TARBALL_SPOOL_ID.fetch_add(1, Ordering::Relaxed)
         ));
-        match OpenOptions::new()
-            .write(true)
-            .read(true)
-            .create_new(true)
-            .open(&path)
+        let mut options = OpenOptions::new();
+        options.write(true).read(true).create_new(true);
+        // A package archive can contain private source before signature and
+        // path validation. Do not rely on the caller's umask for the spool's
+        // confidentiality; the mode is applied atomically with `create_new`.
+        #[cfg(unix)]
         {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
             Ok(file) => return Ok((path, file)),
             Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
             Err(err) => return Err(err),
@@ -503,7 +533,11 @@ impl SignatureCheck<'_> {
     /// Rejects a key that disagrees with the lockfile pin, then
     /// verifies the signature over `bytes`. Public keys are not secret,
     /// so the pin comparison need not be constant-time.
-    fn verify(&self, id: &crate::id::ProjectId, bytes: &[u8]) -> Result<(), CacheError> {
+    fn verify_reader<R: std::io::Read>(
+        &self,
+        id: &crate::id::ProjectId,
+        reader: &mut R,
+    ) -> Result<(), CacheError> {
         if !self.trusted_key.eq_ignore_ascii_case(self.public_key_hex) {
             return Err(CacheError::KeyMismatch {
                 id: id.as_str().to_string(),
@@ -511,7 +545,7 @@ impl SignatureCheck<'_> {
                 offered: self.public_key_hex.to_string(),
             });
         }
-        crate::signing::verify_signature_hex(self.public_key_hex, bytes, self.signature_hex)
+        crate::signing::verify_signature_hex_reader(self.public_key_hex, reader, self.signature_hex)
             .map_err(|_| CacheError::SignatureInvalid(id.as_str().to_string()))
     }
 }
@@ -781,7 +815,7 @@ pub fn synthetic_source_for_test(resolved: &Resolved, seed: &str) -> CachedSourc
 
 #[cfg(test)]
 mod git_source_tests {
-    use super::validate_git_source;
+    use super::{create_tarball_spool, validate_git_source};
 
     const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 
@@ -827,5 +861,20 @@ mod git_source_tests {
             let err = validate_git_source("https://example.com/repo.git", reference).unwrap_err();
             assert!(err.contains("object ID"), "got: {err}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tarball_spool_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (path, file) = create_tarball_spool().expect("spool");
+        let mode = file.metadata().expect("metadata").permissions().mode() & 0o777;
+        drop(file);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            mode, 0o600,
+            "package spool must not be group/world-readable"
+        );
     }
 }

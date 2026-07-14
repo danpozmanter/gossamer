@@ -20,3 +20,6 @@ workspace = true
 anyhow = { workspace = true }
 gossamer-lint = { workspace = true }
 gossamer-std = { workspace = true }
+gossamer-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -4233,7 +4233,30 @@ impl<'a> TypeChecker<'a> {
                 let pair = self.tcx.intern(TyKind::Tuple(vec![key, value]));
                 Some(self.tcx.intern(TyKind::Vec(pair)))
             }
-            "keys" => Some(self.tcx.intern(TyKind::Vec(key))),
+            "keys" => {
+                // Native maps store aggregate keys as canonical flat bytes.
+                // That representation deliberately does not retain enough
+                // layout information to rebuild a `Vec<K>` snapshot, and the
+                // old runtime fallback silently returned `Unit` values. Reject
+                // this surface in the shared checker until the key layout is
+                // threaded through all tiers.
+                let key = self.peel_refs(key);
+                if matches!(
+                    self.tcx.kind_of(key),
+                    TyKind::Adt { .. } | TyKind::Tuple(_) | TyKind::Array { .. }
+                ) {
+                    let ty = render_ty(self.tcx, resolved);
+                    self.emit(
+                        TypeError::UnresolvedMethod {
+                            ty,
+                            name: "keys for aggregate HashMap keys".to_string(),
+                        },
+                        span,
+                    );
+                    return Some(self.tcx.error_ty());
+                }
+                Some(self.tcx.intern(TyKind::Vec(key)))
+            }
             "values" => Some(self.tcx.intern(TyKind::Vec(value))),
             "get" | "pop" => Some(self.option_adt_ty(value)),
             "get_or" | "or_insert" => Some(value),

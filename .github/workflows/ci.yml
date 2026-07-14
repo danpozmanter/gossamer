@@ -442,6 +442,8 @@ jobs:
         run: cargo build --bin gos
       - name: Verify docs_src/stdlib/ matches manifest::ALL_MODULES
         run: ./target/debug/gos doc --emit-stdlib docs_src/stdlib --check
+      - name: Verify generated LLM documentation is byte-clean
+        run: cargo xtask docs-llm --check
 
   # Cross-compilation correctness: `gos build --target aarch64-linux-*`
   # from a Linux host, run under QEMU, must match the bytecode VM. This is

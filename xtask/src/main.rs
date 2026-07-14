@@ -10,6 +10,8 @@
 //! - `stdlib-coverage` - regenerate `docs_src/stdlib_coverage.md`
 //!   from the per-module support state recorded in
 //!   `STDLIB_SUPPORT`.
+//! - `docs-llm` - regenerate the checked-in, machine-readable
+//!   public-stdlib catalogue for LLM and MCP consumers.
 //! - `docs-all` - run every generator above in one invocation.
 
 #![forbid(unsafe_code)]
@@ -20,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use gossamer_std::{StdItemKind, StdModule, modules};
+use serde::Serialize;
 
 /// Entry point that dispatches to the requested xtask subcommand.
 fn main() -> Result<()> {
@@ -32,6 +35,7 @@ fn main() -> Result<()> {
             println!("  docs-lints          regenerate docs_src/toolchain/lints.md");
             println!("  docs-diagnostics    regenerate docs_src/toolchain/diagnostics.md");
             println!("  stdlib-coverage     regenerate docs_src/stdlib_coverage.md");
+            println!("  docs-llm [--check]  regenerate or check docs/api/stdlib.json");
             println!("  docs-all            run every docs generator");
             println!("  lint-budget         tally #[allow(...)] sites per crate");
             println!("  audit-allows        list every #[allow(...)] with surrounding context");
@@ -41,11 +45,13 @@ fn main() -> Result<()> {
         Some("docs-lints") => regenerate_lint_docs(),
         Some("docs-diagnostics") => regenerate_diagnostic_docs(),
         Some("stdlib-coverage") => regenerate_stdlib_coverage(),
+        Some("docs-llm") => regenerate_llm_docs(args.get(1).map(String::as_str) == Some("--check")),
         Some("docs-all") => {
             regenerate_stdlib_docs()?;
             regenerate_lint_docs()?;
             regenerate_diagnostic_docs()?;
-            regenerate_stdlib_coverage()
+            regenerate_stdlib_coverage()?;
+            regenerate_llm_docs(false)
         }
         Some("lint-budget") => report_lint_budget(),
         Some("audit-allows") => audit_allows(),
@@ -88,6 +94,297 @@ fn locate_workspace_root() -> Result<PathBuf> {
                 );
             }
         }
+    }
+}
+
+/// Versioned, deterministic catalogue consumed by documentation tools.
+///
+/// The manifest owns the public name, kind, and description. The checker owns
+/// function signatures. Entries that cannot yet meet the runnable-example
+/// contract remain in this catalogue but are explicitly marked `catalog_only`;
+/// they must not be copied into `llms-full.txt` as if they were verified.
+#[derive(Debug, Serialize)]
+struct PublicApiCatalog {
+    schema_version: u32,
+    gossamer_version: &'static str,
+    entries: Vec<PublicApiEntry>,
+}
+
+/// One joined source-facing public API record.
+#[derive(Debug, Serialize)]
+struct PublicApiEntry {
+    /// Stable identifier for MCP and diagnostic links.
+    id: String,
+    /// Canonical, fully-qualified Gossamer path.
+    name: String,
+    /// Source item classification, never inferred from a Rust `pub` item.
+    kind: &'static str,
+    /// Checker-owned source signature for functions; absent means no guess.
+    signature: Option<&'static str>,
+    /// Manifest-owned one-sentence description.
+    description: &'static str,
+    /// Lifecycle status inherited from the canonical manifest record.
+    lifecycle: &'static str,
+    /// Item-level tier evidence is not available yet, so this is explicit.
+    tier_support: [&'static str; 3],
+    /// Platform evidence is not available at item granularity yet.
+    platform_support: &'static str,
+    /// Documented resource or semantic limits, when item metadata gains them.
+    limits: Vec<String>,
+    /// Intent-oriented cookbook identifiers, when verified recipes land.
+    cookbook_tags: Vec<String>,
+    /// Stable docs source anchor.
+    doc_anchor: String,
+    /// Stable runnable fixture ID; absent entries cannot enter the full reference.
+    example_id: Option<String>,
+    /// `catalog_only` until a standalone checked/run/built example exists.
+    reference_status: &'static str,
+}
+
+/// Regenerates, or byte-checks, the deterministic public stdlib catalogue.
+fn regenerate_llm_docs(check: bool) -> Result<()> {
+    let workspace_root = locate_workspace_root()?;
+    let catalogue = build_public_api_catalog()?;
+    let skill_card = fs::read_to_string(workspace_root.join("SKILL.md"))
+        .context("reading checked LLM primer SKILL.md")?;
+    let outputs = vec![
+        (
+            workspace_root.join("docs/api/stdlib.json"),
+            serialize_public_api_catalog(&catalogue)?,
+        ),
+        (
+            workspace_root.join("docs/api/cookbook.json"),
+            render_empty_cookbook_catalog(),
+        ),
+        (
+            workspace_root.join("llms.txt"),
+            render_llms_index(&catalogue),
+        ),
+        (
+            workspace_root.join("llms-full.txt"),
+            render_llms_full(&catalogue, &skill_card)?,
+        ),
+    ];
+    if check {
+        let drift: Vec<String> = outputs
+            .iter()
+            .filter(|(path, generated)| {
+                fs::read_to_string(path).map_or(true, |on_disk| on_disk != *generated)
+            })
+            .map(|(path, _)| path.display().to_string())
+            .collect();
+        if drift.is_empty() {
+            println!("xtask: docs-llm is in sync ({} files)", outputs.len());
+            return Ok(());
+        }
+        anyhow::bail!(
+            "LLM documentation drift detected: {} (run `cargo xtask docs-llm`)",
+            drift.join(", ")
+        );
+    }
+    for (path, generated) in &outputs {
+        let parent = path.parent().expect("generated file has a parent");
+        fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
+        fs::write(path, generated).with_context(|| format!("writing {}", path.display()))?;
+        println!("xtask: wrote {}", path.display());
+    }
+    let full_bytes = outputs[3].1.len();
+    println!(
+        "xtask: docs-llm catalogue={} entries, full-reference={} bytes (~{} tokens)",
+        catalogue.entries.len(),
+        full_bytes,
+        full_bytes.div_ceil(4)
+    );
+    Ok(())
+}
+
+/// Joins canonical manifest records to checker signatures without scraping Rust
+/// implementation details. A missing or duplicate function signature aborts
+/// generation, making documentation drift a build failure rather than a guess.
+fn build_public_api_catalog() -> Result<PublicApiCatalog> {
+    let records = gossamer_std::item_records();
+    let function_paths: std::collections::HashSet<String> = records
+        .iter()
+        .filter(|item| item.kind == StdItemKind::Function)
+        .map(|item| item.path.clone())
+        .collect();
+    let mut seen_signatures = std::collections::HashSet::new();
+    for signature in gossamer_types::STD_FUNCTION_SIGNATURES {
+        let path = format!("{}::{}", signature.module_path, signature.name);
+        if !seen_signatures.insert(path.clone()) {
+            anyhow::bail!("duplicate checker signature for {path}");
+        }
+        if !function_paths.contains(&path) {
+            anyhow::bail!("checker signature has no canonical manifest function: {path}");
+        }
+    }
+
+    let mut entries = Vec::new();
+    for item in records {
+        let signature = if item.kind == StdItemKind::Function {
+            Some(
+                gossamer_types::stdlib_function_signature(item.module_path, item.name)
+                    .with_context(|| format!("missing checker signature for {}", item.path))?,
+            )
+        } else {
+            None
+        };
+        entries.push(PublicApiEntry {
+            id: public_api_id(&item.path),
+            name: item.path,
+            kind: public_api_kind(item.kind),
+            signature,
+            description: item.doc,
+            lifecycle: item.status.tag(),
+            tier_support: ["not_audited", "not_audited", "not_audited"],
+            platform_support: "not_audited",
+            limits: Vec::new(),
+            cookbook_tags: Vec::new(),
+            doc_anchor: format!("docs_src/stdlib.md#{}", module_anchor(item.module_path)),
+            example_id: None,
+            reference_status: "catalog_only",
+        });
+    }
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
+    if entries.windows(2).any(|pair| pair[0].name == pair[1].name) {
+        anyhow::bail!("duplicate canonical public API name in manifest");
+    }
+    Ok(PublicApiCatalog {
+        schema_version: 1,
+        gossamer_version: env!("CARGO_PKG_VERSION"),
+        entries,
+    })
+}
+
+/// Serializes the public catalogue with no timestamp or other volatile value.
+fn serialize_public_api_catalog(catalogue: &PublicApiCatalog) -> Result<String> {
+    let mut json =
+        serde_json::to_string_pretty(catalogue).context("serializing LLM API catalogue")?;
+    json.push('\n');
+    Ok(json)
+}
+
+/// Compatibility helper for callers/tests that need the checked-in JSON bytes.
+#[cfg(test)]
+fn render_public_api_catalog() -> Result<String> {
+    serialize_public_api_catalog(&build_public_api_catalog()?)
+}
+
+/// Empty, versioned recipe registry. Recipes are intentionally absent until
+/// their standalone check/run/build fixtures exist; this keeps the LLM index
+/// link-stable without pretending that a prose snippet is verified.
+fn render_empty_cookbook_catalog() -> String {
+    "{\n  \"schema_version\": 1,\n  \"recipes\": []\n}\n".to_string()
+}
+
+/// Generates the small root LLM discovery index rather than a second primer.
+fn render_llms_index(catalogue: &PublicApiCatalog) -> String {
+    format!(
+        "# Gossamer\n\nGossamer is a Rust-flavoured language with goroutines and deterministic memory management; use `gos` to check, run, build, test, format, and query programs. This generated index points models and agents at the reviewed primer and canonical API data for Gossamer {version}.\n\n- [Compact LLM reference](llms-full.txt)\n- [Reviewed skill card](SKILL.md)\n- [Machine-readable stdlib API catalog](docs/api/stdlib.json) ({entries} entries)\n- [Cookbook registry](docs/api/cookbook.json) (recipes appear only after fixture verification)\n- [Language specification](SPEC.md)\n- [Examples](examples/)\n- [Examples guide](docs_src/examples.md)\n\n## Tooling\n\nUse `gos check FILE` before `gos run FILE`; validate compiled behavior with `gos build FILE`. For agent integration, run `gos mcp` over stdio, then use its `check`, `run`, `build`, `doc`, `explain`, and semantic-navigation tools.\n",
+        version = catalogue.gossamer_version,
+        entries = catalogue.entries.len()
+    )
+}
+
+/// Maximum size for the pasteable reference. The cap leaves room for a compact
+/// primer while preventing an accidental docs-site dump from entering context.
+const MAX_LLM_FULL_BYTES: usize = 200_000;
+
+/// Renders the compact, scoped LLM reference. An API entry requires a stable
+/// example ID before it is emitted here; catalog-only entries remain available
+/// to structured tooling but are not elevated to a prose recommendation.
+fn render_llms_full(catalogue: &PublicApiCatalog, skill_card: &str) -> Result<String> {
+    let verified_entries = catalogue
+        .entries
+        .iter()
+        .filter(|entry| entry.example_id.is_some() && entry.reference_status == "verified")
+        .count();
+    let mut out = format!(
+        "# Gossamer LLM Reference\n\nGenerated from `SKILL.md` and `docs/api/stdlib.json` for Gossamer {version}. This is deliberately scoped: only catalog entries with a standalone executable example and explicit verified status may appear as API recommendations.\n\n## Language primer\n\n{skill_card}\n\n## Verified API reference\n\n",
+        version = catalogue.gossamer_version
+    );
+    if verified_entries == 0 {
+        out.push_str(
+            "No stdlib entry is eligible for this section yet. Consult the structured \
+             [`docs/api/stdlib.json`](docs/api/stdlib.json) catalog with `gos check`/`gos run`; \
+             its entries are deliberately quarantined until their fixtures and tier evidence land.\n",
+        );
+    }
+    if out.len() > MAX_LLM_FULL_BYTES {
+        anyhow::bail!(
+            "llms-full.txt is {} bytes, above the {} byte budget",
+            out.len(),
+            MAX_LLM_FULL_BYTES
+        );
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod llm_catalog_tests {
+    use super::*;
+
+    #[test]
+    fn public_api_catalog_is_deterministic_and_has_no_guessed_function_signatures() {
+        let json = render_public_api_catalog().expect("manifest/signature join must be valid");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(value["schema_version"], 1);
+        let entries = value["entries"].as_array().expect("entries array");
+        assert!(entries.windows(2).all(|pair| {
+            pair[0]["name"].as_str().expect("entry name")
+                < pair[1]["name"].as_str().expect("entry name")
+        }));
+        assert!(
+            entries
+                .iter()
+                .all(|entry| { entry["kind"] != "function" || entry["signature"].is_string() })
+        );
+        assert!(entries.iter().all(|entry| entry["example_id"].is_null()));
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry["reference_status"] == "catalog_only")
+        );
+    }
+
+    #[test]
+    fn scoped_llm_outputs_link_to_the_catalog_without_promoting_quarantined_entries() {
+        let catalogue = build_public_api_catalog().expect("valid catalogue");
+        let index = render_llms_index(&catalogue);
+        for link in [
+            "llms-full.txt",
+            "SKILL.md",
+            "docs/api/stdlib.json",
+            "docs/api/cookbook.json",
+            "SPEC.md",
+            "examples/",
+        ] {
+            assert!(index.contains(link), "index is missing {link}");
+        }
+        assert_eq!(
+            render_empty_cookbook_catalog(),
+            "{\n  \"schema_version\": 1,\n  \"recipes\": []\n}\n"
+        );
+        let full = render_llms_full(&catalogue, "# Reviewed primer\n")
+            .expect("compact reference within size budget");
+        assert!(full.len() <= MAX_LLM_FULL_BYTES);
+        assert!(full.contains("No stdlib entry is eligible"));
+    }
+}
+
+/// Converts a canonical public path into a stable, URL-safe identifier.
+fn public_api_id(path: &str) -> String {
+    path.replace("::", "-").replace('_', "-")
+}
+
+/// JSON spelling for the manifest's closed item-kind enum.
+const fn public_api_kind(kind: StdItemKind) -> &'static str {
+    match kind {
+        StdItemKind::Function => "function",
+        StdItemKind::Type => "type",
+        StdItemKind::Trait => "trait",
+        StdItemKind::Macro => "macro",
+        StdItemKind::Const => "const",
     }
 }
 

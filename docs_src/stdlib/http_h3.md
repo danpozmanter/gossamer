@@ -1,8 +1,14 @@
 # `std::http_h3`
 
-Status: shipped
+Status: experimental
 
 HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias.
+
+Public client and handler bodies are fully buffered today. Connection, stream,
+header, body, QUIC receive-window, send-window, idle-timeout, and per-stream
+I/O limits are enforced, but HTTP/3 request/response body streaming and
+backpressure parity with HTTP/2 remain experimental and are not part of the
+shipped contract.
 
 ## Public items
 
@@ -13,3 +19,15 @@ HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 a
 | `serve` | fn | Run an HTTP/3 server bound to `addr` with TLS certificate + key paths and the supplied handler. |
 | `Client` | type | HTTP/3 client. `new` validates against the Mozilla root store; `insecure` skips verification (dev only). Methods: `get`, `post`, `put`, `delete`, `head`, `request`. |
 
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+## API details and source
+
+The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_h3.rs) contains the complete declarations and implementation notes. The table below expands the quick index above with canonical Gossamer call signatures; every item name links directly to its implementation file.
+
+| Item | Canonical signature or declaration | Description |
+|---|---|---|
+| [`Client`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_h3.rs) | `type` — see the source declaration | HTTP/3 client. `new` validates against the Mozilla root store; `insecure` skips verification (dev only). Methods: `get`, `post`, `put`, `delete`, `head`, `request`. |
+| [`H3Error`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_h3.rs) | `type` — see the source declaration | Transport / protocol error variants surfaced from quinn + h3. |
+| [`Handler`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_h3.rs) | `trait` — see the source declaration | Per-request handler. `fn serve(&self, request: Request) -> Response`. |
+| [`serve`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_h3.rs) | `fn serve(addr: String, cert_path: String, key_path: String, handler: http_h3::Handler) -> Result<(), errors::Error>` | Run an HTTP/3 server bound to `addr` with TLS certificate + key paths and the supplied handler. |

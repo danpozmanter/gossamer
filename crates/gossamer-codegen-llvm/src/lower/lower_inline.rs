@@ -456,7 +456,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Inline fast path for `gos_rt_vec_get_i64(vec, idx) -> i64`. Replicates
-    /// the runtime helper exactly (null vec / out-of-range idx → 0; else load
+    /// the runtime helper exactly (null vec / out-of-range idx panic; else load
     /// the i64 at `ptr + idx*elem_bytes`). Inlining removes a per-element FFI
     /// call from hot index loops (BFS, scans) and lets LLVM hoist the
     /// loop-invariant `len`/`ptr` loads and keep them in registers. GosVec
@@ -479,15 +479,15 @@ impl<'a> Lowerer<'a> {
         let dest_slot = local_slot(destination.local);
         let s = self.next_ssa;
         self.next_ssa += 1;
-        let (check, load, dflt, cont) = (
+        let (check, load, oob, cont) = (
             format!("vg_check_{s}"),
             format!("vg_load_{s}"),
-            format!("vg_dflt_{s}"),
+            format!("vg_oob_{s}"),
             format!("vg_cont_{s}"),
         );
         let isnull = self.fresh();
         writeln!(self.out, "  {isnull} = icmp eq ptr {vec_ptr}, null").unwrap();
-        writeln!(self.out, "  br i1 {isnull}, label %{dflt}, label %{check}").unwrap();
+        writeln!(self.out, "  br i1 {isnull}, label %{oob}, label %{check}").unwrap();
         writeln!(self.out, "{check}:").unwrap();
         let len = self.fresh();
         writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}{TBAA_HEADER}").unwrap();
@@ -498,7 +498,7 @@ impl<'a> Lowerer<'a> {
         // into this itself - `len` is a runtime load it can't prove >= 0.
         let bad = self.fresh();
         writeln!(self.out, "  {bad} = icmp uge i64 {idx}, {len}").unwrap();
-        writeln!(self.out, "  br i1 {bad}, label %{dflt}, label %{load}").unwrap();
+        writeln!(self.out, "  br i1 {bad}, label %{oob}, label %{load}").unwrap();
         writeln!(self.out, "{load}:").unwrap();
         // Word-stride elements skip the header `elem_bytes` load: the
         // index scales by a constant 8 that folds into the address
@@ -573,14 +573,15 @@ impl<'a> Lowerer<'a> {
         };
         self.store_i64_as(&loaded, &dest_ty, &dest_slot);
         writeln!(self.out, "  br label %{cont}").unwrap();
-        writeln!(self.out, "{dflt}:").unwrap();
-        let zero = match dest_ty.as_str() {
-            "ptr" => "null",
-            "double" | "float" => "0.0",
-            _ => "0",
-        };
-        writeln!(self.out, "  store {dest_ty} {zero}, ptr {dest_slot}").unwrap();
-        writeln!(self.out, "  br label %{cont}").unwrap();
+        declare_rt(&mut self.runtime_refs, "gos_rt_panic_oob");
+        let (label, _) = self.strings.borrow_mut().intern("vec index");
+        writeln!(self.out, "{oob}:").unwrap();
+        writeln!(
+            self.out,
+            "  call void @gos_rt_panic_oob(ptr {label}, i64 {idx}, i64 0)"
+        )
+        .unwrap();
+        writeln!(self.out, "  unreachable").unwrap();
         writeln!(self.out, "{cont}:").unwrap();
         emit_terminator_branch(&mut self.out, target);
         Ok(())
@@ -714,8 +715,8 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    /// Inline fast path for `gos_rt_vec_set_i64(vec, idx, val)`. Null vec /
-    /// out-of-range idx → no-op (matching the runtime), else store.
+    /// Inline fast path for `gos_rt_vec_set_i64(vec, idx, val)`. Invalid
+    /// source indexing panics; valid indices store their value.
     pub(crate) fn lower_vec_set_i64_inline(
         &mut self,
         args: &[Operand],
@@ -735,14 +736,15 @@ impl<'a> Lowerer<'a> {
         let val = self.value_to_i64(&val_v, &val_ty);
         let s = self.next_ssa;
         self.next_ssa += 1;
-        let (check, store_b, cont) = (
+        let (check, store_b, oob, cont) = (
             format!("vs_check_{s}"),
             format!("vs_store_{s}"),
+            format!("vs_oob_{s}"),
             format!("vs_cont_{s}"),
         );
         let isnull = self.fresh();
         writeln!(self.out, "  {isnull} = icmp eq ptr {vec_ptr}, null").unwrap();
-        writeln!(self.out, "  br i1 {isnull}, label %{cont}, label %{check}").unwrap();
+        writeln!(self.out, "  br i1 {isnull}, label %{oob}, label %{check}").unwrap();
         writeln!(self.out, "{check}:").unwrap();
         let len = self.fresh();
         writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}{TBAA_HEADER}").unwrap();
@@ -753,7 +755,7 @@ impl<'a> Lowerer<'a> {
         // into this itself - `len` is a runtime load it can't prove >= 0.
         let bad = self.fresh();
         writeln!(self.out, "  {bad} = icmp uge i64 {idx}, {len}").unwrap();
-        writeln!(self.out, "  br i1 {bad}, label %{cont}, label %{store_b}").unwrap();
+        writeln!(self.out, "  br i1 {bad}, label %{oob}, label %{store_b}").unwrap();
         writeln!(self.out, "{store_b}:").unwrap();
         // Word-stride elements skip the header `elem_bytes` load: the
         // index scales by a constant 8 that folds into the address
@@ -807,6 +809,15 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  store i64 {val}, ptr {ea}{TBAA_DATA}").unwrap();
         }
         writeln!(self.out, "  br label %{cont}").unwrap();
+        declare_rt(&mut self.runtime_refs, "gos_rt_panic_oob");
+        let (label, _) = self.strings.borrow_mut().intern("vec index");
+        writeln!(self.out, "{oob}:").unwrap();
+        writeln!(
+            self.out,
+            "  call void @gos_rt_panic_oob(ptr {label}, i64 {idx}, i64 0)"
+        )
+        .unwrap();
+        writeln!(self.out, "  unreachable").unwrap();
         writeln!(self.out, "{cont}:").unwrap();
         let _ = destination;
         emit_terminator_branch(&mut self.out, target);

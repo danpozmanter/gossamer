@@ -241,12 +241,85 @@ fn build_vec_swap_main() -> (Body, TyCtxt) {
     (body, tcx)
 }
 
+fn build_string_map_capacity_main() -> (Body, TyCtxt) {
+    let mut tcx = TyCtxt::new();
+    let unit = tcx.intern(TyKind::Unit);
+    let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+    let string_ty = tcx.intern(TyKind::String);
+    let map_ty = tcx.intern(TyKind::HashMap {
+        key: string_ty,
+        value: i64_ty,
+    });
+    let body = Body {
+        name: "main".to_string(),
+        def: None,
+        arity: 0,
+        locals: vec![
+            LocalDecl {
+                ty: unit,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+            LocalDecl {
+                ty: map_ty,
+                debug_name: None,
+                mutable: true,
+                region: false,
+            },
+            LocalDecl {
+                ty: i64_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+        ],
+        blocks: vec![
+            BasicBlock {
+                id: BlockId(0),
+                stmts: vec![const_int_assign(2, 16)],
+                terminator: Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(
+                        "std::collections::HashMap::with_capacity".to_string(),
+                    )),
+                    args: vec![Operand::Copy(place(2))],
+                    destination: place(1),
+                    target: Some(BlockId(1)),
+                },
+                span: dummy_span(),
+            },
+            BasicBlock {
+                id: BlockId(1),
+                stmts: vec![],
+                terminator: Terminator::Return,
+                span: dummy_span(),
+            },
+        ],
+        span: dummy_span(),
+    };
+    (body, tcx)
+}
+
 #[test]
 fn const_int_zero_emits_store_i64() {
     let (body, tcx) = build_const_int_main(0);
     let ir = render_ir_to_string(&[body], &tcx, false).unwrap();
     assert!(ir.contains("define i64"), "IR was:\n{ir}");
     assert!(ir.contains("store i64 0"), "IR was:\n{ir}");
+}
+
+#[test]
+fn string_map_with_capacity_uses_typed_storage() {
+    let (body, tcx) = build_string_map_capacity_main();
+    let ir = render_ir_to_string(&[body], &tcx, false).unwrap();
+    assert!(
+        ir.contains("@gos_rt_map_new_with_capacity_typed(i32 1, i32 0, i64"),
+        "IR must select pre-sized String/i64 storage:\n{ir}"
+    );
+    assert!(
+        !ir.contains("@gos_rt_map_new_with_capacity(i32 8, i32 8"),
+        "word-only capacity storage corrupts String map semantics:\n{ir}"
+    );
 }
 
 #[test]

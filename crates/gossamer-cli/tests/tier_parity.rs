@@ -407,9 +407,13 @@ const SPECS: &[Spec] = &[
     // the per-key totals are deterministic and identical on every tier (a
     // goroutine-local map takes the lock-free fast path instead).
     spec("feature-testing-examples/goroutine_shared_map.gos"),
-    // Out-of-range whole-element indexed writes are a lenient no-op on every
-    // tier (scalar, string, and struct elements); in-bounds access unaffected.
-    spec("feature-testing-examples/oob_index_lenient.gos"),
+    // Scalar source indexing panics on every tier rather than yielding zero
+    // or silently dropping an invalid write; valid indexed access remains
+    // observable before the failure.
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/oob_index_scalar_panic.gos")
+    },
     // Loop-versioning bounds-check elision for affine `xs[base + counter]`
     // accesses: the in-range unchecked clone and the out-of-range checked
     // fallback both stay bit-identical across the three tiers.
@@ -419,6 +423,18 @@ const SPECS: &[Spec] = &[
     Spec {
         allow_nonzero: true,
         ..spec("feature-testing-examples/oob_index_aggregate_panic.gos")
+    },
+    // Method-form Vec insert/remove are invariant mutators: invalid indices
+    // panic instead of clamping or silently no-oping. The Result-returning
+    // qualified `Vec::insert` / `Vec::remove` APIs remain the non-panicking
+    // access path.
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/vec_method_oob_panic.gos")
+    },
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/vec_method_remove_oob_panic.gos")
     },
     // Integer divide-by-zero panics with GX0005 + exit 101 identically on
     // every tier (the SIGFPE-vs-clean-panic class had no 3-tier gate).
@@ -579,6 +595,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/nested_vec_ops.gos"),
     spec("feature-testing-examples/mut_ref_scalar_writeback.gos"),
     spec("feature-testing-examples/mut_ref_string_writeback.gos"),
+    spec("feature-testing-examples/fixed_array_mut_param_copy.gos"),
     spec("feature-testing-examples/byte_vec_i64_model.gos"),
     spec("feature-testing-examples/map_iteration_order.gos"),
     spec("feature-testing-examples/usize_compare.gos"),
@@ -656,6 +673,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/json_yaml_encode.gos"),
     spec("feature-testing-examples/bounded_channel.gos"),
     spec("feature-testing-examples/generic_function_monomorphization.gos"),
+    spec("feature-testing-examples/named_function_item_coercion.gos"),
     spec("feature-testing-examples/goroutine_panic_isolation.gos"),
     Spec {
         nondeterministic: true,

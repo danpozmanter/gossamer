@@ -23,7 +23,7 @@ use gossamer_std::slog as slog_std;
 use gossamer_std::time as time_std;
 
 use crate::value::{
-    DenseMap, MapKey, NativeDispatch, RuntimeError, RuntimeResult, SmolStr, Value,
+    DenseMap, JsonInner, MapKey, NativeDispatch, RuntimeError, RuntimeResult, SmolStr, Value,
     dense_map_with_capacity,
 };
 
@@ -1471,7 +1471,7 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("String::new", builtin("String::new", builtin_str_new)));
     globals.push((
         "String::with_capacity",
-        builtin("String::with_capacity", builtin_str_new),
+        builtin("String::with_capacity", builtin_str_with_capacity),
     ));
     globals.push(("String::from", builtin("String::from", builtin_str_from)));
     globals.push((
@@ -1793,15 +1793,9 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "gos_rt_chan_try_recv_option",
         builtin("gos_rt_chan_try_recv_option", builtin_channel_try_recv),
     ));
-    // `rx.recv_ctx(&ctx)` - the interp Channel doesn't share
-    // storage with `gossamer-std::context::Context` waiters,
-    // so the interp implementation degrades to a plain recv
-    // (cancel-via-context is observed only when both the
-    // channel send/recv and the cancel come from the
-    // *compiled* tier sharing the runtime GosChan). The MIR
-    // dispatch + runtime helper carry the real semantics;
-    // the interp builtin keeps the .gos source portable
-    // between tiers without crashing in `gos run`.
+    // `rx.recv_ctx(&ctx)` checks the VM Context registry between bounded
+    // channel waits, so the interpreter observes cancellation without sharing
+    // the native runtime's GosChan condvar.
     globals.push((
         "Channel::recv_ctx",
         builtin("Channel::recv_ctx", builtin_channel_recv_ctx),
@@ -4622,7 +4616,7 @@ fn builtin_json_parse(args: &[Value]) -> RuntimeResult<Value> {
         return Ok(err_variant("json::parse: argument must be a string"));
     };
     match json_std::parse(source) {
-        Ok(value) => Ok(ok_variant(json_value_to_gossamer(&value))),
+        Ok(value) => Ok(ok_variant(Value::Json(Arc::new(JsonInner::new(value))))),
         Err(e) => Ok(err_variant(format!("{e}"))),
     }
 }
@@ -4631,6 +4625,11 @@ fn builtin_json_render(args: &[Value]) -> RuntimeResult<Value> {
     let Some(value) = args.first() else {
         return Ok(Value::String(SmolStr::from(String::from("null"))));
     };
+    if let Value::Json(json_value) = value {
+        return Ok(Value::String(SmolStr::from(json_std::encode(
+            json_value.as_value(),
+        ))));
+    }
     let json_value = gossamer_to_json_value(value);
     Ok(Value::String(SmolStr::from(json_std::encode(&json_value))))
 }
@@ -4647,6 +4646,14 @@ fn builtin_json_get(args: &[Value]) -> RuntimeResult<Value> {
     let Some(key) = args.get(1).and_then(as_str) else {
         return Ok(none_variant());
     };
+    if let Value::Json(value) = receiver {
+        if let json_std::Value::Object(entries) = value.as_value() {
+            if let Some(child) = entries.get(key) {
+                return Ok(some_variant(json_child_to_lazy_value(value, child)));
+            }
+        }
+        return Ok(none_variant());
+    }
     if let Value::Struct(inner) = receiver {
         for (field_name, value) in &inner.fields {
             if (*field_name) == key {
@@ -4673,6 +4680,14 @@ fn builtin_json_at(args: &[Value]) -> RuntimeResult<Value> {
     if idx < 0 {
         return Ok(Value::Unit);
     }
+    if let Value::Json(value) = receiver {
+        if let json_std::Value::Array(items) = value.as_value() {
+            if let Some(child) = items.get(idx as usize) {
+                return Ok(json_child_to_lazy_value(value, child));
+            }
+        }
+        return Ok(Value::Unit);
+    }
     if let Value::Array(arr) = receiver {
         if let Some(v) = arr.get(idx as usize) {
             return Ok(v.clone());
@@ -4685,6 +4700,16 @@ fn builtin_json_at(args: &[Value]) -> RuntimeResult<Value> {
 /// order, or `None` when the receiver isn't an object. Tests
 /// pattern-match the result so we always emit an Option variant.
 fn builtin_json_keys(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::Json(value)) = args.first() {
+        if let json_std::Value::Object(entries) = value.as_value() {
+            let keys = entries
+                .keys()
+                .map(|name| Value::String(SmolStr::from(name.as_str())))
+                .collect();
+            return Ok(some_variant(Value::Array(Arc::new(keys))));
+        }
+        return Ok(none_variant());
+    }
     if let Some(Value::Struct(inner)) = args.first() {
         let mut out: Vec<Value> = Vec::new();
         for (name, _) in &inner.fields {
@@ -4698,6 +4723,12 @@ fn builtin_json_keys(args: &[Value]) -> RuntimeResult<Value> {
 /// `json::len(value)` → element / pair / byte count, 0 for scalar.
 fn builtin_json_len(args: &[Value]) -> RuntimeResult<Value> {
     let n: i64 = match args.first() {
+        Some(Value::Json(value)) => match value.as_value() {
+            json_std::Value::Array(items) => items.len() as i64,
+            json_std::Value::Object(entries) => entries.len() as i64,
+            json_std::Value::String(text) => text.len() as i64,
+            _ => 0,
+        },
         Some(Value::Array(a)) => a.len() as i64,
         Some(Value::Struct(s)) => s.fields.len() as i64,
         Some(Value::String(s)) => s.len() as i64,
@@ -4708,12 +4739,18 @@ fn builtin_json_len(args: &[Value]) -> RuntimeResult<Value> {
 
 /// `json::is_null(value)` → `true` when the value is the `null` shape.
 fn builtin_json_is_null(args: &[Value]) -> RuntimeResult<Value> {
-    let is_null = matches!(args.first(), Some(Value::Unit | Value::Void) | None);
+    let is_null = matches!(args.first(), Some(Value::Unit | Value::Void) | None)
+        || matches!(args.first(), Some(Value::Json(value)) if matches!(value.as_value(), json_std::Value::Null));
     Ok(Value::Bool(is_null))
 }
 
 /// `json::as_str(value)` → `Option<String>`.
 fn builtin_json_as_str(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::Json(value)) = args.first() {
+        if let json_std::Value::String(text) = value.as_value() {
+            return Ok(some_variant(Value::String(SmolStr::from(text.as_str()))));
+        }
+    }
     if let Some(Value::String(s)) = args.first() {
         return Ok(some_variant(Value::String(s.clone())));
     }
@@ -4722,6 +4759,11 @@ fn builtin_json_as_str(args: &[Value]) -> RuntimeResult<Value> {
 
 /// `json::as_i64(value)` → `Option<i64>`.
 fn builtin_json_as_i64(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::Json(value)) = args.first() {
+        if let Some(n) = json_std::as_i64(value.as_value()) {
+            return Ok(some_variant(Value::Int(n)));
+        }
+    }
     if let Some(Value::Int(n)) = args.first() {
         return Ok(some_variant(Value::Int(*n)));
     }
@@ -4735,6 +4777,11 @@ fn builtin_json_as_i64(args: &[Value]) -> RuntimeResult<Value> {
 
 /// `json::as_f64(value)` → `Option<f64>`.
 fn builtin_json_as_f64(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::Json(value)) = args.first() {
+        if let Some(n) = json_std::as_f64(value.as_value()) {
+            return Ok(some_variant(Value::Float(n)));
+        }
+    }
     if let Some(Value::Float(f)) = args.first() {
         return Ok(some_variant(Value::Float(*f)));
     }
@@ -4746,6 +4793,11 @@ fn builtin_json_as_f64(args: &[Value]) -> RuntimeResult<Value> {
 
 /// `json::as_bool(value)` → `Option<bool>`.
 fn builtin_json_as_bool(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::Json(value)) = args.first() {
+        if let json_std::Value::Bool(b) = value.as_value() {
+            return Ok(some_variant(Value::Bool(*b)));
+        }
+    }
     if let Some(Value::Bool(b)) = args.first() {
         return Ok(some_variant(Value::Bool(*b)));
     }
@@ -4757,6 +4809,16 @@ fn builtin_json_as_bool(args: &[Value]) -> RuntimeResult<Value> {
 /// always emit an Option variant - `unwrap()` on a non-array now
 /// fails loudly instead of returning a misleading empty array.
 fn builtin_json_as_array(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::Json(value)) = args.first() {
+        if let json_std::Value::Array(items) = value.as_value() {
+            return Ok(some_variant(Value::Array(Arc::new(
+                items
+                    .iter()
+                    .map(|child| json_child_to_lazy_value(value, child))
+                    .collect(),
+            ))));
+        }
+    }
     if let Some(Value::Array(a)) = args.first() {
         return Ok(some_variant(Value::Array(Arc::clone(a))));
     }
@@ -5021,8 +5083,40 @@ fn json_value_to_gossamer(value: &json_std::Value) -> Value {
     }
 }
 
+/// Exposes JSON scalars as their natural interpreter values and keeps nested
+/// documents canonical. This is the lazy boundary for JSON query operations:
+/// direct parse-render never crosses it, while callers that inspect a child
+/// retain the pre-existing scalar behavior without rebuilding unrelated
+/// branches of the document.
+fn json_value_to_lazy_value(value: &json_std::Value) -> Value {
+    match value {
+        json_std::Value::Null => Value::Unit,
+        json_std::Value::Bool(b) => Value::Bool(*b),
+        json_std::Value::Int(n) => Value::Int(*n),
+        json_std::Value::Number(n) => Value::Float(*n),
+        json_std::Value::String(text) => Value::String(SmolStr::from(text.as_str())),
+        json_std::Value::Array(_) | json_std::Value::Object(_) => {
+            Value::Json(Arc::new(JsonInner::new(value.clone())))
+        }
+    }
+}
+
+fn json_child_to_lazy_value(parent: &JsonInner, child: &json_std::Value) -> Value {
+    match child {
+        json_std::Value::Null => Value::Unit,
+        json_std::Value::Bool(b) => Value::Bool(*b),
+        json_std::Value::Int(n) => Value::Int(*n),
+        json_std::Value::Number(n) => Value::Float(*n),
+        json_std::Value::String(text) => Value::String(SmolStr::from(text.as_str())),
+        json_std::Value::Array(_) | json_std::Value::Object(_) => {
+            Value::Json(Arc::new(parent.child(child)))
+        }
+    }
+}
+
 fn gossamer_to_json_value(value: &Value) -> json_std::Value {
     match value {
+        Value::Json(value) => value.to_owned_value(),
         Value::NativeEnum(o) => gossamer_to_json_value(&crate::value::native_enum_to_variant(o)),
         Value::MutCell(c) => {
             let inner = c.lock().clone();
@@ -5220,11 +5314,21 @@ fn builtin_to_lowercase(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(SmolStr::from(s.to_lowercase())))
 }
 
-/// `String::new()` / `String::with_capacity(n)` - a fresh empty owned
-/// String. The capacity hint is advisory and ignored (gos `String` is
-/// the runtime's immutable byte buffer).
+/// `String::new()` - a fresh empty owned String.
 fn builtin_str_new(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(SmolStr::from(String::new())))
+}
+
+/// `String::with_capacity(n)` reserves mutable VM string storage. Negative
+/// and non-integer inputs retain the harmless empty-string behavior of the
+/// constructor rather than attempting an unbounded conversion.
+fn builtin_str_with_capacity(args: &[Value]) -> RuntimeResult<Value> {
+    let capacity = args
+        .first()
+        .and_then(value_to_int)
+        .and_then(|n| usize::try_from(n).ok())
+        .unwrap_or(0);
+    Ok(Value::String(SmolStr::with_capacity(capacity)))
 }
 
 /// `String::from(s)` is identity for a string argument - gos `String` is
@@ -5267,9 +5371,13 @@ fn builtin_str_from_utf8(args: &[Value]) -> RuntimeResult<Value> {
 /// the receiver binding, so `let mut s = …; s.push('x')` leaves `s` a
 /// String rather than clobbering it with `()`.
 fn builtin_str_push(args: &[Value]) -> RuntimeResult<Value> {
-    let base = args.first().and_then(as_str).unwrap_or("");
-    let mut out = String::with_capacity(base.len() + 4);
-    out.push_str(base);
+    let mut out = args
+        .first()
+        .and_then(|value| match value {
+            Value::String(text) => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
     match args.get(1) {
         Some(Value::Char(c)) => out.push(*c),
         other => {
@@ -5281,15 +5389,19 @@ fn builtin_str_push(args: &[Value]) -> RuntimeResult<Value> {
             }
         }
     }
-    Ok(Value::String(SmolStr::from(out)))
+    Ok(Value::String(out))
 }
 
 /// `s.push_char(c)` - append a char, returning the new String.
 /// Identical write-back contract as `builtin_str_push`.
 fn builtin_str_push_char(args: &[Value]) -> RuntimeResult<Value> {
-    let base = args.first().and_then(as_str).unwrap_or("");
-    let mut out = String::with_capacity(base.len() + 4);
-    out.push_str(base);
+    let mut out = args
+        .first()
+        .and_then(|value| match value {
+            Value::String(text) => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
     match args.get(1) {
         Some(Value::Char(c)) => out.push(*c),
         other => {
@@ -5301,30 +5413,38 @@ fn builtin_str_push_char(args: &[Value]) -> RuntimeResult<Value> {
             }
         }
     }
-    Ok(Value::String(SmolStr::from(out)))
+    Ok(Value::String(out))
 }
 
 /// `s.push_byte(b)` - append a byte (0-255) as its Unicode codepoint,
 /// returning the new String. Write-back contract matches `builtin_str_push`.
 fn builtin_str_push_byte(args: &[Value]) -> RuntimeResult<Value> {
-    let base = args.first().and_then(as_str).unwrap_or("");
     let byte = args.get(1).and_then(value_to_int).unwrap_or(0) as u8;
     let ch = char::from(byte);
-    let mut out = String::with_capacity(base.len() + 4);
-    out.push_str(base);
+    let mut out = args
+        .first()
+        .and_then(|value| match value {
+            Value::String(text) => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
     out.push(ch);
-    Ok(Value::String(SmolStr::from(out)))
+    Ok(Value::String(out))
 }
 
 /// `s.push_str(t)` - append a string slice, returning the new String.
 /// See `builtin_str_push` for the writeback contract.
 fn builtin_str_push_str(args: &[Value]) -> RuntimeResult<Value> {
-    let base = args.first().and_then(as_str).unwrap_or("");
     let suffix = args.get(1).and_then(as_str).unwrap_or("");
-    let mut out = String::with_capacity(base.len() + suffix.len());
-    out.push_str(base);
+    let mut out = args
+        .first()
+        .and_then(|value| match value {
+            Value::String(text) => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
     out.push_str(suffix);
-    Ok(Value::String(SmolStr::from(out)))
+    Ok(Value::String(out))
 }
 
 /// `s.chars()` - the Unicode scalars of `s` as a `Vec<char>`, so
@@ -5804,13 +5924,14 @@ fn builtin_map_new(_args: &[Value]) -> RuntimeResult<Value> {
     ))))
 }
 
-/// `HashMap::with_capacity(cap)`: pre-sizes the underlying typed
-/// storage so the doubling chain doesn't fire on a hot insert
-/// loop, keeping peak RSS predictable for callers with a known
-/// upper bound on entry count.
+/// `HashMap::with_capacity(cap)`: pre-sizes generic map storage so the
+/// doubling chain doesn't fire on a hot insert loop. The VM cannot infer the
+/// key/value specialization from this constructor call, so it must preserve
+/// the same general `Map` representation as `HashMap::new`; returning an
+/// `IntMap` here silently made every `HashMap<String, i64>` lookup miss.
 fn builtin_map_with_capacity(args: &[Value]) -> RuntimeResult<Value> {
     let cap = arg_int(args, 0).unwrap_or(0).max(0) as usize;
-    Ok(Value::IntMap(Arc::new(parking_lot::Mutex::new(
+    Ok(Value::Map(Arc::new(parking_lot::Mutex::new(
         dense_map_with_capacity(cap),
     ))))
 }
@@ -6382,27 +6503,42 @@ fn builtin_insert(args: &[Value]) -> RuntimeResult<Value> {
         return builtin_map_insert(args);
     }
     let idx = match args.get(1) {
-        Some(Value::Int(n)) if *n >= 0 => *n as usize,
-        // A non-positive index leaves the sequence unchanged.
-        _ => return Ok(args.first().cloned().unwrap_or(Value::Unit)),
+        Some(Value::Int(n)) => *n,
+        _ => return Err(RuntimeError::Type("index must be integer".to_string())),
     };
     let value = args.get(2).cloned().unwrap_or(Value::Unit);
     match args.first() {
         Some(Value::Array(parts)) => {
+            let len = parts.len() as i64;
+            if idx < 0 || idx > len {
+                return Err(RuntimeError::Panic(format!(
+                    "insert: index {idx} out of bounds for length {len}"
+                )));
+            }
             let mut owned = parts.as_ref().clone();
-            let at = owned.len().min(idx);
-            owned.insert(at, value);
+            owned.insert(idx as usize, value);
             Ok(Value::Array(Arc::new(owned)))
         }
         Some(Value::IntArray(data)) => {
+            let len = data.len() as i64;
+            if idx < 0 || idx > len {
+                return Err(RuntimeError::Panic(format!(
+                    "insert: index {idx} out of bounds for length {len}"
+                )));
+            }
             let mut owned = data.as_ref().clone();
             if let Value::Int(n) = value {
-                let at = owned.len().min(idx);
-                owned.insert(at, n);
+                owned.insert(idx as usize, n);
             }
             Ok(Value::IntArray(Arc::new(owned)))
         }
         Some(Value::FloatVec(data)) => {
+            let len = data.len() as i64;
+            if idx < 0 || idx > len {
+                return Err(RuntimeError::Panic(format!(
+                    "insert: index {idx} out of bounds for length {len}"
+                )));
+            }
             let mut owned = data.as_ref().clone();
             let f = match value {
                 Value::Float(f) => Some(f),
@@ -6410,8 +6546,7 @@ fn builtin_insert(args: &[Value]) -> RuntimeResult<Value> {
                 _ => None,
             };
             if let Some(f) = f {
-                let at = owned.len().min(idx);
-                owned.insert(at, f);
+                owned.insert(idx as usize, f);
             }
             Ok(Value::FloatVec(Arc::new(owned)))
         }
@@ -6427,29 +6562,41 @@ fn builtin_remove(args: &[Value]) -> RuntimeResult<Value> {
         return builtin_map_remove(args);
     }
     let idx = match args.get(1) {
-        Some(Value::Int(n)) if *n >= 0 => *n as usize,
-        _ => return Ok(args.first().cloned().unwrap_or(Value::Unit)),
+        Some(Value::Int(n)) => *n,
+        _ => return Err(RuntimeError::Type("index must be integer".to_string())),
     };
     match args.first() {
         Some(Value::Array(parts)) => {
-            let mut owned = parts.as_ref().clone();
-            if idx < owned.len() {
-                owned.remove(idx);
+            let len = parts.len() as i64;
+            if idx < 0 || idx >= len {
+                return Err(RuntimeError::Panic(format!(
+                    "remove: index {idx} out of bounds for length {len}"
+                )));
             }
+            let mut owned = parts.as_ref().clone();
+            owned.remove(idx as usize);
             Ok(Value::Array(Arc::new(owned)))
         }
         Some(Value::IntArray(data)) => {
-            let mut owned = data.as_ref().clone();
-            if idx < owned.len() {
-                owned.remove(idx);
+            let len = data.len() as i64;
+            if idx < 0 || idx >= len {
+                return Err(RuntimeError::Panic(format!(
+                    "remove: index {idx} out of bounds for length {len}"
+                )));
             }
+            let mut owned = data.as_ref().clone();
+            owned.remove(idx as usize);
             Ok(Value::IntArray(Arc::new(owned)))
         }
         Some(Value::FloatVec(data)) => {
-            let mut owned = data.as_ref().clone();
-            if idx < owned.len() {
-                owned.remove(idx);
+            let len = data.len() as i64;
+            if idx < 0 || idx >= len {
+                return Err(RuntimeError::Panic(format!(
+                    "remove: index {idx} out of bounds for length {len}"
+                )));
             }
+            let mut owned = data.as_ref().clone();
+            owned.remove(idx as usize);
             Ok(Value::FloatVec(Arc::new(owned)))
         }
         _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
@@ -6778,6 +6925,16 @@ fn builtin_json_set(args: &[Value]) -> RuntimeResult<Value> {
         None => return Ok(receiver),
     };
     let value = args.get(2).cloned().unwrap_or(Value::Unit);
+    if let Value::Json(json) = &receiver {
+        let json_std::Value::Object(entries) = json.as_value() else {
+            return Ok(receiver);
+        };
+        let mut updated = entries.clone();
+        updated.insert(key, gossamer_to_json_value(&value));
+        return Ok(Value::Json(Arc::new(JsonInner::new(
+            json_std::Value::Object(updated),
+        ))));
+    }
     let Value::Struct(inner) = &receiver else {
         return Ok(receiver);
     };
@@ -7382,26 +7539,25 @@ fn builtin_channel_try_recv(args: &[Value]) -> RuntimeResult<Value> {
     })
 }
 
-/// `rx.recv_ctx(&ctx)` in the interp. The interp's `Channel` is
-/// a Rust-side struct distinct from the runtime's `GosChan`, so
-/// it can't observe a `gossamer-std::context::Context` cancel
-/// directly. For source-level parity with the compiled tier
-/// (where the cancel does propagate via the runtime hooks), this
-/// builtin degrades to a plain `recv` - the `&ctx` arg is
-/// accepted and ignored. Programs that need real cancellation
-/// in interpreted mode should structure around `select { _ =
-/// ctx.done() => …, x = rx.recv() => … }`, which the interp's
-/// select primitive supports.
+/// `rx.recv_ctx(&ctx)` in the interpreter. The VM channel and Context use
+/// separate wait primitives, so the receive performs bounded condvar waits and
+/// checks the Context between them. A queued value wins over cancellation, as
+/// it does in the native runtime.
 fn builtin_channel_recv_ctx(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::Channel(channel)) = args.first() else {
         return Err(RuntimeError::Type(
             "recv_ctx: receiver must be a channel".to_string(),
         ));
     };
-    Ok(match channel.recv() {
-        Some(value) => some_variant(value),
-        None => none_variant(),
-    })
+    let ctx = args.get(1);
+    Ok(
+        match channel.recv_with_cancel(|| {
+            ctx.is_some_and(crate::stdlib_builtins::context::value_is_cancelled)
+        }) {
+            Some(value) => some_variant(value),
+            None => none_variant(),
+        },
+    )
 }
 
 /// One flag extracted from a `FlagDecl` struct literal.
@@ -8322,6 +8478,15 @@ fn write_stderr_bytes(bytes: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hashmap_with_capacity_preserves_string_key_semantics() {
+        let map = builtin_map_with_capacity(&[Value::Int(4)]).expect("constructor");
+        let key = Value::String(SmolStr::from("present"));
+        let map = builtin_map_insert(&[map, key.clone(), Value::Int(42)]).expect("insert");
+        let value = builtin_map_get_or(&[map, key, Value::Int(-1)]).expect("get_or");
+        assert!(matches!(value, Value::Int(42)));
+    }
 
     #[test]
     fn builtin_split_returns_array_of_segments_for_string_receiver() {

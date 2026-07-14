@@ -487,27 +487,13 @@ impl<'tcx> FnBuilder<'tcx> {
                 let base_reg = self.compile_expr(base)?;
                 let idx_reg = self.compile_expr(index)?;
                 let dst = self.alloc_reg();
-                // An aggregate element (struct / tuple / array) cannot yield a
-                // lenient zero value on an out-of-range index without feeding a
-                // bogus value into a later field/element access, so it panics
-                // with `index out of bounds` - matching the compiled tiers'
-                // bounds assert. Primitive elements keep lenient `IndexGet`.
-                let aggregate = matches!(
-                    self.tcx.kind(expr.ty),
-                    Some(TyKind::Tuple(_) | TyKind::Adt { .. } | TyKind::Array { .. })
-                );
-                self.emit(if aggregate {
-                    Op::IndexGetChecked {
-                        dst,
-                        base: base_reg,
-                        index: idx_reg,
-                    }
-                } else {
-                    Op::IndexGet {
-                        dst,
-                        base: base_reg,
-                        index: idx_reg,
-                    }
+                // Source indexing is always checked. APIs that intentionally
+                // probe a collection use their explicit `get`-style form;
+                // indexing must not turn a bug into a scalar zero value.
+                self.emit(Op::IndexGetChecked {
+                    dst,
+                    base: base_reg,
+                    index: idx_reg,
                 });
                 Ok(dst)
             }
@@ -2192,6 +2178,33 @@ impl<'tcx> FnBuilder<'tcx> {
                     idx: idx_reg,
                 });
                 return Ok(dst);
+            }
+        }
+        // `s.push_str(x)` on a local String can use the same in-place append
+        // op as `s += x`. The generic mutating-method route clones the
+        // receiver into the builtin argument list and then writes the returned
+        // String back, which preserves semantics but turns builder-style loops
+        // into repeated whole-string copies.
+        if name.name.as_str() == "push_str" && args.len() == 1 {
+            let mut k = self.tcx.kind(receiver.ty).cloned();
+            while let Some(TyKind::Ref { inner, .. }) = k {
+                k = self.tcx.kind(inner).cloned();
+            }
+            if matches!(k, Some(TyKind::String)) {
+                if let HirExprKind::Path { segments, .. } = &receiver.kind {
+                    if let [seg] = segments.as_slice() {
+                        if let Some(target) = self.lookup_local(&seg.name) {
+                            if target.kind == RegKind::Value {
+                                let suffix = self.compile_expr(&args[0])?;
+                                self.emit(Op::StrAppend {
+                                    receiver: target.reg,
+                                    value: suffix,
+                                });
+                                return Ok(target.reg);
+                            }
+                        }
+                    }
+                }
             }
         }
         // `d.as_millis()` / `d.as_secs()` / `d.as_micros()` - method form

@@ -1,0 +1,10 @@
+// Method-form Vec remove panics on invalid indices. Use qualified
+// `Vec::remove(xs, i)` for recoverable `Result` behavior.
+
+fn main() {
+    let mut xs = [1, 2, 3]
+    xs.remove(2)
+    println!("before {}", xs.len())
+    xs.remove(2)
+    println!("unreachable")
+}

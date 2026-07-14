@@ -787,6 +787,7 @@ pub(crate) fn lower_program_full(
     // sequentially (ObjectModule is not Sync). Cranelift compilation
     // happens here too, but the IR construction above (the expensive
     // allocation-heavy work) ran in parallel.
+    let mut emitted_code_bytes = 0u64;
     for (id, name, func) in ir_pairs {
         if dump_clif {
             eprintln!("=== CLIF {name} ===\n{}", func.display());
@@ -799,10 +800,16 @@ pub(crate) fn lower_program_full(
             };
             anyhow!("define {name}: {detail}")
         })?;
+        let code_bytes = ctx
+            .compiled_code()
+            .map(|code| u64::from(code.code_info().total_size))
+            .ok_or_else(|| anyhow!("define {name}: Cranelift returned no compiled code"))?;
+        emitted_code_bytes = emitted_code_bytes.saturating_add(code_bytes);
     }
 
     Ok(LoweredProgram {
         function_ids_by_name,
+        emitted_code_bytes,
         function_ids_by_def,
     })
 }

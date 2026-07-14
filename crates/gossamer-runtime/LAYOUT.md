@@ -110,15 +110,22 @@ GosVec {
   cap:        i64,
   elem_bytes: u32,
   elem_kind:  u8,         // tag driving deep-free of pointer-bearing elements
-  _reserved:  [u8; 3],    // padding; _reserved[0] flags an arena-region vec
+  region_flag: u8,        // arena/split flags; remaining bytes hold the RC
+  rc:         AtomicU16,  // non-region header reference count
   ptr:        *mut u8,    // element buffer
+  generation: u64,        // allocation identity (zero for arena-region Vecs)
+  elem_meta:  *const i64, // guarded aggregate layout, normally null
+  owner:      *mut VecOwner, // lazy aggregate-owned slot metadata, normally null
 }
 ```
 
 The header is reference counted (`vec_retain_header`) and reclaimed by
 `gos_rt_vec_free`, which uses `elem_kind` to recursively free
 string / vec / map / RC-node elements; an arena-region vec is freed
-wholesale at `arena_pop` instead. No tracing collector scans it.
+wholesale at `arena_pop` instead. The fixed native ABI prefix remains
+`len@0`, `cap@8`, `elem_bytes@16`, and `ptr@24`; the tail keeps primitive
+Vecs self-contained, allocating optional slot-child metadata only for
+aggregate-owned elements. No tracing collector scans it.
 
 ### `HashMap<K, V>`
 

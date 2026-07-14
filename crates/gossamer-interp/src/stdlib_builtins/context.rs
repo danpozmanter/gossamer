@@ -178,11 +178,15 @@ fn node_is_cancelled(id: i64) -> bool {
     node.parent.is_some_and(node_is_cancelled)
 }
 
+/// Returns whether a VM `Context` value has been cancelled or timed out.
+/// Cancellation-aware VM primitives use this so they share the parent and
+/// deadline semantics of `Context::is_cancelled`.
+pub(crate) fn value_is_cancelled(value: &Value) -> bool {
+    ctx_id_of(value).is_some_and(node_is_cancelled)
+}
+
 pub(crate) fn builtin_ctx_is_cancelled(args: &[Value]) -> RuntimeResult<Value> {
-    let cancelled = args
-        .first()
-        .and_then(ctx_id_of)
-        .is_some_and(node_is_cancelled);
+    let cancelled = args.first().is_some_and(value_is_cancelled);
     Ok(Value::Bool(cancelled))
 }
 

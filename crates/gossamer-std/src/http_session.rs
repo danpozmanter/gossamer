@@ -633,12 +633,26 @@ fn b64url_encode(input: &[u8]) -> String {
 
 fn b64url_decode(input: &str) -> Result<Vec<u8>, Error> {
     let bytes = input.as_bytes();
-    let pad = match bytes.len() % 4 {
+    let remainder = bytes.len() % 4;
+    let pad = match remainder {
         0 => 0,
         2 => 2,
         3 => 1,
         _ => return Err(Error::new("b64url: invalid length")),
     };
+    // RFC 4648 requires unused bits in an unpadded final quantum to be zero.
+    // Reject alternate spellings that otherwise decode to the same bytes.
+    let unused_bits = match remainder {
+        2 => 0x0f,
+        3 => 0x03,
+        _ => 0,
+    };
+    if unused_bits != 0
+        && let Some(last) = bytes.last().and_then(|byte| url_index(*byte))
+        && last & unused_bits != 0
+    {
+        return Err(Error::new("b64url: non-canonical trailing bits"));
+    }
     let total = bytes.len() + pad;
     let mut padded = Vec::with_capacity(total);
     padded.extend_from_slice(bytes);
@@ -1148,6 +1162,15 @@ mod tests {
             );
             let back = b64url_decode(&s).unwrap();
             assert_eq!(back, input);
+        }
+    }
+
+    #[test]
+    fn b64url_rejects_noncanonical_trailing_bits() {
+        // `AB` and `AAB` decode to the same bytes as `AA` and `AAA` when
+        // their ignored base64 padding bits are not validated.
+        for encoded in ["AB", "AAB"] {
+            assert!(b64url_decode(encoded).is_err(), "{encoded}");
         }
     }
 

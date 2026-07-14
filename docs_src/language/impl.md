@@ -22,9 +22,10 @@ println!("{}", p.norm())
 
 A method takes `self`, `&self`, or `&mut self`; `&self` reads, `&mut self`
 writes through to the caller's storage. Qualified-path calls
-(`Point::origin()`) always resolve; bare-name method dispatch is
-name-global in places, so prefer the qualified form when a name could
-collide.
+(`Point::origin()`) always resolve; method-call dispatch is type-directed for
+user impls, core collection/String receivers, and typed stdlib receivers.
+Prefer the qualified form when several types intentionally share an associated
+function name and you want the call target to be explicit.
 
 ## Generic impls
 

@@ -222,12 +222,11 @@ fn manifest_functions_have_implementations() {
     assert!(
         phantoms.is_empty(),
         "{n} manifest Function item(s) advertise a function that resolves to NO \
-         implementation - they are listed by `gos doc` and default to \"Shipped\" in \
-         the feature-status registry, pass `gos check` (for 3-segment paths), then \
-         fail at runtime with GX0002 / a compiled build error.\nEither wire the \
-         function on all three tiers (interp builtin + c_abi shim + cranelift + llvm \
-         dispatch) and add a tier-parity fixture, or remove the StdItem from its \
-         manifest/*.rs module:\n  {phantoms:#?}",
+         implementation - they are listed by `gos doc`, pass `gos check` (for \
+         3-segment paths), then fail at runtime with GX0002 / a compiled build \
+         error.\nEither wire the function on all three tiers (interp builtin + \
+         c_abi shim + cranelift + llvm dispatch) and add a tier-parity fixture, \
+         or remove the StdItem from its manifest/*.rs module:\n  {phantoms:#?}",
         n = phantoms.len()
     );
 

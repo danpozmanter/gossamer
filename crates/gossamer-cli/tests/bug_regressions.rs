@@ -2134,16 +2134,11 @@ fn main() {
 }
 
 #[test]
-fn typed_int_array_get_falls_back_to_generic_array() {
-    // Bug fixed in 0.10.0: when `fn slide(arr: [i64; 4]) -> i64`
-    // was called from a loop body, the bytecode compiler tracked
-    // `arr` as a `flat_int_local` (Value::IntArray) - but the
-    // call-args ABI didn't always preserve that shape across the
-    // boundary, so the second iteration saw a Value::Array of
-    // boxed Value::Int instead and panicked with "IntArrayGetI64:
-    // receiver lost flat invariant". The runtime fast path now
-    // tolerates the generic Array shape (one discriminant match
-    // per index) instead of aborting.
+fn typed_int_array_parameter_uses_generic_index_path() {
+    // Function arguments use the general Value ABI. In particular, a
+    // `[i64; N]` parameter may be boxed as `Value::Array`, so parameters must
+    // stay on the generic indexing path rather than being incorrectly marked
+    // as `Value::IntArray` fast-path storage.
     let src = r#"
 fn slide(arr: [i64; 4]) -> i64 {
     let mut sum: i64 = 0

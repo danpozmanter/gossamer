@@ -317,13 +317,11 @@ Consequences of the model:
 - Arithmetic between narrow values does not wrap at the declared
   width: `200u8 + 200u8 == 400`. Wrap-at-width is opt-in via a cast
   (`(200u8 + 200u8) as u8 == 144`).
-- `u64`/`usize` values at or beyond 2<sup>63</sup> are not
-  representable distinctly - they alias the i64 two's-complement
-  range, so `0u64 - 1` computes, compares, divides, and prints as
-  `-1`, and `(0u64 - 1) as f64 == -1.0`. (Display provenance is the
-  one exception: a value produced directly by an explicit `as u64` /
-  `as usize` cast renders unsigned, so `(0 - 1) as u64` prints
-  `18446744073709551615`.)
+- `u64`/`usize` values use the same 64-bit payload as signed integers,
+  but arithmetic, comparison, shifts, division/remainder, and display are
+  type-aware on every tier. Casts reinterpret or truncate to the target
+  width (`(0 - 1) as u64` prints `18446744073709551615`); an explicit
+  cast back to a signed type reinterprets the same bits.
 - `+`, `-`, `*` wrap two's-complement at 64-bit width.
 - `<<` and `>>` mask the shift amount to the low 6 bits
   (`1 << 70 == 1 << 6`); `>>` is the arithmetic (sign-propagating)

@@ -285,6 +285,25 @@ impl<'a> Builder<'a> {
             &names[..]
         };
         let joined = strip_std.join("::");
+        // A loop region proves every region-owned allocation dies at the
+        // iteration boundary. Collection while the region is still active is
+        // at best redundant and at worst makes the collector inspect pointers
+        // which `arena_pop` is about to bulk-free. Keep the source-visible
+        // collection point, but lower it immediately after that pop.
+        if joined == "runtime::collect_cycles"
+            && args.is_empty()
+            && let Some(deferred) = self.deferred_auto_region_collections.last_mut()
+        {
+            *deferred = true;
+            let unit = self.tcx.unit();
+            let dest = self.fresh(unit);
+            self.emit_assign(
+                Place::local(dest),
+                Rvalue::Use(Operand::Const(ConstValue::Unit)),
+                span,
+            );
+            return Some(dest);
+        }
         if let ControlFlow::Break(result) = self.lower_stdlib_free_special(
             segments.len(),
             callee_def.is_some(),

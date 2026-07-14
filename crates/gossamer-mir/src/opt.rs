@@ -108,7 +108,7 @@ pub(crate) fn reserve_vecs_for_counted_push_loops(body: &mut Body) {
         let Some(bound) = counted_push_loop_bound(body, *start, destination.local) else {
             continue;
         };
-        if !reserve_bound_available_at_entry(body, &bound) {
+        if !reserve_bound_available_at_entry(body, &bound, block.id) {
             continue;
         }
         rewrites.push((bi, vec![args[0].clone(), bound]));
@@ -126,14 +126,148 @@ pub(crate) fn reserve_vecs_for_counted_push_loops(body: &mut Body) {
     }
 }
 
-fn reserve_bound_available_at_entry(body: &Body, bound: &Operand) -> bool {
+/// Rewrites a fresh word-layout `HashMap::new()` into
+/// `gos_rt_map_new_with_capacity` when a following counted loop performs
+/// exactly one insert into that map on every iteration. The native capacity
+/// constructor carries a proven capacity; native backends select the typed
+/// storage layout from the destination map type. Unsupported aggregate layouts
+/// retain lazy storage while preserving the same constructor semantics.
+/// Duplicate keys are harmless: the loop bound is an upper bound, never an
+/// assertion about the final map length.
+pub(crate) fn reserve_hashmaps_for_counted_insert_loops(body: &mut Body, tcx: &TyCtxt) {
+    let mut rewrites: Vec<(usize, Vec<Operand>)> = Vec::new();
+    for (bi, block) in body.blocks.iter().enumerate() {
+        let Terminator::Call {
+            callee,
+            args,
+            destination,
+            target,
+        } = &block.terminator
+        else {
+            continue;
+        };
+        // Surface `HashMap::new()` has no arguments. The native backends
+        // derive its fixed word-sized key/value layout from the destination,
+        // and their `*_with_capacity` lowering likewise expects just the
+        // capacity operand. Keep accepting the historical runtime-shaped
+        // form too, but discard its layout operands rather than accidentally
+        // treating the key width as the capacity.
+        if !destination.projection.is_empty()
+            || !(args.is_empty()
+                || (matches!(callee, Operand::Const(ConstValue::Str(name)) if name == "gos_rt_map_new")
+                    && args.len() == 2))
+        {
+            continue;
+        }
+        if !matches!(callee, Operand::Const(ConstValue::Str(name)) if matches!(name.as_str(), "HashMap::new" | "collections::HashMap::new" | "gos_rt_map_new"))
+        {
+            continue;
+        }
+        if !is_hashmap_local(body, tcx, destination.local) {
+            continue;
+        }
+        let Some(start) = target else { continue };
+        let Some(bound) = counted_insert_loop_bound(body, *start, destination.local) else {
+            continue;
+        };
+        if !reserve_bound_available_at_entry(body, &bound, block.id) {
+            continue;
+        }
+        rewrites.push((bi, vec![bound]));
+    }
+    for (bi, args) in rewrites {
+        if let Terminator::Call {
+            callee,
+            args: call_args,
+            ..
+        } = &mut body.blocks[bi].terminator
+        {
+            *callee = Operand::Const(ConstValue::Str("gos_rt_map_new_with_capacity".to_string()));
+            *call_args = args;
+        }
+    }
+}
+
+/// Capacity planning only applies to a statically known `HashMap` local.
+fn is_hashmap_local(body: &Body, tcx: &TyCtxt, local: Local) -> bool {
+    let Some(decl) = body.locals.get(local.0 as usize) else {
+        return false;
+    };
+    matches!(tcx.kind_of(decl.ty), TyKind::HashMap { .. })
+}
+
+fn reserve_bound_available_at_entry(body: &Body, bound: &Operand, allocation: BlockId) -> bool {
     match bound {
         Operand::Const(_) => true,
         Operand::Copy(place) if place.projection.is_empty() => {
-            place.local.0 != 0 && place.local.0 <= body.arity
+            if place.local.0 == 0 {
+                return false;
+            }
+            // Parameters exist at function entry. A local must instead have
+            // one whole-local definition that dominates the constructor; a
+            // second write anywhere in the body means a loop back-edge or a
+            // branch can change the reserve bound, so remain conservative.
+            place.local.0 <= body.arity
+                || single_local_definition(body, place.local)
+                    .is_some_and(|definition| block_dominates(body, definition, allocation))
         }
         _ => false,
     }
+}
+
+/// Returns the sole block that defines `local`, counting both statement and
+/// call-result writes. Projection writes count too: a reserve bound must be
+/// immutable for the whole loop, not merely free of direct scalar writes.
+fn single_local_definition(body: &Body, local: Local) -> Option<BlockId> {
+    let mut definition = None;
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign { place, .. } = &stmt.kind
+                && place.local == local
+            {
+                if definition.replace(block.id).is_some() {
+                    return None;
+                }
+            }
+        }
+        if let Terminator::Call { destination, .. } = &block.terminator
+            && destination.local == local
+        {
+            if definition.replace(block.id).is_some() {
+                return None;
+            }
+        }
+    }
+    definition
+}
+
+/// True when every entry-to-`target` path passes through `gate`.
+fn block_dominates(body: &Body, gate: BlockId, target: BlockId) -> bool {
+    let Some(entry) = body.blocks.first().map(|block| block.id) else {
+        return false;
+    };
+    if gate == target || gate == entry {
+        return true;
+    }
+    let mut seen = HashSet::from([entry]);
+    let mut work = VecDeque::from([entry]);
+    while let Some(block_id) = work.pop_front() {
+        if block_id == gate {
+            continue;
+        }
+        if block_id == target {
+            return false;
+        }
+        let Some(block) = body.blocks.get(block_id.0 as usize) else {
+            return false;
+        };
+        for successor in terminator_successors(&block.terminator) {
+            if successor != gate && seen.insert(successor) {
+                work.push_back(successor);
+            }
+        }
+    }
+    true
 }
 
 fn counted_push_loop_bound(body: &Body, start: BlockId, vec_local: Local) -> Option<Operand> {
@@ -145,7 +279,27 @@ fn counted_push_loop_bound(body: &Body, start: BlockId, vec_local: Local) -> Opt
         }
         let block = body.blocks.get(bid.0 as usize)?;
         if let Some((body_entry, bound)) = counted_loop_body_and_bound(block)
-            && loop_body_pushes_vec(body, body_entry, bid, vec_local)
+            && loop_body_has_exactly_one_vec_push(body, body_entry, bid, vec_local)
+        {
+            return Some(bound);
+        }
+        for succ in terminator_successors(&block.terminator) {
+            work.push_back((succ, depth + 1));
+        }
+    }
+    None
+}
+
+fn counted_insert_loop_bound(body: &Body, start: BlockId, map_local: Local) -> Option<Operand> {
+    let mut seen = HashSet::new();
+    let mut work = VecDeque::from([(start, 0usize)]);
+    while let Some((bid, depth)) = work.pop_front() {
+        if depth > 64 || !seen.insert(bid) {
+            continue;
+        }
+        let block = body.blocks.get(bid.0 as usize)?;
+        if let Some((body_entry, bound)) = counted_loop_body_and_bound(block)
+            && loop_body_has_exactly_one_map_insert(body, body_entry, bid, map_local)
         {
             return Some(bound);
         }
@@ -195,24 +349,52 @@ fn counted_loop_body_and_bound(block: &BasicBlock) -> Option<(BlockId, Operand)>
     None
 }
 
-fn loop_body_pushes_vec(body: &Body, entry: BlockId, loop_head: BlockId, vec_local: Local) -> bool {
+/// Proves that every loop-body path reaches the loop head after exactly one
+/// push into `vec_local`. A reserve is only exact under that condition: seeing
+/// one push somewhere is insufficient when another branch skips it or pushes
+/// twice. Loops inside the candidate body and paths which leave the body are
+/// deliberately rejected rather than guessed about.
+fn loop_body_has_exactly_one_vec_push(
+    body: &Body,
+    entry: BlockId,
+    loop_head: BlockId,
+    vec_local: Local,
+) -> bool {
     let mut seen = HashSet::new();
-    let mut work = VecDeque::from([(entry, 0usize)]);
-    while let Some((bid, depth)) = work.pop_front() {
-        if bid == loop_head || depth > 128 || !seen.insert(bid) {
+    let mut work = VecDeque::from([(entry, 0u8)]);
+    let mut reached_head = false;
+    while let Some((bid, pushes)) = work.pop_front() {
+        if bid == loop_head {
+            if pushes != 1 {
+                return false;
+            }
+            reached_head = true;
             continue;
+        }
+        if !seen.insert((bid, pushes)) {
+            // A cycle in the candidate body makes the number of pushes
+            // unbounded or path-dependent, so it is not an exact reserve.
+            return false;
         }
         let Some(block) = body.blocks.get(bid.0 as usize) else {
-            continue;
+            return false;
         };
-        if terminator_pushes_vec(&block.terminator, vec_local) {
-            return true;
+        let pushes = pushes.saturating_add(u8::from(terminator_pushes_vec(
+            &block.terminator,
+            vec_local,
+        )));
+        if pushes > 1 {
+            return false;
         }
-        for succ in terminator_successors(&block.terminator) {
-            work.push_back((succ, depth + 1));
+        let successors = terminator_successors(&block.terminator);
+        if successors.is_empty() {
+            return false;
+        }
+        for successor in successors {
+            work.push_back((successor, pushes));
         }
     }
-    false
+    reached_head
 }
 
 fn terminator_pushes_vec(term: &Terminator, vec_local: Local) -> bool {
@@ -224,6 +406,64 @@ fn terminator_pushes_vec(term: &Terminator, vec_local: Local) -> bool {
         return false;
     }
     args.first().and_then(whole_copy_local) == Some(vec_local)
+}
+
+fn loop_body_has_exactly_one_map_insert(
+    body: &Body,
+    entry: BlockId,
+    loop_head: BlockId,
+    map_local: Local,
+) -> bool {
+    let mut seen = HashSet::new();
+    let mut work = VecDeque::from([(entry, 0u8)]);
+    let mut reached_head = false;
+    while let Some((bid, inserts)) = work.pop_front() {
+        if bid == loop_head {
+            if inserts != 1 {
+                return false;
+            }
+            reached_head = true;
+            continue;
+        }
+        if !seen.insert((bid, inserts)) {
+            return false;
+        }
+        let Some(block) = body.blocks.get(bid.0 as usize) else {
+            return false;
+        };
+        let inserts = inserts.saturating_add(u8::from(terminator_inserts_map(
+            &block.terminator,
+            map_local,
+        )));
+        if inserts > 1 {
+            return false;
+        }
+        let successors = terminator_successors(&block.terminator);
+        if successors.is_empty() {
+            return false;
+        }
+        for successor in successors {
+            work.push_back((successor, inserts));
+        }
+    }
+    reached_head
+}
+
+fn terminator_inserts_map(term: &Terminator, map_local: Local) -> bool {
+    let Terminator::Call { callee, args, .. } = term else {
+        return false;
+    };
+    if !matches!(callee, Operand::Const(ConstValue::Str(name)) if matches!(name.as_str(),
+        "gos_rt_map_insert"
+            | "gos_rt_map_insert_i64_i64"
+            | "gos_rt_map_insert_str_i64"
+            | "gos_rt_map_insert_i64_str"
+            | "gos_rt_map_insert_str_str"
+            | "gos_rt_map_insert_skey"))
+    {
+        return false;
+    }
+    args.first().and_then(whole_copy_local) == Some(map_local)
 }
 
 fn terminator_successors(term: &Terminator) -> Vec<BlockId> {
@@ -3044,6 +3284,24 @@ fn local_is_len_minus_one(body: &Body, local: Local, len: Local) -> bool {
     )
 }
 
+/// Whether `local` has one, acyclic definition that is exactly zero. This is
+/// deliberately narrower than general constant propagation: a `len > 0`
+/// guard proves only index zero (and `len - 1`) without relying on arithmetic
+/// overflow or on a benchmark's input range.
+fn local_is_known_zero(body: &Body, local: Local, visited: &mut Vec<Local>) -> bool {
+    if visited.contains(&local) {
+        return false;
+    }
+    visited.push(local);
+    match unique_def_rvalue(body, local) {
+        Some(Rvalue::Use(Operand::Const(ConstValue::Int(0)))) => true,
+        Some(Rvalue::Use(Operand::Copy(place))) if place.projection.is_empty() => {
+            local_is_known_zero(body, place.local, visited)
+        }
+        _ => false,
+    }
+}
+
 fn guarded_successor_has_no_vec_side_effects(block: &BasicBlock, xs: Local) -> bool {
     block
         .stmts
@@ -3051,65 +3309,100 @@ fn guarded_successor_has_no_vec_side_effects(block: &BasicBlock, xs: Local) -> b
         .all(|stmt| !stmt_mentions_local(stmt, xs))
 }
 
-/// Branch-local bounds facts for heap-style code. Rewrites a checked scalar
-/// Vec get/set in the proven true successor of either `idx < xs.len()` or
-/// `xs.len() > 0` followed by `last = len - 1`. This deliberately does not
-/// clone blocks or reason across arbitrary statements; it only removes the
-/// runtime guard when local control flow proves the single terminator access.
+/// Branch-local bounds facts for heap-style code. Rewrites checked scalar Vec
+/// get/set calls in the proven true successor of either `idx < xs.len()` or
+/// `xs.len() > 0` followed by `index = 0` or `last = len - 1`. The fact flows
+/// through a straight-line chain of side-effect-free access blocks, so
+/// repeated heap sift/BFS accesses do not each pay the same guard. It stops
+/// before any mutation, aliasing/unknown call, branch, or cycle.
 pub(crate) fn local_branch_bounds_check_elim(body: &mut Body, tcx: &TyCtxt) {
     let mut rewrites: Vec<(usize, &'static str)> = Vec::new();
     for h in 0..body.blocks.len() {
         let Some((successor, fact)) = branch_bound_fact(body, h) else {
             continue;
         };
-        let block = &body.blocks[successor];
-        let Terminator::Call {
-            callee: Operand::Const(ConstValue::Str(name)),
-            args,
-            ..
-        } = &block.terminator
-        else {
-            continue;
-        };
-        let Some(unchecked) = unchecked_variant(name) else {
-            continue;
-        };
-        let idx_arg = match (name.as_str(), args.as_slice()) {
-            ("gos_rt_vec_get_i64", [_, idx]) => idx,
-            ("gos_rt_vec_set_i64", [_, idx, _]) => idx,
-            _ => continue,
-        };
-        let Some(Operand::Copy(receiver)) = args.first() else {
-            continue;
-        };
-        if !receiver.projection.is_empty()
-            || !guarded_successor_has_no_vec_side_effects(block, receiver.local)
-        {
-            continue;
-        }
-        if !vec_elem_is_unchecked_scalar(body, tcx, receiver.local) {
-            continue;
-        }
-        let Operand::Copy(idx_place) = idx_arg else {
-            continue;
-        };
-        if !idx_place.projection.is_empty() {
-            continue;
-        }
-        let proven = match fact {
-            BranchBoundFact::IndexLtLen { index, xs } => {
-                receiver.local == xs
-                    && idx_place.local == index
-                    && !block_writes_local(block, index)
+        let mut current = successor;
+        let mut seen = HashSet::new();
+        while seen.insert(current) {
+            let block = &body.blocks[current];
+            // An empty single-successor bridge has no operation that can
+            // mutate, alias, or otherwise invalidate the established bounds
+            // fact. Lowering emits these around cleanup/source-span joins in
+            // heap-sift/BFS-shaped control flow; following them keeps the
+            // proof local without trying to merge facts across a branch.
+            if block.stmts.is_empty()
+                && let Terminator::Goto { target } = &block.terminator
+            {
+                // Do not carry a path fact through a join: another incoming
+                // edge might not have evaluated the guard at all.
+                if body
+                    .blocks
+                    .iter()
+                    .enumerate()
+                    .find(|(pred, candidate)| {
+                        *pred != current
+                            && successor_indices(&candidate.terminator)
+                                .contains(&(target.0 as usize))
+                    })
+                    .is_some()
+                {
+                    break;
+                }
+                current = target.0 as usize;
+                continue;
             }
-            BranchBoundFact::LenPositive { len, xs } => {
-                receiver.local == xs
-                    && !block_writes_local(block, len)
-                    && local_is_len_minus_one(body, idx_place.local, len)
+            let Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                args,
+                target,
+                ..
+            } = &block.terminator
+            else {
+                break;
+            };
+            let Some(unchecked) = unchecked_variant(name) else {
+                break;
+            };
+            let idx_arg = match (name.as_str(), args.as_slice()) {
+                ("gos_rt_vec_get_i64", [_, idx]) => idx,
+                ("gos_rt_vec_set_i64", [_, idx, _]) => idx,
+                _ => break,
+            };
+            let Some(Operand::Copy(receiver)) = args.first() else {
+                break;
+            };
+            if !receiver.projection.is_empty()
+                || !guarded_successor_has_no_vec_side_effects(block, receiver.local)
+                || block_writes_local(block, receiver.local)
+                || !vec_elem_is_unchecked_scalar(body, tcx, receiver.local)
+            {
+                break;
             }
-        };
-        if proven {
-            rewrites.push((successor, unchecked));
+            let Operand::Copy(idx_place) = idx_arg else {
+                break;
+            };
+            if !idx_place.projection.is_empty() {
+                break;
+            }
+            let proven = match fact {
+                BranchBoundFact::IndexLtLen { index, xs } => {
+                    receiver.local == xs
+                        && idx_place.local == index
+                        && !block_writes_local(block, index)
+                }
+                BranchBoundFact::LenPositive { len, xs } => {
+                    receiver.local == xs
+                        && !block_writes_local(block, len)
+                        && (local_is_len_minus_one(body, idx_place.local, len)
+                            || local_is_known_zero(body, idx_place.local, &mut Vec::new()))
+                }
+            };
+            if !proven {
+                break;
+            }
+            rewrites.push((current, unchecked));
+            let Some(next) = target else { break };
+            current = next.0 as usize;
         }
     }
     for (b, name) in rewrites {
@@ -3658,79 +3951,6 @@ fn emit_loop_version(
     }
 }
 
-/// Argument index of the value operand for a container-insert runtime
-/// call whose stored entry aliases the value's heap subgraph, or `None`
-/// for any other callee. The map-insert family and `BTreeMap::insert`
-/// carry the value at index 2 (`m, key, value`); `HashSet::insert` at
-/// index 1 (`set, element`).
-fn container_insert_value_arg(callee: &str) -> Option<usize> {
-    match callee {
-        "gos_rt_map_insert"
-        | "gos_rt_map_insert_i64_i64"
-        | "gos_rt_map_insert_str_i64"
-        | "gos_rt_map_insert_i64_str"
-        | "gos_rt_map_insert_str_str"
-        | "gos_rt_btmap_insert" => Some(2),
-        "gos_rt_set_insert" => Some(1),
-        _ => None,
-    }
-}
-
-/// Move-into-container ownership transfer. A value inserted into a
-/// `HashMap` / `BTreeMap` / `HashSet` is heap-copied into the entry, and the
-/// copy aliases the source value's `String` / `Vec` / nested-aggregate
-/// children (the entry shares the single owning reference). The source
-/// binding's drop must therefore not release those children, or the
-/// stored entry is left pointing at freed memory. The container holds
-/// the reference until the entry is popped - where the receiving binding
-/// releases it - or the container itself is dropped.
-///
-/// Removing a release can only delay a free, never free early, so this
-/// transform cannot introduce a use-after-free or double-free: an entry
-/// that is never popped leaks its children rather than corrupting the
-/// heap. It runs after the drop-insertion pipeline so the releases it
-/// cancels are already materialised.
-pub(crate) fn suppress_container_moved_releases(body: &mut Body) {
-    let mut rooted: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
-    for block in &body.blocks {
-        if let Terminator::Call {
-            callee: Operand::Const(ConstValue::Str(name)),
-            args,
-            ..
-        } = &block.terminator
-            && let Some(vidx) = container_insert_value_arg(name)
-            && let Some(Operand::Copy(p)) = args.get(vidx)
-            && p.projection.is_empty()
-        {
-            rooted.insert(p.local.0);
-        }
-    }
-    if rooted.is_empty() {
-        return;
-    }
-    for block in &mut body.blocks {
-        for stmt in &mut block.stmts {
-            if let StatementKind::Assign {
-                rvalue: Rvalue::CallIntrinsic { name, args },
-                ..
-            } = &stmt.kind
-                && matches!(
-                    *name,
-                    "gos_rt_rc_release" | "gos_rt_str_free" | "gos_rt_vec_free"
-                )
-                && args.len() == 1
-                && let Some(Operand::Copy(p)) = args.first()
-                && rooted.contains(&p.local.0)
-                && p.projection
-                    .iter()
-                    .all(|proj| matches!(proj, Projection::Field(_)))
-            {
-                stmt.kind = StatementKind::Nop;
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod elision_tests {
     use gossamer_lex::{SourceMap, Span};
@@ -3738,7 +3958,8 @@ mod elision_tests {
 
     use super::{
         bounds_check_elim, elide_redundant_rc_pairs, fuse_slice_parse_ranges,
-        local_branch_bounds_check_elim, reserve_vecs_for_counted_push_loops,
+        local_branch_bounds_check_elim, loop_body_has_exactly_one_vec_push,
+        reserve_bound_available_at_entry, reserve_vecs_for_counted_push_loops,
     };
     use crate::ir::{
         BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Projection,
@@ -4186,6 +4407,204 @@ mod elision_tests {
     }
 
     #[test]
+    fn bounds_rewrites_zero_index_after_len_positive_guard() {
+        use gossamer_types::IntTy;
+        let mut tcx = TyCtxt::new();
+        let unit = tcx.unit();
+        let i64t = tcx.int_ty(IntTy::I64);
+        let vec_i64 = tcx.intern(gossamer_types::TyKind::Vec(i64t));
+        let boolt = tcx.bool_ty();
+        let sp = span();
+        let mut body = Body {
+            name: "len_positive_zero".into(),
+            def: None,
+            arity: 1,
+            locals: vec![
+                decl(unit),
+                decl(vec_i64), // xs
+                decl(i64t),    // len
+                decl(boolt),   // len > 0
+                decl(i64t),    // zero index
+                decl(i64t),    // element
+            ],
+            blocks: vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![],
+                    terminator: Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".to_string())),
+                        args: vec![Operand::Copy(Place::local(Local(1)))],
+                        destination: Place::local(Local(2)),
+                        target: Some(BlockId(1)),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    stmts: vec![assign(
+                        Place::local(Local(3)),
+                        Rvalue::BinaryOp {
+                            op: BinOp::Gt,
+                            lhs: Operand::Copy(Place::local(Local(2))),
+                            rhs: Operand::Const(ConstValue::Int(0)),
+                        },
+                    )],
+                    terminator: Terminator::SwitchInt {
+                        discriminant: Operand::Copy(Place::local(Local(3))),
+                        arms: vec![(0, BlockId(3))],
+                        default: BlockId(2),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(2),
+                    stmts: vec![assign(
+                        Place::local(Local(4)),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    )],
+                    terminator: Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_i64".to_string())),
+                        args: vec![
+                            Operand::Copy(Place::local(Local(1))),
+                            Operand::Copy(Place::local(Local(4))),
+                        ],
+                        destination: Place::local(Local(5)),
+                        target: Some(BlockId(3)),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(3),
+                    stmts: vec![],
+                    terminator: Terminator::Return,
+                    span: sp,
+                },
+            ],
+            span: sp,
+        };
+
+        local_branch_bounds_check_elim(&mut body, &tcx);
+        let Terminator::Call { callee, .. } = &body.blocks[2].terminator else {
+            panic!("expected call terminator")
+        };
+        assert_eq!(
+            callee,
+            &Operand::Const(ConstValue::Str("gos_rt_vec_get_i64_unchecked".to_string()))
+        );
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn bounds_fact_flows_through_straight_line_access_chain() {
+        use gossamer_types::IntTy;
+        let mut tcx = TyCtxt::new();
+        let unit = tcx.unit();
+        let i64t = tcx.int_ty(IntTy::I64);
+        let vec_i64 = tcx.intern(gossamer_types::TyKind::Vec(i64t));
+        let boolt = tcx.bool_ty();
+        let sp = span();
+        let mut body = Body {
+            name: "branch_chain".into(),
+            def: None,
+            arity: 1,
+            locals: vec![
+                decl(unit),
+                decl(vec_i64), // xs
+                decl(i64t),    // len
+                decl(i64t),    // idx
+                decl(boolt),   // cmp
+                decl(i64t),    // first
+                decl(i64t),    // second
+            ],
+            blocks: vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![assign(
+                        Place::local(Local(3)),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    )],
+                    terminator: Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".to_string())),
+                        args: vec![Operand::Copy(Place::local(Local(1)))],
+                        destination: Place::local(Local(2)),
+                        target: Some(BlockId(1)),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    stmts: vec![assign(
+                        Place::local(Local(4)),
+                        Rvalue::BinaryOp {
+                            op: BinOp::Lt,
+                            lhs: Operand::Copy(Place::local(Local(3))),
+                            rhs: Operand::Copy(Place::local(Local(2))),
+                        },
+                    )],
+                    terminator: Terminator::SwitchInt {
+                        discriminant: Operand::Copy(Place::local(Local(4))),
+                        arms: vec![(0, BlockId(5))],
+                        default: BlockId(2),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(2),
+                    stmts: vec![],
+                    terminator: Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_i64".to_string())),
+                        args: vec![
+                            Operand::Copy(Place::local(Local(1))),
+                            Operand::Copy(Place::local(Local(3))),
+                        ],
+                        destination: Place::local(Local(5)),
+                        target: Some(BlockId(3)),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(3),
+                    stmts: vec![],
+                    terminator: Terminator::Goto { target: BlockId(4) },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(4),
+                    stmts: vec![],
+                    terminator: Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_i64".to_string())),
+                        args: vec![
+                            Operand::Copy(Place::local(Local(1))),
+                            Operand::Copy(Place::local(Local(3))),
+                        ],
+                        destination: Place::local(Local(6)),
+                        target: Some(BlockId(5)),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(5),
+                    stmts: vec![],
+                    terminator: Terminator::Return,
+                    span: sp,
+                },
+            ],
+            span: sp,
+        };
+
+        local_branch_bounds_check_elim(&mut body, &tcx);
+        for block in [&body.blocks[2], &body.blocks[4]] {
+            assert!(matches!(
+                &block.terminator,
+                Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(name)),
+                    ..
+                } if name == "gos_rt_vec_get_i64_unchecked"
+            ));
+        }
+    }
+
+    #[test]
     #[allow(
         clippy::too_many_lines,
         reason = "synthetic MIR fixture needs explicit block structure"
@@ -4418,6 +4837,76 @@ mod elision_tests {
     }
 
     #[test]
+    fn exact_reserve_requires_one_push_on_every_loop_path() {
+        let mut tcx = TyCtxt::new();
+        let unit = tcx.unit();
+        let sp = span();
+        let push = |target| Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_push".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(Local(1))),
+                Operand::Const(ConstValue::Int(1)),
+            ],
+            destination: Place::local(Local(2)),
+            target: Some(target),
+        };
+        let mut body = Body {
+            name: "one_push".into(),
+            def: None,
+            arity: 0,
+            locals: vec![decl(unit), decl(unit), decl(unit)],
+            blocks: vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![],
+                    terminator: push(BlockId(1)),
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    stmts: vec![],
+                    terminator: Terminator::Goto { target: BlockId(2) },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(2),
+                    stmts: vec![],
+                    terminator: Terminator::Return,
+                    span: sp,
+                },
+            ],
+            span: sp,
+        };
+        assert!(loop_body_has_exactly_one_vec_push(
+            &body,
+            BlockId(0),
+            BlockId(2),
+            Local(1)
+        ));
+
+        body.blocks[0].terminator = Terminator::SwitchInt {
+            discriminant: Operand::Const(ConstValue::Bool(false)),
+            arms: vec![(0, BlockId(2))],
+            default: BlockId(1),
+        };
+        assert!(!loop_body_has_exactly_one_vec_push(
+            &body,
+            BlockId(0),
+            BlockId(2),
+            Local(1)
+        ));
+
+        body.blocks[0].terminator = push(BlockId(1));
+        body.blocks[1].terminator = push(BlockId(2));
+        assert!(!loop_body_has_exactly_one_vec_push(
+            &body,
+            BlockId(0),
+            BlockId(2),
+            Local(1)
+        ));
+    }
+
+    #[test]
     fn reserve_vecs_skips_bounds_computed_after_constructor() {
         let mut tcx = TyCtxt::new();
         let unit = tcx.unit();
@@ -4519,5 +5008,45 @@ mod elision_tests {
         };
         assert!(matches!(callee, Operand::Const(ConstValue::Str(name)) if name == "Vec::new"));
         assert_eq!(args.len(), 1);
+    }
+
+    #[test]
+    fn reserve_bound_accepts_one_dominating_immutable_local() {
+        let mut tcx = TyCtxt::new();
+        let unit = tcx.unit();
+        let i64_ty = tcx.int_ty(gossamer_types::IntTy::I64);
+        let sp = span();
+        let mut body = Body {
+            name: "local_reserve_bound".into(),
+            def: None,
+            arity: 0,
+            locals: vec![decl(unit), decl(i64_ty)],
+            blocks: vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![assign(
+                        Place::local(Local(1)),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(10))),
+                    )],
+                    terminator: Terminator::Goto { target: BlockId(1) },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    stmts: vec![],
+                    terminator: Terminator::Return,
+                    span: sp,
+                },
+            ],
+            span: sp,
+        };
+        let bound = Operand::Copy(Place::local(Local(1)));
+        assert!(reserve_bound_available_at_entry(&body, &bound, BlockId(1)));
+
+        body.blocks[1].stmts.push(assign(
+            Place::local(Local(1)),
+            Rvalue::Use(Operand::Const(ConstValue::Int(11))),
+        ));
+        assert!(!reserve_bound_available_at_entry(&body, &bound, BlockId(1)));
     }
 }
