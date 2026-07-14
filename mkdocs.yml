@@ -94,8 +94,6 @@ nav:
       - Memory model: design/memory_model.md
       - Goroutine stack model: design/goroutine_stacks.md
       - Self-hosting study: design/selfhosting.md
-      - Source-visible surface audit: design/source_visible_surface_audit.md
-      - 0.27 unfinished re-evaluation: design/unfinished_027_reevaluation.md
   - Skill card: skill_card.md
   - Security: security.md
   - Contributing: contributing.md

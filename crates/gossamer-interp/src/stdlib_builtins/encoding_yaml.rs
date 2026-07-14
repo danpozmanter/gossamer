@@ -191,6 +191,7 @@ pub(crate) fn gossamer_value_to_yaml(v: &Value) -> gossamer_std::encoding::yaml:
         Value::Float(f) => YV::Float(*f),
         Value::String(s) => YV::String(s.as_str().to_string()),
         Value::Array(arr) => YV::Seq(arr.iter().map(gossamer_value_to_yaml).collect()),
+        Value::Json(json) => json_value_to_yaml(json.as_value()),
         Value::Map(map) => {
             let guard = map.lock();
             let pairs: Vec<_> = guard
@@ -208,6 +209,24 @@ pub(crate) fn gossamer_value_to_yaml(v: &Value) -> gossamer_std::encoding::yaml:
             YV::Map(pairs)
         }
         _ => YV::Null,
+    }
+}
+
+fn json_value_to_yaml(v: &gossamer_std::json::Value) -> gossamer_std::encoding::yaml::Value {
+    use gossamer_std::encoding::yaml::Value as YV;
+    use gossamer_std::json::Value as JV;
+    match v {
+        JV::Null => YV::Null,
+        JV::Bool(b) => YV::Bool(*b),
+        JV::Int(n) => YV::Int(*n),
+        JV::Number(f) => YV::Float(*f),
+        JV::String(s) => YV::String(s.clone()),
+        JV::Array(items) => YV::Seq(items.iter().map(json_value_to_yaml).collect()),
+        JV::Object(map) => YV::Map(
+            map.iter()
+                .map(|(k, v)| (YV::String(k.clone()), json_value_to_yaml(v)))
+                .collect(),
+        ),
     }
 }
 

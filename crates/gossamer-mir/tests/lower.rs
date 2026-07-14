@@ -431,6 +431,72 @@ fn insert_default() -> i64 {
 }
 
 #[test]
+fn nested_vec_push_retains_inner_vec_once_for_container_share() {
+    // `outer.push(inner)` needs one retained share for the outer Vec's element.
+    // The local `inner` binding keeps its original share and is freed at scope
+    // exit. A second compiler-inserted retain leaves the inner Vec alive after
+    // both frees, leaking nested Vec<String> stress cases.
+    let source = r#"
+fn main() {
+    let mut outer: [[String]] = []
+    let mut inner: [String] = []
+    inner.push("value".to_string())
+    outer.push(inner)
+    println(outer[0][0])
+}
+"#;
+    let (bodies, tcx) = build(source);
+    let body = bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .expect("main");
+    let pushed_inner = body
+        .blocks
+        .iter()
+        .find_map(|block| match &block.terminator {
+            Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                args,
+                ..
+            } if name == "gos_rt_vec_push" => args.get(1).and_then(|arg| match arg {
+                Operand::Copy(place)
+                    if place.projection.is_empty()
+                        && matches!(
+                            tcx.kind_of(body.locals[place.local.0 as usize].ty),
+                            gossamer_types::TyKind::Vec(_) | gossamer_types::TyKind::Slice(_)
+                        ) =>
+                {
+                    Some(place.local)
+                }
+                _ => None,
+            }),
+            _ => None,
+        })
+        .expect("nested Vec push argument");
+
+    let retains = body
+        .blocks
+        .iter()
+        .flat_map(|block| &block.stmts)
+        .filter(|stmt| {
+            matches!(
+                &stmt.kind,
+                StatementKind::Assign {
+                    rvalue: Rvalue::CallIntrinsic { name, args },
+                    ..
+                } if *name == "gos_rt_vec_retain"
+                    && matches!(args.first(), Some(Operand::Copy(place))
+                        if place.projection.is_empty() && place.local == pushed_inner)
+            )
+        })
+        .count();
+    assert_eq!(
+        retains, 1,
+        "nested Vec push must mint exactly one container share; body: {body:#?}"
+    );
+}
+
+#[test]
 fn map_insert_registers_structural_children_for_aggregate_values() {
     let source = r#"
 use std::collections::HashMap
@@ -1931,6 +1997,63 @@ fn call_names(body: &gossamer_mir::Body) -> Vec<String> {
             _ => None,
         })
         .collect()
+}
+
+#[test]
+fn string_plus_assign_flattens_rhs_concat_chain_to_in_place_appends() {
+    let source = r#"
+fn main() {
+    let mut out = "".to_string()
+    let mut i: i64 = 0
+    while i < 3 {
+        let name = "user-" + i.to_string()
+        out += "{\"id\":" + i.to_string() + ",\"name\":\"" + name + "\"}"
+        i += 1
+    }
+    println(out)
+}
+"#;
+    let (bodies, _) = build(source);
+    let body = bodies.iter().find(|b| b.name == "main").expect("main");
+
+    let mut saw_in_place_append = false;
+    for (block_idx, block) in body.blocks.iter().enumerate() {
+        let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            destination,
+            target,
+            ..
+        } = &block.terminator
+        else {
+            continue;
+        };
+        if matches!(
+            name.as_str(),
+            "gos_rt_str_concat_drop_a"
+                | "gos_rt_str_append_i64"
+                | "gos_rt_str_append_f64"
+                | "gos_rt_str_append_bytes"
+        ) {
+            saw_in_place_append = true;
+        }
+        if name == "__concat"
+            && let Some(succ) = target
+            && let Some(first) = body.blocks[succ.0 as usize].stmts.first()
+            && matches!(
+                &first.kind,
+                StatementKind::Assign {
+                    rvalue: Rvalue::Use(Operand::Copy(src)),
+                    ..
+                } if src.local == destination.local && src.projection.is_empty()
+            )
+        {
+            panic!("block {block_idx}: string accumulation lowered through __concat copy-back");
+        }
+    }
+    assert!(
+        saw_in_place_append,
+        "expected string accumulation to use append runtime helpers"
+    );
 }
 
 #[test]

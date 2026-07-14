@@ -827,7 +827,14 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             // in place) - only the value argument(s) (arg1..) are consumed and
             // gain a stored reference. Retaining the receiver too (now that it
             // is RC-managed) would over-retain it and leak it.
-            for arg in args.iter().skip(1) {
+            for (arg_idx, arg) in args.iter().enumerate().skip(1) {
+                // Vec elements pushed into a Vec are handled by the dedicated
+                // `insert_drops_at_returns` block below. Letting this generic
+                // consuming-call path retain them too leaves the inner Vec at
+                // rc=1 after both the local and outer Vec are freed.
+                if name == "gos_rt_vec_push" && arg_idx == 1 && vec_operand(arg).is_some() {
+                    continue;
+                }
                 if let Some(l) = rc_operand(arg).or_else(|| vec_operand(arg)) {
                     terminator_retains.push((block_idx, l));
                 }

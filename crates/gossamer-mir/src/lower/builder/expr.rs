@@ -1791,15 +1791,12 @@ impl<'a> Builder<'a> {
                 self.receiver_local_from_path(lhs),
             )
             && acc == lhs_local
-            && let HirExprKind::Call { callee, args } = &rhs.kind
-            && matches!(
-                &callee.kind,
-                HirExprKind::Path { segments, .. }
-                    if segments.len() == 1 && segments[0].name.as_str() == "__concat"
-            )
-            && self.try_lower_append_fused(acc, args, span)
         {
-            return;
+            let mut pieces = Vec::new();
+            Self::collect_append_pieces(rhs, &mut pieces);
+            if self.try_lower_append_fused(acc, &pieces, span) {
+                return;
+            }
         }
         // Fuse `*s += piece` where `*s` is a `&mut String` deref place: append
         // in place via the self-consuming runtime helper, then store the
@@ -2056,7 +2053,7 @@ impl<'a> Builder<'a> {
     /// single time into the accumulator. Returns `false` without emitting
     /// anything when a piece is not a `String` / `i64` / `f64`, so the caller
     /// falls back to the buffered concat path.
-    fn try_lower_append_fused(&mut self, acc: Local, pieces: &[HirExpr], span: Span) -> bool {
+    fn try_lower_append_fused(&mut self, acc: Local, pieces: &[&HirExpr], span: Span) -> bool {
         use gossamer_types::{FloatTy, IntTy, TyKind};
         if pieces.is_empty() {
             return false;
@@ -2085,24 +2082,75 @@ impl<'a> Builder<'a> {
                 None => return false,
             }
         }
-        for (p, fname) in pieces.iter().zip(fns) {
+        for (&p, fname) in pieces.iter().zip(fns) {
+            let literal_len = match &p.kind {
+                HirExprKind::Literal(gossamer_hir::HirLiteral::String(s))
+                    if fname == "gos_rt_str_concat_drop_a" =>
+                {
+                    Some(s.len() as i128)
+                }
+                _ => None,
+            };
             let Some(piece_local) = self.lower_expr(p) else {
                 return true;
             };
             let piece_local = self.auto_deref_cell(piece_local, span);
             let next = self.new_block(span);
+            let (call_name, call_args) = match literal_len {
+                Some(len) => (
+                    "gos_rt_str_append_bytes",
+                    vec![
+                        Operand::Copy(Place::local(acc)),
+                        Operand::Copy(Place::local(piece_local)),
+                        Operand::Const(ConstValue::Int(len)),
+                    ],
+                ),
+                None => (
+                    fname,
+                    vec![
+                        Operand::Copy(Place::local(acc)),
+                        Operand::Copy(Place::local(piece_local)),
+                    ],
+                ),
+            };
             self.terminate(Terminator::Call {
-                callee: Operand::Const(ConstValue::Str(fname.to_string())),
-                args: vec![
-                    Operand::Copy(Place::local(acc)),
-                    Operand::Copy(Place::local(piece_local)),
-                ],
+                callee: Operand::Const(ConstValue::Str(call_name.to_string())),
+                args: call_args,
                 destination: Place::local(acc),
                 target: Some(next),
             });
             self.set_current(next);
         }
         true
+    }
+
+    /// Flattens the RHS of `acc += ...` into the pieces that should be appended
+    /// to `acc`. This covers both parser-injected `__concat(...)` calls and
+    /// ordinary right-associated `a + b + c` trees. The accumulator itself is
+    /// deliberately not part of this list; callers invoke this only after
+    /// proving the outer `lhs` is the destination accumulator.
+    fn collect_append_pieces<'expr>(expr: &'expr HirExpr, out: &mut Vec<&'expr HirExpr>) {
+        if let HirExprKind::Call { callee, args } = &expr.kind
+            && matches!(
+                &callee.kind,
+                HirExprKind::Path { segments, .. }
+                    if segments.len() == 1 && segments[0].name.as_str() == "__concat"
+            )
+        {
+            out.extend(args.iter());
+            return;
+        }
+        if let HirExprKind::Binary {
+            op: HirBinaryOp::Add,
+            lhs,
+            rhs,
+        } = &expr.kind
+        {
+            Self::collect_append_pieces(lhs, out);
+            Self::collect_append_pieces(rhs, out);
+            return;
+        }
+        out.push(expr);
     }
 
     /// For a `*s` deref-assign place whose `s` is a bare local of type
