@@ -37,4 +37,15 @@ fn docs_repo_header_facts_are_live_and_loaded() {
         script.contains("/releases/latest") && script.contains("/tags?per_page=1"),
         "the displayed version must be fetched from releases or tags"
     );
+    assert!(
+        script.contains("STAR_ICON") && script.contains("FORK_ICON"),
+        "star and fork facts must render with icons"
+    );
+
+    let css = std::fs::read_to_string(root.join("docs_src/stylesheets/extra.css"))
+        .expect("read docs extra.css");
+    assert!(
+        css.contains(".gos-source-fact-icon") && css.contains("color: currentColor"),
+        "repo facts must inherit the visible source link color across themes"
+    );
 }

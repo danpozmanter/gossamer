@@ -6,6 +6,17 @@
     var REPO_NAME = "danpozmanter/gossamer";
     var REPO_URL = "https://github.com/" + REPO_NAME;
     var REPO_API = "https://api.github.com/repos/danpozmanter/gossamer";
+    var STAR_ICON =
+        '<svg class="gos-source-fact-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" aria-hidden="true">' +
+          '<path d="M8 1.2l2.1 4.2 4.6.7-3.3 3.2.8 4.6L8 11.7l-4.2 2.2.8-4.6-3.3-3.2 4.6-.7L8 1.2z"/>' +
+        '</svg>';
+    var FORK_ICON =
+        '<svg class="gos-source-fact-icon gos-source-fact-icon--fork" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" aria-hidden="true">' +
+          '<circle cx="4" cy="3.5" r="1.8"/>' +
+          '<circle cx="12" cy="3.5" r="1.8"/>' +
+          '<circle cx="8" cy="12.5" r="1.8"/>' +
+          '<path d="M4 5.3v1.9A2.8 2.8 0 0 0 6.8 10H8m4-4.7v1.9A2.8 2.8 0 0 1 9.2 10H8v.7"/>' +
+        '</svg>';
 
     function fetchJson(url) {
         if (typeof fetch !== "function") {
@@ -50,6 +61,24 @@
         }
     }
 
+    function appendFact(list, fact) {
+        var item = document.createElement("span");
+        item.className = "gos-source-fact";
+        if (fact.label) {
+            item.setAttribute("aria-label", fact.text + " " + fact.label);
+            item.title = fact.text + " " + fact.label;
+        }
+        if (fact.icon) {
+            item.innerHTML = fact.icon;
+        }
+
+        var value = document.createElement("span");
+        value.className = "gos-source-fact-value";
+        value.textContent = fact.text;
+        item.appendChild(value);
+        list.appendChild(item);
+    }
+
     function renderSourceFacts(facts) {
         var sources = document.querySelectorAll("a.md-source[href='" + REPO_URL + "']");
         for (var i = 0; i < sources.length; i += 1) {
@@ -70,7 +99,9 @@
 
             var list = document.createElement("span");
             list.className = "gos-source-facts";
-            list.textContent = facts.join("  ");
+            for (var j = 0; j < facts.length; j += 1) {
+                appendFact(list, facts[j]);
+            }
             repository.appendChild(list);
         }
     }
@@ -90,13 +121,13 @@
             var forks = formatCount(repo.forks_count);
 
             if (latestTag) {
-                facts.push(latestTag);
+                facts.push({ text: latestTag });
             }
             if (stars) {
-                facts.push(stars + " stars");
+                facts.push({ icon: STAR_ICON, text: stars, label: "stars" });
             }
             if (forks) {
-                facts.push(forks + " forks");
+                facts.push({ icon: FORK_ICON, text: forks, label: "forks" });
             }
 
             renderSourceFacts(facts);

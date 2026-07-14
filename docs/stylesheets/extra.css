@@ -34,16 +34,46 @@
   background-color: #000000;
 }
 
-.gos-source-name,
-.gos-source-facts {
+.gos-source-name {
   display: block;
   line-height: 1.2;
 }
 
 .gos-source-facts {
-  color: var(--md-default-fg-color--light);
+  align-items: center;
+  color: currentColor;
+  display: flex;
+  flex-wrap: nowrap;
   font-size: 0.64rem;
+  gap: 0.45rem;
+  line-height: 1.2;
+  opacity: 0.78;
   white-space: nowrap;
+}
+
+.gos-source-fact {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.16rem;
+}
+
+.gos-source-fact-icon {
+  fill: currentColor;
+  flex: 0 0 auto;
+  height: 0.7rem;
+  width: 0.7rem;
+}
+
+.gos-source-fact-icon--fork {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
+}
+
+.md-source:is(:hover, :focus-visible) .gos-source-facts {
+  opacity: 1;
 }
 
 #gos-repo-button {
