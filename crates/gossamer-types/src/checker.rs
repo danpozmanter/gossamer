@@ -4378,7 +4378,7 @@ impl<'a> TypeChecker<'a> {
         }
         match (method, args.len()) {
             ("first" | "last", 0) => Some(self.option_adt_ty(elem)),
-            ("rev" | "to_vec", 0) => Some(self.tcx.intern(TyKind::Vec(elem))),
+            ("collect" | "rev" | "to_vec", 0) => Some(self.tcx.intern(TyKind::Vec(elem))),
             ("index_of", 1) => {
                 let i = self.tcx.int_ty(IntTy::I64);
                 Some(self.option_adt_ty(i))

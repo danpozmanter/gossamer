@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.28.4 - Iter stdlib surface
+
+- Exposed `iter::collect`, `iter::once`, `iter::empty`, and free-function
+  `iter::step_by` across check, interp, docs, and compiled lowering.
+- Added `xs.collect()` runtime support to match the checker.
+- Removed duplicate Rust-only iter helper spellings in favor of canonical
+  public names: `chunk_by`, `windows`, and `chunks`.
+- Fixed iter docs/signatures for data-last order and nested collection returns.
+
 ## 0.28.3 - Type errors, REPL display, and docs polish
 
 - Fixed `strings::bytes()` typechecking and tightened stdlib string argument

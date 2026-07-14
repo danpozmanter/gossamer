@@ -1847,8 +1847,8 @@ impl<'a> Builder<'a> {
                 TyKind::HashMap { .. } => return SymbolLookup::Bail,
                 _ => Some("gos_rt_arr_iter"),
             },
-            "to_vec" => match &receiver_kind_flat {
-                // Vec/Slice/Array `.to_vec()` must produce an
+            "collect" | "to_vec" => match &receiver_kind_flat {
+                // Vec/Slice/Array `.to_vec()` and `.collect()` must produce an
                 // independent copy - bubble_sort's `out.swap(...)`
                 // was mutating the caller's slice through the
                 // aliased pointer. Other types fall through to
@@ -3319,7 +3319,7 @@ impl<'a> Builder<'a> {
                 _ => {}
             }
         }
-        // `.clone()` on a Vec/Slice receiver: dispatch to
+        // `.clone()` / `.collect()` on a Vec/Slice receiver: dispatch to
         // `gos_rt_vec_clone` so the result is a fresh independent
         // `GosVec` allocation rather than a bitwise pointer alias.
         // Without this, `caps[0].clone()` (where `caps[0]` returns an
@@ -3330,7 +3330,7 @@ impl<'a> Builder<'a> {
         // method.name.as_str() { … }`) keys on the HIR receiver kind,
         // which is still a `Var` for chained `Index<i>.clone()` shapes
         // - `lowered_recv_ty` is the resolved MIR-side type.
-        if method.name.as_str() == "clone"
+        if matches!(method.name.as_str(), "clone" | "collect")
             && matches!(
                 self.tcx.kind_of(lowered_recv_ty),
                 TyKind::Vec(_) | TyKind::Slice(_)

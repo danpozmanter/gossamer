@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "gossamer_version": "0.28.3",
+  "gossamer_version": "0.28.4",
   "entries": [
     {
       "id": "std-archive-tar-TarEntry",
@@ -7359,7 +7359,7 @@
       "id": "std-iter-chunk-by",
       "name": "std::iter::chunk_by",
       "kind": "function",
-      "signature": "fn chunk_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> Vec<Vec<T>>",
+      "signature": "fn chunk_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> HashMap<K, Vec<T>>",
       "description": "Groups elements into a map keyed by f.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -7378,8 +7378,27 @@
       "id": "std-iter-chunks",
       "name": "std::iter::chunks",
       "kind": "function",
-      "signature": "fn chunks<T>(items: Vec<T>, n: i64) -> Vec<T>",
+      "signature": "fn chunks<T>(n: i64, items: Vec<T>) -> Vec<Vec<T>>",
       "description": "Non-overlapping chunks of length n.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stditer",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-iter-collect",
+      "name": "std::iter::collect",
+      "kind": "function",
+      "signature": "fn collect<T>(items: Vec<T>) -> Vec<T>",
+      "description": "Materializes a sequence into a Vec.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -7416,7 +7435,7 @@
       "id": "std-iter-count-by",
       "name": "std::iter::count_by",
       "kind": "function",
-      "signature": "fn count_by<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> i64",
+      "signature": "fn count_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> HashMap<K, i64>",
       "description": "Counts elements per key derived by f.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -7437,6 +7456,25 @@
       "kind": "function",
       "signature": "fn dedup<T: Eq>(items: Vec<T>) -> Vec<T>",
       "description": "Removes consecutive duplicate elements.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stditer",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-iter-empty",
+      "name": "std::iter::empty",
+      "kind": "function",
+      "signature": "fn empty<T>() -> Vec<T>",
+      "description": "Empty Vec.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -7755,6 +7793,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-iter-once",
+      "name": "std::iter::once",
+      "kind": "function",
+      "signature": "fn once<T>(value: T) -> Vec<T>",
+      "description": "Single-element Vec containing value.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stditer",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-iter-pairwise",
       "name": "std::iter::pairwise",
       "kind": "function",
@@ -7967,7 +8024,7 @@
       "id": "std-iter-skip",
       "name": "std::iter::skip",
       "kind": "function",
-      "signature": "fn skip<T>(items: Vec<T>, n: i64) -> Vec<T>",
+      "signature": "fn skip<T>(n: i64, items: Vec<T>) -> Vec<T>",
       "description": "All elements after the first n.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8040,6 +8097,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-iter-step-by",
+      "name": "std::iter::step_by",
+      "kind": "function",
+      "signature": "fn step_by<T>(step: i64, items: Vec<T>) -> Vec<T>",
+      "description": "Every step-th element, starting at index 0.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stditer",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-iter-sum",
       "name": "std::iter::sum",
       "kind": "function",
@@ -8081,7 +8157,7 @@
       "id": "std-iter-take",
       "name": "std::iter::take",
       "kind": "function",
-      "signature": "fn take<T>(items: Vec<T>, n: i64) -> Vec<T>",
+      "signature": "fn take<T>(n: i64, items: Vec<T>) -> Vec<T>",
       "description": "First n elements.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8138,7 +8214,7 @@
       "id": "std-iter-windows",
       "name": "std::iter::windows",
       "kind": "function",
-      "signature": "fn windows<T>(items: Vec<T>, n: i64) -> Vec<T>",
+      "signature": "fn windows<T>(n: i64, items: Vec<T>) -> Vec<Vec<T>>",
       "description": "Overlapping windows of width n.",
       "lifecycle": "experimental",
       "tier_support": [

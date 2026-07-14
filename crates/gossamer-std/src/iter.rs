@@ -8,7 +8,8 @@
 //! These Rust-side helpers exist for stdlib code that wants to call
 //! into the same surface; user `.gos` programs see the dynamic
 //! `Value`-typed wrappers in `crates/gossamer-interp/src/
-//! stdlib_builtins.rs::install_iter`.
+//! stdlib_builtins.rs::install_iter`. The [`Lazy`] adapter below is a
+//! Rust-only host helper, not a Gossamer stdlib type.
 
 #![forbid(unsafe_code)]
 
@@ -78,9 +79,11 @@ pub fn empty<T>() -> Vec<T> {
     Vec::new()
 }
 
-/// Collects every element into a concrete container. The target
-/// type is selected via turbofish at the call site, e.g.
-/// `collect::<HashSet<_>>(xs)`. Mirrors Rust's `Iterator::collect`.
+/// Collects every element into a concrete container. This Rust helper
+/// selects the target type via turbofish at the call site, e.g.
+/// `collect::<HashSet<_>>(xs)`. The Gossamer `iter::collect` wrapper
+/// materializes a `Vec<T>` because source programs cannot choose a
+/// Rust `FromIterator` target.
 #[must_use]
 pub fn collect<T, C>(xs: Vec<T>) -> C
 where
@@ -91,6 +94,10 @@ where
 
 /// Lazy iterator adapter wrapping any [`Iterator`]. Builds a
 /// chain without materialising intermediate `Vec`s.
+///
+/// Rust-only helper for host-side stdlib code and Rust tests. Gossamer
+/// user code should use the public `iter::*` free functions and
+/// sequence methods instead.
 ///
 /// `Lazy::from(xs.iter().cloned())` is the canonical entry; the
 /// chain terminates via [`Lazy::to_vec`], [`Lazy::sum`],
@@ -385,7 +392,7 @@ pub fn sort_by_key<T: Clone, K: Ord, F: FnMut(&T) -> K>(mut key: F, xs: &[T]) ->
 /// Group elements by a derived key, preserving insertion order in
 /// the value vectors.
 #[must_use]
-pub fn group_by<T: Clone, K: Hash + Eq, F: FnMut(&T) -> K>(
+pub fn chunk_by<T: Clone, K: Hash + Eq, F: FnMut(&T) -> K>(
     mut key: F,
     xs: &[T],
 ) -> HashMap<K, Vec<T>> {
@@ -408,7 +415,7 @@ pub fn count_by<T, K: Hash + Eq, F: FnMut(&T) -> K>(mut key: F, xs: &[T]) -> Has
 
 /// Sliding windows of width `n`. Empty if `n == 0` or `xs.len() < n`.
 #[must_use]
-pub fn windowed<T: Clone>(n: usize, xs: &[T]) -> Vec<Vec<T>> {
+pub fn windows<T: Clone>(n: usize, xs: &[T]) -> Vec<Vec<T>> {
     if n == 0 || xs.len() < n {
         return Vec::new();
     }
@@ -426,7 +433,7 @@ pub fn pairwise<T: Clone>(xs: &[T]) -> Vec<(T, T)> {
 /// Split `xs` into consecutive chunks of size `n`. Final chunk may
 /// be shorter. `n == 0` returns empty.
 #[must_use]
-pub fn chunk_by_size<T: Clone>(n: usize, xs: &[T]) -> Vec<Vec<T>> {
+pub fn chunks<T: Clone>(n: usize, xs: &[T]) -> Vec<Vec<T>> {
     if n == 0 {
         return Vec::new();
     }
@@ -577,9 +584,9 @@ mod tests {
     }
 
     #[test]
-    fn group_by_partitions() {
+    fn chunk_by_partitions() {
         let xs = vec![1i64, 2, 3, 4, 5];
-        let grouped = group_by(|x| *x % 2, &xs);
+        let grouped = chunk_by(|x| *x % 2, &xs);
         assert_eq!(grouped.get(&1), Some(&vec![1, 3, 5]));
         assert_eq!(grouped.get(&0), Some(&vec![2, 4]));
     }
@@ -594,19 +601,19 @@ mod tests {
     }
 
     #[test]
-    fn windowed_and_pairwise() {
+    fn windows_and_pairwise() {
         let xs = vec![1i64, 2, 3, 4];
-        assert_eq!(windowed(2, &xs), vec![vec![1, 2], vec![2, 3], vec![3, 4]]);
+        assert_eq!(windows(2, &xs), vec![vec![1, 2], vec![2, 3], vec![3, 4]]);
         assert_eq!(pairwise(&xs), vec![(1, 2), (2, 3), (3, 4)]);
-        assert!(windowed(0, &xs).is_empty());
-        assert!(windowed(5, &xs).is_empty());
+        assert!(windows(0, &xs).is_empty());
+        assert!(windows(5, &xs).is_empty());
     }
 
     #[test]
-    fn chunk_by_size_splits() {
+    fn chunks_splits() {
         let xs = vec![1i64, 2, 3, 4, 5];
-        assert_eq!(chunk_by_size(2, &xs), vec![vec![1, 2], vec![3, 4], vec![5]]);
-        assert!(chunk_by_size(0, &xs).is_empty());
+        assert_eq!(chunks(2, &xs), vec![vec![1, 2], vec![3, 4], vec![5]]);
+        assert!(chunks(0, &xs).is_empty());
     }
 
     #[test]

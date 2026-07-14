@@ -1406,12 +1406,17 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "chunk_by",
-        signature: "fn chunk_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> Vec<Vec<T>>",
+        signature: "fn chunk_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> HashMap<K, Vec<T>>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "chunks",
-        signature: "fn chunks<T>(items: Vec<T>, n: i64) -> Vec<T>",
+        signature: "fn chunks<T>(n: i64, items: Vec<T>) -> Vec<Vec<T>>",
+    },
+    StdFunctionSignature {
+        module_path: "std::iter",
+        name: "collect",
+        signature: "fn collect<T>(items: Vec<T>) -> Vec<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1421,12 +1426,17 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "count_by",
-        signature: "fn count_by<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> i64",
+        signature: "fn count_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> HashMap<K, i64>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "dedup",
         signature: "fn dedup<T: Eq>(items: Vec<T>) -> Vec<T>",
+    },
+    StdFunctionSignature {
+        module_path: "std::iter",
+        name: "empty",
+        signature: "fn empty<T>() -> Vec<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1510,6 +1520,11 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::iter",
+        name: "once",
+        signature: "fn once<T>(value: T) -> Vec<T>",
+    },
+    StdFunctionSignature {
+        module_path: "std::iter",
         name: "pairwise",
         signature: "fn pairwise<T>(items: Vec<T>) -> Vec<(T, T)>",
     },
@@ -1566,7 +1581,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "skip",
-        signature: "fn skip<T>(items: Vec<T>, n: i64) -> Vec<T>",
+        signature: "fn skip<T>(n: i64, items: Vec<T>) -> Vec<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1596,12 +1611,17 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "take",
-        signature: "fn take<T>(items: Vec<T>, n: i64) -> Vec<T>",
+        signature: "fn take<T>(n: i64, items: Vec<T>) -> Vec<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "take_while",
         signature: "fn take_while<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> Vec<T>",
+    },
+    StdFunctionSignature {
+        module_path: "std::iter",
+        name: "step_by",
+        signature: "fn step_by<T>(step: i64, items: Vec<T>) -> Vec<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1611,7 +1631,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "windows",
-        signature: "fn windows<T>(items: Vec<T>, n: i64) -> Vec<T>",
+        signature: "fn windows<T>(n: i64, items: Vec<T>) -> Vec<Vec<T>>",
     },
     StdFunctionSignature {
         module_path: "std::iter",

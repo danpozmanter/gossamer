@@ -398,6 +398,21 @@ pub const ITER: StdModule = StdModule {
             doc: "Number of elements.",
         },
         StdItem {
+            name: "collect",
+            kind: StdItemKind::Function,
+            doc: "Materializes a sequence into a Vec.",
+        },
+        StdItem {
+            name: "once",
+            kind: StdItemKind::Function,
+            doc: "Single-element Vec containing value.",
+        },
+        StdItem {
+            name: "empty",
+            kind: StdItemKind::Function,
+            doc: "Empty Vec.",
+        },
+        StdItem {
             name: "take",
             kind: StdItemKind::Function,
             doc: "First n elements.",
@@ -406,6 +421,11 @@ pub const ITER: StdModule = StdModule {
             name: "skip",
             kind: StdItemKind::Function,
             doc: "All elements after the first n.",
+        },
+        StdItem {
+            name: "step_by",
+            kind: StdItemKind::Function,
+            doc: "Every step-th element, starting at index 0.",
         },
         StdItem {
             name: "zip",

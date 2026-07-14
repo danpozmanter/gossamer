@@ -703,7 +703,7 @@ fn min_max_by_key(env: *const u8, v: *const GosVec, want_max: bool) -> i128 {
     some_of(best)
 }
 
-/// `iter::group_by(key, xs) -> HashMap<K, [T]>` - insertion order of
+/// `iter::chunk_by(key, xs) -> HashMap<K, [T]>` - insertion order of
 /// groups follows first occurrence of each key.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_group_by_i64(env: *const u8, v: *const GosVec) -> *mut GosMap {

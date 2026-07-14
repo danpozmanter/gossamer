@@ -509,6 +509,20 @@ impl<'a> Builder<'a> {
 
         match (joined, args.len()) {
             // Non-closure constructors / accessors.
+            ("iter::collect", 1) => {
+                let v = self.lower_iter_vec_arg(&args[0])?;
+                let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_) | TyKind::Slice(_)) {
+                    ty
+                } else {
+                    self.tcx.intern(TyKind::Vec(i64_ty))
+                };
+                Some(self.emit_combinator_call(
+                    "gos_rt_vec_clone",
+                    vec![Operand::Copy(Place::local(v))],
+                    dest_ty,
+                    span,
+                ))
+            }
             ("iter::count", 1) => {
                 let v = self.lower_iter_vec_arg(&args[0])?;
                 let dest = self.fresh(i64_ty);
@@ -516,6 +530,59 @@ impl<'a> Builder<'a> {
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str("gos_rt_iter_count".to_string())),
                     args: vec![Operand::Copy(Place::local(v))],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("iter::empty", 0) => {
+                let elem_ty = match self.tcx.kind_of(ty) {
+                    TyKind::Vec(e) | TyKind::Slice(e) => *e,
+                    _ => i64_ty,
+                };
+                let elem_bytes_val = i128::from(self.elem_bytes_of(elem_ty).max(1));
+                let elem_bytes = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(elem_bytes),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(elem_bytes_val))),
+                    span,
+                );
+                let cap = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(cap),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    span,
+                );
+                let dest = self.fresh(ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_vec_with_capacity".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(elem_bytes)),
+                        Operand::Copy(Place::local(cap)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("iter::once", 1) => {
+                let v = self.lower_expr(&args[0])?;
+                let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_) | TyKind::Slice(_)) {
+                    ty
+                } else {
+                    self.tcx.intern(TyKind::Vec(i64_ty))
+                };
+                let dest = self.fresh(dest_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_repeat_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(v)),
+                        Operand::Const(ConstValue::Int(1)),
+                    ],
                     destination: Place::local(dest),
                     target: Some(next),
                 });
@@ -655,6 +722,24 @@ impl<'a> Builder<'a> {
                 });
                 self.set_current(next);
                 Some(dest)
+            }
+            ("iter::step_by", 2) => {
+                let step = self.lower_expr(&args[0])?;
+                let v = self.lower_iter_vec_arg(&args[1])?;
+                let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_) | TyKind::Slice(_)) {
+                    ty
+                } else {
+                    self.tcx.intern(TyKind::Vec(i64_ty))
+                };
+                Some(self.emit_combinator_call(
+                    "gos_rt_vec_step_by",
+                    vec![
+                        Operand::Copy(Place::local(v)),
+                        Operand::Copy(Place::local(step)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
             }
             ("iter::skip", 2) => {
                 let n = self.lower_expr(&args[0])?;

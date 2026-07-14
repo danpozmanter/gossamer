@@ -443,7 +443,7 @@ pub unsafe extern "C" fn gos_rt_iter_pairwise_i64(v: *const GosVec) -> *mut GosV
     })
 }
 
-/// `iter::windowed(n, xs)` - `Vec<Vec<i64>>` of every contiguous
+/// `iter::windows(n, xs)` - `Vec<Vec<i64>>` of every contiguous
 /// width-`n` window. Empty when `n <= 0` or `xs` is shorter than
 /// `n`. Outer is a VEC-typed vec of inner `*mut GosVec` pointers
 /// (recursively freed).
@@ -473,7 +473,7 @@ pub unsafe extern "C" fn gos_rt_iter_windowed_i64(n: i64, v: *const GosVec) -> *
     })
 }
 
-/// `iter::chunk_by_size(n, xs)` - `Vec<Vec<i64>>` of consecutive
+/// `iter::chunks(n, xs)` - `Vec<Vec<i64>>` of consecutive
 /// width-`n` chunks; the final chunk may be short. Empty when
 /// `n <= 0`.
 #[unsafe(no_mangle)]

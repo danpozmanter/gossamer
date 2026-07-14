@@ -2560,6 +2560,31 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
         "gos_rt_iter_filter_map_i64",
     ),
     (
+        "iter::collect",
+        "use std::iter\nfn main() { let xs = iter::collect([1, 2])\nlet _ = xs }",
+        "gos_rt_vec_clone",
+    ),
+    (
+        "Vec::collect",
+        "fn main() { let xs = [1, 2].collect()\nlet _ = xs }",
+        "gos_rt_vec_clone",
+    ),
+    (
+        "iter::once",
+        "use std::iter\nfn main() { let xs = iter::once(7)\nlet _ = xs }",
+        "gos_rt_iter_repeat_i64",
+    ),
+    (
+        "iter::empty",
+        "use std::iter\nfn main() { let xs: Vec<i64> = iter::empty()\nlet _ = xs }",
+        "gos_rt_vec_with_capacity",
+    ),
+    (
+        "iter::step_by",
+        "use std::iter\nfn main() { let xs = [1, 2, 3] |> iter::step_by(2)\nlet _ = xs }",
+        "gos_rt_vec_step_by",
+    ),
+    (
         "iter::flat_map (array literal)",
         "use std::iter\nfn main() { let xs = [1, 2] |> iter::flat_map(|x: i64| [x, x * 10])\nlet _ = xs }",
         "gos_rt_iter_flat_map_arr_i64",

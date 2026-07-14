@@ -1,6 +1,6 @@
 // Exercises the eight iter combinators that previously had no
 // compiled-tier lowering (enumerate, zip, flatten, dedup, unzip,
-// windowed, pairwise, chunk_by_size) plus the rev-index idiom
+// windows, pairwise, chunks) plus the rev-index idiom
 // `iter::rev(xs)[i]` (the unannotated-result SIGSEGV class).
 //
 // i64-element only - matches the `_i64` shim family. Output is
@@ -49,12 +49,12 @@ fn main() {
     let (lefts, rights) = iter::unzip(pairs)
     println!("unzip {} {}", lefts[0], rights[0])
 
-    // -- windowed(n, xs): sliding width-2 windows.
+    // -- windows(n, xs): sliding width-2 windows.
     let mut wsum = 0
     for w in iter::windows(2, xs) {
         wsum += w[0] * w[1]
     }
-    println!("windowed {}", wsum)
+    println!("windows {}", wsum)
 
     // -- pairwise: successive overlapping pairs.
     let mut psum = 0
@@ -63,7 +63,7 @@ fn main() {
     }
     println!("pairwise {}", psum)
 
-    // -- chunk_by_size(n, xs): consecutive chunks, final may be short.
+    // -- chunks(n, xs): consecutive chunks, final may be short.
     let nine = [1, 2, 3, 4, 5]
     let mut chunks = 0
     let mut last_first = 0
@@ -71,19 +71,27 @@ fn main() {
         chunks += 1
         last_first = c[0]
     }
-    println!("chunk_by_size {} {}", chunks, last_first)
+    println!("chunks {} {}", chunks, last_first)
 
     // -- rev-index idiom: indexing the heap-vec result directly,
     // with no `: [i64]` annotation (the SIGSEGV regression).
     let r = iter::rev(xs)
     println!("rev {} {} {} {}", r[0], r[1], r[2], r[3])
 
-    // -- same crash class for take / skip / chain / range / repeat.
+    // -- same crash class for take / skip / step_by / chain / range / repeat.
     let t = iter::take(2, xs)
     let s = iter::skip(2, xs)
+    let st = iter::step_by(2, xs)
     let ch = iter::chain(ys, ys)
     let rg = iter::range(0, 4)
     let rp = iter::repeat(7, 3)
-    println!("take {} skip {} chain {} range {} repeat {}",
-        t[0], s[0], ch[3], rg[3], rp[2])
+    println!("take {} skip {} step_by {} chain {} range {} repeat {}",
+        t[0], s[0], st[1], ch[3], rg[3], rp[2])
+
+    // -- collect / once / empty as public free functions, plus method collect.
+    let c = iter::collect(xs)
+    let mc = xs.collect()
+    let one = iter::once(99)
+    let empty: Vec<i64> = iter::empty()
+    println!("collect {} {} once {} empty {}", c[3], mc[0], one[0], empty.len())
 }

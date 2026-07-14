@@ -115,9 +115,13 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
     // Argument order is DATA-LAST throughout, matching SPEC §4.6 so
     // `xs |> iter::map(f)` desugars to `iter::map(f, xs)` and threads.
     let static_entries: &[(&str, BuiltinFnPub)] = &[
+        ("collect", builtin_iter_collect),
         ("count", builtin_iter_count),
+        ("empty", builtin_iter_empty),
+        ("once", builtin_iter_once),
         ("take", builtin_iter_take),
         ("skip", builtin_iter_skip),
+        ("step_by", builtin_iter_step_by),
         ("zip", builtin_iter_zip),
         ("enumerate", builtin_iter_enumerate),
         ("chain", builtin_iter_chain),
@@ -132,9 +136,9 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("range_inclusive", builtin_iter_range_inclusive),
         ("repeat", builtin_iter_repeat),
         ("unzip", builtin_iter_unzip),
-        ("windows", builtin_iter_windowed),
+        ("windows", builtin_iter_windows),
         ("pairwise", builtin_iter_pairwise),
-        ("chunks", builtin_iter_chunk_by_size),
+        ("chunks", builtin_iter_chunks),
     ];
     for (short, call) in static_entries {
         let qualified: &'static str = Box::leak(format!("iter::{short}").into_boxed_str());
@@ -167,7 +171,7 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("max_by", native_iter_max_by),
         ("min_by_key", native_iter_min_by_key),
         ("max_by_key", native_iter_max_by_key),
-        ("chunk_by", native_iter_group_by),
+        ("chunk_by", native_iter_chunk_by),
         ("count_by", native_iter_count_by),
     ];
     for (short, call) in native_entries {
@@ -182,6 +186,7 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
     let vec_builtin_entries: &[(&str, BuiltinFnPub)] = &[
         ("take", builtin_vec_take_method),
         ("step_by", builtin_vec_step_by_method),
+        ("collect", builtin_iter_collect),
         // Data-first single-argument reducers: the method call's
         // (receiver) argument list is already the free form's shape.
         ("sum", builtin_iter_sum),
@@ -279,6 +284,39 @@ pub(crate) fn builtin_vec_step_by_method(args: &[Value]) -> RuntimeResult<Value>
     let xs = collect_array(args.first().unwrap_or(&Value::Unit));
     let step = args.get(1).and_then(value_to_int).unwrap_or(1).max(1);
     let step = usize::try_from(step).unwrap_or(1);
+    let out: Vec<Value> = xs.iter().step_by(step).cloned().collect();
+    Ok(Value::Array(Arc::new(out)))
+}
+
+pub(crate) fn builtin_iter_collect(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(match args.first().unwrap_or(&Value::Unit) {
+        Value::Array(arr) => Value::Array(arr.clone()),
+        Value::IntArray(arr) => {
+            let out = arr.iter().copied().map(Value::Int).collect();
+            Value::Array(Arc::new(out))
+        }
+        Value::FloatVec(arr) => {
+            let out = arr.iter().copied().map(Value::Float).collect();
+            Value::Array(Arc::new(out))
+        }
+        other => Value::Array(Arc::new(collect_array(other))),
+    })
+}
+
+pub(crate) fn builtin_iter_once(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Array(Arc::new(vec![
+        args.first().cloned().unwrap_or(Value::Unit),
+    ])))
+}
+
+pub(crate) fn builtin_iter_empty(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Array(Arc::new(Vec::new())))
+}
+
+pub(crate) fn builtin_iter_step_by(args: &[Value]) -> RuntimeResult<Value> {
+    let step = args.first().and_then(value_to_int).unwrap_or(1).max(1);
+    let step = usize::try_from(step).unwrap_or(1);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     let out: Vec<Value> = xs.iter().step_by(step).cloned().collect();
     Ok(Value::Array(Arc::new(out)))
 }
@@ -827,7 +865,7 @@ pub(crate) fn native_iter_max_by_key(
     Ok(some_variant(best))
 }
 
-pub(crate) fn native_iter_group_by(
+pub(crate) fn native_iter_chunk_by(
     dispatch: &mut dyn NativeDispatch,
     args: &[Value],
 ) -> RuntimeResult<Value> {
@@ -1006,7 +1044,7 @@ pub(crate) fn builtin_iter_unzip(args: &[Value]) -> RuntimeResult<Value> {
     ])))
 }
 
-pub(crate) fn builtin_iter_windowed(args: &[Value]) -> RuntimeResult<Value> {
+pub(crate) fn builtin_iter_windows(args: &[Value]) -> RuntimeResult<Value> {
     let n = args.first().and_then(value_to_int).unwrap_or(0);
     let n = usize::try_from(n.max(0)).unwrap_or(0);
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
@@ -1029,7 +1067,7 @@ pub(crate) fn builtin_iter_pairwise(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Array(Arc::new(out)))
 }
 
-pub(crate) fn builtin_iter_chunk_by_size(args: &[Value]) -> RuntimeResult<Value> {
+pub(crate) fn builtin_iter_chunks(args: &[Value]) -> RuntimeResult<Value> {
     let n = args.first().and_then(value_to_int).unwrap_or(0);
     let n = usize::try_from(n.max(0)).unwrap_or(0);
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
