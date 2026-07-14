@@ -20,6 +20,6 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`TarEntry`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/archive/tar.rs) | `type` — see the source declaration | name + data + size + mode. |
+| [`TarEntry`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/archive/tar.rs) | `type TarEntry` | name + data + size + mode. |
 | [`read`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/archive/tar.rs) | `fn read(path: String) -> Result<Vec<(String, Vec<u8>)>, errors::Error>` | Reads all entries from a tar archive. |
 | [`write`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/archive/tar.rs) | `fn write(entries: Vec<(String, Vec<u8>)>) -> Result<Vec<u8>, errors::Error>` | Builds a tar archive from (name, data) pairs. |

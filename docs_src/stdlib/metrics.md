@@ -23,9 +23,9 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Counter`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/metrics.rs) | `type` — see the source declaration | Monotonic-increasing u64 counter (lock-free). |
-| [`Gauge`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/metrics.rs) | `type` — see the source declaration | Set / inc / dec gauge (lock-free). |
-| [`Histogram`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/metrics.rs) | `type` — see the source declaration | Bucketed observation histogram with sum and count. |
-| [`Metric`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/metrics.rs) | `type` — see the source declaration | Enum holding any of the three primitives for registry storage. |
-| [`Registry`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/metrics.rs) | `type` — see the source declaration | Ordered collection of metrics; `render()` emits the Prometheus text-exposition format. |
+| [`Counter`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/metrics.rs) | `type Counter` | Monotonic-increasing u64 counter (lock-free). |
+| [`Gauge`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/metrics.rs) | `type Gauge` | Set / inc / dec gauge (lock-free). |
+| [`Histogram`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/metrics.rs) | `type Histogram` | Bucketed observation histogram with sum and count. |
+| [`Metric`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/metrics.rs) | `type Metric` | Enum holding any of the three primitives for registry storage. |
+| [`Registry`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/metrics.rs) | `type Registry` | Ordered collection of metrics; `render()` emits the Prometheus text-exposition format. |
 | [`serve_metrics`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/metrics.rs) | `fn serve_metrics(addr: String) -> Result<(), errors::Error>` | Mounts a registry on `/metrics` over the existing http server loop. |

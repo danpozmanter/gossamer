@@ -29,7 +29,7 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Child`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/process.rs) | `type` — see the source declaration | Handle to a still-running child supporting wait / kill. |
+| [`Child`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/process.rs) | `type Child` | Handle to a still-running child supporting wait / kill. |
 | [`abort`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/process.rs) | `fn abort() -> !` | Aborts the current process without unwinding. |
 | [`exit`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/process.rs) | `fn exit(code: i64) -> !` | Exits the current process with the given status code. |
 | [`id`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/process.rs) | `fn id() -> i64` | Returns the current process ID. |

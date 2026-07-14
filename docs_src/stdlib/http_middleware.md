@@ -24,8 +24,8 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Chain`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs) | `type` — see the source declaration | Helper for composing middleware in a single value. |
-| [`Handler`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs) | `trait` — see the source declaration | Anything serving (Request, Params) -> Response. |
+| [`Chain`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs) | `type Chain` | Helper for composing middleware in a single value. |
+| [`Handler`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs) | `trait Handler` | Anything serving (Request, Params) -> Response. |
 | [`accepts_gzip`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs) | `fn accepts_gzip(request: http::Request) -> bool` | Check an Accept-Encoding header for a gzip token. Available in interp + compiled. |
 | [`bearer_ok`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs) | `fn bearer_ok(request: http::Request, verify: Fn(String) -> bool) -> bool` | Run a verify closure on the request's Bearer token; false (without calling verify) when no Bearer header is present. Available in interp + compiled. |
 | [`decode_basic_auth`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_middleware.rs) | `fn decode_basic_auth(request: http::Request) -> Option<(String, String)>` | Decode a Basic-auth Authorization header into (user, password). Interp tier. |

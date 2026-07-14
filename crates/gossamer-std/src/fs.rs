@@ -275,10 +275,11 @@ pub fn chown(_path: impl AsRef<Path>, _uid: i64, _gid: i64) -> io::Result<()> {
     ))
 }
 
-/// Writes `bytes` to `path` atomically: the bytes are first written
-/// to a sibling temp file, fsync'd, then renamed into place. On a
-/// crash mid-write the caller observes either the previous file
-/// contents or the new ones - never a partial file.
+/// Writes `bytes` to `path` atomically: the bytes are first written to a
+/// sibling temp file, fsync'd, and renamed into place. Unix additionally syncs
+/// the containing directory, making the rename durable across a power loss.
+/// Other targets retain atomic replacement visibility but have their platform
+/// filesystem's crash-durability semantics.
 pub fn write_atomic(path: impl AsRef<Path>, bytes: &[u8]) -> io::Result<()> {
     let path = path.as_ref();
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
@@ -302,17 +303,34 @@ pub fn write_atomic(path: impl AsRef<Path>, bytes: &[u8]) -> io::Result<()> {
     }
 
     let result = (|| -> io::Result<()> {
-        let mut file = stdfs::File::create(&tmp)?;
+        let mut file = stdfs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
-        stdfs::rename(&tmp, path)
+        stdfs::rename(&tmp, path)?;
+        sync_parent_dir(parent)
     })();
 
     if result.is_err() {
         let _ = stdfs::remove_file(&tmp);
     }
     result
+}
+
+#[cfg(unix)]
+fn sync_parent_dir(parent: &Path) -> io::Result<()> {
+    stdfs::File::open(parent)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_parent: &Path) -> io::Result<()> {
+    // Windows directory handles need platform-specific sharing flags. Rename
+    // is still atomic here; this helper keeps the API portable until that
+    // durable directory-sync implementation is available.
+    Ok(())
 }
 
 /// Kind of filesystem change reported by [`Watcher`].

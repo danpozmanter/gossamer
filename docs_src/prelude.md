@@ -1,21 +1,20 @@
-# Prelude - available without imports
+# Builtins and prelude
 
-Every Gossamer program starts with these names in scope. No `use`
-needed.
+Gossamer 0.28.2 puts these names in every file. No `use` needed. A local
+definition with the same name wins.
 
-## Output and failure
+## Output and formatting
 
-The six format macros, all `format!`-style with `{}` / `{name}`
-placeholders:
+Format strings use `{}` and `{name}` placeholders.
 
-| Macro | Effect |
-|-------|--------|
-| `println!("…", a)` | stdout, newline appended |
-| `print!("…", a)` | stdout, no newline |
-| `eprintln!("…", a)` | stderr, newline appended |
-| `eprint!("…", a)` | stderr, no newline |
-| `format!("…", a)` | returns the rendered `String` |
-| `panic!("…", a)` | unwinds with the rendered message |
+| Name | Signature | Description |
+|---|---|---|
+| `println!` | `println!("fmt", values...)` | Print formatted text to stdout, then a newline. |
+| `print!` | `print!("fmt", values...)` | Print formatted text to stdout with no newline. |
+| `eprintln!` | `eprintln!("fmt", values...)` | Print formatted text to stderr, then a newline. |
+| `eprint!` | `eprint!("fmt", values...)` | Print formatted text to stderr with no newline. |
+| `format!` | `format!("fmt", values...) -> String` | Render formatted text into an owned `String`. |
+| `panic!` | `panic!("fmt", values...) -> !` | Stop the current goroutine with the rendered message. |
 
 ```gossamer
 let who = "world"
@@ -23,26 +22,39 @@ println!("hello, {who}")
 println!("{} + {} = {}", 1, 2, 1 + 2)
 ```
 
-A few desugar macros round out the fixed set: `matches!(e, pat)`
-(boolean pattern test), `todo!` / `unimplemented!` / `unreachable!`
-(panic with a fixed or supplied message), and `dbg!(e)` (prints `e`
-with `{:?}` to stderr, yields its value). There are no user-defined
-macros - every other `name!(…)` is a parse error.
+## Fixed macros
+
+| Name | Signature | Description |
+|---|---|---|
+| `matches!` | `matches!(expr, pattern) -> bool` | Test whether `expr` matches `pattern`. |
+| `todo!` | `todo!("msg"?) -> !` | Mark code as intentionally unfinished and panic if reached. |
+| `unimplemented!` | `unimplemented!("msg"?) -> !` | Mark an unsupported path and panic if reached. |
+| `unreachable!` | `unreachable!("msg"?) -> !` | Mark an impossible path and panic if reached. |
+| `dbg!` | `dbg!(expr) -> T` | Print `expr` with debug formatting, then return it. |
+| `regex!` | `regex!("pattern") -> regex::Pattern` | Compile a checked regular expression at build time. |
+| `sql!` | `sql!("query")` | Check a SQL literal at build time when a driver can validate it. |
+| `codegen!` | `codegen!(...)` | Run the build-time codegen hook. |
+
+User-defined macros do not exist. Any other `name!(...)` is a parse error.
 
 ## Assertions
 
-- `assert(cond)` - panics when `cond` is false.
-- `assert_eq(a, b)` - panics when `a != b`, printing both values.
+| Name | Signature | Description |
+|---|---|---|
+| `assert` | `assert(cond: bool, msg?: String)` | Panic when `cond` is false. |
+| `assert_eq` | `assert_eq(a, b, msg?: String)` | Panic when `a != b`; include both values in the failure text. |
 
-For a "not yet implemented" marker use the `todo!` macro (above), not a
-`todo()` call.
+Use `todo!` for unfinished code. There is no `todo()` function.
 
-## Scalars
+## Scalar helpers
 
-- `min(a, b)` / `max(a, b)` - work on any pair of comparable
-  scalars. The one-argument collection forms `min(xs)` / `max(xs)`
-  return `Option<T>`.
-- `clamp(x, lo, hi)` - `x` limited to `[lo, hi]`.
+| Name | Signature | Description |
+|---|---|---|
+| `min` | `min(a, b) -> T` | Return the smaller comparable scalar. |
+| `max` | `max(a, b) -> T` | Return the larger comparable scalar. |
+| `min` | `min(xs) -> Option<T>` | Return the smallest collection item, or `None` when empty. |
+| `max` | `max(xs) -> Option<T>` | Return the largest collection item, or `None` when empty. |
+| `clamp` | `clamp(x, lo, hi) -> T` | Limit `x` to the inclusive range `[lo, hi]`. |
 
 ```gossamer
 let speed = clamp(input, 0, 120)
@@ -51,11 +63,11 @@ let better = max(score_a, score_b)
 
 ## Concurrency
 
-- `go expr` - statement keyword: run `expr` on a goroutine,
-  fire-and-forget.
-- `spawn(f)` - run `f` on a goroutine and get a `JoinHandle<T>`;
-  `handle.join()` blocks for `Result<T, String>` (`Err` carries the
-  panic message if the goroutine panicked).
+| Name | Signature | Description |
+|---|---|---|
+| `go` | `go expr` | Run `expr` on a goroutine and discard its result. |
+| `spawn` | `spawn(f) -> JoinHandle<T>` | Run `f` on a goroutine and return a join handle. |
+| `join` | `handle.join() -> Result<T, String>` | Wait for a spawned goroutine. `Err` carries the panic message. |
 
 ```gossamer
 let h = spawn(|| heavy_compute())
@@ -65,21 +77,21 @@ match h.join() {
 }
 ```
 
-Channels, `Mutex`, and `WaitGroup` come from `std::sync`, but the
-`Sender` / `Receiver` / `Mutex` / `WaitGroup` *type names* resolve
-without an import when they appear in signatures.
+`Sender`, `Receiver`, `Mutex`, and `WaitGroup` type names resolve in
+signatures without imports. Their constructors and helpers live in `std::sync`.
 
-## Serialization (synthesized per struct)
+## Serialization
 
-Every user `struct` automatically gets free functions callable with
-a turbofish - no import, no derive attribute:
+Every user `struct` gets strict typed codecs. No derive attribute needed.
 
-| Function | Returns |
-|----------|---------|
-| `from_json::<T>(&text)` | `Result<T, errors::Error>` |
-| `to_json::<T>(&value)` | `Result<String, errors::Error>` |
-| `from_toml::<T>` / `to_toml::<T>` | same shapes, TOML |
-| `from_yaml::<T>` / `to_yaml::<T>` | same shapes, YAML |
+| Name | Signature | Description |
+|---|---|---|
+| `from_json` | `from_json::<T>(&text) -> Result<T, errors::Error>` | Decode JSON into `T`; report missing fields and type mismatches. |
+| `to_json` | `to_json::<T>(&value) -> Result<String, errors::Error>` | Encode `T` as JSON text. |
+| `from_toml` | `from_toml::<T>(&text) -> Result<T, errors::Error>` | Decode TOML into `T`; report schema errors. |
+| `to_toml` | `to_toml::<T>(&value) -> Result<String, errors::Error>` | Encode `T` as TOML text. |
+| `from_yaml` | `from_yaml::<T>(&text) -> Result<T, errors::Error>` | Decode YAML into `T`; report schema errors. |
+| `to_yaml` | `to_yaml::<T>(&value) -> Result<String, errors::Error>` | Encode `T` as YAML text. |
 
 ```gossamer
 struct Config { host: String, port: i64 }
@@ -87,36 +99,22 @@ struct Config { host: String, port: i64 }
 let cfg = from_json::<Config>(&text)?
 ```
 
-Decoding is strict: missing required fields and type mismatches
-return `Err` naming the offending field. The dynamic surface
-(`json::parse`, `json::get`, `json::as_i64`, …) lives in
-`std::encoding::json` for documents whose shape is not known at
+Use `std::encoding::json` for dynamic JSON where the shape is not known at
 compile time.
 
-## Types
+## Always-in-scope types
 
-Always-in-scope type names:
+| Family | Names | Description |
+|---|---|---|
+| Primitives | `bool`, `char`, signed and unsigned integers, `isize`, `usize`, `f32`, `f64`, `String`, `str` | Scalar and text types. |
+| Wrappers | `Option<T>`, `Result<T, E>`, `Box<T>`, `Rc<T>`, `Arc<T>`, `Weak<T>` | Sum types and managed-runtime compatibility wrappers. |
+| Collections | `Vec<T>`, `HashMap<K, V>`, `HashSet<T>`, `BTreeMap<K, V>`, `VecDeque<T>`, `Range` | Core collection types. |
+| Concurrency | `Sender<T>`, `Receiver<T>`, `Mutex<T>`, `WaitGroup`, `JoinHandle<T>` | Channel, lock, wait, and goroutine-handle types. |
 
-- Primitives: `bool`, `char`, `i8`…`i64`, `u8`…`u64`, `isize`,
-  `usize`, `f32`, `f64`, `String`, `str`.
-- Wrappers: `Option<T>` (`Some` / `None`), `Result<T, E>`
-  (`Ok` / `Err`), `Box<T>`, `Rc<T>`, `Arc<T>` (all three are
-  transparent in a managed runtime - spelling compatibility with
-  Rust), `Weak<T>`.
-- Collections: `Vec<T>`, `HashMap<K, V>`, `HashSet<T>`,
-  `BTreeMap<K, V>`, `VecDeque<T>`, `Range`.
-- Concurrency: `Sender<T>`, `Receiver<T>`, `Mutex<T>`,
-  `WaitGroup`, `JoinHandle<T>`.
+## Runtime statements
 
-## Statement keywords with runtime effects
-
-Not functions, but also available everywhere:
-
-- `defer expr` - run `expr` on every exit path of the enclosing
-  block.
-- `arena { … }` - bump-allocate everything created inside; free it
-  wholesale at the block's exit ([memory model](memory.md)).
-- `select { … }` - multiplex channel operations.
-
-A user definition with the same name shadows any prelude entry -
-prelude bindings never collide with your code.
+| Statement | Description |
+|---|---|
+| `defer expr` | Run `expr` on every exit path of the enclosing block. |
+| `arena { ... }` | Allocate values inside a region and free them when the block exits. |
+| `select { ... }` | Wait on multiple channel operations. |

@@ -18,4 +18,4 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`panic`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/panic.rs) | `macro` — see the source declaration | Aborts the current goroutine with a message. |
+| [`panic`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/panic.rs) | `macro panic!(...)` | Aborts the current goroutine with a message. |

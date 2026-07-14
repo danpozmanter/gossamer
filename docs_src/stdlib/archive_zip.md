@@ -20,6 +20,6 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`ZipEntry`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/archive/zip.rs) | `type` — see the source declaration | name + decompressed data + is_dir flag. |
+| [`ZipEntry`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/archive/zip.rs) | `type ZipEntry` | name + decompressed data + is_dir flag. |
 | [`read`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/archive/zip.rs) | `fn read(path: String) -> Result<Vec<(String, Vec<u8>)>, errors::Error>` | Reads all file entries from a zip stored in `data`. |
 | [`write`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/archive/zip.rs) | `fn write(entries: Vec<(String, Vec<u8>)>) -> Result<Vec<u8>, errors::Error>` | Builds an in-memory zip from (name, data) pairs. |

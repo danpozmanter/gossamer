@@ -21,7 +21,7 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Reader`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_chunked.rs) | `type` — see the source declaration | Decodes a chunked body from any Read source (Rust-side; streaming). |
-| [`Writer`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_chunked.rs) | `type` — see the source declaration | Encodes raw bytes into chunked frames over any Write sink (Rust-side; streaming). |
+| [`Reader`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_chunked.rs) | `type Reader` | Decodes a chunked body from any Read source (Rust-side; streaming). |
+| [`Writer`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_chunked.rs) | `type Writer` | Encodes raw bytes into chunked frames over any Write sink (Rust-side; streaming). |
 | [`decode`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_chunked.rs) | `fn decode(body: String) -> String` | One-shot: concatenates data chunks from a complete chunked body. Available in interp + compiled. |
 | [`encode`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_chunked.rs) | `fn encode(body: String) -> String` | One-shot: wraps a buffer in chunked transfer-encoding with terminator. Available in interp + compiled. |

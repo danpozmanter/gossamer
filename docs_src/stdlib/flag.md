@@ -24,8 +24,8 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Error`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/flag.rs) | `type` — see the source declaration | Error produced while parsing flags. |
-| [`Set`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/flag.rs) | `type` — see the source declaration | Flag definition + parsing set. |
+| [`Error`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/flag.rs) | `type Error` | Error produced while parsing flags. |
+| [`Set`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/flag.rs) | `type Set` | Flag definition + parsing set. |
 | [`bool`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/flag.rs) | `fn bool(name: String, default: bool, usage: String, short: char) -> flag::Flag` | Defines a boolean flag on the default set. |
 | [`define`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/flag.rs) | `fn define(name: String, flags: Vec<flag::Flag>) -> flag::FlagSet` | Registers a flag definition on the default set. |
 | [`int`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/flag.rs) | `fn int(name: String, default: i64, usage: String, short: char) -> flag::Flag` | Defines an integer flag on the default set. |

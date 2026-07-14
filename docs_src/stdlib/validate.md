@@ -20,6 +20,6 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Errors`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/validate.rs) | `type` — see the source declaration | Aggregated FieldError set, indexable by dotted path. |
-| [`FieldError`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/validate.rs) | `type` — see the source declaration | One field-scoped validation failure: dotted path, message, optional code. |
-| [`Validate`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/validate.rs) | `trait` — see the source declaration | Implement on a struct to declare field-level validation rules. |
+| [`Errors`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/validate.rs) | `type Errors` | Aggregated FieldError set, indexable by dotted path. |
+| [`FieldError`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/validate.rs) | `type FieldError` | One field-scoped validation failure: dotted path, message, optional code. |
+| [`Validate`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/validate.rs) | `trait Validate` | Implement on a struct to declare field-level validation rules. |

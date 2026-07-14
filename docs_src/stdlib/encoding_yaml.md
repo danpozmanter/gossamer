@@ -24,7 +24,7 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Value`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/yaml.rs) | `type` — see the source declaration | Dynamically typed YAML value. |
+| [`Value`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/yaml.rs) | `type Value` | Dynamically typed YAML value. |
 | [`encode`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/yaml.rs) | `fn encode(value: json::Value) -> Result<String, errors::Error>` | Encodes a Value as a YAML document. |
 | [`from_json`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/yaml.rs) | `fn from_json(source: String) -> Result<String, errors::Error>` | Converts JSON text to a YAML document. |
 | [`is_valid`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/yaml.rs) | `fn is_valid(source: String) -> bool` | Reports whether the text is well-formed YAML. |

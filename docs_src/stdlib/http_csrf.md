@@ -25,8 +25,8 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Config`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_csrf.rs) | `type` — see the source declaration | Signing key, cookie / header names, and origin allowlist. |
-| [`RouteAuth`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_csrf.rs) | `type` — see the source declaration | Per-route policy: Required, Optional, or Skipped. |
+| [`Config`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_csrf.rs) | `type Config` | Signing key, cookie / header names, and origin allowlist. |
+| [`RouteAuth`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_csrf.rs) | `type RouteAuth` | Per-route policy: Required, Optional, or Skipped. |
 | [`attach_cookie`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_csrf.rs) | `fn attach_cookie(request: http::Request, secret: String) -> Result<http::Request, errors::Error>` | Set the CSRF cookie on a Response. |
 | [`check`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_csrf.rs) | `fn check(request: http::Request, secret: String) -> Result<http::Request, errors::Error>` | Combined origin + token gate; returns Err on failure. |
 | [`extract_token`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_csrf.rs) | `fn extract_token(request: http::Request, secret: String) -> Result<http::Request, errors::Error>` | Pull a token from the configured header or form field. |

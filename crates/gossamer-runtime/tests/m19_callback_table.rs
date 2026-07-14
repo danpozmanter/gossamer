@@ -6,6 +6,8 @@
 )]
 
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Barrier, mpsc};
+use std::time::Duration;
 
 // Pinned 8-byte-aligned box so the `*const u8 → AtomicU32` cast
 // in the callback is safe under stricter alignment lints.
@@ -87,4 +89,101 @@ fn callback_invoke_zero_handle_short_circuits() {
         )
     };
     assert_eq!(rc, -1);
+}
+
+struct BlockingContext {
+    entered: Arc<Barrier>,
+    release: Arc<Barrier>,
+}
+
+extern "C" fn blocking_callback(
+    ctx: *const u8,
+    _args: *const u8,
+    _args_len: u32,
+    _result: *mut u8,
+) -> i32 {
+    let ctx = unsafe { &*ctx.cast::<BlockingContext>() };
+    ctx.entered.wait();
+    ctx.release.wait();
+    0
+}
+
+#[test]
+fn unregister_waits_for_an_in_flight_callback() {
+    let context = Box::new(BlockingContext {
+        entered: Arc::new(Barrier::new(2)),
+        release: Arc::new(Barrier::new(2)),
+    });
+    let handle = gossamer_runtime::c_abi::gos_rt_callback_register(
+        std::ptr::from_ref(context.as_ref()).cast(),
+        blocking_callback,
+    );
+    let invoke_handle = handle;
+    let invoke = std::thread::spawn(move || unsafe {
+        gossamer_runtime::c_abi::gos_rt_callback_invoke(
+            invoke_handle,
+            std::ptr::null(),
+            0,
+            std::ptr::null_mut(),
+        )
+    });
+    context.entered.wait();
+
+    let (done_tx, done_rx) = mpsc::channel();
+    let unregister = std::thread::spawn(move || {
+        gossamer_runtime::c_abi::gos_rt_callback_unregister(handle);
+        done_tx.send(()).unwrap();
+    });
+    assert!(done_rx.recv_timeout(Duration::from_millis(50)).is_err());
+    context.release.wait();
+    assert_eq!(invoke.join().unwrap(), 0);
+    done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    unregister.join().unwrap();
+    drop(context);
+}
+
+#[repr(align(8))]
+struct SelfUnregisterContext(std::sync::atomic::AtomicU64);
+
+extern "C" fn self_unregister_callback(
+    ctx: *const u8,
+    _args: *const u8,
+    _args_len: u32,
+    _result: *mut u8,
+) -> i32 {
+    let ctx = unsafe { &*ctx.cast::<SelfUnregisterContext>() };
+    gossamer_runtime::c_abi::gos_rt_callback_unregister(ctx.0.load(Ordering::Acquire));
+    0
+}
+
+#[test]
+fn callback_can_unregister_itself_without_deadlocking() {
+    let context = SelfUnregisterContext(std::sync::atomic::AtomicU64::new(0));
+    let handle = gossamer_runtime::c_abi::gos_rt_callback_register(
+        std::ptr::from_ref(&context).cast(),
+        self_unregister_callback,
+    );
+    context.0.store(handle, Ordering::Release);
+    assert_eq!(
+        unsafe {
+            gossamer_runtime::c_abi::gos_rt_callback_invoke(
+                handle,
+                std::ptr::null(),
+                0,
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+    assert_eq!(
+        unsafe {
+            gossamer_runtime::c_abi::gos_rt_callback_invoke(
+                handle,
+                std::ptr::null(),
+                0,
+                std::ptr::null_mut(),
+            )
+        },
+        -1
+    );
 }

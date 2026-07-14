@@ -19,5 +19,5 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`CertInfo`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/crypto.rs) | `type` — see the source declaration | Inspected fields of an X.509 certificate. |
+| [`CertInfo`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/crypto.rs) | `type CertInfo` | Inspected fields of an X.509 certificate. |
 | [`parse_pem`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/crypto.rs) | `fn parse_pem(pem: String) -> Result<x509::Certificate, errors::Error>` | Parses one PEM-encoded certificate. |

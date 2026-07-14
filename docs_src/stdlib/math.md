@@ -63,26 +63,26 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`E`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const` — see the source declaration | Euler's number e. |
-| [`INF`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const` — see the source declaration | Positive infinity. |
-| [`LN_10`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const` — see the source declaration | Natural log of 10. |
-| [`LN_2`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const` — see the source declaration | Natural log of 2. |
-| [`LOG10_E`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const` — see the source declaration | Base-10 logarithm of e. |
-| [`LOG2_E`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const` — see the source declaration | Base-2 logarithm of e. |
-| [`MAX_F64`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const` — see the source declaration | Largest finite f64 value. |
-| [`MIN_POSITIVE_F64`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const` — see the source declaration | Smallest positive normal f64 value. |
-| [`NAN`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const` — see the source declaration | Not-a-number value. |
-| [`NEG_INF`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const` — see the source declaration | Negative infinity. |
-| [`PHI`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const` — see the source declaration | Golden ratio φ. |
-| [`PI`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const` — see the source declaration | Archimedes' constant π. |
-| [`SQRT_2`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const` — see the source declaration | √2. |
+| [`E`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const E: f64` | Euler's number e. |
+| [`INF`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const INF: f64` | Positive infinity. |
+| [`LN_10`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const LN_10: f64` | Natural log of 10. |
+| [`LN_2`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const LN_2: f64` | Natural log of 2. |
+| [`LOG10_E`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const LOG10_E: f64` | Base-10 logarithm of e. |
+| [`LOG2_E`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const LOG2_E: f64` | Base-2 logarithm of e. |
+| [`MAX_F64`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const MAX_F64: f64` | Largest finite f64 value. |
+| [`MIN_POSITIVE_F64`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const MIN_POSITIVE_F64: f64` | Smallest positive normal f64 value. |
+| [`NAN`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const NAN: f64` | Not-a-number value. |
+| [`NEG_INF`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const NEG_INF: f64` | Negative infinity. |
+| [`PHI`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const PHI: f64` | Golden ratio φ. |
+| [`PI`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const PI: f64` | Archimedes' constant π. |
+| [`SQRT_2`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `const SQRT_2: f64` | √2. |
 | [`abs`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `fn abs(x: f64) -> f64` | Absolute value of x. |
 | [`acos`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `fn acos(x: f64) -> f64` | Arccosine (radians). |
 | [`asin`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `fn asin(x: f64) -> f64` | Arcsine (radians). |
 | [`atan`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `fn atan(x: f64) -> f64` | Arctangent (radians). |
 | [`atan2`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `fn atan2(y: f64, x: f64) -> f64` | Four-quadrant arctangent of y/x. |
-| [`Int`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `type` — see the source declaration | Arbitrary-precision signed integer. |
-| [`Uint`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `type` — see the source declaration | Arbitrary-precision unsigned integer. |
+| [`Int`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `type Int` | Arbitrary-precision signed integer. |
+| [`Uint`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `type Uint` | Arbitrary-precision unsigned integer. |
 | [`factorial`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `fn factorial(n: i64) -> big::Uint` | Computes n! as an Int. |
 | [`int_abs`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `fn int_abs(value: big::Int) -> big::Int` | Absolute value of an Int. |
 | [`int_add`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `fn int_add(a: big::Int, b: big::Int) -> big::Int` | Sum of two Ints. |
@@ -147,7 +147,7 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 | [`min`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `fn min(x: f64, y: f64) -> f64` | Lesser of two values. |
 | [`positive_diff`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `fn positive_diff(x: f64, y: f64) -> f64` | max(x-y, 0). |
 | [`pow`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `fn pow(x: f64, y: f64) -> f64` | x raised to the power y. |
-| [`Rng`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `type` — see the source declaration | SplitMix64-based RNG. |
+| [`Rng`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `type Rng` | SplitMix64-based RNG. |
 | [`rem`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `fn rem(x: f64, y: f64) -> f64` | Floating-point remainder x%y. |
 | [`round`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `fn round(x: f64) -> f64` | Nearest integer, half away from zero. |
 | [`sin`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math.rs) | `fn sin(x: f64) -> f64` | Sine (radians). |

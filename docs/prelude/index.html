@@ -82,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#prelude-available-without-imports" class="md-skip">
+        <a href="#builtins-and-prelude" class="md-skip">
           Skip to content
         </a>
       
@@ -811,10 +811,21 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#output-and-failure" class="md-nav__link">
+  <a href="#output-and-formatting" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Output and failure
+        Output and formatting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed-macros" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed macros
       
     </span>
   </a>
@@ -833,10 +844,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#scalars" class="md-nav__link">
+  <a href="#scalar-helpers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Scalars
+        Scalar helpers
       
     </span>
   </a>
@@ -855,10 +866,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#serialization-synthesized-per-struct" class="md-nav__link">
+  <a href="#serialization" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Serialization (synthesized per struct)
+        Serialization
       
     </span>
   </a>
@@ -866,10 +877,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#types" class="md-nav__link">
+  <a href="#always-in-scope-types" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Types
+        Always-in-scope types
       
     </span>
   </a>
@@ -877,10 +888,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#statement-keywords-with-runtime-effects" class="md-nav__link">
+  <a href="#runtime-statements" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Statement keywords with runtime effects
+        Runtime statements
       
     </span>
   </a>
@@ -1846,10 +1857,21 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#output-and-failure" class="md-nav__link">
+  <a href="#output-and-formatting" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Output and failure
+        Output and formatting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed-macros" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed macros
       
     </span>
   </a>
@@ -1868,10 +1890,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#scalars" class="md-nav__link">
+  <a href="#scalar-helpers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Scalars
+        Scalar helpers
       
     </span>
   </a>
@@ -1890,10 +1912,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#serialization-synthesized-per-struct" class="md-nav__link">
+  <a href="#serialization" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Serialization (synthesized per struct)
+        Serialization
       
     </span>
   </a>
@@ -1901,10 +1923,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#types" class="md-nav__link">
+  <a href="#always-in-scope-types" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Types
+        Always-in-scope types
       
     </span>
   </a>
@@ -1912,10 +1934,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#statement-keywords-with-runtime-effects" class="md-nav__link">
+  <a href="#runtime-statements" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Statement keywords with runtime effects
+        Runtime statements
       
     </span>
   </a>
@@ -1939,43 +1961,49 @@
 
 
 
-<h1 id="prelude-available-without-imports">Prelude - available without imports<a class="headerlink" href="#prelude-available-without-imports" title="Permanent link">&para;</a></h1>
-<p>Every Gossamer program starts with these names in scope. No <code>use</code>
-needed.</p>
-<h2 id="output-and-failure">Output and failure<a class="headerlink" href="#output-and-failure" title="Permanent link">&para;</a></h2>
-<p>The six format macros, all <code>format!</code>-style with <code>{}</code> / <code>{name}</code>
-placeholders:</p>
+<h1 id="builtins-and-prelude">Builtins and prelude<a class="headerlink" href="#builtins-and-prelude" title="Permanent link">&para;</a></h1>
+<p>Gossamer 0.28.2 puts these names in every file. No <code>use</code> needed. A local
+definition with the same name wins.</p>
+<h2 id="output-and-formatting">Output and formatting<a class="headerlink" href="#output-and-formatting" title="Permanent link">&para;</a></h2>
+<p>Format strings use <code>{}</code> and <code>{name}</code> placeholders.</p>
 <table>
 <thead>
 <tr>
-<th>Macro</th>
-<th>Effect</th>
+<th>Name</th>
+<th>Signature</th>
+<th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>println!("…", a)</code></td>
-<td>stdout, newline appended</td>
+<td><code>println!</code></td>
+<td><code>println!("fmt", values...)</code></td>
+<td>Print formatted text to stdout, then a newline.</td>
 </tr>
 <tr>
-<td><code>print!("…", a)</code></td>
-<td>stdout, no newline</td>
+<td><code>print!</code></td>
+<td><code>print!("fmt", values...)</code></td>
+<td>Print formatted text to stdout with no newline.</td>
 </tr>
 <tr>
-<td><code>eprintln!("…", a)</code></td>
-<td>stderr, newline appended</td>
+<td><code>eprintln!</code></td>
+<td><code>eprintln!("fmt", values...)</code></td>
+<td>Print formatted text to stderr, then a newline.</td>
 </tr>
 <tr>
-<td><code>eprint!("…", a)</code></td>
-<td>stderr, no newline</td>
+<td><code>eprint!</code></td>
+<td><code>eprint!("fmt", values...)</code></td>
+<td>Print formatted text to stderr with no newline.</td>
 </tr>
 <tr>
-<td><code>format!("…", a)</code></td>
-<td>returns the rendered <code>String</code></td>
+<td><code>format!</code></td>
+<td><code>format!("fmt", values...) -&gt; String</code></td>
+<td>Render formatted text into an owned <code>String</code>.</td>
 </tr>
 <tr>
-<td><code>panic!("…", a)</code></td>
-<td>unwinds with the rendered message</td>
+<td><code>panic!</code></td>
+<td><code>panic!("fmt", values...) -&gt; !</code></td>
+<td>Stop the current goroutine with the rendered message.</td>
 </tr>
 </tbody>
 </table>
@@ -1983,71 +2011,197 @@ placeholders:</p>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;hello, {who}&quot;</span><span class="p">)</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{} + {} = {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span>
 </code></pre></div>
-<p>A few desugar macros round out the fixed set: <code>matches!(e, pat)</code>
-(boolean pattern test), <code>todo!</code> / <code>unimplemented!</code> / <code>unreachable!</code>
-(panic with a fixed or supplied message), and <code>dbg!(e)</code> (prints <code>e</code>
-with <code>{:?}</code> to stderr, yields its value). There are no user-defined
-macros - every other <code>name!(…)</code> is a parse error.</p>
+<h2 id="fixed-macros">Fixed macros<a class="headerlink" href="#fixed-macros" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>matches!</code></td>
+<td><code>matches!(expr, pattern) -&gt; bool</code></td>
+<td>Test whether <code>expr</code> matches <code>pattern</code>.</td>
+</tr>
+<tr>
+<td><code>todo!</code></td>
+<td><code>todo!("msg"?) -&gt; !</code></td>
+<td>Mark code as intentionally unfinished and panic if reached.</td>
+</tr>
+<tr>
+<td><code>unimplemented!</code></td>
+<td><code>unimplemented!("msg"?) -&gt; !</code></td>
+<td>Mark an unsupported path and panic if reached.</td>
+</tr>
+<tr>
+<td><code>unreachable!</code></td>
+<td><code>unreachable!("msg"?) -&gt; !</code></td>
+<td>Mark an impossible path and panic if reached.</td>
+</tr>
+<tr>
+<td><code>dbg!</code></td>
+<td><code>dbg!(expr) -&gt; T</code></td>
+<td>Print <code>expr</code> with debug formatting, then return it.</td>
+</tr>
+<tr>
+<td><code>regex!</code></td>
+<td><code>regex!("pattern") -&gt; regex::Pattern</code></td>
+<td>Compile a checked regular expression at build time.</td>
+</tr>
+<tr>
+<td><code>sql!</code></td>
+<td><code>sql!("query")</code></td>
+<td>Check a SQL literal at build time when a driver can validate it.</td>
+</tr>
+<tr>
+<td><code>codegen!</code></td>
+<td><code>codegen!(...)</code></td>
+<td>Run the build-time codegen hook.</td>
+</tr>
+</tbody>
+</table>
+<p>User-defined macros do not exist. Any other <code>name!(...)</code> is a parse error.</p>
 <h2 id="assertions">Assertions<a class="headerlink" href="#assertions" title="Permanent link">&para;</a></h2>
-<ul>
-<li><code>assert(cond)</code> - panics when <code>cond</code> is false.</li>
-<li><code>assert_eq(a, b)</code> - panics when <code>a != b</code>, printing both values.</li>
-</ul>
-<p>For a "not yet implemented" marker use the <code>todo!</code> macro (above), not a
-<code>todo()</code> call.</p>
-<h2 id="scalars">Scalars<a class="headerlink" href="#scalars" title="Permanent link">&para;</a></h2>
-<ul>
-<li><code>min(a, b)</code> / <code>max(a, b)</code> - work on any pair of comparable
-  scalars. The one-argument collection forms <code>min(xs)</code> / <code>max(xs)</code>
-  return <code>Option&lt;T&gt;</code>.</li>
-<li><code>clamp(x, lo, hi)</code> - <code>x</code> limited to <code>[lo, hi]</code>.</li>
-</ul>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>assert</code></td>
+<td><code>assert(cond: bool, msg?: String)</code></td>
+<td>Panic when <code>cond</code> is false.</td>
+</tr>
+<tr>
+<td><code>assert_eq</code></td>
+<td><code>assert_eq(a, b, msg?: String)</code></td>
+<td>Panic when <code>a != b</code>; include both values in the failure text.</td>
+</tr>
+</tbody>
+</table>
+<p>Use <code>todo!</code> for unfinished code. There is no <code>todo()</code> function.</p>
+<h2 id="scalar-helpers">Scalar helpers<a class="headerlink" href="#scalar-helpers" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>min</code></td>
+<td><code>min(a, b) -&gt; T</code></td>
+<td>Return the smaller comparable scalar.</td>
+</tr>
+<tr>
+<td><code>max</code></td>
+<td><code>max(a, b) -&gt; T</code></td>
+<td>Return the larger comparable scalar.</td>
+</tr>
+<tr>
+<td><code>min</code></td>
+<td><code>min(xs) -&gt; Option&lt;T&gt;</code></td>
+<td>Return the smallest collection item, or <code>None</code> when empty.</td>
+</tr>
+<tr>
+<td><code>max</code></td>
+<td><code>max(xs) -&gt; Option&lt;T&gt;</code></td>
+<td>Return the largest collection item, or <code>None</code> when empty.</td>
+</tr>
+<tr>
+<td><code>clamp</code></td>
+<td><code>clamp(x, lo, hi) -&gt; T</code></td>
+<td>Limit <code>x</code> to the inclusive range <code>[lo, hi]</code>.</td>
+</tr>
+</tbody>
+</table>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">speed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">clamp</span><span class="p">(</span><span class="n">input</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">120</span><span class="p">)</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">better</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">max</span><span class="p">(</span><span class="n">score_a</span><span class="p">,</span><span class="w"> </span><span class="n">score_b</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="concurrency">Concurrency<a class="headerlink" href="#concurrency" title="Permanent link">&para;</a></h2>
-<ul>
-<li><code>go expr</code> - statement keyword: run <code>expr</code> on a goroutine,
-  fire-and-forget.</li>
-<li><code>spawn(f)</code> - run <code>f</code> on a goroutine and get a <code>JoinHandle&lt;T&gt;</code>;
-  <code>handle.join()</code> blocks for <code>Result&lt;T, String&gt;</code> (<code>Err</code> carries the
-  panic message if the goroutine panicked).</li>
-</ul>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>go</code></td>
+<td><code>go expr</code></td>
+<td>Run <code>expr</code> on a goroutine and discard its result.</td>
+</tr>
+<tr>
+<td><code>spawn</code></td>
+<td><code>spawn(f) -&gt; JoinHandle&lt;T&gt;</code></td>
+<td>Run <code>f</code> on a goroutine and return a join handle.</td>
+</tr>
+<tr>
+<td><code>join</code></td>
+<td><code>handle.join() -&gt; Result&lt;T, String&gt;</code></td>
+<td>Wait for a spawned goroutine. <code>Err</code> carries the panic message.</td>
+</tr>
+</tbody>
+</table>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">h</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">spawn</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">heavy_compute</span><span class="p">())</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">match</span><span class="w"> </span><span class="n">h</span><span class="p">.</span><span class="n">join</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nb">Ok</span><span class="p">(</span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{v}&quot;</span><span class="p">),</span>
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="fm">eprintln!</span><span class="p">(</span><span class="s">&quot;worker panicked: {e}&quot;</span><span class="p">),</span>
 <a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="p">}</span>
 </code></pre></div>
-<p>Channels, <code>Mutex</code>, and <code>WaitGroup</code> come from <code>std::sync</code>, but the
-<code>Sender</code> / <code>Receiver</code> / <code>Mutex</code> / <code>WaitGroup</code> <em>type names</em> resolve
-without an import when they appear in signatures.</p>
-<h2 id="serialization-synthesized-per-struct">Serialization (synthesized per struct)<a class="headerlink" href="#serialization-synthesized-per-struct" title="Permanent link">&para;</a></h2>
-<p>Every user <code>struct</code> automatically gets free functions callable with
-a turbofish - no import, no derive attribute:</p>
+<p><code>Sender</code>, <code>Receiver</code>, <code>Mutex</code>, and <code>WaitGroup</code> type names resolve in
+signatures without imports. Their constructors and helpers live in <code>std::sync</code>.</p>
+<h2 id="serialization">Serialization<a class="headerlink" href="#serialization" title="Permanent link">&para;</a></h2>
+<p>Every user <code>struct</code> gets strict typed codecs. No derive attribute needed.</p>
 <table>
 <thead>
 <tr>
-<th>Function</th>
-<th>Returns</th>
+<th>Name</th>
+<th>Signature</th>
+<th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>from_json::&lt;T&gt;(&amp;text)</code></td>
-<td><code>Result&lt;T, errors::Error&gt;</code></td>
+<td><code>from_json</code></td>
+<td><code>from_json::&lt;T&gt;(&amp;text) -&gt; Result&lt;T, errors::Error&gt;</code></td>
+<td>Decode JSON into <code>T</code>; report missing fields and type mismatches.</td>
 </tr>
 <tr>
-<td><code>to_json::&lt;T&gt;(&amp;value)</code></td>
-<td><code>Result&lt;String, errors::Error&gt;</code></td>
+<td><code>to_json</code></td>
+<td><code>to_json::&lt;T&gt;(&amp;value) -&gt; Result&lt;String, errors::Error&gt;</code></td>
+<td>Encode <code>T</code> as JSON text.</td>
 </tr>
 <tr>
-<td><code>from_toml::&lt;T&gt;</code> / <code>to_toml::&lt;T&gt;</code></td>
-<td>same shapes, TOML</td>
+<td><code>from_toml</code></td>
+<td><code>from_toml::&lt;T&gt;(&amp;text) -&gt; Result&lt;T, errors::Error&gt;</code></td>
+<td>Decode TOML into <code>T</code>; report schema errors.</td>
 </tr>
 <tr>
-<td><code>from_yaml::&lt;T&gt;</code> / <code>to_yaml::&lt;T&gt;</code></td>
-<td>same shapes, YAML</td>
+<td><code>to_toml</code></td>
+<td><code>to_toml::&lt;T&gt;(&amp;value) -&gt; Result&lt;String, errors::Error&gt;</code></td>
+<td>Encode <code>T</code> as TOML text.</td>
+</tr>
+<tr>
+<td><code>from_yaml</code></td>
+<td><code>from_yaml::&lt;T&gt;(&amp;text) -&gt; Result&lt;T, errors::Error&gt;</code></td>
+<td>Decode YAML into <code>T</code>; report schema errors.</td>
+</tr>
+<tr>
+<td><code>to_yaml</code></td>
+<td><code>to_yaml::&lt;T&gt;(&amp;value) -&gt; Result&lt;String, errors::Error&gt;</code></td>
+<td>Encode <code>T</code> as YAML text.</td>
 </tr>
 </tbody>
 </table>
@@ -2055,36 +2209,63 @@ a turbofish - no import, no derive attribute:</p>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">cfg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">from_json</span>::<span class="o">&lt;</span><span class="n">Config</span><span class="o">&gt;</span><span class="p">(</span><span class="o">&amp;</span><span class="n">text</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
-<p>Decoding is strict: missing required fields and type mismatches
-return <code>Err</code> naming the offending field. The dynamic surface
-(<code>json::parse</code>, <code>json::get</code>, <code>json::as_i64</code>, …) lives in
-<code>std::encoding::json</code> for documents whose shape is not known at
+<p>Use <code>std::encoding::json</code> for dynamic JSON where the shape is not known at
 compile time.</p>
-<h2 id="types">Types<a class="headerlink" href="#types" title="Permanent link">&para;</a></h2>
-<p>Always-in-scope type names:</p>
-<ul>
-<li>Primitives: <code>bool</code>, <code>char</code>, <code>i8</code>…<code>i64</code>, <code>u8</code>…<code>u64</code>, <code>isize</code>,
-  <code>usize</code>, <code>f32</code>, <code>f64</code>, <code>String</code>, <code>str</code>.</li>
-<li>Wrappers: <code>Option&lt;T&gt;</code> (<code>Some</code> / <code>None</code>), <code>Result&lt;T, E&gt;</code>
-  (<code>Ok</code> / <code>Err</code>), <code>Box&lt;T&gt;</code>, <code>Rc&lt;T&gt;</code>, <code>Arc&lt;T&gt;</code> (all three are
-  transparent in a managed runtime - spelling compatibility with
-  Rust), <code>Weak&lt;T&gt;</code>.</li>
-<li>Collections: <code>Vec&lt;T&gt;</code>, <code>HashMap&lt;K, V&gt;</code>, <code>HashSet&lt;T&gt;</code>,
-  <code>BTreeMap&lt;K, V&gt;</code>, <code>VecDeque&lt;T&gt;</code>, <code>Range</code>.</li>
-<li>Concurrency: <code>Sender&lt;T&gt;</code>, <code>Receiver&lt;T&gt;</code>, <code>Mutex&lt;T&gt;</code>,
-  <code>WaitGroup</code>, <code>JoinHandle&lt;T&gt;</code>.</li>
-</ul>
-<h2 id="statement-keywords-with-runtime-effects">Statement keywords with runtime effects<a class="headerlink" href="#statement-keywords-with-runtime-effects" title="Permanent link">&para;</a></h2>
-<p>Not functions, but also available everywhere:</p>
-<ul>
-<li><code>defer expr</code> - run <code>expr</code> on every exit path of the enclosing
-  block.</li>
-<li><code>arena { … }</code> - bump-allocate everything created inside; free it
-  wholesale at the block's exit (<a href="../memory/">memory model</a>).</li>
-<li><code>select { … }</code> - multiplex channel operations.</li>
-</ul>
-<p>A user definition with the same name shadows any prelude entry -
-prelude bindings never collide with your code.</p>
+<h2 id="always-in-scope-types">Always-in-scope types<a class="headerlink" href="#always-in-scope-types" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>Names</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Primitives</td>
+<td><code>bool</code>, <code>char</code>, signed and unsigned integers, <code>isize</code>, <code>usize</code>, <code>f32</code>, <code>f64</code>, <code>String</code>, <code>str</code></td>
+<td>Scalar and text types.</td>
+</tr>
+<tr>
+<td>Wrappers</td>
+<td><code>Option&lt;T&gt;</code>, <code>Result&lt;T, E&gt;</code>, <code>Box&lt;T&gt;</code>, <code>Rc&lt;T&gt;</code>, <code>Arc&lt;T&gt;</code>, <code>Weak&lt;T&gt;</code></td>
+<td>Sum types and managed-runtime compatibility wrappers.</td>
+</tr>
+<tr>
+<td>Collections</td>
+<td><code>Vec&lt;T&gt;</code>, <code>HashMap&lt;K, V&gt;</code>, <code>HashSet&lt;T&gt;</code>, <code>BTreeMap&lt;K, V&gt;</code>, <code>VecDeque&lt;T&gt;</code>, <code>Range</code></td>
+<td>Core collection types.</td>
+</tr>
+<tr>
+<td>Concurrency</td>
+<td><code>Sender&lt;T&gt;</code>, <code>Receiver&lt;T&gt;</code>, <code>Mutex&lt;T&gt;</code>, <code>WaitGroup</code>, <code>JoinHandle&lt;T&gt;</code></td>
+<td>Channel, lock, wait, and goroutine-handle types.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="runtime-statements">Runtime statements<a class="headerlink" href="#runtime-statements" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Statement</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>defer expr</code></td>
+<td>Run <code>expr</code> on every exit path of the enclosing block.</td>
+</tr>
+<tr>
+<td><code>arena { ... }</code></td>
+<td>Allocate values inside a region and free them when the block exits.</td>
+</tr>
+<tr>
+<td><code>select { ... }</code></td>
+<td>Wait on multiple channel operations.</td>
+</tr>
+</tbody>
+</table>
 
 
 

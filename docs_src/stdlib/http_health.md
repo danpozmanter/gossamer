@@ -19,5 +19,5 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Health`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_health.rs) | `type` — see the source declaration | Aggregates a set of named probes into a single status. |
-| [`Probe`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_health.rs) | `trait` — see the source declaration | One health check returning Ok or Err with a short message. |
+| [`Health`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_health.rs) | `type Health` | Aggregates a set of named probes into a single status. |
+| [`Probe`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_health.rs) | `trait Probe` | One health check returning Ok or Err with a short message. |

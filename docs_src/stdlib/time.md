@@ -30,9 +30,9 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Duration`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `type` — see the source declaration | Difference between two `Instant`s. |
-| [`Instant`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `type` — see the source declaration | Monotonic point-in-time. |
-| [`SystemTime`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `type` — see the source declaration | Wall-clock point-in-time. |
+| [`Duration`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `type Duration` | Difference between two `Instant`s. |
+| [`Instant`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `type Instant` | Monotonic point-in-time. |
+| [`SystemTime`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `type SystemTime` | Wall-clock point-in-time. |
 | [`format_rfc3339`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `fn format_rfc3339(ms: i64) -> Result<String, errors::Error>` | Formats a `SystemTime` in RFC 3339 (`YYYY-MM-DDTHH:MM:SSZ`). |
 | [`monotonic_ms`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `fn monotonic_ms() -> i64` | Monotonic clock reading in milliseconds. |
 | [`monotonic_nanos`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `fn monotonic_nanos() -> i64` | Monotonic clock reading in nanoseconds. |

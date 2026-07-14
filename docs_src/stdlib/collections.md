@@ -22,11 +22,11 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`BTreeMap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type` — see the source declaration | Ordered map. |
-| [`HashMap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type` — see the source declaration | Hash map backed by the swiss-table layout. |
-| [`HashSet`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type` — see the source declaration | Unordered set built on top of `HashMap`. |
-| [`Vec`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type` — see the source declaration | Growable contiguous sequence. |
-| [`VecDeque`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type` — see the source declaration | Double-ended queue backed by a ring buffer. |
+| [`BTreeMap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BTreeMap` | Ordered map. |
+| [`HashMap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type HashMap` | Hash map backed by the swiss-table layout. |
+| [`HashSet`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type HashSet` | Unordered set built on top of `HashMap`. |
+| [`Vec`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Vec` | Growable contiguous sequence. |
+| [`VecDeque`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type VecDeque` | Double-ended queue backed by a ring buffer. |
 | [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn len(xs: Deque<i64>) -> i64` | Element count. |
 | [`peek_back`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek_back(xs: Deque<i64>) -> i64` | Back element, or 0 if empty. |
 | [`peek_front`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek_front(xs: Deque<i64>) -> i64` | Front element, or 0 if empty. |

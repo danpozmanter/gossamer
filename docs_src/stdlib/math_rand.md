@@ -18,4 +18,4 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Rng`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/mathrand.rs) | `type` — see the source declaration | SplitMix64-based RNG. |
+| [`Rng`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/mathrand.rs) | `type Rng` | SplitMix64-based RNG. |

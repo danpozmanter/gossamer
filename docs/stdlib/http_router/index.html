@@ -1847,17 +1847,17 @@
 <tbody>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs"><code>Handler</code></a></td>
-<td><code>trait</code> — see the source declaration</td>
+<td><code>trait Handler</code></td>
 <td>Anything callable as <code>Fn(&amp;Request, &amp;Params) -&gt; Response</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs"><code>Params</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type Params</code></td>
 <td>Captured path parameters. Read inside a handler with <code>r.path_value(name) -&gt; String</code>; returns <code>""</code> for an undeclared name. All tiers.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_router.rs"><code>Router</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type Router</code></td>
 <td>Routing table. Build with <code>Router::new()</code>, register routes via the verb methods, then pass to <code>http::serve</code>. Verb methods return the router so they chain with <code>\|&gt;</code>.</td>
 </tr>
 <tr>

@@ -22,7 +22,7 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Runner`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs) | `type` — see the source declaration | Sub-test collector. |
+| [`Runner`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs) | `type Runner` | Sub-test collector. |
 | [`check`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs) | `fn check(cond: bool, message: String) -> Result<(), errors::Error>` | Asserts a condition. |
 | [`check_eq`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs) | `fn check_eq<T: Debug + Eq>(left: T, right: T, message: String) -> Result<(), errors::Error>` | Asserts equality, rendering a diff on failure. |
 | [`check_ok`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/testing.rs) | `fn check_ok<T, E: Debug>(result: Result<T, E>, message: String) -> Result<T, errors::Error>` | Asserts a Result is Ok, recording without panicking. |

@@ -20,8 +20,8 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Director`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_proxy.rs) | `type` — see the source declaration | Fn(&mut Request) request mutator (Rust-side). |
-| [`Proxy`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_proxy.rs) | `type` — see the source declaration | Reverse-proxy handler (Rust-side). |
+| [`Director`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_proxy.rs) | `type Director` | Fn(&mut Request) request mutator (Rust-side). |
+| [`Proxy`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_proxy.rs) | `type Proxy` | Reverse-proxy handler (Rust-side). |
 | [`forward`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_proxy.rs) | `fn forward(url: String, method: String, body: Vec<u8>) -> Result<http::Response, errors::Error>` | One-shot upstream forward: `(url, method, body) -> Result<Response, Error>`. Interp tier. |
 
 

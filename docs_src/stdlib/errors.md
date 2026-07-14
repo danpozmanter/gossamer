@@ -23,7 +23,7 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Error`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/errors.rs) | `type` — see the source declaration | Reference-counted error value with optional cause chain. |
+| [`Error`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/errors.rs) | `type Error` | Reference-counted error value with optional cause chain. |
 | [`is`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/errors.rs) | `fn is(error: errors::Error, needle: String) -> bool` | Checks whether an error's chain contains a matching message. |
 | [`join`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/errors.rs) | `fn join(errors: Vec<errors::Error>) -> Option<errors::Error>` | Joins a list of errors into one; messages are joined with "; " (None for an empty list). |
 | [`new`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/errors.rs) | `fn new(message: String) -> errors::Error` | Constructs a fresh error from a message. |

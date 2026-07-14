@@ -50,8 +50,8 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Int`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math/big.rs) | `type` — see the source declaration | Arbitrary-precision signed integer. |
-| [`Uint`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math/big.rs) | `type` — see the source declaration | Arbitrary-precision unsigned integer. |
+| [`Int`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math/big.rs) | `type Int` | Arbitrary-precision signed integer. |
+| [`Uint`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math/big.rs) | `type Uint` | Arbitrary-precision unsigned integer. |
 | [`factorial`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math/big.rs) | `fn factorial(n: i64) -> big::Uint` | Computes n! as an Int. |
 | [`int_abs`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math/big.rs) | `fn int_abs(value: big::Int) -> big::Int` | Absolute value of an Int. |
 | [`int_add`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/math/big.rs) | `fn int_add(a: big::Int, b: big::Int) -> big::Int` | Sum of two Ints. |

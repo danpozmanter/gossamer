@@ -1,8 +1,19 @@
 # Changelog
 
+## 0.28.2 - Stability, correctness, and docs
+
+- Made compiled callback teardown wait for in-flight calls before 
+bindings may release their contexts.
+- Hardened atomic stdlib writes against temp-file collisions and 
+Unix rename durability loss.
+- Docs - additional details & gaps filled.
+
 ## 0.28.1 - Compiled HTTP stability
 
-- Restored compiled HTTP, TLS, and WebSocket keep-alive throughput by moving accepted connections off the single global scheduler-poller lock. Connection admission remains bounded, sockets retain read/write deadlines, and thread-admission failures return `503`.
+- Restored compiled HTTP, TLS, and WebSocket keep-alive throughput by moving
+accepted connections off the single global scheduler-poller lock. 
+Connection admission remains bounded, sockets retain read/write deadlines,
+and thread-admission failures return `503`.
 
 ## 0.28.0 - Correctness, optimization, and tooling
 

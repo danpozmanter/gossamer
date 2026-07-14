@@ -22,7 +22,7 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Url`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/url.rs) | `type` — see the source declaration | Parsed URL. |
+| [`Url`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/url.rs) | `type Url` | Parsed URL. |
 | [`path_escape`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/url.rs) | `fn path_escape(text: String) -> String` | Percent-encodes a URL path segment. |
 | [`path_unescape`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/url.rs) | `fn path_unescape(text: String) -> String` | Inverse of `path_escape`. |
 | [`query_escape`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/url.rs) | `fn query_escape(text: String) -> String` | Percent-encodes a query parameter. |

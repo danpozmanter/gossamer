@@ -40,8 +40,8 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`File`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `type` — see the source declaration | Streaming file handle; supports read, read_to_string, write, flush, and close. |
-| [`OpenOptions`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `type` — see the source declaration | Builder for opening files with read/write/append/create/truncate flags. |
+| [`File`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `type File` | Streaming file handle; supports read, read_to_string, write, flush, and close. |
+| [`OpenOptions`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `type OpenOptions` | Builder for opening files with read/write/append/create/truncate flags. |
 | [`canonicalize`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `fn canonicalize(path: String) -> Result<String, io::Error>` | Resolves a path to an absolute, symlink-free canonical form. |
 | [`copy`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `fn copy(src: String, dst: String) -> Result<i64, io::Error>` | Copies a file, creating parent dirs as needed. |
 | [`create`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `fn create(path: String) -> Result<fs::File, io::Error>` | Creates or truncates a file and returns a streaming file handle. |

@@ -18,4 +18,4 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Context`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/context.rs) | `type` — see the source declaration | Cancellation-aware context handle. |
+| [`Context`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/context.rs) | `type Context` | Cancellation-aware context handle. |

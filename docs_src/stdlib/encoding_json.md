@@ -38,10 +38,10 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Deserialize`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs) | `trait` — see the source declaration | Trait for parsing a value from JSON. |
-| [`Error`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs) | `type` — see the source declaration | Error raised by encoding/decoding operations. |
-| [`Serialize`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs) | `trait` — see the source declaration | Trait for converting a value to JSON. |
-| [`Value`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs) | `type` — see the source declaration | Dynamically typed JSON value. |
+| [`Deserialize`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs) | `trait Deserialize` | Trait for parsing a value from JSON. |
+| [`Error`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs) | `type Error` | Error raised by encoding/decoding operations. |
+| [`Serialize`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs) | `trait Serialize` | Trait for converting a value to JSON. |
+| [`Value`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs) | `type Value` | Dynamically typed JSON value. |
 | [`as_array`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs) | `fn as_array(value: json::Value) -> Option<Vec<json::Value>>` | Reads a dynamic Value as an array of Values. |
 | [`as_bool`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs) | `fn as_bool(value: json::Value) -> Option<bool>` | Reads a dynamic Value as Option<bool>. |
 | [`as_f64`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding.rs) | `fn as_f64(value: json::Value) -> Option<f64>` | Reads a dynamic Value as Option<f64>. |

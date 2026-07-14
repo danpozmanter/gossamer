@@ -18,4 +18,4 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Lifecycle`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/lifecycle.rs) | `type` — see the source declaration | Registers shutdown hooks, listens for SIGTERM / SIGINT, and notifies systemd. |
+| [`Lifecycle`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/lifecycle.rs) | `type Lifecycle` | Registers shutdown hooks, listens for SIGTERM / SIGINT, and notifies systemd. |

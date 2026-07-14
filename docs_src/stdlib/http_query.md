@@ -18,4 +18,4 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Query`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_query.rs) | `type` — see the source declaration | Parsed query string with typed get / get_all / contains. |
+| [`Query`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_query.rs) | `type Query` | Parsed query string with typed get / get_all / contains. |

@@ -28,9 +28,9 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Child`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs) | `type` — see the source declaration | Handle to a still-running child supporting wait / kill. |
-| [`Pipeline`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs) | `type` — see the source declaration | Multi-stage subprocess pipeline (stdout-to-stdin chain). |
-| [`Signal`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs) | `type` — see the source declaration | Portable signal selector (Term/Kill/Stop/Cont/Hup/Int/Usr1/Usr2/Pipe/Quit). |
+| [`Child`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs) | `type Child` | Handle to a still-running child supporting wait / kill. |
+| [`Pipeline`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs) | `type Pipeline` | Multi-stage subprocess pipeline (stdout-to-stdin chain). |
+| [`Signal`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs) | `type Signal` | Portable signal selector (Term/Kill/Stop/Cont/Hup/Int/Usr1/Usr2/Pipe/Quit). |
 | [`kill`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs) | `fn kill(pid: i64) -> bool` | Best-effort SIGTERM by pid; returns true on success. |
 | [`kill_group`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs) | `fn kill_group(pid: i64) -> bool` | Send SIGTERM to the entire process group (Unix); best-effort TerminateProcess on Windows. |
 | [`pipeline_run`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/exec.rs) | `fn pipeline_run(commands: Vec<String>) -> Result<process::Output, errors::Error>` | Run a Vec<String> of shell-tokenised commands as a stdout-to-stdin pipeline. |

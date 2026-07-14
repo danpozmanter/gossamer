@@ -20,9 +20,9 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
 | [`arch`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `fn arch() -> String` | Returns the target CPU architecture (e.g. "x86_64"). |
-| [`Child`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `type` — see the source declaration | Handle to a still-running child supporting wait / kill. |
-| [`Pipeline`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `type` — see the source declaration | Multi-stage subprocess pipeline (stdout-to-stdin chain). |
-| [`Signal`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `type` — see the source declaration | Portable signal selector (Term/Kill/Stop/Cont/Hup/Int/Usr1/Usr2/Pipe/Quit). |
+| [`Child`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `type Child` | Handle to a still-running child supporting wait / kill. |
+| [`Pipeline`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `type Pipeline` | Multi-stage subprocess pipeline (stdout-to-stdin chain). |
+| [`Signal`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `type Signal` | Portable signal selector (Term/Kill/Stop/Cont/Hup/Int/Usr1/Usr2/Pipe/Quit). |
 | [`kill`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `fn kill(pid: i64) -> bool` | Best-effort SIGTERM by pid; returns true on success. |
 | [`kill_group`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `fn kill_group(pid: i64) -> bool` | Send SIGTERM to the entire process group (Unix); best-effort TerminateProcess on Windows. |
 | [`pipeline_run`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `fn pipeline_run(commands: Vec<String>) -> Result<process::Output, errors::Error>` | Run a Vec<String> of shell-tokenised commands as a stdout-to-stdin pipeline. |
@@ -32,8 +32,8 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 | [`spawn_piped`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `fn spawn_piped(program: String, args: Vec<String>) -> Result<process::Child, errors::Error>` | Spawns a child with piped stdin/stdout; returns Result<Child, errors::Error>. The Child's write_stdin / close_stdin / read_line / read_stdout / wait / kill methods drive it interactively. |
 | [`wait_timeout`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `fn wait_timeout(pid: i64, ms: i64) -> i64` | Wait up to N ms for a pid to exit; returns exit code, -1 on timeout, -2 on error. |
 | [`family`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `fn family() -> String` | Returns "unix" or "windows" for the running OS family. |
-| [`Notifier`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `type` — see the source declaration | Returned by `on(sig)`; supports wait / try_wait. |
-| [`Signal`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `type` — see the source declaration | Opaque signal name; constructors live in `sigs`. |
+| [`Notifier`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `type Notifier` | Returned by `on(sig)`; supports wait / try_wait. |
+| [`Signal`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `type Signal` | Opaque signal name; constructors live in `sigs`. |
 | [`on`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `fn on(signum: i64) -> os::signal::Notifier` | Subscribes to a signal; returns a Notifier. |
 | [`try_wait`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `fn try_wait(notifier: os::signal::Notifier) -> bool` | Non-blocking poll: returns true if the subscribed signal has fired. |
 | [`wait`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/os.rs) | `fn wait(notifier: os::signal::Notifier) -> ()` | Blocks the calling goroutine until the subscribed signal fires. |

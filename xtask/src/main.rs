@@ -517,11 +517,13 @@ fn render_stdlib_page(modules: &[StdModule]) -> String {
     writeln!(out).unwrap();
     writeln!(
         out,
-        "Gossamer's standard library ships as a Rust-implemented host\n\
+        "This is the Gossamer {version} standard library reference.\n\
+         Gossamer's standard library ships as a Rust-implemented host\n\
          crate (`gossamer-std`) with a manifest describing every\n\
          module and item. This page is auto-generated from that\n\
          manifest via `cargo xtask docs-stdlib`; hand edits are\n\
-         overwritten on the next regeneration."
+         overwritten on the next regeneration.",
+        version = env!("CARGO_PKG_VERSION")
     )
     .unwrap();
     writeln!(out).unwrap();

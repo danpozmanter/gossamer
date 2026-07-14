@@ -27,10 +27,10 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Alg`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs) | `type` — see the source declaration | Signing algorithm: HS256 / HS384 / HS512 / ES256 / EdDSA. |
-| [`Claims`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs) | `type` — see the source declaration | Standard registered claims plus a free-form custom map. |
-| [`Header`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs) | `type` — see the source declaration | JWS / JWT header (alg, kid, typ). |
-| [`VerifyOpts`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs) | `type` — see the source declaration | Expected issuer / audience / clock leeway used by verify. |
+| [`Alg`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs) | `type Alg` | Signing algorithm: HS256 / HS384 / HS512 / ES256 / EdDSA. |
+| [`Claims`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs) | `type Claims` | Standard registered claims plus a free-form custom map. |
+| [`Header`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs) | `type Header` | JWS / JWT header (alg, kid, typ). |
+| [`VerifyOpts`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs) | `type VerifyOpts` | Expected issuer / audience / clock leeway used by verify. |
 | [`sign_eddsa`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs) | `fn sign_eddsa(claims_json: String, signing_key_pem: String) -> Result<String, errors::Error>` | Sign with Ed25519 from a PEM-encoded private key. |
 | [`sign_es256`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs) | `fn sign_es256(claims_json: String, signing_key_pem: String) -> Result<String, errors::Error>` | Sign with ECDSA P-256 from a PEM-encoded private key. |
 | [`sign_hs`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/jwt.rs) | `fn sign_hs(alg: String, claims_json: String, key: Vec<u8>) -> Result<String, errors::Error>` | Sign claims with HMAC-SHA family using a shared key. |

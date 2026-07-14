@@ -27,7 +27,7 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Pattern`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/regex.rs) | `type` — see the source declaration | Compiled pattern handle returned by `compile`. |
+| [`Pattern`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/regex.rs) | `type Pattern` | Compiled pattern handle returned by `compile`. |
 | [`captures`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/regex.rs) | `fn captures(pattern: regex::Pattern, text: String) -> Option<Vec<Option<String>>>` | Returns capture groups for the first match; index 0 is the full match. |
 | [`captures_all`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/regex.rs) | `fn captures_all(pattern: regex::Pattern, text: String) -> Vec<Vec<Option<String>>>` | Returns capture groups for every match in the text. |
 | [`compile`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/regex.rs) | `fn compile(pattern: String) -> Result<regex::Pattern, errors::Error>` | Parses a pattern into a reusable `Pattern` or returns an `Err`. |

@@ -29,9 +29,9 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Error`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs) | `type` — see the source declaration | Io / Protocol / BadHandshake. |
-| [`Message`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs) | `type` — see the source declaration | Text / Binary / Ping / Pong / Close. |
-| [`WebSocket`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs) | `type` — see the source declaration | Accepted WebSocket connection (Rust-side framing). |
+| [`Error`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs) | `type Error` | Io / Protocol / BadHandshake. |
+| [`Message`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs) | `type Message` | Text / Binary / Ping / Pong / Close. |
+| [`WebSocket`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs) | `type WebSocket` | Accepted WebSocket connection (Rust-side framing). |
 | [`accept`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs) | `fn accept(request: http::Request) -> Result<http::websocket::Conn, errors::Error>` | Upgrade an incoming Request to a WebSocket (Rust-side). |
 | [`accept_key`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs) | `fn accept_key(key: String) -> String` | Compute RFC 6455 Sec-WebSocket-Accept from a client nonce. Available in interp + compiled. |
 | [`close`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_websocket.rs) | `fn close(conn: http::websocket::Conn) -> Result<(), errors::Error>` | close(ws) -> Result<(), Error>: send a close frame and release the handle. |

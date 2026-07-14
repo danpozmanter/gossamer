@@ -23,8 +23,8 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Client`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_native_client.rs) | `type` — see the source declaration | Native h1 client (Rust-side; full builder surface). |
-| [`Error`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_native_client.rs) | `type` — see the source declaration | Connect / Tls / Http / Redirect / Timeout / Io. |
+| [`Client`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_native_client.rs) | `type Client` | Native h1 client (Rust-side; full builder surface). |
+| [`Error`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_native_client.rs) | `type Error` | Connect / Tls / Http / Redirect / Timeout / Io. |
 | [`delete`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_native_client.rs) | `fn delete(url: String) -> Result<http::Response, errors::Error>` | One-shot DELETE → Result<Response, Error>. Interp tier. |
 | [`get`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_native_client.rs) | `fn get(url: String) -> Result<http::Response, errors::Error>` | One-shot GET → Result<Response, Error>. Interp tier (compiled tier shares http::get). |
 | [`post`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_native_client.rs) | `fn post(url: String, body: Vec<u8>, content_type: String) -> Result<http::Response, errors::Error>` | One-shot POST: `(url, body, content_type)`. Interp tier. |

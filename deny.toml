@@ -67,6 +67,10 @@ skip = [
     # `cpufeatures 0.2` reaches the workspace via sha2 / aes /
     # chacha20; `0.3` arrives via blake3. Both are RustCrypto deps.
     { name = "cpufeatures", version = "0.2.17" },
+    # `chacha20poly1305 0.10` still depends on `chacha20 0.9`;
+    # quinn-proto's rand 0.10 path depends on `chacha20 0.10`.
+    # Drop when RustCrypto's AEAD stack moves to chacha20 0.10.
+    { name = "chacha20", version = "0.9.1" },
     # `socket2 0.5` vs `0.6` - quinn 0.11 pulls 0.5, h2 / rustls pull
     # 0.6. Drop the pin when quinn upgrades.
     { name = "socket2", version = "0.5.10" },

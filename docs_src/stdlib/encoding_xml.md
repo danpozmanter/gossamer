@@ -23,9 +23,9 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Event`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/xml.rs) | `type` — see the source declaration | Start / End / Text / CData / Comment / Eof. |
-| [`Reader`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/xml.rs) | `type` — see the source declaration | Pull-style XML reader. |
-| [`Writer`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/xml.rs) | `type` — see the source declaration | Streaming XML writer. |
+| [`Event`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/xml.rs) | `type Event` | Start / End / Text / CData / Comment / Eof. |
+| [`Reader`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/xml.rs) | `type Reader` | Pull-style XML reader. |
+| [`Writer`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/xml.rs) | `type Writer` | Streaming XML writer. |
 | [`encode`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/xml.rs) | `fn encode(value: json::Value) -> String` | Serialises a sequence of events to XML text. |
 | [`escape`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/xml.rs) | `fn escape(text: String) -> String` | Escapes XML metacharacters in text. |
 | [`parse`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/encoding/xml.rs) | `fn parse(source: String) -> Result<json::Value, errors::Error>` | Parses an XML document into a Vec of events. |

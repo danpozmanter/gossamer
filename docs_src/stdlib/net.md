@@ -21,9 +21,9 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`TcpListener`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `type` — see the source declaration | Accepts incoming TCP connections. |
-| [`TcpStream`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `type` — see the source declaration | Bidirectional TCP byte stream; supports read/write, TLS upgrade, close, and read/write timeout setters. |
-| [`UdpSocket`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `type` — see the source declaration | Bound UDP socket for datagram I/O. |
+| [`TcpListener`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `type TcpListener` | Accepts incoming TCP connections. |
+| [`TcpStream`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `type TcpStream` | Bidirectional TCP byte stream; supports read/write, TLS upgrade, close, and read/write timeout setters. |
+| [`UdpSocket`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `type UdpSocket` | Bound UDP socket for datagram I/O. |
 | [`is_loopback`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `fn is_loopback(addr: String) -> bool` | Reports whether the IP is a loopback address. |
 | [`is_multicast`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `fn is_multicast(addr: String) -> bool` | Reports whether the IP is a multicast address. |
 | [`is_private`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `fn is_private(addr: String) -> bool` | Reports whether the IP is in a private range. |
@@ -46,7 +46,7 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 | [`join_addr_port`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `fn join_addr_port(addr: String, port: i64) -> String` | Compose an addr:port string from host and port, or empty on failure. |
 | [`normalize`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `fn normalize(addr: String) -> Result<String, errors::Error>` | Canonical lowercase form of the IP, or empty string on parse failure. |
 | [`port_of`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `fn port_of(addr_port: String) -> i64` | Port portion of an addr:port string, or -1 on parse failure. |
-| [`Url`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `type` — see the source declaration | Parsed URL. |
+| [`Url`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `type Url` | Parsed URL. |
 | [`path_escape`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `fn path_escape(text: String) -> String` | Percent-encodes a URL path segment. |
 | [`path_unescape`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `fn path_unescape(text: String) -> String` | Inverse of `path_escape`. |
 | [`query_escape`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/net.rs) | `fn query_escape(text: String) -> String` | Percent-encodes a query parameter. |

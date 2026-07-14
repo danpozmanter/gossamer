@@ -1869,67 +1869,67 @@
 <tbody>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/database/sql/mod.rs"><code>Conn</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type Conn</code></td>
 <td>Open database connection. <code>prepare</code>, <code>execute</code>, <code>query</code>, <code>query_each</code>, <code>begin</code>, <code>begin_with</code>, <code>ping</code>, <code>execute_many</code>, <code>execute_ctx</code>, <code>query_ctx</code>, <code>interrupt</code>, <code>close</code> (closing sweeps any cursors still open on the connection).</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/database/sql/mod.rs"><code>Driver</code></a></td>
-<td><code>trait</code> — see the source declaration</td>
+<td><code>trait Driver</code></td>
 <td>Host-side database driver contract. Rust bindings register implementations before the Gossamer program starts.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/database/sql/mod.rs"><code>Error</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type Error</code></td>
 <td>Driver error. <code>Error::driver(driver, msg)</code> builds one; <code>Error::PoolExhausted</code> and <code>Error::Cancelled</code> are variants.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/database/sql/mod.rs"><code>IsolationLevel</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type IsolationLevel</code></td>
 <td>Default / ReadUncommitted / ReadCommitted / RepeatableRead / Serializable. Passed to <code>Conn::begin_with</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/database/sql/mod.rs"><code>Pool</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type Pool</code></td>
 <td>Connection pool. <code>new</code>, <code>fill</code>, <code>get</code> (blocks up to <code>acquire_timeout</code>), <code>len</code>. Cheap to clone.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/database/sql/mod.rs"><code>PoolConfig</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type PoolConfig</code></td>
 <td>Pool tuning: <code>min</code>, <code>max</code>, <code>idle_timeout</code>, <code>max_lifetime</code>, <code>acquire_timeout</code>, <code>statement_cache</code>. Fluent <code>with_*</code> builders.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/database/sql/mod.rs"><code>PooledConn</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type PooledConn</code></td>
 <td>Connection checked out from a <code>Pool</code>; returned on drop.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/database/sql/mod.rs"><code>Row</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type Row</code></td>
 <td>Current row inside a <code>Rows</code> walk; valid until the cursor advances or closes. Typed <code>get_i64</code>, <code>get_f64</code>, <code>get_bool</code>, <code>get_text</code>, <code>get_blob</code> plus <code>get_opt_*</code> and <code>is_null</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/database/sql/mod.rs"><code>Rows</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type Rows</code></td>
 <td>Result-set cursor. <code>next_row</code>, <code>columns</code>, <code>close</code> (idempotent). Advancing frees the previous Row; a full drain reclaims everything. For early exits, <code>defer rows.close()</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/database/sql/mod.rs"><code>Select</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type Select</code></td>
 <td>Fluent SELECT builder. <code>Select::new(table).columns(&amp;[..]).where_eq(col, sql::Value::Int(...))...render() -&gt; String</code>; <code>.params()</code> returns the bound parameters. Emits Postgres-style <code>$N</code> placeholders.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/database/sql/mod.rs"><code>Stmt</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type Stmt</code></td>
 <td>Prepared statement.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/database/sql/mod.rs"><code>Tx</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type Tx</code></td>
 <td>Active transaction. <code>commit</code>, <code>rollback</code>, <code>savepoint</code>, <code>release_savepoint</code>, <code>rollback_to_savepoint</code>, <code>execute</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/database/sql/mod.rs"><code>Value</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type Value</code></td>
 <td>Bound or fetched value. Null / Bool / Int / Float / Text / Blob.</td>
 </tr>
 <tr>

@@ -1824,42 +1824,42 @@
 <tbody>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/trace.rs"><code>EndedSpan</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type EndedSpan</code></td>
 <td>Finalised span record; <code>to_otlp_json()</code> serialises for OTLP/HTTP export.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/trace.rs"><code>Span</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type Span</code></td>
 <td>Active span builder. Attributes, events, status; <code>end()</code> finalises and records.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/trace.rs"><code>SpanContext</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type SpanContext</code></td>
 <td>Request-scoped trace + span pair, propagated through <code>std::context</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/trace.rs"><code>SpanGuard</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type SpanGuard</code></td>
 <td>RAII guard returned by <code>enter_span</code>; restores the prior active span on drop.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/trace.rs"><code>SpanId</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type SpanId</code></td>
 <td>64-bit span identifier.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/trace.rs"><code>SpanStatus</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type SpanStatus</code></td>
 <td>Span outcome: Unset / Ok / Error(message).</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/trace.rs"><code>TraceId</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type TraceId</code></td>
 <td>128-bit trace identifier (W3C trace-context format).</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/trace.rs"><code>Tracer</code></a></td>
-<td><code>type</code> — see the source declaration</td>
+<td><code>type Tracer</code></td>
 <td>Process-level span sink. <code>start_span</code>, <code>ended_spans</code>, <code>set_global</code>.</td>
 </tr>
 </tbody>

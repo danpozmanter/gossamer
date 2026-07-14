@@ -394,14 +394,30 @@ struct CallbackEntry {
     /// result_out)` and returns a status code (0 = ok, non-zero
     /// = caller-defined error).
     invoke: extern "C" fn(*const u8, *const u8, u32, *mut u8) -> i32,
+    state: parking_lot::Mutex<CallbackState>,
+    idle: parking_lot::Condvar,
+}
+
+#[derive(Default)]
+struct CallbackState {
+    closing: bool,
+    active: usize,
 }
 
 static CALLBACK_TABLE: std::sync::OnceLock<
-    parking_lot::Mutex<std::collections::HashMap<u64, CallbackEntry>>,
+    parking_lot::Mutex<std::collections::HashMap<u64, std::sync::Arc<CallbackEntry>>>,
 > = std::sync::OnceLock::new();
 static NEXT_CALLBACK_HANDLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
-fn callback_table() -> &'static parking_lot::Mutex<std::collections::HashMap<u64, CallbackEntry>> {
+thread_local! {
+    // A callback may unregister itself to prevent future calls. It cannot wait
+    // for its own in-flight count without deadlocking, so that case only
+    // closes the handle; the binding must defer freeing `ctx` until return.
+    static ACTIVE_CALLBACKS: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn callback_table()
+-> &'static parking_lot::Mutex<std::collections::HashMap<u64, std::sync::Arc<CallbackEntry>>> {
     CALLBACK_TABLE.get_or_init(|| parking_lot::Mutex::new(std::collections::HashMap::new()))
 }
 
@@ -421,25 +437,39 @@ pub extern "C" fn gos_rt_callback_register(
         let handle = NEXT_CALLBACK_HANDLE.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         callback_table().lock().insert(
             handle,
-            CallbackEntry {
+            std::sync::Arc::new(CallbackEntry {
                 ctx: SyncRawPtr::new(ctx.cast_mut()),
                 invoke,
-            },
+                state: parking_lot::Mutex::new(CallbackState::default()),
+                idle: parking_lot::Condvar::new(),
+            }),
         );
         handle
     })
 }
 
 /// Removes a callback from the handle table. Idempotent on
-/// unknown handles. After this call, [`gos_rt_callback_invoke`]
-/// against the same handle returns `-1`.
+/// unknown handles. After this call returns, no invocation that began before
+/// removal is still executing, so the binding may release its context safely.
+/// A callback may unregister itself to prevent future calls, but must defer
+/// freeing its own context until the invocation returns.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_callback_unregister(handle: u64) {
     ffi_entry!((), {
         if handle == 0 {
             return;
         }
-        callback_table().lock().remove(&handle);
+        let Some(entry) = callback_table().lock().remove(&handle) else {
+            return;
+        };
+        let mut state = entry.state.lock();
+        state.closing = true;
+        if ACTIVE_CALLBACKS.with(|active| active.borrow().contains(&handle)) {
+            return;
+        }
+        while state.active != 0 {
+            entry.idle.wait(&mut state);
+        }
     });
 }
 
@@ -472,20 +502,34 @@ pub unsafe extern "C" fn gos_rt_callback_invoke(
             // slot per the ABI. 16 bytes is the documented minimum.
             unsafe { std::ptr::write_bytes(result_out, 0, 16) };
         }
-        // Clone the entry (ctx + fn ptr - both `Copy`) so we can drop
-        // the lock before invocation. Without this drop, a callback
-        // that recursively registers another handle would deadlock.
+        // Clone the Arc so table removal can happen without holding its mutex
+        // during user code. Mark the invocation in-flight before releasing the
+        // entry state lock; unregister waits for that count to reach zero
+        // before it lets a binding free `ctx`.
         let entry = {
             let table = callback_table().lock();
-            match table.get(&handle) {
-                Some(e) => CallbackEntry {
-                    ctx: e.ctx,
-                    invoke: e.invoke,
-                },
-                None => return -1,
-            }
+            table.get(&handle).cloned()
         };
-        (entry.invoke)(entry.ctx.as_const_ptr(), args, args_len, result_out)
+        let Some(entry) = entry else { return -1 };
+        {
+            let mut state = entry.state.lock();
+            if state.closing {
+                return -1;
+            }
+            state.active += 1;
+        }
+        ACTIVE_CALLBACKS.with(|active| active.borrow_mut().push(handle));
+        let result = (entry.invoke)(entry.ctx.as_const_ptr(), args, args_len, result_out);
+        ACTIVE_CALLBACKS.with(|active| {
+            let popped = active.borrow_mut().pop();
+            debug_assert_eq!(popped, Some(handle));
+        });
+        let mut state = entry.state.lock();
+        state.active -= 1;
+        if state.active == 0 {
+            entry.idle.notify_all();
+        }
+        result
     })
 }
 
