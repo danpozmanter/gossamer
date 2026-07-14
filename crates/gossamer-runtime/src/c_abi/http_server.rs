@@ -116,9 +116,8 @@ impl ConnScratch {
     }
 }
 
-/// Live count of scheduler-owned HTTP server connections. Each accepted
-/// connection bumps this on dispatch and decrements when its goroutine
-/// finishes;
+/// Live count of compiled HTTP server connections. Each accepted connection
+/// bumps this on dispatch and decrements when its connection thread finishes;
 /// final body line; the cap from `GOSSAMER_HTTP_MAX_CONN` rejects
 /// further connections with a 503 once the count reaches its
 /// ceiling. Process-global so multiple `http::serve` calls inside
@@ -126,8 +125,8 @@ impl ConnScratch {
 static HTTP_ACTIVE_CONNS: AtomicUsize = AtomicUsize::new(0);
 
 /// RAII guard that decrements [`HTTP_ACTIVE_CONNS`] when the
-/// connection goroutine's body unwinds or returns. Created inside
-/// the task closure so the decrement runs even if
+/// connection thread's body unwinds or returns. Created inside
+/// the thread closure so the decrement runs even if
 /// `handle_http_conn` panics.
 struct HttpConnGuard;
 
@@ -193,6 +192,16 @@ fn http_write_timeout_ms() -> Option<u64> {
     (ms != 0).then_some(ms)
 }
 
+/// Applies the compiled server's slow-peer limits before transferring an
+/// accepted socket to its connection thread. The timeout is socket-local, so
+/// one stalled peer cannot retain a thread indefinitely.
+fn configure_socket_timeouts(stream: &TcpStream) {
+    let read = http_read_timeout_ms().map(std::time::Duration::from_millis);
+    let write = http_write_timeout_ms().map(std::time::Duration::from_millis);
+    let _ = stream.set_read_timeout(read);
+    let _ = stream.set_write_timeout(write);
+}
+
 const RESPONSE_503_BYTES: &[u8] =
     b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
@@ -221,7 +230,7 @@ fn http_serve_err_result(msg: &str) -> i128 {
 /// connection, writes a 503 Service Unavailable response, closes
 /// the socket without spawning a thread, and continues. This
 /// applies bounded back-pressure so a flood of clients cannot exhaust the
-/// file-descriptor or scheduler-goroutine budget.
+/// file-descriptor or thread budget.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn gos_rt_http_serve(
     addr: *const c_char,
@@ -245,16 +254,12 @@ pub unsafe extern "C-unwind" fn gos_rt_http_serve(
         };
         let env_addr = handler_env as usize;
         let fn_addr = handler_fn as usize;
-        // Each plaintext socket becomes a stackful goroutine on the M:N
-        // scheduler. `HttpConn` uses non-blocking I/O and the process-global
-        // mio poller, so an idle client parks its goroutine instead of holding
-        // an OS thread. The connection cap is still process-wide and replies
-        // 503 before a task is admitted. A scheduler-cap refusal does the
-        // same, rather than silently dropping the accepted socket.
+        // HTTP/1 keep-alive requests block on the next read between responses.
+        // Keep that wait local to the connection: routing every ready socket
+        // through the scheduler's one global poller serializes high-throughput
+        // traffic on the poller lock. Admission remains bounded below.
         accept_serve(listener, move |stream| {
-            let Some(mut conn) = HttpConn::wrap(stream) else {
-                return;
-            };
+            let mut conn = BlockingTcpConn(stream);
             handle_http_conn(&mut conn, env_addr, fn_addr);
         });
     }
@@ -264,31 +269,15 @@ pub unsafe extern "C-unwind" fn gos_rt_http_serve(
     super::vec::pack_result(0, 0)
 }
 
-/// Accept loop for plaintext HTTP. Each accepted socket runs in a stackful
-/// scheduler goroutine. `HttpConn` parks it on the global netpoller for
-/// read/write readiness, allowing a bounded worker pool to serve many idle
-/// keep-alive connections. `HTTP_ACTIVE_CONNS` caps admitted connections at
-/// `GOSSAMER_HTTP_MAX_CONN` (default 4096), replying 503 both at that limit
-/// and when `GOSSAMER_MAX_GOROUTINES` refuses a new task.
+/// Accept loop shared by compiled HTTP, TLS, and WebSocket servers. Each
+/// accepted socket runs on a dedicated OS thread with read and write deadlines.
+/// `HTTP_ACTIVE_CONNS` caps the live thread count at `GOSSAMER_HTTP_MAX_CONN`
+/// (default 4096), replying 503 past the cap so a client flood cannot exhaust
+/// file descriptors or threads.
 pub(crate) fn accept_serve<F>(listener: TcpListener, serve_conn: F)
 where
     F: Fn(TcpStream) + Send + Sync + Clone + 'static,
 {
-    // A server is normally launched with `go`. In that case make the
-    // listener non-blocking as well as every accepted socket, and park the
-    // accept goroutine on mio between connections. Calling `http::serve`
-    // directly intentionally retains ordinary blocking-server semantics;
-    // there is no scheduler goroutine to release in that case.
-    let mut listener_source = if gossamer_coro::in_goroutine() {
-        match listener.try_clone() {
-            Ok(cloned) if listener.set_nonblocking(true).is_ok() => {
-                Some(mio::net::TcpListener::from_std(cloned))
-            }
-            _ => None,
-        }
-    } else {
-        None
-    };
     loop {
         if crate::sched_global::is_shutdown_requested() {
             break;
@@ -296,22 +285,10 @@ where
         let stream = match listener.accept() {
             Ok((s, _)) => s,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                let Some(source) = listener_source.as_mut() else {
-                    // A listener only becomes non-blocking after the source
-                    // above has been prepared. Treat an unexpected WouldBlock
-                    // conservatively rather than spinning a worker.
-                    std::thread::yield_now();
-                    continue;
-                };
-                if crate::sched_global::wait_io(source, crate::sched::Interest::Readable).is_err() {
-                    break;
-                }
-                continue;
-            }
             Err(_) => break,
         };
         let _ = stream.set_nodelay(true);
+        configure_socket_timeouts(&stream);
         let cap = http_max_conn();
         let current = HTTP_ACTIVE_CONNS.fetch_add(1, Ordering::AcqRel);
         if current >= cap {
@@ -324,21 +301,22 @@ where
             let _ = stream.flush();
             continue;
         }
-        // Keep the socket outside the task closure until admission succeeds.
-        // `try_spawn` consumes a closure even on refusal; the slot lets us
-        // recover the accepted stream and return a truthful 503 rather than
-        // resetting it under scheduler saturation.
+        // Keep the socket outside the thread closure until creation succeeds,
+        // so an OS thread limit reports a truthful 503 instead of resetting
+        // the accepted connection.
         let serve = serve_conn.clone();
         let slot = std::sync::Arc::new(parking_lot::Mutex::new(Some(stream)));
         let task_slot = std::sync::Arc::clone(&slot);
-        let admitted = crate::sched_global::try_spawn(Box::new(move || {
-            let Some(stream) = task_slot.lock().take() else {
-                return;
-            };
-            let _guard = HttpConnGuard;
-            serve(stream);
-        }));
-        if admitted.is_none() {
+        let spawned = std::thread::Builder::new()
+            .name("gos-http-conn".to_string())
+            .spawn(move || {
+                let Some(stream) = task_slot.lock().take() else {
+                    return;
+                };
+                let _guard = HttpConnGuard;
+                serve(stream);
+            });
+        if spawned.is_err() {
             HTTP_ACTIVE_CONNS.fetch_sub(1, Ordering::AcqRel);
             if let Some(mut stream) = slot.lock().take() {
                 use std::io::Write;
@@ -391,26 +369,17 @@ pub unsafe extern "C-unwind" fn gos_rt_http_serve_tls(
         };
         let env_addr = handler_env as usize;
         let fn_addr = handler_fn as usize;
-        // rustls is synchronous at its `Read` / `Write` boundary, but its
-        // transport need not be. `HttpConn` converts WouldBlock into a
-        // netpoller park, so TLS handshakes and encrypted request I/O share
-        // the bounded M:N path with plaintext HTTP instead of pinning one OS
-        // thread per slow peer.
         accept_serve(listener, move |stream| {
-            let Some(stream) = HttpConn::wrap(stream) else {
-                return;
-            };
             serve_tls_conn(stream, env_addr, fn_addr, server_config.clone());
         });
     }
     super::vec::pack_result(0, 0)
 }
 
-/// rustls-terminated server connection. Rustls drives its record layer via
-/// synchronous `Read` / `Write`, while [`HttpConn`] turns those calls into
-/// goroutine-aware netpoll waits when the socket would block.
+/// rustls-terminated server connection. The accepted socket has the same
+/// read/write deadlines and bounded admission as plaintext HTTP.
 struct TlsServerConn {
-    inner: rustls::StreamOwned<rustls::ServerConnection, HttpConn>,
+    inner: rustls::StreamOwned<rustls::ServerConnection, TcpStream>,
 }
 
 impl HttpIo for TlsServerConn {
@@ -427,7 +396,7 @@ impl HttpIo for TlsServerConn {
 /// through the shared request/response core. A handshake that never
 /// completes is dropped when the connection thread's read loop returns.
 fn serve_tls_conn(
-    stream: HttpConn,
+    stream: TcpStream,
     env_addr: usize,
     fn_addr: usize,
     server_config: std::sync::Arc<rustls::ServerConfig>,
@@ -494,15 +463,27 @@ pub unsafe extern "C" fn gos_rt_http2_bind_and_run_h2c(
     }
 }
 
-/// Byte transport for one HTTP connection. Implemented by [`HttpConn`]
-/// (plaintext, goroutine-aware netpoller I/O) and [`TlsServerConn`]
-/// (rustls-terminated, blocking I/O), so the request/response core
-/// drives a cleartext or TLS socket through a single code path.
+/// Byte transport for one HTTP connection. Plaintext sockets and TLS streams
+/// share this request/response core.
 trait HttpIo {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize>;
     fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()>;
 }
 
+/// Blocking accepted-connection transport. Its socket has deadlines applied
+/// before this wrapper is constructed by [`accept_serve`].
+struct BlockingTcpConn(TcpStream);
+
+impl HttpIo for BlockingTcpConn {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        std::io::Read::read(&mut self.0, buf)
+    }
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        std::io::Write::write_all(&mut self.0, buf)
+    }
+}
+
+#[cfg(test)]
 impl HttpIo for HttpConn {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         HttpConn::read(self, buf)
@@ -710,11 +691,13 @@ fn request_expects_continue(header_section: &[u8]) -> bool {
 /// interest with [`crate::sched_global`] and park the calling
 /// goroutine on a Condvar; the netpoller wakes the waker when the
 /// kernel reports readiness.
+#[cfg(test)]
 pub(crate) struct HttpConn {
     stream: TcpStream,
     mio_stream: mio::net::TcpStream,
 }
 
+#[cfg(test)]
 impl HttpConn {
     pub(crate) fn wrap(stream: TcpStream) -> Option<Self> {
         // The std handle drives I/O while a clone is registered with mio.
@@ -807,12 +790,14 @@ impl HttpConn {
 // only on the standard `Read` / `Write` traits. Implementing those traits on
 // the scheduler-aware adapter lets both protocols use the same non-blocking
 // socket and park only their goroutine when a peer is slow.
+#[cfg(test)]
 impl std::io::Read for HttpConn {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         Self::read(self, buf)
     }
 }
 
+#[cfg(test)]
 impl std::io::Write for HttpConn {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         Self::write_all(self, buf)?;
@@ -2195,26 +2180,6 @@ mod tests {
         let c = std::ffi::CString::new(text).unwrap();
         let resp = unsafe { gos_rt_http_response_text_new(200, c.as_ptr()) };
         super::super::vec::pack_result(0, resp as i64)
-    }
-
-    /// Blocking adapter for tests that exercise HTTP framing rather than the
-    /// non-blocking netpoller. Keeping those concerns separate prevents a
-    /// parallel scheduler/netpoll test from delaying a framing assertion until
-    /// the connection's 30-second idle deadline.
-    struct BlockingTcpConn(TcpStream);
-
-    impl HttpIo for BlockingTcpConn {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            use std::io::Read;
-
-            self.0.read(buf)
-        }
-
-        fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-            use std::io::Write;
-
-            self.0.write_all(buf)
-        }
     }
 
     /// Runs the HTTP framing core for one accepted connection and returns
