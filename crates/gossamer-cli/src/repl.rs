@@ -32,6 +32,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
     let mut transcript: Vec<String> = Vec::new();
     let mut declarations: Vec<String> = Vec::new();
     let mut lets: Vec<String> = Vec::new();
+    let mut bindings: Vec<ReplBinding> = Vec::new();
     let mut input_no = 1u32;
 
     let config = Config::builder()
@@ -105,11 +106,14 @@ pub(crate) fn cmd_repl() -> Result<()> {
                     continue;
                 }
                 "bindings" => {
-                    if lets.is_empty() {
+                    if bindings.is_empty() {
                         println!("    no `let` bindings yet");
                     } else {
-                        for (i, b) in lets.iter().enumerate() {
-                            println!("  {}: {b}", i + 1);
+                        for (i, line) in render_repl_bindings(&declarations, &lets, &bindings)
+                            .iter()
+                            .enumerate()
+                        {
+                            println!("  {}: {line}", i + 1);
                         }
                     }
                     continue;
@@ -117,6 +121,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
                 "reset" => {
                     declarations.clear();
                     lets.clear();
+                    bindings.clear();
                     println!("session cleared");
                     continue;
                 }
@@ -165,7 +170,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
 
         if trimmed.starts_with("let ") {
             let candidate = trimmed.to_string();
-            lets.push(candidate);
+            lets.push(candidate.clone());
             let probe_body = format!("{}\n    ()\n", lets.join("\n    "));
             let probe = format!(
                 "{}\nfn __irepl_{n}() {{\n    {body}}}\n",
@@ -175,7 +180,8 @@ pub(crate) fn cmd_repl() -> Result<()> {
             );
             match build_and_call(&probe, &format!("__irepl_{input_no}")) {
                 Ok(_) => {
-                    println!("    binding added ({} total)", lets.len());
+                    update_repl_bindings(&mut bindings, ReplBinding::from_let_source(&candidate));
+                    println!("    binding added ({} total)", bindings.len());
                 }
                 Err(msg) => {
                     lets.pop();
@@ -249,6 +255,165 @@ pub(crate) fn cmd_repl() -> Result<()> {
 /// from an identifier and applies recursively to aggregate values.
 fn render_repl_value(value: &gossamer_interp::Value) -> String {
     value.repr()
+}
+
+struct ReplBinding {
+    vars: Vec<ReplBindingVar>,
+}
+
+struct ReplBindingVar {
+    name: String,
+    mutable: bool,
+}
+
+impl ReplBinding {
+    fn from_let_source(source: &str) -> Self {
+        Self {
+            vars: let_binding_vars(source),
+        }
+    }
+}
+
+fn update_repl_bindings(bindings: &mut Vec<ReplBinding>, new_binding: ReplBinding) {
+    if !new_binding.vars.is_empty() {
+        for binding in bindings.iter_mut() {
+            binding.vars.retain(|var| {
+                !new_binding
+                    .vars
+                    .iter()
+                    .any(|new_var| new_var.name == var.name)
+            });
+        }
+        bindings.retain(|binding| !binding.vars.is_empty());
+    }
+    bindings.push(new_binding);
+}
+
+fn render_repl_bindings(
+    declarations: &[String],
+    lets: &[String],
+    bindings: &[ReplBinding],
+) -> Vec<String> {
+    let let_body = if lets.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n    ", lets.join("\n    "))
+    };
+    let mut lines = Vec::new();
+    for binding in bindings {
+        for var in &binding.vars {
+            let entry = format!("__irepl_binding_{}", lines.len());
+            let source = format!(
+                "{}\nfn {entry}() {{ {lets}{name} }}\n",
+                declarations.join("\n"),
+                lets = let_body,
+                name = var.name,
+            );
+            let value = match build_and_call(&source, &entry) {
+                Ok(value) => render_repl_value(&value),
+                Err(msg) => format!("<error: {}>", msg.lines().next().unwrap_or("unknown")),
+            };
+            let prefix = if var.mutable { "mut " } else { "" };
+            lines.push(format!("{prefix}{} = {value}", var.name));
+        }
+    }
+    lines
+}
+
+fn let_binding_vars(input: &str) -> Vec<ReplBindingVar> {
+    use gossamer_ast::{ExprKind, ItemKind, StmtKind};
+
+    let source = format!("fn __irepl_binding_names() {{ {input} }}\n");
+    let mut map = gossamer_lex::SourceMap::new();
+    let file = map.add_file("irepl-binding-names".to_string(), source.clone());
+    let (sf, diags) = gossamer_parse::parse_source_file(&source, file);
+    if !diags.is_empty() {
+        return Vec::new();
+    }
+    let Some(item) = sf.items.first() else {
+        return Vec::new();
+    };
+    let ItemKind::Fn(decl) = &item.kind else {
+        return Vec::new();
+    };
+    let Some(body) = &decl.body else {
+        return Vec::new();
+    };
+    let ExprKind::Block(block) = &body.kind else {
+        return Vec::new();
+    };
+    let Some(stmt) = block.stmts.first() else {
+        return Vec::new();
+    };
+    let StmtKind::Let { pattern, .. } = &stmt.kind else {
+        return Vec::new();
+    };
+    let mut vars = Vec::new();
+    collect_repl_pattern_bindings(pattern, &mut vars);
+    vars
+}
+
+fn collect_repl_pattern_bindings(pattern: &gossamer_ast::Pattern, out: &mut Vec<ReplBindingVar>) {
+    use gossamer_ast::PatternKind;
+
+    match &pattern.kind {
+        PatternKind::Ident {
+            mutability,
+            name,
+            subpattern,
+        } => {
+            out.push(ReplBindingVar {
+                name: name.name.clone(),
+                mutable: mutability.is_mutable(),
+            });
+            if let Some(subpattern) = subpattern {
+                collect_repl_pattern_bindings(subpattern, out);
+            }
+        }
+        PatternKind::Tuple(patterns) => {
+            for pattern in patterns {
+                collect_repl_pattern_bindings(pattern, out);
+            }
+        }
+        PatternKind::Or(patterns) => {
+            if let Some(pattern) = patterns.first() {
+                collect_repl_pattern_bindings(pattern, out);
+            }
+        }
+        PatternKind::Slice {
+            prefix,
+            rest,
+            suffix,
+        } => {
+            for pattern in prefix {
+                collect_repl_pattern_bindings(pattern, out);
+            }
+            if let Some(rest) = rest {
+                collect_repl_pattern_bindings(rest, out);
+            }
+            for pattern in suffix {
+                collect_repl_pattern_bindings(pattern, out);
+            }
+        }
+        PatternKind::Struct { fields, .. } => {
+            for field in fields {
+                match &field.pattern {
+                    Some(pattern) => collect_repl_pattern_bindings(pattern, out),
+                    None => out.push(ReplBindingVar {
+                        name: field.name.name.clone(),
+                        mutable: false,
+                    }),
+                }
+            }
+        }
+        PatternKind::TupleStruct { elems, .. } => {
+            for pattern in elems {
+                collect_repl_pattern_bindings(pattern, out);
+            }
+        }
+        PatternKind::Ref { inner, .. } => collect_repl_pattern_bindings(inner, out),
+        _ => {}
+    }
 }
 
 fn split_meta_command(input: &str) -> (&str, &str) {

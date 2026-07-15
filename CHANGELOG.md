@@ -1,10 +1,14 @@
 # Changelog
 
-## 0.28.5 - String diagnostics and char pattern parity
+## 0.28.5 - String diagnostics, byte string literals, REPL bindings, char-patterns.
 
 - Fixed `strings::count` and related string diagnostics so each parameter
   reports the expected type from the public signature, not a hard-coded
   `String | char`.
+- Fixed byte string literal decoding so `b"..."` stores only the literal body
+  bytes instead of including the `b` prefix and quote delimiters.
+- Fixed REPL `%bindings` to show current values (`name = value` /
+  `mut name = value`) and added tier-parity coverage for shadowed assignment.
 - Changed string diagnostics to use canonical parameter names from `%help`,
   including `needle` for count/find/contains-style functions.
 - Aligned char-pattern handling across checker signatures, interpreter

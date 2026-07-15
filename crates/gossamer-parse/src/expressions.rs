@@ -15,7 +15,9 @@ use gossamer_lex::{Keyword, Punct, Span, TokenKind};
 
 use crate::diagnostic::ParseError;
 use crate::parser::Parser;
-use crate::patterns::{byte_literal_value, char_literal_value, string_literal_value};
+use crate::patterns::{
+    byte_literal_value, byte_string_literal_value, char_literal_value, string_literal_value,
+};
 
 /// Precedence level strictly stronger than any binary operator.
 const PREC_BELOW_ASSIGN: u8 = 17;
@@ -1990,9 +1992,9 @@ impl Parser<'_> {
             }
             TokenKind::ByteStringLit => {
                 self.bump();
-                Some(Literal::ByteString(
-                    self.slice(token.span).as_bytes().to_vec(),
-                ))
+                Some(Literal::ByteString(byte_string_literal_value(
+                    self.slice(token.span),
+                )))
             }
             TokenKind::RawByteStringLit { hashes } => {
                 self.bump();

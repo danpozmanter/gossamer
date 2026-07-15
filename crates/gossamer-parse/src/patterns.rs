@@ -536,6 +536,13 @@ pub(crate) fn byte_literal_value(source: &str) -> u8 {
     decoded.bytes().next().unwrap_or(0)
 }
 
+/// Returns the decoded byte vector for a `b"..."` literal.
+pub(crate) fn byte_string_literal_value(source: &str) -> Vec<u8> {
+    let body = source.strip_prefix("b\"").unwrap_or(source);
+    let body = body.strip_suffix('"').unwrap_or(body);
+    decode_string_escapes(body).into_bytes()
+}
+
 fn is_wildcard_ident(text: &str) -> bool {
     text == "_"
 }

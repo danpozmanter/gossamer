@@ -128,6 +128,27 @@ fn repl_uses_repr_for_results_and_display_for_explicit_printing() {
 }
 
 #[test]
+fn repl_decodes_byte_string_literals_without_prefix_or_quotes() {
+    let out = run_repl("b'b'\nb\"b\"\nb\"a\\n\"\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Out[1]: 98"),
+        "byte literal should render as its u8 value; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("Out[2]: [98]"),
+        "byte string should contain only body bytes; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("Out[3]: [97, 10]"),
+        "byte string escapes should decode before vector output; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_mutable_assignment_persists_across_lines() {
     // Regression (issue #14): reassigning a `let mut` binding from an earlier
     // input was applied in a throwaway frame and discarded, so a later read
@@ -154,6 +175,58 @@ fn repl_compound_assignment_accumulates_across_lines() {
     assert!(
         out.stdout.contains("Out[4]: 8"),
         "compound assignment did not accumulate; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_bindings_show_current_shadowed_lets_only() {
+    let out = run_repl("let i = 1\nlet mut i = 2\n%bindings\ni = 3\n%bindings\ni\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("binding added (1 total)"),
+        "first binding count should be one; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("binding added (2 total)"),
+        "shadowing let should replace the visible binding count; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("  1: mut i = 2"),
+        "visible binding should show the current shadowing value; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("  1: mut i = 3"),
+        "assignment should update the displayed current value; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("let i = 1") && !out.stdout.contains("let mut i = 2"),
+        "`%bindings` must not show replay source lines; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("Out[4]: 3"),
+        "assignment must still apply to the active shadowing binding; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_bindings_show_immutable_values_without_let_prefix() {
+    let out = run_repl("let i = 3\n%bindings\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("  1: i = 3"),
+        "immutable binding should render as `name = value`; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("let i = 3"),
+        "`%bindings` must not show the original let source; stdout: {}",
         out.stdout
     );
 }

@@ -985,6 +985,7 @@ const SPECS: &[Spec] = &[
         ..spec("feature-testing-examples/tuple_destructuring_loop.gos")
     },
     spec("feature-testing-examples/variable_shadowing_ladder.gos"),
+    spec("feature-testing-examples/same_scope_shadow_assignment.gos"),
     spec("feature-testing-examples/literal_forms.gos"),
     spec("feature-testing-examples/loop_continue.gos"),
     spec("feature-testing-examples/match_or_patterns.gos"),

@@ -1,0 +1,15 @@
+// Same-scope shadowing plus mutation.
+// The initializer of a shadowing `let` must read the previous binding, and a
+// later assignment must target the new mutable binding on every tier.
+
+fn main() {
+    let i = 1
+    let mut i = 2
+    i = 3
+    println!("i={}", i)
+
+    let base = 10
+    let mut base = base + 1
+    base += 9
+    println!("base={}", base)
+}
