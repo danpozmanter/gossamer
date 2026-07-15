@@ -178,6 +178,68 @@ fn build_vec_pop_main() -> (Body, TyCtxt) {
     (body, tcx)
 }
 
+fn build_chan_recv_option_main(try_recv: bool) -> (Body, TyCtxt) {
+    let mut tcx = TyCtxt::new();
+    let unit = tcx.intern(TyKind::Unit);
+    let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+    let receiver_i64 = tcx.intern(TyKind::Receiver(i64_ty));
+    let option_i64 = tcx.intern(TyKind::Adt {
+        def: DefId::local(u32::MAX - 1),
+        substs: gossamer_types::Substs::from_types([i64_ty]),
+    });
+    let callee = if try_recv {
+        "gos_rt_chan_try_recv_option"
+    } else {
+        "gos_rt_chan_recv_option"
+    };
+    let body = Body {
+        name: "main".to_string(),
+        def: None,
+        arity: 0,
+        locals: vec![
+            LocalDecl {
+                ty: unit,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+            LocalDecl {
+                ty: receiver_i64,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+            LocalDecl {
+                ty: option_i64,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+        ],
+        blocks: vec![
+            BasicBlock {
+                id: BlockId(0),
+                stmts: vec![],
+                terminator: Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(callee.to_string())),
+                    args: vec![Operand::Copy(place(1))],
+                    destination: place(2),
+                    target: Some(BlockId(1)),
+                },
+                span: dummy_span(),
+            },
+            BasicBlock {
+                id: BlockId(1),
+                stmts: vec![],
+                terminator: Terminator::Return,
+                span: dummy_span(),
+            },
+        ],
+        span: dummy_span(),
+    };
+    (body, tcx)
+}
+
 fn build_vec_swap_main() -> (Body, TyCtxt) {
     let mut tcx = TyCtxt::new();
     let unit = tcx.intern(TyKind::Unit);
@@ -412,6 +474,38 @@ fn vec_i64_pop_option_is_inlined() {
         "Vec<i64>::pop should inline instead of calling runtime:\n{ir}"
     );
     assert!(ir.contains("vpop_some_"), "IR was:\n{ir}");
+    assert!(ir.contains("shl i128"), "IR was:\n{ir}");
+    assert!(ir.contains("store i128"), "IR was:\n{ir}");
+}
+
+#[test]
+fn channel_recv_option_uses_status_out_pointer_call() {
+    let (body, tcx) = build_chan_recv_option_main(false);
+    let ir = render_ir_to_string(&[body], &tcx, false).unwrap();
+    assert!(
+        !ir.contains("call i128 @\"gos_rt_chan_recv_option\""),
+        "channel recv should avoid direct i128 C-ABI return:\n{ir}"
+    );
+    assert!(
+        ir.contains("call i32 @\"gos_rt_chan_recv\""),
+        "IR was:\n{ir}"
+    );
+    assert!(ir.contains("shl i128"), "IR was:\n{ir}");
+    assert!(ir.contains("store i128"), "IR was:\n{ir}");
+}
+
+#[test]
+fn channel_try_recv_option_uses_status_out_pointer_call() {
+    let (body, tcx) = build_chan_recv_option_main(true);
+    let ir = render_ir_to_string(&[body], &tcx, false).unwrap();
+    assert!(
+        !ir.contains("call i128 @\"gos_rt_chan_try_recv_option\""),
+        "channel try_recv should avoid direct i128 C-ABI return:\n{ir}"
+    );
+    assert!(
+        ir.contains("call i32 @\"gos_rt_chan_try_recv\""),
+        "IR was:\n{ir}"
+    );
     assert!(ir.contains("shl i128"), "IR was:\n{ir}");
     assert!(ir.contains("store i128"), "IR was:\n{ir}");
 }

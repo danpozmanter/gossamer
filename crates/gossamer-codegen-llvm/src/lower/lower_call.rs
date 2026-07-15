@@ -754,6 +754,62 @@ impl<'a> Lowerer<'a> {
             emit_terminator_branch(&mut self.out, target);
             return Ok(());
         }
+        // Avoid returning the channel Option<T> through the Rust/C `i128`
+        // boundary on LLVM native builds. The runtime already exposes the
+        // primitive status-plus-out-pointer calls; packing the 2-word Option
+        // in this module keeps the ABI register convention entirely under
+        // LLVM's control. This is especially important on non-x86_64 targets
+        // where a closed recv misread as `Some` turns drain loops into
+        // infinite loops.
+        if matches!(
+            name.as_str(),
+            "gos_rt_chan_recv_option" | "gos_rt_chan_try_recv_option"
+        ) && args.len() == 1
+            && render_ty(self.tcx, self.body.local_ty(destination.local)) == "i128"
+        {
+            let chan = self.lower_operand(&args[0])?;
+            let out_slot = self.fresh();
+            writeln!(self.out, "  {out_slot} = alloca i64").unwrap();
+            writeln!(self.out, "  store i64 0, ptr {out_slot}").unwrap();
+            let status_fn = if name == "gos_rt_chan_recv_option" {
+                "gos_rt_chan_recv"
+            } else {
+                "gos_rt_chan_try_recv"
+            };
+            declare_rt(&mut self.runtime_refs, status_fn);
+            let status = self.fresh();
+            writeln!(
+                self.out,
+                "  {status} = call i32 @\"{status_fn}\"(ptr {chan}, ptr {out_slot})"
+            )
+            .unwrap();
+            let status_i64 = self.fresh();
+            writeln!(self.out, "  {status_i64} = sext i32 {status} to i64").unwrap();
+            let disc = self.fresh();
+            writeln!(self.out, "  {disc} = sub i64 1, {status_i64}").unwrap();
+            let is_some = self.fresh();
+            writeln!(self.out, "  {is_some} = icmp eq i32 {status}, 1").unwrap();
+            let raw_payload = self.fresh();
+            writeln!(self.out, "  {raw_payload} = load i64, ptr {out_slot}").unwrap();
+            let payload = self.fresh();
+            writeln!(
+                self.out,
+                "  {payload} = select i1 {is_some}, i64 {raw_payload}, i64 0"
+            )
+            .unwrap();
+            let disc128 = self.fresh();
+            writeln!(self.out, "  {disc128} = zext i64 {disc} to i128").unwrap();
+            let payload128 = self.fresh();
+            writeln!(self.out, "  {payload128} = zext i64 {payload} to i128").unwrap();
+            let shifted = self.fresh();
+            writeln!(self.out, "  {shifted} = shl i128 {payload128}, 64").unwrap();
+            let packed = self.fresh();
+            writeln!(self.out, "  {packed} = or i128 {shifted}, {disc128}").unwrap();
+            let slot = local_slot(destination.local);
+            writeln!(self.out, "  store i128 {packed}, ptr {slot}").unwrap();
+            emit_terminator_branch(&mut self.out, target);
+            return Ok(());
+        }
         // `Vec::new(elem_bytes)` - the runtime helper signature is
         // `gos_rt_vec_new(elem_bytes: u32)`. MIR passes the element
         // width as `i64`, so we truncate to `i32` before the call.
