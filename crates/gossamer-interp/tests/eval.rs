@@ -168,6 +168,22 @@ fn main() {
 }
 
 #[test]
+fn tuple_struct_constructors_work_directly_and_as_values() {
+    let source = r"
+struct Pair(i64, i64)
+
+fn main() {
+    let direct = Pair(1i64, 2i64)
+    let make = Pair
+    let via_value = make(3i64, 4i64)
+    println(direct.0 + direct.1)
+    println(via_value.0 + via_value.1)
+}
+";
+    assert_eq!(run_program(source), "3\n7\n");
+}
+
+#[test]
 fn result_unwrap_or_returns_default_on_err() {
     let source = r#"
 fn main() {

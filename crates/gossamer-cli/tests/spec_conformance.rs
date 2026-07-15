@@ -8,7 +8,7 @@
 //! Behaviours covered:
 //!   §3.1   integer overflow wraps at 64-bit width with no panic;
 //!          `i128`/`u128` are rejected on every tier.
-//!   §7.5   no borrow check - aliasing `&mut` compiles.
+//!   §7.5   reference mutability is checked; aliasing `&mut` compiles.
 //!   §8.6   `extern "C"` is not an `unsafe` power; it is rejected.
 //!   §11.2  linking - musl-static is the Linux default, `--dynamic`
 //!          opts out.
@@ -325,7 +325,34 @@ fn spec_11_2_states_static_musl_default() {
     );
 }
 
-// ---------- §7.5: borrow check is not enforced ----------
+// ---------- §7.5: reference mutability without a borrow checker ----------
+
+#[test]
+fn spec_7_5_mut_ref_requires_mutable_source() {
+    let src = r"
+fn main() {
+    let x = 1
+    let p = &mut x
+}
+";
+    let (ok, _stdout, stderr) = run_check("spec_7_5_mut_source", src);
+    assert!(!ok, "&mut of an immutable source must be rejected");
+    assert!(stderr.contains("GT0032"), "expected GT0032, got: {stderr}");
+}
+
+#[test]
+fn spec_7_5_shared_reference_rejects_writes() {
+    let src = r"
+fn main() {
+    let mut x = [1, 2]
+    let mut p = &x
+    p[0] = 0
+}
+";
+    let (ok, _stdout, stderr) = run_check("spec_7_5_shared_write", src);
+    assert!(!ok, "assignment through &T must be rejected");
+    assert!(stderr.contains("GT0031"), "expected GT0031, got: {stderr}");
+}
 
 #[test]
 fn spec_7_5_aliased_mut_borrow_does_not_error() {

@@ -128,6 +128,20 @@ fn has_immutable_assign(checked: &Checked) -> bool {
         .any(|d| matches!(d.error, TypeError::AssignToImmutable { .. }))
 }
 
+fn has_shared_reference_assign(checked: &Checked) -> bool {
+    checked
+        .diagnostics
+        .iter()
+        .any(|d| matches!(d.error, TypeError::AssignThroughSharedReference { .. }))
+}
+
+fn has_mutable_reference_to_immutable(checked: &Checked) -> bool {
+    checked
+        .diagnostics
+        .iter()
+        .any(|d| matches!(d.error, TypeError::MutableReferenceToImmutable { .. }))
+}
+
 #[test]
 fn compound_assign_to_immutable_let_is_rejected() {
     let checked = run("fn main() { let total: i64 = 0\n total += 5 }\n");
@@ -196,6 +210,58 @@ fn write_through_mut_reference_parameter_is_accepted() {
         "unexpected GT0030: {:?}",
         checked.diagnostics
     );
+}
+
+#[test]
+fn mutable_reference_to_immutable_binding_is_rejected() {
+    let checked = run("fn main() { let a = [1, 2]\n let c = &mut a }\n");
+    assert!(
+        has_mutable_reference_to_immutable(&checked),
+        "expected GT0032: {:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn mutable_reference_to_mutable_binding_is_accepted() {
+    let checked = run("fn main() { let mut a = [1, 2]\n let c = &mut a\n c[0] = 0 }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn mutable_reference_respects_static_mutability() {
+    let immutable = run("static X: i64 = 1\nfn main() { let p = &mut X }\n");
+    assert!(
+        has_mutable_reference_to_immutable(&immutable),
+        "expected GT0032: {:?}",
+        immutable.diagnostics
+    );
+
+    let mutable = run("static mut X: i64 = 1\nfn main() { let p = &mut X }\n");
+    assert!(mutable.diagnostics.is_empty(), "{:?}", mutable.diagnostics);
+}
+
+#[test]
+fn assignment_through_shared_reference_is_rejected_precisely() {
+    let checked = run("fn main() { let a = [1, 2]\n let mut d = &a\n d[0] = 0 }\n");
+    assert!(
+        has_shared_reference_assign(&checked),
+        "expected GT0031: {:?}",
+        checked.diagnostics
+    );
+    assert!(
+        !has_immutable_assign(&checked),
+        "shared-reference write must not be reported as GT0030: {:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn overlapping_mutable_references_remain_accepted() {
+    let checked = run(
+        "fn main() { let mut a = [1, 2]\n let x = &mut a\n let y = &mut a\n x[0] = 0\n y[1] = 3 }\n",
+    );
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
 #[test]
@@ -910,6 +976,14 @@ fn qualified_associated_call_is_not_flagged_as_non_callable() {
 fn constructor_calls_are_not_flagged_as_non_callable() {
     let d = diagnostics_for("fn main() { let o = Some(5); let r = Ok(1); println!(\"ok\") }\n");
     assert!(!has_code(&d, "GT0022"), "{d:?}");
+}
+
+#[test]
+fn tuple_struct_associated_function_is_not_checked_as_constructor() {
+    let checked = run(
+        "struct Pt(i64, i64)\nimpl Pt { fn origin() -> Pt { Pt(0, 0) } }\nfn main() { let p = Pt::origin() }\n",
+    );
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
 #[test]

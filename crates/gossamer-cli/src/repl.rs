@@ -9,11 +9,12 @@ use regex::Regex;
 
 use crate::paths::repl_history_path;
 
-const REPL_HELP_TEXT: &str = "meta-commands: %quit  %history  %bindings  %reset  %help  %ls\n\
+const REPL_HELP_TEXT: &str = "meta-commands: %quit  %history  %bindings  %declarations  %reset  %help  %ls\n\
                          plain expressions render as Out[N]; declarations and\n\
                          `let` bindings persist across inputs.";
 
 #[allow(
+    clippy::cognitive_complexity,
     clippy::too_many_lines,
     reason = "REPL loop bundles input, completion, history, and graceful-exit handling"
 )]
@@ -118,6 +119,16 @@ pub(crate) fn cmd_repl() -> Result<()> {
                     }
                     continue;
                 }
+                "declarations" | "decls" => {
+                    if declarations.is_empty() {
+                        println!("    no declarations yet");
+                    } else {
+                        for (i, line) in declarations.iter().enumerate() {
+                            println!("  {}: {line}", i + 1);
+                        }
+                    }
+                    continue;
+                }
                 "reset" => {
                     declarations.clear();
                     lets.clear();
@@ -146,12 +157,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
             }
         }
 
-        let is_declaration = trimmed.starts_with("fn ")
-            || trimmed.starts_with("struct ")
-            || trimmed.starts_with("enum ")
-            || trimmed.starts_with("use ")
-            || trimmed.starts_with("const ")
-            || trimmed.starts_with("type ");
+        let is_declaration = input_is_declaration(trimmed);
 
         if is_declaration {
             declarations.push(trimmed.to_string());
@@ -420,6 +426,20 @@ fn split_meta_command(input: &str) -> (&str, &str) {
     input
         .split_once(char::is_whitespace)
         .map_or((input, ""), |(command, arg)| (command, arg.trim()))
+}
+
+fn input_is_declaration(input: &str) -> bool {
+    let input = input
+        .strip_prefix("pub ")
+        .or_else(|| input.strip_prefix("pub(crate) "))
+        .unwrap_or(input);
+    input.starts_with("fn ")
+        || input.starts_with("struct ")
+        || input.starts_with("enum ")
+        || input.starts_with("use ")
+        || input.starts_with("const ")
+        || input.starts_with("static ")
+        || input.starts_with("type ")
 }
 
 fn repl_help(arg: &str) -> std::result::Result<String, String> {

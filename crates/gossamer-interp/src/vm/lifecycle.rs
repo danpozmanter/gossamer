@@ -1012,8 +1012,24 @@ impl Vm {
             // [`Self::register_item_value`]) before any function compiles,
             // so there is nothing to do here.
             HirItemKind::Const(_) | HirItemKind::Static(_) => {}
-            HirItemKind::Adt(decl) => {
-                if let gossamer_hir::HirAdtKind::Enum(variants) = &decl.kind {
+            HirItemKind::Adt(decl) => match &decl.kind {
+                gossamer_hir::HirAdtKind::Struct(_) => {
+                    let Some(def) = item.def else {
+                        return Ok(());
+                    };
+                    if tcx.is_tuple_struct(def.local) {
+                        let type_name = decl.name.name.as_str();
+                        let sentinel = Value::struct_(type_name, Vec::new());
+                        if let Some(prefix) = &module_prefix {
+                            globals.insert(
+                                intern(&format!("{prefix}::{type_name}")),
+                                Global::Value(sentinel.clone()),
+                            );
+                        }
+                        globals.insert(intern(type_name), Global::Value(sentinel));
+                    }
+                }
+                gossamer_hir::HirAdtKind::Enum(variants) => {
                     let type_name = decl.name.name.as_str();
                     for variant in variants {
                         let variant_name = variant.name.name.as_str();
@@ -1029,7 +1045,7 @@ impl Vm {
                         globals.insert(intern(&qualified), Global::Value(sentinel));
                     }
                 }
-            }
+            },
         }
         Ok(())
     }

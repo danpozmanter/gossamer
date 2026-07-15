@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0031]: An assignment targeted a place through a shared `&T` reference. - here
+--- framed ---
+error[GT0031]: An assignment targeted a place through a shared `&T` reference.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

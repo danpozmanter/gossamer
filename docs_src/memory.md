@@ -69,12 +69,12 @@ automatic cycle reclamation that ARC leaves to the programmer.
 `&x` means "read `x` without taking ownership". `&mut x` means
 "write `x` without taking ownership". The type checker rejects:
 
-- A `&mut` overlapping with another `&` or `&mut` in a visible
-  scope.
 - A `&mut` taken on a non-`mut` binding.
+- An assignment through a shared `&T` reference.
 
 These are *correctness* rules, not lifetime proofs. You never
-write `'a`.
+write `'a`. Overlapping `&mut` references remain allowed; Gossamer does
+not perform Rust-style exclusivity analysis.
 
 ## How reclamation works
 

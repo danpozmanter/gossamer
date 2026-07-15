@@ -367,6 +367,21 @@ pub enum TypeError {
         /// Name of the immutable root binding.
         name: String,
     },
+    /// An assignment targets a place reached through a shared `&T`
+    /// reference. The reference binding's own `mut` qualifier cannot make
+    /// its referent writable.
+    #[error("cannot assign through shared reference `{name}`")]
+    AssignThroughSharedReference {
+        /// Name of the shared reference at the root of the place.
+        name: String,
+    },
+    /// A mutable reference was requested for a place rooted at an immutable
+    /// binding. Mutable references require a writable source place.
+    #[error("cannot take a mutable reference to immutable binding `{name}`")]
+    MutableReferenceToImmutable {
+        /// Name of the immutable root binding.
+        name: String,
+    },
 }
 
 impl TypeError {
@@ -405,6 +420,8 @@ impl TypeError {
             Self::WeakDowngradeNonRc { .. } => "weak-downgrade-non-rc",
             Self::CombinatorDataArgMismatch { .. } => "combinator-data-arg-mismatch",
             Self::AssignToImmutable { .. } => "assign-to-immutable",
+            Self::AssignThroughSharedReference { .. } => "assign-through-shared-reference",
+            Self::MutableReferenceToImmutable { .. } => "mutable-reference-to-immutable",
         }
     }
 
@@ -442,6 +459,8 @@ impl TypeError {
             Self::WeakDowngradeNonRc { .. } => "GT0028",
             Self::CombinatorDataArgMismatch { .. } => "GT0029",
             Self::AssignToImmutable { .. } => "GT0030",
+            Self::AssignThroughSharedReference { .. } => "GT0031",
+            Self::MutableReferenceToImmutable { .. } => "GT0032",
         }
     }
 }
@@ -720,6 +739,20 @@ impl TypeDiagnostic {
                     .with_note(
                         "bindings are immutable by default; only a `mut` place can be assigned",
                     );
+            }
+            TypeError::AssignThroughSharedReference { name } => {
+                out = out
+                    .with_help(format!(
+                        "create `{name}` with `&mut` from a mutable place to write through it"
+                    ))
+                    .with_note("a shared `&T` reference permits reads but not writes");
+            }
+            TypeError::MutableReferenceToImmutable { name } => {
+                out = out
+                    .with_help(format!(
+                        "declare the source mutable before borrowing it: `let mut {name} = ...`"
+                    ))
+                    .with_note("`&mut` requires a mutable place; it does not enforce exclusivity");
             }
         }
         out

@@ -1,8 +1,12 @@
 # Changelog
 
-## 0.28.6 - Source files split
+## 0.28.6 - Tuple structs, REPL declarations, and reference mutability
 
 - Split some large low-risk source modules and tests.
+- Added `%declarations` and tuple-struct constructors across the REPL, VM,
+  and compiled tiers.
+- `&mut` now requires a mutable source; writes through `&T` report a precise
+  shared-reference diagnostic.
 
 ## 0.28.5 - String diagnostics, byte string literals, REPL bindings, char-patterns.
 

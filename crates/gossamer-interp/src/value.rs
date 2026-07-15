@@ -2207,16 +2207,7 @@ fn repr_value(value: &Value) -> String {
                 format!("{}({})", inner.name.as_str(), fields.join(", "))
             }
         }
-        Value::Struct(inner) => format!(
-            "{} {{ {} }}",
-            inner.name.as_str(),
-            inner
-                .fields
-                .iter()
-                .map(|(name, field)| format!("{name}: {}", repr_value(field)))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        Value::Struct(inner) => repr_struct(inner.name.as_str(), &inner.fields),
         Value::Map(map) => {
             let map = map.lock();
             let mut entries: Vec<_> = map.iter().collect();
@@ -2251,6 +2242,30 @@ fn repr_value(value: &Value) -> String {
         Value::NativeEnum(owner) => repr_value(&native_enum_to_variant(owner)),
         _ => value.to_string(),
     }
+}
+
+fn repr_struct(name: &str, fields: &[(&'static str, Value)]) -> String {
+    let is_tuple_struct = !fields.is_empty()
+        && fields
+            .iter()
+            .enumerate()
+            .all(|(i, (n, _))| n.parse::<usize>() == Ok(i));
+    if is_tuple_struct {
+        let fields = fields
+            .iter()
+            .map(|(_, field)| repr_value(field))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return format!("{name}({fields})");
+    }
+    format!(
+        "{name} {{ {} }}",
+        fields
+            .iter()
+            .map(|(field_name, field)| format!("{field_name}: {}", repr_value(field)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 fn write_tuple(out: &mut fmt::Formatter<'_>, parts: &[Value]) -> fmt::Result {

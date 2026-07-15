@@ -530,6 +530,19 @@ impl Vm {
                 inner.name.clone(),
                 Arc::unwrap_or_clone(std::sync::Arc::new(args)),
             )),
+            // A tuple-struct constructor is registered as an empty struct
+            // sentinel; calling it fills positional fields named "0".."N-1".
+            Value::Struct(inner) if inner.fields.is_empty() => {
+                let fields = args
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, value)| {
+                        let name = crate::value::intern_type_name(&idx.to_string());
+                        (name, value)
+                    })
+                    .collect();
+                Ok(Value::struct_(inner.name.as_str(), fields))
+            }
             other => Err(RuntimeError::Type(format!(
                 "value of kind `{other}` is not callable"
             ))),

@@ -232,6 +232,33 @@ fn repl_bindings_show_immutable_values_without_let_prefix() {
 }
 
 #[test]
+fn repl_tuple_struct_constructors_and_declarations_are_visible() {
+    let out = run_repl(
+        "struct Pair(i64, i64)\n\
+         let p = Pair(0, 0)\n\
+         p\n\
+         %declarations\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("binding added (1 total)"),
+        "tuple struct constructor should be callable; stdout: {}; stderr: {}",
+        out.stdout,
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("Out[3]: Pair(0, 0)"),
+        "tuple struct value should render in REPL output; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("  1: struct Pair(i64, i64)"),
+        "%declarations should list accumulated declarations; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_prints_runtime_error_without_crashing() {
     let out = run_repl("panic!(\"boom\")\n1 + 1\n");
     assert!(
@@ -322,8 +349,9 @@ fn repl_meta_help_preserves_base_banner() {
     let out = run_repl("%help\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout
-            .contains("meta-commands: %quit  %history  %bindings  %reset  %help  %ls"),
+        out.stdout.contains(
+            "meta-commands: %quit  %history  %bindings  %declarations  %reset  %help  %ls"
+        ),
         "bare %help should keep the existing banner; stdout: {}",
         out.stdout
     );

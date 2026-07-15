@@ -771,6 +771,43 @@ fn aggregate_alloc_loop_reclaims_deterministically() {
 }
 
 #[test]
+fn tuple_struct_constructor_is_available_on_vm_and_native_tiers() {
+    let src = r#"
+struct Pair(i64, i64)
+
+fn sum(p: Pair) -> i64 {
+    p.0 + p.1
+}
+
+fn main() {
+    let p = Pair(20i64, 22i64)
+    println!("{}", sum(p))
+}
+"#;
+    let dir = fresh_dir("tuple_struct_ctor");
+    let path = write_source(&dir, "tuple_struct_ctor", src);
+
+    let run = run_vm(&path);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    assert_eq!(run.0.trim_end(), "42", "vm output mismatch");
+
+    let debug_dir = dir.join("debug");
+    fs::create_dir_all(&debug_dir).unwrap();
+    let debug_bin = build_native(&path, &debug_dir).expect("debug build");
+    let debug = run_native(&debug_bin);
+    assert_eq!(debug.2, Some(0), "debug stderr: {}", debug.1);
+    assert_eq!(debug.0.trim_end(), "42", "debug output mismatch");
+
+    let release_dir = dir.join("release");
+    fs::create_dir_all(&release_dir).unwrap();
+    let release_bin = build_native_release(&path, &release_dir).expect("release build");
+    let release = run_native(&release_bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(release.2, Some(0), "release stderr: {}", release.1);
+    assert_eq!(release.0.trim_end(), "42", "release output mismatch");
+}
+
+#[test]
 fn aggregate_return_chain_outlives_callee_frame() {
     // Stresses the aggregate-return heap-copy discipline: every
     // iteration calls a function that builds an aggregate on the
@@ -845,4 +882,3 @@ fn aggregate_return_chain_outlives_callee_frame() {
         "release aggregate-return chain mismatch"
     );
 }
-

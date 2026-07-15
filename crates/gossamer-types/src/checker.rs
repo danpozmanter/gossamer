@@ -231,6 +231,10 @@ struct TypeChecker<'a> {
     /// use site unconstrained and the codegen reading the slot at
     /// the wrong layout.
     const_tys: HashMap<gossamer_resolve::DefId, Ty>,
+    /// Declared mutability of `static` items, keyed by `DefId`, so place
+    /// mutability checks treat `static` and `static mut` like their local
+    /// binding counterparts.
+    static_mutability: HashMap<gossamer_resolve::DefId, bool>,
     /// Type-parameter names and right-hand-side AST of every `type X<..> =
     /// T` alias, keyed by the alias's `DefId`. Built up front so a use of
     /// `X` expands to `T` lazily during type lowering (transparent
@@ -385,6 +389,7 @@ impl<'a> TypeChecker<'a> {
             enum_variant_payloads: HashMap::new(),
             enum_tys: HashMap::new(),
             const_tys: HashMap::new(),
+            static_mutability: HashMap::new(),
             alias_targets: HashMap::new(),
             alias_expanding: std::collections::HashSet::new(),
             struct_generic_arity: HashMap::new(),
@@ -1084,6 +1089,14 @@ impl<'a> TypeChecker<'a> {
                     self.register_enum(item.id, decl, item.span);
                 }
                 ItemKind::Const(decl) => self.register_const(item.id, &decl.ty),
+                ItemKind::Static(decl) => {
+                    if let Some(def) = self.resolutions.definition_of(item.id) {
+                        self.static_mutability.insert(
+                            def,
+                            matches!(decl.mutability, gossamer_ast::Mutability::Mutable),
+                        );
+                    }
+                }
                 ItemKind::Mod(decl) => {
                     if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
                         self.collect_signatures(inner);
@@ -2667,6 +2680,9 @@ impl<'a> TypeChecker<'a> {
             // Fall through to the existing stdlib / fresh handling so a
             // pipe-stage call keeps its current return typing.
         }
+        if let Some(ty) = self.check_tuple_struct_ctor_call(callee, args, arg_tys) {
+            return ty;
+        }
         // Fallback: known stdlib free functions whose signatures are
         // not present in `fn_sigs` (because they live outside user
         // source). Returning a real type instead of a fresh variable
@@ -2767,6 +2783,53 @@ impl<'a> TypeChecker<'a> {
         }
         self.reject_noncallable_callee(callee, callee_ty);
         self.fresh()
+    }
+
+    fn check_tuple_struct_ctor_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        arg_tys: &[Ty],
+    ) -> Option<Ty> {
+        let ExprKind::Path(path) = &callee.kind else {
+            return None;
+        };
+        let Some(Resolution::Def {
+            def,
+            kind: gossamer_resolve::DefKind::Struct,
+        }) = self.resolutions.get(callee.id)
+        else {
+            return None;
+        };
+        if !self.tcx.is_tuple_struct(def.local) {
+            return None;
+        }
+        let called_name = path.segments.last()?.name.name.as_str();
+        if self.tcx.def_name(def) != Some(called_name) {
+            return None;
+        }
+        let fields = self.struct_fields.get(&def)?.clone();
+        let arity = self.struct_generic_arity.get(&def).copied().unwrap_or(0);
+        let substs: Vec<Ty> = (0..arity).map(|_| self.fresh()).collect();
+        if fields.len() == arg_tys.len() {
+            for ((_, field_ty), (arg_ty, arg_expr)) in fields.iter().zip(arg_tys.iter().zip(args)) {
+                let field_ty = self.subst_params_in_ty(*field_ty, &substs);
+                self.check_sig_param_arg(field_ty, *arg_ty, arg_expr.span);
+            }
+        } else {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: callee_display_name(callee),
+                    expected: fields.len(),
+                    found: arg_tys.len(),
+                },
+                callee.span,
+            );
+        }
+        Some(self.tcx.intern(TyKind::Adt {
+            def,
+            substs: crate::Substs::from_types(substs.iter().copied()),
+        }))
     }
 
     /// After a call failed every resolution path: if the callee is a
@@ -5345,10 +5408,24 @@ impl<'a> TypeChecker<'a> {
                 mutability: Mutbl::Not,
                 inner: operand_ty,
             }),
-            UnaryOp::RefMut => self.tcx.intern(TyKind::Ref {
-                mutability: Mutbl::Mut,
-                inner: operand_ty,
-            }),
+            UnaryOp::RefMut => {
+                let name = Self::place_root_name(operand).unwrap_or_else(|| "value".to_string());
+                match self.place_mutability(operand) {
+                    PlaceMut::ImmutableBinding => self.emit(
+                        TypeError::MutableReferenceToImmutable { name },
+                        operand.span,
+                    ),
+                    PlaceMut::SharedReference => self.emit(
+                        TypeError::AssignThroughSharedReference { name },
+                        operand.span,
+                    ),
+                    PlaceMut::Writable | PlaceMut::Unknown => {}
+                }
+                self.tcx.intern(TyKind::Ref {
+                    mutability: Mutbl::Mut,
+                    inner: operand_ty,
+                })
+            }
             UnaryOp::Deref => {
                 // `*x` strips a single `&T` / `&mut T` wrapper.
                 // For any other concrete operand shape the deref is
@@ -5651,10 +5728,28 @@ impl<'a> TypeChecker<'a> {
         match &place.kind {
             ExprKind::Path(path) => {
                 if path.segments.len() == 1 && path.segments[0].generics.is_empty() {
-                    match self.lookup_local_mutability(&path.segments[0].name.name) {
-                        Some(true) => PlaceMut::Writable,
-                        Some(false) => PlaceMut::Immutable,
-                        None => PlaceMut::Unknown,
+                    if let Some(mutable) = self.lookup_local_mutability(&path.segments[0].name.name)
+                    {
+                        return if mutable {
+                            PlaceMut::Writable
+                        } else {
+                            PlaceMut::ImmutableBinding
+                        };
+                    }
+                    match self.resolutions.get(place.id) {
+                        Some(Resolution::Def {
+                            def,
+                            kind: gossamer_resolve::DefKind::Static,
+                        }) => match self.static_mutability.get(&def) {
+                            Some(true) => PlaceMut::Writable,
+                            Some(false) => PlaceMut::ImmutableBinding,
+                            None => PlaceMut::Unknown,
+                        },
+                        Some(Resolution::Def {
+                            kind: gossamer_resolve::DefKind::Const,
+                            ..
+                        }) => PlaceMut::ImmutableBinding,
+                        _ => PlaceMut::Unknown,
                     }
                 } else {
                     PlaceMut::Unknown
@@ -5667,7 +5762,7 @@ impl<'a> TypeChecker<'a> {
                 operand,
             } => match self.expr_ref_mutbl(operand) {
                 Some(Mutbl::Mut) => PlaceMut::Writable,
-                Some(Mutbl::Not) => PlaceMut::Immutable,
+                Some(Mutbl::Not) => PlaceMut::SharedReference,
                 None => PlaceMut::Unknown,
             },
             _ => PlaceMut::Unknown,
@@ -5680,7 +5775,7 @@ impl<'a> TypeChecker<'a> {
     fn base_place_mutability(&self, base: &Expr) -> PlaceMut {
         match self.expr_ref_mutbl(base) {
             Some(Mutbl::Mut) => PlaceMut::Writable,
-            Some(Mutbl::Not) => PlaceMut::Immutable,
+            Some(Mutbl::Not) => PlaceMut::SharedReference,
             None => self.place_mutability(base),
         }
     }
@@ -5699,9 +5794,15 @@ impl<'a> TypeChecker<'a> {
 
     fn check_assign(&mut self, place: &Expr, value: &Expr, op: gossamer_ast::AssignOp) -> Ty {
         let place_ty = self.check_expr(place);
-        if matches!(self.place_mutability(place), PlaceMut::Immutable) {
-            let name = Self::place_root_name(place).unwrap_or_else(|| "value".to_string());
-            self.emit(TypeError::AssignToImmutable { name }, place.span);
+        let name = Self::place_root_name(place).unwrap_or_else(|| "value".to_string());
+        match self.place_mutability(place) {
+            PlaceMut::ImmutableBinding => {
+                self.emit(TypeError::AssignToImmutable { name }, place.span);
+            }
+            PlaceMut::SharedReference => {
+                self.emit(TypeError::AssignThroughSharedReference { name }, place.span);
+            }
+            PlaceMut::Writable | PlaceMut::Unknown => {}
         }
         // The place's type flows into the value as its expectation so
         // `v = [2, 3]` against a `Vec<i64>` slot lays a heap Vec, not
@@ -7695,8 +7796,10 @@ fn arith_op_method(op: BinaryOp) -> Option<&'static str> {
 enum PlaceMut {
     /// Rooted at a `mut` binding or reached through a `&mut` reference.
     Writable,
-    /// Rooted at a non-`mut` binding or reached through a `&T` reference.
-    Immutable,
+    /// Rooted at a non-`mut` binding.
+    ImmutableBinding,
+    /// Reached through a shared `&T` reference.
+    SharedReference,
     /// Not statically determinable; not checked.
     Unknown,
 }

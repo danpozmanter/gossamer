@@ -613,6 +613,20 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      mutability.",
     ),
     (
+        "GT0031",
+        "An assignment targeted a place through a shared `&T` reference.\n\
+                     Shared references permit reads but not writes, regardless of\n\
+                     whether the reference binding itself is declared `mut`. Create\n\
+                     the reference with `&mut` from a mutable place to write through it.",
+    ),
+    (
+        "GT0032",
+        "A mutable reference was requested for a place rooted at an immutable binding.\n\
+                     Declare the source binding `mut` before taking `&mut`.\n\
+                     This checks write intent only; Gossamer still permits overlapping\n\
+                     mutable references and does not perform lifetime analysis.",
+    ),
+    (
         "GX0001",
         "A runtime value had the wrong shape for the operation. The\n\
                      interpreter catches this at execution time; the native\n\

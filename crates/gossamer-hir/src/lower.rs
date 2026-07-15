@@ -608,10 +608,16 @@ impl Lowerer<'_> {
         match &expr.kind {
             AstExprKind::Literal(lit) => HirExprKind::Literal(lower_literal(lit)),
             AstExprKind::Path(path) => self.lower_path_expr(expr.id, path),
-            AstExprKind::Call { callee, args } => HirExprKind::Call {
-                callee: Box::new(self.lower_expr(callee)),
-                args: args.iter().map(|a| self.lower_expr(a)).collect(),
-            },
+            AstExprKind::Call { callee, args } => {
+                if let Some(lowered) = self.lower_tuple_struct_call(callee, args, expr.span) {
+                    lowered
+                } else {
+                    HirExprKind::Call {
+                        callee: Box::new(self.lower_expr(callee)),
+                        args: args.iter().map(|a| self.lower_expr(a)).collect(),
+                    }
+                }
+            }
             AstExprKind::MethodCall {
                 receiver,
                 name,
@@ -1517,6 +1523,70 @@ impl Lowerer<'_> {
                 args: vec![err_value],
             },
         }
+    }
+
+    fn lower_tuple_struct_call(
+        &mut self,
+        callee: &AstExpr,
+        args: &[AstExpr],
+        span: Span,
+    ) -> Option<HirExprKind> {
+        let AstExprKind::Path(path) = &callee.kind else {
+            return None;
+        };
+        let Some(Resolution::Def {
+            def,
+            kind: gossamer_resolve::DefKind::Struct,
+        }) = self.resolutions.get(callee.id)
+        else {
+            return None;
+        };
+        if !self.tcx.is_tuple_struct(def.local) {
+            return None;
+        }
+        let called_name = path.segments.last()?.name.name.as_str();
+        if self.tcx.def_name(def) != Some(called_name) {
+            return None;
+        }
+        let field_count = self.tcx.struct_field_tys(def)?.len();
+        if field_count != args.len() {
+            return None;
+        }
+        let name = path
+            .segments
+            .last()
+            .map(|seg| seg.name.name.clone())
+            .unwrap_or_default();
+        let error_ty = self.error_ty();
+        let string_ty = self.error_ty();
+        let mut struct_args = Vec::with_capacity(1 + args.len() * 2);
+        struct_args.push(HirExpr {
+            id: self.fresh(),
+            span,
+            ty: string_ty,
+            kind: HirExprKind::Literal(HirLiteral::String(name)),
+        });
+        for (idx, arg) in args.iter().enumerate() {
+            struct_args.push(HirExpr {
+                id: self.fresh(),
+                span,
+                ty: string_ty,
+                kind: HirExprKind::Literal(HirLiteral::String(idx.to_string())),
+            });
+            struct_args.push(self.lower_expr(arg));
+        }
+        Some(HirExprKind::Call {
+            callee: Box::new(HirExpr {
+                id: self.fresh(),
+                span,
+                ty: error_ty,
+                kind: HirExprKind::Path {
+                    segments: vec![Ident::new("__struct")],
+                    def: None,
+                },
+            }),
+            args: struct_args,
+        })
     }
 
     /// Lowers `Path { field: value, … }` into a call to the synthetic

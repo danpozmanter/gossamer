@@ -423,14 +423,16 @@ type: `let g: Vec<Vec<i64>> = [[1, 2], [3]]` builds a Vec of Vecs.
   remains accessible.
 - `&T` - a **shared managed reference** to a value of type `T`. Not a
   raw pointer. Cannot be null. Created by `&expr`. Auto-dereferenced
-  for `.` access. Liveness is guaranteed by the runtime. `&` is an
-  aliasing-intent marker; there is no compiler pass that enforces an
-  aliasing discipline today (§7.5).
+  for `.` access. Liveness is guaranteed by the runtime. A place reached
+  through `&T` cannot be assigned, even when the reference binding itself
+  is declared `mut` (§7.5).
 - `&mut T` - a **mutable managed reference**, used to signal write
-  intent through a reference. Exclusivity is *not* enforced: no pass
-  rejects two simultaneous `&mut` to the same value, and a `&mut T`
-  struct field is accepted. Does not carry write-through across a `go`
-  or channel boundary (see the parameter-semantics paragraph below).
+  intent through a reference. Created by taking `&mut` of a writable
+  place rooted at a `mut` binding or reached through another `&mut`.
+  Exclusivity is *not* enforced: no pass rejects two simultaneous `&mut`
+  to the same value, and a `&mut T` struct field is accepted. Does not
+  carry write-through across a `go` or channel boundary (see the
+  parameter-semantics paragraph below).
 
 Raw pointers (`*const T`, `*mut T`) are **not** part of the language
 today: the type spellings do not parse (`GP0001`), and there is no safe
@@ -439,11 +441,11 @@ or unsafe way to construct one in Gossamer source. FFI goes through the
 parses - see §8.6 - but grants no extra powers, because there is nothing
 unsafe to do.)
 
-`&T` and `&mut T` in Gossamer are not borrows in the Rust sense -
+`&T` and `&mut T` in Gossamer are not borrows in the Rust sense:
 automatic memory management already guarantees liveness. They are
-aliasing-intent markers only; there is no borrow-checking or
-exclusivity-enforcement pass today (§7.5). No lifetime parameters exist
-at any level of the language.
+statically checked read/write-intent markers, but there is no lifetime or
+exclusivity analysis (§7.5). No lifetime parameters exist at any level of
+the language.
 
 **`&mut` parameter semantics.** A `&mut Vec<T>` / `&mut [T]` parameter
 writes through to the caller's storage on every tier: element writes,
@@ -1529,7 +1531,7 @@ an always-on runtime guard, and it sees the compiled-tier accesses the
 codegen instruments; the `Once::call_once` and atomic-load/store
 happens-before edges are not yet folded into the model.
 
-### 7.5 References and aliasing (no borrow checker)
+### 7.5 References and aliasing (reference mutability, no borrow checker)
 
 Gossamer has no ownership transfer, no `move` keyword, and no lifetime
 annotations anywhere. All bindings stay live and accessible for the
@@ -1538,13 +1540,15 @@ closure capture all behave like Go: a managed reference for
 heap-managed types, a copy for `Copy` types. The cognitive load of "who
 owns this value now" does not exist.
 
-**There is no borrow checker and no aliasing-enforcement pass.** `&T`
-and `&mut T` are *aliasing-intent markers* only - they document whether
-a reference is used to read or to write. No compiler pass tracks
-reference activity, rejects two simultaneous `&mut`, or forbids `&mut`
-where a `&` is live. Programs that would violate a Rust-style
-exclusivity rule compile and run on every tier; `&mut counter` twice in
-a row is accepted, and a `&mut T` struct field is accepted.
+**There is no borrow checker and no aliasing-enforcement pass.** The type
+checker does enforce reference mutability: taking `&mut` requires a
+writable place, assignment through `&T` is rejected, and assignment
+through `&mut T` is accepted independently of whether the reference
+binding itself is `mut`. No compiler pass tracks reference activity,
+rejects two simultaneous `&mut`, or forbids `&mut` where a `&` is live.
+Programs that would violate a Rust-style exclusivity rule compile and run
+on every tier; `&mut counter` twice in a row is accepted, and a `&mut T`
+struct field is accepted.
 
 Liveness is the one guarantee that *is* enforced - by automatic memory
 management, at runtime, not by a static check. No reference dangles
@@ -1553,19 +1557,20 @@ collection while iterating it, self-aliasing, and the other patterns a
 borrow checker would reject are the programmer's responsibility today;
 they are not diagnosed.
 
-There is no exclusivity-enforcement pass. `&mut T` is parsed and
-type-checked, but no compiler pass rejects aliasing: a program that
-would violate a Rust-style exclusivity rule compiles and runs on every
-tier. A scope-local exclusivity check (many `&T`, or one `&mut T`,
-never both) remains a candidate for a future release (§7.5.2), and
-nothing in this specification depends on it.
+There is no exclusivity-enforcement pass. A program that would violate a
+Rust-style exclusivity rule compiles and runs on every tier. Nothing in
+this specification depends on adding scope-local exclusivity checks.
 
 #### 7.5.1 What this means in practice
 
 - Use `&` to signal "I only read this" and `&mut` to signal "I write
-  through this." These markers aid the reader and select the mutating
-  vs non-mutating method where dispatch distinguishes them; they do not
-  gate compilation.
+  through this." These markers gate writes and mutable-reference
+  creation, and select the mutating versus non-mutating method where
+  dispatch distinguishes them.
+- `let mut reference = &value` permits rebinding `reference`; it does not
+  make the shared referent writable. Conversely, `let reference = &mut
+  value` permits writing through `reference` without making the reference
+  binding itself mutable.
 - `&mut Vec<T>` / `&mut [T]` parameters do carry write-through to the
   caller (§3.4), so the marker is load-bearing for that data flow even
   though exclusivity is unchecked.

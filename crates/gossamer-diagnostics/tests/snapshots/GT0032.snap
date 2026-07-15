@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0032]: A mutable reference was requested for a place rooted at an immutable binding. - here
+--- framed ---
+error[GT0032]: A mutable reference was requested for a place rooted at an immutable binding.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here
