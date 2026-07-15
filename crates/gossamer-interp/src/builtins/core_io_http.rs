@@ -1,0 +1,1212 @@
+// ---- Stream builtins: io::{stdout, stderr, stdin} + methods ----
+//
+// An `io::Stream` value is a `Value::Struct` with a single `fd`
+// field: 0 = stdin, 1 = stdout, 2 = stderr. The walker's method
+// dispatch routes `stream.write_byte(b)` etc. to the handlers
+// below based on either the bare method name or the
+// `Stream::method` qualified key.
+
+fn stream_of(fd: i64) -> Value {
+    Value::struct_("Stream", vec![("fd", Value::Int(fd))])
+}
+
+fn stream_fd(value: &Value) -> i64 {
+    match value {
+        Value::MutCell(cell) => stream_fd(&cell.lock()),
+        Value::Struct(inner) if inner.name == "Stream" => {
+            for (f_name, f_val) in &inner.fields {
+                if (*f_name) == "fd" {
+                    if let Value::Int(n) = f_val {
+                        return *n;
+                    }
+                }
+            }
+            1
+        }
+        _ => 1,
+    }
+}
+
+fn math_arg(args: &[Value]) -> f64 {
+    match args.first() {
+        Some(Value::Float(x)) => *x,
+        Some(Value::Int(n)) => *n as f64,
+        _ => 0.0,
+    }
+}
+
+fn builtin_math_sqrt(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Float(math_arg(args).sqrt()))
+}
+fn builtin_math_sin(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Float(math_arg(args).sin()))
+}
+fn builtin_math_cos(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Float(math_arg(args).cos()))
+}
+fn builtin_math_exp(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Float(math_arg(args).exp()))
+}
+fn builtin_math_ln(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Float(math_arg(args).ln()))
+}
+fn builtin_math_abs(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::Int(n)) = args.first() {
+        return Ok(Value::Int(n.saturating_abs()));
+    }
+    Ok(Value::Float(math_arg(args).abs()))
+}
+fn builtin_math_floor(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Float(math_arg(args).floor()))
+}
+fn builtin_math_ceil(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Float(math_arg(args).ceil()))
+}
+fn builtin_math_pow(args: &[Value]) -> RuntimeResult<Value> {
+    let x = math_arg(args);
+    let y = match args.get(1) {
+        Some(Value::Float(v)) => *v,
+        Some(Value::Int(n)) => *n as f64,
+        _ => 0.0,
+    };
+    Ok(Value::Float(x.powf(y)))
+}
+
+fn builtin_io_stdout(_: &[Value]) -> RuntimeResult<Value> {
+    Ok(stream_of(1))
+}
+fn builtin_io_stderr(_: &[Value]) -> RuntimeResult<Value> {
+    Ok(stream_of(2))
+}
+fn builtin_io_stdin(_: &[Value]) -> RuntimeResult<Value> {
+    Ok(stream_of(0))
+}
+
+fn builtin_stream_write_byte(args: &[Value]) -> RuntimeResult<Value> {
+    let fd = args.first().map_or(1, stream_fd);
+    let b = match args.get(1) {
+        Some(Value::Int(n)) => *n,
+        _ => return Err(RuntimeError::Type("write_byte: expected i64".to_string())),
+    };
+    stream_write_one_byte(fd, b);
+    Ok(Value::Unit)
+}
+
+/// Writes a single byte to fd `fd` through the bytecode VM's
+/// redirectable writer (`STDOUT_WRITER` / `STDERR_WRITER`),
+/// matching the public `set_stdout_writer` contract used by
+/// tests. Pulled out of `builtin_stream_write_byte` so the
+/// `Op::StreamWriteByte` super-instruction can call it without
+/// constructing a `Vec<Value>` first - the dominant per-byte cost
+/// in `fasta`'s output loop.
+pub(crate) fn stream_write_one_byte(fd: i64, byte: i64) {
+    let bytes = [(byte & 0xff) as u8];
+    let text = std::str::from_utf8(&bytes).unwrap_or("");
+    if fd == 2 {
+        write_stderr(text);
+    } else {
+        write_stdout(text);
+    }
+}
+
+fn builtin_stream_write_str(args: &[Value]) -> RuntimeResult<Value> {
+    let fd = args.first().map_or(1, stream_fd);
+    let s = args.get(1).map(render_one).unwrap_or_default();
+    if fd == 2 {
+        write_stderr(&s);
+    } else {
+        write_stdout(&s);
+    }
+    Ok(Value::Unit)
+}
+
+fn builtin_stream_flush(_args: &[Value]) -> RuntimeResult<Value> {
+    // The walker's writers are unbuffered (go straight to the
+    // installed closures); flush is a no-op.
+    Ok(Value::Unit)
+}
+
+fn builtin_stream_read_line(args: &[Value]) -> RuntimeResult<Value> {
+    use std::io::BufRead;
+    let fd = args.first().map_or(0, stream_fd);
+    let Some(Value::MutCell(cell)) = args.get(1) else {
+        return Ok(err_variant(
+            "read_line: expected &mut String buffer".to_string(),
+        ));
+    };
+    if fd != 0 {
+        return Ok(ok_variant(Value::Int(0)));
+    }
+    let stdin = std::io::stdin();
+    let mut line = String::new();
+    match stdin.lock().read_line(&mut line) {
+        Ok(n) => {
+            let mut guard = cell.lock();
+            let Some(existing) = as_str(&guard) else {
+                return Ok(err_variant(
+                    "read_line: expected &mut String buffer".to_string(),
+                ));
+            };
+            let mut out = existing.to_string();
+            out.push_str(&line);
+            *guard = Value::String(SmolStr::from(out));
+            Ok(ok_variant(Value::Int(n as i64)))
+        }
+        Err(e) => Ok(err_variant(format!("read_line: {e}"))),
+    }
+}
+
+fn builtin_stream_read_to_string(args: &[Value]) -> RuntimeResult<Value> {
+    use std::io::Read;
+    let fd = args.first().map_or(0, stream_fd);
+    if fd != 0 {
+        return Ok(Value::String(SmolStr::from(String::new())));
+    }
+    let stdin = std::io::stdin();
+    let mut buf = String::new();
+    match stdin.lock().read_to_string(&mut buf) {
+        Ok(_) => {
+            buf.shrink_to_fit();
+            Ok(Value::String(buf.into()))
+        }
+        Err(_) => Ok(Value::String(SmolStr::from(String::new()))),
+    }
+}
+
+/// `io::ReadAll(reader) -> String` - drains the reader until EOF
+/// and returns the accumulated bytes as a String. Mirrors Go's
+/// `io.ReadAll`. Today the only Reader-shaped value the interp
+/// surfaces is the stdin Stream (fd 0); other fds return an empty
+/// String. `io::Copy(dst, src)` uses the same drain.
+fn builtin_io_read_all(args: &[Value]) -> RuntimeResult<Value> {
+    use std::io::Read;
+    let fd = args.first().map_or(0, stream_fd);
+    if fd != 0 {
+        return Ok(Value::String(SmolStr::from(String::new())));
+    }
+    let stdin = std::io::stdin();
+    let mut buf = String::new();
+    match stdin.lock().read_to_string(&mut buf) {
+        Ok(_) => {
+            buf.shrink_to_fit();
+            Ok(Value::String(buf.into()))
+        }
+        Err(_) => Ok(Value::String(SmolStr::from(String::new()))),
+    }
+}
+
+/// `io::Copy(dst, src) -> i64` - drains `src` byte-by-byte into
+/// `dst`, returning the byte count copied. Mirrors Go's `io.Copy`.
+/// Works on the fd-shaped streams returned by `io::stdin` /
+/// `io::stdout` / `io::stderr`: stdin → stdout/stderr is the only
+/// pair supported today (other fds map to empty / no-op).
+fn builtin_io_copy(args: &[Value]) -> RuntimeResult<Value> {
+    use std::io::Read;
+    let dst_fd = args.first().map_or(1, stream_fd);
+    let src_fd = args.get(1).map_or(0, stream_fd);
+    if src_fd != 0 {
+        return Ok(Value::Int(0));
+    }
+    let stdin = std::io::stdin();
+    let mut buf = String::new();
+    let n = match stdin.lock().read_to_string(&mut buf) {
+        Ok(n) => {
+            buf.shrink_to_fit();
+            n as i64
+        }
+        Err(_) => return Ok(Value::Int(0)),
+    };
+    if dst_fd == 2 {
+        write_stderr(&buf);
+    } else {
+        write_stdout(&buf);
+    }
+    Ok(Value::Int(n))
+}
+
+fn builtin_eprintln(args: &[Value]) -> RuntimeResult<Value> {
+    let rendered = render_args(args);
+    write_stderr(&rendered);
+    write_stderr("\n");
+    Ok(Value::Unit)
+}
+
+fn builtin_eprint(args: &[Value]) -> RuntimeResult<Value> {
+    write_stderr(&render_args(args));
+    Ok(Value::Unit)
+}
+
+fn builtin_format(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::String(SmolStr::from(render_args(args))))
+}
+
+/// Zero-separator concat. Used by compile-time macro expansion.
+fn builtin_concat(args: &[Value]) -> RuntimeResult<Value> {
+    let mut out = String::with_capacity(args.len() * 8);
+    for arg in args {
+        let _ = write!(out, "{arg}");
+    }
+    Ok(Value::String(out.into()))
+}
+
+/// `__fmt_prec(value, prec)` - format-string `{:.N}` lowering. Returns
+/// a `String` containing `value` rendered with `prec` fractional
+/// digits. Mirrors the runtime helper `gos_rt_f64_prec_to_str` so
+/// interp output matches the compiled tiers bit-for-bit.
+fn builtin_fmt_prec(args: &[Value]) -> RuntimeResult<Value> {
+    let value = args.first().cloned().unwrap_or(Value::Int(0));
+    let prec = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let prec = prec.clamp(0, 64) as usize;
+    let f = match value {
+        Value::Float(f) => f,
+        Value::Int(n) => n as f64,
+        other => {
+            return Err(RuntimeError::Type(format!(
+                "__fmt_prec expected a numeric first argument, got {other}"
+            )));
+        }
+    };
+    Ok(Value::String(format!("{f:.prec$}").into()))
+}
+
+/// `__fmt_radix(value, base)` - renders an integer in `base` (2..=36).
+fn builtin_fmt_radix(args: &[Value]) -> RuntimeResult<Value> {
+    let value = args.first().and_then(value_to_int).unwrap_or(0);
+    let base = args.get(1).and_then(value_to_int).unwrap_or(10);
+    let radix = u32::try_from(base).unwrap_or(10);
+    let out = if !(2..=36).contains(&radix) || value == 0 {
+        if value == 0 {
+            "0".to_string()
+        } else {
+            value.to_string()
+        }
+    } else {
+        let mut v = u128::from(value as u64);
+        let r = u128::from(radix);
+        let mut digits = Vec::new();
+        while v > 0 {
+            let d = (v % r) as u32;
+            digits.push(std::char::from_digit(d, radix).unwrap_or('0'));
+            v /= r;
+        }
+        digits.iter().rev().collect()
+    };
+    Ok(Value::String(out.into()))
+}
+
+/// `__fmt_upper(s)` - uppercases the rendered string (for `{:X}`).
+fn builtin_fmt_upper(args: &[Value]) -> RuntimeResult<Value> {
+    let s = args.first().and_then(as_str).unwrap_or("");
+    Ok(Value::String(SmolStr::to_uppercase_from(s)))
+}
+
+/// `__fmt_pad(s, width, fill, align)` - pads a rendered string to `width`.
+/// `align`: 0 = right (pad left), 1 = left (pad right), 2 = center.
+fn builtin_fmt_pad(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    let width = args.get(1).and_then(value_to_int).unwrap_or(0).max(0) as usize;
+    let fill = args
+        .get(2)
+        .and_then(value_to_int)
+        .and_then(|c| u32::try_from(c).ok())
+        .and_then(char::from_u32)
+        .unwrap_or(' ');
+    let align = args.get(3).and_then(value_to_int).unwrap_or(0);
+    let count = text.chars().count();
+    if count >= width {
+        return Ok(Value::String(text.into()));
+    }
+    let total = width - count;
+    let (left, right) = match align {
+        1 => (0, total),
+        2 => (total / 2, total - total / 2),
+        _ => (total, 0),
+    };
+    let mut out = String::with_capacity(text.len() + total);
+    for _ in 0..left {
+        out.push(fill);
+    }
+    out.push_str(text);
+    for _ in 0..right {
+        out.push(fill);
+    }
+    Ok(Value::String(out.into()))
+}
+
+fn builtin_panic(args: &[Value]) -> RuntimeResult<Value> {
+    Err(RuntimeError::Panic(render_args(args)))
+}
+
+/// `assert(cond)` / `assert(cond, msg)` - prelude assertion. Panics on a
+/// false condition (so a failing test is recorded as a failure); a
+/// passing assertion is counted in the test tally. Mirrored on the
+/// compiled tiers by lowering to a conditional `gos_rt_panic`.
+fn builtin_assert(args: &[Value]) -> RuntimeResult<Value> {
+    let cond = matches!(args.first(), Some(Value::Bool(true)));
+    if cond {
+        observe_assertion(true, "assert".to_string());
+        return Ok(Value::Unit);
+    }
+    // Match the compiled tier (and Rust's `assert!`): a supplied message
+    // is the panic text verbatim; the no-message form panics with
+    // "assertion failed".
+    let detail = match args.get(1).and_then(as_str) {
+        Some(m) => m.to_string(),
+        None => "assertion failed".to_string(),
+    };
+    Err(RuntimeError::Panic(detail))
+}
+
+/// `assert_eq(a, b)` / `assert_eq(a, b, msg)` - panics unless `a == b`.
+fn builtin_assert_eq(args: &[Value]) -> RuntimeResult<Value> {
+    let left = args.first().cloned().unwrap_or(Value::Unit);
+    let right = args.get(1).cloned().unwrap_or(Value::Unit);
+    if values_equal_for_assertion(&left, &right) {
+        observe_assertion(true, "assert_eq".to_string());
+        return Ok(Value::Unit);
+    }
+    let suffix = match args.get(2).and_then(as_str) {
+        Some(m) => format!(": {m}"),
+        None => String::new(),
+    };
+    Err(RuntimeError::Panic(format!(
+        "assertion failed{suffix}: {} != {}",
+        render_one(&left),
+        render_one(&right)
+    )))
+}
+
+fn builtin_http_response_text(args: &[Value]) -> RuntimeResult<Value> {
+    // Method call: response.text() - receiver is a Response struct.
+    if let Some(Value::Struct(inner)) = args.first() {
+        if inner.name == "Response" {
+            let body = inner
+                .fields
+                .iter()
+                .find(|(ident, _)| (*ident) == "body")
+                .and_then(|(_, v)| as_str(v))
+                .unwrap_or_default();
+            return Ok(ok_variant(Value::String(SmolStr::from(body.to_string()))));
+        }
+    }
+    // Constructor: Response::text(status, body).
+    let status = args.first().and_then(value_to_int).unwrap_or(200);
+    let body = args.get(1).map(render_one).unwrap_or_default();
+    Ok(response_struct(status, body, "text/plain; charset=utf-8"))
+}
+
+fn builtin_http_response_json(args: &[Value]) -> RuntimeResult<Value> {
+    let status = args.first().and_then(value_to_int).unwrap_or(200);
+    let body = args.get(1).map(render_one).unwrap_or_default();
+    Ok(response_struct(status, body, "application/json"))
+}
+
+/// `Response::stream(status, content_type, rs) -> Response` - wraps a
+/// live `ResponseStream` so the server drains it to the client as
+/// chunked frames (proxy passthrough). Construction CONSUMES the
+/// stream: the handle is moved out of the client registry, so a later
+/// `next_chunk` / `next_line` on the same `ResponseStream` yields
+/// `None`, and a second `Response::stream` over the same value serves
+/// an empty chunked body. Mirrors the compiled tier's
+/// `gos_rt_http_response_stream_new` exactly.
+#[cfg(not(target_arch = "wasm32"))]
+fn builtin_http_response_stream(args: &[Value]) -> RuntimeResult<Value> {
+    let status = args.first().and_then(value_to_int).unwrap_or(200);
+    let content_type = args.get(1).map(render_one).unwrap_or_default();
+    let Some(handle) = args
+        .get(2)
+        .and_then(crate::http_client_builtins::response_stream_handle)
+    else {
+        return Err(RuntimeError::Type(
+            "Response::stream expects a ResponseStream as its third argument".to_string(),
+        ));
+    };
+    crate::http_client_builtins::stream_consume_for_response(handle);
+    let fields = vec![
+        ("status", Value::Int(status)),
+        ("body", Value::String(SmolStr::default())),
+        ("content_type", Value::String(SmolStr::from(content_type))),
+        ("__stream_handle", Value::Int(handle)),
+    ];
+    Ok(Value::struct_("Response", fields))
+}
+
+/// `resp.with_header(name, value) -> Response` - chainable header
+/// attach. Replace-then-push, mirroring the compiled tier's
+/// `gos_rt_http_response_with_header`: any prior header with the
+/// same case-insensitive name is dropped, then the new pair is
+/// appended, so the last `with_header` for a name wins.
+fn builtin_http_response_with_header(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Struct(inner)) = args.first() else {
+        return Err(RuntimeError::Type(
+            "Response::with_header expects a Response receiver".to_string(),
+        ));
+    };
+    let name = args.get(1).map(render_one).unwrap_or_default();
+    let value = args.get(2).map(render_one).unwrap_or_default();
+    let pair = Value::Tuple(Arc::from(vec![
+        Value::String(SmolStr::from(name.clone())),
+        Value::String(SmolStr::from(value)),
+    ]));
+    let mut fields = inner.fields.to_vec();
+    if let Some((_, slot)) = fields.iter_mut().find(|(ident, _)| (*ident) == "headers") {
+        let mut items = match slot {
+            Value::Array(existing) => existing.as_ref().clone(),
+            _ => Vec::new(),
+        };
+        items.retain(|item| {
+            !matches!(item, Value::Tuple(kv)
+                if matches!(kv.first(), Some(Value::String(k))
+                    if k.as_str().eq_ignore_ascii_case(&name)))
+        });
+        items.push(pair);
+        *slot = Value::Array(Arc::new(items));
+    } else {
+        fields.push(("headers", Value::Array(Arc::new(vec![pair]))));
+    }
+    Ok(Value::struct_(inner.name.clone(), fields))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn builtin_http2_config_default(_args: &[Value]) -> RuntimeResult<Value> {
+    let c = gossamer_std::http_h2::Config::default();
+    let fields = vec![
+        (
+            "max_concurrent_streams",
+            Value::Int(i64::from(c.max_concurrent_streams)),
+        ),
+        (
+            "initial_window_size",
+            Value::Int(i64::from(c.initial_window_size)),
+        ),
+        (
+            "initial_connection_window_size",
+            Value::Int(i64::from(c.initial_connection_window_size)),
+        ),
+        ("max_frame_size", Value::Int(i64::from(c.max_frame_size))),
+        (
+            "max_header_list_size",
+            Value::Int(i64::from(c.max_header_list_size)),
+        ),
+    ];
+    Ok(Value::struct_(
+        "Config",
+        Arc::unwrap_or_clone(Arc::new(fields)),
+    ))
+}
+
+fn response_struct(status: i64, body: String, content_type: &str) -> Value {
+    let fields = vec![
+        ("status", Value::Int(status)),
+        ("body", Value::String(body.into())),
+        (
+            "content_type",
+            Value::String(SmolStr::from(content_type.to_string())),
+        ),
+    ];
+    Value::struct_("Response", Arc::unwrap_or_clone(Arc::new(fields)))
+}
+
+pub(crate) fn value_to_int(value: &Value) -> Option<i64> {
+    match value {
+        Value::Int(n) => Some(*n),
+        _ => None,
+    }
+}
+
+fn render_one(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.as_str().to_string(),
+        other => format!("{other}"),
+    }
+}
+
+fn render_args(args: &[Value]) -> String {
+    let mut out = String::new();
+    for (i, arg) in args.iter().enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        let _ = write!(out, "{arg}");
+    }
+    out
+}
+
+/// `http::serve(addr: String, handler: Value) -> Result<(), Error>`.
+///
+/// Binds a TCP listener on `addr` and serves HTTP/1.1 traffic. Each
+/// accepted connection is parsed into a [`Request`][http_std::Request]
+/// shaped `Value::Struct`, then dispatched by calling the user's
+/// `serve` method with `[handler, request_value]`. The returned
+/// response value is serialised back to the wire.
+///
+/// Graceful shutdown is driven by the `GOSSAMER_HTTP_MAX_REQUESTS`
+/// environment variable (stop after N requests) or by the process
+/// receiving SIGINT.
+#[cfg(not(target_arch = "wasm32"))]
+fn native_http_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    if args.len() < 2 {
+        return Err(RuntimeError::Arity {
+            expected: 2,
+            found: args.len(),
+        });
+    }
+    let addr: String = match &args[0] {
+        Value::String(s) => s.as_str().to_string(),
+        other => {
+            return Err(RuntimeError::Type(format!(
+                "expected address string, got {other}"
+            )));
+        }
+    };
+    let handler = args[1].clone();
+
+    let mut config = http_std::server::Config::default();
+    let override_max = HTTP_MAX_REQUESTS_OVERRIDE.load(Ordering::SeqCst);
+    if override_max > 0 {
+        config.max_requests = Some(override_max);
+    } else if let Ok(raw) = std::env::var("GOSSAMER_HTTP_MAX_REQUESTS") {
+        if let Ok(n) = raw.parse::<u64>() {
+            config.max_requests = Some(n);
+            eprintln!(
+                "http::serve: GOSSAMER_HTTP_MAX_REQUESTS={n} - server will exit after {n} request(s). Unset this env var to run forever."
+            );
+        }
+    }
+    let shutdown = Arc::clone(&config.shutdown);
+    install_sigint_handler(shutdown);
+
+    let errors = Mutex::new(Vec::<String>::new());
+    let dispatch_cell = std::cell::RefCell::new(dispatch);
+
+    // Resolve serve to the handler's specific impl by struct
+    // name. The bare "serve" global key gets overwritten as
+    // each impl loads, so dispatching on it picks the last-
+    // loaded serve regardless of which type the handler is.
+    let serve_method_name = match &handler {
+        Value::Struct(inner) => format!("{}::serve", inner.name),
+        _ => "serve".to_string(),
+    };
+    let result = http_std::server::bind_and_run(&addr, &config, |request| {
+        let request_value = request_to_value(&request);
+        let mut guard = dispatch_cell.borrow_mut();
+        let dispatched = guard.call_fn(&serve_method_name, vec![handler.clone(), request_value]);
+        drop(guard);
+        match dispatched {
+            Ok(value) => {
+                if let Some(response) = value_to_response(&value) {
+                    response
+                } else {
+                    let mut errs = errors.lock().unwrap();
+                    errs.push("handler did not return http::Response".to_string());
+                    drop(errs);
+                    http_std::Response::text(
+                        http_std::StatusCode::INTERNAL_SERVER_ERROR,
+                        "internal server error",
+                    )
+                }
+            }
+            Err(err) => {
+                let mut errs = errors.lock().unwrap();
+                errs.push(format!("{err}"));
+                drop(errs);
+                http_std::Response::text(
+                    http_std::StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal server error",
+                )
+            }
+        }
+    });
+
+    match result {
+        Ok(()) => Ok(Value::variant("Ok", vec![Value::Unit])),
+        // `http::serve` is `Result<(), Error>` in Gossamer - a bind
+        // failure is an `Err` value for the caller's match, not a
+        // panic (native-tier parity).
+        Err(err) => Ok(err_variant(format!("http::serve: {err}"))),
+    }
+}
+
+/// `http::serve_tls(addr, cert_pem, key_pem, handler) -> Result<(), Error>`.
+///
+/// TLS-terminating variant of [`native_http_serve`]: builds a rustls
+/// server config from the PEM-encoded certificate chain and private
+/// key, then dispatches each request through the same handler contract
+/// after TLS termination - so HTTPS handlers behave identically to the
+/// plaintext path on every tier.
+#[cfg(not(target_arch = "wasm32"))]
+fn native_http_serve_tls(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    if args.len() < 4 {
+        return Err(RuntimeError::Arity {
+            expected: 4,
+            found: args.len(),
+        });
+    }
+    let addr = match &args[0] {
+        Value::String(s) => s.as_str().to_string(),
+        other => {
+            return Err(RuntimeError::Type(format!(
+                "expected address string, got {other}"
+            )));
+        }
+    };
+    let cert_pem = match &args[1] {
+        Value::String(s) => s.as_str().to_string(),
+        other => {
+            return Err(RuntimeError::Type(format!(
+                "expected cert PEM string, got {other}"
+            )));
+        }
+    };
+    let key_pem = match &args[2] {
+        Value::String(s) => s.as_str().to_string(),
+        other => {
+            return Err(RuntimeError::Type(format!(
+                "expected key PEM string, got {other}"
+            )));
+        }
+    };
+    let handler = args[3].clone();
+
+    let tls_config = match gossamer_std::tls::server_config(gossamer_std::tls::CertKey {
+        cert_pem: cert_pem.into_bytes(),
+        key_pem: key_pem.into_bytes(),
+    }) {
+        Ok(c) => c,
+        Err(e) => return Ok(err_variant(format!("http::serve_tls: {e}"))),
+    };
+
+    let mut config = http_std::server::Config::default();
+    let override_max = HTTP_MAX_REQUESTS_OVERRIDE.load(Ordering::SeqCst);
+    if override_max > 0 {
+        config.max_requests = Some(override_max);
+    } else if let Ok(raw) = std::env::var("GOSSAMER_HTTP_MAX_REQUESTS") {
+        if let Ok(n) = raw.parse::<u64>() {
+            config.max_requests = Some(n);
+        }
+    }
+    let shutdown = Arc::clone(&config.shutdown);
+    install_sigint_handler(shutdown);
+
+    let errors = Mutex::new(Vec::<String>::new());
+    let dispatch_cell = std::cell::RefCell::new(dispatch);
+    let serve_method_name = match &handler {
+        Value::Struct(inner) => format!("{}::serve", inner.name),
+        _ => "serve".to_string(),
+    };
+    let result = http_std::server::bind_and_run_tls(&addr, &tls_config, &config, |request| {
+        let request_value = request_to_value(&request);
+        let mut guard = dispatch_cell.borrow_mut();
+        let dispatched = guard.call_fn(&serve_method_name, vec![handler.clone(), request_value]);
+        drop(guard);
+        match dispatched {
+            Ok(value) => value_to_response(&value).unwrap_or_else(|| {
+                errors
+                    .lock()
+                    .unwrap()
+                    .push("handler did not return http::Response".to_string());
+                http_std::Response::text(
+                    http_std::StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal server error",
+                )
+            }),
+            Err(err) => {
+                errors.lock().unwrap().push(format!("{err}"));
+                http_std::Response::text(
+                    http_std::StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal server error",
+                )
+            }
+        }
+    });
+
+    match result {
+        Ok(()) => Ok(Value::variant("Ok", vec![Value::Unit])),
+        Err(err) => Ok(err_variant(format!("http::serve_tls: {err}"))),
+    }
+}
+
+/// `http2::bind_and_run_h2c(addr: String, handler) -> Result<(), Error>`.
+///
+/// Boots an HTTP/2 cleartext server. The handler is a struct
+/// with a `serve(request) -> Response` method (or any callable
+/// value with that shape). Connections run in goroutines; each
+/// request is dispatched back to the main thread via a channel
+/// so the interpreter's `NativeDispatch` (which is not Send) can
+/// invoke the handler on the calling thread.
+#[allow(
+    clippy::too_many_lines,
+    clippy::items_after_statements,
+    clippy::needless_continue
+)]
+#[cfg(not(target_arch = "wasm32"))]
+fn native_http2_bind_and_run_h2c(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    if args.len() < 2 {
+        return Err(RuntimeError::Arity {
+            expected: 2,
+            found: args.len(),
+        });
+    }
+    let addr: String = match &args[0] {
+        Value::String(s) => s.as_str().to_string(),
+        other => {
+            return Err(RuntimeError::Type(format!(
+                "expected address string, got {other}"
+            )));
+        }
+    };
+    let handler = args[1].clone();
+
+    use std::sync::mpsc;
+    let (req_tx, req_rx) = mpsc::channel::<(http_std::Request, mpsc::Sender<http_std::Response>)>();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    install_sigint_handler(Arc::clone(&shutdown));
+
+    let max_requests = HTTP_MAX_REQUESTS_OVERRIDE.load(Ordering::SeqCst);
+
+    // Bind synchronously so a bind failure is the caller's `Err`
+    // value (native-tier parity), then hand the listener to the
+    // accept thread.
+    let listener = match std::net::TcpListener::bind(&addr) {
+        Ok(l) => l,
+        Err(e) => return Ok(err_variant(format!("http::serve_h2c: {e}"))),
+    };
+
+    let shutdown_for_server = Arc::clone(&shutdown);
+    let req_tx_for_server = req_tx.clone();
+    std::thread::Builder::new()
+        .name("gossamer-http2-accept".to_string())
+        .spawn(move || {
+            let _ = gossamer_std::http_h2::run_h2c(
+                listener,
+                move |req: http_std::Request| -> http_std::Response {
+                    if shutdown_for_server.load(Ordering::Acquire) {
+                        return http_std::Response {
+                            status: http_std::StatusCode(503),
+                            headers: http_std::Headers::new(),
+                            body: b"shutting down".to_vec(),
+                            raw_header_pairs: Vec::new(),
+                            body_stream: None,
+                        };
+                    }
+                    let (resp_tx, resp_rx) = mpsc::channel();
+                    if req_tx_for_server.send((req, resp_tx)).is_err() {
+                        return http_std::Response {
+                            status: http_std::StatusCode(500),
+                            headers: http_std::Headers::new(),
+                            body: b"dispatch channel closed".to_vec(),
+                            raw_header_pairs: Vec::new(),
+                            body_stream: None,
+                        };
+                    }
+                    match resp_rx.recv_timeout(Duration::from_secs(30)) {
+                        Ok(r) => r,
+                        Err(_) => http_std::Response {
+                            status: http_std::StatusCode(504),
+                            headers: http_std::Headers::new(),
+                            body: b"handler timeout".to_vec(),
+                            raw_header_pairs: Vec::new(),
+                            body_stream: None,
+                        },
+                    }
+                },
+                gossamer_std::http_h2::Config::default(),
+            );
+        })
+        .map_err(|e| RuntimeError::Panic(format!("http2::bind_and_run_h2c spawn: {e}")))?;
+    drop(req_tx);
+
+    let dispatch_cell = std::cell::RefCell::new(dispatch);
+    let mut served: u64 = 0;
+    loop {
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
+        match req_rx.recv_timeout(Duration::from_millis(50)) {
+            Ok((req, resp_tx)) => {
+                let request_value = request_to_value(&req);
+                let mut guard = dispatch_cell.borrow_mut();
+                let dispatched = guard.call_fn("serve", vec![handler.clone(), request_value]);
+                drop(guard);
+                let response = match dispatched {
+                    Ok(value) => value_to_response(&value).unwrap_or_else(|| http_std::Response {
+                        status: http_std::StatusCode(500),
+                        headers: http_std::Headers::new(),
+                        body: b"handler did not return http::Response".to_vec(),
+                        raw_header_pairs: Vec::new(),
+                        body_stream: None,
+                    }),
+                    Err(err) => http_std::Response {
+                        status: http_std::StatusCode(500),
+                        headers: http_std::Headers::new(),
+                        body: format!("handler error: {err}").into_bytes(),
+                        raw_header_pairs: Vec::new(),
+                        body_stream: None,
+                    },
+                };
+                let _ = resp_tx.send(response);
+                served = served.saturating_add(1);
+                if max_requests > 0 && served >= max_requests {
+                    shutdown.store(true, Ordering::Release);
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    Ok(Value::variant("Ok", vec![Value::Unit]))
+}
+
+/// `http_h3::serve(addr, cert_path, key_path, handler) ->
+/// Result<(), Error>`.
+///
+/// Boots a QUIC + HTTP/3 server through the shared
+/// [`gossamer_std::http_h3`] adapter. The engine drives its handler
+/// closure on a private tokio runtime thread, so - exactly like the
+/// h2 builtin - each request is marshalled over an mpsc channel back
+/// to the interpreter thread, where the not-`Send` `NativeDispatch`
+/// invokes the user handler.
+#[allow(
+    clippy::too_many_lines,
+    clippy::items_after_statements,
+    clippy::needless_continue
+)]
+#[cfg(not(target_arch = "wasm32"))]
+fn native_http3_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    if args.len() < 4 {
+        return Err(RuntimeError::Arity {
+            expected: 4,
+            found: args.len(),
+        });
+    }
+    let str_arg = |v: &Value, what: &str| -> RuntimeResult<String> {
+        match v {
+            Value::String(s) => Ok(s.as_str().to_string()),
+            other => Err(RuntimeError::Type(format!(
+                "expected {what} string, got {other}"
+            ))),
+        }
+    };
+    let addr = str_arg(&args[0], "address")?;
+    let cert_path = str_arg(&args[1], "cert path")?;
+    let key_path = str_arg(&args[2], "key path")?;
+    let handler = args[3].clone();
+
+    // Resolve the handler's specific `T::serve` impl by struct name,
+    // matching `native_http_serve` (the bare `serve` global is
+    // overwritten as each impl loads, so dispatching on it would
+    // pick the last-loaded one).
+    let serve_method_name = match &handler {
+        Value::Struct(inner) => format!("{}::serve", inner.name),
+        _ => "serve".to_string(),
+    };
+
+    use std::sync::mpsc;
+    let (req_tx, req_rx) = mpsc::channel::<(http_std::Request, mpsc::Sender<http_std::Response>)>();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    install_sigint_handler(Arc::clone(&shutdown));
+    let max_requests = HTTP_MAX_REQUESTS_OVERRIDE.load(Ordering::SeqCst);
+
+    let shutdown_for_server = Arc::clone(&shutdown);
+    let req_tx_for_server = req_tx.clone();
+    let bind_addr = addr.clone();
+    let (boot_tx, boot_rx) = mpsc::channel::<Result<(), String>>();
+    std::thread::Builder::new()
+        .name("gossamer-http3-accept".to_string())
+        .spawn(move || {
+            let handler_fn = move |req: http_std::Request| -> http_std::Response {
+                if shutdown_for_server.load(Ordering::Acquire) {
+                    return http_std::Response {
+                        status: http_std::StatusCode(503),
+                        headers: http_std::Headers::new(),
+                        body: b"shutting down".to_vec(),
+                        raw_header_pairs: Vec::new(),
+                        body_stream: None,
+                    };
+                }
+                let (resp_tx, resp_rx) = mpsc::channel();
+                if req_tx_for_server.send((req, resp_tx)).is_err() {
+                    return http_std::Response {
+                        status: http_std::StatusCode(500),
+                        headers: http_std::Headers::new(),
+                        body: b"dispatch channel closed".to_vec(),
+                        raw_header_pairs: Vec::new(),
+                        body_stream: None,
+                    };
+                }
+                match resp_rx.recv_timeout(Duration::from_secs(30)) {
+                    Ok(r) => r,
+                    Err(_) => http_std::Response {
+                        status: http_std::StatusCode(504),
+                        headers: http_std::Headers::new(),
+                        body: b"handler timeout".to_vec(),
+                        raw_header_pairs: Vec::new(),
+                        body_stream: None,
+                    },
+                }
+            };
+            // `gossamer_std::http_h3::serve` validates the address,
+            // reads the keypair, and binds before its accept loop
+            // runs - so a synchronous `Err` is a startup failure the
+            // caller must see. Forward the bind outcome over `boot`
+            // and, on success, block here driving the endpoint.
+            match gossamer_std::http_h3::serve(&bind_addr, &cert_path, &key_path, handler_fn) {
+                Ok(()) => {
+                    let _ = boot_tx.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = boot_tx.send(Err(e.to_string()));
+                }
+            }
+        })
+        .map_err(|e| RuntimeError::Panic(format!("http_h3::serve spawn: {e}")))?;
+    drop(req_tx);
+
+    let dispatch_cell = std::cell::RefCell::new(dispatch);
+    let mut served: u64 = 0;
+    loop {
+        // A startup failure (bad address, unreadable cert/key, bind
+        // error) arrives on `boot` before any request - surface it as
+        // the caller's `Err`, matching the native tier.
+        if let Ok(Err(msg)) = boot_rx.try_recv() {
+            return Ok(err_variant(format!("http_h3::serve: {msg}")));
+        }
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
+        match req_rx.recv_timeout(Duration::from_millis(50)) {
+            Ok((req, resp_tx)) => {
+                let request_value = request_to_value(&req);
+                let mut guard = dispatch_cell.borrow_mut();
+                let dispatched =
+                    guard.call_fn(&serve_method_name, vec![handler.clone(), request_value]);
+                drop(guard);
+                let response = match dispatched {
+                    Ok(value) => value_to_response(&value).unwrap_or_else(|| http_std::Response {
+                        status: http_std::StatusCode(500),
+                        headers: http_std::Headers::new(),
+                        body: b"handler did not return http::Response".to_vec(),
+                        raw_header_pairs: Vec::new(),
+                        body_stream: None,
+                    }),
+                    Err(err) => http_std::Response {
+                        status: http_std::StatusCode(500),
+                        headers: http_std::Headers::new(),
+                        body: format!("handler error: {err}").into_bytes(),
+                        raw_header_pairs: Vec::new(),
+                        body_stream: None,
+                    },
+                };
+                let _ = resp_tx.send(response);
+                served = served.saturating_add(1);
+                if max_requests > 0 && served >= max_requests {
+                    shutdown.store(true, Ordering::Release);
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                // The server thread ended before any request - the only
+                // pre-shutdown exit is a startup failure (bad address,
+                // unreadable cert/key, bind error). Its outcome is now
+                // definitively on `boot`; surface an `Err` so the caller
+                // sees the same failure value the native tier returns.
+                if let Ok(Err(msg)) = boot_rx.recv() {
+                    return Ok(err_variant(format!("http_h3::serve: {msg}")));
+                }
+                break;
+            }
+        }
+    }
+
+    Ok(Value::variant("Ok", vec![Value::Unit]))
+}
+
+fn request_to_value(request: &http_std::Request) -> Value {
+    // Path and query are split at the ABI level since 0.4.
+    let bare_path = request.path.clone();
+    let query_string = request.query.clone();
+    let headers: Vec<Value> = request
+        .headers
+        .iter()
+        .map(|(name, value)| {
+            Value::Tuple(Arc::from(vec![
+                Value::String(SmolStr::from(name.to_string())),
+                Value::String(SmolStr::from(value.to_string())),
+            ]))
+        })
+        .collect();
+    let query_pairs: Vec<Value> = query_string
+        .split('&')
+        .filter(|seg| !seg.is_empty())
+        .map(|seg| {
+            let (k, v) = match seg.split_once('=') {
+                Some((k, v)) => (k, v),
+                None => (seg, ""),
+            };
+            Value::Tuple(Arc::from(vec![
+                Value::String(SmolStr::from(k.to_string())),
+                Value::String(SmolStr::from(v.to_string())),
+            ]))
+        })
+        .collect();
+    let body_text = String::from_utf8_lossy(&request.body).into_owned();
+    // Binary-safe sibling of the UTF-8-lossy `body` field - one
+    // `Value::Int` per byte, matching the `resp.raw_bytes` and
+    // `fs::read` byte-array shape.
+    let raw_body: Vec<Value> = request
+        .body
+        .iter()
+        .map(|b| Value::Int(i64::from(*b)))
+        .collect();
+    let fields = vec![
+        (
+            "method",
+            Value::String(SmolStr::from(request.method.as_str().to_string())),
+        ),
+        ("path", Value::String(bare_path.into())),
+        ("query", Value::String(query_string.into())),
+        ("query_pairs", Value::Array(Arc::new(query_pairs))),
+        ("headers", Value::Array(Arc::new(headers))),
+        ("body", Value::String(body_text.into())),
+        ("raw_body", Value::Array(Arc::new(raw_body))),
+    ];
+    Value::struct_("Request", Arc::unwrap_or_clone(Arc::new(fields)))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn value_to_response(value: &Value) -> Option<http_std::Response> {
+    let unwrapped = unwrap_result(value);
+    let Value::Struct(struct_inner) = unwrapped else {
+        return None;
+    };
+    let fields = &struct_inner.fields;
+    let mut status: u16 = 200;
+    let mut body: Vec<u8> = Vec::new();
+    let mut content_type = String::new();
+    let mut header_pairs: Vec<(String, String)> = Vec::new();
+    let mut stream_handle: Option<i64> = None;
+    for (ident, v) in fields {
+        match *ident {
+            "__stream_handle" => {
+                if let Value::Int(h) = v {
+                    stream_handle = Some(*h);
+                }
+            }
+            "status" => {
+                status = match v {
+                    Value::Int(n) => u16::try_from(*n).unwrap_or(500),
+                    Value::Variant(var_inner) if !var_inner.fields.is_empty() => {
+                        match &var_inner.fields[0] {
+                            Value::Int(n) => u16::try_from(*n).unwrap_or(500),
+                            _ => 200,
+                        }
+                    }
+                    _ => 200,
+                };
+            }
+            "body" => match v {
+                Value::String(s) => body = s.as_bytes().to_vec(),
+                Value::Array(bytes) => {
+                    body = bytes
+                        .iter()
+                        .filter_map(|b| match b {
+                            Value::Int(n) => u8::try_from(*n).ok(),
+                            _ => None,
+                        })
+                        .collect();
+                }
+                _ => {}
+            },
+            "content_type" => {
+                if let Value::String(s) = v {
+                    content_type.clear();
+                    content_type.push_str(s.as_str());
+                }
+            }
+            "headers" => {
+                if let Value::Array(items) = v {
+                    for item in items.iter() {
+                        if let Value::Tuple(kv) = item
+                            && let (Some(Value::String(k)), Some(Value::String(val))) =
+                                (kv.first(), kv.get(1))
+                        {
+                            header_pairs.push((k.to_string(), val.to_string()));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // A `__stream_handle` field marks a `Response::stream` value:
+    // take the live stream out of the pending registry (one-shot -
+    // a second serve of the same handle drains nothing and answers
+    // an empty chunked body, matching the compiled tier).
+    let body_stream = stream_handle.map(|h| {
+        crate::http_client_builtins::stream_take_for_serve(h).map_or_else(
+            || http_std::BodyStream(Box::new(std::io::empty())),
+            |arc| http_std::BodyStream(Box::new(crate::http_client_builtins::StreamBody(arc))),
+        )
+    });
+    let streamed = body_stream.is_some();
+    let mut response = http_std::Response {
+        status: http_std::StatusCode(status),
+        headers: http_std::Headers::new(),
+        body,
+        body_stream,
+        raw_header_pairs: Vec::new(),
+    };
+    // Handler-set headers go in first; `Headers::insert` keys by
+    // lowercased name, so a later same-name pair replaces the
+    // earlier one - matching the compiled tier's replace-then-push.
+    let mut has_content_type = false;
+    let mut has_content_length = false;
+    for (name, value) in &header_pairs {
+        if name.eq_ignore_ascii_case("content-type") {
+            has_content_type = true;
+        }
+        if name.eq_ignore_ascii_case("content-length") {
+            has_content_length = true;
+        }
+        response.headers.insert(name, value);
+    }
+    // Precedence (mirrors the compiled tier's
+    // `extract_response_into`): explicit content-type header >
+    // `content_type` field > text/plain default.
+    if !has_content_type {
+        if content_type.is_empty() {
+            content_type.push_str("text/plain; charset=utf-8");
+        }
+        response.headers.insert("content-type", &content_type);
+    }
+    // Streamed responses are framed as Transfer-Encoding: chunked by
+    // the server writer; a Content-Length would violate RFC 7230
+    // §3.3.3, so it is only synthesized for buffered bodies.
+    if !has_content_length && !streamed {
+        response
+            .headers
+            .insert("content-length", &response.body.len().to_string());
+    }
+    Some(response)
+}
+
+fn unwrap_result(value: &Value) -> &Value {
+    match value {
+        Value::Variant(inner) if inner.name == "Ok" && !inner.fields.is_empty() => &inner.fields[0],
+        other => other,
+    }
+}
+
+static SIGINT_HOOKED: AtomicBool = AtomicBool::new(false);
+

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.28.6 - Source files split
+
+- Split some large low-risk source modules and tests.
+
 ## 0.28.5 - String diagnostics, byte string literals, REPL bindings, char-patterns.
 
 - Fixed `strings::count` and related string diagnostics so each parameter

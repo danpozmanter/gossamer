@@ -8,6 +8,7 @@
 
 #![forbid(unsafe_code)]
 
+/// Compile-time source augmentation for derives, serde helpers, and rewrites.
 pub mod autoderive;
 mod diagnostic;
 mod entry_main;

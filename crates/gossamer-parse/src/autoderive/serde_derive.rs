@@ -1,0 +1,1020 @@
+/// Walks `parsed` for struct definitions and synthesizes
+/// serialization-method source for each eligible struct. Returns the
+/// generated source text, ready to be parsed and merged.
+#[must_use]
+pub fn synthesize_serde_impls(parsed: &SourceFile) -> String {
+    let mut out = String::new();
+    out.push_str("// Synthesized by `gossamer-parse::autoderive`.\n");
+    out.push('\n');
+
+    let struct_names: HashSet<String> = flatten_items(&parsed.items)
+        .into_iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Struct(decl)
+                if matches!(&decl.body, StructBody::Named(_) | StructBody::Tuple(_)) =>
+            {
+                Some(decl.name.name.clone())
+            }
+            _ => None,
+        })
+        .collect();
+
+    for item in flatten_items(&parsed.items) {
+        let ItemKind::Struct(decl) = &item.kind else {
+            continue;
+        };
+        if !decl.generics.params.is_empty() {
+            continue;
+        }
+        match &decl.body {
+            StructBody::Named(fields) => {
+                let typed: Option<Vec<(String, FieldKind)>> = fields
+                    .iter()
+                    .map(|f| {
+                        FieldKind::from_type(&f.ty, &struct_names).map(|k| (f.name.name.clone(), k))
+                    })
+                    .collect();
+                if let Some(typed) = typed {
+                    emit_impl(&mut out, decl, &typed);
+                }
+            }
+            StructBody::Tuple(fields) => {
+                let typed: Option<Vec<FieldKind>> = fields
+                    .iter()
+                    .map(|f| FieldKind::from_type(&f.ty, &struct_names))
+                    .collect();
+                if let Some(typed) = typed {
+                    emit_tuple_impl(&mut out, decl, &typed);
+                }
+            }
+            StructBody::Unit => {}
+        }
+    }
+    out
+}
+
+/// Emits the serde free functions for a tuple struct: a JSON object keyed
+/// by position (`{"0":v0,"1":v1}`), reusing the `to_json`-backed toml/yaml
+/// wrappers. Positional access `value.N` and the `Name(..)` constructor are
+/// rewritten through the tuple-struct machinery.
+fn emit_tuple_impl(out: &mut String, decl: &StructDecl, fields: &[FieldKind]) {
+    let name = &decl.name.name;
+    emit_tuple_to_json(out, name, fields);
+    emit_tuple_from_json(out, name, fields);
+    emit_to_toml(out, name);
+    emit_from_toml(out, name);
+    emit_to_yaml(out, name);
+    emit_from_yaml(out, name);
+}
+
+fn emit_tuple_to_json(out: &mut String, name: &str, fields: &[FieldKind]) {
+    out.push_str("// Render a tuple struct as a position-keyed JSON object. Auto-derived.\n");
+    out.push_str(&format!(
+        "pub fn {}(value: {name}) -> Result<String, errors::Error> {{\n",
+        to_json_fn(name)
+    ));
+    out.push_str("    let mut out = \"\"\n    out += \"{\"\n");
+    for (i, kind) in fields.iter().enumerate() {
+        if i > 0 {
+            out.push_str("    out += \",\"\n");
+        }
+        out.push_str(&format!("    out += \"\\\"{i}\\\":\"\n"));
+        let lit = kind.render_to_json(&format!("value.{i}"));
+        out.push_str(&format!("    out += {lit}\n"));
+    }
+    out.push_str("    out += \"}\"\n    Ok(out)\n}\n\n");
+}
+
+fn emit_tuple_from_json(out: &mut String, name: &str, fields: &[FieldKind]) {
+    out.push_str("// Parse a position-keyed JSON object into a tuple struct. Auto-derived.\n");
+    out.push_str(&format!(
+        "pub fn {}(text: &String) -> Result<{name}, errors::Error> {{\n",
+        from_json_fn(name)
+    ));
+    out.push_str("    let v = json::parse(text)?\n");
+    for (i, kind) in fields.iter().enumerate() {
+        let path = format!("element `{i}`");
+        let extract = kind.extract_strict("__child", &path);
+        let missing = if kind.tolerates_missing_key() {
+            "None".to_string()
+        } else {
+            format!("return Err(errors::new(\"missing element `{i}`\"))")
+        };
+        out.push_str(&format!(
+            "    let __f{i} = match json::get(v, \"{i}\") {{\n        Some(__child) => {extract},\n        None => {missing},\n    }}\n"
+        ));
+    }
+    let args: Vec<String> = (0..fields.len()).map(|i| format!("__f{i}")).collect();
+    out.push_str(&format!("    Ok({name}({}))\n}}\n\n", args.join(", ")));
+}
+
+fn emit_impl(out: &mut String, decl: &StructDecl, fields: &[(String, FieldKind)]) {
+    let name = &decl.name.name;
+    emit_to_json(out, name, fields);
+    emit_from_json(out, name, fields);
+    emit_to_toml(out, name);
+    emit_from_toml(out, name);
+    emit_to_yaml(out, name);
+    emit_from_yaml(out, name);
+}
+
+fn emit_to_json(out: &mut String, name: &str, fields: &[(String, FieldKind)]) {
+    out.push_str(
+        "// Render a value as a JSON object. Auto-derived; reached via `to_json::<T>(value)`.\n",
+    );
+    out.push_str(&format!(
+        "pub fn {}(value: {name}) -> Result<String, errors::Error> {{\n",
+        to_json_fn(name)
+    ));
+    out.push_str("    let mut out = \"\"\n");
+    out.push_str("    out += \"{\"\n");
+    for (i, (fname, kind)) in fields.iter().enumerate() {
+        if i > 0 {
+            out.push_str("    out += \",\"\n");
+        }
+        out.push_str(&format!("    out += \"\\\"{fname}\\\":\"\n"));
+        let lit = kind.render_to_json(&format!("value.{fname}"));
+        out.push_str(&format!("    out += {lit}\n"));
+    }
+    out.push_str("    out += \"}\"\n");
+    out.push_str("    Ok(out)\n");
+    out.push_str("}\n\n");
+}
+
+fn emit_to_toml(out: &mut String, name: &str) {
+    out.push_str("// Render a value as TOML. Auto-derived; reached via `to_toml::<T>(value)`.\n");
+    out.push_str(&format!(
+        "pub fn {}(value: {name}) -> Result<String, errors::Error> {{\n",
+        serde_fn("to_toml", name)
+    ));
+    out.push_str(&format!("    let j = {}(value)?\n", to_json_fn(name)));
+    out.push_str("    toml::from_json(&j)\n");
+    out.push_str("}\n\n");
+}
+
+fn emit_from_toml(out: &mut String, name: &str) {
+    out.push_str(
+        "// Parse TOML text into a value. Auto-derived; reached via `from_toml::<T>(text)`.\n",
+    );
+    out.push_str(&format!(
+        "pub fn {}(text: &String) -> Result<{name}, errors::Error> {{\n",
+        serde_fn("from_toml", name)
+    ));
+    out.push_str("    let j = toml::to_json(text)?\n");
+    out.push_str(&format!("    {}(&j)\n", from_json_fn(name)));
+    out.push_str("}\n\n");
+}
+
+fn emit_to_yaml(out: &mut String, name: &str) {
+    out.push_str("// Render a value as YAML. Auto-derived; reached via `to_yaml::<T>(value)`.\n");
+    out.push_str(&format!(
+        "pub fn {}(value: {name}) -> Result<String, errors::Error> {{\n",
+        serde_fn("to_yaml", name)
+    ));
+    out.push_str(&format!("    let j = {}(value)?\n", to_json_fn(name)));
+    out.push_str("    yaml::from_json(&j)\n");
+    out.push_str("}\n\n");
+}
+
+fn emit_from_yaml(out: &mut String, name: &str) {
+    out.push_str(
+        "// Parse YAML text into a value. Auto-derived; reached via `from_yaml::<T>(text)`.\n",
+    );
+    out.push_str(&format!(
+        "pub fn {}(text: &String) -> Result<{name}, errors::Error> {{\n",
+        serde_fn("from_yaml", name)
+    ));
+    out.push_str("    let j = yaml::to_json(text)?\n");
+    out.push_str(&format!("    {}(&j)\n", from_json_fn(name)));
+    out.push_str("}\n\n");
+}
+
+fn emit_from_json(out: &mut String, name: &str, fields: &[(String, FieldKind)]) {
+    out.push_str(
+        "// Parse a JSON object into a value. Auto-derived; reached via `from_json::<T>(text)`.\n// Returns `Err` when a required field is missing or a field's value\n// type does not match the declaration; the error names the field.\n",
+    );
+    out.push_str(&format!(
+        "pub fn {}(text: &String) -> Result<{name}, errors::Error> {{\n",
+        from_json_fn(name)
+    ));
+    out.push_str("    let v = json::parse(text)?\n");
+    for (fname, kind) in fields {
+        let path = format!("field `{fname}`");
+        let extract = kind.extract_strict("__child", &path);
+        // A missing `Option` field decodes to `None` rather than erroring.
+        let missing = if kind.tolerates_missing_key() {
+            "None".to_string()
+        } else {
+            format!("return Err(errors::new(\"missing field `{fname}`\"))")
+        };
+        out.push_str(&format!(
+            "    let {fname} = match json::get(v, \"{fname}\") {{\n        Some(__child) => {extract},\n        None => {missing},\n    }}\n"
+        ));
+    }
+    out.push_str(&format!("    Ok({name} {{ "));
+    let names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+    out.push_str(&names.join(", "));
+    out.push_str(" })\n");
+    out.push_str("}\n\n");
+}
+
+/// Extracts the trait names listed in an item's `#[derive(...)]`
+/// attributes (e.g. `["Clone", "PartialEq"]`). Multiple `#[derive(...)]`
+/// attributes accumulate.
+fn derive_list(attrs: &gossamer_ast::Attrs) -> Vec<String> {
+    let mut out = Vec::new();
+    for attr in &attrs.outer {
+        let is_derive =
+            attr.path.segments.len() == 1 && attr.path.segments[0].name.name == "derive";
+        if !is_derive {
+            continue;
+        }
+        if let Some(tokens) = &attr.tokens {
+            for tok in tokens.split(',') {
+                let name = tok.trim();
+                if !name.is_empty() {
+                    out.push(name.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Walks `parsed` for `#[derive(...)]`-annotated structs and synthesizes
+/// the requested trait methods as real Gossamer `impl` source. Clone,
+/// PartialEq/Eq, and Default lower through every tier exactly like
+/// hand-written methods; the `==` / `!=` operators route to the
+/// synthesized `eq` in MIR (see the builder's binary-op lowering).
+#[must_use]
+/// Head name of a `Type` that is a single-segment path (`Point` ->
+/// `"Point"`), used to attach an `impl` block to its target type.
+fn type_head_name(ty: &gossamer_ast::Type) -> Option<&str> {
+    match &ty.kind {
+        TypeKind::Path(path) if path.segments.len() == 1 => {
+            Some(path.segments[0].name.name.as_str())
+        }
+        _ => None,
+    }
+}
+
+/// Types for which the user already wrote an `impl Type { fn fmt(&self) -> ... }`,
+/// so the synthesizer must not emit a conflicting structural `fmt`.
+fn types_with_user_fmt(parsed: &SourceFile) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for item in flatten_items(&parsed.items) {
+        if let ItemKind::Impl(decl) = &item.kind
+            && decl.trait_ref.is_none()
+            && let Some(name) = type_head_name(&decl.self_ty)
+            && decl
+                .items
+                .iter()
+                .any(|i| matches!(i, gossamer_ast::ImplItem::Fn(f) if f.name.name == "fmt"))
+        {
+            out.insert(name.to_string());
+        }
+    }
+    out
+}
+
+/// Scalar field types a synthesized `fmt` can render directly via
+/// `format!("{}", field)` on every tier.
+fn is_scalar_fmt_name(name: &str) -> bool {
+    matches!(
+        name,
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "char"
+            | "String"
+    )
+}
+
+/// Whether a field type renders inside a synthesized `fmt` on the compiled
+/// tiers: a scalar, or a struct / enum that itself ends up with a `fmt`
+/// (tracked in `formattable`). Containers (`Vec`, `Option`, tuple, `HashMap`),
+/// references-to-containers, channels, and function types are excluded -
+/// `{}` on them does not lower through the implicit `fmt` path, so a type
+/// carrying one keeps the runtime's default render and gets no implicit `fmt`.
+fn ty_is_renderable(ty: &gossamer_ast::Type, formattable: &HashSet<String>) -> bool {
+    match &ty.kind {
+        TypeKind::Path(path) if path.segments.len() == 1 => {
+            let seg = &path.segments[0];
+            if !seg.generics.is_empty() {
+                return false;
+            }
+            let name = seg.name.name.as_str();
+            is_scalar_fmt_name(name) || formattable.contains(name)
+        }
+        TypeKind::Ref { inner, .. } => ty_is_renderable(inner, formattable),
+        _ => false,
+    }
+}
+
+/// Type heads whose values carry no meaningful equality / ordering, so a
+/// synthesized `self.f == other.f` over a field of one would not typecheck.
+/// A struct carrying one of these gets no automatic comparison (comparing it
+/// is then a clean check error, never a miscompile).
+fn is_noncomparable_head(name: &str) -> bool {
+    matches!(
+        name,
+        "Sender"
+            | "Receiver"
+            | "Mutex"
+            | "RwLock"
+            | "JoinHandle"
+            | "WaitGroup"
+            | "Once"
+            | "Context"
+            | "AtomicBool"
+            | "AtomicI8"
+            | "AtomicI16"
+            | "AtomicI32"
+            | "AtomicI64"
+            | "AtomicU8"
+            | "AtomicU16"
+            | "AtomicU32"
+            | "AtomicU64"
+            | "AtomicUsize"
+            | "AtomicIsize"
+    )
+}
+
+/// A field type over which a synthesized `eq` and `cmp` are correct and
+/// lower identically on every tier: a scalar / `String` leaf, or a nested
+/// struct / enum already proven comparable. Containers, tuples, generic
+/// parameters, and channel / fn types are deliberately excluded - those need
+/// an explicit `#[derive(PartialEq)]` / `#[derive(Ord)]`, which force the
+/// synthesis without the by-value guarantee.
+fn ty_is_comparable(ty: &gossamer_ast::Type, comparable: &HashSet<String>) -> bool {
+    match &ty.kind {
+        TypeKind::Ref { inner, .. } => ty_is_comparable(inner, comparable),
+        TypeKind::Path(path) => {
+            let Some(seg) = path.segments.last() else {
+                return false;
+            };
+            if !seg.generics.is_empty() {
+                return false;
+            }
+            let name = seg.name.name.as_str();
+            !is_noncomparable_head(name) && (is_scalar_fmt_name(name) || comparable.contains(name))
+        }
+        _ => false,
+    }
+}
+
+/// Like [`ty_is_comparable`] but for ordering (`cmp`), which additionally
+/// excludes `bool`: `<` on a `bool` does not lower on the compiled tiers, so a
+/// struct carrying a `bool` is equatable (`==`) but not auto-orderable - it
+/// gets `eq` but not `cmp`. (Equality on a `bool` field lowers fine.)
+fn ty_is_orderable(ty: &gossamer_ast::Type, orderable: &HashSet<String>) -> bool {
+    match &ty.kind {
+        TypeKind::Ref { inner, .. } => ty_is_orderable(inner, orderable),
+        TypeKind::Path(path) => {
+            let Some(seg) = path.segments.last() else {
+                return false;
+            };
+            if !seg.generics.is_empty() {
+                return false;
+            }
+            let name = seg.name.name.as_str();
+            name != "bool"
+                && !is_noncomparable_head(name)
+                && (is_scalar_fmt_name(name) || orderable.contains(name))
+        }
+        _ => false,
+    }
+}
+
+/// Types for which the user already wrote a method named `method` (in an
+/// inherent or trait `impl`), so the synthesizer must not emit a conflicting
+/// structural one. Mirrors [`types_with_user_fmt`] for `eq` / `cmp`.
+fn types_with_user_method(parsed: &SourceFile, method: &str) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for item in flatten_items(&parsed.items) {
+        if let ItemKind::Impl(decl) = &item.kind
+            && let Some(name) = type_head_name(&decl.self_ty)
+            && decl
+                .items
+                .iter()
+                .any(|i| matches!(i, gossamer_ast::ImplItem::Fn(f) if f.name.name == method))
+        {
+            out.insert(name.to_string());
+        }
+    }
+    out
+}
+
+/// Synthesizes `impl` blocks for the `#[derive(...)]` traits, plus a
+/// structural `fmt` for every struct / enum that is formattable but has no
+/// `fmt` of its own, so `{}` / `{:?}` lowers on the compiled tiers exactly as
+/// it renders on the VM. Returns the appended source.
+#[allow(
+    clippy::too_many_lines,
+    clippy::cognitive_complexity,
+    reason = "linear orchestration: collect names, fields, formattable + comparable sets, then emit"
+)]
+pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
+    let struct_names: HashSet<String> = flatten_items(&parsed.items)
+        .into_iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Struct(decl)
+                if matches!(&decl.body, StructBody::Named(_) | StructBody::Tuple(_)) =>
+            {
+                Some(decl.name.name.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    let user_fmt = types_with_user_fmt(parsed);
+    let user_eq = types_with_user_method(parsed, "eq");
+    let user_cmp = types_with_user_method(parsed, "cmp");
+
+    // Field types per struct / enum, used to grow the `formattable` set.
+    let mut field_tys: HashMap<String, Vec<&gossamer_ast::Type>> = HashMap::new();
+    for item in flatten_items(&parsed.items) {
+        match &item.kind {
+            ItemKind::Struct(decl) => {
+                let tys: Vec<&gossamer_ast::Type> = match &decl.body {
+                    StructBody::Named(fields) => fields.iter().map(|f| &f.ty).collect(),
+                    StructBody::Tuple(fields) => fields.iter().map(|f| &f.ty).collect(),
+                    StructBody::Unit => Vec::new(),
+                };
+                field_tys.insert(decl.name.name.clone(), tys);
+            }
+            ItemKind::Enum(decl) if decl.generics.params.is_empty() => {
+                field_tys.insert(
+                    decl.name.name.clone(),
+                    decl.variants.iter().flat_map(variant_fields).collect(),
+                );
+            }
+            _ => {}
+        }
+    }
+    // A type ends up with a `fmt` if the user wrote one or a `#[derive(Debug)]`
+    // requests one; seed the formattable set with those, then grow it to the
+    // fixpoint of types whose every field is a scalar or an already-formattable
+    // type. A struct/enum reaches a `fmt` only if all its fields actually
+    // render - so a field referencing a non-formattable type (or a container)
+    // never produces a `format!("{}", field)` the compiled tiers cannot lower.
+    let mut formattable: HashSet<String> = HashSet::new();
+    for item in flatten_items(&parsed.items) {
+        let derives = derive_list(&item.attrs);
+        let name = match &item.kind {
+            ItemKind::Struct(d)
+                if matches!(&d.body, StructBody::Named(_) | StructBody::Tuple(_)) =>
+            {
+                Some(&d.name.name)
+            }
+            ItemKind::Enum(d) if d.generics.params.is_empty() => Some(&d.name.name),
+            _ => None,
+        };
+        if let Some(n) = name
+            && (derives.iter().any(|d| d == "Debug") || user_fmt.contains(n))
+        {
+            formattable.insert(n.clone());
+        }
+    }
+    loop {
+        let mut changed = false;
+        for (name, tys) in &field_tys {
+            if formattable.contains(name) {
+                continue;
+            }
+            if tys.iter().all(|ty| ty_is_renderable(ty, &formattable)) {
+                formattable.insert(name.clone());
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    // Grow the set of structs / enums that compare by value structurally on
+    // every tier: a type is comparable once every field is a scalar / String
+    // or an already-comparable nested type. This drives automatic `eq` / `cmp`
+    // synthesis, so `==` / `<` work on a plain `struct Point { x, y }` with no
+    // `#[derive(...)]` - exactly as they already do on tuples.
+    let mut comparable: HashSet<String> = HashSet::new();
+    loop {
+        let mut changed = false;
+        for (name, tys) in &field_tys {
+            if comparable.contains(name) {
+                continue;
+            }
+            if tys.iter().all(|ty| ty_is_comparable(ty, &comparable)) {
+                comparable.insert(name.clone());
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    // Orderable types (drives `cmp`): comparable, minus any `bool` field, since
+    // `<` on a `bool` does not lower on the compiled tiers. A bool-bearing type
+    // is still in `comparable` (it gets `eq`), just not here.
+    let mut orderable: HashSet<String> = HashSet::new();
+    loop {
+        let mut changed = false;
+        for (name, tys) in &field_tys {
+            if orderable.contains(name) {
+                continue;
+            }
+            if tys.iter().all(|ty| ty_is_orderable(ty, &orderable)) {
+                orderable.insert(name.clone());
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let mut out = String::new();
+    for item in flatten_items(&parsed.items) {
+        let mut derives = derive_list(&item.attrs);
+        // Synthesize a structural `fmt` for every formattable struct / enum that
+        // lacks one, so `{}` / `{:?}` lowers on the compiled tiers exactly as it
+        // renders on the VM.
+        let implicit_target = match &item.kind {
+            ItemKind::Struct(d)
+                if matches!(&d.body, StructBody::Named(_) | StructBody::Tuple(_)) =>
+            {
+                Some(&d.name.name)
+            }
+            ItemKind::Enum(d) if d.generics.params.is_empty() => Some(&d.name.name),
+            _ => None,
+        };
+        if let Some(tn) = implicit_target
+            && formattable.contains(tn)
+            && !user_fmt.contains(tn)
+            && !derives.iter().any(|d| d == "Debug")
+        {
+            derives.push("Debug".to_string());
+        }
+        // Synthesize `eq` / `cmp` for every by-value-comparable struct / enum
+        // that has no user-written one, so structural `==` and `<` work with no
+        // `#[derive(...)]`. The synthesized methods key off the same `PartialEq`
+        // / `Ord` markers an explicit derive uses, so the two paths never
+        // double-emit.
+        if let Some(tn) = implicit_target {
+            if comparable.contains(tn)
+                && !user_eq.contains(tn)
+                && !derives.iter().any(|d| d == "PartialEq" || d == "Eq")
+            {
+                derives.push("PartialEq".to_string());
+            }
+            if orderable.contains(tn)
+                && !user_cmp.contains(tn)
+                && !derives.iter().any(|d| d == "Ord" || d == "PartialOrd")
+            {
+                derives.push("Ord".to_string());
+            }
+        }
+        if derives.is_empty() {
+            continue;
+        }
+        match &item.kind {
+            ItemKind::Struct(decl) => match &decl.body {
+                StructBody::Named(fields) => {
+                    emit_struct_derive_impl(&mut out, decl, fields, &derives, &struct_names);
+                }
+                StructBody::Tuple(fields) => {
+                    emit_tuple_struct_derive_impl(&mut out, decl, fields, &derives, &struct_names);
+                }
+                StructBody::Unit => {}
+            },
+            ItemKind::Enum(decl) if decl.generics.params.is_empty() => {
+                emit_enum_derive_impl(&mut out, decl, &derives);
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Iterator over the payload field types of an enum variant (empty for unit
+/// variants), for the implicit-`fmt` formattability check.
+fn variant_fields(v: &EnumVariant) -> impl Iterator<Item = &gossamer_ast::Type> {
+    let tys: Vec<&gossamer_ast::Type> = match &v.body {
+        StructBody::Unit => Vec::new(),
+        StructBody::Tuple(fields) => fields.iter().map(|f| &f.ty).collect(),
+        StructBody::Named(fields) => fields.iter().map(|f| &f.ty).collect(),
+    };
+    tys.into_iter()
+}
+
+/// The match pattern and the value-reconstruction for one enum variant,
+/// binding each payload field to `{prefix}{i}` - e.g. for `V(a, b)` with prefix
+/// `__s`: `("E::V(__s0, __s1)", "E::V(__s0, __s1)", ["__s0", "__s1"])`.
+fn variant_shape(enum_name: &str, v: &EnumVariant, prefix: &str) -> (String, String, Vec<String>) {
+    let vn = &v.name.name;
+    match &v.body {
+        StructBody::Unit => (
+            format!("{enum_name}::{vn}"),
+            format!("{enum_name}::{vn}"),
+            Vec::new(),
+        ),
+        StructBody::Tuple(fields) => {
+            let binds: Vec<String> = (0..fields.len()).map(|i| format!("{prefix}{i}")).collect();
+            let joined = binds.join(", ");
+            (
+                format!("{enum_name}::{vn}({joined})"),
+                format!("{enum_name}::{vn}({joined})"),
+                binds,
+            )
+        }
+        StructBody::Named(fields) => {
+            let binds: Vec<String> = (0..fields.len()).map(|i| format!("{prefix}{i}")).collect();
+            let pat: Vec<String> = fields
+                .iter()
+                .zip(&binds)
+                .map(|(f, b)| format!("{}: {b}", f.name.name))
+                .collect();
+            (
+                format!("{enum_name}::{vn} {{ {} }}", pat.join(", ")),
+                format!("{enum_name}::{vn} {{ {} }}", pat.join(", ")),
+                binds,
+            )
+        }
+    }
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one block per derived trait (clone/eq/cmp/debug/default); splitting scatters the emit"
+)]
+fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, derives: &[String]) {
+    let name = &decl.name.name;
+    let has = |t: &str| derives.iter().any(|d| d == t);
+    let want_clone = has("Clone");
+    let want_eq = has("PartialEq") || has("Eq");
+    let want_cmp = has("PartialOrd") || has("Ord");
+    let want_default = has("Default");
+    let want_debug = has("Debug");
+    if !(want_clone || want_eq || want_cmp || want_default || want_debug) {
+        return;
+    }
+    out.push_str(&format!(
+        "// Auto-derived from #[derive(...)] for {name}.\nimpl {name} {{\n"
+    ));
+    if want_clone {
+        out.push_str(&format!(
+            "    fn clone(&self) -> {name} {{\n        match self {{\n"
+        ));
+        for v in &decl.variants {
+            let (pat, recon, _) = variant_shape(name, v, "__c");
+            out.push_str(&format!("            {pat} => {recon},\n"));
+        }
+        out.push_str("        }\n    }\n");
+    }
+    if want_eq {
+        // Nested single matches (a tuple `match (self, other)` over enum
+        // variant patterns isn't reliably matched): match `self`'s variant,
+        // then match `other` against the same variant inside the arm.
+        out.push_str(&format!(
+            "    fn eq(&self, other: &{name}) -> bool {{\n        match self {{\n"
+        ));
+        for v in &decl.variants {
+            let (lpat, _, lbinds) = variant_shape(name, v, "__a");
+            let (rpat, _, rbinds) = variant_shape(name, v, "__b");
+            let cond = if lbinds.is_empty() {
+                "true".to_string()
+            } else {
+                lbinds
+                    .iter()
+                    .zip(&rbinds)
+                    .map(|(a, b)| format!("{a} == {b}"))
+                    .collect::<Vec<_>>()
+                    .join(" && ")
+            };
+            out.push_str(&format!(
+                "            {lpat} => match other {{ {rpat} => {cond}, _ => false }},\n"
+            ));
+        }
+        out.push_str("        }\n    }\n");
+    }
+    if want_cmp {
+        // Order by variant declaration position first (rank), then compare
+        // payloads of a same-rank pair lexicographically. Returns -1 / 0 / 1;
+        // the operator routing tests `Type::cmp(a, b) <op> 0`.
+        out.push_str(&format!("    fn cmp(&self, other: &{name}) -> i64 {{\n"));
+        for (side, var) in [("self", "__rs"), ("other", "__ro")] {
+            out.push_str(&format!("        let {var} = match {side} {{\n"));
+            for (i, v) in decl.variants.iter().enumerate() {
+                let vn = &v.name.name;
+                let pat = match &v.body {
+                    StructBody::Unit => format!("{name}::{vn}"),
+                    StructBody::Tuple(fields) => {
+                        let wilds = vec!["_"; fields.len()].join(", ");
+                        format!("{name}::{vn}({wilds})")
+                    }
+                    StructBody::Named(_) => format!("{name}::{vn} {{ .. }}"),
+                };
+                out.push_str(&format!("            {pat} => {i},\n"));
+            }
+            out.push_str("        }\n");
+        }
+        out.push_str("        if __rs < __ro { return -1 }\n        if __rs > __ro { return 1 }\n");
+        out.push_str("        match self {\n");
+        for v in &decl.variants {
+            let (lpat, _, lbinds) = variant_shape(name, v, "__a");
+            let (rpat, _, rbinds) = variant_shape(name, v, "__b");
+            if lbinds.is_empty() {
+                out.push_str(&format!("            {lpat} => 0,\n"));
+            } else {
+                let mut body = String::new();
+                for (a, b) in lbinds.iter().zip(&rbinds) {
+                    body.push_str(&format!(
+                        "if {a} < {b} {{ return -1 }}\n                if {b} < {a} {{ return 1 }}\n                "
+                    ));
+                }
+                body.push('0');
+                out.push_str(&format!(
+                    "            {lpat} => match other {{\n                {rpat} => {{\n                {body}\n                }},\n                _ => 0,\n            }},\n"
+                ));
+            }
+        }
+        out.push_str("        }\n    }\n");
+    }
+    if want_debug {
+        out.push_str("    fn fmt(&self) -> String {\n        match self {\n");
+        for v in &decl.variants {
+            let (pat, _, binds) = variant_shape(name, v, "__d");
+            let vn = &v.name.name;
+            let arm = match &v.body {
+                StructBody::Unit => format!("\"{vn}\""),
+                StructBody::Tuple(_) => {
+                    let holes = binds.iter().map(|_| "{}").collect::<Vec<_>>().join(", ");
+                    format!("format!(\"{vn}({holes})\", {})", binds.join(", "))
+                }
+                StructBody::Named(fields) => {
+                    let parts: Vec<String> = fields
+                        .iter()
+                        .map(|f| format!("{}: {{}}", f.name.name))
+                        .collect();
+                    format!(
+                        "format!(\"{vn} {{{{ {} }}}}\", {})",
+                        parts.join(", "),
+                        binds.join(", ")
+                    )
+                }
+            };
+            out.push_str(&format!("            {pat} => {arm},\n"));
+        }
+        out.push_str("        }\n    }\n");
+    }
+    if want_default {
+        // Rust requires `#[default]` on exactly one (unit) variant.
+        let default_variant = decl.variants.iter().find(|v| {
+            v.attrs
+                .outer
+                .iter()
+                .any(|a| a.path.segments.len() == 1 && a.path.segments[0].name.name == "default")
+        });
+        if let Some(v) = default_variant {
+            if matches!(v.body, StructBody::Unit) {
+                out.push_str(&format!(
+                    "    fn default() -> {name} {{ {name}::{} }}\n",
+                    v.name.name
+                ));
+            }
+        }
+    }
+    out.push_str("}\n\n");
+}
+
+/// `("<T, U>", "Name<T, U>")` for a generic struct, or `("", "Name")` for a
+/// non-generic one. Lifetime / const params are skipped (rare in derives).
+fn struct_generics(decl: &StructDecl) -> (String, String) {
+    let names: Vec<&str> = decl
+        .generics
+        .params
+        .iter()
+        .filter_map(|p| match p {
+            gossamer_ast::GenericParam::Type { name, .. } => Some(name.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    if names.is_empty() {
+        (String::new(), decl.name.name.clone())
+    } else {
+        let args = format!("<{}>", names.join(", "));
+        (args.clone(), format!("{}{args}", decl.name.name))
+    }
+}
+
+/// Emits `Clone` / `PartialEq` / `Default` / `Debug` impls for a tuple
+/// struct, using positional access `self.N` and positional construction
+/// `Name(..)` (rewritten to the struct-literal form by
+/// `rewrite_tuple_struct_ctors`). Debug renders `Name(v0, v1)`.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one block per derived trait; splitting scatters the emit"
+)]
+fn emit_tuple_struct_derive_impl(
+    out: &mut String,
+    decl: &StructDecl,
+    fields: &[gossamer_ast::TupleField],
+    derives: &[String],
+    structs: &HashSet<String>,
+) {
+    let name = &decl.name.name;
+    let has = |t: &str| derives.iter().any(|d| d == t);
+    let want_clone = has("Clone");
+    let want_eq = has("PartialEq") || has("Eq");
+    let want_cmp = has("PartialOrd") || has("Ord");
+    let want_default = has("Default");
+    let want_debug = has("Debug");
+    if !(want_clone || want_eq || want_cmp || want_default || want_debug) {
+        return;
+    }
+    let (gen_decl, self_ty) = struct_generics(decl);
+    let n = fields.len();
+    out.push_str(&format!(
+        "// Auto-derived from #[derive(...)] for {name}.\nimpl{gen_decl} {self_ty} {{\n"
+    ));
+    if want_clone {
+        let init: Vec<String> = (0..n).map(|i| format!("self.{i}")).collect();
+        out.push_str(&format!(
+            "    fn clone(&self) -> {self_ty} {{ {name}({}) }}\n",
+            init.join(", ")
+        ));
+    }
+    if want_eq {
+        if n == 0 {
+            out.push_str(&format!(
+                "    fn eq(&self, other: &{self_ty}) -> bool {{ true }}\n"
+            ));
+        } else {
+            let conds: Vec<String> = (0..n).map(|i| format!("self.{i} == other.{i}")).collect();
+            out.push_str(&format!(
+                "    fn eq(&self, other: &{self_ty}) -> bool {{ {} }}\n",
+                conds.join(" && ")
+            ));
+        }
+    }
+    if want_cmp {
+        out.push_str(&format!("    fn cmp(&self, other: &{self_ty}) -> i64 {{\n"));
+        for i in 0..n {
+            out.push_str(&format!(
+                "        if self.{i} < other.{i} {{ return -1 }}\n        if other.{i} < self.{i} {{ return 1 }}\n"
+            ));
+        }
+        out.push_str("        0\n    }\n");
+    }
+    if want_default {
+        let typed: Option<Vec<FieldKind>> = fields
+            .iter()
+            .map(|f| FieldKind::from_type(&f.ty, structs))
+            .collect();
+        if let Some(typed) = typed {
+            let init: Vec<String> = typed.iter().map(FieldKind::default_literal).collect();
+            out.push_str(&format!(
+                "    fn default() -> {self_ty} {{ {name}({}) }}\n",
+                init.join(", ")
+            ));
+        }
+    }
+    if want_debug {
+        let placeholders: Vec<&str> = (0..n).map(|_| "{}").collect();
+        let argvals: Vec<String> = (0..n).map(|i| format!("self.{i}")).collect();
+        out.push_str(&format!(
+            "    fn fmt(&self) -> String {{ format!(\"{name}({})\", {}) }}\n",
+            placeholders.join(", "),
+            argvals.join(", ")
+        ));
+    }
+    out.push_str("}\n");
+}
+
+fn emit_struct_derive_impl(
+    out: &mut String,
+    decl: &StructDecl,
+    fields: &[gossamer_ast::StructField],
+    derives: &[String],
+    structs: &HashSet<String>,
+) {
+    let name = &decl.name.name;
+    let has = |t: &str| derives.iter().any(|d| d == t);
+    let want_clone = has("Clone");
+    let want_eq = has("PartialEq") || has("Eq");
+    let want_cmp = has("PartialOrd") || has("Ord");
+    let want_default = has("Default");
+    let want_debug = has("Debug");
+    if !(want_clone || want_eq || want_cmp || want_default || want_debug) {
+        return;
+    }
+    // `(gen_decl, self_ty)` = ("<T>", "Pair<T>") for a generic struct, else
+    // ("", "Pair"). Struct *literals* never carry the args, so the
+    // reconstruction below stays `{name} { … }`.
+    let (gen_decl, self_ty) = struct_generics(decl);
+    let field_names: Vec<&str> = fields.iter().map(|f| f.name.name.as_str()).collect();
+    out.push_str(&format!(
+        "// Auto-derived from #[derive(...)] for {name}.\nimpl{gen_decl} {self_ty} {{\n"
+    ));
+    if want_clone {
+        // Reconstruct with a field-by-field copy. In the GC model a value
+        // struct's fields are shared by copy; this avoids a per-field
+        // `.clone()` call (which the VM's name-global method dispatch would
+        // misroute back to `Type::clone`).
+        let init: Vec<String> = field_names
+            .iter()
+            .map(|f| format!("{f}: self.{f}"))
+            .collect();
+        out.push_str(&format!(
+            "    fn clone(&self) -> {self_ty} {{ {name} {{ {} }} }}\n",
+            init.join(", ")
+        ));
+    }
+    if want_eq {
+        if field_names.is_empty() {
+            out.push_str(&format!(
+                "    fn eq(&self, other: &{self_ty}) -> bool {{ true }}\n"
+            ));
+        } else {
+            let conds: Vec<String> = field_names
+                .iter()
+                .map(|f| format!("self.{f} == other.{f}"))
+                .collect();
+            out.push_str(&format!(
+                "    fn eq(&self, other: &{self_ty}) -> bool {{ {} }}\n",
+                conds.join(" && ")
+            ));
+        }
+    }
+    if want_cmp {
+        // Lexicographic field-by-field ordering returning -1 / 0 / 1; the
+        // operator routing tests `Type::cmp(a, b) <op> 0`. Each `<` recurses:
+        // scalars / String compare natively, a nested struct routes to its own
+        // `cmp`.
+        out.push_str(&format!("    fn cmp(&self, other: &{self_ty}) -> i64 {{\n"));
+        for f in &field_names {
+            out.push_str(&format!(
+                "        if self.{f} < other.{f} {{ return -1 }}\n        if other.{f} < self.{f} {{ return 1 }}\n"
+            ));
+        }
+        out.push_str("        0\n    }\n");
+    }
+    if want_default {
+        // Per-field default literal needs each field classified; if any
+        // field type is outside the supported set, skip Default rather
+        // than emit code that won't compile.
+        let typed: Option<Vec<(String, FieldKind)>> = fields
+            .iter()
+            .map(|f| FieldKind::from_type(&f.ty, structs).map(|k| (f.name.name.clone(), k)))
+            .collect();
+        if let Some(typed) = typed {
+            let init: Vec<String> = typed
+                .iter()
+                .map(|(f, k)| format!("{f}: {}", k.default_literal()))
+                .collect();
+            out.push_str(&format!(
+                "    fn default() -> {self_ty} {{ {name} {{ {} }} }}\n",
+                init.join(", ")
+            ));
+        }
+    }
+    if want_debug {
+        // `fmt(&self) -> String` rendering `Name { f0: v0, f1: v1 }`, matching
+        // the VM's `value.rs::write_struct` byte-for-byte so all tiers agree.
+        // `{}` on each field recurses (primitives print directly; a nested
+        // struct field routes to its own `fmt`). `{{` / `}}` are literal braces.
+        let mut tmpl = String::new();
+        tmpl.push_str(name);
+        tmpl.push_str(" {{ ");
+        for (i, f) in field_names.iter().enumerate() {
+            if i > 0 {
+                tmpl.push_str(", ");
+            }
+            tmpl.push_str(f);
+            tmpl.push_str(": {}");
+        }
+        tmpl.push_str(" }}");
+        let argvals: Vec<String> = field_names.iter().map(|f| format!("self.{f}")).collect();
+        if field_names.is_empty() {
+            out.push_str(&format!(
+                "    fn fmt(&self) -> String {{ format!(\"{tmpl}\") }}\n"
+            ));
+        } else {
+            out.push_str(&format!(
+                "    fn fmt(&self) -> String {{ format!(\"{tmpl}\", {}) }}\n",
+                argvals.join(", ")
+            ));
+        }
+    }
+    out.push_str("}\n\n");
+}
+

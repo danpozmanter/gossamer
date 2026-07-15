@@ -1,0 +1,1813 @@
+// Tier parity gate - VM, Cranelift debug, LLVM release.
+//
+// Every `.gos` source under `examples/` and
+// `feature-testing-examples/` is run in all three tiers and the
+// captured stdout / exit code must match. The harness is the
+// single source of truth for cross-tier behaviour: a regression in
+// any backend turns this suite red.
+//
+// Examples needing CLI args, stdin, or running an HTTP server
+// carry a row in `SPECS` describing the fixture. Server-style
+// examples are bounded with a hard 60 s wall clock cap so a
+// regression that hangs a tier cannot stall CI.
+//
+// `GOSSAMER_FAIL_ON_LLVM_FALLBACK` is enabled separately by
+// `llvm_release_lowers_every_example_without_fallback`, surfacing
+// "LLVM body silently routed to Cranelift" regressions distinct
+// from output-level parity.
+
+
+
+use std::env;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
+
+// Ceiling for a single fixture's tier run, sized to catch a genuine hang
+// (an infinite loop lowers to the same never-returns shape) while tolerating
+// a saturated machine: under `cargo test --workspace` this walk runs beside
+// every other crate's tests, so a fixture that builds and runs in well under a
+// second standalone (e.g. an `-O3` monomorphising build) can still be starved
+// for tens of seconds. Five minutes leaves ample headroom for the load without
+// letting a real hang run unbounded.
+const PER_RUN_TIMEOUT: Duration = Duration::from_mins(5);
+
+fn gos_bin() -> PathBuf {
+    PathBuf::from(env::var("CARGO_BIN_EXE_gos").expect("CARGO_BIN_EXE_gos"))
+}
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("workspace root")
+        .to_path_buf()
+}
+
+fn fresh_dir(tag: &str) -> PathBuf {
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = env::temp_dir().join(format!(
+        "gos-parity-{pid}-{n}-{tag}",
+        pid = std::process::id(),
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("create scratch dir");
+    dir
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Tier {
+    Vm,
+    Cranelift,
+    Llvm,
+}
+
+impl Tier {
+    fn label(self) -> &'static str {
+        match self {
+            Tier::Vm => "vm",
+            Tier::Cranelift => "cranelift",
+            Tier::Llvm => "llvm",
+        }
+    }
+}
+
+struct Spec {
+    /// Path relative to the workspace root.
+    path: &'static str,
+    /// Args appended after the source on `gos run`, or passed
+    /// directly to the compiled binary.
+    args: &'static [&'static str],
+    /// Stdin to feed to every tier's run.
+    stdin: &'static [u8],
+    /// Stdout is non-deterministic; compare line multisets only.
+    nondeterministic: bool,
+    /// Allow non-zero exit (must still match across tiers).
+    allow_nonzero: bool,
+    /// Skip parity entirely; the VM still has to run cleanly.
+    skip_parity: Option<&'static str>,
+    /// Skip everything (including the VM run) with a reason.
+    skip_all: Option<&'static str>,
+    /// HTTP-server fixture: spawn, sleep `boot_ms`, send a probe,
+    /// kill, compare the probe response across tiers.
+    server: Option<ServerFixture>,
+}
+
+#[derive(Clone, Copy)]
+struct ServerFixture {
+    /// Wait this long after launch before issuing the probe.
+    boot_ms: u64,
+    /// Listen address baked into the example.
+    addr: &'static str,
+    /// Probe path, e.g. `/health`.
+    probe_path: &'static str,
+}
+
+const fn spec(path: &'static str) -> Spec {
+    Spec {
+        path,
+        args: &[],
+        stdin: &[],
+        nondeterministic: false,
+        allow_nonzero: false,
+        skip_parity: None,
+        skip_all: None,
+        server: None,
+    }
+}
+
+const SPECS: &[Spec] = &[
+    // --- examples/ ---
+    spec("examples/binary_search.gos"),
+    spec("examples/bubble_sort.gos"),
+    spec("examples/caesar_cipher.gos"),
+    spec("examples/defer_cleanup.gos"),
+    Spec {
+        args: &[
+            "--name",
+            "jane",
+            "--port",
+            "9000",
+            "--verbose",
+            "alpha",
+            "beta",
+        ],
+        ..spec("examples/cli_args.gos")
+    },
+    spec("examples/concurrency.gos"),
+    spec("examples/containers_ordered_demo.gos"),
+    spec("examples/containers_seq_demo.gos"),
+    spec("examples/containers_setmap_demo.gos"),
+    spec("examples/control_flow.gos"),
+    spec("examples/data_structures.gos"),
+    spec("examples/digit_sum.gos"),
+    spec("examples/environment.gos"),
+    spec("examples/errors.gos"),
+    // Entry-point `Err` must print to stderr and exit nonzero identically on
+    // every tier (not silently succeed on `gos run` while `gos build` exits 1).
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/entry_result_err.gos")
+    },
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/entry_toplevel_err.gos")
+    },
+    // `fs::read_to_string` on a missing path must return `Err` on every tier,
+    // not a silent `Ok("")` on the native tier.
+    spec("feature-testing-examples/fs_read_to_string_missing.gos"),
+    spec("examples/factorial.gos"),
+    spec("examples/fibonacci.gos"),
+    spec("examples/file_io.gos"),
+    spec("examples/fizz_buzz.gos"),
+    spec("examples/fnv_hash.gos"),
+    spec("examples/function_piping.gos"),
+    spec("examples/gcd.gos"),
+    Spec {
+        nondeterministic: true,
+        skip_parity: Some(
+            "goroutine completion count differs across tiers under scheduling pressure",
+        ),
+        ..spec("examples/go_spawn.gos")
+    },
+    Spec {
+        args: &["needle"],
+        stdin: b"alpha line\nneedle hidden here\nanother needle\nclosing\n",
+        ..spec("examples/grep.gos")
+    },
+    spec("examples/heap_demo.gos"),
+    spec("examples/hello_world.gos"),
+    spec("examples/json_derive_test.gos"),
+    Spec {
+        skip_all: Some("needs live web_server.gos on :8080 - covered by web_server smoke tests"),
+        ..spec("examples/http_client.gos")
+    },
+    spec("examples/line_count.gos"),
+    spec("examples/linked_list.gos"),
+    // Lists the live working directory and prints each entry's mtime, so the
+    // output depends on filesystem state that differs between the sequential
+    // per-tier runs (running `gos` writes a `.gos-cache`, mtimes advance) -
+    // it cannot be a stable cross-tier stdout comparison. Still runs on the VM
+    // for the crash check; only the parity diff is skipped.
+    Spec {
+        skip_parity: Some(
+            "lists the live cwd with per-entry mtimes; output varies run-to-run and between tiers",
+        ),
+        ..spec("examples/list_dir.gos")
+    },
+    spec("examples/mime_demo.gos"),
+    spec("examples/netip_demo.gos"),
+    spec("examples/os_user_demo.gos"),
+    spec("examples/prime_check.gos"),
+    spec("examples/range_sum.gos"),
+    spec("examples/regex.gos"),
+    spec("examples/reverse_string.gos"),
+    spec("examples/shapes.gos"),
+    spec("examples/sleep_demo.gos"),
+    spec("examples/temperature.gos"),
+    Spec {
+        skip_parity: Some(
+            "fn main is empty stub - coverage comes from `gos test examples/testing.gos`",
+        ),
+        ..spec("examples/testing.gos")
+    },
+    spec("examples/toml_demo.gos"),
+    spec("examples/url_escape_demo.gos"),
+    Spec {
+        // v4/v7 produce fresh random / time-ordered values each run;
+        // exit code is 0 and the format checks (lengths, validity,
+        // normalize, simple) deterministic across tiers - but the
+        // raw stdout bytes differ run-to-run.
+        nondeterministic: true,
+        ..spec("examples/uuid_demo.gos")
+    },
+    spec("examples/vowel_count.gos"),
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             web_auth_api_parity_across_tiers",
+        ),
+        ..spec("examples/web_auth_api.gos")
+    },
+    Spec {
+        server: Some(ServerFixture {
+            boot_ms: 800,
+            addr: "127.0.0.1:8080",
+            probe_path: "/health",
+        }),
+        ..spec("examples/web_server.gos")
+    },
+    spec("examples/word_count.gos"),
+    // --- feature-testing-examples/ ---
+    // `os::args()` must hand back owned, refcounted gos strings: cloning
+    // one arg while others are live must not corrupt any of them. The
+    // first arg ("Qwen3.6-35B") is held while the rest are cloned in a
+    // loop, the classic shape that exposed raw-argv-pointer corruption.
+    Spec {
+        args: &["Qwen3.6-35B", "a", "b", "c", "d"],
+        ..spec("feature-testing-examples/os_args_clone_roundtrip.gos")
+    },
+    // Phase 7A: the compiled tiers inline the `Vec<(i64,f64)>` scalar-projection
+    // get (`table[j].1`) and `buf.set_byte` on the call route; the LCG-driven
+    // probe sum must match the VM's opaque-call path bit-for-bit.
+    spec("feature-testing-examples/p7_fasta_probe.gos"),
+    // Phase 7B: `*out += format!("{}", n)` on an enum-payload binding fuses to a
+    // direct append, and `?`-heavy code inlines the Result i128 carrier bit-ops.
+    spec("feature-testing-examples/p7_deref_format.gos"),
+    // Phase 7C: `seq.substring(i, i+k)` + `m.inc(kmer)` fuses to the borrowed
+    // map probe on the compiled tiers; counts must match the VM's alloc path.
+    spec("feature-testing-examples/p7_substring_inc.gos"),
+    // Typed i64 for-range loops: fused back-edges, constant operands, the
+    // accumulator write-back, continue/break/label routing, and empty/
+    // single-iteration bounds must stay bit-identical across tiers.
+    spec("feature-testing-examples/loop_arith_fusion.gos"),
+    // `iter::` combinator chains over integer ranges fuse to a single loop
+    // with the stage/terminal closures inlined (filter/map/sum_by/sum/
+    // count/product/fold/for_each/any/all). Every fused shape must produce
+    // the same result the eager combinator path would across all tiers.
+    spec("feature-testing-examples/iter_pipeline_fusion.gos"),
+    // `static mut` scalar load/store lowered natively: an LCG advances a
+    // static-mut seed in a helper while `main`'s hot loop is JIT-promoted.
+    // The compiled backing cell and the VM's shared cell must agree, and the
+    // static must not poison whole-module JIT the way the VM-only decline did.
+    spec("feature-testing-examples/static_mut_hot_loop.gos"),
+    // A recursive Box-enum cloned in a loop (the original stays live) must
+    // retain each iteration's clone; the loop-carried read must not be
+    // move-elided. Covers the sequential and goroutine-shared (captured) paths
+    // that double-freed the enum's nodes and corrupted the heap at exit.
+    spec("feature-testing-examples/rc_loop_carried_clone.gos"),
+    // Byte-packed `[u8]` storage (stride 1): array index, byte-array slice,
+    // Vec<u8> push, iteration, and high-bit zero-extension must be
+    // bit-identical across tiers (the unbounded-cache memory fix).
+    spec("feature-testing-examples/byte_vec_packed.gos"),
+    // In-place append fast paths: a tail-position `v.push(x)` inside an `if` /
+    // `match` arm, `s += x` / `*out += x`, and the `&mut`-arg write-back cell
+    // move (with its clone fallback when a sibling argument reads the same
+    // local). These avoid the per-call copy that made build loops O(n^2) on
+    // the VM; output must stay bit-identical across tiers.
+    spec("feature-testing-examples/inplace_mut_append_parity.gos"),
+    // Arithmetic operator overloading: `+ - * /` on a user struct route to its
+    // `add`/`sub`/`mul`/`div` impl method; the result is the method's return
+    // type (incl. a heterogeneous `Mul -> f64`). Bit-identical across tiers.
+    spec("feature-testing-examples/operator_overload_arith.gos"),
+    // Vector-math operator overloading: `Vec3` with `impl Add / Sub / Mul /
+    // Neg / Index` drives `a + b`, `v * s`, `-v`, `v[i]`, and compound
+    // assignment (`+=`, `*=`) through the same impls, inside a hot helper
+    // loop so the JIT tier compiles it. Bit-identical across tiers.
+    spec("feature-testing-examples/operator_overload_vec3.gos"),
+    // Operator overloading on enums (`+`, unary `-`, `+=` on bound locals
+    // and inline constructors) and on generic structs (`impl<T> Add for
+    // Wrap<T>`), including a chained field read of the operator result
+    // (`(a + b).v`) with an `f64` payload. Bit-identical across tiers.
+    spec("feature-testing-examples/operator_overload_enum_generic.gos"),
+    // Byte literals compare against the integer byte index without a cast
+    // (`s[i] == b'>'`); a byte literal is an `Int` value on every tier.
+    spec("feature-testing-examples/byte_literal_compare.gos"),
+    // Move-on-last-use: draining a uniquely-owned consumable scrutinee in a
+    // guard-free `match` must be suppressed for an arm whose refutable
+    // sub-pattern (a literal) can fail after a field is emptied and fall
+    // through to a later arm that re-reads the same variant. Also covers the
+    // all-binding drain shape and the for-loop element drain over a rebuilt
+    // recursive enum. Bit-identical across tiers.
+    spec("feature-testing-examples/move_on_last_use_match.gos"),
+    // `from_json` infers its type argument from the binding annotation, so the
+    // turbofish is optional; the decode is identical on every tier.
+    spec("feature-testing-examples/from_json_infer.gos"),
+    // Auto-derived serde over Option / tuple / Vec / nested-struct fields.
+    spec("feature-testing-examples/serde_more_field_kinds.gos"),
+    // The inline Option/Result enum payload crosses fn boundaries as i128;
+    // combined with wide shifts and comparisons this pins the i128 ABI and
+    // instruction lowering bit-identically across tiers (the aarch64 backend
+    // in particular, exercised on the native-arm and cross CI jobs).
+    spec("feature-testing-examples/i128_enum_payload_arith.gos"),
+    // Structural aggregate comparison: fixed-array / Vec `==`/`!=` and tuple
+    // ordering (all six operators) are bit-identical across tiers (the VM
+    // walks them at runtime; compiled routes to gos_rt_tuple_cmp / vec_eq).
+    spec("feature-testing-examples/aggregate_compare.gos"),
+    // `sort_by_key` / `sort_by_key_desc` Vec methods with scalar and tuple
+    // (multi-key) keys; the key body is inlined into a `sort_by` comparator
+    // that orders with `<`, identical on every tier.
+    spec("feature-testing-examples/sort_by_key.gos"),
+    // Comptime: `comptime { ... }` blocks and `comptime fn` calls are
+    // evaluated on the VM during compilation and spliced into the source as
+    // literals, so every tier compiles the identical constant (scalar /
+    // string / float / bool / char results, const initializers, nesting).
+    spec("feature-testing-examples/comptime_fold.gos"),
+    // Comptime reflection (`typeInfo::<T>()`) + codegen: a comptime fn
+    // consumes the reflected fields to generate a string (SQL DDL, field
+    // lists), folded to a literal identical on every tier.
+    spec("feature-testing-examples/comptime_reflection.gos"),
+    // Comptime parameters (`fn f(comptime n, ...)`) fold their argument at
+    // the call site, and the `regex!` / `sql!` validation macros validate at
+    // build time and fold to the validated string on every tier.
+    spec("feature-testing-examples/comptime_params_validate.gos"),
+    // Code-emitting comptime (`codegen!(...)`): a comptime fn reflects a
+    // type's fields and emits a native serializer body, spliced as raw
+    // source. The emitted field code is identical on every tier and carries
+    // no runtime reflection.
+    spec("feature-testing-examples/comptime_codegen.gos"),
+    // Phase 2 staged reflection: a `for` over `typeInfo::<T>()` is unrolled
+    // per field in the single compile (no fold pass), `field_of` projects
+    // the concrete field, and a `match` over the comptime field type folds
+    // to the taken arm. Native field code, identical on every tier.
+    spec("feature-testing-examples/comptime_inline_for.gos"),
+    // Transparent `type X = T` aliases: interchangeable with the underlying
+    // type in lets, params, returns, struct fields, composites, and chains,
+    // lowering identically on every tier (no opaque nominal alias).
+    spec("feature-testing-examples/type_alias_transparent.gos"),
+    // Tuple structs: construction, positional `.N` access, and destructuring
+    // (let / match / fn params), modelled as named fields "0".."N-1".
+    spec("feature-testing-examples/tuple_structs.gos"),
+    // Structs / enums compare and order by value with no `#[derive(...)]`:
+    // auto-synthesized `eq` / `cmp`, plus `..` rest in multi-field variants.
+    spec("feature-testing-examples/structural_comparison.gos"),
+    // Operator overloading (`% - | & ^ << >> []`), the desugar macros
+    // (`matches!` / `dbg!`), and `x.into()` routing to `B::from(x)`.
+    spec("feature-testing-examples/operator_overloads.gos"),
+    // Pattern destructuring in function parameters (tuple / struct /
+    // tuple-struct), bound via a fresh local + injected destructuring let.
+    spec("feature-testing-examples/param_destructure.gos"),
+    // Tuple-struct serde: position-keyed JSON object round-trip.
+    spec("feature-testing-examples/tuple_struct_serde.gos"),
+    // BTreeMap with i64 keys: typed IntMap backing, key-sorted iteration.
+    spec("feature-testing-examples/btreemap_i64_keys.gos"),
+    // VecDeque both-ends ops: push/pop/peek front and back.
+    spec("feature-testing-examples/vecdeque_full.gos"),
+    // A generic function's call result keeps its instantiated concrete type
+    // when used inline (`println!("{}", id(s))`), selecting the right
+    // formatter; the compiled tiers must match the VM across scalar / string
+    // / float / struct results, multi-parameter generics, and recursion.
+    spec("feature-testing-examples/generic_call_result.gos"),
+    // Generic struct TYPES holding `T` by value and `impl<T>` methods on
+    // them: per-instantiation field layout and method specialisation make
+    // `Wrapper<Point>` / `Wrapper<i64>::get` bit-identical across tiers
+    // (scalar / string / float / struct payloads, two type parameters,
+    // nesting, and an array of generic structs).
+    spec("feature-testing-examples/generic_struct_types.gos"),
+    // An enum-variant payload (`Ok(..)` / `Some(..)`) whose struct has a
+    // nested struct-typed field: reading `v.inner.field` after the match must
+    // resolve the leaf against the inner struct's type on every tier, so the
+    // compiled tiers walk the payload's flat slots instead of misrouting the
+    // read to a dynamic JSON lookup (which the VM tolerated but native did not).
+    spec("feature-testing-examples/nested_struct_variant_payload.gos"),
+    // Perceus reuse: an owned local reassigned in a loop recycles its dropped
+    // block in place on the compiled tiers (the VM does not). Reuse is
+    // observationally transparent, so the result must match across tiers; the
+    // RC-child variant exercises child release before recycle.
+    spec("feature-testing-examples/perceus_reuse.gos"),
+    // A HashMap that crosses the `go` boundary is marked shared at the spawn,
+    // so its biased lock synchronizes the two goroutines' concurrent inserts:
+    // the per-key totals are deterministic and identical on every tier (a
+    // goroutine-local map takes the lock-free fast path instead).
+    spec("feature-testing-examples/goroutine_shared_map.gos"),
+    // Scalar source indexing panics on every tier rather than yielding zero
+    // or silently dropping an invalid write; valid indexed access remains
+    // observable before the failure.
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/oob_index_scalar_panic.gos")
+    },
+    // Loop-versioning bounds-check elision for affine `xs[base + counter]`
+    // accesses: the in-range unchecked clone and the out-of-range checked
+    // fallback both stay bit-identical across the three tiers.
+    spec("feature-testing-examples/bce_loop_versioning.gos"),
+    // Out-of-range read of an aggregate-element Vec panics identically on
+    // every tier (was a compiled segfault / VM field-access error).
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/oob_index_aggregate_panic.gos")
+    },
+    // Method-form Vec insert/remove are invariant mutators: invalid indices
+    // panic instead of clamping or silently no-oping. The Result-returning
+    // qualified `Vec::insert` / `Vec::remove` APIs remain the non-panicking
+    // access path.
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/vec_method_oob_panic.gos")
+    },
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/vec_method_remove_oob_panic.gos")
+    },
+    // Integer divide-by-zero panics with GX0005 + exit 101 identically on
+    // every tier (the SIGFPE-vs-clean-panic class had no 3-tier gate).
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/div_zero_panic.gos")
+    },
+    // A match that slips past exhaustiveness (nested int payloads) panics
+    // cleanly and identically on the VM and the compiled backstop - was a
+    // VM-returns-zero / compiled-returns-garbage divergence.
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/non_exhaustive_match_panic.gos")
+    },
+    // A `[v; n]` whose `n * elem_bytes` overflows aborts with a clean
+    // `capacity overflow` panic on every tier (was a heap-corruption OOB
+    // write / SIGSEGV on the compiled tiers). "before" is flushed first.
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/vec_capacity_overflow.gos")
+    },
+    // Out-of-range `HashMap.inc_at` window returns 0 and inserts nothing on
+    // every tier (was an unbounded slice / OOB read on the compiled tier).
+    spec("feature-testing-examples/map_inc_at_oob.gos"),
+    // Unbounded recursion yields a clean stack-overflow diagnostic instead of
+    // a raw SIGSEGV on every tier now that the AOT `@main` installs the guard.
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/deep_recursion_stack_overflow.gos")
+    },
+    // A byte-range `substring` that clamps mid-codepoint stays valid UTF-8
+    // via the same lossy repair the interpreter uses (was raw invalid bytes
+    // feeding `from_utf8_unchecked` on the compiled tier).
+    spec("feature-testing-examples/str_substring_utf8_boundary.gos"),
+    // Win B stdlib differential-parity coverage: every function in these
+    // module groups produces bit-identical output on the VM, Cranelift, and
+    // LLVM tiers (the sweep that found and fixed the split/equal_fold/parse,
+    // path/time, and crypto-coerce divergences).
+    spec("feature-testing-examples/winb_text_strings.gos"),
+    spec("feature-testing-examples/winb_text_strconv.gos"),
+    spec("feature-testing-examples/winb_text_utf8.gos"),
+    spec("feature-testing-examples/winb_text_unicode.gos"),
+    spec("feature-testing-examples/winb_text_fmt.gos"),
+    spec("feature-testing-examples/winb_data_crypto.gos"),
+    spec("feature-testing-examples/winb_data_encoding.gos"),
+    spec("feature-testing-examples/binary_u8_varint_encode.gos"),
+    spec("feature-testing-examples/winb_data_math.gos"),
+    spec("feature-testing-examples/winb_data_regex.gos"),
+    spec("feature-testing-examples/winb_coll_vec.gos"),
+    spec("feature-testing-examples/winb_coll_map.gos"),
+    spec("feature-testing-examples/winb_coll_set.gos"),
+    spec("feature-testing-examples/winb_coll_iter.gos"),
+    spec("feature-testing-examples/winb_coll_optres.gos"),
+    spec("feature-testing-examples/winb_sys_path.gos"),
+    spec("feature-testing-examples/winb_sys_time.gos"),
+    spec("feature-testing-examples/winb_sys_bytes.gos"),
+    spec("feature-testing-examples/winb_sys_misc.gos"),
+    // Win B integrator-fix coverage: segfaults (Vec<Struct>::new+push,
+    // HashSet<i64>::insert, regex::find_all bound-iter), silent-wrong
+    // (map contains, parse_u64, JSON integer precision), and dispatch gaps
+    // (HashSet to_vec/iter/clear, Vec method insert/remove, BTreeMap keys).
+    spec("feature-testing-examples/winb2_vec_new_struct.gos"),
+    spec("feature-testing-examples/winb2_hashset_i64.gos"),
+    spec("feature-testing-examples/winb2_regex_find_all_bound.gos"),
+    spec("feature-testing-examples/winb2_map_contains.gos"),
+    spec("feature-testing-examples/winb2_parse_u64.gos"),
+    spec("feature-testing-examples/winb2_json_int_precision.gos"),
+    spec("feature-testing-examples/winb2_hashset_to_vec.gos"),
+    spec("feature-testing-examples/winb2_vec_insert_remove.gos"),
+    spec("feature-testing-examples/winb2_btreemap_keys.gos"),
+    // 0.18.0 smaller items: String::from identity, parse-error Display,
+    // scalar fixed-array out-of-range lenient zero-value.
+    spec("feature-testing-examples/winb2_smaller_items.gos"),
+    // JIT widening coverage fixtures (inliner edge-dissolving,
+    // aggregate-interior bodies, char-field enums, mixed-arity).
+    spec("feature-testing-examples/jit_inline_chain.gos"),
+    spec("feature-testing-examples/jit_aggregate_local.gos"),
+    // A hot loop constructing, copying, mutating, and dropping an aggregate
+    // with an RC (String) field each iteration: the JIT must memcpy the copy
+    // into its own frame slot (a mutation of the copy must not alias the
+    // source) and reuse that slot rather than leaking a heap block per round.
+    spec("feature-testing-examples/jit_aggregate_drop.gos"),
+    spec("feature-testing-examples/jit_inline_aggregate_return.gos"),
+    // A JIT-promoted hot loop that returns a 3-tuple, a struct, a `[i64; 4]`
+    // array, and a monomorphised generic method's struct by value. Each call
+    // lowers through the generalised structural-return (sret) ABI: the caller
+    // allocates one correctly-sized stack slot per call site and the callee
+    // writes the aggregate through it, so the loop is RSS-flat with no leak and
+    // the returned pointer never dangles. Bit-identical VM / Cranelift / LLVM.
+    spec("feature-testing-examples/aggregate_return_sret.gos"),
+    spec("feature-testing-examples/jit_inline_const_args.gos"),
+    spec("feature-testing-examples/jit_enum_char_field.gos"),
+    spec("feature-testing-examples/jit_inline_vec_ops.gos"),
+    // Word-stride Vec<f64>/Vec<i64> element get/set lower to inline
+    // load/store off the GosVec header on the compiled tiers; covers read,
+    // write, nested Vec, scalar lenient OOB, and an aggregate element type.
+    spec("feature-testing-examples/vec_f64_inline_index.gos"),
+    spec("feature-testing-examples/jit_mixed_arity6.gos"),
+    spec("feature-testing-examples/jit_aggregate_param.gos"),
+    // Bytecode VM user-function inliner - must stay bit-identical to the
+    // MIR-tier inlining already present in the compiled tiers.
+    spec("feature-testing-examples/inline_scalar_kernel.gos"),
+    spec("feature-testing-examples/temporary_wrap.gos"),
+    spec("feature-testing-examples/temporary_method_dispatch.gos"),
+    spec("feature-testing-examples/vecdeque_element_typing.gos"),
+    spec("feature-testing-examples/method_dispatch_collisions.gos"),
+    spec("feature-testing-examples/fmt_struct_enum.gos"),
+    spec("feature-testing-examples/fmt_tuple_map.gos"),
+    spec("feature-testing-examples/string_concat_chain.gos"),
+    // Irrefutable let-pattern destructuring (struct / tuple-struct / enum
+    // variant / nested / or-pattern) and const generic array length.
+    spec("feature-testing-examples/let_destructure_struct.gos"),
+    spec("feature-testing-examples/const_generic_array_len.gos"),
+    spec("feature-testing-examples/container_reassign_loop.gos"),
+    // Closure capturing an inline aggregate reads every field, and the heap
+    // box survives an escaping closure.
+    spec("feature-testing-examples/closure_capture_aggregate.gos"),
+    // Let-chains, open-ended range patterns, fixed-array slice patterns,
+    // bounds-safe String.byte_at, and in-place / flat numeric Vec growth.
+    spec("feature-testing-examples/let_chains.gos"),
+    spec("feature-testing-examples/open_ended_ranges.gos"),
+    spec("feature-testing-examples/slice_pattern_fixed_array.gos"),
+    spec("feature-testing-examples/string_byte_at_oob.gos"),
+    spec("feature-testing-examples/vec_inplace_growth.gos"),
+    spec("feature-testing-examples/record_update.gos"),
+    spec("feature-testing-examples/nested_struct_record_update.gos"),
+    spec("feature-testing-examples/map_iter_destructure.gos"),
+    spec("feature-testing-examples/trait_bounds.gos"),
+    spec("feature-testing-examples/nested_field_access.gos"),
+    spec("feature-testing-examples/rc_elision.gos"),
+    spec("feature-testing-examples/bounds_check_elim.gos"),
+    spec("feature-testing-examples/borrowed_option_result.gos"),
+    spec("feature-testing-examples/aggregate_binding.gos"),
+    spec("feature-testing-examples/fs_metadata.gos"),
+    spec("feature-testing-examples/html_escape.gos"),
+    spec("feature-testing-examples/html_template_render_json.gos"),
+    spec("feature-testing-examples/jwt_roundtrip.gos"),
+    spec("feature-testing-examples/crypto_ecdsa.gos"),
+    spec("feature-testing-examples/validate_errors.gos"),
+    spec("feature-testing-examples/validate_errors_return.gos"),
+    spec("feature-testing-examples/sync_rwlock.gos"),
+    spec("feature-testing-examples/context_cancel.gos"),
+    spec("feature-testing-examples/metrics_observability.gos"),
+    spec("feature-testing-examples/trace_observability.gos"),
+    spec("feature-testing-examples/os_signal_subscribe.gos"),
+    spec("feature-testing-examples/array_bounds_probe.gos"),
+    spec("feature-testing-examples/array_literal_vec_methods.gos"),
+    spec("feature-testing-examples/vec_aggregate_rc_ownership.gos"),
+    // A by-value struct's `Vec` / `[T]` field: construction moves the vector in,
+    // struct copy / `..base` share it (retained through the vec count), a field
+    // extract borrows it, and every owner frees it once at death. Covers the
+    // drop pass's Vec-field teardown plus the Cranelift single-slot-aggregate
+    // and struct-update (`..base` projected operand) lowering.
+    spec("feature-testing-examples/struct_vec_field.gos"),
+    // Nested vectors: build `Vec<Vec<i64>>` by push and an `[[i64]]` literal,
+    // double-index `a[i][j]`, iterate an inner row via the outer index, mutate
+    // an inner element and grow an inner row, and drop the whole structure.
+    spec("feature-testing-examples/nested_vec_ops.gos"),
+    spec("feature-testing-examples/mut_ref_scalar_writeback.gos"),
+    spec("feature-testing-examples/mut_ref_string_writeback.gos"),
+    spec("feature-testing-examples/fixed_array_mut_param_copy.gos"),
+    spec("feature-testing-examples/byte_vec_i64_model.gos"),
+    spec("feature-testing-examples/map_iteration_order.gos"),
+    spec("feature-testing-examples/usize_compare.gos"),
+    spec("feature-testing-examples/u64_unsigned.gos"),
+    spec("feature-testing-examples/channel_close_drain.gos"),
+    spec("feature-testing-examples/chan_struct_payload.gos"),
+    spec("feature-testing-examples/channel_timers.gos"),
+    Spec {
+        nondeterministic: true,
+        ..spec("feature-testing-examples/channel_fan_in.gos")
+    },
+    spec("feature-testing-examples/closure_capture_mutation.gos"),
+    spec("feature-testing-examples/closure_lifetime_inference.gos"),
+    spec("feature-testing-examples/closure_payload_typing.gos"),
+    spec("feature-testing-examples/combinator_sweep.gos"),
+    spec("feature-testing-examples/mut_ref_params.gos"),
+    spec("feature-testing-examples/http_surface.gos"),
+    spec("feature-testing-examples/http_form_multipart.gos"),
+    spec("feature-testing-examples/option_none_variant_collision.gos"),
+    spec("feature-testing-examples/method_name_collision.gos"),
+    spec("feature-testing-examples/select_multiplex.gos"),
+    spec("feature-testing-examples/select_closed_chan_ready.gos"),
+    spec("feature-testing-examples/select_ctx_cancel.gos"),
+    spec("feature-testing-examples/let_else_binding.gos"),
+    spec("feature-testing-examples/slice_param_coercion.gos"),
+    spec("feature-testing-examples/enum_param_rc_repro.gos"),
+    spec("feature-testing-examples/vec_param_aggregate_ctor.gos"),
+    spec("feature-testing-examples/sort_struct_field_closure.gos"),
+    spec("feature-testing-examples/sql_driverless.gos"),
+    spec("feature-testing-examples/sql_ident_quoting.gos"),
+    spec("feature-testing-examples/struct_copy_reclaim.gos"),
+    spec("feature-testing-examples/struct_copy_followups.gos"),
+    spec("feature-testing-examples/struct_container_reclaim.gos"),
+    spec("feature-testing-examples/enum_unit_local.gos"),
+    spec("feature-testing-examples/panic_hook.gos"),
+    spec("feature-testing-examples/arena_blocks.gos"),
+    spec("feature-testing-examples/result_struct_payload.gos"),
+    spec("feature-testing-examples/vec_literal_coercion.gos"),
+    spec("feature-testing-examples/derive_traits.gos"),
+    spec("feature-testing-examples/derive_struct_variant.gos"),
+    spec("feature-testing-examples/struct_map_keys.gos"),
+    spec("feature-testing-examples/atomic_bool.gos"),
+    spec("feature-testing-examples/cycle_collector.gos"),
+    spec("feature-testing-examples/cycle_reclaim.gos"),
+    // The collector treats shared (escaped) objects as external live
+    // edges while goroutines churn them: no trial-deletion through the
+    // shared boundary, freed cycle nodes release their out-edges once.
+    spec("feature-testing-examples/cycle_shared_goroutines.gos"),
+    // A Vec-bearing enum payload survives escaping its constructing
+    // frame (by-value call argument, returned through a second
+    // boundary) and is reclaimed exactly once wherever the enum dies.
+    spec("feature-testing-examples/enum_vec_payload_escape.gos"),
+    spec("feature-testing-examples/jit_native_marshal.gos"),
+    spec("feature-testing-examples/arena_regions.gos"),
+    spec("feature-testing-examples/auto_regions.gos"),
+    spec("feature-testing-examples/auto_regions_for.gos"),
+    spec("feature-testing-examples/auto_regions_map_iter.gos"),
+    spec("feature-testing-examples/bool_vec_byte_stride.gos"),
+    spec("feature-testing-examples/tuple_extract_region.gos"),
+    spec("feature-testing-examples/defer_unwind_order.gos"),
+    spec("feature-testing-examples/early_break_materializers.gos"),
+    spec("feature-testing-examples/empty_vec_growth.gos"),
+    spec("feature-testing-examples/vec_multislot_growth.gos"),
+    spec("feature-testing-examples/doc_test_vs_unit_test_drift.gos"),
+    spec("feature-testing-examples/error_chain_inspection.gos"),
+    spec("feature-testing-examples/error_question_mark_propagation.gos"),
+    spec("feature-testing-examples/float_cast_drift.gos"),
+    spec("feature-testing-examples/format_precision_padding.gos"),
+    spec("feature-testing-examples/format_spec.gos"),
+    spec("feature-testing-examples/fs_error_text.gos"),
+    spec("feature-testing-examples/fs_temp_file_lifecycle.gos"),
+    spec("feature-testing-examples/fs_dir_ops.gos"),
+    spec("feature-testing-examples/path_split.gos"),
+    spec("feature-testing-examples/base32_decode.gos"),
+    spec("feature-testing-examples/json_yaml_encode.gos"),
+    spec("feature-testing-examples/bounded_channel.gos"),
+    spec("feature-testing-examples/generic_function_monomorphization.gos"),
+    spec("feature-testing-examples/named_function_item_coercion.gos"),
+    spec("feature-testing-examples/goroutine_panic_isolation.gos"),
+    Spec {
+        nondeterministic: true,
+        ..spec("feature-testing-examples/hashmap_counter_race.gos")
+    },
+    spec("feature-testing-examples/hashset_algebra.gos"),
+    spec("feature-testing-examples/http2_push.gos"),
+    spec("feature-testing-examples/http2_trailers.gos"),
+    spec("feature-testing-examples/http_cookie.gos"),
+    spec("feature-testing-examples/http_csrf.gos"),
+    spec("feature-testing-examples/http_csrf_attach.gos"),
+    spec("feature-testing-examples/http_session.gos"),
+    spec("feature-testing-examples/http_session_roundtrip.gos"),
+    spec("feature-testing-examples/http_form_urlencoded.gos"),
+    Spec {
+        skip_all: Some(
+            "binds fixed loopback ports - covered serially by \
+             http_bare_handler_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_bare_handler.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_bare_aliases_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_bare_aliases.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_client_cookie_jar_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_client_cookie_jar.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_client_verbs_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_client_verbs.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback TLS port - covered serially by \
+             http_serve_tls_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_serve_tls_roundtrip.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_server_headers_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_server_headers.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_middleware_bearer_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_middleware_bearer.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_middleware_compose_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_middleware_compose.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_middleware_ws_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_middleware_ws.gos")
+    },
+    spec("feature-testing-examples/http_router_lookup.gos"),
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_router_params_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_router_params.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_router_typed_params_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_router_typed_params.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_router_chain_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_router_chain.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_next_chunk_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_next_chunk.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds fixed loopback ports - covered serially by \
+             http_proxy_stream_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_proxy_stream.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_raw_bytes_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_raw_bytes.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_redirect_policy_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_redirect_policy.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_request_headers_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_request_headers.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_request_values_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_request_values.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_request_form_auth_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_request_form_auth.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_form_file_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_form_file.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_response_headers_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_response_headers.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds fixed loopback ports - covered serially by \
+             http_roundtrip_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_roundtrip.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_static_file_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_static_file.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_static_range_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_static_range.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_websocket_accept_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_websocket_accept.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             websocket_echo_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/websocket_echo.gos")
+    },
+    spec("feature-testing-examples/http_serve_err_binding.gos"),
+    spec("feature-testing-examples/http3_serve_err_binding.gos"),
+    spec("feature-testing-examples/integer_overflow_edges.gos"),
+    spec("feature-testing-examples/iter_combinator_chain.gos"),
+    spec("feature-testing-examples/iter_extra.gos"),
+    spec("feature-testing-examples/sync_extra.gos"),
+    spec("feature-testing-examples/math_rand.gos"),
+    spec("feature-testing-examples/bytes_builder.gos"),
+    spec("feature-testing-examples/net_ip.gos"),
+    spec("feature-testing-examples/net_tcp_echo.gos"),
+    Spec {
+        // Unix-domain sockets are POSIX-only; on Windows every entry
+        // point returns an Err, so the program prints a bind-failure
+        // message whose format differs between VM and native.
+        skip_all: if cfg!(windows) {
+            Some("Unix-domain sockets are not available on Windows")
+        } else {
+            None
+        },
+        ..spec("feature-testing-examples/net_unix_echo.gos")
+    },
+    spec("feature-testing-examples/vec_remove_inplace.gos"),
+    spec("feature-testing-examples/map_value_heap_children.gos"),
+    spec("feature-testing-examples/map_pop_then_drop.gos"),
+    spec("feature-testing-examples/rc_move_elision.gos"),
+    spec("feature-testing-examples/map_struct_value_access.gos"),
+    spec("feature-testing-examples/map_iter_wildcard_destructure.gos"),
+    spec("feature-testing-examples/mut_self_method_dispatch.gos"),
+    spec("feature-testing-examples/single_field_struct_aggregate.gos"),
+    spec("feature-testing-examples/struct_tuple_map_key.gos"),
+    spec("feature-testing-examples/struct_keyed_map_value_iter.gos"),
+    spec("feature-testing-examples/debug_option_result.gos"),
+    spec("feature-testing-examples/goroutine_panic_join.gos"),
+    spec("feature-testing-examples/chan_struct_local_recv.gos"),
+    spec("feature-testing-examples/chan_select_struct_payload.gos"),
+    spec("feature-testing-examples/net_tls_client.gos"),
+    spec("feature-testing-examples/net_tls_client_modes.gos"),
+    spec("feature-testing-examples/json_round_trip_fuzz.gos"),
+    spec("feature-testing-examples/json_set_update.gos"),
+    spec("feature-testing-examples/option_result_chain_methods.gos"),
+    spec("feature-testing-examples/process_spawn_piped.gos"),
+    spec("feature-testing-examples/method_dispatch_collision.gos"),
+    spec("feature-testing-examples/module_same_fn_names.gos"),
+    spec("feature-testing-examples/mutex_poison_recovery.gos"),
+    spec("feature-testing-examples/mutex_vs_channel_counter.gos"),
+    spec("feature-testing-examples/numeric_conversion_matrix.gos"),
+    spec("feature-testing-examples/option_default.gos"),
+    spec("feature-testing-examples/option_unwrap_chain.gos"),
+    spec("feature-testing-examples/result_default.gos"),
+    spec("feature-testing-examples/try_option_propagation.gos"),
+    spec("feature-testing-examples/try_err_conversion.gos"),
+    spec("feature-testing-examples/crypto_sha_hex.gos"),
+    spec("feature-testing-examples/os_signal_handler.gos"),
+    spec("feature-testing-examples/panic_recover_round_trip.gos"),
+    spec("feature-testing-examples/pattern_match_exhaustiveness.gos"),
+    spec("feature-testing-examples/pipe_operator_precedence.gos"),
+    spec("feature-testing-examples/pipe_placeholder.gos"),
+    Spec {
+        // The example exercises `exec::run` against `echo`, `printf`,
+        // `sh`, `true`, `false` - all Unix-only standalone executables
+        // (on Windows `echo`/`true`/`false` are `cmd` builtins, not
+        // resolvable via `Command::new`, and `sh`/`printf` aren't
+        // present at all). Cross-platform shape would defeat the
+        // demo's purpose. Linux + macOS cover the surface.
+        skip_all: if cfg!(windows) {
+            Some("uses Unix-only commands (echo, sh, printf, true, false)")
+        } else {
+            None
+        },
+        ..spec("feature-testing-examples/process_spawn_pipe.gos")
+    },
+    spec("feature-testing-examples/rc_release_drops.gos"),
+    spec("feature-testing-examples/mut_string_return.gos"),
+    spec("feature-testing-examples/string_accumulator_return.gos"),
+    spec("feature-testing-examples/weak_refs.gos"),
+    // `w.upgrade()` hands out an owned strong reference pinned in a
+    // frame-owned shadow local: repeated / rebound / discarded upgrades
+    // keep the accounting balanced on every tier.
+    spec("feature-testing-examples/weak_upgrade_ownership.gos"),
+    spec("feature-testing-examples/recursive_enum_walk.gos"),
+    // Structural `==` / `!=` on heap (recursive / Box / Vec-bearing) enums:
+    // equal-but-distinct allocations compare true on every tier.
+    spec("feature-testing-examples/enum_struct_eq.gos"),
+    spec("feature-testing-examples/reference_alias_mutation.gos"),
+    spec("feature-testing-examples/regex_unicode_categories.gos"),
+    Spec {
+        skip_parity: Some("poll-attempt count is scheduler-dependent; output varies across tiers"),
+        ..spec("feature-testing-examples/select_default_timing.gos")
+    },
+    spec("feature-testing-examples/slice_methods.gos"),
+    spec("feature-testing-examples/slice_subslicing.gos"),
+    spec("feature-testing-examples/sort_with_closure.gos"),
+    spec("feature-testing-examples/spawn_join.gos"),
+    spec("feature-testing-examples/string_build.gos"),
+    spec("feature-testing-examples/string_concatenation_stress.gos"),
+    spec("feature-testing-examples/string_method_surface.gos"),
+    spec("feature-testing-examples/string_unicode_boundaries.gos"),
+    // Byte-range `substring` reads its source length from the O(1) string
+    // header (not an O(len) strlen), so a sliding-window k-mer scan stays
+    // linear; covers literal + built sources, clamping, and HashMap<String>
+    // k-mer counting.
+    spec("feature-testing-examples/str_substring_kmer.gos"),
+    // `m.iter()` on a `&HashMap` parameter materialises real entries on the
+    // compiled tiers (the receiver type is peeled past `&` before the map
+    // dispatch); previously a borrowed map iterated as a bogus Vec.
+    spec("feature-testing-examples/hashmap_ref_param_iter.gos"),
+    spec("feature-testing-examples/time_monotonic_vs_wall.gos"),
+    spec("feature-testing-examples/tw_go_block.gos"),
+    spec("feature-testing-examples/trait_object_dispatch.gos"),
+    Spec {
+        nondeterministic: true,
+        ..spec("feature-testing-examples/tuple_destructuring_loop.gos")
+    },
+    spec("feature-testing-examples/variable_shadowing_ladder.gos"),
+    spec("feature-testing-examples/same_scope_shadow_assignment.gos"),
+    spec("feature-testing-examples/literal_forms.gos"),
+    spec("feature-testing-examples/loop_continue.gos"),
+    spec("feature-testing-examples/match_or_patterns.gos"),
+    spec("feature-testing-examples/or_patterns.gos"),
+    spec("feature-testing-examples/string_match_patterns.gos"),
+    spec("feature-testing-examples/string_char_needle.gos"),
+    spec("feature-testing-examples/static_items.gos"),
+    spec("feature-testing-examples/stdlib_expansion.gos"),
+    spec("feature-testing-examples/strconv_radix_quote.gos"),
+    spec("feature-testing-examples/stdlib_strings_free.gos"),
+    spec("feature-testing-examples/stdlib_compiled_wiring.gos"),
+    spec("feature-testing-examples/stdlib_path_free.gos"),
+    spec("feature-testing-examples/stdlib_time_free.gos"),
+    spec("feature-testing-examples/stdlib_hash.gos"),
+    spec("feature-testing-examples/stdlib_math_bits.gos"),
+    spec("feature-testing-examples/stdlib_math_pred.gos"),
+    spec("feature-testing-examples/stdlib_os_introspection.gos"),
+    spec("feature-testing-examples/stdlib_fs_rename.gos"),
+    spec("feature-testing-examples/stdlib_json_as_bool.gos"),
+    spec("feature-testing-examples/stdlib_thread_yield.gos"),
+    Spec {
+        stdin: b"alpha\nbeta\ngamma\n",
+        ..spec("feature-testing-examples/stdlib_io_read_all.gos")
+    },
+    Spec {
+        stdin: b"one two three",
+        ..spec("feature-testing-examples/stdlib_io_copy.gos")
+    },
+    spec("feature-testing-examples/stdlib_alias_wiring.gos"),
+    spec("feature-testing-examples/stdlib_math_scalar.gos"),
+    spec("feature-testing-examples/stdlib_math_const.gos"),
+    spec("feature-testing-examples/stdlib_unicode_norm.gos"),
+    spec("feature-testing-examples/stdlib_process.gos"),
+    spec("feature-testing-examples/stdlib_time_methods.gos"),
+    spec("feature-testing-examples/duration_methods.gos"),
+    spec("feature-testing-examples/flag_cell_duration.gos"),
+    spec("feature-testing-examples/instant_methods.gos"),
+    spec("feature-testing-examples/time_param_dispatch.gos"),
+    spec("feature-testing-examples/neg_int_min_wraps.gos"),
+    spec("feature-testing-examples/stdlib_net_dns.gos"),
+    spec("feature-testing-examples/stdlib_json_dynamic.gos"),
+    spec("feature-testing-examples/stdlib_netip.gos"),
+    spec("feature-testing-examples/stdlib_strconv.gos"),
+    spec("feature-testing-examples/stdlib_fs_ops.gos"),
+    spec("feature-testing-examples/stdlib_encoding_crypto.gos"),
+    spec("feature-testing-examples/stdlib_text_codec.gos"),
+    spec("feature-testing-examples/stdlib_pem.gos"),
+    spec("feature-testing-examples/stdlib_x509.gos"),
+    spec("feature-testing-examples/stdlib_archive.gos"),
+    spec("feature-testing-examples/struct_update_base.gos"),
+    spec("feature-testing-examples/at_binding_subpattern.gos"),
+    spec("feature-testing-examples/scheduler_drain.gos"),
+    spec("feature-testing-examples/static_mut_basic.gos"),
+    spec("feature-testing-examples/static_mut_goroutines.gos"),
+    spec("feature-testing-examples/closure_goroutine.gos"),
+    spec("feature-testing-examples/go_stdlib_spawn.gos"),
+    spec("feature-testing-examples/yaml_autoderive.gos"),
+    spec("feature-testing-examples/sync_map_demo.gos"),
+    spec("feature-testing-examples/autoderive_int_widths.gos"),
+    spec("feature-testing-examples/write_file_bytes.gos"),
+    spec("feature-testing-examples/unicode_full.gos"),
+    spec("feature-testing-examples/string_len_bytes.gos"),
+    spec("feature-testing-examples/concurrent_atomic.gos"),
+    // Same cross-goroutine-registry class as concurrent_atomic, for the
+    // HashSet and VecDeque handle registries: a handle built before a
+    // channel yield (which the scheduler may resume on another worker
+    // thread) must stay usable afterward. A thread-local registry lost
+    // the handle across the migration; the registries are now global.
+    spec("feature-testing-examples/goroutine_set_handle.gos"),
+    spec("feature-testing-examples/goroutine_deque_handle.gos"),
+    spec("feature-testing-examples/stdlib_parity_batch.gos"),
+    spec("feature-testing-examples/compress_zstd.gos"),
+    spec("feature-testing-examples/compress_bzip2.gos"),
+    spec("feature-testing-examples/crypto_password.gos"),
+    spec("feature-testing-examples/crypto_extra.gos"),
+    spec("feature-testing-examples/crypto_aead.gos"),
+    spec("feature-testing-examples/encoding_xml.gos"),
+    spec("feature-testing-examples/misc_class_a.gos"),
+    spec("feature-testing-examples/hashmap_get_some_field.gos"),
+    spec("feature-testing-examples/hashmap_field_through_result.gos"),
+    Spec {
+        skip_all: if cfg!(windows) {
+            Some("uses Unix-only commands (printf, tr, sort, head)")
+        } else {
+            None
+        },
+        ..spec("feature-testing-examples/exec_pipeline.gos")
+    },
+    Spec {
+        skip_all: if cfg!(windows) {
+            Some("uses Unix-only /bin/true and /bin/sleep")
+        } else {
+            None
+        },
+        ..spec("feature-testing-examples/exec_wait_timeout.gos")
+    },
+    Spec {
+        skip_all: if cfg!(windows) {
+            Some("uses Unix-only /bin/sleep, /bin/sh, SIGTERM")
+        } else {
+            None
+        },
+        ..spec("feature-testing-examples/exec_signal_group.gos")
+    },
+    spec("feature-testing-examples/vec_runtime_repeat.gos"),
+    spec("feature-testing-examples/vec_with_capacity.gos"),
+    // Push-built / runtime-repeat scalar vecs ride the VM's flat typed
+    // storage (IntArray / FloatVec); the whole Vec surface, plus mixed
+    // vec-vs-fixed-array structural `==`, must agree on every tier.
+    spec("feature-testing-examples/vec_push_typed_storage.gos"),
+    spec("feature-testing-examples/range_non_i64.gos"),
+    spec("feature-testing-examples/string_push_char.gos"),
+    spec("feature-testing-examples/vec_deque.gos"),
+    spec("feature-testing-examples/tuple_match_patterns.gos"),
+    spec("feature-testing-examples/clone_builtin_dispatch.gos"),
+    spec("feature-testing-examples/nested_vec_mutation.gos"),
+    spec("feature-testing-examples/deref_string_concat.gos"),
+    spec("feature-testing-examples/vec_single_field_struct.gos"),
+    spec("feature-testing-examples/inline_index_remap.gos"),
+    spec("feature-testing-examples/string_append_realloc.gos"),
+    spec("feature-testing-examples/byte_literal_arith.gos"),
+    spec("feature-testing-examples/closure_env_container_capture.gos"),
+    spec("feature-testing-examples/inferred_map_dispatch.gos"),
+    spec("feature-testing-examples/iterator_trait_user_impl.gos"),
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/jit_panic_trace.gos")
+    },
+    spec("feature-testing-examples/map_entry_and_format_paths.gos"),
+    spec("feature-testing-examples/nested_repeat_literal.gos"),
+    spec("feature-testing-examples/range_pipeline_iter.gos"),
+    spec("feature-testing-examples/seq_method_combinators.gos"),
+    spec("feature-testing-examples/stdlib_slog.gos"),
+    // Top-level statements (implicit `fn main`): plain, `?`-propagation,
+    // mixed-with-items, and an explicit process exit code.
+    spec("examples/top_level_statements.gos"),
+    spec("feature-testing-examples/top_level_hello.gos"),
+    spec("feature-testing-examples/top_level_question.gos"),
+    spec("feature-testing-examples/top_level_mixed.gos"),
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/top_level_exit_code.gos")
+    },
+    // Front-end features: labelled loops (`break 'l`/`continue 'l`) and
+    // slice / rest patterns (`[a, b]`, `[first, ..rest]`, `[.., last]`).
+    spec("feature-testing-examples/labeled_loops.gos"),
+    spec("feature-testing-examples/slice_patterns.gos"),
+    // Gossamer-native SQL driver dispatch: a `.gos` struct registers
+    // itself as a std::database::sql driver (sql::register_native) and
+    // is driven through the full Conn/Stmt/Rows facade. Cross-tier
+    // gate for the register_native bridge + native_* side-channel.
+    spec("feature-testing-examples/sql_native_driver.gos"),
+    // Qualified type-path annotation (`util::Rec` in `&util::Rec` param and
+    // `&mut util::Rec` param) resolves to the struct's Adt on all tiers so
+    // field access lowers to a real Field projection instead of falling
+    // through to the json accessor.
+    spec("feature-testing-examples/cross_module_struct_fields.gos"),
+    // Struct-`self` method JIT (Lever 1a): an all-scalar user struct whose
+    // `&mut self` mutator and `&self` reader run as in-process Cranelift JIT
+    // code. The struct crosses the VM<->native boundary as a flat field-slot
+    // block; a `&mut self` call's in-place field mutations are written back
+    // into the caller's binding. Mixed i64/f64/bool/char fields, a hot loop
+    // (so the methods promote), and `&self` recursion - bit-identical across
+    // the bytecode VM, Cranelift JIT, and LLVM AOT tiers.
+    spec("feature-testing-examples/struct_self_jit.gos"),
+    // `Vec<Vec<i64>>` / `[[i64]]` crosses the VM<->native boundary as the AOT
+    // nested layout (outer vec of inner `GosVec<i64>` pointers), marshalled
+    // once per source `Arc` and reused via the identity cache across repeated
+    // calls. A `&[[i64]]` function called in a hot loop promotes to Cranelift
+    // JIT and reads `g[i]` + iterates inner vecs - the graph-bfs shape.
+    // Bit-identical across the bytecode VM, Cranelift JIT, and LLVM AOT tiers.
+    spec("feature-testing-examples/vec_vec_i64_jit.gos"),
+    // A recursive enum (`Node`) with a `Vec<Node>` (`List`) and a
+    // `Vec<(String, Node)>` (`Map`) variant: a `parse`-like
+    // `Result<Node, _>`-returning builder called in a hot loop promotes to the
+    // Cranelift JIT, where its String-in / Result<enum>-out boundary marshals
+    // once each. The native body builds nested `List` / `Map` DOMs (heap enum
+    // nodes, `GosVec` fields, AGGR_OWNED tuple vecs) which the trampoline reads
+    // back into a `Value::Variant` tree and frees - the json-serde parse shape.
+    // Bit-identical across the bytecode VM, Cranelift JIT, and LLVM AOT tiers.
+    spec("feature-testing-examples/json_parse_jit.gos"),
+    // Recursive heap enum crossing the JIT boundary in BOTH directions: a
+    // by-value `transform(Node) -> Node` (enum in, freshly built enum out,
+    // with `Vec<Node>` and `Vec<(String, Node)>` variant fields marshalled
+    // each way) and a `serialize_into(&Node, &mut String)` that writes the
+    // string back through the `&mut` cell. The recursive builders promote to
+    // the Cranelift JIT; output is bit-identical across the VM, JIT, and AOT.
+    spec("feature-testing-examples/enum_transform_jit.gos"),
+    // `for (k, v)` over a `Vec<(String, Enum)>` bound from an enum-variant
+    // pattern - the tuple-destructure for-vec path - plus a fixed-array
+    // literal local stored as an enum payload, which must materialize a heap
+    // GosVec so the nested variant iterates correctly. Bit-identical across
+    // the VM, Cranelift JIT, and LLVM AOT.
+    spec("feature-testing-examples/for_kv_enum_payload.gos"),
+    // Display-rendering `join` on scalar / String sequences and the strict
+    // `to_i64` / `to_f64` / `to_bool` String parses, which lower to the
+    // `gos_rt_str_to_*_opt` Option carriers on the compiled tiers. Guards the
+    // MIR dispatch wiring so the parses stay bit-identical across the VM,
+    // Cranelift JIT, and LLVM AOT.
+    spec("feature-testing-examples/stdlib_surface_join_parse_take.gos"),
+];
+
+#[test]
+fn specs_cover_every_feature_testing_example() {
+    use std::collections::BTreeSet;
+
+    let root = workspace_root();
+    let dir = root.join("feature-testing-examples");
+    let on_disk: BTreeSet<String> = fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()))
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("gos"))
+        .filter_map(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
+        .collect();
+    let in_specs: BTreeSet<String> = SPECS
+        .iter()
+        .filter_map(|spec| spec.path.strip_prefix("feature-testing-examples/"))
+        .map(str::to_string)
+        .collect();
+    let missing: Vec<_> = on_disk.difference(&in_specs).cloned().collect();
+    assert!(
+        missing.is_empty(),
+        "feature-testing-examples fixtures missing from SPECS: {}",
+        missing.join(", ")
+    );
+}
+
+#[derive(Debug)]
+struct Run {
+    stdout: String,
+    stderr: String,
+    code: Option<i32>,
+    /// Crash cause instead of an opaque number (signal name on unix,
+    /// NTSTATUS name on Windows); `None` only if the process never
+    /// reported an exit status.
+    exit_text: Option<String>,
+    /// True when the deadline elapsed and the child was killed.
+    timed_out: bool,
+    /// Executable path that was launched.
+    exe: PathBuf,
+    /// Space-joined command line (exe + args), for reproduction.
+    cmdline: String,
+    /// Working directory the child ran in.
+    workdir: PathBuf,
+}
+
+fn normalize_newlines(s: &str) -> String {
+    s.replace("\r\n", "\n")
+}
+
+/// Renders an `ExitStatus` via the shared helper so a native-tier
+/// crash reads as its cause (signal / NTSTATUS) instead of a bare
+/// number. Returns `Some` whenever the process reported a status
+/// (exit code or signal); `None` only if no status was collected.
+fn render_status(status: std::process::ExitStatus) -> Option<String> {
+    if status.code().is_some() {
+        return Some(common::describe_exit(status).text);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if status.signal().is_some() {
+            return Some(common::describe_exit(status).text);
+        }
+    }
+    let _ = status;
+    None
+}
+
+fn run_with_timeout(
+    mut child: Child,
+    stdin: &[u8],
+    deadline: Instant,
+    exe: PathBuf,
+    cmdline: String,
+    workdir: PathBuf,
+) -> Run {
+    if let Some(mut sin) = child.stdin.take() {
+        let _ = sin.write_all(stdin);
+        drop(sin);
+    }
+    let mut timed_out = false;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    dump_stuck_child_forensics(child.id());
+                    // Under the gdb debug harness, interrupt instead of
+                    // killing first: batch gdb then prints the inferior's
+                    // backtrace into the captured stdout before exiting.
+                    if env::var("GOS_PARITY_GDB").is_ok() {
+                        let _ = Command::new("kill")
+                            .args(["-INT", &child.id().to_string()])
+                            .status();
+                        std::thread::sleep(Duration::from_secs(10));
+                    }
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    timed_out = true;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(40));
+            }
+            Err(_) => break,
+        }
+    }
+    let out = child.wait_with_output().expect("wait_with_output");
+    Run {
+        stdout: normalize_newlines(&String::from_utf8_lossy(&out.stdout)),
+        stderr: normalize_newlines(&String::from_utf8_lossy(&out.stderr)),
+        code: out.status.code(),
+        exit_text: render_status(out.status),
+        timed_out,
+        exe,
+        cmdline,
+        workdir,
+    }
+}
+
+/// Dumps per-thread scheduler state of a child that outlived the run
+/// deadline, so a timeout report shows WHERE the process is stuck
+/// (thread names, wait channels, run state) instead of only that it
+/// was killed. Best-effort: /proc reads that fail are skipped.
+#[cfg(target_os = "linux")]
+fn dump_stuck_child_forensics(pid: u32) {
+    eprintln!("--- stuck-child forensics for pid {pid} ---");
+    if let Ok(status) = fs::read_to_string(format!("/proc/{pid}/status")) {
+        for line in status.lines() {
+            if line.starts_with("State") || line.starts_with("Threads") {
+                eprintln!("  {line}");
+            }
+        }
+    }
+    if let Ok(tasks) = fs::read_dir(format!("/proc/{pid}/task")) {
+        for t in tasks.flatten() {
+            let tid = t.file_name().to_string_lossy().to_string();
+            let comm = fs::read_to_string(format!("/proc/{pid}/task/{tid}/comm"))
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let wchan =
+                fs::read_to_string(format!("/proc/{pid}/task/{tid}/wchan")).unwrap_or_default();
+            // Comm may contain spaces, so the run-state field is found
+            // after the last `)` of `/proc/<pid>/stat`.
+            let state = fs::read_to_string(format!("/proc/{pid}/task/{tid}/stat"))
+                .ok()
+                .and_then(|s| {
+                    s.rsplit(')')
+                        .next()
+                        .and_then(|tail| tail.split_whitespace().next())
+                        .map(std::string::ToString::to_string)
+                })
+                .unwrap_or_default();
+            eprintln!("  tid={tid} comm={comm} state={state} wchan={wchan}");
+        }
+    }
+    eprintln!("--- end forensics ---");
+}
+
+/// macOS mirror of the Linux forensics: `sample` (ships with the OS)
+/// captures every thread's stack of the stuck child, so a timeout
+/// report shows WHERE the process is wedged (a parked worker, a
+/// spinning collector, a lost channel wakeup) instead of only that it
+/// was killed. Best-effort: a missing or failing `sample` is skipped.
+#[cfg(target_os = "macos")]
+fn dump_stuck_child_forensics(pid: u32) {
+    eprintln!("--- stuck-child forensics for pid {pid} ---");
+    match Command::new("sample")
+        .args([&pid.to_string(), "2", "-mayDie"])
+        .output()
+    {
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            // The call-graph section is the useful part; the binary
+            // image list below it is noise for a hang report.
+            let graph = text
+                .split("Binary Images:")
+                .next()
+                .unwrap_or(&text)
+                .trim_end();
+            for line in graph.lines() {
+                eprintln!("  {line}");
+            }
+            if !out.status.success() {
+                eprintln!("  (sample exited {:?})", out.status.code());
+            }
+        }
+        Err(e) => eprintln!("  (sample unavailable: {e})"),
+    }
+    eprintln!("--- end forensics ---");
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn dump_stuck_child_forensics(_pid: u32) {}
+
+/// Formats the full per-tier execution report for a CI failure dump.
+/// Every field is shown even when empty so a crashed-before-output
+/// tier still surfaces executable path, command line, and exit cause.
+fn tier_report(label: &str, run: &Run) -> String {
+    let exit = match (run.code, &run.exit_text) {
+        (Some(c), Some(text)) => format!("{c} ({text})"),
+        (Some(c), None) => format!("{c}"),
+        (None, Some(text)) => format!("none ({text})"),
+        (None, None) => "none".to_string(),
+    };
+    let timeout = if run.timed_out { "yes" } else { "no" };
+    format!(
+        "{label}:\n  exit={exit}\n  timed_out={timeout}\n  exe={}\n  cmdline={}\n  workdir={}\n  stdout={:?}\n  stderr={:?}",
+        run.exe.display(),
+        run.cmdline,
+        run.workdir.display(),
+        run.stdout,
+        run.stderr,
+    )
+}
+
+#[test]
+fn tier_report_shows_exit_ntstatus_and_streams() {
+    let run = Run {
+        stdout: String::from("ok\n"),
+        stderr: String::new(),
+        code: Some(0),
+        exit_text: Some("exit 0".to_string()),
+        timed_out: false,
+        exe: PathBuf::from("/tmp/gos"),
+        cmdline: "/tmp/gos run examples/hello.gos".to_string(),
+        workdir: PathBuf::from("/home/daniel/dev/gossamer"),
+    };
+    let report = tier_report("vm", &run);
+    assert!(report.starts_with("vm:\n  exit=0 (exit 0)"));
+    assert!(report.contains("timed_out=no"));
+    assert!(report.contains("exe=/tmp/gos"));
+    assert!(report.contains("cmdline=/tmp/gos run examples/hello.gos"));
+    assert!(report.contains("workdir=/home/daniel/dev/gossamer"));
+    assert!(report.contains("stdout=\"ok\\n\""));
+    assert!(report.contains("stderr=\"\""));
+}
+
+#[test]
+fn tier_report_handles_crash_and_timeout() {
+    // 0xC0000005 reinterpreted as i32 is -1073741819. This is how
+    // Rust's ExitStatus::code() surfaces a Windows NTSTATUS exit.
+    // exit_text carries the decoded name so the CI log reads as the
+    // cause, not a number.
+    let run = Run {
+        stdout: String::new(),
+        stderr: String::from("fault"),
+        code: Some(-1073741819),
+        exit_text: Some("exit code 0xc0000005 (STATUS_ACCESS_VIOLATION)".to_string()),
+        timed_out: true,
+        exe: PathBuf::from("C:\\scratch\\hello.exe"),
+        cmdline: "C:\\scratch\\hello.exe".to_string(),
+        workdir: PathBuf::from("C:\\ci"),
+    };
+    let report = tier_report("cranelift", &run);
+    assert!(report.contains("exit=-1073741819 (exit code 0xc0000005 (STATUS_ACCESS_VIOLATION))"));
+    assert!(report.contains("timed_out=yes"));
+    assert!(report.contains("exe=C:\\scratch\\hello.exe"));
+    assert!(report.contains("stdout=\"\""));
+    assert!(report.contains("stderr=\"fault\""));
+}
+
+fn run_vm(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
+    let gos = gos_bin();
+    let mut cmd = Command::new(&gos);
+    cmd.arg("run").arg(src);
+    let mut parts: Vec<String> = vec![gos.display().to_string(), "run".to_string()];
+    parts.push(src.display().to_string());
+    if !args.is_empty() {
+        cmd.arg("--").args(args);
+        parts.push("--".to_string());
+        parts.extend(args.iter().map(std::string::ToString::to_string));
+    }
+    let workdir = cmd.get_current_dir().map_or_else(
+        || env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        std::path::Path::to_path_buf,
+    );
+    let child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn gos run");
+    run_with_timeout(
+        child,
+        stdin,
+        Instant::now() + PER_RUN_TIMEOUT,
+        gos,
+        parts.join(" "),
+        workdir,
+    )
+}
+
+fn run_jit(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
+    let gos = gos_bin();
+    let mut cmd = Command::new(&gos);
+    cmd.arg("run")
+        .arg(src)
+        .env("GOSSAMER_JIT_THRESHOLD", "1")
+        .env_remove("GOS_JIT");
+    let mut parts: Vec<String> = vec![
+        "GOSSAMER_JIT_THRESHOLD=1".to_string(),
+        gos.display().to_string(),
+        "run".to_string(),
+    ];
+    parts.push(src.display().to_string());
+    if !args.is_empty() {
+        cmd.arg("--").args(args);
+        parts.push("--".to_string());
+        parts.extend(args.iter().map(std::string::ToString::to_string));
+    }
+    let workdir = cmd.get_current_dir().map_or_else(
+        || env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        std::path::Path::to_path_buf,
+    );
+    let child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn gos run with JIT");
+    run_with_timeout(
+        child,
+        stdin,
+        Instant::now() + PER_RUN_TIMEOUT,
+        src.to_path_buf(),
+        parts.join(" "),
+        workdir,
+    )
+}
+
+fn build_native(src: &Path, release: bool, scratch: &Path) -> Result<PathBuf, String> {
+    let mut cmd = Command::new(gos_bin());
+    cmd.arg("build");
+    if release {
+        cmd.arg("--release");
+    }
+    cmd.arg("--out-dir").arg(scratch).arg(src);
+    let out = cmd.output().expect("spawn gos build");
+    if !out.status.success() {
+        return Err(format!(
+            "gos build {flag} failed:\n  stdout: {}\n  stderr: {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+            flag = if release { "--release" } else { "" },
+        ));
+    }
+    // The unit name is manifest-derived (project id tail) for sources
+    // inside a project, or the file stem for loose-file builds. Scan
+    // the scratch dir for a single executable instead of guessing.
+    let mut binaries: Vec<PathBuf> = Vec::new();
+    for entry in fs::read_dir(scratch)
+        .map_err(|e| format!("read_dir {}: {e}", scratch.display()))?
+        .flatten()
+    {
+        let p = entry.path();
+        if !p.is_file() {
+            continue;
+        }
+        if is_executable(&p) {
+            binaries.push(p);
+        }
+    }
+    if binaries.is_empty() {
+        return Err(format!(
+            "gos build produced no executable in {}",
+            scratch.display(),
+        ));
+    }
+    if binaries.len() > 1 {
+        return Err(format!(
+            "gos build produced multiple executables in {}: {binaries:?}",
+            scratch.display(),
+        ));
+    }
+    Ok(binaries.into_iter().next().expect("checked len == 1"))
+}
+
+#[cfg(unix)]
+fn is_executable(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(p).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable(p: &Path) -> bool {
+    p.extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+}
+
+fn run_native(bin: &Path, args: &[&str], stdin: &[u8]) -> Run {
+    // Debug harness mode: run the binary under gdb (its direct parent, so
+    // Yama's restricted ptrace scope permits it); the deadline path sends
+    // SIGINT and batch gdb prints the backtrace of wherever the inferior
+    // is spinning before the kill.
+    let mut cmd = if env::var("GOS_PARITY_GDB").is_ok() {
+        let mut c = Command::new("gdb");
+        c.args(["--batch", "-ex", "run", "-ex", "bt", "--args"]);
+        c.arg(bin);
+        c.args(args);
+        c
+    } else {
+        let mut c = Command::new(bin);
+        c.args(args);
+        c
+    };
+    let mut parts: Vec<String> = vec![bin.display().to_string()];
+    parts.extend(args.iter().map(std::string::ToString::to_string));
+    let workdir = cmd.get_current_dir().map_or_else(
+        || env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        std::path::Path::to_path_buf,
+    );
+    let child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn native binary");
+    run_with_timeout(
+        child,
+        stdin,
+        Instant::now() + PER_RUN_TIMEOUT,
+        bin.to_path_buf(),
+        parts.join(" "),
+        workdir,
+    )
+}
+
+fn run_tier(spec: &Spec, tier: Tier) -> Result<Run, String> {
+    let src = workspace_root().join(spec.path);
+    match tier {
+        Tier::Vm => Ok(run_vm(&src, spec.args, spec.stdin)),
+        Tier::Cranelift => Ok(run_jit(&src, spec.args, spec.stdin)),
+        Tier::Llvm => {
+            let scratch = fresh_dir(&format!("ll-{}", file_tag(spec.path)));
+            let bin = build_native(&src, true, &scratch)?;
+            let run = run_native(&bin, spec.args, spec.stdin);
+            let _ = fs::remove_dir_all(&scratch);
+            Ok(run)
+        }
+    }
+}
+
+fn file_tag(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("x")
+        .to_string()
+}
+
+fn stdout_matches(a: &str, b: &str, nondeterministic: bool) -> bool {
+    if nondeterministic {
+        let mut la: Vec<&str> = a.lines().collect();
+        let mut lb: Vec<&str> = b.lines().collect();
+        la.sort_unstable();
+        lb.sort_unstable();
+        la == lb
+    } else {
+        a == b
+    }
+}
+
+fn divergence(spec: &Spec, lhs: (Tier, &Run), rhs: (Tier, &Run)) -> Option<String> {
+    if !stdout_matches(&lhs.1.stdout, &rhs.1.stdout, spec.nondeterministic) {
+        return Some(format!(
+            "{path}: stdout diverged between {a} and {b}\n  {a}: {astdout:?}\n  {b}: {bstdout:?}\n\n--- per-tier execution report ---\n{report}",
+            path = spec.path,
+            a = lhs.0.label(),
+            b = rhs.0.label(),
+            astdout = lhs.1.stdout,
+            bstdout = rhs.1.stdout,
+            report = tier_report(lhs.0.label(), lhs.1) + "\n" + &tier_report(rhs.0.label(), rhs.1),
+        ));
+    }
+    if !spec.allow_nonzero && lhs.1.code != rhs.1.code {
+        return Some(format!(
+            "{path}: exit code diverged: {a}={ac:?} {b}={bc:?}\n\n--- per-tier execution report ---\n{report}",
+            path = spec.path,
+            a = lhs.0.label(),
+            ac = lhs.1.code,
+            b = rhs.0.label(),
+            bc = rhs.1.code,
+            report = tier_report(lhs.0.label(), lhs.1) + "\n" + &tier_report(rhs.0.label(), rhs.1),
+        ));
+    }
+    None
+}
+
+#[test]
+fn vm_runs_every_example_without_crashing() {
+    let mut failures = Vec::new();
+    for spec in SPECS {
+        if let Some(reason) = spec.skip_all {
+            eprintln!("skip vm: {} ({reason})", spec.path);
+            continue;
+        }
+        if spec.server.is_some() {
+            // Server VM coverage lives in `web_server_smoke_vm`.
+            continue;
+        }
+        let run = match run_tier(spec, Tier::Vm) {
+            Ok(r) => r,
+            Err(e) => {
+                failures.push(format!(
+                    "{path}: vm error (no Run produced - tier failed before execution):\n  {e}",
+                    path = spec.path,
+                ));
+                continue;
+            }
+        };
+        if !spec.allow_nonzero && run.code != Some(0) {
+            failures.push(format!(
+                "{path}: vm exit={code:?}\n\n--- per-tier execution report ---\n{report}",
+                path = spec.path,
+                code = run.code,
+                report = tier_report(Tier::Vm.label(), &run),
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} VM run failures:\n{}",
+        failures.len(),
+        failures.join("\n\n"),
+    );
+}
+
+// The parity battery is split into `PARITY_GROUPS` round-robin groups
+// per tier so a single failing example fails only its small group test
+// (e.g. `llvm_parity_group_2`) instead of the whole "every example"
+// suite - narrower to find, faster to re-run. The failure message
+// still names the exact example. Keep the group tests below in sync
+// with this count.
+const PARITY_GROUPS: usize = 6;
+
+macro_rules! parity_group_tests {
+    ($($g:literal => $cranelift:ident, $llvm:ident, $strict:ident;)*) => {
+        $(
+            #[test]
+            fn $cranelift() {
+                parity_walk(Tier::Cranelift, $g);
+            }
+            #[test]
+            fn $llvm() {
+                parity_walk(Tier::Llvm, $g);
+            }
+            #[test]
+            fn $strict() {
+                lowers_without_fallback_group($g);
+            }
+        )*
+    };
+}
+
+parity_group_tests! {
+    0 => cranelift_parity_group_0, llvm_parity_group_0, llvm_strict_lower_group_0;
+    1 => cranelift_parity_group_1, llvm_parity_group_1, llvm_strict_lower_group_1;
+    2 => cranelift_parity_group_2, llvm_parity_group_2, llvm_strict_lower_group_2;
+    3 => cranelift_parity_group_3, llvm_parity_group_3, llvm_strict_lower_group_3;
+    4 => cranelift_parity_group_4, llvm_parity_group_4, llvm_strict_lower_group_4;
+    5 => cranelift_parity_group_5, llvm_parity_group_5, llvm_strict_lower_group_5;
+}
+
+/// Serialises every parity walk so concurrent test functions can't
+/// race on examples whose fixtures share `/tmp/gossamer_test_*`
+/// paths (notably `fs_temp_file_lifecycle.gos`). The grouped tests run
+/// sequentially under this lock - the round-robin split shrinks the
+/// failing unit without reintroducing the cross-test fixture race.
+static PARITY_WALK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn parity_walk(compiled: Tier, group: usize) {
+    let _guard = PARITY_WALK_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let trace = env::var_os("GOS_PARITY_TRACE").is_some();
+    let mut failures = Vec::new();
+    for (idx, spec) in SPECS.iter().enumerate() {
+        if idx % PARITY_GROUPS != group {
+            continue;
+        }
+        if spec.skip_all.is_some() || spec.skip_parity.is_some() || spec.server.is_some() {
+            continue;
+        }
+        if trace {
+            eprintln!(
+                "tier-parity: {} group {group}: {}",
+                compiled.label(),
+                spec.path
+            );
+        }
+        let vm = match run_tier(spec, Tier::Vm) {
+            Ok(r) => r,
+            Err(e) => {
+                failures.push(format!(
+                    "{path}: vm error (no Run produced - tier failed before execution):\n  {e}",
+                    path = spec.path,
+                ));
+                continue;
+            }
+        };
+        let other = match run_tier(spec, compiled) {
+            Ok(r) => r,
+            Err(e) => {
+                failures.push(format!(
+                    "{path}: {tier} error (no Run produced - tier failed before execution):\n  {e}",
+                    path = spec.path,
+                    tier = compiled.label(),
+                ));
+                continue;
+            }
+        };
+        if let Some(d) = divergence(spec, (Tier::Vm, &vm), (compiled, &other)) {
+            failures.push(d);
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} {} parity failures:\n{}",
+        failures.len(),
+        compiled.label(),
+        failures.join("\n\n"),
+    );
+}
