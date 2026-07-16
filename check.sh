@@ -100,9 +100,31 @@ phase() {
 phase "core Rust gates"
 run_step "cargo fmt"                                       cargo fmt
 run_step "cargo clippy --workspace --all-targets"          cargo clippy --workspace --all-targets -- -D warnings
-run_step "cargo test --workspace --no-fail-fast"           cargo test --workspace --no-fail-fast -- --test-threads=1
 
-phase "tooling and documentation gates"
+phase "fast policy and documentation gates"
+run_step "cargo check --workspace"                          cargo check --workspace
+
+# cargo-deny - license + advisory + bans + sources gate
+# (`.github/workflows/ci.yml` deny job). Skip cleanly if
+# `cargo-deny` isn't installed so the local pass keeps moving.
+if [[ $run_deny -eq 1 ]]; then
+    if command -v cargo-deny >/dev/null 2>&1; then
+        run_step "cargo deny check" cargo deny check
+    else
+        echo "cargo deny skipped (run \`cargo install cargo-deny\` to enable)"
+    fi
+fi
+
+# cargo-audit - RUSTSEC advisory gate (`.github/workflows/ci.yml`
+# audit job). Skip cleanly if `cargo-audit` isn't installed.
+if [[ $run_audit -eq 1 ]]; then
+    if command -v cargo-audit >/dev/null 2>&1; then
+        run_step "cargo audit" cargo audit
+    else
+        echo "cargo audit skipped (run \`cargo install cargo-audit --locked\` to enable)"
+    fi
+fi
+
 # Stdlib docs drift gate - verifies docs_src/stdlib/ pages match
 # what `manifest::ALL_MODULES` would emit. Build the binary first
 # so the check uses the freshly built crate.
@@ -135,27 +157,8 @@ if [[ $run_doctests -eq 1 ]]; then
         cargo test --doc --workspace --release
 fi
 
-phase "dependency policy gates"
-# cargo-deny - license + advisory + bans + sources gate
-# (`.github/workflows/ci.yml` deny job). Skip cleanly if
-# `cargo-deny` isn't installed so the local pass keeps moving.
-if [[ $run_deny -eq 1 ]]; then
-    if command -v cargo-deny >/dev/null 2>&1; then
-        run_step "cargo deny check" cargo deny check
-    else
-        echo "cargo deny skipped (run \`cargo install cargo-deny\` to enable)"
-    fi
-fi
-
-# cargo-audit - RUSTSEC advisory gate (`.github/workflows/ci.yml`
-# audit job). Skip cleanly if `cargo-audit` isn't installed.
-if [[ $run_audit -eq 1 ]]; then
-    if command -v cargo-audit >/dev/null 2>&1; then
-        run_step "cargo audit" cargo audit
-    else
-        echo "cargo audit skipped (run \`cargo install cargo-audit --locked\` to enable)"
-    fi
-fi
+phase "test gate"
+run_step "cargo test --workspace --no-fail-fast"           cargo test --workspace --no-fail-fast -- --test-threads=1
 
 # Cross-target check - mirrors the cross-targets job's wasm32 leg.
 # Just the wasm-portable crates: rustls / corosensei / mio aren't

@@ -1203,9 +1203,8 @@ mod blocking_file_tests {
     #[test]
     fn whole_file_builtins_preserve_text_and_lines() {
         let path = std::env::temp_dir().join(format!(
-            "gossamer-blocking-file-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
+            "gossamer-blocking-file-{}",
+            std::process::id()
         ));
         let path_value = Value::String(path.to_string_lossy().into_owned().into());
         ok_payload(
@@ -1239,9 +1238,8 @@ mod blocking_file_tests {
         ok_payload(builtin_os_remove_file(&[renamed_value]).expect("remove file"));
 
         let dir = std::env::temp_dir().join(format!(
-            "gossamer-blocking-dir-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
+            "gossamer-blocking-dir-{}",
+            std::process::id()
         ));
         std::fs::create_dir(&dir).expect("create fixture dir");
         ok_payload(
@@ -1251,9 +1249,8 @@ mod blocking_file_tests {
         assert!(!dir.exists());
 
         let nested = std::env::temp_dir().join(format!(
-            "gossamer-blocking-tree-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
+            "gossamer-blocking-tree-{}",
+            std::process::id()
         ));
         std::fs::create_dir_all(nested.join("child")).expect("create nested fixture");
         ok_payload(

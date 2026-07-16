@@ -137,10 +137,13 @@ jobs:
           from collections import defaultdict
 
           records = defaultdict(list)
-          line_re = re.compile(r"^(?P<label>\S+)\s+\.\.\.\s+(?P<ns>[0-9]+)\s+ns/op$")
+          ansi_re = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+          line_re = re.compile(
+              r"^(?P<label>\S+)\s+\.\.\.\s+(?P<ns>[0-9]+)\s+ns/op(?:\s+\(.*\))?$"
+          )
           for path in sys.argv[1:]:
               for line in open(path):
-                  m = line_re.match(line.strip())
+                  m = line_re.match(ansi_re.sub("", line).strip())
                   if m:
                       records[m.group("label")].append(int(m.group("ns")))
 

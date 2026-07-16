@@ -299,7 +299,7 @@ fn normalize_virtual_path(path: &Path) -> io::Result<PathBuf> {
             "virtual filesystem paths must be relative and slash-separated",
         ));
     }
-    let mut normalized = PathBuf::new();
+    let mut components = Vec::new();
     for component in raw.split('/') {
         match component {
             "" | "." => {}
@@ -309,10 +309,14 @@ fn normalize_virtual_path(path: &Path) -> io::Result<PathBuf> {
                     "virtual filesystem paths cannot contain `..`",
                 ));
             }
-            name => normalized.push(name),
+            name => components.push(name),
         }
     }
-    Ok(normalized)
+    // Keep virtual paths slash-separated even on Windows. `PathBuf::push`
+    // would translate every separator to `\\`, which both leaks host syntax
+    // through this portable API and makes an already-normalized path fail a
+    // second validation pass.
+    Ok(PathBuf::from(components.join("/")))
 }
 
 fn file_info(path: PathBuf, len: u64, kind: FileKind) -> FileInfo {
@@ -400,17 +404,18 @@ impl TestFileSystem {
     pub fn create_dir_all(&self, path: impl AsRef<Path>) -> io::Result<()> {
         let path = normalize_virtual_path(path.as_ref())?;
         let mut state = self.state.write();
-        let mut current = PathBuf::new();
-        state.directories.insert(current.clone());
+        let mut components = Vec::new();
+        state.directories.insert(PathBuf::new());
         for component in path.components() {
-            current.push(component.as_os_str());
+            components.push(component.as_os_str().to_string_lossy());
+            let current = PathBuf::from(components.join("/"));
             if state.files.contains_key(&current) {
                 return Err(io::Error::new(
                     io::ErrorKind::AlreadyExists,
                     "a file already exists where a directory was requested",
                 ));
             }
-            state.directories.insert(current.clone());
+            state.directories.insert(current);
         }
         Ok(())
     }
@@ -527,7 +532,7 @@ pub struct EmbeddedAsset {
 }
 
 impl EmbeddedAsset {
-    /// Creates one embedded asset. Prefer [`embed_assets!`] so the bytes are
+    /// Creates one embedded asset. Prefer [`macro@crate::embed_assets`] so the bytes are
     /// included by the compiler and path dependencies are tracked.
     #[must_use]
     pub const fn new(path: &'static str, bytes: &'static [u8]) -> Self {
@@ -572,15 +577,21 @@ impl EmbeddedAssets {
         let path = normalize_virtual_path(path.as_ref()).ok()?;
         self.entries
             .iter()
-            .find(|entry| Path::new(entry.path) == path)
+            .find(|entry| {
+                normalize_virtual_path(Path::new(entry.path))
+                    .ok()
+                    .as_deref()
+                    == Some(path.as_path())
+            })
             .map(|entry| entry.bytes)
     }
 
     fn is_directory(&self, path: &Path) -> bool {
         path.as_os_str().is_empty()
             || self.entries.iter().any(|entry| {
-                Path::new(entry.path)
-                    .parent()
+                normalize_virtual_path(Path::new(entry.path))
+                    .ok()
+                    .and_then(|entry_path| entry_path.parent().map(Path::to_path_buf))
                     .is_some_and(|parent| parent == path || parent.starts_with(path))
             })
     }
@@ -620,7 +631,15 @@ impl FileSystem for EmbeddedAssets {
             let Some(first) = relative.components().next() else {
                 continue;
             };
-            let child = path.join(first.as_os_str());
+            let child = if path.as_os_str().is_empty() {
+                PathBuf::from(first.as_os_str())
+            } else {
+                PathBuf::from(format!(
+                    "{}/{}",
+                    path.to_string_lossy(),
+                    first.as_os_str().to_string_lossy()
+                ))
+            };
             let name = first.as_os_str().to_string_lossy().into_owned();
             let is_file = relative.components().count() == 1;
             entries.entry(name.clone()).or_insert(DirEntry {
@@ -668,7 +687,18 @@ impl<F: FileSystem> SubFileSystem<F> {
     }
 
     fn resolve(&self, path: &Path) -> io::Result<PathBuf> {
-        Ok(self.root.join(normalize_virtual_path(path)?))
+        let path = normalize_virtual_path(path)?;
+        if self.root.as_os_str().is_empty() {
+            Ok(path)
+        } else if path.as_os_str().is_empty() {
+            Ok(self.root.clone())
+        } else {
+            Ok(PathBuf::from(format!(
+                "{}/{}",
+                self.root.to_string_lossy(),
+                path.to_string_lossy()
+            )))
+        }
     }
 
     /// Returns the backing filesystem.

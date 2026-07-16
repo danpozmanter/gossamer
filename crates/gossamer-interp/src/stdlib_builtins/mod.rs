@@ -186,6 +186,7 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     install_os_user(globals);
     install_netip(globals);
     install_mime(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_image(globals);
     install_encoding_toml(globals);
     install_container_heap(globals);
@@ -284,6 +285,7 @@ pub mod http_websocket;
 pub mod http_ws;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http_ws_accept;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod image;
 pub mod iter;
 pub mod json_builtins;
@@ -419,7 +421,9 @@ pub use http_ws::*;
 pub(crate) use http_ws_accept::install_http_ws_accept;
 #[cfg(not(target_arch = "wasm32"))]
 pub use http_ws_accept::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use image::install_image;
+#[cfg(not(target_arch = "wasm32"))]
 pub use image::*;
 pub(crate) use iter::install_iter;
 pub use iter::*;

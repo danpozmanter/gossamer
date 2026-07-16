@@ -180,11 +180,7 @@ mod bufio_blocking_tests {
 
     #[test]
     fn file_read_builtins_preserve_text_and_lines() {
-        let path = std::env::temp_dir().join(format!(
-            "gossamer-bufio-{}-{}.txt",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
-        ));
+        let path = std::env::temp_dir().join(format!("gossamer-bufio-{}.txt", std::process::id()));
         std::fs::write(&path, "first\nsecond\n").expect("write fixture");
         let arg = Value::String(path.to_string_lossy().into_owned().into());
 

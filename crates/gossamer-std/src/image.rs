@@ -1,6 +1,6 @@
 //! In-memory raster images plus PNG and JPEG codecs.
 //!
-//! [`Image`] uses a canonical, row-major RGBA8 backing store. PNG round trips
+//! [`Image`](crate::image::Image) uses a canonical, row-major RGBA8 backing store. PNG round trips
 //! alpha exactly. JPEG has no alpha channel, so encoding composites transparent
 //! pixels against black and decoding always returns opaque pixels. Keeping one
 //! model avoids format-specific colour and stride surprises at API boundaries.
