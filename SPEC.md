@@ -841,11 +841,12 @@ MatchArm  = Pattern [ "if" Expr ] "=>" ( Expr | Block )
 `match` is exhaustive. Non-exhaustive `match` is a compile error.
 Patterns support literals, wildcards (`_`), ranges, bindings,
 struct/enum destructuring, and or-patterns (`A | B`). Ranges may be
-closed (`1..=10`), exclusive (`1..10`), or open-ended - `..=hi` and
-`..hi` (open start) and `lo..` and `lo..=` (open end, covering up to
-the type maximum inclusive). Range patterns are opaque to exhaustiveness
-analysis, so a `_` arm is still required even when the ranges appear to
-cover the type; `..=` with no upper bound is a parse error.
+closed (`1..=10`), exclusive (`1..10`), or open-ended: `..=hi` and
+`..hi` (open start), or `lo..` (open end, covering up to the type maximum
+inclusive). Range patterns are opaque to exhaustiveness analysis, so a `_`
+arm is still required even when the ranges appear to cover the type. An
+inclusive marker requires an upper bound, so bare `..=` and `lo..=` are
+parse errors.
 
 ```
 match divide(a, b) {
@@ -1154,16 +1155,15 @@ Pattern = LiteralPattern
         | ".." Literal                       // open-start, exclusive
         | "..=" Literal                      // open-start, inclusive
         | Literal ".."                       // open-end, exclusive
-        | Literal "..="                      // open-end, inclusive
         | "&" Pattern                        // ref pattern
         | "mut" IdentPattern                 // mutable binding
         | ".." Pattern?                      // rest pattern
 ```
 
-An open-ended range covers up to the type's maximum (inclusive). `..=`
-with no upper bound is a parse error. Range patterns are opaque to the
-exhaustiveness checker, so a match using only ranges still needs a `_`
-arm.
+An open-ended range covers up to the type's maximum (inclusive). An
+inclusive marker requires an upper bound, so bare `..=` and `lo..=` are
+parse errors. Range patterns are opaque to the exhaustiveness checker, so a
+match using only ranges still needs a `_` arm.
 
 A `let` binding (§4.1) and a `let` clause in an `if` / `while` condition
 (§4.4) require an irrefutable pattern (or an `else` branch that diverges,

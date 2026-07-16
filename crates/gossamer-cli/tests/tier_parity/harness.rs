@@ -663,6 +663,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/format_spec.gos"),
     spec("feature-testing-examples/fs_error_text.gos"),
     spec("feature-testing-examples/fs_temp_file_lifecycle.gos"),
+    spec("feature-testing-examples/fs_temp_resources.gos"),
     spec("feature-testing-examples/fs_dir_ops.gos"),
     spec("feature-testing-examples/path_split.gos"),
     spec("feature-testing-examples/base32_decode.gos"),

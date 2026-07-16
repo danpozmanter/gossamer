@@ -314,3 +314,99 @@ fn pipe_rejects_dotdot_as_a_placeholder() {
         "`..` must not be interpreted as a pipe placeholder: {diags:?}"
     );
 }
+
+#[test]
+fn format_macro_family_rejects_missing_and_unused_positional_arguments() {
+    for macro_name in ["format", "println", "print", "eprintln", "eprint", "panic"] {
+        for (template, expected, found) in [("one", 0, 1), ("{}", 1, 0)] {
+            let source = format!("fn main() {{ {macro_name}!(\"{template}\", \"two\") }}");
+            let source = if found == 0 {
+                format!("fn main() {{ {macro_name}!(\"{template}\") }}")
+            } else {
+                source
+            };
+            let mut map = SourceMap::new();
+            let file = map.add_file("format_args.gos", source.clone());
+            let (_sf, diags) = parse_source_file(&source, file);
+            assert!(
+                diags.iter().any(|diag| matches!(
+                    diag.error,
+                    ParseError::FormatArgumentCount {
+                        expected: actual_expected,
+                        found: actual_found,
+                    } if actual_expected == expected && actual_found == found
+                )),
+                "{macro_name}!({template:?}) should reject its positional arguments: {diags:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn format_macro_family_requires_literal_templates() {
+    for macro_name in ["format", "println", "print", "eprintln", "eprint", "panic"] {
+        let source =
+            format!("fn main() {{ let template = \"{{}}\"; {macro_name}!(template, \"value\") }}");
+        let mut map = SourceMap::new();
+        let file = map.add_file("format_literal.gos", source.clone());
+        let (_sf, diags) = parse_source_file(&source, file);
+        assert!(
+            diags
+                .iter()
+                .any(|diag| matches!(diag.error, ParseError::FormatStringMustBeLiteral)),
+            "{macro_name}! must require a literal template: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn pipes_require_an_explicit_format_macro_placeholder() {
+    let source = "fn main() {\n\
+        let value = \"world\"\n\
+        value |> println!(\"hello, {}\", _)\n\
+    }\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("pipe_format_placeholder.gos", source.to_string());
+    let (_sf, diags) = parse_source_file(source, file);
+    assert!(
+        diags.is_empty(),
+        "an explicit placeholder should accept the piped value: {diags:?}"
+    );
+
+    for macro_name in ["format", "println", "print", "eprintln", "eprint", "panic"] {
+        let source = format!("fn main() {{ \"world\" |> {macro_name}!(\"hello\") }}");
+        let mut map = SourceMap::new();
+        let file = map.add_file("pipe_format_implicit.gos", source.clone());
+        let (_sf, diags) = parse_source_file(&source, file);
+        assert!(
+            diags
+                .iter()
+                .any(|diag| matches!(diag.error, ParseError::PipedFormatArgumentNeedsPlaceholder)),
+            "{macro_name}! must not accept an implicit piped format value: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn open_end_range_pattern_must_not_use_the_inclusive_marker() {
+    let valid = "fn main() { let _ = match 1 { 1.. => 0, _ => 1 } }";
+    let mut map = SourceMap::new();
+    let file = map.add_file("open_end_range.gos", valid.to_string());
+    let (_sf, diags) = parse_source_file(valid, file);
+    assert!(
+        diags.is_empty(),
+        "`lo..` should be a valid open-end range: {diags:?}"
+    );
+
+    let invalid = "fn main() { let _ = match 1 { 1..= => 0, _ => 1 } }";
+    let mut map = SourceMap::new();
+    let file = map.add_file("invalid_open_end_range.gos", invalid.to_string());
+    let (_sf, diags) = parse_source_file(invalid, file);
+    assert!(
+        diags.iter().any(|diag| matches!(
+            &diag.error,
+            ParseError::Unexpected { expected, .. } if expected == "upper bound after `..=`"
+        )),
+        "`lo..=` should require an upper bound: {diags:?}"
+    );
+}

@@ -1,5 +1,5 @@
 // Open-ended range patterns: `..=hi`, `..hi` (open start) and
-// `lo..`, `lo..=` (open end), mirroring closed `lo..=hi` ranges.
+// `lo..` (open end), mirroring closed `lo..=hi` ranges.
 
 fn classify(n: i64) -> String {
     match n {

@@ -151,8 +151,9 @@ more than once in one pipe step.
 - `Point { x, y }` / `Point { x: a, y: b }` - struct destructure (and renamed).
 - `(a, b)` - tuple destructure.
 - `1..=5` / `1..5` - closed and exclusive range.
-- `..=hi` / `..hi` / `lo..` / `lo..=` - open-ended range (an open end
-  covers up to the type maximum).
+- `..=hi` / `..hi` / `lo..` - open-ended range (an open end covers up to
+  the type maximum). `lo..=` is a parse error because `..=` requires an
+  upper bound.
 - `a | b` - or-pattern.
 - `x @ 1..=3` - `@`-binding.
 - `..` - rest.

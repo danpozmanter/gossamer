@@ -124,6 +124,23 @@ pub enum ParseError {
         /// The placeholder's inner text (without the braces).
         text: String,
     },
+    /// A Rust-style formatting macro received a positional argument count
+    /// different from the number of positional placeholders in its template.
+    #[error("format string requires {expected} positional argument(s), but {found} were supplied")]
+    FormatArgumentCount {
+        /// Number of positional placeholders in the template.
+        expected: usize,
+        /// Number of explicit positional arguments after the template.
+        found: usize,
+    },
+    /// A Rust-style formatting macro requires a literal template so its
+    /// placeholders can be checked during parsing.
+    #[error("format argument must be a string literal")]
+    FormatStringMustBeLiteral,
+    /// A piped value cannot be appended implicitly to a format macro because
+    /// every value must correspond to an explicit positional placeholder.
+    #[error("piped format value needs an explicit positional placeholder")]
+    PipedFormatArgumentNeedsPlaceholder,
     /// A struct used in a `to_json` / `from_json` (or toml/yaml) call has a
     /// field whose type the serde synthesizer cannot handle. Without this the
     /// whole struct's serde was silently dropped and the call surfaced only as
@@ -319,6 +336,32 @@ impl ParseError {
                 Some(
                     "format macros interpolate a binding name or a `{:spec}`, not an expression; \
                      bind it first or pass it as a positional argument with `{}`"
+                        .to_string(),
+                ),
+            ),
+            ParseError::FormatArgumentCount { expected, found } => (
+                "GP0023",
+                format!(
+                    "format string requires {expected} positional argument(s), but {found} were supplied"
+                ),
+                Some(
+                    "add or remove `{}` placeholders so every positional argument is used exactly once"
+                        .to_string(),
+                ),
+            ),
+            ParseError::FormatStringMustBeLiteral => (
+                "GP0024",
+                "format argument must be a string literal".to_string(),
+                Some(
+                    "use a literal template such as `format!(\"value: {}\", value)`"
+                        .to_string(),
+                ),
+            ),
+            ParseError::PipedFormatArgumentNeedsPlaceholder => (
+                "GP0025",
+                "piped format value needs an explicit positional placeholder".to_string(),
+                Some(
+                    "write `value |> println!(\"… {}\", _)` so the piped value fills that placeholder"
                         .to_string(),
                 ),
             ),

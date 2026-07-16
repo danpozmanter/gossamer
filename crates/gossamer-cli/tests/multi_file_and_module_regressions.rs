@@ -1248,7 +1248,7 @@ fn main() {}
 /// each read the contiguous `args..args+argc` span; before this
 /// fix the pass only saw `callee` / `receiver`, so a literal
 /// passed directly to a builtin (e.g. `println!("hello")`,
-/// `println!(42)`, `format!("{}", "x")`) had its `LoadConst`
+/// `println(42)`, `format!("{}", "x")`) had its `LoadConst`
 /// dropped - the call then read `Value::Void` from the
 /// not-yet-written argument slot. The user-visible symptom was
 /// `<void>` printed instead of the literal.
@@ -1257,11 +1257,11 @@ fn peephole_does_not_drop_literal_const_loads_feeding_call_args() {
     let src = r#"
 fn main() {
     println!("hello")
-    println!(42)
+    println(42)
     println!("{}", "world")
     println!("{}", 7)
     let s = format!("{}", "ok")
-    println!(s)
+    println(s)
 }
 "#;
     let dir = fresh_dir("peephole-call-args");

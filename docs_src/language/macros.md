@@ -22,6 +22,13 @@ println!("[{:>8.2}]", 3.14159)     // [    3.14]
 let msg = format!("{} / {}", 1, 2) // returns a String
 ```
 
+Like Rust's format macros, every explicit positional argument must match one
+positional placeholder, and the template must be a string literal. Extra and
+missing arguments are parse errors. A piped value must use an explicit `_`
+argument, for example `value |> println!("result: {}", _)`; it is never
+silently appended after formatting. The plain `println(...)` and related
+functions remain variadic and join their arguments with spaces.
+
 A named capture also walks a field path: struct fields (`{a.balance}`),
 tuple indices (`{t.0}`), nesting (`{o.inner.hits}`), and specs on the
 path (`{a.balance:>8}`, `{f.0:.2}`) all resolve against bindings in

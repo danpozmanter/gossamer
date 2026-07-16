@@ -116,6 +116,13 @@ fn stdout_lock_release() {
     });
 }
 
+/// Whether this OS thread currently owns the stdout-buffer lock. A caller
+/// holding that lock cannot park for a scheduler handoff: peer goroutines may
+/// be occupying every worker while waiting for the same lock.
+fn stdout_lock_is_held() -> bool {
+    STDOUT_LOCK_DEPTH.with(|depth| depth.get() > 0)
+}
+
 /// Sync-Sealed `[u8; STDOUT_BUF_SIZE]` newtype used as the
 /// storage cell of [`GOS_RT_STDOUT_BYTES`]. `repr(transparent)`
 /// keeps the linker symbol's size and alignment identical to a
@@ -213,29 +220,37 @@ impl Drop for StdoutGuard {
     }
 }
 
-/// Writes terminal bytes without pinning a scheduler worker.  The caller may
-/// hold [`STDOUT_LOCK`] while draining a coherent buffered sequence; the
-/// scheduler handoff parks that goroutine, rather than its worker, until the
-/// OS write completes.  Copying here is intentional: the caller's buffer can
-/// be reused immediately after the handoff starts.
+/// Writes terminal bytes without pinning a scheduler worker. Unlocked calls
+/// hand off the OS write and park the goroutine. A caller holding a
+/// [`StdoutGuard`] writes inline instead: parking while it owns the global
+/// buffer lock can deadlock when peer goroutines have occupied every worker
+/// waiting for that same lock. Copying for the handoff is intentional because
+/// the caller's buffer can be reused immediately after it starts.
 pub fn write_terminal(fd: i32, bytes: &[u8]) {
     if bytes.is_empty() {
         return;
     }
-    let bytes = bytes.to_vec();
     let label = match fd {
         1 => "stdout-write",
         2 => "stderr-write",
         _ => return,
     };
-    let _ = crate::sched_global::run_blocking(label, move || {
-        use std::io::Write;
-        match fd {
-            1 => std::io::stdout().lock().write_all(&bytes),
-            2 => std::io::stderr().lock().write_all(&bytes),
-            _ => unreachable!("terminal fd was validated before dispatch"),
-        }
-    });
+    if stdout_lock_is_held() {
+        let _ = write_terminal_direct(fd, bytes);
+        return;
+    }
+    let bytes = bytes.to_vec();
+    let _ = crate::sched_global::run_blocking(label, move || write_terminal_direct(fd, &bytes));
+}
+
+fn write_terminal_direct(fd: i32, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    match fd {
+        1 => std::io::stdout().lock().write_all(bytes),
+        2 => std::io::stderr().lock().write_all(bytes),
+        _ => unreachable!("terminal fd was validated before dispatch"),
+    }
 }
 
 pub fn raw_write_stdout(bytes: &[u8]) {

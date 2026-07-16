@@ -21,6 +21,12 @@
 - Fixed pipe placeholders: `_` selects one direct argument or receiver;
   repeated and nested placeholders, and duplicate String slice receivers, now
   report precise errors.
+- Corrected open-ended range patterns: `lo..` covers through the type maximum,
+  while `lo..=` is rejected because an inclusive range requires an upper bound.
+- Made all Rust-style format macros reject missing and unused positional
+  arguments, require literal templates, and require an explicit `_` placeholder
+  for piped values. Plain print functions retain their space-separated
+  variadic behavior.
 - Added internal linear `Iterator<T>` MIR state, source/adapter/next
   verification, Rust-hosted lazy range/slice/owned-Vec sources, adapters and
   terminals, plus callable `iter::eager_*` compatibility aliases.
@@ -1558,7 +1564,7 @@ Closes the gap between `gos check` and what runs: a program that type-checks now
 ### Language and formatting
 
 - **Let-chains in `if` and `while` conditions.** An `if`/`while` condition may now be a sequence of clauses joined by `&&`, where each clause is either `let PAT = expr` or a boolean expression: `if let Some(x) = a && let Some(y) = b && x > 0 { ... }`. Earlier `let` bindings are in scope for every later clause and for the body, so `if let Some(inner) = pair && let Some(v) = inner` reads top-down without a nested `match`. An `else` attaches to the whole chain, and `while let` chains drain-and-test in one condition. A `let` clause chain is `&&`-only: joining `let` clauses with `||` (without parentheses) is a parse error (`GP0001`, "`let` in a condition can only be chained with `&&`"). A pure front-end desugar into nested `match`, so it runs bit-identically across the bytecode VM, Cranelift, and LLVM tiers. Fixture: `let_chains.gos`.
-- **Open-ended range patterns in `match`.** `..=hi` and `..hi` (open start) and `lo..` and `lo..=` (open end) join the closed `lo..=hi` and exclusive `lo..hi` forms. An open end covers up to the type's maximum (inclusive), so `1.. => "positive"` matches every value at or above `1`. Like closed ranges they are opaque to exhaustiveness, so a `_` arm is still required. `..=` with no upper bound is a parse error. The patterns lower the same as closed ranges, so they run identically across the VM, Cranelift, and LLVM tiers. Fixture: `open_ended_ranges.gos`.
+- **Open-ended range patterns in `match`.** `..=hi` and `..hi` (open start) and `lo..` (open end) join the closed `lo..=hi` and exclusive `lo..hi` forms. An open end covers up to the type's maximum (inclusive), so `1.. => "positive"` matches every value at or above `1`. Like closed ranges they are opaque to exhaustiveness, so a `_` arm is still required. An inclusive marker requires an upper bound, so bare `..=` and `lo..=` are parse errors. The patterns lower the same as closed ranges, so they run identically across the VM, Cranelift, and LLVM tiers. Fixture: `open_ended_ranges.gos`.
 - **Irrefutable `let` destructuring on every tier.** `let Point { x, y } = p`, the renamed form `let Point { x: a, y: b } = p`, nested struct patterns (`let Nested { p: Point { x: nx, y: ny }, label } = nested`), enum / tuple-struct variant patterns (`let Shape::Pair(m, n) = s`), and irrefutable or-patterns (`let (Shape::Pair(g, _) | Shape::Single(g)) = v`, whose alternatives must bind the same names) now bind correct values on the bytecode VM, Cranelift, and LLVM tiers. These previously crashed `gos run` or bound the wrong values under `gos build`. Fixture: `let_destructure_struct.gos`.
 - Fixing stale println syntax in gos init and documentation.
 

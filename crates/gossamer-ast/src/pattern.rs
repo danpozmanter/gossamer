@@ -85,7 +85,7 @@ pub enum PatternKind {
         elems: Vec<Pattern>,
     },
     /// Range pattern `lo..hi`, `lo..=hi`, or an open-ended form
-    /// (`..=hi`, `..hi`, `lo..`, `lo..=`). At least one bound is always
+    /// (`..=hi`, `..hi`, `lo..`). At least one bound is always
     /// present; a missing bound denotes the scrutinee type's extreme.
     Range {
         /// Lower bound literal, or `None` for an open start.

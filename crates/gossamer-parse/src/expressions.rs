@@ -341,6 +341,22 @@ impl Parser<'_> {
                 self.record(ParseError::PipePlaceholderInvalid, rhs.span);
             }
         }
+        match substitute_pipe_format_macro_placeholder(&mut rhs, &mut piped) {
+            PipeArgumentPlaceholder::None => {}
+            PipeArgumentPlaceholder::Substituted => {
+                if contains_pipe_placeholder(&rhs) {
+                    self.record(ParseError::PipePlaceholderInvalid, rhs.span);
+                }
+                rhs.span = self.join(lhs_span, rhs.span);
+                return rhs;
+            }
+            PipeArgumentPlaceholder::Invalid => {
+                self.record(ParseError::PipePlaceholderInvalid, rhs.span);
+            }
+        }
+        if is_format_macro_expansion(&rhs) {
+            self.record(ParseError::PipedFormatArgumentNeedsPlaceholder, rhs.span);
+        }
         let lhs = piped.take().expect("piped value left unconsumed");
         let rhs_span = rhs.span;
         let valid = matches!(
@@ -1735,8 +1751,8 @@ impl Parser<'_> {
     /// function - so the whole format builds in one allocation
     /// inside `__concat` rather than chained `+` calls.
     ///
-    /// If the first argument is not a string literal, falls back to
-    /// a plain call (drop the `!`, keep the args as-is).
+    /// Rust-style format macros require a literal first argument so their
+    /// positional placeholders can be checked during parsing.
     fn expand_format_macro(&mut self, macro_name: &str, args: Vec<Expr>) -> ExprKind {
         let (first, rest) = match args.split_first() {
             Some((first, rest)) => (first.clone(), rest.to_vec()),
@@ -1747,9 +1763,30 @@ impl Parser<'_> {
         let Some(template) = literal_string(&first) else {
             let mut all = vec![first];
             all.extend(rest);
+            self.record(ParseError::FormatStringMustBeLiteral, all[0].span);
             return self.alloc_function_call(macro_name, all);
         };
         let segments = parse_format_template(&template);
+        let expected = segments
+            .iter()
+            .filter(|segment| {
+                matches!(
+                    segment,
+                    FormatSegment::Positional
+                        | FormatSegment::PositionalPrec(_)
+                        | FormatSegment::PositionalSpec(_)
+                )
+            })
+            .count();
+        if expected != rest.len() {
+            self.record(
+                ParseError::FormatArgumentCount {
+                    expected,
+                    found: rest.len(),
+                },
+                first.span,
+            );
+        }
         let mut concat_args: Vec<Expr> = Vec::new();
         let mut positional_iter = rest.into_iter();
         for segment in segments {
@@ -1804,9 +1841,6 @@ impl Parser<'_> {
                 }
             }
         }
-        for extra in positional_iter {
-            concat_args.push(extra);
-        }
         let concat_call = self.alloc_function_call_expr("__concat", concat_args);
         if macro_name == "format" {
             return concat_call.kind;
@@ -1839,6 +1873,23 @@ impl Parser<'_> {
             self.alloc_function_call_expr("__fmt_prec", vec![value, prec_lit])
         } else {
             self.alloc_function_call_expr("__concat", vec![value])
+        };
+        let rendered = if spec.alternate {
+            let prefix = match (spec.radix, spec.upper) {
+                (Some(16), true) => "0X",
+                (Some(16), false) => "0x",
+                (Some(2), _) => "0b",
+                (Some(8), _) => "0o",
+                _ => "",
+            };
+            if prefix.is_empty() {
+                rendered
+            } else {
+                let prefix = self.alloc_literal_expr(Literal::String(prefix.to_string()));
+                self.alloc_function_call_expr("__concat", vec![prefix, rendered])
+            }
+        } else {
+            rendered
         };
         if spec.width == 0 {
             return rendered;
@@ -2282,6 +2333,41 @@ fn substitute_pipe_argument_placeholder(
     let (ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. }) = &mut expr.kind else {
         return PipeArgumentPlaceholder::None;
     };
+    substitute_pipe_placeholder_in_args(args, value)
+}
+
+/// Replaces the direct placeholder inside a formatting macro's synthesized
+/// `sink(__concat(...))` call. Macro expansion happens before pipe validation,
+/// so the source-level direct placeholder is one call deeper for print-style
+/// macros. Keeping this special case narrow avoids accepting arbitrary nested
+/// pipe placeholders.
+fn substitute_pipe_format_macro_placeholder(
+    expr: &mut Expr,
+    value: &mut Option<Expr>,
+) -> PipeArgumentPlaceholder {
+    let ExprKind::Call { callee, args } = &mut expr.kind else {
+        return PipeArgumentPlaceholder::None;
+    };
+    if !is_format_macro_sink(callee) || args.len() != 1 {
+        return PipeArgumentPlaceholder::None;
+    }
+    let ExprKind::Call {
+        callee: concat_callee,
+        args: concat_args,
+    } = &mut args[0].kind
+    else {
+        return PipeArgumentPlaceholder::None;
+    };
+    if !is_internal_concat(callee_path_name(concat_callee)) {
+        return PipeArgumentPlaceholder::None;
+    }
+    substitute_pipe_placeholder_in_args(concat_args, value)
+}
+
+fn substitute_pipe_placeholder_in_args(
+    args: &mut [Expr],
+    value: &mut Option<Expr>,
+) -> PipeArgumentPlaceholder {
     let placeholders: Vec<usize> = args
         .iter()
         .enumerate()
@@ -2301,6 +2387,46 @@ fn substitute_pipe_argument_placeholder(
         }
         _ => PipeArgumentPlaceholder::Invalid,
     }
+}
+
+/// Whether `expr` is the parser-level expansion of a Rust-style formatting
+/// macro. A value may not flow into this shape through the implicit data-last
+/// pipe rule: format arguments must be represented by `{}` and an explicit
+/// `_` placeholder.
+fn is_format_macro_expansion(expr: &Expr) -> bool {
+    let ExprKind::Call { callee, args } = &expr.kind else {
+        return false;
+    };
+    if is_internal_concat(callee_path_name(callee)) {
+        return true;
+    }
+    args.len() == 1
+        && is_format_macro_sink(callee)
+        && matches!(
+            args[0].kind,
+            ExprKind::Call {
+                ref callee,
+                ..
+            } if is_internal_concat(callee_path_name(callee))
+        )
+}
+
+fn is_format_macro_sink(callee: &Expr) -> bool {
+    matches!(
+        callee_path_name(callee),
+        Some("println" | "print" | "eprintln" | "eprint" | "panic")
+    )
+}
+
+fn is_internal_concat(name: Option<&str>) -> bool {
+    name == Some("__concat")
+}
+
+fn callee_path_name(expr: &Expr) -> Option<&str> {
+    let ExprKind::Path(path) = &expr.kind else {
+        return None;
+    };
+    (path.segments.len() == 1).then(|| path.segments[0].name.name.as_str())
 }
 
 /// Whether an unsubstituted `_` remains anywhere in the immediate pipe step.
@@ -2373,7 +2499,7 @@ enum Align {
 }
 
 /// A parsed format spec covering width / alignment / fill / zero-pad /
-/// precision / radix - the subset of Rust's `{:spec}` grammar Gossamer
+/// alternate radix prefix / precision / radix - the subset of Rust's `{:spec}` grammar Gossamer
 /// expands by composing `__concat`, `strconv::format_i64_radix`, and the
 /// `strings` padding helpers (all already wired on every tier).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2386,6 +2512,8 @@ struct FormatSpec {
     radix: Option<u32>,
     /// `{:X}` - uppercase the radix digits.
     upper: bool,
+    /// `{:#x}` / `{:#b}` / `{:#o}` - include the radix prefix.
+    alternate: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2587,7 +2715,7 @@ fn parse_precision_spec(inner: &str) -> Option<FormatSegment> {
     }
 }
 
-/// Parses a full `{[name]:[[fill]align][0][width][.prec][type]}` spec into a
+/// Parses a full `{[name]:[[fill]align][#][0][width][.prec][type]}` spec into a
 /// `PositionalSpec` / `NamedSpec`. Returns `None` (so the caller falls back to
 /// emitting the brace block literally) for anything it doesn't understand, so
 /// an unrecognized spec never breaks compilation. `type` is one of
@@ -2616,6 +2744,10 @@ fn parse_format_spec(inner: &str) -> Option<FormatSegment> {
         align = to_align(chars[0]);
         pos = 1;
     }
+
+    // `#` requests a binary, octal, or hexadecimal radix prefix.
+    let alternate = chars.get(pos) == Some(&'#');
+    pos += usize::from(alternate);
 
     // `0` zero-pad flag: fill with '0', right-align by default.
     if chars.get(pos) == Some(&'0') {
@@ -2683,7 +2815,8 @@ fn parse_format_spec(inner: &str) -> Option<FormatSegment> {
     if pos != chars.len() {
         return None;
     }
-    if align == Align::Default && !saw_width && precision.is_none() && radix.is_none() {
+    if align == Align::Default && !alternate && !saw_width && precision.is_none() && radix.is_none()
+    {
         return None;
     }
 
@@ -2694,6 +2827,7 @@ fn parse_format_spec(inner: &str) -> Option<FormatSegment> {
         precision,
         radix,
         upper,
+        alternate,
     };
     if head.is_empty() {
         Some(FormatSegment::PositionalSpec(spec))

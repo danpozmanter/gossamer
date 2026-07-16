@@ -62,6 +62,23 @@ fn main() {
 }
 
 #[test]
+fn pipe_into_format_macros_uses_the_explicit_placeholder() {
+    let src = r#"
+fn main() {
+    "two" |> println!("one {}", _)
+    let text = "four" |> format!("three {}", _)
+    println!("{}", text)
+    println!("{:#x} {:#b} {:#o}", 255, 5, 8)
+    println("plain", "function")
+}
+"#;
+    assert_eq!(
+        run_main(src),
+        "one two\nthree four\n0xff 0b101 0o10\nplain function\n"
+    );
+}
+
+#[test]
 fn map_filter_fold_thread_closures_through_the_vm() {
     let src = r#"
 use std::iter

@@ -289,9 +289,20 @@ impl Parser<'_> {
                 self.bump();
                 RangeKind::Exclusive
             };
-            // `lo..hi` / `lo..=hi` when a bound follows; otherwise an
-            // open-end range `lo..` / `lo..=` up to the type maximum.
+            // `lo..hi` / `lo..=hi` when a bound follows; otherwise `lo..`
+            // is an open-end range up to the type maximum. `lo..=` has an
+            // inclusive marker without an upper bound and is invalid.
             let hi = self.try_parse_literal_pattern();
+            if hi.is_none() && kind == RangeKind::Inclusive {
+                self.record(
+                    ParseError::Unexpected {
+                        expected: "upper bound after `..=`".to_string(),
+                        found: self.peek_text(),
+                    },
+                    self.peek_span(),
+                );
+                return PatternKind::Error;
+            }
             return PatternKind::Range {
                 lo: Some(lo),
                 hi,
