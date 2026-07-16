@@ -5,3 +5,6 @@
 # example parity battery.
 language_core.gos	language_core.out
 collections_and_result.gos	collections_and_result.out
+callbacks.gos	callbacks.out
+channel_roundtrip.gos	channel_roundtrip.out
+result_propagation.gos	result_propagation.out

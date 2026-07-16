@@ -102,9 +102,17 @@ where
 /// `Lazy::from(xs.iter().cloned())` is the canonical entry; the
 /// chain terminates via [`Lazy::to_vec`], [`Lazy::sum`],
 /// [`Lazy::min`], [`Lazy::max`], [`Lazy::count`], [`Lazy::first`],
-/// or any of the boolean reducers.
+/// [`Lazy::find`], or any of the boolean reducers.
 pub struct Lazy<I: Iterator> {
     inner: I,
+}
+
+impl<I: Iterator> Iterator for Lazy<I> {
+    type Item = I::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
 }
 
 impl<I: Iterator> Lazy<I> {
@@ -141,6 +149,34 @@ impl<I: Iterator> Lazy<I> {
         }
     }
 
+    /// Lazy `enumerate` adapter - pairs each item with its source index.
+    pub fn enumerate(self) -> Lazy<std::iter::Enumerate<I>> {
+        Lazy {
+            inner: self.inner.enumerate(),
+        }
+    }
+
+    /// Lazy `chain` adapter. The second source is not polled until this
+    /// source is exhausted.
+    pub fn chain<J>(self, other: Lazy<J>) -> Lazy<std::iter::Chain<I, J>>
+    where
+        J: Iterator<Item = I::Item>,
+    {
+        Lazy {
+            inner: self.inner.chain(other.inner),
+        }
+    }
+
+    /// Lazy `zip` adapter. It stops as soon as either source is exhausted.
+    pub fn zip<J>(self, other: Lazy<J>) -> Lazy<std::iter::Zip<I, J>>
+    where
+        J: Iterator,
+    {
+        Lazy {
+            inner: self.inner.zip(other.inner),
+        }
+    }
+
     /// Lazy `step_by` adapter. `n` of zero is normalised to 1.
     pub fn step_by(self, n: usize) -> Lazy<std::iter::StepBy<I>> {
         Lazy {
@@ -151,6 +187,13 @@ impl<I: Iterator> Lazy<I> {
     /// Terminal - collects every yielded element into a `Vec`.
     pub fn to_vec(self) -> Vec<I::Item> {
         self.inner.collect()
+    }
+
+    /// Terminal - consumes the pipeline into a `Vec`. This is the named
+    /// counterpart to [`Lazy::to_vec`] and the only terminal that allocates a
+    /// pipeline result.
+    pub fn collect(self) -> Vec<I::Item> {
+        self.to_vec()
     }
 
     /// Terminal - sums every element.
@@ -189,6 +232,12 @@ impl<I: Iterator> Lazy<I> {
         self.inner.next()
     }
 
+    /// Terminal - returns the first item accepted by `p`, without polling the
+    /// remainder of the source.
+    pub fn find<P: FnMut(&I::Item) -> bool>(mut self, p: P) -> Option<I::Item> {
+        self.inner.find(p)
+    }
+
     /// Terminal - fold.
     pub fn fold<A, F: FnMut(A, I::Item) -> A>(self, init: A, f: F) -> A {
         self.inner.fold(init, f)
@@ -202,6 +251,32 @@ impl<I: Iterator> Lazy<I> {
     /// Terminal - `true` iff at least one element satisfies `p`.
     pub fn any<P: FnMut(I::Item) -> bool>(mut self, mut p: P) -> bool {
         self.inner.any(&mut p)
+    }
+}
+
+impl Lazy<std::ops::Range<i64>> {
+    /// Creates a lazy half-open integer range source.
+    #[must_use]
+    pub fn range(start: i64, end: i64) -> Self {
+        Self::from(start..end)
+    }
+}
+
+impl<'a, T: Clone> Lazy<std::iter::Cloned<std::slice::Iter<'a, T>>> {
+    /// Creates a lazy borrowing slice source. Elements are cloned only when
+    /// the iterator is advanced, rather than while building the pipeline.
+    #[must_use]
+    pub fn from_slice(source: &'a [T]) -> Self {
+        Self::from(source.iter().cloned())
+    }
+}
+
+impl<T> Lazy<std::vec::IntoIter<T>> {
+    /// Creates a lazy owning Vec source. Dropping the resulting pipeline drops
+    /// all unconsumed elements exactly once.
+    #[must_use]
+    pub fn from_vec(source: Vec<T>) -> Self {
+        Self::from(source.into_iter())
     }
 }
 

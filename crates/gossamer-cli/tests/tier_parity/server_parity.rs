@@ -208,6 +208,29 @@ fn http_client_cookie_jar_parity_across_tiers() {
     );
 }
 
+/// `httptest::server` must bind an isolated loopback listener before returning
+/// its URL, then serve the requested status/body through the ordinary HTTP
+/// client identically on the VM, Cranelift, and LLVM tiers.
+#[test]
+fn httptest_static_server_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/httptest_static_server.gos",
+        &["status=201 body=fixture body"],
+    );
+}
+
+/// The checked-in diagnostics consumer example uses the same pre-bound
+/// `httptest::server` fixture as an application readiness probe. Its success
+/// result must include both response diagnostics and a real client transport
+/// round trip on the VM, Cranelift, and LLVM tiers.
+#[test]
+fn http_diagnostics_transport_consumer_parity_across_tiers() {
+    self_terminating_server_parity(
+        "examples/http_diagnostics_transport.gos",
+        &["ready status=200 body=database=up"],
+    );
+}
+
 /// Request-scoped values (`r.set_value(k, v)` / `r.value(k)`, Go's
 /// `context.WithValue`) must read back bit-identically on every tier;
 /// re-setting a key overwrites, an absent key yields `""`.

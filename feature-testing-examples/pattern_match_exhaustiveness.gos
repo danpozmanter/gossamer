@@ -10,8 +10,8 @@ enum Color {
 
 enum Shape {
     Circle(f64, Color),
-    Rect { w: f64, h: f64, fill: Color },
-    Triangle { base: f64, height: f64 },
+    Rect(f64, f64, Color),
+    Triangle(f64, f64),
     Point,
 }
 
@@ -20,11 +20,11 @@ fn describe(shape: &Shape) -> String {
         Shape::Circle(r, Color::Red) => format!("red circle r={}", r),
         Shape::Circle(r, Color::Green) => format!("green circle r={}", r),
         Shape::Circle(r, Color::Blue) => format!("blue circle r={}", r),
-        Shape::Rect { w, h, fill: Color::Red } => format!("red rect {}x{}", w, h),
-        Shape::Rect { w, h, fill: Color::Green } => format!("green rect {}x{}", w, h),
-        Shape::Rect { w, h, fill: Color::Blue } => format!("blue rect {}x{}", w, h),
-        Shape::Triangle { base, height } if *base == *height => format!("iso triangle b=h={}", base),
-        Shape::Triangle { base, height } => format!("triangle {}x{}", base, height),
+        Shape::Rect(w, h, Color::Red) => format!("red rect {}x{}", w, h),
+        Shape::Rect(w, h, Color::Green) => format!("green rect {}x{}", w, h),
+        Shape::Rect(w, h, Color::Blue) => format!("blue rect {}x{}", w, h),
+        Shape::Triangle(base, height) if *base == *height => format!("iso triangle b=h={}", base),
+        Shape::Triangle(base, height) => format!("triangle {}x{}", base, height),
         Shape::Point => "point",
     }
 }
@@ -41,9 +41,9 @@ fn main() {
     let shapes = [
         Shape::Circle(1.0, Color::Red),
         Shape::Circle(2.0, Color::Green),
-        Shape::Rect { w: 3.0, h: 4.0, fill: Color::Blue },
-        Shape::Triangle { base: 5.0, height: 5.0 },
-        Shape::Triangle { base: 3.0, height: 4.0 },
+        Shape::Rect(3.0, 4.0, Color::Blue),
+        Shape::Triangle(5.0, 5.0),
+        Shape::Triangle(3.0, 4.0),
         Shape::Point,
     ]
 
@@ -77,7 +77,7 @@ mod tests {
 
     #[test]
     fn describe_iso_triangle() {
-        let s = super::Shape::Triangle { base: 5.0, height: 5.0 }
+        let s = super::Shape::Triangle(5.0, 5.0)
         let d = super::describe(&s)
         let _ = testing::check(d.contains("iso"), "isosceles triangle")
     }

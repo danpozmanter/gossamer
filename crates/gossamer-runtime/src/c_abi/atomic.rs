@@ -27,6 +27,22 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 pub struct GosAtomicI64 {
     inner: AtomicI64,
+    /// Goroutine that most recently published a release/SeqCst update.
+    /// This is race-detector metadata only; the atomic value itself remains
+    /// the language-visible storage.
+    last_release_gid: AtomicI64,
+}
+
+fn record_atomic_acquire(a: &GosAtomicI64) {
+    let from = a.last_release_gid.load(Ordering::Acquire);
+    if from >= 0 {
+        crate::race::record_sync(u32::try_from(from).unwrap_or(0), crate::race::current_gid());
+    }
+}
+
+fn record_atomic_release(a: &GosAtomicI64) {
+    a.last_release_gid
+        .store(i64::from(crate::race::current_gid()), Ordering::Release);
 }
 
 #[unsafe(no_mangle)]
@@ -34,6 +50,7 @@ pub unsafe extern "C" fn gos_rt_atomic_i64_new(initial: i64) -> *mut GosAtomicI6
     ffi_entry!(std::ptr::null_mut(), {
         Box::into_raw(Box::new(GosAtomicI64 {
             inner: AtomicI64::new(initial),
+            last_release_gid: AtomicI64::new(-1),
         }))
     })
 }
@@ -45,7 +62,9 @@ pub unsafe extern "C" fn gos_rt_atomic_i64_load(a: *const GosAtomicI64) -> i64 {
             return 0;
         }
         let a = unsafe { &*a };
-        a.inner.load(Ordering::SeqCst)
+        let value = a.inner.load(Ordering::SeqCst);
+        record_atomic_acquire(a);
+        value
     })
 }
 
@@ -57,6 +76,7 @@ pub unsafe extern "C" fn gos_rt_atomic_i64_store(a: *mut GosAtomicI64, val: i64)
         }
         let a = unsafe { &*a };
         a.inner.store(val, Ordering::SeqCst);
+        record_atomic_release(a);
     });
 }
 
@@ -67,7 +87,10 @@ pub unsafe extern "C" fn gos_rt_atomic_i64_fetch_add(a: *mut GosAtomicI64, delta
             return 0;
         }
         let a = unsafe { &*a };
-        a.inner.fetch_add(delta, Ordering::SeqCst)
+        let prior = a.inner.fetch_add(delta, Ordering::SeqCst);
+        record_atomic_acquire(a);
+        record_atomic_release(a);
+        prior
     })
 }
 
@@ -87,6 +110,7 @@ pub unsafe extern "C" fn gos_rt_atomic_bool_new(initial: bool) -> *mut GosAtomic
     ffi_entry!(std::ptr::null_mut(), {
         Box::into_raw(Box::new(GosAtomicI64 {
             inner: AtomicI64::new(i64::from(initial)),
+            last_release_gid: AtomicI64::new(-1),
         }))
     })
 }
@@ -99,7 +123,9 @@ pub unsafe extern "C" fn gos_rt_atomic_bool_load(a: *const GosAtomicI64) -> bool
             return false;
         }
         let a = unsafe { &*a };
-        a.inner.load(Ordering::SeqCst) != 0
+        let value = a.inner.load(Ordering::SeqCst) != 0;
+        record_atomic_acquire(a);
+        value
     })
 }
 
@@ -112,6 +138,7 @@ pub unsafe extern "C" fn gos_rt_atomic_bool_store(a: *mut GosAtomicI64, val: boo
         }
         let a = unsafe { &*a };
         a.inner.store(i64::from(val), Ordering::SeqCst);
+        record_atomic_release(a);
     });
 }
 
@@ -127,7 +154,9 @@ pub unsafe extern "C" fn gos_rt_atomic_i64_load_acquire(a: *const GosAtomicI64) 
             return 0;
         }
         let a = unsafe { &*a };
-        a.inner.load(Ordering::Acquire)
+        let value = a.inner.load(Ordering::Acquire);
+        record_atomic_acquire(a);
+        value
     })
 }
 
@@ -140,6 +169,7 @@ pub unsafe extern "C" fn gos_rt_atomic_i64_store_release(a: *mut GosAtomicI64, v
         }
         let a = unsafe { &*a };
         a.inner.store(val, Ordering::Release);
+        record_atomic_release(a);
     });
 }
 
@@ -181,7 +211,10 @@ pub unsafe extern "C" fn gos_rt_atomic_i64_fetch_add_acqrel(
             return 0;
         }
         let a = unsafe { &*a };
-        a.inner.fetch_add(delta, Ordering::AcqRel)
+        let prior = a.inner.fetch_add(delta, Ordering::AcqRel);
+        record_atomic_acquire(a);
+        record_atomic_release(a);
+        prior
     })
 }
 
@@ -204,7 +237,11 @@ pub unsafe extern "C" fn gos_rt_atomic_i64_cas(
             .inner
             .compare_exchange(expected, new, Ordering::SeqCst, Ordering::SeqCst)
         {
-            Ok(_) => 1,
+            Ok(_) => {
+                record_atomic_acquire(a);
+                record_atomic_release(a);
+                1
+            }
             Err(_) => 0,
         }
     })
@@ -227,7 +264,11 @@ pub unsafe extern "C" fn gos_rt_atomic_i64_cas_acq_rel(
             .inner
             .compare_exchange(expected, new, Ordering::AcqRel, Ordering::Acquire)
         {
-            Ok(_) => 1,
+            Ok(_) => {
+                record_atomic_acquire(a);
+                record_atomic_release(a);
+                1
+            }
             Err(_) => 0,
         }
     })
@@ -241,6 +282,34 @@ pub unsafe extern "C" fn gos_rt_atomic_i64_swap(a: *mut GosAtomicI64, val: i64) 
             return 0;
         }
         let a = unsafe { &*a };
-        a.inner.swap(val, Ordering::AcqRel)
+        let prior = a.inner.swap(val, Ordering::AcqRel);
+        record_atomic_acquire(a);
+        record_atomic_release(a);
+        prior
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn release_store_records_the_publishing_goroutine() {
+        crate::race::set_current_gid(701);
+        let atomic = unsafe { gos_rt_atomic_i64_new(0) };
+        unsafe { gos_rt_atomic_i64_store_release(atomic, 1) };
+        let published = unsafe { &*atomic }.last_release_gid.load(Ordering::Acquire);
+        assert_eq!(published, 701);
+        unsafe { drop(Box::from_raw(atomic)) };
+    }
+
+    #[test]
+    fn relaxed_store_does_not_create_a_happens_before_publication() {
+        crate::race::set_current_gid(702);
+        let atomic = unsafe { gos_rt_atomic_i64_new(0) };
+        unsafe { gos_rt_atomic_i64_store_relaxed(atomic, 1) };
+        let published = unsafe { &*atomic }.last_release_gid.load(Ordering::Acquire);
+        assert_eq!(published, -1);
+        unsafe { drop(Box::from_raw(atomic)) };
+    }
 }

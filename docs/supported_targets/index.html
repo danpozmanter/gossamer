@@ -448,6 +448,17 @@
 
 </li>
 
+        <li class="md-nav__item">
+  <a href="#macos-deployment-target" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        macOS deployment target
+
+    </span>
+  </a>
+
+</li>
+
     </ul>
 
 </nav>
@@ -978,6 +989,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1029,6 +1042,34 @@
 
 
     Overview
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../misc/tooling_faithful_fmt/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Formatter behavior
 
 
 
@@ -1854,6 +1895,17 @@
 
 </li>
 
+        <li class="md-nav__item">
+  <a href="#macos-deployment-target" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        macOS deployment target
+
+    </span>
+  </a>
+
+</li>
+
     </ul>
 
 </nav>
@@ -1898,7 +1950,7 @@ fixtures on native CI. They are the supported 1.0 execution contract.</p>
 </tr>
 <tr>
 <td><code>aarch64-apple-darwin</code></td>
-<td><code>macos-latest</code></td>
+<td><code>macos-15</code></td>
 </tr>
 <tr>
 <td><code>x86_64-pc-windows-msvc</code></td>
@@ -1943,6 +1995,23 @@ wasm32-...</code> is not a supported deployment path.</p>
 <p>Targets not listed above are Experimental. A local build, a generated object
 file, or a package artifact alone does not promote a target, ABI, allocator,
 or standard-library surface to Stable.</p>
+<h2 id="macos-deployment-target">macOS deployment target<a class="headerlink" href="#macos-deployment-target" title="Permanent link">&para;</a></h2>
+<p>Release artifacts, the embedded runtime, user Rust bindings, and executables
+produced by <code>gos build</code> use <code>MACOSX_DEPLOYMENT_TARGET=15.0</code>. macOS 15 is the
+supported deployment baseline and the native build regression runs on a
+<code>macos-15</code> GitHub Actions runner.</p>
+<p>Building the complete toolchain from source for macOS 11 through 14 is allowed
+as an unsupported, best-effort configuration. Export one target for both the
+toolchain build and every later <code>gos build</code> invocation so the runtime archive,
+Rust bindings, and final executable agree:</p>
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">MACOSX_DEPLOYMENT_TARGET</span><span class="o">=</span><span class="m">11</span>.0
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>-p<span class="w"> </span>gossamer-cli
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>./target/release/gos<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>path/to/main.gos
+</code></pre></div>
+<p>Replace <code>11.0</code> with the desired deployment target from <code>11.0</code> through <code>14.x</code>.
+These older targets do not run in Gossamer CI and are not supported release
+configurations. Building requires an installed Xcode or Command Line Tools SDK
+that can target the selected macOS version.</p>
 
 
 

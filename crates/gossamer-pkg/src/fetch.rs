@@ -266,7 +266,7 @@ impl Fetcher {
             ResolvedSource::Git { url, reference } => {
                 (self.fetch_git(resolved, url, reference)?, None)
             }
-            ResolvedSource::Registry(version) => self.fetch_registry(resolved, *version)?,
+            ResolvedSource::Registry(version) => self.fetch_registry(resolved, version)?,
             ResolvedSource::Tarball { url, sha256: hash } => {
                 (self.fetch_tarball(resolved, url, hash, None)?, None)
             }
@@ -361,7 +361,7 @@ impl Fetcher {
     fn fetch_registry(
         &self,
         resolved: &Resolved,
-        version: crate::version::Version,
+        version: &crate::version::Version,
     ) -> Result<(CachedSource, Option<String>), CacheError> {
         let entry = self.catalogue.entry(&resolved.id, version).ok_or_else(|| {
             CacheError::Unsupported(format!(

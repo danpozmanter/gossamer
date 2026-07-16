@@ -52,8 +52,10 @@ path = "src/lib.gos"
 ```
 
 `gos add example.org/lib@1.2.3` appends the dependency.
-`gos remove example.org/lib` drops it. `gos tidy` re-serialises
-the file in canonical form.
+`gos remove example.org/lib` drops it. `gos update` refreshes selected versions
+within declared ranges. `gos tidy` parses project sources, removes direct
+project dependencies that are not imported, and writes canonical ordering.
+Rust binding dependencies are retained independently.
 
 The default convention is still: `src/main.gos` ⇒ binary,
 `src/lib.gos` ⇒ library, project id ⇒ output name. The

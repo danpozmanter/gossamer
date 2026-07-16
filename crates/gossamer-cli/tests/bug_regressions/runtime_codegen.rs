@@ -555,7 +555,7 @@ fn show(item: Info, as_json: bool) {
 }
 
 fn main() {
-    let it = Info { num: 42, label: "hello".to_string() }
+    let it = Info(42, "hello".to_string())
     show(it, false)
 }
 "#;
@@ -682,7 +682,7 @@ fn aggregate_alloc_loop_reclaims_deterministically() {
     //     double-free in the drop pass);
     //   - all three tiers agree.
     let src = "struct Pair { a: i64, b: i64 }\n\
-               fn make(i: i64) -> Pair { Pair { a: i, b: i * 2 } }\n\
+               fn make(i: i64) -> Pair { Pair(i, i * 2) }\n\
                fn main() {\n\
                    let mut total: i64 = 0\n\
                    let mut i: i64 = 0\n\
@@ -771,12 +771,12 @@ fn aggregate_alloc_loop_reclaims_deterministically() {
 }
 
 #[test]
-fn tuple_struct_constructor_is_available_on_vm_and_native_tiers() {
+fn named_struct_constructor_is_available_on_vm_and_native_tiers() {
     let src = r#"
-struct Pair(i64, i64)
+struct Pair { left: i64, right: i64 }
 
 fn sum(p: Pair) -> i64 {
-    p.0 + p.1
+    p.left + p.right
 }
 
 fn main() {
@@ -784,8 +784,8 @@ fn main() {
     println!("{}", sum(p))
 }
 "#;
-    let dir = fresh_dir("tuple_struct_ctor");
-    let path = write_source(&dir, "tuple_struct_ctor", src);
+    let dir = fresh_dir("named_struct_ctor");
+    let path = write_source(&dir, "named_struct_ctor", src);
 
     let run = run_vm(&path);
     assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);

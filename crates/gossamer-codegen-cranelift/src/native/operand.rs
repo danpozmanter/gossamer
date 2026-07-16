@@ -434,6 +434,7 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                     },
                     _ => PrintKind::Unsupported("Vec"),
                 },
+                TyKind::Iterator(_) => PrintKind::Unsupported("iterator"),
                 TyKind::HashMap { key, value } => {
                     if map_kv_supported(tcx, *key) && map_kv_supported(tcx, *value) {
                         PrintKind::Map

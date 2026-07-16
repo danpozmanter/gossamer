@@ -11,7 +11,7 @@ struct P {
 }
 
 fn main() {
-    let v: [P] = [P { x: 1, y: 2 }]
+    let v: [P] = [P(1, 2)]
     let bad = v[1000000]
     println!("unreachable {}", bad.x)
 }

@@ -92,21 +92,35 @@ impl<'a> Lowerer<'a> {
         .unwrap();
     }
 
-    /// Back-edge safepoint for cooperative preemption. Currently a
-    /// no-op: a runtime call inserted on every loop back-edge
-    /// blocks `opt -O3` from vectorising tight numeric inner loops
-    /// (the call is opaque to alias analysis and the loop
-    /// vectoriser refuses to lift it across iterations), which is
-    /// the difference between sub-1-second and 5+ second runs on
-    /// spectral-norm and n-body. Mirrors the Cranelift backend,
-    /// where the matching insertion point in
-    /// `crates/gossamer-codegen-cranelift/src/native.rs:1723` is
-    /// also a stub. Both backends will gain a real safepoint when
-    /// the runtime grows SIGURG-based async preemption (Track 3
-    /// follow-up); until then the function-level safepoint at the
-    /// scheduler boundary is what limits runaway goroutines.
+    /// Amortized back-edge safepoint for cooperative preemption. The hot path
+    /// is one decrement and branch; the runtime call occurs once per 1024
+    /// iterations and suspends the current stackful goroutine when requested.
     pub(crate) fn emit_preempt_check(&mut self) {
-        let _ = self.preempt_seq;
+        declare_rt(&mut self.runtime_refs, "gos_rt_preempt_check_and_yield");
+        let seq = self.preempt_seq;
+        self.preempt_seq += 1;
+        let current = self.fresh();
+        let next = self.fresh();
+        let expired = self.fresh();
+        writeln!(self.out, "  {current} = load i32, ptr %gos_preempt_counter").unwrap();
+        writeln!(self.out, "  {next} = sub i32 {current}, 1").unwrap();
+        writeln!(self.out, "  store i32 {next}, ptr %gos_preempt_counter").unwrap();
+        writeln!(self.out, "  {expired} = icmp eq i32 {next}, 0").unwrap();
+        writeln!(
+            self.out,
+            "  br i1 {expired}, label %preempt_slow_{seq}, label %preempt_cont_{seq}"
+        )
+        .unwrap();
+        writeln!(self.out, "preempt_slow_{seq}:").unwrap();
+        let poll = self.fresh();
+        writeln!(
+            self.out,
+            "  {poll} = call i32 @gos_rt_preempt_check_and_yield()"
+        )
+        .unwrap();
+        writeln!(self.out, "  store i32 1024, ptr %gos_preempt_counter").unwrap();
+        writeln!(self.out, "  br label %preempt_cont_{seq}").unwrap();
+        writeln!(self.out, "preempt_cont_{seq}:").unwrap();
     }
 
     pub(crate) fn fresh_label(&mut self, prefix: &str) -> String {

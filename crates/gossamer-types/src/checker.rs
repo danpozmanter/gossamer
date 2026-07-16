@@ -644,6 +644,7 @@ impl<'a> TypeChecker<'a> {
     /// argument is inferred from the array argument's length.
     #[allow(
         clippy::too_many_lines,
+        clippy::cognitive_complexity,
         reason = "type-constructor dispatch - arms map 1:1 to TyKind variants; splitting hides the type walk"
     )]
     fn subst_generics_in_ty(&mut self, ty: Ty, substs: &[Ty], const_substs: &[Option<i128>]) -> Ty {
@@ -2025,6 +2026,7 @@ impl<'a> TypeChecker<'a> {
 
     #[allow(
         clippy::too_many_lines,
+        clippy::cognitive_complexity,
         reason = "expression dispatch - arms map 1:1 to ExprKind variants; splitting hides the dispatch table"
     )]
     fn check_expr_kind(&mut self, expr: &Expr, expected: Expectation) -> Ty {
@@ -2129,7 +2131,22 @@ impl<'a> TypeChecker<'a> {
                 let tys: Vec<Ty> = elems.iter().map(|e| self.check_expr(e)).collect();
                 self.tcx.intern(TyKind::Tuple(tys))
             }
-            ExprKind::Struct { path, fields, base } => {
+            ExprKind::Struct {
+                path,
+                fields,
+                base,
+                syntax,
+            } => {
+                if matches!(syntax, gossamer_ast::expr::StructExprSyntax::Braced) {
+                    let name = path.segments.last().map_or_else(
+                        || "<struct>".to_string(),
+                        |segment| segment.name.name.clone(),
+                    );
+                    self.emit(
+                        TypeError::StructConstructorParenthesesRequired { name },
+                        expr.span,
+                    );
+                }
                 // Resolve the header path to an Adt type. Unifying
                 // named field values with the declared field
                 // types lets downstream field-access nodes see
@@ -4794,6 +4811,11 @@ impl<'a> TypeChecker<'a> {
     /// arg) of a std data-last combinator the checker can type, or
     /// `None` for names it has no signature row for.
     fn std_combinator_arity(module: &str, name: &str) -> Option<usize> {
+        let name = if module == "iter" {
+            name.strip_prefix("eager_").unwrap_or(name)
+        } else {
+            name
+        };
         let arity = match (module, name) {
             (
                 "result",
@@ -4864,17 +4886,20 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    /// Element type of a sequence-shaped `ty` (`Vec` / slice / fixed
-    /// array, ref-transparent), unifying a free var with `Vec<?>`.
+    /// Element type of a sequence-shaped `ty` (`Vec`, `Iterator`, slice, or
+    /// fixed array, ref-transparent), unifying a free var with `Vec<?>`.
     fn sequence_elem_ty(&mut self, ty: Ty, span: Span) -> Option<Ty> {
         let mut resolved = self.infer.resolve(self.tcx, ty);
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = self.infer.resolve(self.tcx, *inner);
         }
         match self.tcx.kind(resolved) {
-            Some(TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. }) => {
-                Some(*elem)
-            }
+            Some(
+                TyKind::Vec(elem)
+                | TyKind::Iterator(elem)
+                | TyKind::Slice(elem)
+                | TyKind::Array { elem, .. },
+            ) => Some(*elem),
             Some(TyKind::Var(_)) => {
                 let elem = self.fresh();
                 let shaped = self.tcx.intern(TyKind::Vec(elem));
@@ -5121,6 +5146,7 @@ impl<'a> TypeChecker<'a> {
                 Some(ty)
             }
             "iter" => {
+                let name = name.strip_prefix("eager_").unwrap_or(name);
                 let elem = self.sequence_elem_ty(data_ty, span)?;
                 let bool_ty = self.tcx.bool_ty();
                 let ty = match name {
@@ -5499,7 +5525,7 @@ impl<'a> TypeChecker<'a> {
             self.pipe_stage_callees.insert(rhs.id);
         }
         let lhs_ty = self.check_expr(lhs);
-        let rhs_ty = self.check_expr(rhs);
+        let rhs_ty = self.check_pipe_rhs(op, lhs_ty, rhs);
         match op {
             BinaryOp::Eq
             | BinaryOp::Ne
@@ -5607,6 +5633,29 @@ impl<'a> TypeChecker<'a> {
                 self.unify(lhs_ty, rhs_ty, span);
                 lhs_ty
             }
+        }
+    }
+
+    /// Type-checks a pipe RHS closure with its parameter shaped by the value
+    /// flowing in. Other expressions retain ordinary expression checking.
+    fn check_pipe_rhs(&mut self, op: BinaryOp, lhs_ty: Ty, rhs: &Expr) -> Ty {
+        // A pipe into a closure determines the closure's sole parameter before
+        // checking its body. Delaying this until `pipe_result_ty` left method
+        // calls in the body with an unresolved receiver, so a malformed
+        // `s |> |s| s.slice(s, 1, 3)` skipped String's arity check and reached
+        // the runtime shim with an ignored extra argument.
+        if op == BinaryOp::PipeGt
+            && let ExprKind::Closure { params, .. } = &rhs.kind
+            && params.len() == 1
+        {
+            let output = self.fresh();
+            let expected = self.tcx.intern(TyKind::FnPtr(FnSig {
+                inputs: vec![lhs_ty],
+                output,
+            }));
+            self.check_expr_expecting(rhs, Expectation::HasType(expected))
+        } else {
+            self.check_expr(rhs)
         }
     }
 
@@ -7250,6 +7299,14 @@ impl<'a> TypeChecker<'a> {
             }
             PatternKind::Tuple(parts) => {
                 let resolved = self.infer.resolve(self.tcx, ty);
+                if matches!(self.tcx.kind(resolved), Some(TyKind::Adt { .. })) {
+                    self.emit(
+                        TypeError::StructPatternNameRequired {
+                            ty: render_ty(self.tcx, resolved),
+                        },
+                        pattern.span,
+                    );
+                }
                 let element_tys: Vec<Ty> =
                     if let Some(TyKind::Tuple(elems)) = self.tcx.kind(resolved).cloned() {
                         elems
@@ -7994,6 +8051,7 @@ fn kind_is_concrete(checker: &TypeChecker<'_>, kind: &TyKind) -> bool {
         TyKind::Array { elem, .. }
         | TyKind::Slice(elem)
         | TyKind::Vec(elem)
+        | TyKind::Iterator(elem)
         | TyKind::Sender(elem)
         | TyKind::Receiver(elem)
         | TyKind::JoinHandle(elem)

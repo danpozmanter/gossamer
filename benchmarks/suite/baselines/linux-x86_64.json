@@ -1,0 +1,396 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-15T20:42:35.269783Z",
+  "host": {
+    "os": "Linux",
+    "arch": "x86_64",
+    "kernel": "6.17.0-35-generic",
+    "cpu_count": 24,
+    "cpu_model": "AMD Ryzen 9 9900X 12-Core Processor",
+    "memory_bytes": 64893304832
+  },
+  "toolchains": {
+    "gos": "gos 0.29.0",
+    "go": "go version go1.26.0 linux/amd64",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "llvm": "system/default"
+  },
+  "runs": 3,
+  "results": [
+    {
+      "workload": "arithmetic",
+      "tier": "vm-no-jit",
+      "samples_ns": [
+        41063777,
+        39976353,
+        40555804
+      ],
+      "median_ns": 40555804,
+      "mad_ns": 507973,
+      "peak_rss_kib": 13416,
+      "compile_ns": 0,
+      "binary_bytes": 27947456,
+      "output_sha256": "6b7bfd484c86871c9fc28ed26b627f7aae72829107df4f1310e75e8e93a1d061"
+    },
+    {
+      "workload": "arithmetic",
+      "tier": "vm-jit",
+      "samples_ns": [
+        40437727,
+        41372699,
+        40113526
+      ],
+      "median_ns": 40437727,
+      "mad_ns": 324201,
+      "peak_rss_kib": 15272,
+      "compile_ns": 0,
+      "binary_bytes": 27947456,
+      "output_sha256": "6b7bfd484c86871c9fc28ed26b627f7aae72829107df4f1310e75e8e93a1d061"
+    },
+    {
+      "workload": "arithmetic",
+      "tier": "llvm-debug",
+      "samples_ns": [
+        15233365,
+        14983186,
+        16167245
+      ],
+      "median_ns": 15233365,
+      "mad_ns": 250179,
+      "peak_rss_kib": 3144,
+      "compile_ns": 126216321,
+      "binary_bytes": 1224496,
+      "output_sha256": "6b7bfd484c86871c9fc28ed26b627f7aae72829107df4f1310e75e8e93a1d061"
+    },
+    {
+      "workload": "arithmetic",
+      "tier": "llvm-release",
+      "samples_ns": [
+        13645802,
+        13715485,
+        14300236
+      ],
+      "median_ns": 13715485,
+      "mad_ns": 69683,
+      "peak_rss_kib": 824,
+      "compile_ns": 218340041,
+      "binary_bytes": 1724712,
+      "output_sha256": "6b7bfd484c86871c9fc28ed26b627f7aae72829107df4f1310e75e8e93a1d061"
+    },
+    {
+      "workload": "arithmetic",
+      "tier": "go-release",
+      "samples_ns": [
+        14071728,
+        14732856,
+        13836958
+      ],
+      "median_ns": 14071728,
+      "mad_ns": 234770,
+      "peak_rss_kib": 2240,
+      "compile_ns": 1465437368,
+      "binary_bytes": 2392054,
+      "output_sha256": "6b7bfd484c86871c9fc28ed26b627f7aae72829107df4f1310e75e8e93a1d061"
+    },
+    {
+      "workload": "allocation",
+      "tier": "vm-no-jit",
+      "samples_ns": [
+        33722032,
+        33341212,
+        33294262
+      ],
+      "median_ns": 33341212,
+      "mad_ns": 46950,
+      "peak_rss_kib": 13376,
+      "compile_ns": 0,
+      "binary_bytes": 27947456,
+      "output_sha256": "2d2557238d7088e946a3340fa03380229d835999e048ad0507522325193302ff"
+    },
+    {
+      "workload": "allocation",
+      "tier": "vm-jit",
+      "samples_ns": [
+        33312096,
+        33153232,
+        32940884
+      ],
+      "median_ns": 33153232,
+      "mad_ns": 158864,
+      "peak_rss_kib": 15408,
+      "compile_ns": 0,
+      "binary_bytes": 27947456,
+      "output_sha256": "2d2557238d7088e946a3340fa03380229d835999e048ad0507522325193302ff"
+    },
+    {
+      "workload": "allocation",
+      "tier": "llvm-debug",
+      "samples_ns": [
+        4470050,
+        4384415,
+        4691735
+      ],
+      "median_ns": 4470050,
+      "mad_ns": 85635,
+      "peak_rss_kib": 3136,
+      "compile_ns": 131893807,
+      "binary_bytes": 1229432,
+      "output_sha256": "2d2557238d7088e946a3340fa03380229d835999e048ad0507522325193302ff"
+    },
+    {
+      "workload": "allocation",
+      "tier": "llvm-release",
+      "samples_ns": [
+        3011494,
+        3004380,
+        2771784
+      ],
+      "median_ns": 3004380,
+      "mad_ns": 7114,
+      "peak_rss_kib": 636,
+      "compile_ns": 177799618,
+      "binary_bytes": 1728856,
+      "output_sha256": "2d2557238d7088e946a3340fa03380229d835999e048ad0507522325193302ff"
+    },
+    {
+      "workload": "allocation",
+      "tier": "go-release",
+      "samples_ns": [
+        2387818,
+        2391165,
+        2337712
+      ],
+      "median_ns": 2387818,
+      "mad_ns": 3347,
+      "peak_rss_kib": 2240,
+      "compile_ns": 70808724,
+      "binary_bytes": 2392350,
+      "output_sha256": "2d2557238d7088e946a3340fa03380229d835999e048ad0507522325193302ff"
+    },
+    {
+      "workload": "json",
+      "tier": "vm-no-jit",
+      "samples_ns": [
+        34080630,
+        34510884,
+        33694319
+      ],
+      "median_ns": 34080630,
+      "mad_ns": 386311,
+      "peak_rss_kib": 14064,
+      "compile_ns": 0,
+      "binary_bytes": 27947456,
+      "output_sha256": "eea5daac8b1d1b7b82edaaa7fadadf6b48a439a874efd036fb0666e68c17462e"
+    },
+    {
+      "workload": "json",
+      "tier": "vm-jit",
+      "samples_ns": [
+        33932206,
+        34114204,
+        34409100
+      ],
+      "median_ns": 34114204,
+      "mad_ns": 181998,
+      "peak_rss_kib": 15984,
+      "compile_ns": 0,
+      "binary_bytes": 27947456,
+      "output_sha256": "eea5daac8b1d1b7b82edaaa7fadadf6b48a439a874efd036fb0666e68c17462e"
+    },
+    {
+      "workload": "json",
+      "tier": "llvm-debug",
+      "samples_ns": [
+        6207802,
+        5796954,
+        5967972
+      ],
+      "median_ns": 5967972,
+      "mad_ns": 171018,
+      "peak_rss_kib": 4456,
+      "compile_ns": 136873445,
+      "binary_bytes": 1952840,
+      "output_sha256": "eea5daac8b1d1b7b82edaaa7fadadf6b48a439a874efd036fb0666e68c17462e"
+    },
+    {
+      "workload": "json",
+      "tier": "llvm-release",
+      "samples_ns": [
+        7453560,
+        7239490,
+        7443561
+      ],
+      "median_ns": 7443561,
+      "mad_ns": 9999,
+      "peak_rss_kib": 2092,
+      "compile_ns": 184814898,
+      "binary_bytes": 2364416,
+      "output_sha256": "eea5daac8b1d1b7b82edaaa7fadadf6b48a439a874efd036fb0666e68c17462e"
+    },
+    {
+      "workload": "json",
+      "tier": "go-release",
+      "samples_ns": [
+        6725985,
+        6898376,
+        6670558
+      ],
+      "median_ns": 6725985,
+      "mad_ns": 55427,
+      "peak_rss_kib": 5752,
+      "compile_ns": 226878733,
+      "binary_bytes": 2935871,
+      "output_sha256": "eea5daac8b1d1b7b82edaaa7fadadf6b48a439a874efd036fb0666e68c17462e"
+    },
+    {
+      "workload": "concurrency",
+      "tier": "vm-no-jit",
+      "samples_ns": [
+        3936186,
+        3752865,
+        3475734
+      ],
+      "median_ns": 3752865,
+      "mad_ns": 183321,
+      "peak_rss_kib": 13880,
+      "compile_ns": 0,
+      "binary_bytes": 27947456,
+      "output_sha256": "0d12e27e40bcc8c91191392cfa830096ffb17c71400ba67f884290c34347e13f"
+    },
+    {
+      "workload": "concurrency",
+      "tier": "vm-jit",
+      "samples_ns": [
+        3880720,
+        3732927,
+        3862705
+      ],
+      "median_ns": 3862705,
+      "mad_ns": 18015,
+      "peak_rss_kib": 15704,
+      "compile_ns": 0,
+      "binary_bytes": 27947456,
+      "output_sha256": "0d12e27e40bcc8c91191392cfa830096ffb17c71400ba67f884290c34347e13f"
+    },
+    {
+      "workload": "concurrency",
+      "tier": "llvm-debug",
+      "samples_ns": [
+        1789471,
+        1662528,
+        1552807
+      ],
+      "median_ns": 1662528,
+      "mad_ns": 109721,
+      "peak_rss_kib": 3848,
+      "compile_ns": 130389043,
+      "binary_bytes": 1423920,
+      "output_sha256": "0d12e27e40bcc8c91191392cfa830096ffb17c71400ba67f884290c34347e13f"
+    },
+    {
+      "workload": "concurrency",
+      "tier": "llvm-release",
+      "samples_ns": [
+        1266528,
+        1236311,
+        1294722
+      ],
+      "median_ns": 1266528,
+      "mad_ns": 28194,
+      "peak_rss_kib": 1668,
+      "compile_ns": 180783339,
+      "binary_bytes": 1895960,
+      "output_sha256": "0d12e27e40bcc8c91191392cfa830096ffb17c71400ba67f884290c34347e13f"
+    },
+    {
+      "workload": "concurrency",
+      "tier": "go-release",
+      "samples_ns": [
+        1066675,
+        1037689,
+        1163501
+      ],
+      "median_ns": 1066675,
+      "mad_ns": 28986,
+      "peak_rss_kib": 2240,
+      "compile_ns": 69615748,
+      "binary_bytes": 2392596,
+      "output_sha256": "0d12e27e40bcc8c91191392cfa830096ffb17c71400ba67f884290c34347e13f"
+    },
+    {
+      "workload": "startup",
+      "tier": "vm-no-jit",
+      "samples_ns": [
+        2320910,
+        2170411,
+        2008341
+      ],
+      "median_ns": 2170411,
+      "mad_ns": 150499,
+      "peak_rss_kib": 12768,
+      "compile_ns": 0,
+      "binary_bytes": 27947456,
+      "output_sha256": "ed1a545bb85e55816bbf9566b028b2a0bc456b88f49f6f266c0401048824194b"
+    },
+    {
+      "workload": "startup",
+      "tier": "vm-jit",
+      "samples_ns": [
+        1949598,
+        1797205,
+        1945219
+      ],
+      "median_ns": 1945219,
+      "mad_ns": 4379,
+      "peak_rss_kib": 13056,
+      "compile_ns": 0,
+      "binary_bytes": 27947456,
+      "output_sha256": "ed1a545bb85e55816bbf9566b028b2a0bc456b88f49f6f266c0401048824194b"
+    },
+    {
+      "workload": "startup",
+      "tier": "llvm-debug",
+      "samples_ns": [
+        920916,
+        906498,
+        794042
+      ],
+      "median_ns": 906498,
+      "mad_ns": 14418,
+      "peak_rss_kib": 3152,
+      "compile_ns": 131722960,
+      "binary_bytes": 1218176,
+      "output_sha256": "ed1a545bb85e55816bbf9566b028b2a0bc456b88f49f6f266c0401048824194b"
+    },
+    {
+      "workload": "startup",
+      "tier": "llvm-release",
+      "samples_ns": [
+        642242,
+        553952,
+        506221
+      ],
+      "median_ns": 553952,
+      "mad_ns": 47731,
+      "peak_rss_kib": 632,
+      "compile_ns": 178125074,
+      "binary_bytes": 1719696,
+      "output_sha256": "ed1a545bb85e55816bbf9566b028b2a0bc456b88f49f6f266c0401048824194b"
+    },
+    {
+      "workload": "startup",
+      "tier": "go-release",
+      "samples_ns": [
+        952937,
+        922529,
+        807468
+      ],
+      "median_ns": 922529,
+      "mad_ns": 30408,
+      "peak_rss_kib": 2232,
+      "compile_ns": 70867838,
+      "binary_bytes": 2387798,
+      "output_sha256": "ed1a545bb85e55816bbf9566b028b2a0bc456b88f49f6f266c0401048824194b"
+    }
+  ]
+}

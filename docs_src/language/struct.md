@@ -11,8 +11,7 @@ A struct literal may spread a base value with `..base` and override
 individual fields:
 
 ```gossamer
-let p2 = Point { ..p1, x: 10 }   // x overridden, the rest copied from p1
-let p3 = Point { x: 10, ..p1 }   // the spread may appear in any position
+let p2 = Point(10, p1.y)
 ```
 
 - Explicit fields win over the base for the same name.
@@ -21,22 +20,22 @@ let p3 = Point { x: 10, ..p1 }   // the spread may appear in any position
   so the base stays usable after the update with no double-free. Output
   is identical across the VM, Cranelift, and LLVM tiers.
 
-## Tuple structs
+## Declaration and construction
 
-A struct may carry positional fields instead of named ones:
+Struct declarations always use named fields in braces. Construction uses
+parentheses, with arguments assigned in declaration order:
 
 ```gossamer
-struct Pt(i64, i64)
+struct Pt { x: i64, y: i64 }
 
-let p = Pt(3, 4)            // construction
-println!("{} {}", p.0, p.1) // positional access
-let Pt(a, b) = p            // destructuring (also in `match` and fn params)
+let p = Pt(3, 4)
+println!("{} {}", p.x, p.y)
+let Pt { x, y } = p
 ```
 
-Tuple fields are modelled as named fields `"0".."N-1"`, so construction,
-`.N` access, destructuring, `#[derive(...)]`, and serde all work the same
-as on a named struct. `to_json` / `from_json` use a position-keyed object
-(`{"0": 3, "1": 4}`).
+Use `struct Marker {}` and `Marker()` for an empty struct. Tuple declarations
+such as `struct Pt(i64, i64)` and bare unit declarations such as `struct
+Marker` are rejected.
 
 ## Value semantics: copy and compare with no derive
 
@@ -49,10 +48,10 @@ lexicographic by field declaration order:
 ```gossamer
 struct Point { x: i64, y: i64 }
 
-let a = Point { x: 1, y: 2 }
+let a = Point(1, 2)
 let b = a.clone()                          // `clone` is a universal builtin
 println!("{}", a == b)                     // true, no derive
-println!("{}", a < Point { x: 1, y: 3 })   // true (lexicographic by field)
+println!("{}", a < Point(1, 3))   // true (lexicographic by field)
 ```
 
 A user `impl` of `eq` / `cmp` overrides the synthesized comparison.

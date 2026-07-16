@@ -41,7 +41,7 @@ impl http::Handler for App {
 }
 
 fn serve() {
-    if let Err(e) = http::serve_tls(&ADDR, &SRV_CERT, &SRV_KEY, App { }) {
+    if let Err(e) = http::serve_tls(&ADDR, &SRV_CERT, &SRV_KEY, App()) {
         eprintln!("serve_tls failed: {e}")
     }
 }

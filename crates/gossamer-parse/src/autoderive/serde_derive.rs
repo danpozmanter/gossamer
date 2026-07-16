@@ -211,10 +211,8 @@ fn emit_from_json(out: &mut String, name: &str, fields: &[(String, FieldKind)]) 
             "    let {fname} = match json::get(v, \"{fname}\") {{\n        Some(__child) => {extract},\n        None => {missing},\n    }}\n"
         ));
     }
-    out.push_str(&format!("    Ok({name} {{ "));
     let names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
-    out.push_str(&names.join(", "));
-    out.push_str(" })\n");
+    out.push_str(&format!("    Ok({name}({}))\n", names.join(", ")));
     out.push_str("}\n\n");
 }
 
@@ -918,8 +916,7 @@ fn emit_struct_derive_impl(
         return;
     }
     // `(gen_decl, self_ty)` = ("<T>", "Pair<T>") for a generic struct, else
-    // ("", "Pair"). Struct *literals* never carry the args, so the
-    // reconstruction below stays `{name} { … }`.
+    // ("", "Pair"). Constructors use declaration-order arguments.
     let (gen_decl, self_ty) = struct_generics(decl);
     let field_names: Vec<&str> = fields.iter().map(|f| f.name.name.as_str()).collect();
     out.push_str(&format!(
@@ -930,12 +927,9 @@ fn emit_struct_derive_impl(
         // struct's fields are shared by copy; this avoids a per-field
         // `.clone()` call (which the VM's name-global method dispatch would
         // misroute back to `Type::clone`).
-        let init: Vec<String> = field_names
-            .iter()
-            .map(|f| format!("{f}: self.{f}"))
-            .collect();
+        let init: Vec<String> = field_names.iter().map(|f| format!("self.{f}")).collect();
         out.push_str(&format!(
-            "    fn clone(&self) -> {self_ty} {{ {name} {{ {} }} }}\n",
+            "    fn clone(&self) -> {self_ty} {{ {name}({}) }}\n",
             init.join(", ")
         ));
     }
@@ -979,10 +973,10 @@ fn emit_struct_derive_impl(
         if let Some(typed) = typed {
             let init: Vec<String> = typed
                 .iter()
-                .map(|(f, k)| format!("{f}: {}", k.default_literal()))
+                .map(|(_, k)| k.default_literal())
                 .collect();
             out.push_str(&format!(
-                "    fn default() -> {self_ty} {{ {name} {{ {} }} }}\n",
+                "    fn default() -> {self_ty} {{ {name}({}) }}\n",
                 init.join(", ")
             ));
         }
@@ -1017,4 +1011,3 @@ fn emit_struct_derive_impl(
     }
     out.push_str("}\n\n");
 }
-

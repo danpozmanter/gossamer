@@ -854,7 +854,9 @@ impl Resolver {
             }
             ExprKind::Continue { .. } | ExprKind::MacroCall(_) => {}
             ExprKind::Tuple(elems) => self.resolve_exprs(elems),
-            ExprKind::Struct { path, fields, base } => {
+            ExprKind::Struct {
+                path, fields, base, ..
+            } => {
                 self.resolve_struct_expr(path, fields, base.as_deref(), expr.id, expr.span);
             }
             ExprKind::Array(arr) => self.resolve_array_expr(arr),

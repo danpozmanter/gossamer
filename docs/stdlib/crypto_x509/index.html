@@ -883,6 +883,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -934,6 +936,34 @@
 
 
     Overview
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../misc/tooling_faithful_fmt/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Formatter behavior
 
 
 
@@ -1768,6 +1798,11 @@
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/crypto.rs"><code>parse_pem</code></a></td>
 <td><code>fn parse_pem(pem: String) -&gt; Result&lt;x509::Certificate, errors::Error&gt;</code></td>
 <td>Parses one PEM-encoded certificate.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/crypto.rs"><code>verify_server_certificate_with_crls</code></a></td>
+<td><code>fn verify_server_certificate_with_crls(chain_pem: String, roots_pem: String, hostname: String, crl_pem: String) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>Verifies a leaf-first server chain and hostname against private roots and mandatory CRLs. Unknown revocation status and expired CRLs fail closed.</td>
 </tr>
 </tbody>
 </table>

@@ -887,6 +887,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -938,6 +940,34 @@
 
 
     Overview
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../misc/tooling_faithful_fmt/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Formatter behavior
 
 
 
@@ -2095,6 +2125,12 @@ Every Gossamer binary links it through <code>libgossamer_runtime.a</code>, so
 shared pool. The pool size defaults to <code>num_cpus()</code>, overridable
 via <code>GOSSAMER_MAX_PROCS=N</code> or <code>runtime::set_max_procs(n)</code> from
 user code.</p>
+<p>Deferred JIT promotion reports compile time, emitted native-code bytes, and
+process RSS through VM diagnostics. Set <code>GOS_JIT_MAX_CODE_BYTES=N</code> to reject a
+promotion whose retained code would exceed <code>N</code> bytes for that VM; set
+<code>GOS_JIT_MAX_RSS_MB=N</code> to reject a promotion before compilation when the
+process is already at its RSS budget. A rejected artifact releases its MIR
+snapshot and remains on bytecode.</p>
 <p>A <code>MultiScheduler</code> owns:</p>
 <ul>
 <li>one work-stealing deque per worker M (a <code>crossbeam_deque::Worker</code>),</li>
@@ -2148,15 +2184,16 @@ yet parked, it records the gid; the worker about to park the
 task observes the pre-unpark and immediately re-ejects the task
 to the injector instead of leaving it parked.</p>
 <h2 id="preemption">Preemption<a class="headerlink" href="#preemption" title="Permanent link">&para;</a></h2>
-<p>Scheduling is <strong>cooperative with watchdog-assisted preemption</strong> - the
-Go pre-1.14 model plus the first half of Go's async-preemption work.</p>
+<p>Scheduling uses cooperative safepoints with watchdog-requested preemption.</p>
 <p>A goroutine yields the worker M at <em>safepoints</em>:</p>
 <ul>
 <li>every park point - channel send/recv, <code>select</code>, mutex contention,
-  <code>time::sleep</code>, network reads, filesystem syscalls (see <em>Goroutines</em>
-  above),</li>
+  <code>time::sleep</code>, scheduler-aware network reads, and core filesystem operations,</li>
 <li>function-call / scheduler-step boundaries, where the worker can
-  reclaim the coroutine between <code>step()</code> invocations.</li>
+  reclaim the coroutine between <code>step()</code> invocations,</li>
+<li>amortized loop back-edge polls. LLVM and Cranelift poll every 1,024 taken
+  backedges and suspend the current coroutine when the watchdog phase changes.
+  The bytecode VM yields its OS worker every 1,024 taken backedges.</li>
 </ul>
 <p>The watchdog thread (<code>sched::multi::watchdog_loop</code>, 5 ms tick) escalates
 against a worker that has not reached a safepoint:</p>
@@ -2170,19 +2207,18 @@ against a worker that has not reached a safepoint:</p>
   importantly, interrupts a blocking syscall the worker is stuck
   inside (the kernel returns <code>EINTR</code>).</li>
 </ul>
-<p><strong>Current limitation.</strong> The safepoint poll at <em>loop back-edges</em> is
-deliberately not emitted by the LLVM and Cranelift backends:
-<code>emit_preempt_check</code> is a no-op stub because an opaque runtime call on
-every back-edge blocks <code>opt -O3</code> from vectorising tight numeric inner
-loops (the difference between sub-second and multi-second runs on
-spectral-norm / n-body). The interpreter likewise does not poll at
-back-edges. So a goroutine spinning in a tight, call-free, pure-compute
-loop is <strong>not</strong> asynchronously preempted today - it yields only when it
-makes a call or reaches a park point. Because the pool is M:N, such a
-goroutine starves at most one worker thread; the other workers keep
-running every other goroutine. Emitting real back-edge safepoints
-(behind a flag that preserves the vectoriser fast path) is the planned
-completion of async preemption.</p>
+<p>The compiled hot path is a decrement and branch; the runtime call occurs only
+when the counter expires, preserving a bounded polling cost. The native
+scheduler has a one-worker fairness regression that proves a call-free loop
+hands control to a runnable peer. The VM uses a separate bounded OS-thread pool,
+so its backedge poll yields an OS worker rather than suspending a stackful
+coroutine. A VM configured with one goroutine worker can still be monopolized by
+one nonterminating task; replacing that pool with resumable VM frames remains a
+tracked limitation.</p>
+<p>Not every host operation is scheduler-aware yet. Core filesystem file and path
+I/O, HTTP client work, channels, timers, and socket readiness are routed or
+parked. Specialty filesystem bridges, some process pipe operations, compression,
+terminal calls, and third-party binding code still require effect-ledger audit.</p>
 <h2 id="netpoller">Netpoller<a class="headerlink" href="#netpoller" title="Permanent link">&para;</a></h2>
 <p><code>gossamer-runtime::sched::poller::OsPoller</code> wraps <code>mio</code> (epoll on
 Linux, kqueue on macOS / BSD, IOCP on Windows). One dedicated

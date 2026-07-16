@@ -30,9 +30,9 @@ impl Shape for Triangle {
 }
 
 fn main() {
-    let circle = Circle { radius: 3.0 }
-    let rect = Rectangle { width: 4.0, height: 5.0 }
-    let tri = Triangle { base: 6.0, height: 4.0 }
+    let circle = Circle(3.0)
+    let rect = Rectangle(4.0, 5.0)
+    let tri = Triangle(6.0, 4.0)
 
     println!("{}: area = {}", circle.name(), circle.area())
     println!("{}: area = {}", rect.name(), rect.area())

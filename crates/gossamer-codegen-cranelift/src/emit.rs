@@ -111,6 +111,9 @@ fn emit_statement(out: &mut String, stmt: &gossamer_mir::Statement) {
             emit_operand(out, value);
             out.push('\n');
         }
+        StatementKind::IterSource { .. } => out.push_str("    iter_source\n"),
+        StatementKind::IterAdapter { .. } => out.push_str("    iter_adapter\n"),
+        StatementKind::IterNext { .. } => out.push_str("    iter_next\n"),
         StatementKind::Nop => {
             out.push_str("    nop\n");
         }

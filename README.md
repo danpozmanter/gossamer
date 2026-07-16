@@ -57,7 +57,7 @@ My goal is for Gossamer to replace Rust, Go, F#, Kotlin, and Python for most of
 | Error handling via `?` with `Result` & `Option` | ✓ |  | ✓ |  |  |
 | No `null` by default | ✓ |  | ✓ |  | ✓ |
 | Immutable by default | ✓ |  | ✓ |  | ✓ |
-| (Local) Borrow checking | ✓ |  |  |  |  |
+| Reference mutability and escape checks | ✓ |  |  |  |  |
 | Automatic memory management |  | ✓ | ✓ | ✓ | ✓ |
 | Lightweight concurrency primitives |  | ✓ | ✓ |  | ✓ |
 | Fast compilation |  | ✓ |  |  |  |
@@ -66,12 +66,11 @@ My goal is for Gossamer to replace Rust, Go, F#, Kotlin, and Python for most of
 | Interpreted / scripting mode |  |  | ✓ | ✓ | ✓ |
 | Interactive REPL |  |  | ✓ | ✓ | ✓ |
 
-Gossamer's automatic memory management is **deterministic**: reference
-counting reclaims a value the moment its last reference dies, an
-automatic cycle collector handles reference cycles, and there is no
-tracing collector. It is closely modeled on Swift's ARC, with the
-addition that reference cycles are reclaimed for you instead of having
-to be broken by hand.
+Gossamer's automatic memory management uses deterministic reference counting
+and has no tracing collector. The compiled runtime can collect thread-local
+cycles on demand; cross-goroutine cycles must be broken with `Weak<T>`, and the
+bytecode VM currently treats `runtime::collect_cycles()` as a no-op. Cycle
+collection is Experimental and is not a cross-tier compatibility promise.
 
 Plus `arena { }` blocks, inspired by Zig: everything allocated inside
 the block is bump-allocated and freed wholesale when the block exits -
@@ -107,8 +106,9 @@ The CLI is `gos`.
 
 Manifests live in `project.toml`.
 
-Pre-stable. A formal compatibility policy will land with the first
-stable tag; until then, treat the public API as may-change-with-notice.
+Pre-stable. `gos feature-status` distinguishes available Shipped surface from
+compatibility-protected Stable surface. Until entries are explicitly promoted
+to Stable, treat them as may-change-with-notice.
 
 ## Gossamer's Syntax
 
@@ -318,7 +318,9 @@ My main goals are:
 
 * Making Gossamer reliable enough to run real production code, and trust.
 
-* Optimizing Gossamer to be Go-grade or better for performance and resource usage. This feels close: on several compute-heavy kernels the compiled tier already reaches or beats Go, and recent interpreter work has narrowed the scripting-mode gap substantially.
+* Optimizing Gossamer toward Go-grade performance and resource usage. Claims
+  are limited to workloads recorded by the checked-in benchmark suite; broad
+  language-level parity is a goal, not a current guarantee.
 
 * Building a reliable standard library to reduce the need to reach for third party libraries (using Golang as the gold standard, with small changes that feel right).
 

@@ -41,7 +41,7 @@ pub fn tidy(manifest: &mut Manifest, keep: &[Resolved]) {
 /// inline dependencies.
 pub fn pin_to_resolved(manifest: &mut Manifest, resolved: &Resolved) {
     if let ResolvedSource::Registry(version) = &resolved.pin {
-        let spec = DependencySpec::Registry(CaretRange::new(*version));
+        let spec = DependencySpec::Registry(CaretRange::new(version.clone()));
         manifest
             .dependencies
             .insert(resolved.id.as_str().to_string(), spec);

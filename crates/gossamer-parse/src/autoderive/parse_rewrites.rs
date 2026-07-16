@@ -1,6 +1,9 @@
-/// Returns the field count when `e` is `Name(args)` and `Name` is a declared
-/// tuple struct whose arity matches `args.len()`.
-fn tuple_ctor_arity(e: &gossamer_ast::expr::Expr, arity: &HashMap<String, usize>) -> Option<usize> {
+/// Returns declaration-order field names when `e` is `Name(args)` and `Name`
+/// is a declared struct whose arity matches `args.len()`.
+fn struct_ctor_fields(
+    e: &gossamer_ast::expr::Expr,
+    fields: &HashMap<String, Vec<String>>,
+) -> Option<Vec<String>> {
     use gossamer_ast::expr::ExprKind;
     let ExprKind::Call { callee, args } = &e.kind else {
         return None;
@@ -11,42 +14,271 @@ fn tuple_ctor_arity(e: &gossamer_ast::expr::Expr, arity: &HashMap<String, usize>
     if p.segments.len() != 1 {
         return None;
     }
-    let n = arity.get(p.segments[0].name.name.as_str()).copied()?;
-    (n == args.len()).then_some(n)
+    let names = fields.get(p.segments[0].name.name.as_str())?;
+    (names.len() == args.len()).then(|| names.clone())
 }
 
-/// Rewrites a tuple-struct constructor call `Pt(a, b)` into the equivalent
-/// struct literal `Pt { 0: a, 1: b }`, so construction (and `.N` access, with
-/// tuple fields modelled as "0".."N-1") runs through the named-field
-/// machinery on every tier. Only single-segment calls naming a declared
-/// tuple struct with a matching argument count are rewritten.
+/// Rewrites a declared struct constructor call `Pt(a, b)` into the equivalent
+/// struct literal. Named fields are initialized in declaration order, while
+/// legacy tuple fields use their existing `"0".."N-1"` internal names. This
+/// gives every struct a consistent parenthesized constructor spelling without
+/// changing the all-tier aggregate lowering machinery.
 pub fn rewrite_tuple_struct_ctors(sf: &mut SourceFile) {
     use gossamer_ast::VisitorMut;
     let mut arity: HashMap<String, usize> = HashMap::new();
+    let mut constructors: HashMap<String, Vec<String>> = HashMap::new();
     for item in flatten_items(&sf.items) {
-        if let ItemKind::Struct(decl) = &item.kind
-            && let StructBody::Tuple(fields) = &decl.body
-        {
-            arity.insert(decl.name.name.clone(), fields.len());
+        if let ItemKind::Struct(decl) = &item.kind {
+            let names = match &decl.body {
+                StructBody::Named(fields) => fields.iter().map(|field| field.name.name.clone()).collect(),
+                StructBody::Tuple(fields) => {
+                    arity.insert(decl.name.name.clone(), fields.len());
+                    (0..fields.len()).map(|index| index.to_string()).collect()
+                }
+                StructBody::Unit => Vec::new(),
+            };
+            constructors.insert(decl.name.name.clone(), names);
         }
     }
-    if arity.is_empty() {
+    if constructors.is_empty() {
         return;
     }
-    TupleCtorRewriter { arity: &arity }.visit_source_file(sf);
+    TupleCtorRewriter {
+        arity: &arity,
+        constructors: &constructors,
+    }
+    .visit_source_file(sf);
+}
+
+/// Migrates braced construction of locally declared named structs to the
+/// canonical declaration-order parenthesized form. This is intentionally a
+/// source migration helper, not a compile-path rewrite: normal compilation
+/// retains the braced syntax marker so the checker can reject it with GT0034.
+pub fn migrate_braced_struct_constructors(
+    source: &str,
+    file: FileId,
+) -> Result<String, Vec<ParseDiagnostic>> {
+    use gossamer_ast::Visitor;
+
+    let mut current = source.to_string();
+    loop {
+        let (sf, diags) = crate::parse_source_file(&current, file);
+        if !diags.is_empty() {
+            return Err(diags);
+        }
+        let constructors = struct_constructor_fields(&sf);
+        let mut rewriter = BracedConstructorMigration {
+            source: &current,
+            constructors: &constructors,
+            replacements: Vec::new(),
+        };
+        rewriter.visit_source_file(&sf);
+        if rewriter.replacements.is_empty() {
+            return Ok(current);
+        }
+        // Apply one innermost replacement per pass. Its source slice remains
+        // valid, then the next parse observes the rewritten child expression.
+        let (span, replacement) = rewriter
+            .replacements
+            .into_iter()
+            .min_by_key(|(span, _)| span.end.saturating_sub(span.start))
+            .expect("non-empty replacements");
+        let start = span.start as usize;
+        let end = span.end as usize;
+        current.replace_range(start..end, &replacement);
+    }
+}
+
+fn struct_constructor_fields(sf: &SourceFile) -> HashMap<String, Vec<String>> {
+    flatten_items(&sf.items)
+        .into_iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Struct(decl) => match &decl.body {
+                StructBody::Named(fields) => Some((
+                    decl.name.name.clone(),
+                    fields.iter().map(|field| field.name.name.clone()).collect(),
+                )),
+                StructBody::Tuple(_) | StructBody::Unit => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+struct BracedConstructorMigration<'a> {
+    source: &'a str,
+    constructors: &'a HashMap<String, Vec<String>>,
+    replacements: Vec<(gossamer_lex::Span, String)>,
+}
+
+impl gossamer_ast::Visitor for BracedConstructorMigration<'_> {
+    fn visit_expr(&mut self, expr: &gossamer_ast::expr::Expr) {
+        use gossamer_ast::expr::{ExprKind, StructExprSyntax};
+        gossamer_ast::visitor::walk_expr(self, expr);
+        let ExprKind::Struct {
+            path,
+            fields,
+            base: None,
+            syntax: StructExprSyntax::Braced,
+        } = &expr.kind
+        else {
+            return;
+        };
+        if path.segments.len() != 1 {
+            return;
+        }
+        let name = &path.segments[0].name.name;
+        let Some(order) = self.constructors.get(name.as_str()) else {
+            return;
+        };
+        if fields.len() != order.len() {
+            return;
+        }
+        let mut values = HashMap::new();
+        for field in fields {
+            let value = field.value.as_ref().map_or_else(
+                || field.name.name.clone(),
+                |value| self.source[value.span.start as usize..value.span.end as usize].to_string(),
+            );
+            values.insert(field.name.name.as_str(), value);
+        }
+        let Some(args) = order
+            .iter()
+            .map(|field| values.get(field.as_str()).cloned())
+            .collect::<Option<Vec<_>>>()
+        else {
+            return;
+        };
+        self.replacements
+            .push((expr.span, format!("{}({})", name, args.join(", "))));
+    }
+}
+
+/// Rewrites `open_range.take(n)` into an equivalent finite range. The runtime
+/// currently materializes range values eagerly, so retaining an unbounded end
+/// would either allocate forever or silently collapse to an empty array. This
+/// preserves lazy-looking bounded consumption without changing the range ABI.
+pub fn rewrite_open_range_take(sf: &mut SourceFile) {
+    use gossamer_ast::VisitorMut;
+    OpenRangeTakeRewriter.visit_source_file(sf);
+}
+
+struct OpenRangeTakeRewriter;
+
+impl gossamer_ast::VisitorMut for OpenRangeTakeRewriter {
+    fn visit_expr(&mut self, expr: &mut gossamer_ast::expr::Expr) {
+        use gossamer_ast::common::BinaryOp;
+        use gossamer_ast::expr::{Expr, ExprKind, Literal};
+        use gossamer_ast::NodeId;
+
+        gossamer_ast::visitor::walk_expr_mut(self, expr);
+        let span = expr.span;
+        let ExprKind::MethodCall {
+            receiver,
+            name,
+            args,
+            ..
+        } = &expr.kind
+        else {
+            return;
+        };
+        if name.name != "take" || args.len() != 1 {
+            return;
+        }
+        let ExprKind::Range {
+            start,
+            end: None,
+            kind,
+        } = &receiver.kind
+        else {
+            return;
+        };
+
+        let start = start.as_deref().cloned().unwrap_or_else(|| Expr {
+            id: NodeId::DUMMY,
+            span,
+            kind: ExprKind::Literal(Literal::Int("0".to_string())),
+        });
+        let plus_count = Expr {
+            id: NodeId::DUMMY,
+            span,
+            kind: ExprKind::Binary {
+                op: BinaryOp::Add,
+                lhs: Box::new(start.clone()),
+                rhs: Box::new(args[0].clone()),
+            },
+        };
+        let end = if *kind == gossamer_ast::RangeKind::Inclusive {
+            Expr {
+                id: NodeId::DUMMY,
+                span,
+                kind: ExprKind::Binary {
+                    op: BinaryOp::Sub,
+                    lhs: Box::new(plus_count),
+                    rhs: Box::new(Expr {
+                        id: NodeId::DUMMY,
+                        span,
+                        kind: ExprKind::Literal(Literal::Int("1".to_string())),
+                    }),
+                },
+            }
+        } else {
+            plus_count
+        };
+        expr.kind = ExprKind::Range {
+            start: Some(Box::new(start)),
+            end: Some(Box::new(end)),
+            kind: *kind,
+        };
+    }
 }
 
 struct TupleCtorRewriter<'a> {
     arity: &'a HashMap<String, usize>,
+    constructors: &'a HashMap<String, Vec<String>>,
 }
 
 impl gossamer_ast::VisitorMut for TupleCtorRewriter<'_> {
     fn visit_expr(&mut self, e: &mut gossamer_ast::expr::Expr) {
         use gossamer_ast::expr::{ExprKind, StructExprField};
         gossamer_ast::visitor::walk_expr_mut(self, e);
-        if tuple_ctor_arity(e, self.arity).is_none() {
+        // `http::Response(status, body_bytes, content_type)` is the
+        // parenthesized spelling of the runtime response aggregate. Keep its
+        // fields named internally so MIR can retain the byte-array body
+        // instead of routing it through the C-string text constructor.
+        if let ExprKind::Call { callee, args } = &e.kind
+            && let ExprKind::Path(path) = &callee.kind
+            && path.segments.len() == 2
+            && path.segments[0].name.name == "http"
+            && path.segments[1].name.name == "Response"
+            && args.len() == 3
+        {
+            let ExprKind::Call { callee, args } =
+                std::mem::replace(&mut e.kind, ExprKind::Error)
+            else {
+                unreachable!("matched call expression")
+            };
+            let ExprKind::Path(path) = callee.kind else {
+                unreachable!("matched path callee")
+            };
+            e.kind = ExprKind::Struct {
+                path,
+                fields: args
+                    .into_iter()
+                    .zip(["status", "body", "content_type"])
+                    .map(|(value, name)| StructExprField {
+                        name: gossamer_ast::Ident::new(name),
+                        value: Some(value),
+                    })
+                    .collect(),
+                base: None,
+                syntax: gossamer_ast::expr::StructExprSyntax::Parenthesized,
+            };
             return;
         }
+        let Some(field_names) = struct_ctor_fields(e, self.constructors) else {
+            return;
+        };
         let ExprKind::Call { callee, args } = std::mem::replace(&mut e.kind, ExprKind::Error)
         else {
             return;
@@ -56,16 +288,17 @@ impl gossamer_ast::VisitorMut for TupleCtorRewriter<'_> {
         };
         let fields = args
             .into_iter()
-            .enumerate()
-            .map(|(i, a)| StructExprField {
-                name: gossamer_ast::Ident::new(i.to_string()),
-                value: Some(a),
+            .zip(field_names)
+            .map(|(value, name)| StructExprField {
+                name: gossamer_ast::Ident::new(name),
+                value: Some(value),
             })
             .collect();
         e.kind = ExprKind::Struct {
             path,
             fields,
             base: None,
+            syntax: gossamer_ast::expr::StructExprSyntax::Parenthesized,
         };
     }
 
@@ -114,11 +347,13 @@ pub fn parse_with_autoderive(source: &str, file: FileId) -> (SourceFile, Vec<Par
     // statements into one (or report a conflict with an explicit `fn main`)
     // before the rewrites below, so the synthesized body receives the same
     // serde-turbofish and synthetic-use treatment as any function body. This
-    // is the single compile/analysis parse entry - every codegen tier and the
-    // LSP reach the implicit main through here. The REPL and `gos fmt`/`doc`/
-    // `lint` use the raw `parse_source_file` and are unaffected.
+    // is the single compile/analysis parse entry - every codegen tier, the
+    // REPL compiler path, and the LSP reach the implicit main through here.
+    // Source-preserving `gos fmt`/`doc`/`lint` paths use raw
+    // `parse_source_file` and are unaffected.
     diags.extend(crate::entry_main::synthesize_entry_main(&mut sf));
     rewrite_tuple_struct_ctors(&mut sf);
+    rewrite_open_range_take(&mut sf);
     infer_serde_turbofish(&mut sf);
     desugar_sort_by_key(&mut sf);
     // Runs on the un-mangled AST: `rewrite_serde_generic_calls` below turns a
@@ -131,6 +366,12 @@ pub fn parse_with_autoderive(source: &str, file: FileId) -> (SourceFile, Vec<Par
     rewrite_type_info_calls(&mut sf);
     rewrite_json_set_mutators(&mut sf);
     rewrite_stdlib_struct_surface(&mut sf);
+    // `rewrite_stdlib_struct_surface` turns public qualified wrapper names
+    // such as `sql::Rows` and `encoding::pem::Block` into the injected local
+    // structs. Run constructor conversion again now that those paths are
+    // local, so their canonical `Type(args...)` spelling becomes the field
+    // aggregate expected by every lowering tier.
+    rewrite_tuple_struct_ctors(&mut sf);
     inject_synthetic_uses(&mut sf, file);
     (sf, diags)
 }
@@ -570,4 +811,3 @@ pub fn rewrite_json_set_mutators(sf: &mut SourceFile) {
     }
     Rewriter.visit_source_file(sf);
 }
-

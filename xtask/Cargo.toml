@@ -19,6 +19,8 @@ workspace = true
 [dependencies]
 anyhow = { workspace = true }
 gossamer-lint = { workspace = true }
+gossamer-lex = { workspace = true }
+gossamer-parse = { workspace = true }
 gossamer-std = { workspace = true }
 gossamer-types = { workspace = true }
 serde = { workspace = true }

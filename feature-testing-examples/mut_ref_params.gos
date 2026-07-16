@@ -63,7 +63,7 @@ fn main() {
     swap_ends(&mut e)
     println!("swap: {} {} {}", e[0], e[1], e[2])
 
-    let mut h = Holder { data: [0, 0] }
+    let mut h = Holder([0, 0])
     set_first(&mut h.data)
     println!("field: {}", h.data[0])
 

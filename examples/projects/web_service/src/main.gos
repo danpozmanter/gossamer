@@ -134,7 +134,7 @@ mod tests {
 }
 
 fn main() -> Result<(), http::Error> {
-    let app = App { }
+    let app = App()
     println!("listening on 0.0.0.0:8080")
     println!("try: curl http://localhost:8080/health")
     println!("     curl http://localhost:8080/users")

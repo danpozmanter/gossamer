@@ -217,8 +217,8 @@ fn main() { println!("{}", sum_to(10)) }
 struct Point { x: i64, y: i64 }
 fn dot(p: Point, q: Point) -> i64 { p.x * q.x + p.y * q.y }
 fn main() {
-    let p = Point { x: 2, y: 3 }
-    let q = Point { x: 4, y: 5 }
+    let p = Point(2, 3)
+    let q = Point(4, 5)
     println!("{}", dot(p, q))
 }
 "#,
@@ -413,7 +413,7 @@ impl Counter {
     fn step(&self) -> i64 { self.n + 1 }
 }
 fn main() {
-    let c = Counter { n: 41 }
+    let c = Counter(41)
     println!("{}", c.step())
 }
 "#,

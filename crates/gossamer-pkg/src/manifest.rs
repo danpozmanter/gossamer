@@ -71,6 +71,9 @@ pub struct ProjectTable {
     pub id: ProjectId,
     /// `project.version`.
     pub version: Version,
+    /// Language edition selecting source-compatible semantics. Projects that
+    /// omit this field retain the current 2026 eager-iterator behavior.
+    pub edition: Edition,
     /// `project.authors`. Empty when omitted.
     pub authors: Vec<String>,
     /// `project.license`. Empty string when omitted.
@@ -83,6 +86,35 @@ pub struct ProjectTable {
     /// manifest directory. Overrides convention-based entry resolution and
     /// designates the file that may carry top-level statements.
     pub entry: Option<String>,
+}
+
+/// Source-language edition accepted by this toolchain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Edition {
+    /// Current edition with eager public iterator helpers.
+    E2026,
+    /// Staged edition that may opt into iterator-returning signatures.
+    E2027,
+}
+
+impl Edition {
+    /// Parses the manifest spelling for a supported edition.
+    fn parse(value: &str) -> Result<Self, ManifestError> {
+        match value {
+            "2026" => Ok(Self::E2026),
+            "2027" => Ok(Self::E2027),
+            _ => Err(ManifestError::UnsupportedEdition(value.to_string())),
+        }
+    }
+
+    /// Canonical manifest spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::E2026 => "2026",
+            Self::E2027 => "2027",
+        }
+    }
 }
 
 /// One entry in `[dependencies]`.
@@ -224,6 +256,9 @@ pub enum ManifestError {
     /// The version literal failed validation.
     #[error("invalid version: {0}")]
     BadVersion(#[from] VersionError),
+    /// The manifest requested a language edition this compiler cannot parse.
+    #[error("unsupported language edition {0:?}; supported editions are \"2026\" and \"2027\"")]
+    UnsupportedEdition(String),
     /// An inline dependency table mixed incompatible keys.
     #[error("ambiguous dependency for {0}: pick at most one of git/path/tarball")]
     AmbiguousDependency(String),
@@ -312,6 +347,9 @@ impl Manifest {
             "project.version",
             "project.version",
         )?)?;
+        let edition = optional_toml_str(project, "edition", "project.edition")?
+            .as_deref()
+            .map_or(Ok(Edition::E2026), Edition::parse)?;
         let authors =
             optional_toml_string_array(project, "authors", "project.authors")?.unwrap_or_default();
         let license = optional_toml_str(project, "license", "project.license")?.unwrap_or_default();
@@ -387,6 +425,7 @@ impl Manifest {
             project: ProjectTable {
                 id,
                 version,
+                edition,
                 authors,
                 license,
                 output,
@@ -439,6 +478,10 @@ impl Manifest {
         out.push_str("[project]\n");
         out.push_str(&format!("id = \"{}\"\n", self.project.id));
         out.push_str(&format!("version = \"{}\"\n", self.project.version));
+        out.push_str(&format!(
+            "edition = \"{}\"\n",
+            self.project.edition.as_str()
+        ));
         if !self.project.authors.is_empty() {
             out.push_str("authors = [");
             for (i, a) in self.project.authors.iter().enumerate() {
@@ -951,5 +994,33 @@ mod entry_field_tests {
         let src = "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\n";
         let m = Manifest::parse(src).unwrap();
         assert_eq!(m.project.entry, None);
+    }
+}
+
+#[cfg(test)]
+mod edition_tests {
+    use super::*;
+
+    #[test]
+    fn edition_defaults_to_eager_2026_and_round_trips_2027() {
+        let legacy =
+            Manifest::parse("[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\n").unwrap();
+        assert_eq!(legacy.project.edition, Edition::E2026);
+
+        let staged = Manifest::parse(
+            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
+        )
+        .unwrap();
+        assert_eq!(staged.project.edition, Edition::E2027);
+        assert_eq!(Manifest::parse(&staged.render()).unwrap(), staged);
+    }
+
+    #[test]
+    fn unknown_edition_is_rejected() {
+        let error = Manifest::parse(
+            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\nedition = \"2028\"\n",
+        )
+        .unwrap_err();
+        assert!(matches!(error, ManifestError::UnsupportedEdition(value) if value == "2028"));
     }
 }

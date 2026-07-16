@@ -323,13 +323,7 @@ impl Parser<'_> {
             };
         }
         let body = self.parse_struct_body();
-        let where_clause = if matches!(&body, StructBody::Tuple(_) | StructBody::Unit) {
-            let clause = self.parse_where_clause();
-            self.eat_punct(Punct::Semi);
-            clause
-        } else {
-            self.parse_where_clause()
-        };
+        let where_clause = self.parse_where_clause();
         StructDecl {
             name,
             generics,
@@ -339,11 +333,7 @@ impl Parser<'_> {
     }
 
     fn parse_struct_body_terminated(&mut self) -> StructBody {
-        let body = self.parse_struct_body();
-        if matches!(&body, StructBody::Tuple(_) | StructBody::Unit) {
-            self.eat_punct(Punct::Semi);
-        }
-        body
+        self.parse_struct_body()
     }
 
     fn parse_struct_body(&mut self) -> StructBody {
@@ -372,7 +362,16 @@ impl Parser<'_> {
             self.expect_punct(Punct::RBrace, "to close struct body");
             return StructBody::Named(fields);
         }
-        if self.eat_punct(Punct::LParen) {
+        if self.at_punct(Punct::LParen) {
+            let span = self.peek_span();
+            self.record(
+                ParseError::Unexpected {
+                    expected: "`{ field: Type }` after a struct name".to_string(),
+                    found: self.peek_text(),
+                },
+                span,
+            );
+            self.bump();
             let mut fields = Vec::new();
             while !self.at_punct(Punct::RParen) && !self.at_eof() {
                 let attrs = self.parse_attrs();
@@ -394,6 +393,14 @@ impl Parser<'_> {
             self.expect_punct(Punct::RParen, "to close tuple struct body");
             return StructBody::Tuple(fields);
         }
+        let span = self.peek_span();
+        self.record(
+            ParseError::Unexpected {
+                expected: "`{ field: Type }` after a struct name".to_string(),
+                found: self.peek_text(),
+            },
+            span,
+        );
         StructBody::Unit
     }
 

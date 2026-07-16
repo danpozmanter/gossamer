@@ -16,14 +16,14 @@ use std::time::Instant;
 use gossamer_hir::lower_source_file;
 use gossamer_interp::Vm;
 use gossamer_lex::SourceMap;
-use gossamer_parse::parse_source_file;
+use gossamer_parse::autoderive::parse_with_autoderive;
 use gossamer_resolve::resolve_source_file;
 use gossamer_types::{TyCtxt, typecheck_source_file};
 
 fn compile(src: &str) -> (gossamer_hir::HirProgram, TyCtxt) {
     let mut map = SourceMap::new();
     let file = map.add_file("workload.gos", src.to_string());
-    let (sf, _) = parse_source_file(src, file);
+    let (sf, _) = parse_with_autoderive(src, file);
     let (res, _) = resolve_source_file(&sf);
     let mut tcx = TyCtxt::new();
     let (tbl, _) = typecheck_source_file(&sf, &res, &mut tcx);
@@ -108,7 +108,7 @@ fn main() -> i64 {
 const STRUCT_FIELD_SRC: &str = r"
 struct P { x: i64, y: i64 }
 fn main() -> i64 {
-    let mut p = P { x: 0, y: 0 }
+    let mut p = P(0, 0)
     let mut i: i64 = 0
     while i < 500_000 {
         p.x = p.x + i

@@ -15,8 +15,12 @@
 //!
 //! Output format:
 //! ```text
-//! benchmark::add_two_ints          ... 23 ns/op
-//! benchmark::create_thousand_keys  ... 1240 ns/op
+//! benchmark::add_two_ints          ... 23 ns/op (tier-ups 1, compiles 1,
+//!                                        compile 42 us, native-code 768 B,
+//!                                        peak-rss 123456 B, vm-bypassed 2048,
+//!                                        allocs 8, alloc-bytes 256 B,
+//!                                        arc +5/-5, boundary-copies 2 (64 B))
+//! benchmark::create_thousand_keys  ... 1240 ns/op (...)
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -68,6 +72,10 @@ struct BenchRecord {
     ns_per_op: u128,
     /// Total iterations the harness settled on after calibration.
     iterations: u64,
+    /// Deferred-JIT activity observed while calibrating and timing this target.
+    jit_metrics: gossamer_interp::JitMetrics,
+    /// Runtime allocation, ARC, and VM/JIT boundary-copy work for this target.
+    runtime_metrics: gossamer_runtime::c_abi::ledger::BenchmarkCounters,
 }
 
 /// Entry point for `gos bench`. Walks `opts.path`, runs every
@@ -120,11 +128,27 @@ pub(crate) fn run_with_opts(opts: BenchOpts) -> Result<()> {
         .unwrap_or(1);
     for record in &records {
         println!(
-            "{label:<lw$} ... {ns:>nw$} ns/op",
+            "{label:<lw$} ... {ns:>nw$} ns/op (tier-ups {tier_ups}, compiles {compiles}, \
+             compile {compile_us} us, native-code {native_code} B, peak-rss {peak_rss} B, \
+             vm-bypassed {vm_bypassed}, allocs {allocations}, alloc-bytes {allocation_bytes} B, \
+             arc +{arc_retains}/-{arc_releases}, boundary-copies {boundary_copies} \
+             ({boundary_copy_bytes} B))",
             label = record.label,
             lw = label_width,
             ns = record.ns_per_op,
             nw = ns_width,
+            tier_ups = record.jit_metrics.tier_up_requests,
+            compiles = record.jit_metrics.compile_attempts,
+            compile_us = record.jit_metrics.total_compile_time_us,
+            native_code = record.jit_metrics.emitted_code_bytes,
+            peak_rss = record.jit_metrics.peak_observed_rss_bytes,
+            vm_bypassed = record.jit_metrics.saved_vm_instructions,
+            allocations = record.runtime_metrics.allocations,
+            allocation_bytes = record.runtime_metrics.allocation_bytes,
+            arc_retains = record.runtime_metrics.arc_retains,
+            arc_releases = record.runtime_metrics.arc_releases,
+            boundary_copies = record.runtime_metrics.boundary_copies,
+            boundary_copy_bytes = record.runtime_metrics.boundary_copy_bytes,
         );
     }
     eprintln!(
@@ -196,6 +220,7 @@ fn run_one_inner(target: &BenchTarget) -> Result<BenchRecord> {
     vm.load(&program, tcx, true)
         .map_err(|e| anyhow!("bench {} load failed: {e}", target.name))?;
 
+    gossamer_runtime::c_abi::ledger::begin_benchmark_counters();
     let iterations = auto_tune_iterations(&vm, &target.name)?;
     let started = Instant::now();
     for _ in 0..iterations {
@@ -203,6 +228,7 @@ fn run_one_inner(target: &BenchTarget) -> Result<BenchRecord> {
             .map_err(|e| anyhow!("bench {} failed: {e}", target.name))?;
     }
     let elapsed = started.elapsed();
+    let runtime_metrics = gossamer_runtime::c_abi::ledger::finish_benchmark_counters();
 
     let total_nanos = elapsed.as_nanos();
     let ns_per_op = if iterations == 0 {
@@ -223,6 +249,8 @@ fn run_one_inner(target: &BenchTarget) -> Result<BenchRecord> {
         label,
         ns_per_op,
         iterations,
+        jit_metrics: vm.jit_metrics(),
+        runtime_metrics,
     })
 }
 

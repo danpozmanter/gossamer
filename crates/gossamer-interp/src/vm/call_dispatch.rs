@@ -536,12 +536,9 @@ impl Vm {
                 let fields = args
                     .into_iter()
                     .enumerate()
-                    .map(|(idx, value)| {
-                        let name = crate::value::intern_type_name(&idx.to_string());
-                        (name, value)
-                    })
+                    .map(|(idx, value)| (positional_field_name(idx), value))
                     .collect();
-                Ok(Value::struct_(inner.name.as_str(), fields))
+                Ok(Value::struct_with_tag(inner.name.clone(), fields))
             }
             other => Err(RuntimeError::Type(format!(
                 "value of kind `{other}` is not callable"
@@ -572,5 +569,43 @@ impl Vm {
         full.extend(closure.capture_values.iter().cloned());
         full.extend(args);
         self.apply(Global::Fn(Arc::clone(chunk)), full)
+    }
+}
+
+/// Returns the canonical positional field name without re-interning the hot
+/// small arities used by ordinary source constructors.
+fn positional_field_name(index: usize) -> &'static str {
+    const HOT_ARITIES: usize = 16;
+    static NAMES: std::sync::LazyLock<[&'static str; HOT_ARITIES]> =
+        std::sync::LazyLock::new(|| {
+            std::array::from_fn(|index| crate::value::intern_type_name(&index.to_string()))
+        });
+    NAMES
+        .get(index)
+        .copied()
+        .unwrap_or_else(|| crate::value::intern_type_name(&index.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn positional_constructor_preserves_layout_with_cached_names_and_tag() {
+        let vm = Vm::new();
+        let sentinel = Value::struct_("Pair", Vec::new());
+        let result = vm
+            .dispatch_call(&sentinel, vec![Value::Int(3), Value::Int(5)])
+            .expect("construct Pair");
+
+        let (Value::Struct(sentinel), Value::Struct(result)) = (&sentinel, result) else {
+            panic!("expected struct constructor result");
+        };
+        assert_eq!(result.name, sentinel.name);
+        assert_eq!(result.fields.len(), 2);
+        assert_eq!(result.fields[0].0, positional_field_name(0));
+        assert!(matches!(result.fields[0].1, Value::Int(3)));
+        assert_eq!(result.fields[1].0, positional_field_name(1));
+        assert!(matches!(result.fields[1].1, Value::Int(5)));
     }
 }

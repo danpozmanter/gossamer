@@ -38,6 +38,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 
+use crate::loaders::profile_rss_stage;
 use crate::paths::{
     default_unit_name, platform_exe_name, read_entry_source, resolve_entry_arg, resolve_output_path,
 };
@@ -184,8 +185,10 @@ fn run(
     dynamic: bool,
     out_dir: Option<&Path>,
 ) -> Result<()> {
+    warn_if_pgo_profile_is_stale(file);
     let source = read_entry_source(file)?;
-    let (sf, resolutions, table, tcx) = validate_source(file, &source)?;
+    let (sf, resolutions, table, tcx) = validate_source(file, source)?;
+    profile_rss_stage("build_frontend_released");
 
     // Resolve `--target`. `None` or the host triple takes the host
     // build path. A registered, Linux-target triple cross-builds
@@ -233,16 +236,8 @@ fn run(
         debug_info,
         dynamic,
     };
-    let outcome = try_native_build(
-        &source,
-        &unit_name,
-        file,
-        &out_path,
-        opts,
-        cross_target,
-        checked,
-    )
-    .map_err(|err| anyhow!("build: {}", err.user_message()))?;
+    let outcome = try_native_build(&unit_name, file, &out_path, opts, cross_target, checked)
+        .map_err(|err| anyhow!("build: {}", err.user_message()))?;
     println!(
         "build: {bytes}B native executable at {path} ({note})",
         bytes = outcome.size,
@@ -260,7 +255,7 @@ fn run(
 /// artifacts.
 fn validate_source(
     file: &Path,
-    source: &str,
+    source: String,
 ) -> Result<(
     gossamer_ast::SourceFile,
     gossamer_resolve::Resolutions,
@@ -268,12 +263,16 @@ fn validate_source(
     gossamer_types::TyCtxt,
 )> {
     // Compile-time codegen pass for from_json/to_json (and friends).
-    let augmented = gossamer_parse::autoderive::augment_source(source);
+    let augmented = gossamer_parse::autoderive::augment_source(&source);
+    // The augmented source supersedes the file contents for every subsequent
+    // frontend stage. Release the original before parsing so large generated
+    // files do not overlap the resolver, type table, and backend artifacts.
+    drop(source);
     // Comptime fold: evaluate `comptime` regions and splice in their
     // result literals so the native backend compiles a constant.
     let augmented = crate::comptime_fold::fold_comptime(&augmented, &file.to_string_lossy())?;
     let mut map = gossamer_lex::SourceMap::new();
-    let file_id = map.add_file(file.to_string_lossy().into_owned(), augmented.clone());
+    let file_id = map.add_file(file.to_string_lossy().into_owned(), augmented);
     let render_opts = gossamer_diagnostics::RenderOptions {
         colour: crate::paths::stderr_supports_colour(),
     };
@@ -282,7 +281,11 @@ fn validate_source(
     // otherwise compile to a binary that segfaults on the unmatched arm)
     // and the canonical-`std`-path check (GR0005). Anything the gate
     // rejects must never reach codegen.
-    let outcome = gossamer_driver::check_frontend(&augmented, file_id);
+    let outcome = gossamer_driver::check_frontend_with_edition(
+        map.source(file_id),
+        file_id,
+        crate::paths::project_edition(),
+    );
     if !outcome.diagnostics.is_empty() {
         for diag in &outcome.diagnostics {
             eprintln!("{}", gossamer_diagnostics::render(diag, &map, render_opts));
@@ -292,6 +295,7 @@ fn validate_source(
             outcome.diagnostics.len()
         ));
     }
+    profile_rss_stage("build_frontend_checked");
     // Drop the source map before backend lowering so peak RSS reflects
     // only the live frontend artifacts.
     drop(map);
@@ -582,7 +586,6 @@ fn locate_host_lld() -> std::result::Result<(PathBuf, &'static [&'static str]), 
 }
 
 fn try_native_build(
-    source: &str,
     unit_name: &str,
     input_path: &PathBuf,
     out_path: &PathBuf,
@@ -596,7 +599,8 @@ fn try_native_build(
     fs::create_dir_all(&tmp_dir)
         .map_err(|err| NativeBuildError::Io(anyhow!("creating {}: {err}", tmp_dir.display())))?;
     let (object_paths, object_triple) =
-        emit_native_objects(source, unit_name, &tmp_dir, opts.release, checked)?;
+        emit_native_objects(unit_name, &tmp_dir, opts.release, checked)?;
+    profile_rss_stage("build_backend_emitted");
     // Static-musl is chosen for a cross musl target (musl links
     // statically by construction) or for a host release that opted in.
     let static_musl = lt.env == TargetEnv::Musl || opts.want_static_musl();
@@ -637,8 +641,8 @@ fn try_native_build(
     // in `libclang_rt.profile-x86_64.a`; without it the link fails
     // with undefined reference. We locate the archive next to the
     // LLVM toolchain and splice it into the link as an extra archive.
-    let pgo_collect = std::env::var("GOS_PGO_COLLECT").ok();
-    if pgo_collect.is_some() && opts.release {
+    let pgo = pgo_link_config();
+    if pgo.collect_path.is_some() && opts.release {
         if let Some(proflib) = find_clang_rt_profile() {
             extra_archives.push(proflib);
         }
@@ -683,14 +687,8 @@ fn try_native_build(
     }
     let _ = input_path;
     link_result.map(|()| {
-        if let Some(profraw) = &pgo_collect {
-            eprintln!(
-                "pgo: instrumented binary at {path}",
-                path = out_path.display()
-            );
-            eprintln!("pgo: run it, then:");
-            eprintln!("      llvm-profdata merge -output=default.profdata {profraw}");
-            eprintln!("      GOS_PGO_PROFILE=default.profdata gos build --release [PATH]");
+        if let Some(profile_path) = pgo.collect_path.as_deref() {
+            print_pgo_collect_instructions(out_path, profile_path);
         }
         NativeBuildOutcome {
             size: fs::metadata(out_path).map_or(0, |m| m.len()),
@@ -698,9 +696,9 @@ fn try_native_build(
                 "target {triple}{tag}{pgo}",
                 triple = object_triple.as_deref().unwrap_or("unknown"),
                 tag = if static_musl { ", static-musl" } else { "" },
-                pgo = if pgo_collect.is_some() {
+                pgo = if pgo.collect_path.is_some() {
                     ", pgo-collect"
-                } else if std::env::var("GOS_PGO_PROFILE").is_ok() {
+                } else if pgo.profile {
                     ", pgo-guided"
                 } else {
                     ""
@@ -708,6 +706,67 @@ fn try_native_build(
             ),
         }
     })
+}
+
+struct PgoLinkConfig {
+    collect_path: Option<PathBuf>,
+    profile: bool,
+}
+
+fn pgo_link_config() -> PgoLinkConfig {
+    let mode = gossamer_codegen_llvm::pgo_mode();
+    match mode.as_ref() {
+        Some(gossamer_codegen_llvm::PgoMode::Collect(path)) => PgoLinkConfig {
+            collect_path: Some(path.clone()),
+            profile: false,
+        },
+        Some(gossamer_codegen_llvm::PgoMode::Profile(_)) => PgoLinkConfig {
+            collect_path: None,
+            profile: true,
+        },
+        None => PgoLinkConfig {
+            collect_path: std::env::var_os("GOS_PGO_COLLECT").map(PathBuf::from),
+            profile: std::env::var_os("GOS_PGO_PROFILE").is_some(),
+        },
+    }
+}
+
+fn print_pgo_collect_instructions(binary: &Path, profile_path: &Path) {
+    eprintln!("pgo: instrumented binary at {}", binary.display());
+    eprintln!("pgo: run it, then:");
+    eprintln!(
+        "      llvm-profdata merge -output=default.profdata {}",
+        profile_path.display()
+    );
+    eprintln!("      gos build --release --pgo-profile default.profdata [PATH]");
+}
+
+fn warn_if_pgo_profile_is_stale(source: &Path) {
+    let Some(gossamer_codegen_llvm::PgoMode::Profile(profile)) = gossamer_codegen_llvm::pgo_mode()
+    else {
+        return;
+    };
+    let (Ok(profile_meta), Ok(source_meta)) = (fs::metadata(&profile), fs::metadata(source)) else {
+        return;
+    };
+    let (Ok(profile_time), Ok(source_time)) = (profile_meta.modified(), source_meta.modified())
+    else {
+        return;
+    };
+    if pgo_profile_is_stale(profile_time, source_time) {
+        eprintln!(
+            "pgo: warning: profile {} predates source {}; rebuild it or verify it is intentional",
+            profile.display(),
+            source.display()
+        );
+    }
+}
+
+fn pgo_profile_is_stale(
+    profile_time: std::time::SystemTime,
+    source_time: std::time::SystemTime,
+) -> bool {
+    profile_time < source_time
 }
 
 /// Locates `libclang_rt.profile-*.a` alongside the active LLVM
@@ -913,6 +972,9 @@ fn link_posix(
         std::env::var("CC").unwrap_or_else(|_| "cc".to_string())
     };
     let mut cmd = std::process::Command::new(&cc);
+    if lt.os == TargetOs::MacOs {
+        configure_macos_link_command(&mut cmd);
+    }
     // Prefer a fast linker for a native host link only; a cross gcc
     // driver selects its own target linker, so mold/lld here would
     // target the host.
@@ -1009,6 +1071,19 @@ fn link_posix(
         ))),
         Err(err) => Err(NativeBuildError::LinkerMissing(format!("{cc}: {err}"))),
     }
+}
+
+fn configure_macos_link_command(command: &mut std::process::Command) {
+    let deployment_target = gossamer_driver::macos_deployment::effective_deployment_target();
+    configure_macos_link_command_with_target(command, &deployment_target);
+}
+
+fn configure_macos_link_command_with_target(
+    command: &mut std::process::Command,
+    deployment_target: &str,
+) {
+    gossamer_driver::macos_deployment::set_command_deployment_target(command, deployment_target);
+    command.arg(format!("-mmacosx-version-min={deployment_target}"));
 }
 
 /// OS-crossing gnu-dynamic link (a macOS / Windows host targeting
@@ -1293,11 +1368,10 @@ fn locate_rust_lld() -> std::result::Result<PathBuf, NativeBuildError> {
     Ok(PathBuf::from("rust-lld.exe"))
 }
 
-/// Lowers `source` into one or two object files under `tmp_dir`,
+/// Lowers the checked frontend into one or two object files under `tmp_dir`,
 /// picking the codegen tier from `release`. Returns the object
 /// paths plus the recorded target triple for the linker step.
 fn emit_native_objects(
-    _source: &str,
     unit_name: &str,
     tmp_dir: &Path,
     release: bool,
@@ -1373,10 +1447,42 @@ fn set_executable(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn pgo_profile_staleness_uses_strict_timestamp_ordering() {
+        let older = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1);
+        let newer = std::time::UNIX_EPOCH + std::time::Duration::from_secs(2);
+        assert!(super::pgo_profile_is_stale(older, newer));
+        assert!(!super::pgo_profile_is_stale(newer, older));
+        assert!(!super::pgo_profile_is_stale(older, older));
+    }
+
+    #[test]
     fn render_command_joins_program_and_args() {
         let mut cmd = std::process::Command::new("cc");
         cmd.arg("a.o").arg("-o").arg("out").arg("-lpthread");
         assert_eq!(super::render_command(&cmd), "cc a.o -o out -lpthread");
+    }
+
+    #[test]
+    fn macos_link_command_uses_supported_deployment_target() {
+        let mut cmd = std::process::Command::new("cc");
+        super::configure_macos_link_command_with_target(
+            &mut cmd,
+            gossamer_driver::macos_deployment::DEFAULT_MACOSX_DEPLOYMENT_TARGET,
+        );
+
+        assert!(
+            cmd.get_args().any(|arg| arg == "-mmacosx-version-min=15.0"),
+            "link command missing macOS 15 deployment flag: {}",
+            super::render_command(&cmd)
+        );
+        let deployment_target = cmd
+            .get_envs()
+            .find(|(name, _)| {
+                *name == gossamer_driver::macos_deployment::MACOSX_DEPLOYMENT_TARGET_ENV
+            })
+            .and_then(|(_, value)| value)
+            .expect("link command deployment target environment");
+        assert_eq!(deployment_target, "15.0");
     }
 
     #[test]

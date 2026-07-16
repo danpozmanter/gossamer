@@ -46,6 +46,24 @@ pub enum ParkReason {
     Timer,
 }
 
+/// Snapshot of goroutines currently parked by wait category.
+///
+/// The cooperative wasm runtime cannot park goroutines, so every field is
+/// always zero. The type preserves API parity with the native scheduler.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ParkedReasonCounts {
+    /// Parks with no more specific category.
+    pub other: usize,
+    /// Goroutines waiting on channels.
+    pub chan: usize,
+    /// Goroutines waiting on synchronization primitives.
+    pub sync: usize,
+    /// Goroutines waiting on I/O.
+    pub io: usize,
+    /// Goroutines waiting on timers.
+    pub timer: usize,
+}
+
 /// Scheduler counters, mirroring the native [`super::multi::MultiStats`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MultiStats {
@@ -168,5 +186,17 @@ impl MultiScheduler {
     #[must_use]
     pub fn live_goroutines(&self) -> usize {
         0
+    }
+
+    /// Returns an empty snapshot because wasm execution never parks a task.
+    #[must_use]
+    pub const fn parked_reason_counts(&self) -> ParkedReasonCounts {
+        ParkedReasonCounts {
+            other: 0,
+            chan: 0,
+            sync: 0,
+            io: 0,
+            timer: 0,
+        }
     }
 }

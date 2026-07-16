@@ -28,9 +28,12 @@ The runtime establishes synchronization for these operations:
   acquire the lock.
 - `WaitGroup::done` synchronizes with a `wait` that observes the count
   reach zero.
+- `Once::call_once` publishes the completed initialization body to every
+  caller that returns from the same `Once`.
 - Atomic operations synchronize according to the operation's documented
-  ordering. Current stdlib atomics use conservative acquire/release or
-  stronger runtime ordering for their exposed methods.
+  ordering. Sequentially consistent operations and release-store/acquire-load
+  pairs establish detector-visible edges. Relaxed operations are atomic but do
+  not establish an ordering edge.
 
 ## Channels
 

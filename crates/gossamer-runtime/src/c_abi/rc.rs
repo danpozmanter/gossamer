@@ -1852,6 +1852,7 @@ pub unsafe extern "C" fn gos_rt_rc_retain(payload: *mut u8) {
     if payload.is_null() {
         return;
     }
+    crate::c_abi::ledger::benchmark_arc_retain();
     if unsafe { crate::c_abi::string::is_gos_string(payload.cast()) } {
         unsafe { crate::c_abi::string::gos_rt_str_retain(payload.cast()) };
         return;
@@ -1878,6 +1879,9 @@ pub unsafe extern "C" fn gos_rt_rc_release(payload: *mut u8) {
     // never touch their memory from the accounting paths.
     if in_region_arena(payload) {
         return;
+    }
+    if !payload.is_null() {
+        crate::c_abi::ledger::benchmark_arc_release();
     }
     unsafe { rc_release_impl(payload) };
 }

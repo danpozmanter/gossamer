@@ -22,7 +22,7 @@ impl http::Handler for App {
 }
 
 fn serve() {
-    if let Err(e) = http::serve(&ADDR, App { }) {
+    if let Err(e) = http::serve(&ADDR, App()) {
         eprintln!("serve failed: {e}")
     }
 }

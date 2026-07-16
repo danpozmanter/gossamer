@@ -484,6 +484,56 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         signature: "fn parse_pem(pem: String) -> Result<x509::Certificate, errors::Error>",
     },
     StdFunctionSignature {
+        module_path: "std::crypto::x509",
+        name: "verify_server_certificate_with_crls",
+        signature: "fn verify_server_certificate_with_crls(chain_pem: String, roots_pem: String, hostname: String, crl_pem: String) -> Result<(), errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::image",
+        name: "new",
+        signature: "fn new(width: i64, height: i64) -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::image",
+        name: "filled",
+        signature: "fn filled(width: i64, height: i64, rgba: i64) -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::image",
+        name: "decode_base64",
+        signature: "fn decode_base64(data: String) -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::image",
+        name: "width",
+        signature: "fn width(image: i64) -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::image",
+        name: "height",
+        signature: "fn height(image: i64) -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::image",
+        name: "pixel",
+        signature: "fn pixel(image: i64, x: i64, y: i64) -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::image",
+        name: "set_pixel",
+        signature: "fn set_pixel(image: i64, x: i64, y: i64, rgba: i64) -> bool",
+    },
+    StdFunctionSignature {
+        module_path: "std::image",
+        name: "encode_png_base64",
+        signature: "fn encode_png_base64(image: i64) -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::image",
+        name: "encode_jpeg_base64",
+        signature: "fn encode_jpeg_base64(image: i64, quality: i64) -> String",
+    },
+    StdFunctionSignature {
         module_path: "std::database::sql",
         name: "drivers",
         signature: "fn drivers() -> Vec<String>",
@@ -952,6 +1002,16 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         module_path: "std::fs",
         name: "create_dir_all",
         signature: "fn create_dir_all(path: String) -> Result<(), io::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::fs",
+        name: "temp_dir",
+        signature: "fn temp_dir(prefix: String) -> Result<String, io::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::fs",
+        name: "temp_file",
+        signature: "fn temp_file(prefix: String) -> Result<(fs::File, String), io::Error>",
     },
     StdFunctionSignature {
         module_path: "std::fs",
@@ -2600,6 +2660,11 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::runtime",
+        name: "cycle_collection_supported",
+        signature: "fn cycle_collection_supported() -> bool",
+    },
+    StdFunctionSignature {
+        module_path: "std::runtime",
         name: "scheduler_stats_json",
         signature: "fn scheduler_stats_json() -> String",
     },
@@ -2907,6 +2972,11 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         module_path: "std::testing",
         name: "wait_for_scheduler_idle",
         signature: "fn wait_for_scheduler_idle(timeout_ms: i64) -> bool",
+    },
+    StdFunctionSignature {
+        module_path: "std::httptest",
+        name: "server",
+        signature: "fn server(status: i64, body: String) -> String",
     },
     StdFunctionSignature {
         module_path: "std::thread",

@@ -1,0 +1,7 @@
+fn main() {
+    let mut acc = 17
+    for i in 0..5_000_000 {
+        acc = (acc * 31 + i * 7) % 1_000_003
+    }
+    println!("{}", acc)
+}

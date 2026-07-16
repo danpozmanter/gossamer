@@ -23,7 +23,7 @@ fn main() {
     while i <= 5 {
         let (rtx, rrx) = channel()
         let op = if i < 5 { 1 } else { 0 }
-        tx.send(Cmd { op: op, x: i, reply: rtx })
+        tx.send(Cmd(op, i, rtx))
         match rrx.recv() {
             Some(v) => total += v,
             None => {}

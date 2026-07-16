@@ -213,14 +213,33 @@ impl Drop for StdoutGuard {
     }
 }
 
-pub fn raw_write_stdout(bytes: &[u8]) {
+/// Writes terminal bytes without pinning a scheduler worker.  The caller may
+/// hold [`STDOUT_LOCK`] while draining a coherent buffered sequence; the
+/// scheduler handoff parks that goroutine, rather than its worker, until the
+/// OS write completes.  Copying here is intentional: the caller's buffer can
+/// be reused immediately after the handoff starts.
+pub fn write_terminal(fd: i32, bytes: &[u8]) {
     if bytes.is_empty() {
         return;
     }
-    use std::io::Write;
-    let stdout = std::io::stdout();
-    let mut handle = stdout.lock();
-    let _ = handle.write_all(bytes);
+    let bytes = bytes.to_vec();
+    let label = match fd {
+        1 => "stdout-write",
+        2 => "stderr-write",
+        _ => return,
+    };
+    let _ = crate::sched_global::run_blocking(label, move || {
+        use std::io::Write;
+        match fd {
+            1 => std::io::stdout().lock().write_all(&bytes),
+            2 => std::io::stderr().lock().write_all(&bytes),
+            _ => unreachable!("terminal fd was validated before dispatch"),
+        }
+    });
+}
+
+pub fn raw_write_stdout(bytes: &[u8]) {
+    write_terminal(1, bytes);
 }
 
 /// Inner mechanic shared by `write_stdout` and any internal
@@ -393,9 +412,7 @@ pub unsafe extern "C" fn gos_rt_eprint_str(s: *const c_char) {
             unsafe { crate::c_abi::gos_str_key_bytes(s) }
         };
         unsafe { gos_rt_flush_stdout() };
-        use std::io::Write;
-        let stderr = std::io::stderr();
-        let _ = stderr.lock().write_all(bytes);
+        write_terminal(2, bytes);
     });
 }
 
@@ -404,8 +421,6 @@ pub unsafe extern "C" fn gos_rt_eprint_str(s: *const c_char) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_eprintln() {
     ffi_entry!((), {
-        use std::io::Write;
-        let stderr = std::io::stderr();
-        let _ = stderr.lock().write_all(b"\n");
+        write_terminal(2, b"\n");
     });
 }

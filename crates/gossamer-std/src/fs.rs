@@ -1,9 +1,12 @@
 //! Runtime support for `std::fs` - filesystem walking + mutation
 //! helpers on top of `std::fs`.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self as stdfs, Metadata};
-use std::io::{self, Read, Write};
+use std::io::{self, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc::{Receiver, Sender, channel};
 
@@ -14,8 +17,12 @@ use notify::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use parking_lot::Mutex;
+use parking_lot::RwLock;
 
 pub use std::fs::{File, OpenOptions};
+
+static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Directory entry surfaced by [`read_dir`].
 #[derive(Debug, Clone)]
@@ -30,6 +37,740 @@ pub struct DirEntry {
     pub is_file: bool,
     /// `true` when the entry is a symlink.
     pub is_symlink: bool,
+}
+
+/// Portable kind of a filesystem node.
+///
+/// Unlike [`Metadata`], this is available from every [`FileSystem`], including
+/// the in-memory and embedded implementations below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileKind {
+    /// A regular byte stream.
+    File,
+    /// A directory containing named entries.
+    Directory,
+    /// A symbolic link on an operating-system filesystem.
+    Symlink,
+    /// A filesystem-specific node that is neither a file nor a directory.
+    Other,
+}
+
+/// Metadata that can be supplied by any [`FileSystem`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileInfo {
+    /// Path used to obtain this information.
+    pub path: PathBuf,
+    /// Final path component, or an empty string for a filesystem root.
+    pub name: String,
+    /// Size in bytes. Directories report zero.
+    pub len: u64,
+    /// Node kind.
+    pub kind: FileKind,
+}
+
+impl FileInfo {
+    /// Returns whether this is a regular file.
+    #[must_use]
+    pub const fn is_file(&self) -> bool {
+        matches!(self.kind, FileKind::File)
+    }
+
+    /// Returns whether this is a directory.
+    #[must_use]
+    pub const fn is_dir(&self) -> bool {
+        matches!(self.kind, FileKind::Directory)
+    }
+}
+
+/// An opened read-only file supplied by a [`FileSystem`].
+///
+/// This intentionally has only the portable read and stat contract. Callers
+/// that need OS-specific handles can opt into `std::fs::File` separately.
+pub trait FsFile: Read + Send {
+    /// Metadata captured when this file was opened.
+    fn info(&self) -> io::Result<FileInfo>;
+}
+
+/// A small, object-safe `io/fs`-style filesystem interface.
+///
+/// Paths are relative to the filesystem root. [`TestFileSystem`],
+/// [`EmbeddedAssets`], and [`SubFileSystem`] reject absolute paths, `..`, and
+/// backslashes so an untrusted path cannot escape its virtual root. The OS
+/// implementation accepts normal platform paths for compatibility with the
+/// existing `std::fs` helpers.
+pub trait FileSystem: Send + Sync {
+    /// Opens a regular file for reading.
+    fn open(&self, path: &Path) -> io::Result<Box<dyn FsFile>>;
+
+    /// Returns direct children of a directory in deterministic name order.
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>>;
+
+    /// Returns portable metadata for a path.
+    fn metadata(&self, path: &Path) -> io::Result<FileInfo>;
+
+    /// Reads a complete file using [`Self::open`].
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        let mut file = self.open(path)?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    /// Reads a complete UTF-8 file using [`Self::open`].
+    fn read_to_string(&self, path: &Path) -> io::Result<String> {
+        let mut file = self.open(path)?;
+        let mut text = String::new();
+        file.read_to_string(&mut text)?;
+        Ok(text)
+    }
+}
+
+/// Filesystem implementation backed by the host operating system.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct OsFileSystem;
+
+impl FileSystem for OsFileSystem {
+    fn open(&self, path: &Path) -> io::Result<Box<dyn FsFile>> {
+        let file = stdfs::File::open(path)?;
+        let info = os_file_info(path, &file.metadata()?);
+        Ok(Box::new(OsFsFile { file, info }))
+    }
+
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        let mut out = Vec::new();
+        for raw in stdfs::read_dir(path)? {
+            let raw = raw?;
+            let ty = raw.file_type()?;
+            out.push(DirEntry {
+                path: raw.path(),
+                name: raw.file_name().to_string_lossy().into_owned(),
+                is_dir: ty.is_dir(),
+                is_file: ty.is_file(),
+                is_symlink: ty.is_symlink(),
+            });
+        }
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(out)
+    }
+
+    fn metadata(&self, path: &Path) -> io::Result<FileInfo> {
+        Ok(os_file_info(path, &stdfs::symlink_metadata(path)?))
+    }
+}
+
+struct OsFsFile {
+    file: File,
+    info: FileInfo,
+}
+
+impl Read for OsFsFile {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.file.read(buf)
+    }
+}
+
+impl FsFile for OsFsFile {
+    fn info(&self) -> io::Result<FileInfo> {
+        Ok(self.info.clone())
+    }
+}
+
+fn os_file_info(path: &Path, metadata: &Metadata) -> FileInfo {
+    let file_type = metadata.file_type();
+    let kind = if file_type.is_file() {
+        FileKind::File
+    } else if file_type.is_dir() {
+        FileKind::Directory
+    } else if file_type.is_symlink() {
+        FileKind::Symlink
+    } else {
+        FileKind::Other
+    };
+    FileInfo {
+        path: path.to_path_buf(),
+        name: path
+            .file_name()
+            .map_or_else(String::new, |name| name.to_string_lossy().into_owned()),
+        len: metadata.len(),
+        kind,
+    }
+}
+
+/// Deterministically walks every descendant of `root` in a portable
+/// filesystem. Directories are yielded before their children.
+pub fn walk<F>(fs: &dyn FileSystem, root: impl AsRef<Path>, mut visit: F) -> io::Result<()>
+where
+    F: FnMut(&DirEntry) -> io::Result<()>,
+{
+    fn descend<F>(fs: &dyn FileSystem, directory: &Path, visit: &mut F) -> io::Result<()>
+    where
+        F: FnMut(&DirEntry) -> io::Result<()>,
+    {
+        for entry in fs.read_dir(directory)? {
+            visit(&entry)?;
+            if entry.is_dir {
+                descend(fs, &entry.path, visit)?;
+            }
+        }
+        Ok(())
+    }
+    descend(fs, root.as_ref(), &mut visit)
+}
+
+/// Returns files below `root` whose root-relative paths match `pattern`.
+///
+/// `*` and `?` do not cross path separators; `**` does. Results are sorted.
+pub fn glob_fs(
+    fs: &dyn FileSystem,
+    root: impl AsRef<Path>,
+    pattern: &str,
+) -> io::Result<Vec<PathBuf>> {
+    let root = root.as_ref().to_path_buf();
+    let pattern = normalize_virtual_pattern(pattern)?;
+    let mut matches = Vec::new();
+    walk(fs, &root, |entry| {
+        if !entry.is_file {
+            return Ok(());
+        }
+        let relative = entry.path.strip_prefix(&root).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "filesystem returned a path outside root",
+            )
+        })?;
+        if glob_matches(&pattern, &relative.to_string_lossy()) {
+            matches.push(entry.path.clone());
+        }
+        Ok(())
+    })?;
+    matches.sort();
+    Ok(matches)
+}
+
+fn glob_matches(pattern: &str, path: &str) -> bool {
+    fn matches_at(pattern: &[u8], path: &[u8]) -> bool {
+        match pattern {
+            [] => path.is_empty(),
+            [b'*', b'*', b'/', rest @ ..] => {
+                matches_at(rest, path) || (!path.is_empty() && matches_at(pattern, &path[1..]))
+            }
+            [b'*', b'*', rest @ ..] => {
+                matches_at(rest, path) || (!path.is_empty() && matches_at(pattern, &path[1..]))
+            }
+            [b'*', rest @ ..] => {
+                matches_at(rest, path)
+                    || (!path.is_empty() && path[0] != b'/' && matches_at(pattern, &path[1..]))
+            }
+            [b'?', rest @ ..] => {
+                !path.is_empty() && path[0] != b'/' && matches_at(rest, &path[1..])
+            }
+            [byte, rest @ ..] => {
+                !path.is_empty() && *byte == path[0] && matches_at(rest, &path[1..])
+            }
+        }
+    }
+    matches_at(pattern.as_bytes(), path.as_bytes())
+}
+
+fn normalize_virtual_pattern(pattern: &str) -> io::Result<String> {
+    if pattern.is_empty()
+        || pattern.starts_with('/')
+        || pattern.contains('\\')
+        || pattern.split('/').any(|part| part == "..")
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "filesystem glob patterns must be non-empty relative paths without `..`",
+        ));
+    }
+    Ok(pattern.trim_start_matches("./").to_string())
+}
+
+fn normalize_virtual_path(path: &Path) -> io::Result<PathBuf> {
+    let raw = path.to_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "virtual filesystem paths must be valid UTF-8",
+        )
+    })?;
+    if raw.starts_with('/') || raw.contains('\\') || raw.contains('\0') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "virtual filesystem paths must be relative and slash-separated",
+        ));
+    }
+    let mut normalized = PathBuf::new();
+    for component in raw.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "virtual filesystem paths cannot contain `..`",
+                ));
+            }
+            name => normalized.push(name),
+        }
+    }
+    Ok(normalized)
+}
+
+fn file_info(path: PathBuf, len: u64, kind: FileKind) -> FileInfo {
+    FileInfo {
+        name: path
+            .file_name()
+            .map_or_else(String::new, |name| name.to_string_lossy().into_owned()),
+        path,
+        len,
+        kind,
+    }
+}
+
+struct MemoryFile {
+    cursor: Cursor<Vec<u8>>,
+    info: FileInfo,
+}
+
+impl MemoryFile {
+    fn new(bytes: Vec<u8>, info: FileInfo) -> Self {
+        Self {
+            cursor: Cursor::new(bytes),
+            info,
+        }
+    }
+}
+
+impl Read for MemoryFile {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.cursor.read(buf)
+    }
+}
+
+impl FsFile for MemoryFile {
+    fn info(&self) -> io::Result<FileInfo> {
+        Ok(self.info.clone())
+    }
+}
+
+#[derive(Default)]
+struct TestFileState {
+    files: BTreeMap<PathBuf, Vec<u8>>,
+    directories: BTreeSet<PathBuf>,
+}
+
+/// Thread-safe in-memory filesystem for deterministic unit and integration
+/// tests. It never reads or mutates host files.
+#[derive(Clone)]
+pub struct TestFileSystem {
+    state: Arc<RwLock<TestFileState>>,
+}
+
+impl Default for TestFileSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TestFileSystem {
+    /// Creates an empty filesystem containing only its root directory.
+    #[must_use]
+    pub fn new() -> Self {
+        let mut state = TestFileState::default();
+        state.directories.insert(PathBuf::new());
+        Self {
+            state: Arc::new(RwLock::new(state)),
+        }
+    }
+
+    /// Creates a filesystem from files, creating each parent directory.
+    pub fn from_files<I, P, B>(files: I) -> io::Result<Self>
+    where
+        I: IntoIterator<Item = (P, B)>,
+        P: AsRef<Path>,
+        B: AsRef<[u8]>,
+    {
+        let fs = Self::new();
+        for (path, bytes) in files {
+            fs.write(path, bytes)?;
+        }
+        Ok(fs)
+    }
+
+    /// Creates `path` and all missing parent directories.
+    pub fn create_dir_all(&self, path: impl AsRef<Path>) -> io::Result<()> {
+        let path = normalize_virtual_path(path.as_ref())?;
+        let mut state = self.state.write();
+        let mut current = PathBuf::new();
+        state.directories.insert(current.clone());
+        for component in path.components() {
+            current.push(component.as_os_str());
+            if state.files.contains_key(&current) {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "a file already exists where a directory was requested",
+                ));
+            }
+            state.directories.insert(current.clone());
+        }
+        Ok(())
+    }
+
+    /// Replaces a file's bytes, creating missing parent directories.
+    pub fn write(&self, path: impl AsRef<Path>, bytes: impl AsRef<[u8]>) -> io::Result<()> {
+        let path = normalize_virtual_path(path.as_ref())?;
+        if path.as_os_str().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "cannot write the filesystem root",
+            ));
+        }
+        let parent = path.parent().unwrap_or_else(|| Path::new(""));
+        self.create_dir_all(parent)?;
+        let mut state = self.state.write();
+        if state.directories.contains(&path) {
+            return Err(io::Error::new(
+                io::ErrorKind::IsADirectory,
+                "cannot replace a directory with a file",
+            ));
+        }
+        state.files.insert(path, bytes.as_ref().to_vec());
+        Ok(())
+    }
+}
+
+impl FileSystem for TestFileSystem {
+    fn open(&self, path: &Path) -> io::Result<Box<dyn FsFile>> {
+        let path = normalize_virtual_path(path)?;
+        let state = self.state.read();
+        let bytes = state.files.get(&path).cloned().ok_or_else(|| {
+            let kind = if state.directories.contains(&path) {
+                io::ErrorKind::IsADirectory
+            } else {
+                io::ErrorKind::NotFound
+            };
+            io::Error::new(kind, "file not found in test filesystem")
+        })?;
+        let info = file_info(path, bytes.len() as u64, FileKind::File);
+        Ok(Box::new(MemoryFile::new(bytes, info)))
+    }
+
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        let path = normalize_virtual_path(path)?;
+        let state = self.state.read();
+        if !state.directories.contains(&path) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                "directory not found in test filesystem",
+            ));
+        }
+        let mut entries = BTreeMap::<String, DirEntry>::new();
+        for directory in &state.directories {
+            if directory.parent() == Some(path.as_path()) && !directory.as_os_str().is_empty() {
+                let name = directory
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                entries.insert(
+                    name.clone(),
+                    DirEntry {
+                        path: directory.clone(),
+                        name,
+                        is_dir: true,
+                        is_file: false,
+                        is_symlink: false,
+                    },
+                );
+            }
+        }
+        for file in state.files.keys() {
+            if file.parent() == Some(path.as_path()) {
+                let name = file.file_name().unwrap().to_string_lossy().into_owned();
+                entries.insert(
+                    name.clone(),
+                    DirEntry {
+                        path: file.clone(),
+                        name,
+                        is_dir: false,
+                        is_file: true,
+                        is_symlink: false,
+                    },
+                );
+            }
+        }
+        Ok(entries.into_values().collect())
+    }
+
+    fn metadata(&self, path: &Path) -> io::Result<FileInfo> {
+        let path = normalize_virtual_path(path)?;
+        let state = self.state.read();
+        if let Some(bytes) = state.files.get(&path) {
+            return Ok(file_info(path, bytes.len() as u64, FileKind::File));
+        }
+        if state.directories.contains(&path) {
+            return Ok(file_info(path, 0, FileKind::Directory));
+        }
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "path not found in test filesystem",
+        ))
+    }
+}
+
+/// A compile-time embedded asset.
+#[derive(Debug, Clone, Copy)]
+pub struct EmbeddedAsset {
+    /// Slash-separated path inside the asset filesystem.
+    pub path: &'static str,
+    /// Bytes compiled into the executable.
+    pub bytes: &'static [u8],
+}
+
+impl EmbeddedAsset {
+    /// Creates one embedded asset. Prefer [`embed_assets!`] so the bytes are
+    /// included by the compiler and path dependencies are tracked.
+    #[must_use]
+    pub const fn new(path: &'static str, bytes: &'static [u8]) -> Self {
+        Self { path, bytes }
+    }
+}
+
+/// Read-only filesystem backed by bytes embedded in the executable.
+#[derive(Debug, Clone, Copy)]
+pub struct EmbeddedAssets {
+    entries: &'static [EmbeddedAsset],
+}
+
+impl EmbeddedAssets {
+    /// Creates an asset filesystem from statically embedded entries.
+    #[must_use]
+    pub const fn new(entries: &'static [EmbeddedAsset]) -> Self {
+        Self { entries }
+    }
+
+    /// Validates portable asset paths and rejects duplicate entries.
+    pub fn validate(&self) -> io::Result<()> {
+        let mut paths = BTreeSet::<PathBuf>::new();
+        for entry in self.entries {
+            let path = normalize_virtual_path(Path::new(entry.path))?;
+            let conflicts_with_file = paths.iter().any(|existing| {
+                existing == &path || existing.starts_with(&path) || path.starts_with(existing)
+            });
+            if path.as_os_str().is_empty() || conflicts_with_file {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "embedded asset paths must be unique non-root paths without file-directory conflicts",
+                ));
+            }
+            paths.insert(path);
+        }
+        Ok(())
+    }
+
+    /// Looks up an asset without copying its embedded bytes.
+    pub fn get(&self, path: impl AsRef<Path>) -> Option<&'static [u8]> {
+        let path = normalize_virtual_path(path.as_ref()).ok()?;
+        self.entries
+            .iter()
+            .find(|entry| Path::new(entry.path) == path)
+            .map(|entry| entry.bytes)
+    }
+
+    fn is_directory(&self, path: &Path) -> bool {
+        path.as_os_str().is_empty()
+            || self.entries.iter().any(|entry| {
+                Path::new(entry.path)
+                    .parent()
+                    .is_some_and(|parent| parent == path || parent.starts_with(path))
+            })
+    }
+}
+
+impl FileSystem for EmbeddedAssets {
+    fn open(&self, path: &Path) -> io::Result<Box<dyn FsFile>> {
+        self.validate()?;
+        let path = normalize_virtual_path(path)?;
+        let bytes = self.get(&path).ok_or_else(|| {
+            let kind = if self.is_directory(&path) {
+                io::ErrorKind::IsADirectory
+            } else {
+                io::ErrorKind::NotFound
+            };
+            io::Error::new(kind, "asset not found")
+        })?;
+        let info = file_info(path, bytes.len() as u64, FileKind::File);
+        Ok(Box::new(MemoryFile::new(bytes.to_vec(), info)))
+    }
+
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        self.validate()?;
+        let path = normalize_virtual_path(path)?;
+        if !self.is_directory(&path) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                "asset directory not found",
+            ));
+        }
+        let mut entries = BTreeMap::<String, DirEntry>::new();
+        for asset in self.entries {
+            let asset_path = Path::new(asset.path);
+            let Ok(relative) = asset_path.strip_prefix(&path) else {
+                continue;
+            };
+            let Some(first) = relative.components().next() else {
+                continue;
+            };
+            let child = path.join(first.as_os_str());
+            let name = first.as_os_str().to_string_lossy().into_owned();
+            let is_file = relative.components().count() == 1;
+            entries.entry(name.clone()).or_insert(DirEntry {
+                path: child,
+                name,
+                is_dir: !is_file,
+                is_file,
+                is_symlink: false,
+            });
+        }
+        Ok(entries.into_values().collect())
+    }
+
+    fn metadata(&self, path: &Path) -> io::Result<FileInfo> {
+        self.validate()?;
+        let path = normalize_virtual_path(path)?;
+        if let Some(bytes) = self.get(&path) {
+            return Ok(file_info(path, bytes.len() as u64, FileKind::File));
+        }
+        if self.is_directory(&path) {
+            return Ok(file_info(path, 0, FileKind::Directory));
+        }
+        Err(io::Error::new(io::ErrorKind::NotFound, "asset not found"))
+    }
+}
+
+/// A view rooted at a directory of another filesystem.
+#[derive(Debug, Clone)]
+pub struct SubFileSystem<F> {
+    inner: F,
+    root: PathBuf,
+}
+
+impl<F: FileSystem> SubFileSystem<F> {
+    /// Creates a filesystem view rooted at `root`, which must be a directory.
+    pub fn new(inner: F, root: impl AsRef<Path>) -> io::Result<Self> {
+        let root = normalize_virtual_path(root.as_ref())?;
+        if !inner.metadata(&root)?.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                "sub-filesystem root is not a directory",
+            ));
+        }
+        Ok(Self { inner, root })
+    }
+
+    fn resolve(&self, path: &Path) -> io::Result<PathBuf> {
+        Ok(self.root.join(normalize_virtual_path(path)?))
+    }
+
+    /// Returns the backing filesystem.
+    #[must_use]
+    pub const fn inner(&self) -> &F {
+        &self.inner
+    }
+}
+
+impl<F: FileSystem> FileSystem for SubFileSystem<F> {
+    fn open(&self, path: &Path) -> io::Result<Box<dyn FsFile>> {
+        Ok(Box::new(SubFsFile {
+            inner: self.inner.open(&self.resolve(path)?)?,
+            root: self.root.clone(),
+        }))
+    }
+
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        let mut entries = self.inner.read_dir(&self.resolve(path)?)?;
+        for entry in &mut entries {
+            entry.path = entry
+                .path
+                .strip_prefix(&self.root)
+                .map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "backing filesystem returned a path outside the sub-filesystem root",
+                    )
+                })?
+                .to_path_buf();
+        }
+        Ok(entries)
+    }
+
+    fn metadata(&self, path: &Path) -> io::Result<FileInfo> {
+        let mut info = self.inner.metadata(&self.resolve(path)?)?;
+        info.path = info
+            .path
+            .strip_prefix(&self.root)
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "backing filesystem returned metadata outside the sub-filesystem root",
+                )
+            })?
+            .to_path_buf();
+        info.name = info
+            .path
+            .file_name()
+            .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+        Ok(info)
+    }
+}
+
+struct SubFsFile {
+    inner: Box<dyn FsFile>,
+    root: PathBuf,
+}
+
+impl Read for SubFsFile {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl FsFile for SubFsFile {
+    fn info(&self) -> io::Result<FileInfo> {
+        let mut info = self.inner.info()?;
+        info.path = info
+            .path
+            .strip_prefix(&self.root)
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "backing filesystem returned metadata outside the sub-filesystem root",
+                )
+            })?
+            .to_path_buf();
+        info.name = info
+            .path
+            .file_name()
+            .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+        Ok(info)
+    }
+}
+
+/// Builds an [`EmbeddedAssets`] filesystem from files at compile time.
+///
+/// Paths on the left are reproducible virtual paths, while paths on the right
+/// are resolved by Rust's `include_bytes!` relative to the macro invocation.
+/// The asset bytes become part of the binary and never require host filesystem
+/// access at runtime.
+#[macro_export]
+macro_rules! embed_assets {
+    ($($name:literal => $source:literal),* $(,)?) => {
+        {
+            static EMBEDDED_ASSETS: &[$crate::fs::EmbeddedAsset] = &[
+                $($crate::fs::EmbeddedAsset::new($name, include_bytes!($source))),*
+            ];
+            $crate::fs::EmbeddedAssets::new(EMBEDDED_ASSETS)
+        }
+    };
 }
 
 /// Lists the direct children of `path`. Does not recurse.
@@ -560,9 +1301,8 @@ impl TempDir {
     /// caller-supplied `prefix` for easier identification in
     /// long-lived working directories.
     pub fn with_prefix(prefix: &str) -> io::Result<Self> {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        validate_temp_prefix(prefix)?;
+        let n = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
         let pid = std::process::id();
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -591,6 +1331,14 @@ impl TempDir {
     }
 }
 
+/// Creates a unique temporary directory and transfers cleanup responsibility
+/// to the caller. Pair the returned path with [`remove_dir_all`] after the
+/// test or operation completes. [`TempDir`] remains the preferred Rust API
+/// when RAII cleanup is available.
+pub fn temp_dir(prefix: &str) -> io::Result<PathBuf> {
+    TempDir::with_prefix(prefix).map(TempDir::into_path)
+}
+
 impl Drop for TempDir {
     fn drop(&mut self) {
         if !self.path.as_os_str().is_empty() {
@@ -605,9 +1353,8 @@ impl Drop for TempDir {
 /// automatic cleanup. Mirrors Python's `tempfile.mkstemp` (sans
 /// the file-descriptor return).
 pub fn temp_file(prefix: &str) -> io::Result<(File, PathBuf)> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    validate_temp_prefix(prefix)?;
+    let n = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -620,6 +1367,20 @@ pub fn temp_file(prefix: &str) -> io::Result<(File, PathBuf)> {
         .read(true)
         .open(&path)?;
     Ok((file, path))
+}
+
+/// Rejects a caller-controlled prefix that could turn a generated temporary
+/// name into a path outside the system temporary root. This is deliberately
+/// platform-independent: a prefix produced on one host must remain safe when
+/// the same test runs on another host with different path separators.
+fn validate_temp_prefix(prefix: &str) -> io::Result<()> {
+    if prefix.contains(['/', '\\', '\0']) || matches!(prefix, "." | "..") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "temporary-resource prefix must be a single path component",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -653,6 +1414,169 @@ mod tests {
         let text = read_to_string(&path).unwrap();
         assert_eq!(text, "hello");
         let _ = remove_all(&dir);
+    }
+
+    #[test]
+    fn test_filesystem_is_a_deterministic_io_fs_implementation() {
+        let fs = TestFileSystem::from_files([
+            ("docs/readme.txt", b"read me".as_slice()),
+            ("docs/guide.md", b"guide".as_slice()),
+            ("static/site.css", b"body {}".as_slice()),
+        ])
+        .unwrap();
+        let filesystem: &dyn FileSystem = &fs;
+
+        assert_eq!(
+            filesystem
+                .read_to_string(Path::new("docs/readme.txt"))
+                .unwrap(),
+            "read me"
+        );
+        let info = filesystem.metadata(Path::new("docs/readme.txt")).unwrap();
+        assert_eq!(info.kind, FileKind::File);
+        assert_eq!(info.len, 7);
+
+        let mut walked = Vec::new();
+        walk(filesystem, "", |entry| {
+            walked.push(entry.path.to_string_lossy().into_owned());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            walked,
+            [
+                "docs",
+                "docs/guide.md",
+                "docs/readme.txt",
+                "static",
+                "static/site.css"
+            ]
+        );
+        assert_eq!(
+            glob_fs(filesystem, "", "**/*.txt").unwrap(),
+            vec![PathBuf::from("docs/readme.txt")]
+        );
+    }
+
+    #[test]
+    fn virtual_filesystems_reject_escape_paths() {
+        let fs = TestFileSystem::new();
+        for path in ["../secret", "/etc/passwd", r"dir\\file"] {
+            let err = fs.write(path, b"nope").unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{path}");
+        }
+        let err = glob_fs(&fs, "", "../*").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn sub_filesystem_hides_its_backing_root() {
+        let fs = TestFileSystem::from_files([
+            ("public/index.html", b"ok".as_slice()),
+            ("private/key.txt", b"secret".as_slice()),
+        ])
+        .unwrap();
+        let sub = SubFileSystem::new(fs, "public").unwrap();
+        assert_eq!(sub.read_to_string(Path::new("index.html")).unwrap(), "ok");
+        assert_eq!(
+            sub.metadata(Path::new("index.html")).unwrap().path,
+            PathBuf::from("index.html")
+        );
+        assert_eq!(
+            sub.read_dir(Path::new("")).unwrap()[0].path,
+            PathBuf::from("index.html")
+        );
+        assert_eq!(
+            glob_fs(&sub, "", "*.html").unwrap(),
+            vec![PathBuf::from("index.html")]
+        );
+        assert_eq!(
+            sub.read_to_string(Path::new("../private/key.txt"))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn embedded_assets_are_read_only_filesystem_entries() {
+        let assets = crate::embed_assets! {
+            "tls/cert.pem" => "../tests/fixtures/test_cert.pem",
+            "site/index.html" => "../tests/fixtures/test_key.pem",
+        };
+        assets.validate().unwrap();
+        assert!(
+            assets
+                .get("tls/cert.pem")
+                .unwrap()
+                .starts_with(b"-----BEGIN CERTIFICATE-----")
+        );
+        assert_eq!(
+            assets.metadata(Path::new("tls")).unwrap().kind,
+            FileKind::Directory
+        );
+        let mut file = assets.open(Path::new("site/index.html")).unwrap();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        assert!(bytes.starts_with(b"-----BEGIN PRIVATE KEY-----"));
+        let Err(error) = assets.open(Path::new("missing.txt")) else {
+            panic!("missing asset unexpectedly opened");
+        };
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn embedded_assets_reject_duplicate_and_unsafe_paths() {
+        static DUPLICATE: [EmbeddedAsset; 2] = [
+            EmbeddedAsset::new("a.txt", b"a"),
+            EmbeddedAsset::new("a.txt", b"b"),
+        ];
+        static UNSAFE_PATH: [EmbeddedAsset; 1] = [EmbeddedAsset::new("../secret", b"no")];
+        static FILE_DIRECTORY_CONFLICT: [EmbeddedAsset; 2] = [
+            EmbeddedAsset::new("site", b"file"),
+            EmbeddedAsset::new("site/index.html", b"nested"),
+        ];
+        let duplicate = EmbeddedAssets::new(&DUPLICATE);
+        assert_eq!(
+            duplicate.validate().unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        let unsafe_path = EmbeddedAssets::new(&UNSAFE_PATH);
+        assert_eq!(
+            unsafe_path.validate().unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        let file_directory_conflict = EmbeddedAssets::new(&FILE_DIRECTORY_CONFLICT);
+        assert_eq!(
+            file_directory_conflict.validate().unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn temp_resources_are_unique_and_explicitly_cleanable() {
+        let dir = temp_dir("gossamer-fs-test").unwrap();
+        assert!(dir.is_dir());
+
+        let (file, path) = temp_file("gossamer-fs-test").unwrap();
+        assert!(path.is_file());
+        assert_ne!(dir, path);
+        drop(file);
+
+        stdfs::remove_file(&path).unwrap();
+        stdfs::remove_dir_all(&dir).unwrap();
+        assert!(!path.exists());
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn temp_resource_prefix_rejects_path_components() {
+        for prefix in ["../escape", "nested/path", r"nested\\path", ".", ".."] {
+            let err = temp_dir(prefix).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{prefix:?}");
+            let err = temp_file(prefix).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{prefix:?}");
+        }
     }
 
     #[test]

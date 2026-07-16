@@ -106,6 +106,16 @@ pub const NET: StdModule = StdModule {
     summary: "TCP/UDP networking primitives.",
     items: &[
         StdItem {
+            name: "UnixListener",
+            kind: StdItemKind::Type,
+            doc: "Unix-domain socket listener.",
+        },
+        StdItem {
+            name: "UnixStream",
+            kind: StdItemKind::Type,
+            doc: "Connected Unix-domain byte stream.",
+        },
+        StdItem {
             name: "TcpListener",
             kind: StdItemKind::Type,
             doc: "Accepts incoming TCP connections.",

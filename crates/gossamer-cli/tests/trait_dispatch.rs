@@ -176,7 +176,7 @@ impl Counter {
 }
 
 fn main() {
-    let c = Counter { n: 7 }
+    let c = Counter(7)
     println!("step={} doubled={}", c.step(), c.doubled())
 }
 "#;
@@ -207,8 +207,8 @@ impl Greet for Dog {
 }
 
 fn main() {
-    let c = Cat { name: "tabby".to_string() }
-    let d = Dog { name: "rex".to_string() }
+    let c = Cat("tabby".to_string())
+    let d = Dog("rex".to_string())
     println!("{}", c.greet())
     println!("{}", d.greet())
 }
@@ -241,11 +241,7 @@ impl Summarize for Inventory {
 }
 
 fn main() {
-    let inv = Inventory {
-        name: "widgets".to_string(),
-        stock: 42,
-        weight: 17,
-    }
+    let inv = Inventory("widgets".to_string(), 42, 17)
     println!("{}", inv.summary())
 }
 "#;
@@ -277,8 +273,8 @@ impl Shape for Circle {
 }
 
 fn main() {
-    let s = Square { side: 4.0 }
-    let c = Circle { radius: 1.0 }
+    let s = Square(4.0)
+    let c = Circle(1.0)
     println!("{}={:.2}", s.name(), s.area())
     println!("{}={:.5}", c.name(), c.area())
 }
@@ -305,7 +301,7 @@ impl Mix {
 }
 
 fn main() {
-    let m = Mix { x: 7, y: 4.0 }
+    let m = Mix(7, 4.0)
     println!("count={} ratio={:.1}", m.count(), m.ratio())
 }
 "#;

@@ -1,15 +1,15 @@
 #[derive(PartialEq, Debug)]
 enum Shape {
     Circle(f64),
-    Rect { w: f64, h: f64 },
+    Rect(f64, f64),
     Origin,
 }
 
 fn main() {
-    let s = Shape::Rect { w: 3.0, h: 4.0 }
+    let s = Shape::Rect(3.0, 4.0)
     let s2 = s.clone()
     println!("{}", s == s2)            // true
-    println!("{:?}", s2)               // Rect { w: 3, h: 4 }
+    println!("{:?}", s2)               // Rect(3, 4)
     let c = Shape::Circle(1.5)
     println!("{}", c.clone() == c)     // true
     println!("{}", c == Shape::Origin) // false

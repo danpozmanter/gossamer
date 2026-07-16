@@ -101,6 +101,11 @@ pub const SYNC: StdModule = StdModule {
     summary: "Synchronisation primitives beyond channels.",
     items: &[
         StdItem {
+            name: "Channel",
+            kind: StdItemKind::Type,
+            doc: "Bidirectional channel handle.",
+        },
+        StdItem {
             name: "Mutex",
             kind: StdItemKind::Type,
             doc: "Mutual-exclusion lock.",
@@ -131,6 +136,11 @@ pub const SYNC: StdModule = StdModule {
             doc: "Atomic 64-bit signed integer.",
         },
         StdItem {
+            name: "AtomicI32",
+            kind: StdItemKind::Type,
+            doc: "Atomic 32-bit signed integer.",
+        },
+        StdItem {
             name: "AtomicU64",
             kind: StdItemKind::Type,
             doc: "Atomic 64-bit unsigned integer.",
@@ -139,6 +149,11 @@ pub const SYNC: StdModule = StdModule {
             name: "AtomicBool",
             kind: StdItemKind::Type,
             doc: "Atomic boolean.",
+        },
+        StdItem {
+            name: "Map",
+            kind: StdItemKind::Type,
+            doc: "Concurrent key/value map.",
         },
         StdItem {
             name: "channel",

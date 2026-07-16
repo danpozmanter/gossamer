@@ -1254,6 +1254,30 @@ static RACE_INSTRUMENTATION: std::sync::atomic::AtomicBool =
 /// when the user omits `--release`.
 static OPT_PROFILE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
+/// LLVM profile-guided optimisation mode selected by the CLI. Environment
+/// variables remain a compatibility fallback for embedding callers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PgoMode {
+    /// Emit instrumentation that writes raw profile data to this path.
+    Collect(PathBuf),
+    /// Optimise with this merged LLVM profile data file.
+    Profile(PathBuf),
+}
+
+static PGO_MODE: std::sync::LazyLock<std::sync::RwLock<Option<PgoMode>>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(None));
+
+/// Selects PGO mode for subsequent LLVM emissions in this process.
+pub fn set_pgo_mode(mode: Option<PgoMode>) {
+    *PGO_MODE.write().expect("PGO mode lock poisoned") = mode;
+}
+
+/// Returns the PGO mode selected through [`set_pgo_mode`], if any.
+#[must_use]
+pub fn pgo_mode() -> Option<PgoMode> {
+    PGO_MODE.read().expect("PGO mode lock poisoned").clone()
+}
+
 /// Enables (or disables) DWARF emission for subsequent
 /// [`compile_to_object`] / [`compile_with_fallback`] calls.
 /// Called by the `gos build --release -g` flag.
@@ -1950,23 +1974,34 @@ fn invoke_llc_pipeline(
     if matches!(profile, OptProfile::Release) {
         opt_cmd.arg("--disable-loop-idiom-all");
     }
-    // PGO instrumentation mode: `GOS_PGO_COLLECT=<output.profraw>`
-    // builds an instrumented binary that emits raw profile data when
-    // the program exits. Link with `libclang_rt.profile-x86_64.a`
-    // (handled in `gossamer-cli/src/cmd/build.rs`); merge the
-    // resulting `.profraw` with `llvm-profdata merge -output=...`.
-    if let Ok(profraw) = std::env::var("GOS_PGO_COLLECT") {
+    // PGO instrumentation builds an instrumented binary that emits raw
+    // profile data when the program exits. Link with
+    // `libclang_rt.profile-x86_64.a` (handled in
+    // `gossamer-cli/src/cmd/build.rs`), then merge the resulting `.profraw`
+    // with `llvm-profdata merge -output=...`. The environment variables are
+    // retained only for embedding callers that predate the CLI options.
+    let selected_pgo = pgo_mode();
+    let pgo_collect = match selected_pgo.as_ref() {
+        Some(PgoMode::Collect(path)) => Some(path.display().to_string()),
+        Some(PgoMode::Profile(_)) => None,
+        None => std::env::var("GOS_PGO_COLLECT").ok(),
+    };
+    if let Some(profraw) = pgo_collect {
         opt_cmd
             .arg("--pgo-kind=pgo-instr-gen-pipeline")
             .arg(format!("--pgo-test-profile-file={profraw}"));
     }
-    // PGO optimisation mode: `GOS_PGO_PROFILE=<merged.profdata>`
-    // feeds a previously collected and merged profile into the `opt`
-    // mid-end so branch weights, inlining thresholds, and the loop /
-    // SLP vectorisers are guided by real execution frequencies.
-    // Typical speedup: 5-10% on compute-heavy workloads. The two
-    // modes are mutually exclusive; setting both is undefined.
-    if let Ok(profdata) = std::env::var("GOS_PGO_PROFILE") {
+    // PGO optimisation feeds a previously collected and merged profile into
+    // the `opt` mid-end so branch weights, inlining thresholds, and the loop
+    // / SLP vectorisers are guided by real execution frequencies. A selected
+    // CLI mode wins over the legacy environment to keep the two modes
+    // mutually exclusive.
+    let pgo_profile = match selected_pgo.as_ref() {
+        Some(PgoMode::Collect(_)) => None,
+        Some(PgoMode::Profile(path)) => Some(path.display().to_string()),
+        None => std::env::var("GOS_PGO_PROFILE").ok(),
+    };
+    if let Some(profdata) = pgo_profile {
         opt_cmd
             .arg("--pgo-kind=pgo-instr-use-pipeline")
             .arg(format!("--profile-file={profdata}"));

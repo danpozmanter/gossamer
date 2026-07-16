@@ -1013,6 +1013,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1064,6 +1066,34 @@
 
 
     Overview
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../misc/tooling_faithful_fmt/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Formatter behavior
 
 
 
@@ -2097,6 +2127,10 @@ automatic.</p>
 <p>The shipped surface is compile-time <em>evaluation</em>, <em>reflection over
 named structs</em>, <em>comptime parameters</em>, <em>build-time validation</em>, and
 <em>code generation</em> (a <code>for</code> over <code>typeInfo::&lt;T&gt;()</code> and <code>codegen!</code>).
+Gossamer deliberately does not provide runtime reflection. Libraries that
+need dynamic inspection must expose an explicit generated schema, tagged
+representation, or <code>comptime</code>-generated adapter; <code>typeInfo</code>, <code>autoderive</code>,
+and <code>codegen!</code> are the supported replacement for reflection-driven code.
 Comptime regions fold to scalar or string results. You can now write the
 reflection-driven <code>autoderive</code> shape yourself, but the built-in
 <code>to_json</code> / <code>from_json</code> serializers remain built in (not yet re-expressed

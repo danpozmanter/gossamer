@@ -34,7 +34,7 @@ fn make_named(k: i64) -> Named {
     let mut tags: [String] = []
     tags.push(format!("t{}", k))
     tags.push(format!("u{}", k))
-    Named { label: format!("name-{}", k), tags: tags }
+    Named(format!("name-{}", k), tags)
 }
 
 fn main() {

@@ -224,10 +224,10 @@ jobs:
       matrix:
         include:
           - arch: aarch64
-            runner: macos-latest
+            runner: macos-15
             target: aarch64-apple-darwin
           - arch: x86_64
-            runner: macos-latest
+            runner: macos-15
             target: x86_64-apple-darwin
     steps:
       - uses: actions/checkout@v6
@@ -253,7 +253,7 @@ jobs:
 
       - name: Build
         env:
-          MACOSX_DEPLOYMENT_TARGET: "11.0"
+          MACOSX_DEPLOYMENT_TARGET: "15.0"
         run: |
           cargo build --release --target ${{ matrix.target }} --bin gos
           # `gos build` needs the runtime archive matching the binary's arch;

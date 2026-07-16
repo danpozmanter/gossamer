@@ -312,6 +312,25 @@ fn resolver_picks_highest_when_multiple_consumers_overlap() {
 }
 
 #[test]
+fn resolver_excludes_prereleases_for_a_stable_caret_requirement() {
+    let manifest = Manifest::parse(
+        "[project]\nid = \"r.test/app\"\nversion = \"0.1.0\"\n\n[dependencies]\n\"l.test/lib\" = \"1.0.0\"\n",
+    )
+    .unwrap();
+    let id = ProjectId::parse("l.test/lib").unwrap();
+    let mut catalogue = VersionCatalogue::new();
+    for version in ["1.0.0-beta.2", "1.0.0", "1.1.0-rc.1"] {
+        catalogue.add(&id, Version::parse(version).unwrap());
+    }
+
+    let resolved = Resolver::new(catalogue).resolve(&manifest).unwrap();
+    assert!(matches!(
+        &resolved[0].pin,
+        ResolvedSource::Registry(version) if version == &Version::parse("1.0.0").unwrap()
+    ));
+}
+
+#[test]
 fn lockfile_from_fetched_carries_sha256() {
     let id = ProjectId::parse("a.test/a").unwrap();
     let resolved = Resolved {

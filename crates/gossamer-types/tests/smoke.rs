@@ -69,6 +69,8 @@ fn ref_types_and_collections_render_correctly() {
     assert_eq!(render_ty(&tcx, mut_ref_i32), "&mut i32");
     let vec_i32 = tcx.intern(TyKind::Vec(i32_));
     assert_eq!(render_ty(&tcx, vec_i32), "Vec<i32>");
+    let iter_i32 = tcx.iterator_ty(i32_);
+    assert_eq!(render_ty(&tcx, iter_i32), "Iterator<i32>");
     let string = tcx.string_ty();
     let map = tcx.intern(TyKind::HashMap {
         key: string,

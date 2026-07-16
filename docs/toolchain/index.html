@@ -18,7 +18,7 @@
         <link rel="prev" href="../stdlib_coverage/">
 
 
-        <link rel="next" href="lints/">
+        <link rel="next" href="../misc/tooling_faithful_fmt/">
 
 
 
@@ -889,6 +889,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
 
 
@@ -1133,6 +1135,34 @@
 
 </nav>
 
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../misc/tooling_faithful_fmt/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Formatter behavior
+
+
+
+  </span>
+
+
+
+      </a>
     </li>
 
 
@@ -2088,7 +2118,7 @@ the implementation by a rev.</p>
 </tr>
 <tr>
 <td><code>gos build [--release] [--target TRIPLE] FILE</code></td>
-<td>Produce a native binary (ELF/Mach-O/PE) by lowering through MIR + LLVM (<code>llc -O0</code>; <code>--release</code> runs the full <code>opt -O3 | llc -O3</code> pipeline) and linking the user's <code>.o</code> against <code>libgossamer_runtime.a</code>. The Cranelift code path is reserved for the in-process JIT (<code>gos run</code>), not this command. Tier 2 cross deployment is <code>{x86_64,aarch64}-unknown-linux-musl</code>, QEMU-differential-tested in CI. Other registered triples are not supported merely because a local link succeeds; macOS/Windows as cross targets are out of scope.</td>
+<td>Produce a native binary (ELF/Mach-O/PE) by lowering through MIR + LLVM (<code>llc -O0</code>; <code>--release</code> runs the full <code>opt -O3 | llc -O3</code> pipeline) and linking the user's <code>.o</code> against <code>libgossamer_runtime.a</code>. Release builds may use <code>--pgo-collect PATH.profraw</code> to emit an instrumented binary or <code>--pgo-profile PATH.profdata</code> to apply merged LLVM profile data; the modes conflict, profile input must exist, and an input older than the source produces a warning. The Cranelift code path is reserved for the in-process JIT (<code>gos run</code>), not this command. Tier 2 cross deployment is <code>{x86_64,aarch64}-unknown-linux-musl</code>, QEMU-differential-tested in CI. Other registered triples are not supported merely because a local link succeeds; macOS/Windows as cross targets are out of scope.</td>
 </tr>
 </tbody>
 </table>
@@ -2134,7 +2164,7 @@ the implementation by a rev.</p>
 </tr>
 <tr>
 <td><code>gos bench [--parallel N] [PATH]</code></td>
-<td>Discover and time <code>#[bench]</code> functions; reports <code>ns/op</code> per benchmark. Per-bench iteration counts auto-tune against a 50 ms calibration window (cap 2^20). <code>PATH</code> defaults to the project's <code>src/</code>.</td>
+<td>Discover and time <code>#[bench]</code> functions; reports <code>ns/op</code> plus JIT tier-up, compile-time, native-code, peak-RSS, and bypassed-VM-work counters. Per-bench iteration counts auto-tune against a 50 ms calibration window (cap 2^20). <code>PATH</code> defaults to the project's <code>src/</code>.</td>
 </tr>
 </tbody>
 </table>
@@ -2194,8 +2224,12 @@ the implementation by a rev.</p>
 <td>Drop a dependency.</td>
 </tr>
 <tr>
+<td><code>gos update</code></td>
+<td>Update locked dependencies within declared ranges.</td>
+</tr>
+<tr>
 <td><code>gos tidy</code></td>
-<td>Canonicalise the manifest.</td>
+<td>Remove unused project dependencies and canonicalise the manifest.</td>
 </tr>
 <tr>
 <td><code>gos fetch</code></td>

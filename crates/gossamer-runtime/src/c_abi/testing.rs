@@ -15,8 +15,18 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
+use std::collections::HashMap;
 use std::ffi::CStr;
 use std::os::raw::c_char;
+use std::sync::{Mutex, OnceLock};
+
+/// Process-scoped static responders keyed by their immutable response.
+///
+/// Source benchmarks call `httptest::server` repeatedly while calibrating.
+/// Reusing an identical responder keeps that benchmark focused on client
+/// transport work instead of accumulating one detached accept thread per
+/// sample.
+static HTTP_TEST_SERVERS: OnceLock<Mutex<HashMap<(u16, String), String>>> = OnceLock::new();
 
 // ---------------------------------------------------------------
 // testing module - minimal `check`, `check_eq`, `check_ok` that
@@ -71,5 +81,71 @@ pub unsafe extern "C" fn gos_rt_testing_wait_for_scheduler_idle(timeout_ms: i64)
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+    })
+}
+
+/// Starts or reuses a process-scoped static HTTP responder for source
+/// integration tests and benchmarks.
+///
+/// The listener is bound before the worker starts, making the returned loopback
+/// URL safe to use immediately. Test processes own the worker lifetime: it is
+/// intentionally released by normal process shutdown rather than exposing a
+/// cross-tier handle with native-pointer lifetime requirements.
+pub fn httptest_server(status: i64, body: &str) -> Result<String, std::io::Error> {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let status = u16::try_from(status)
+        .ok()
+        .filter(|code| (100..=599).contains(code))
+        .unwrap_or(500);
+    let key = (status, body.to_string());
+    let servers = HTTP_TEST_SERVERS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut servers = servers
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(url) = servers.get(&key) {
+        return Ok(url.clone());
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?;
+    let response = format!(
+        "HTTP/1.1 {status} Test\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .into_bytes();
+    std::thread::Builder::new()
+        .name("gos-httptest-server".to_string())
+        .spawn(move || {
+            loop {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    break;
+                };
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+                let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(5)));
+                let mut head = [0_u8; 8192];
+                let _ = stream.read(&mut head);
+                let _ = stream.write_all(&response);
+                let _ = stream.flush();
+            }
+        })?;
+    let url = format!("http://{address}");
+    servers.insert(key, url.clone());
+    Ok(url)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_httptest_server(status: i64, body: *const c_char) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let body = if body.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(body).to_string_lossy().into_owned() }
+        };
+        let Ok(url) = httptest_server(status, &body) else {
+            return std::ptr::null_mut();
+        };
+        super::string::alloc_cstring(url.as_bytes())
     })
 }

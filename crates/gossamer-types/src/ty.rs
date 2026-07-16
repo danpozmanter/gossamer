@@ -248,6 +248,10 @@ pub enum TyKind {
     Slice(Ty),
     /// `Vec<T>` - built-in growable sequence.
     Vec(Ty),
+    /// `Iterator<T>` - linear lazy sequence state. This is an internal
+    /// compiler type until the edition-gated public iterator signatures and
+    /// backend lowering are enabled.
+    Iterator(Ty),
     /// `HashMap<K, V>` - built-in hash map.
     HashMap {
         /// Key type.

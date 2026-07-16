@@ -1773,6 +1773,38 @@ impl BindingAbi for Result<Vec<String>, String> {
     }
 }
 
+/// Fallible binary payloads are the common wire contract for Redis,
+/// protobuf/RPC, MessagePack, and CBOR adapters. Inside a `Result` variant,
+/// bytes use the established vector payload tag: `GosVariantValue` predates
+/// `GosBytes` and has no bytes pointer arm of its own.
+impl BindingAbi for Result<Bytes, String> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Result(&Type::Bytes, &Type::String);
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return Err(String::new()),
+        };
+        if tag == 1 {
+            Ok(Bytes::new(unsafe { read_gos_vec_u8(payload.data.vec) }))
+        } else {
+            Err(unsafe { String::from_input(payload.data.string) })
+        }
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            Ok(bytes) => {
+                let inner = make_gos_vec(&bytes.into_inner());
+                make_variant(1, vec![unsafe { variant_value_vec(inner) }])
+            }
+            Err(message) => make_variant(0, vec![unsafe { variant_value_string_owned(message) }]),
+        }
+    }
+}
+
 // --- HashMap impls (additions) ---------------------------------------
 
 unsafe fn read_gos_map_keys_values_str_vec_i64(
@@ -2401,6 +2433,18 @@ mod tests {
         let err_raw = Err::<i64, _>("nope".to_string()).to_output();
         let back = unsafe { <Result<i64, String> as BindingAbi>::from_input(err_raw) };
         assert_eq!(back, Err("nope".to_string()));
+    }
+
+    #[test]
+    fn result_bytes_round_trip() {
+        let payload = Bytes::new(vec![0, 1, 127, 255]);
+        let raw = Ok::<Bytes, String>(payload.clone()).to_output();
+        let back = unsafe { <Result<Bytes, String> as BindingAbi>::from_input(raw) };
+        assert_eq!(back, Ok(payload));
+
+        let raw = Err::<Bytes, _>("bad frame".to_string()).to_output();
+        let back = unsafe { <Result<Bytes, String> as BindingAbi>::from_input(raw) };
+        assert_eq!(back, Err("bad frame".to_string()));
     }
 
     // --- ABI 0.4 round-trip coverage -------------------------------

@@ -240,6 +240,16 @@ pub const FS: StdModule = StdModule {
             doc: "Creates or truncates a file and returns a streaming file handle.",
         },
         StdItem {
+            name: "temp_dir",
+            kind: StdItemKind::Function,
+            doc: "Creates a unique temporary directory; the caller removes it explicitly.",
+        },
+        StdItem {
+            name: "temp_file",
+            kind: StdItemKind::Function,
+            doc: "Creates a unique temporary file and returns its handle plus path.",
+        },
+        StdItem {
             name: "read",
             kind: StdItemKind::Function,
             doc: "Reads an entire file into memory as bytes.",

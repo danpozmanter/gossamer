@@ -24,7 +24,7 @@ fn main() {
     let mut m: HashMap<i64, Rec> = HashMap::new()
     let mut k = 1
     while k <= 5 {
-        m.insert(k, Rec { label: format!("rec-{}", k), weight: k * 10 })
+        m.insert(k, Rec(format!("rec-{}", k), k * 10))
         k += 1
     }
     let _ = churn()

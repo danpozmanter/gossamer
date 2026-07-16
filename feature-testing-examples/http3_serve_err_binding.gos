@@ -32,7 +32,7 @@ fn main() {
         "127.0.0.1:0",
         "/nonexistent/gossamer-h3-cert.pem",
         "/nonexistent/gossamer-h3-key.pem",
-        App { },
+        App(),
     )
     match result {
         Ok(_) => println!("unexpected ok"),

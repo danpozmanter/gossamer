@@ -16,8 +16,6 @@
 // "LLVM body silently routed to Cranelift" regressions distinct
 // from output-level parity.
 
-
-
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -686,6 +684,8 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/http_session.gos"),
     spec("feature-testing-examples/http_session_roundtrip.gos"),
     spec("feature-testing-examples/http_form_urlencoded.gos"),
+    spec("feature-testing-examples/httptest_static_server.gos"),
+    spec("examples/http_diagnostics_transport.gos"),
     Spec {
         skip_all: Some(
             "binds fixed loopback ports - covered serially by \

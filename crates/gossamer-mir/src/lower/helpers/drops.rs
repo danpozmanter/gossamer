@@ -3184,6 +3184,51 @@ pub(crate) fn insert_early_releases(body: &mut Body, tcx: &gossamer_types::TyCtx
                         }
                         continue;
                     }
+                    StatementKind::IterSource { dst, source, .. } => {
+                        let mut ls: Vec<Local> = Vec::new();
+                        locals_in_operand(source, &mut ls);
+                        ls.push(dst.local);
+                        for l in ls {
+                            mark(l, bi, Some(si), &mut mention_stmt, &mut mention_term);
+                        }
+                        continue;
+                    }
+                    StatementKind::IterAdapter {
+                        dst,
+                        upstream,
+                        closure_or_arg,
+                        ..
+                    } => {
+                        let mut ls = vec![dst.local, upstream.local];
+                        if let Some(arg) = closure_or_arg {
+                            locals_in_operand(arg, &mut ls);
+                        }
+                        for l in ls {
+                            mark(l, bi, Some(si), &mut mention_stmt, &mut mention_term);
+                        }
+                        continue;
+                    }
+                    StatementKind::IterNext {
+                        dst_option,
+                        iter_place,
+                        ..
+                    } => {
+                        mark(
+                            dst_option.local,
+                            bi,
+                            Some(si),
+                            &mut mention_stmt,
+                            &mut mention_term,
+                        );
+                        mark(
+                            iter_place.local,
+                            bi,
+                            Some(si),
+                            &mut mention_stmt,
+                            &mut mention_term,
+                        );
+                        continue;
+                    }
                 };
                 let mut ls: Vec<Local> = Vec::new();
                 match rvalue {
@@ -4702,6 +4747,30 @@ fn collect_local_read_counts(body: &Body) -> HashMap<u32, usize> {
                 }
                 StatementKind::SetDiscriminant { place, .. } => read_store_dest(place, &mut counts),
                 StatementKind::StaticStore { value, .. } => read_operand(value, &mut counts),
+                StatementKind::IterSource { dst, source, .. } => {
+                    read_store_dest(dst, &mut counts);
+                    read_operand(source, &mut counts);
+                }
+                StatementKind::IterAdapter {
+                    dst,
+                    upstream,
+                    closure_or_arg,
+                    ..
+                } => {
+                    read_store_dest(dst, &mut counts);
+                    read_place(upstream, &mut counts);
+                    if let Some(arg) = closure_or_arg {
+                        read_operand(arg, &mut counts);
+                    }
+                }
+                StatementKind::IterNext {
+                    dst_option,
+                    iter_place,
+                    ..
+                } => {
+                    read_store_dest(dst_option, &mut counts);
+                    read_place(iter_place, &mut counts);
+                }
                 StatementKind::StorageLive(_)
                 | StatementKind::StorageDead(_)
                 | StatementKind::Nop => {}

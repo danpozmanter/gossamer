@@ -106,7 +106,11 @@ pub(crate) fn run(
     // gate is what keeps `check` from drifting looser than the tiers it
     // is meant to guard.
     let stage = std::time::Instant::now();
-    let outcome = gossamer_driver::check_frontend(&source, file_id);
+    let outcome = gossamer_driver::check_frontend_with_edition(
+        &source,
+        file_id,
+        crate::paths::project_edition(),
+    );
     let elapsed = stage.elapsed();
     for diag in &outcome.diagnostics {
         emit_diag(diag, &map, render_opts, message_format);

@@ -17,16 +17,16 @@ fn greet(name: &String) { println!("hi, {name}") }
 
 ## Parameter pattern destructuring
 
-A parameter may be a pattern instead of a plain name - tuple, struct, or
-tuple-struct - and binds its components directly:
+A parameter may be a pattern instead of a plain name - tuple or struct - and
+binds its components directly:
 
 ```gossamer
 struct Point { x: i64, y: i64 }
-struct Pair(i64, i64)
+struct Pair { left: i64, right: i64 }
 
 fn dot((a, b): (i64, i64)) -> i64 { a * b }
 fn sum(Point { x, y }: Point) -> i64 { x + y }
-fn diff(Pair(a, b): Pair) -> i64 { a - b }
+fn diff(Pair { left, right }: Pair) -> i64 { left - right }
 ```
 
 ## Generics

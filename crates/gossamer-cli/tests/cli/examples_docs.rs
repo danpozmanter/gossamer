@@ -209,6 +209,15 @@ fn bench_subcommand_reports_ns_per_op() {
         "expected ns/op in stdout, got: {stdout}"
     );
     assert!(
+        stdout.contains("tier-ups")
+            && stdout.contains("native-code")
+            && stdout.contains("peak-rss")
+            && stdout.contains("allocs")
+            && stdout.contains("arc +")
+            && stdout.contains("boundary-copies"),
+        "expected JIT benchmark counters in stdout, got: {stdout}"
+    );
+    assert!(
         stdout.contains("bench_noop"),
         "expected the bench label in stdout, got: {stdout}"
     );
@@ -267,6 +276,28 @@ fn perf_gate_benchmarks_keep_work_observable() {
             && !source.contains("let _ = struct_work(")
             && !source.contains("let _ = string_work("),
         "perf benchmark workloads must not be discarded with `let _ = ...`",
+    );
+}
+
+#[test]
+fn http_diagnostics_transport_benchmark_uses_loopback_fixture() {
+    let fixture = workspace_root().join("benchmarks/perf/http_diagnostics_transport.gos");
+    let out = Command::new(gos_bin())
+        .args(["bench"])
+        .arg(&fixture)
+        .output()
+        .expect("spawn HTTP diagnostics benchmark");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("bench_http_diagnostics_transport_observed")
+            && stdout.contains("ns/op")
+            && stdout.contains("allocs"),
+        "expected checked-in HTTP diagnostics benchmark output, got: {stdout}"
     );
 }
 
@@ -702,4 +733,3 @@ fn build_rejects_unknown_target() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("unknown target"));
     let _ = std::fs::remove_file(&fixture);
 }
-

@@ -883,6 +883,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -934,6 +936,34 @@
 
 
     Overview
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../misc/tooling_faithful_fmt/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Formatter behavior
 
 
 
@@ -1766,10 +1796,11 @@
 
 
 <h1 id="stdruntimecollect_cycles"><code>std::runtime::collect_cycles</code><a class="headerlink" href="#stdruntimecollect_cycles" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
+<p>Status: experimental</p>
 <p>Requests collection of unreachable reference cycles.</p>
 <h2 id="signature">Signature<a class="headerlink" href="#signature" title="Permanent link">&para;</a></h2>
 <div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">fn</span> <span class="nf">collect_cycles</span><span class="p">()</span><span class="w"> </span>-&gt; <span class="p">()</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="k">fn</span> <span class="nf">cycle_collection_supported</span><span class="p">()</span><span class="w"> </span>-&gt; <span class="kt">bool</span>
 </code></pre></div>
 <h2 id="behavior">Behavior<a class="headerlink" href="#behavior" title="Permanent link">&para;</a></h2>
 <p>On compiled tiers, <code>collect_cycles()</code> runs the native runtime's cycle
@@ -1778,6 +1809,9 @@ that are unreachable except through their own strong references.</p>
 <p>The bytecode VM exposes the same function so programs typecheck and run
 consistently. VM heap values are <code>Arc</code>-backed, so the call does not provide
 collection-driven weak invalidation there.</p>
+<p>Use <code>cycle_collection_supported()</code> when behavior must be selected explicitly:
+it returns <code>false</code> in the bytecode VM and <code>true</code> in JIT and AOT builds. It
+reports capability only; it does not make cross-goroutine cycles collectable.</p>
 <p>Values that have crossed goroutine boundaries are excluded from the native
 collector's thread-local pass. Break cross-goroutine cycles explicitly with
 <code>Weak&lt;T&gt;</code>.</p>

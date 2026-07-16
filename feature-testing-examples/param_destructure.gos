@@ -3,16 +3,16 @@
 // lowering to a fresh local plus a destructuring `let` on every tier.
 
 struct Point { x: i64, y: i64 }
-struct Pair(i64, i64)
+struct Pair { left: i64, right: i64 }
 
 fn tup((a, b): (i64, i64)) -> i64 { a * b }
 fn named(Point { x, y }: Point) -> i64 { x + y }
-fn tuple_struct(Pair(a, b): Pair) -> i64 { a - b }
+fn pair(Pair { left, right }: Pair) -> i64 { left - right }
 fn nested((Point { x, y }, k): (Point, i64)) -> i64 { x + y + k }
 
 fn main() {
     println!("{}", tup((6, 7)))
-    println!("{}", named(Point { x: 3, y: 4 }))
-    println!("{}", tuple_struct(Pair(20, 5)))
-    println!("{}", nested((Point { x: 1, y: 2 }, 10)))
+    println!("{}", named(Point(3, 4)))
+    println!("{}", pair(Pair(20, 5)))
+    println!("{}", nested((Point(1, 2), 10)))
 }

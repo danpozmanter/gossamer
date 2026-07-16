@@ -2,6 +2,7 @@
 // turbofish is optional: `let p: Point = from_json(&t)?`. Identical decode
 // on every tier.
 use std::errors
+
 struct Point { x: i64, y: i64 }
 fn main() -> Result<(), errors::Error> {
     let t = "{\"x\":3,\"y\":4}"

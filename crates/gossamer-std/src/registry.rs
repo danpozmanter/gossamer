@@ -47,9 +47,13 @@ pub struct StdItemRecord {
     pub name: &'static str,
     /// Kind tag used by docs and resolver audits.
     pub kind: StdItemKind,
-    /// Lifecycle status inherited from the module unless explicitly
-    /// overridden by future item-level metadata.
+    /// Lifecycle status from this exact canonical item path. Module lifecycle
+    /// entries never implicitly promote their exports.
     pub status: crate::manifest::feature_status::Status,
+    /// Item-level status, tier, target, documentation, test, and limitation
+    /// evidence. This is deliberately materialized per exported item rather
+    /// than inferred by consumers from a module roll-up.
+    pub evidence: crate::manifest::feature_status::ItemEvidence,
     /// Module summary for roll-up reports.
     pub module_summary: &'static str,
     /// One-line item documentation.
@@ -106,13 +110,12 @@ pub fn item(qualified: &str) -> Option<(&'static StdModule, &'static StdItem)> {
 pub fn item_records() -> Vec<StdItemRecord> {
     let mut out = Vec::new();
     for module in modules() {
-        let status = crate::manifest::feature_status::lookup(module.path).map_or(
-            crate::manifest::feature_status::Status::Experimental,
-            |entry| entry.status,
-        );
         for item in module.items {
+            let path = format!("{}::{}", module.path, item.name);
+            let status = crate::manifest::feature_status::item_status(&path);
             out.push(StdItemRecord {
-                path: format!("{}::{}", module.path, item.name),
+                evidence: crate::manifest::feature_status::item_evidence(&path, status),
+                path,
                 module_path: module.path,
                 name: item.name,
                 kind: item.kind,
@@ -148,15 +151,20 @@ mod tests {
     }
 
     #[test]
-    fn item_records_inherit_module_status() {
+    fn item_records_do_not_inherit_module_promotion() {
         let records = item_records();
-        let sql_migrate = records
+        let process_run = records
             .iter()
-            .find(|record| record.path == "std::database::sql::migrate_up")
-            .expect("std::database::sql::migrate_up is manifest-listed");
+            .find(|record| record.path == "std::process::run")
+            .expect("std::process::run is manifest-listed");
         assert_eq!(
-            sql_migrate.status,
-            crate::manifest::feature_status::Status::Shipped
+            process_run.status,
+            crate::manifest::feature_status::Status::Experimental
+        );
+        assert_eq!(process_run.evidence.status, process_run.status);
+        assert_eq!(
+            process_run.evidence.doc_path.as_deref(),
+            Some("docs_src/stdlib/process_run.md")
         );
     }
 }

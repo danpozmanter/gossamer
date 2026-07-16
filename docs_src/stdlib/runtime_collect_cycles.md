@@ -1,6 +1,6 @@
 # `std::runtime::collect_cycles`
 
-Status: shipped
+Status: experimental
 
 Requests collection of unreachable reference cycles.
 
@@ -8,6 +8,7 @@ Requests collection of unreachable reference cycles.
 
 ```gos
 fn collect_cycles() -> ()
+fn cycle_collection_supported() -> bool
 ```
 
 ## Behavior
@@ -19,6 +20,10 @@ that are unreachable except through their own strong references.
 The bytecode VM exposes the same function so programs typecheck and run
 consistently. VM heap values are `Arc`-backed, so the call does not provide
 collection-driven weak invalidation there.
+
+Use `cycle_collection_supported()` when behavior must be selected explicitly:
+it returns `false` in the bytecode VM and `true` in JIT and AOT builds. It
+reports capability only; it does not make cross-goroutine cycles collectable.
 
 Values that have crossed goroutine boundaries are excluded from the native
 collector's thread-local pass. Break cross-goroutine cycles explicitly with

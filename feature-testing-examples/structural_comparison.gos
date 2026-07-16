@@ -11,20 +11,20 @@ enum Shape {
     Dot,
     Line(i64),
     Box(i64, i64),
-    Named { id: i64 },
+    Named(i64),
 }
 
 fn main() {
     // Struct equality and ordering, no derive.
-    println!("{}", Point { x: 1, y: 2 } == Point { x: 1, y: 2 })
-    println!("{}", Point { x: 1, y: 2 } != Point { x: 1, y: 9 })
-    println!("{}", Point { x: 1, y: 2 } < Point { x: 1, y: 3 })
-    println!("{}", Point { x: 2, y: 0 } < Point { x: 1, y: 9 })
-    println!("{}", Point { x: 5, y: 5 } <= Point { x: 5, y: 5 })
+    println!("{}", Point(1, 2) == Point(1, 2))
+    println!("{}", Point(1, 2) != Point(1, 9))
+    println!("{}", Point(1, 2) < Point(1, 3))
+    println!("{}", Point(2, 0) < Point(1, 9))
+    println!("{}", Point(5, 5) <= Point(5, 5))
 
     // Nested struct + String field: lexicographic by declaration order.
-    let a = Segment { from: Point { x: 0, y: 0 }, to: Point { x: 1, y: 1 }, label: "ab" }
-    let b = Segment { from: Point { x: 0, y: 0 }, to: Point { x: 1, y: 1 }, label: "ac" }
+    let a = Segment(Point(0, 0), Point(1, 1), "ab")
+    let b = Segment(Point(0, 0), Point(1, 1), "ac")
     println!("{}", a < b)
     println!("{}", a == a)
 
@@ -33,7 +33,7 @@ fn main() {
     println!("{}", Shape::Line(1) < Shape::Line(2))
     println!("{}", Shape::Box(1, 2) < Shape::Box(1, 3))
     println!("{}", Shape::Box(5, 0) < Shape::Box(1, 9))
-    println!("{}", Shape::Named { id: 1 } < Shape::Named { id: 2 })
+    println!("{}", Shape::Named(1) < Shape::Named(2))
     println!("{}", Shape::Box(1, 2) == Shape::Box(1, 2))
     println!("{}", Shape::Line(1) < Shape::Box(0, 0))
 
@@ -42,15 +42,15 @@ fn main() {
         Shape::Dot => 0,
         Shape::Line(..) => 1,
         Shape::Box(..) => 2,
-        Shape::Named { .. } => 3,
+        Shape::Named(..) => 3,
     }
     println!("{}", kind)
 
     // Ordering powers sort with no derive.
     let mut pts: Vec<Point> = [
-        Point { x: 3, y: 1 },
-        Point { x: 1, y: 9 },
-        Point { x: 2, y: 5 },
+        Point(3, 1),
+        Point(1, 9),
+        Point(2, 5),
     ]
     pts.sort_by_key(|p| p.x)
     println!("{} {} {}", pts[0].x, pts[1].x, pts[2].x)

@@ -386,9 +386,10 @@ pub unsafe extern "C" fn gos_rt_tcp_listener_close(h: i64) {
 pub unsafe extern "C" fn gos_rt_tcp_stream_connect(addr: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         let a = cstr_to_str(addr);
-        match TcpStream::connect(&a) {
-            Ok(s) => super::vec::gos_rt_result_new(0, insert_stream(s)),
-            Err(e) => tcp_err(&format!("{e}")),
+        match crate::sched_global::run_blocking("tcp-connect", move || TcpStream::connect(&a)) {
+            Ok(Ok(s)) => super::vec::gos_rt_result_new(0, insert_stream(s)),
+            Ok(Err(e)) => tcp_err(&format!("{e}")),
+            Err(e) => tcp_err(&e),
         }
     })
 }
@@ -399,23 +400,32 @@ pub unsafe extern "C" fn gos_rt_tcp_stream_connect(addr: *const c_char) -> i128 
 pub unsafe extern "C" fn gos_rt_tcp_stream_read(h: i64, max: i64) -> i128 {
     ffi_entry!(0i128, {
         let cap = max.clamp(1, 1 << 24) as usize;
-        let mut buf = vec![0u8; cap];
-        let n = if let Some(tls) = tls_clone(h) {
-            let mut guard = tls.lock();
-            match guard.read(&mut buf) {
-                Ok(n) => n,
-                Err(e) => return tcp_err(&format!("{e}")),
+        let buf = if let Some(tls) = tls_clone(h) {
+            match crate::sched_global::run_blocking("tls-stream-read", move || {
+                let mut buf = vec![0u8; cap];
+                let mut guard = tls.lock();
+                guard.read(&mut buf).map(|n| {
+                    buf.truncate(n);
+                    buf
+                })
+            }) {
+                Ok(Ok(buf)) => buf,
+                Ok(Err(e)) => return tcp_err(&format!("{e}")),
+                Err(e) => return tcp_err(&e),
             }
         } else if let Some(stream) = stream_clone(h) {
+            let mut buf = vec![0u8; cap];
             let mut reader: &TcpStream = &stream;
             match reader.read(&mut buf) {
-                Ok(n) => n,
+                Ok(n) => {
+                    buf.truncate(n);
+                    buf
+                }
                 Err(e) => return tcp_err(&format!("{e}")),
             }
         } else {
             return tcp_err("TcpStream::read: stale handle");
         };
-        buf.truncate(n);
         super::vec::gos_rt_result_new(0, super::encoding::bytes_to_gosvec(&buf) as i64)
     })
 }
@@ -428,13 +438,20 @@ pub unsafe extern "C" fn gos_rt_tcp_stream_read_to_string(h: i64) -> i128 {
         let mut out = Vec::new();
         let mut chunk = [0u8; 4096];
         if let Some(tls) = tls_clone(h) {
-            let mut guard = tls.lock();
-            loop {
-                match guard.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(n) => out.extend_from_slice(&chunk[..n]),
-                    Err(e) => return tcp_err(&format!("{e}")),
+            let result = crate::sched_global::run_blocking("tls-stream-read-string", move || {
+                let mut guard = tls.lock();
+                loop {
+                    match guard.read(&mut chunk) {
+                        Ok(0) => break Ok(out),
+                        Ok(n) => out.extend_from_slice(&chunk[..n]),
+                        Err(e) => break Err(e),
+                    }
                 }
+            });
+            match result {
+                Ok(Ok(bytes)) => out = bytes,
+                Ok(Err(e)) => return tcp_err(&format!("{e}")),
+                Err(e) => return tcp_err(&e),
             }
         } else if let Some(stream) = stream_clone(h) {
             let mut reader: &TcpStream = &stream;
@@ -461,13 +478,17 @@ pub unsafe extern "C" fn gos_rt_tcp_stream_read_to_string(h: i64) -> i128 {
 pub unsafe extern "C" fn gos_rt_tcp_stream_write(h: i64, data: *const super::vec::GosVec) -> i128 {
     ffi_entry!(0i128, {
         let bytes = unsafe { super::encoding::gosvec_u8(data) };
+        let bytes_len = bytes.len() as i64;
         if let Some(tls) = tls_clone(h) {
             // rustls buffers plaintext until flushed; flush so the
             // encrypted record reaches the peer before the call returns.
-            let mut guard = tls.lock();
-            match guard.write_all(&bytes).and_then(|()| guard.flush()) {
-                Ok(()) => super::vec::gos_rt_result_new(0, bytes.len() as i64),
-                Err(e) => tcp_err(&format!("{e}")),
+            match crate::sched_global::run_blocking("tls-stream-write", move || {
+                let mut guard = tls.lock();
+                guard.write_all(&bytes).and_then(|()| guard.flush())
+            }) {
+                Ok(Ok(())) => super::vec::gos_rt_result_new(0, bytes_len),
+                Ok(Err(e)) => tcp_err(&format!("{e}")),
+                Err(e) => tcp_err(&e),
             }
         } else if let Some(stream) = stream_clone(h) {
             let mut writer: &TcpStream = &stream;

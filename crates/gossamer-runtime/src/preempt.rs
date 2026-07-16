@@ -164,7 +164,11 @@ pub extern "C" fn gos_rt_preempt_check() -> i32 {
 pub extern "C" fn gos_rt_preempt_check_and_yield() -> i32 {
     if should_yield() {
         note_yield();
-        std::thread::yield_now();
+        if gossamer_coro::in_goroutine() {
+            gossamer_coro::suspend();
+        } else {
+            std::thread::yield_now();
+        }
         1
     } else {
         0

@@ -994,6 +994,23 @@ pub enum Op {
         /// Const-pool index of the field-name string.
         name_idx: ConstIdx,
     },
+    /// Builds a two-field integer struct directly from typed registers. This
+    /// bypasses the synthetic `__struct` builtin, its call-argument buffer,
+    /// and boxing of the two scalar operands.
+    Struct2I64 {
+        /// Destination boxed aggregate register.
+        dst: Reg,
+        /// Struct type name in [`FnChunk::shape_names`].
+        type_name: ConstIdx,
+        /// First field name in [`FnChunk::shape_names`].
+        field0: ConstIdx,
+        /// Second field name in [`FnChunk::shape_names`].
+        field1: ConstIdx,
+        /// First source integer register.
+        first_i: Reg,
+        /// Second source integer register.
+        second_i: Reg,
+    },
     /// `dst = base[index].field_name` - fused indexed field
     /// read. Avoids cloning the inner struct `Arc` that a
     /// separate `IndexGet` + `FieldGet` would produce; reads

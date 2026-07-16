@@ -346,4 +346,26 @@ fn advance(c: Cursor) -> i64 { c.pos + c.limit }
             chunk.instrs
         );
     }
+
+    #[test]
+    fn two_i64_positional_constructor_skips_generic_struct_call() {
+        let source = r"
+struct Pair { left: i64, right: i64 }
+fn make(a: i64, b: i64) -> Pair { Pair(a, b) }
+";
+        let (chunk, _) = compile_named(source, "make");
+        assert!(
+            chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::Struct2I64 { .. })),
+            "two-integer positional constructor must use Struct2I64: {:?}",
+            chunk.instrs
+        );
+        assert!(
+            !chunk.instrs.iter().any(|op| matches!(op, Op::Call { .. })),
+            "direct constructor must not retain a generic call: {:?}",
+            chunk.instrs
+        );
+    }
 }

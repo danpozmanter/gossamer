@@ -1039,6 +1039,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1090,6 +1092,34 @@
 
 
     Overview
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../misc/tooling_faithful_fmt/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Formatter behavior
 
 
 
@@ -2057,12 +2087,12 @@ automatic cycle reclamation that ARC leaves to the programmer.</p>
 <p><code>&amp;x</code> means "read <code>x</code> without taking ownership". <code>&amp;mut x</code> means
 "write <code>x</code> without taking ownership". The type checker rejects:</p>
 <ul>
-<li>A <code>&amp;mut</code> overlapping with another <code>&amp;</code> or <code>&amp;mut</code> in a visible
-  scope.</li>
 <li>A <code>&amp;mut</code> taken on a non-<code>mut</code> binding.</li>
+<li>An assignment through a shared <code>&amp;T</code> reference.</li>
 </ul>
 <p>These are <em>correctness</em> rules, not lifetime proofs. You never
-write <code>'a</code>.</p>
+write <code>'a</code>. Overlapping <code>&amp;mut</code> references remain allowed; Gossamer does
+not perform Rust-style exclusivity analysis.</p>
 <h2 id="how-reclamation-works">How reclamation works<a class="headerlink" href="#how-reclamation-works" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Reference counting, compiler-inserted.</strong> The MIR lowering inserts

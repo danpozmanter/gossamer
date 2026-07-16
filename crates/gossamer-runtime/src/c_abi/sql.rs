@@ -153,11 +153,41 @@ fn conn_register(c: Box<dyn ConnectionImpl>) -> i64 {
     id
 }
 
-fn conn_with<R>(handle: i64, f: impl FnOnce(&mut dyn ConnectionImpl) -> R) -> Option<R> {
+/// Removes a session from the registry while a driver call owns it.  Database
+/// sessions are `Send` but deliberately not `Sync`, so taking the entry gives
+/// one operation exclusive ownership without pinning the handle-registry lock
+/// across a potentially unbounded driver call.
+fn conn_take(handle: i64) -> Option<Box<dyn ConnectionImpl>> {
     let mut guard = CONN_HANDLES.lock();
-    let map = guard.as_mut()?;
-    let c = map.get_mut(&handle)?;
-    Some(f(c.as_mut()))
+    guard.as_mut()?.remove(&handle)
+}
+
+fn conn_reinsert(handle: i64, conn: Box<dyn ConnectionImpl>) {
+    let mut guard = CONN_HANDLES.lock();
+    guard.get_or_insert_with(HashMap::new).insert(handle, conn);
+}
+
+/// Runs one session operation on the blocking pool and restores the session
+/// afterward.  While the operation is in flight, a competing use of the same
+/// opaque handle observes it as unavailable rather than blocking on a global
+/// registry mutex.  This matches the existing take/reinsert ownership model
+/// for statements, rows, and transactions.
+fn conn_run<R>(
+    handle: i64,
+    label: &'static str,
+    f: impl FnOnce(&mut dyn ConnectionImpl) -> R + Send + 'static,
+) -> Result<R, String>
+where
+    R: Send + 'static,
+{
+    let conn = conn_take(handle).ok_or_else(|| INVALID_CONN.to_string())?;
+    let (conn, result) = crate::sched_global::run_blocking(label, move || {
+        let mut conn = conn;
+        let result = f(conn.as_mut());
+        (conn, result)
+    })?;
+    conn_reinsert(handle, conn);
+    Ok(result)
 }
 
 fn rows_register(r: Box<dyn RowsImpl>, conn: i64) -> i64 {
@@ -296,16 +326,19 @@ const INVALID_TX: &str = "sql: invalid transaction handle";
 /// Opens a connection. Returns a Conn handle, -1 on unknown driver,
 /// -2 on driver error.
 pub fn sql_open_handle(name: &str, url: &str) -> i64 {
-    match crate::sql::open(name, url) {
-        Ok(conn) => conn_register(conn),
-        Err(e @ Error::UnknownDriver(_)) => {
+    let name = name.to_string();
+    let url = url.to_string();
+    match crate::sched_global::run_blocking("sql-open", move || crate::sql::open(&name, &url)) {
+        Ok(Ok(conn)) => conn_register(conn),
+        Ok(Err(e @ Error::UnknownDriver(_))) => {
             sql_set_last_error(e.to_string());
             -1
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             sql_set_last_error(e.to_string());
             -2
         }
+        Err(e) => fail(e),
     }
 }
 
@@ -357,37 +390,42 @@ pub fn params_take_public(handle: i64) -> Vec<Value> {
 /// Returns rows affected, or -1 on error.
 pub fn sql_conn_execute_params(handle: i64, sql: &str, params_handle: i64) -> i64 {
     let params = params_take(params_handle);
-    conn_with(handle, |c| match c.prepare(sql) {
+    let sql = sql.to_string();
+    match conn_run(handle, "sql-conn-execute", move |c| match c.prepare(&sql) {
         Ok(mut stmt) => match stmt.execute(&params) {
             Ok(n) => n as i64,
             Err(e) => fail(e.to_string()),
         },
         Err(e) => fail(e.to_string()),
-    })
-    .unwrap_or_else(|| fail(INVALID_CONN))
+    }) {
+        Ok(n) => n,
+        Err(e) => fail(e),
+    }
 }
 
 /// Prepares + queries `sql` with the bound parameter list (consumed).
 /// Returns a Rows handle, or -1 on error.
 pub fn sql_conn_query_params(handle: i64, sql: &str, params_handle: i64) -> i64 {
     let params = params_take(params_handle);
-    conn_with(handle, |c| match c.prepare(sql) {
-        Ok(mut stmt) => match stmt.query(&params) {
-            Ok(rows) => rows_register(rows, handle),
-            Err(e) => fail(e.to_string()),
-        },
-        Err(e) => fail(e.to_string()),
-    })
-    .unwrap_or_else(|| fail(INVALID_CONN))
+    let sql = sql.to_string();
+    let result = conn_run(handle, "sql-conn-query", move |c| match c.prepare(&sql) {
+        Ok(mut stmt) => stmt.query(&params),
+        Err(e) => Err(e),
+    });
+    match result {
+        Ok(Ok(rows)) => rows_register(rows, handle),
+        Ok(Err(e)) => fail(e.to_string()),
+        Err(e) => fail(e),
+    }
 }
 
 /// Begins a transaction. Returns a Tx handle, or -1 on error.
 pub fn sql_conn_begin(handle: i64) -> i64 {
-    conn_with(handle, |c| match c.begin() {
-        Ok(tx) => tx_register(tx, handle),
-        Err(e) => fail(e.to_string()),
-    })
-    .unwrap_or_else(|| fail(INVALID_CONN))
+    match conn_run(handle, "sql-conn-begin", |c| c.begin()) {
+        Ok(Ok(tx)) => tx_register(tx, handle),
+        Ok(Err(e)) => fail(e.to_string()),
+        Err(e) => fail(e),
+    }
 }
 
 /// Begins a transaction at isolation level `iso` (0=Default,
@@ -401,57 +439,63 @@ pub fn sql_conn_begin_with(handle: i64, iso: i64) -> i64 {
         4 => IsolationLevel::Serializable,
         _ => IsolationLevel::Default,
     };
-    conn_with(handle, |c| match c.begin_with(level) {
-        Ok(tx) => tx_register(tx, handle),
-        Err(e) => fail(e.to_string()),
-    })
-    .unwrap_or_else(|| fail(INVALID_CONN))
+    match conn_run(handle, "sql-conn-begin", move |c| c.begin_with(level)) {
+        Ok(Ok(tx)) => tx_register(tx, handle),
+        Ok(Err(e)) => fail(e.to_string()),
+        Err(e) => fail(e),
+    }
 }
 
 /// Pings the connection. Returns 0 on success, -1 on error.
 pub fn sql_conn_ping(handle: i64) -> i64 {
-    conn_with(handle, |c| match c.ping() {
-        Ok(()) => 0,
-        Err(e) => fail(e.to_string()),
-    })
-    .unwrap_or_else(|| fail(INVALID_CONN))
+    match conn_run(handle, "sql-conn-ping", |c| c.ping()) {
+        Ok(Ok(())) => 0,
+        Ok(Err(e)) => fail(e.to_string()),
+        Err(e) => fail(e),
+    }
 }
 
 /// Sets the driver busy timeout. Returns 0 on success, -1 on error.
 pub fn sql_conn_set_busy_timeout(handle: i64, ms: i64) -> i64 {
-    conn_with(handle, |c| match c.set_busy_timeout(ms) {
-        Ok(()) => 0,
-        Err(e) => fail(e.to_string()),
-    })
-    .unwrap_or_else(|| fail(INVALID_CONN))
+    match conn_run(handle, "sql-conn-set-busy-timeout", move |c| {
+        c.set_busy_timeout(ms)
+    }) {
+        Ok(Ok(())) => 0,
+        Ok(Err(e)) => fail(e.to_string()),
+        Err(e) => fail(e),
+    }
 }
 
 /// Cancels any in-flight statement on the connection. Returns 0, or
 /// -1 on a bad handle.
 pub fn sql_conn_interrupt(handle: i64) -> i64 {
-    conn_with(handle, |c| {
-        c.interrupt();
-        0
-    })
-    .unwrap_or_else(|| fail(INVALID_CONN))
+    let mut guard = CONN_HANDLES.lock();
+    let Some(conn) = guard.as_mut().and_then(|map| map.get_mut(&handle)) else {
+        return fail(INVALID_CONN);
+    };
+    conn.interrupt();
+    0
 }
 
 /// Closes the connection and releases its handle, sweeping any
 /// cursors still open on it (so an abandoned iteration is bounded by
 /// the connection's lifetime). Returns 0 on success, -1 on error.
 pub fn sql_conn_close(handle: i64) -> i64 {
-    let conn = {
-        let mut guard = CONN_HANDLES.lock();
-        guard.as_mut().and_then(|m| m.remove(&handle))
-    };
-    let Some(mut conn) = conn else {
+    let conn = conn_take(handle);
+    let Some(conn) = conn else {
         return fail(INVALID_CONN);
     };
     sweep_conn_cursors(handle);
     sweep_conn_children(handle);
-    match conn.close() {
-        Ok(()) => 0,
-        Err(e) => fail(e.to_string()),
+    match crate::sched_global::run_blocking("sql-conn-close", move || {
+        let mut conn = conn;
+        let result = conn.close();
+        drop(conn);
+        result
+    }) {
+        Ok(Ok(())) => 0,
+        Ok(Err(e)) => fail(e.to_string()),
+        Err(e) => fail(e),
     }
 }
 
@@ -748,11 +792,12 @@ pub fn sql_tx_query_params(handle: i64, sql: &str, params_handle: i64) -> i64 {
 /// Prepares a statement for repeated execution. Returns a Stmt
 /// handle (registered under the connection), or -1 on error.
 pub fn sql_conn_prepare(handle: i64, sql: &str) -> i64 {
-    conn_with(handle, |c| match c.prepare(sql) {
-        Ok(stmt) => stmt_register(stmt, handle),
-        Err(e) => fail(e.to_string()),
-    })
-    .unwrap_or_else(|| fail(INVALID_CONN))
+    let sql = sql.to_string();
+    match conn_run(handle, "sql-conn-prepare", move |c| c.prepare(&sql)) {
+        Ok(Ok(stmt)) => stmt_register(stmt, handle),
+        Ok(Err(e)) => fail(e.to_string()),
+        Err(e) => fail(e),
+    }
 }
 
 /// Executes a prepared statement with bound parameters (consumed).
@@ -795,24 +840,27 @@ pub fn sql_stmt_close(handle: i64) -> i64 {
 /// Bulk-loads `data` through the dialect's copy mechanism. Returns
 /// rows written, or -1 on error.
 pub fn sql_conn_copy_in(handle: i64, sql: &str, data: &[u8]) -> i64 {
-    conn_with(handle, |c| match c.copy_in(sql, data) {
-        Ok(n) => n as i64,
-        Err(e) => fail(e.to_string()),
-    })
-    .unwrap_or_else(|| fail(INVALID_CONN))
+    let sql = sql.to_string();
+    let data = data.to_vec();
+    match conn_run(handle, "sql-conn-copy-in", move |c| c.copy_in(&sql, &data)) {
+        Ok(Ok(n)) => n as i64,
+        Ok(Err(e)) => fail(e.to_string()),
+        Err(e) => fail(e),
+    }
 }
 
 /// Bulk-extracts rows through the dialect's copy mechanism. `None`
 /// means error (message via `sql_take_last_error`).
 pub fn sql_conn_copy_out(handle: i64, sql: &str) -> Option<Vec<u8>> {
-    match conn_with(handle, |c| c.copy_out(sql)) {
-        Some(Ok(bytes)) => Some(bytes),
-        Some(Err(e)) => {
+    let sql = sql.to_string();
+    match conn_run(handle, "sql-conn-copy-out", move |c| c.copy_out(&sql)) {
+        Ok(Ok(bytes)) => Some(bytes),
+        Ok(Err(e)) => {
             sql_set_last_error(e.to_string());
             None
         }
-        None => {
-            sql_set_last_error(INVALID_CONN);
+        Err(e) => {
+            sql_set_last_error(e);
             None
         }
     }
@@ -820,37 +868,41 @@ pub fn sql_conn_copy_out(handle: i64, sql: &str) -> Option<Vec<u8>> {
 
 /// Subscribes the connection to `channel`. Returns 0, or -1 on error.
 pub fn sql_conn_listen(handle: i64, channel: &str) -> i64 {
-    conn_with(handle, |c| match c.listen(channel) {
-        Ok(()) => 0,
-        Err(e) => fail(e.to_string()),
-    })
-    .unwrap_or_else(|| fail(INVALID_CONN))
+    let channel = channel.to_string();
+    match conn_run(handle, "sql-conn-listen", move |c| c.listen(&channel)) {
+        Ok(Ok(())) => 0,
+        Ok(Err(e)) => fail(e.to_string()),
+        Err(e) => fail(e),
+    }
 }
 
 /// Unsubscribes the connection from `channel`. Returns 0, or -1 on
 /// error.
 pub fn sql_conn_unlisten(handle: i64, channel: &str) -> i64 {
-    conn_with(handle, |c| match c.unlisten(channel) {
-        Ok(()) => 0,
-        Err(e) => fail(e.to_string()),
-    })
-    .unwrap_or_else(|| fail(INVALID_CONN))
+    let channel = channel.to_string();
+    match conn_run(handle, "sql-conn-unlisten", move |c| c.unlisten(&channel)) {
+        Ok(Ok(())) => 0,
+        Ok(Err(e)) => fail(e.to_string()),
+        Err(e) => fail(e),
+    }
 }
 
 /// Waits up to `timeout_ms` for a notification. Returns 1 when one
 /// arrived (readable via the `sql_notification_*` getters), 0 on
 /// timeout, -1 on error.
 pub fn sql_conn_poll_notification(handle: i64, timeout_ms: i64) -> i64 {
-    let polled = conn_with(handle, |c| c.poll_notification(timeout_ms));
+    let polled = conn_run(handle, "sql-conn-poll-notification", move |c| {
+        c.poll_notification(timeout_ms)
+    });
     match polled {
-        Some(Ok(Some(n))) => {
+        Ok(Ok(Some(n))) => {
             let mut guard = LAST_NOTIFICATION.lock();
             guard.get_or_insert_with(HashMap::new).insert(handle, n);
             1
         }
-        Some(Ok(None)) => 0,
-        Some(Err(e)) => fail(e.to_string()),
-        None => fail(INVALID_CONN),
+        Ok(Ok(None)) => 0,
+        Ok(Err(e)) => fail(e.to_string()),
+        Err(e) => fail(e),
     }
 }
 
@@ -914,14 +966,19 @@ pub fn sql_pool_new(
     if acquire_timeout_ms > 0 {
         config.acquire_timeout = std::time::Duration::from_millis(acquire_timeout_ms as u64);
     }
-    match crate::sql_pool::Pool::new(driver, url, config) {
-        Ok(pool) => {
+    let driver = driver.to_string();
+    let url = url.to_string();
+    match crate::sched_global::run_blocking("sql-pool-new", move || {
+        crate::sql_pool::Pool::new(&driver, &url, config)
+    }) {
+        Ok(Ok(pool)) => {
             let id = next_handle();
             let mut guard = POOL_HANDLES.lock();
             guard.get_or_insert_with(HashMap::new).insert(id, pool);
             id
         }
-        Err(e) => fail(e.to_string()),
+        Ok(Err(e)) => fail(e.to_string()),
+        Err(e) => fail(e),
     }
 }
 
@@ -930,14 +987,20 @@ fn pool_with<R>(handle: i64, f: impl FnOnce(&crate::sql_pool::Pool) -> R) -> Opt
     guard.as_ref()?.get(&handle).map(f)
 }
 
+fn pool_clone(handle: i64) -> Option<crate::sql_pool::Pool> {
+    pool_with(handle, Clone::clone)
+}
+
 /// Checks a connection out of the pool. The result is an ordinary
 /// Conn handle; closing it returns the connection to the pool.
 pub fn sql_pool_get(handle: i64) -> i64 {
-    let checkout = pool_with(handle, crate::sql_pool::Pool::get);
-    match checkout {
-        Some(Ok(conn)) => conn_register(Box::new(conn)),
-        Some(Err(e)) => fail(e.to_string()),
-        None => fail("sql: invalid pool handle"),
+    let Some(pool) = pool_clone(handle) else {
+        return fail("sql: invalid pool handle");
+    };
+    match crate::sched_global::run_blocking("sql-pool-get", move || pool.get()) {
+        Ok(Ok(conn)) => conn_register(Box::new(conn)),
+        Ok(Err(e)) => fail(e.to_string()),
+        Err(e) => fail(e),
     }
 }
 
@@ -964,11 +1027,14 @@ pub fn sql_pool_close_idle(handle: i64) -> i64 {
 /// Applies pending migrations from `dir` on the connection. Returns
 /// the number applied, or -1 on error.
 pub fn sql_migrate_up(conn: i64, dir: &str) -> i64 {
-    let result = conn_with(conn, |c| crate::sql_migrate::up(c, dir));
+    let dir = dir.to_string();
+    let result = conn_run(conn, "sql-migrate-up", move |c| {
+        crate::sql_migrate::up(c, dir)
+    });
     match result {
-        Some(Ok(applied)) => applied.len() as i64,
-        Some(Err(e)) => fail(e.to_string()),
-        None => fail(INVALID_CONN),
+        Ok(Ok(applied)) => applied.len() as i64,
+        Ok(Err(e)) => fail(e.to_string()),
+        Err(e) => fail(e),
     }
 }
 
@@ -2883,7 +2949,8 @@ fn bytes_to_gosvec(bytes: &[u8]) -> *mut super::vec::GosVec {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
 
     use super::*;
     use crate::sql::{ConnectionImpl, Driver, RowsImpl, StatementImpl, TransactionImpl};
@@ -2908,12 +2975,42 @@ mod tests {
 
     struct StubTx;
 
+    struct BlockingPrepareDriver {
+        started: Mutex<Option<mpsc::Sender<()>>>,
+        release: Mutex<Option<mpsc::Receiver<()>>>,
+    }
+
+    struct BlockingPrepareConn {
+        started: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+    }
+
     impl Driver for StubDriver {
         fn name(&self) -> &'static str {
             "stub-cursor-test"
         }
         fn open(&self, _url: &str) -> Result<Box<dyn ConnectionImpl>, Error> {
             Ok(Box::new(StubConn))
+        }
+    }
+
+    impl Driver for BlockingPrepareDriver {
+        fn name(&self) -> &'static str {
+            "blocking-session-test"
+        }
+
+        fn open(&self, _url: &str) -> Result<Box<dyn ConnectionImpl>, Error> {
+            let started = self
+                .started
+                .lock()
+                .take()
+                .ok_or_else(|| Error::driver("blocking", "connection already opened"))?;
+            let release = self
+                .release
+                .lock()
+                .take()
+                .ok_or_else(|| Error::driver("blocking", "connection already opened"))?;
+            Ok(Box::new(BlockingPrepareConn { started, release }))
         }
     }
 
@@ -2932,6 +3029,29 @@ mod tests {
         fn begin(&mut self) -> Result<Box<dyn TransactionImpl>, Error> {
             Ok(Box::new(StubTx))
         }
+        fn close(&mut self) -> Result<(), Error> {
+            Ok(())
+        }
+    }
+
+    impl ConnectionImpl for BlockingPrepareConn {
+        fn prepare(&mut self, _sql: &str) -> Result<Box<dyn StatementImpl>, Error> {
+            self.started
+                .send(())
+                .map_err(|e| Error::driver("blocking", e.to_string()))?;
+            self.release
+                .recv()
+                .map_err(|e| Error::driver("blocking", e.to_string()))?;
+            Ok(Box::new(StubStmt {
+                n: 0,
+                fail_at: None,
+            }))
+        }
+
+        fn begin(&mut self) -> Result<Box<dyn TransactionImpl>, Error> {
+            Ok(Box::new(StubTx))
+        }
+
         fn close(&mut self) -> Result<(), Error> {
             Ok(())
         }
@@ -3087,6 +3207,33 @@ mod tests {
         assert_eq!(sql_row_kind(first, "c"), 2, "row survives a failed advance");
         assert_eq!(sql_rows_close(rows), 0, "cursor still closable after error");
         assert!(stale(first));
+        assert_eq!(sql_conn_close(conn), 0);
+    }
+
+    #[test]
+    fn connection_registry_lock_is_released_during_driver_io() {
+        let _guard = ERROR_SLOT_LOCK.lock();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        crate::sql::register(Arc::new(BlockingPrepareDriver {
+            started: Mutex::new(Some(started_tx)),
+            release: Mutex::new(Some(release_rx)),
+        }));
+        let conn = sql_open_handle("blocking-session-test", "mem");
+        assert!(conn > 0, "open: {}", sql_take_last_error());
+
+        let worker = std::thread::spawn(move || sql_conn_prepare(conn, "blocked"));
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("driver prepare should start");
+        assert!(
+            CONN_HANDLES.try_lock().is_some(),
+            "a blocked driver call must not retain the connection registry lock"
+        );
+        release_tx.send(()).expect("release driver prepare");
+        let stmt = worker.join().expect("prepare worker panicked");
+        assert!(stmt > 0, "prepare: {}", sql_take_last_error());
+        assert_eq!(sql_stmt_close(stmt), 0);
         assert_eq!(sql_conn_close(conn), 0);
     }
 

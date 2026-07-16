@@ -47,8 +47,8 @@ fn bigger<T: Shape>(s: &T, threshold: i64) -> bool {
 }
 
 fn main() {
-    let sq = Square { side: 4 }
-    let r = Rect { w: 3, h: 5 }
+    let sq = Square(4)
+    let r = Rect(3, 5)
     println!("{}", report(&sq))
     println!("{}", report(&r))
     println!("{}", bigger(&sq, 10))

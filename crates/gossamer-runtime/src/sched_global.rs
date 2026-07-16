@@ -611,6 +611,21 @@ impl crate::sched::Task for GoroutineTask {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::ffi::CString;
+    #[cfg(unix)]
+    use std::os::fd::{FromRawFd, RawFd};
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStrExt;
+    #[cfg(unix)]
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[cfg(unix)]
+    const BLOCKING_FS_CHILD_ENV: &str = "GOSSAMER_BLOCKING_FS_CHILD";
+    #[cfg(unix)]
+    const BLOCKING_CHILD_PIPE_ENV: &str = "GOSSAMER_BLOCKING_CHILD_PIPE";
+    #[cfg(unix)]
+    const BLOCKING_TERMINAL_ENV: &str = "GOSSAMER_BLOCKING_TERMINAL";
 
     #[test]
     #[cfg_attr(miri, ignore)] // spawns goroutines on the mmap-stack scheduler; Miri can't
@@ -665,5 +680,274 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         panic!("goroutine sleep did not return within deadline");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[cfg_attr(miri, ignore)] // starts a one-worker subprocess with mmap-stack coroutines
+    fn blocking_filesystem_read_allows_peer_progress_on_one_worker() {
+        let status = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .arg("--exact")
+            .arg("sched_global::tests::blocking_filesystem_read_child")
+            .arg("--nocapture")
+            .env(BLOCKING_FS_CHILD_ENV, "1")
+            .env("GOSSAMER_MAX_PROCS", "1")
+            .status()
+            .expect("start one-worker child");
+        assert!(status.success(), "one-worker child failed: {status}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[cfg_attr(miri, ignore)] // exercises a real FIFO and scheduler worker thread
+    fn blocking_filesystem_read_child() {
+        if std::env::var_os(BLOCKING_FS_CHILD_ENV).is_none() {
+            return;
+        }
+
+        let fifo = std::env::temp_dir().join(format!(
+            "gos-blocking-fs-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock after epoch")
+                .as_nanos()
+        ));
+        let fifo_c = CString::new(fifo.as_os_str().as_bytes()).expect("FIFO path has no NUL");
+        // SAFETY: `fifo_c` is a NUL-terminated path that remains live for the
+        // call; 0600 avoids exposing the test FIFO to other local users.
+        assert_eq!(
+            unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) },
+            0,
+            "create FIFO"
+        );
+
+        let peer_ran = std::sync::Arc::new(AtomicBool::new(false));
+        let read_done = std::sync::Arc::new(AtomicBool::new(false));
+        let reader_path = fifo_c.clone();
+        let reader_done = std::sync::Arc::clone(&read_done);
+        let _ = spawn(Box::new(move || {
+            // SAFETY: `reader_path` is an owned, NUL-terminated FIFO path and
+            // the C-ABI helper accepts it for the duration of this call.
+            let raw = unsafe { crate::c_abi::fs::gos_rt_fs_read_to_string(reader_path.as_ptr()) };
+            if !raw.is_null() {
+                // SAFETY: the C-ABI helper returns either null or an owned
+                // CString allocation, so this consumes exactly that allocation.
+                drop(unsafe { CString::from_raw(raw) });
+            }
+            reader_done.store(true, Ordering::Release);
+        }));
+        let peer = std::sync::Arc::clone(&peer_ran);
+        let _ = spawn(Box::new(move || peer.store(true, Ordering::Release)));
+
+        for _ in 0..200 {
+            if peer_ran.load(Ordering::Acquire) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            peer_ran.load(Ordering::Acquire),
+            "a FIFO read pinned the only scheduler worker"
+        );
+
+        std::fs::write(&fifo, b"unblock").expect("unblock FIFO reader");
+        for _ in 0..200 {
+            if read_done.load(Ordering::Acquire) {
+                let _ = std::fs::remove_file(&fifo);
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let _ = std::fs::remove_file(&fifo);
+        panic!("FIFO read did not resume after writer closed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[cfg_attr(miri, ignore)] // starts a one-worker subprocess with mmap-stack coroutines
+    fn blocking_child_pipe_allows_peer_progress_on_one_worker() {
+        let status = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .arg("--exact")
+            .arg("sched_global::tests::blocking_child_pipe_child")
+            .arg("--nocapture")
+            .env(BLOCKING_CHILD_PIPE_ENV, "1")
+            .env("GOSSAMER_MAX_PROCS", "1")
+            .status()
+            .expect("start one-worker child");
+        assert!(status.success(), "one-worker child failed: {status}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[cfg_attr(miri, ignore)] // waits on a real child stdout pipe
+    fn blocking_child_pipe_child() {
+        if std::env::var_os(BLOCKING_CHILD_PIPE_ENV).is_none() {
+            return;
+        }
+
+        let read_started = std::sync::Arc::new(AtomicBool::new(false));
+        let peer_ran = std::sync::Arc::new(AtomicBool::new(false));
+        let read_done = std::sync::Arc::new(AtomicBool::new(false));
+        let started = std::sync::Arc::clone(&read_started);
+        let done = std::sync::Arc::clone(&read_done);
+        let _ = spawn(Box::new(move || {
+            let args = vec!["-c".to_string(), "sleep 0.2; printf done".to_string()];
+            let handle = crate::c_abi::piped_child_spawn("sh", &args).expect("spawn shell");
+            started.store(true, Ordering::Release);
+            assert_eq!(
+                crate::c_abi::piped_child_read_stdout(handle).as_deref(),
+                Some("done")
+            );
+            assert_eq!(
+                crate::c_abi::piped_child_wait(handle).expect("wait shell"),
+                0
+            );
+            done.store(true, Ordering::Release);
+        }));
+
+        for _ in 0..200 {
+            if read_started.load(Ordering::Acquire) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            read_started.load(Ordering::Acquire),
+            "child pipe did not start"
+        );
+
+        let peer = std::sync::Arc::clone(&peer_ran);
+        let _ = spawn(Box::new(move || peer.store(true, Ordering::Release)));
+        for _ in 0..200 {
+            if peer_ran.load(Ordering::Acquire) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            peer_ran.load(Ordering::Acquire),
+            "a child stdout read pinned the only scheduler worker"
+        );
+
+        for _ in 0..200 {
+            if read_done.load(Ordering::Acquire) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("child stdout read did not resume after the child exited");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[cfg_attr(miri, ignore)] // starts a one-worker subprocess with a real full pipe
+    fn blocking_terminal_write_allows_peer_progress_on_one_worker() {
+        let status = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .arg("--exact")
+            .arg("sched_global::tests::blocking_terminal_write_child")
+            .arg("--nocapture")
+            .env(BLOCKING_TERMINAL_ENV, "1")
+            .env("GOSSAMER_MAX_PROCS", "1")
+            .status()
+            .expect("start one-worker child");
+        assert!(status.success(), "one-worker child failed: {status}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[cfg_attr(miri, ignore)] // redirects stdout to a real pipe and drains it after the assertion
+    fn blocking_terminal_write_child() {
+        if std::env::var_os(BLOCKING_TERMINAL_ENV).is_none() {
+            return;
+        }
+
+        let mut pipe: [RawFd; 2] = [-1; 2];
+        // SAFETY: `pipe` points to two valid fd slots.
+        assert_eq!(
+            unsafe { libc::pipe(pipe.as_mut_ptr()) },
+            0,
+            "create stdout pipe"
+        );
+        // SAFETY: stdout is an open descriptor in the test subprocess.
+        let saved_stdout = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        assert!(saved_stdout >= 0, "save stdout");
+        // SAFETY: both descriptors are open. stdout now shares the pipe's write
+        // end; closing the original write descriptor leaves stdout valid.
+        assert_eq!(
+            unsafe { libc::dup2(pipe[1], libc::STDOUT_FILENO) },
+            libc::STDOUT_FILENO
+        );
+        assert_eq!(
+            unsafe { libc::close(pipe[1]) },
+            0,
+            "close original pipe writer"
+        );
+
+        let writer_started = std::sync::Arc::new(AtomicBool::new(false));
+        let writer_done = std::sync::Arc::new(AtomicBool::new(false));
+        let peer_ran = std::sync::Arc::new(AtomicBool::new(false));
+        let started = std::sync::Arc::clone(&writer_started);
+        let done = std::sync::Arc::clone(&writer_done);
+        let _ = spawn(Box::new(move || {
+            started.store(true, Ordering::Release);
+            crate::c_abi::write_terminal(1, &vec![b'x'; 1024 * 1024]);
+            done.store(true, Ordering::Release);
+        }));
+
+        for _ in 0..200 {
+            if writer_started.load(Ordering::Acquire) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            writer_started.load(Ordering::Acquire),
+            "terminal writer did not start"
+        );
+        // Let the blocking worker fill the pipe before scheduling the peer.
+        std::thread::sleep(Duration::from_millis(20));
+
+        let peer = std::sync::Arc::clone(&peer_ran);
+        let _ = spawn(Box::new(move || peer.store(true, Ordering::Release)));
+        for _ in 0..200 {
+            if peer_ran.load(Ordering::Acquire) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            peer_ran.load(Ordering::Acquire),
+            "a terminal write pinned the only scheduler worker"
+        );
+
+        // Restore test output before unblocking the terminal writer, then drain
+        // the pipe on a plain OS thread until that worker closes its duplicate.
+        // SAFETY: `saved_stdout` is valid and becomes fd 1; it is then closed.
+        assert_eq!(
+            unsafe { libc::dup2(saved_stdout, libc::STDOUT_FILENO) },
+            libc::STDOUT_FILENO
+        );
+        assert_eq!(
+            unsafe { libc::close(saved_stdout) },
+            0,
+            "close saved stdout"
+        );
+        let reader = std::thread::spawn(move || {
+            // SAFETY: this thread uniquely owns the pipe's read descriptor.
+            let mut pipe = unsafe { std::fs::File::from_raw_fd(pipe[0]) };
+            let mut buf = [0_u8; 8192];
+            while std::io::Read::read(&mut pipe, &mut buf).expect("read terminal pipe") > 0 {}
+        });
+
+        for _ in 0..200 {
+            if writer_done.load(Ordering::Acquire) {
+                reader.join().expect("terminal pipe reader");
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let _ = reader.join();
+        panic!("terminal write did not resume after pipe drain");
     }
 }

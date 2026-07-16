@@ -26,7 +26,7 @@ impl Iterator for Counter {
 }
 
 fn main() {
-    let mut c = Counter { next_value: 0, end: 5 }
+    let mut c = Counter(0, 5)
     let mut sum = 0
     for n in c {
         sum += n

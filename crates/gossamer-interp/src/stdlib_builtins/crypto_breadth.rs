@@ -181,6 +181,16 @@ pub(crate) fn install_crypto_breadth(globals: &mut Vec<(&'static str, Value)>) {
             crate::builtins::builtin_pub(q, builtin_crypto_x509_parse_pem),
         ));
     }
+    {
+        let q = "crypto::x509::verify_server_certificate_with_crls";
+        globals.push((
+            q,
+            crate::builtins::builtin_pub(
+                q,
+                builtin_crypto_x509_verify_server_certificate_with_crls,
+            ),
+        ));
+    }
     // Leaf intrinsic for the injected real-struct `CertInfo` wrapper:
     // returns the fields as a 7-tuple the wrapper folds into a struct.
     {
@@ -225,6 +235,21 @@ pub(crate) fn builtin_x509_parse_pem_raw(args: &[Value]) -> RuntimeResult<Value>
             ]))))
         }
         Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+pub(crate) fn builtin_crypto_x509_verify_server_certificate_with_crls(
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let chain = value_to_bytes(args.first().unwrap_or(&Value::Unit));
+    let roots = value_to_bytes(args.get(1).unwrap_or(&Value::Unit));
+    let hostname = as_str(args.get(2).unwrap_or(&Value::Unit)).unwrap_or("");
+    let crls = value_to_bytes(args.get(3).unwrap_or(&Value::Unit));
+    match gossamer_std::crypto::x509::verify_server_certificate_with_crls(
+        &chain, &roots, hostname, &crls,
+    ) {
+        Ok(()) => Ok(ok_variant(Value::Unit)),
+        Err(e) => Ok(err_variant(e.to_string())),
     }
 }
 

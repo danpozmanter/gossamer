@@ -32,10 +32,7 @@ fn triple(i: i64) -> (i64, i64, i64) {
 }
 
 fn make_point(i: i64) -> Point {
-    Point {
-        x: i + 1,
-        y: i - 1,
-    }
+    Point(i + 1, i - 1)
 }
 
 fn quad(i: i64) -> [i64; 4] {
@@ -55,11 +52,7 @@ fn run(rounds: i64) -> i64 {
         let arr = quad(i)
         total += arr[0] + arr[1] + arr[2] + arr[3]
 
-        let t = Trip {
-            a: Point { x: i, y: i * 3 },
-            b: Point { x: 0, y: 0 },
-            c: Point { x: 0, y: 0 },
-        }
+        let t = Trip(Point(i, i * 3), Point(0, 0), Point(0, 0))
         let h = t.head()
         total += h.x + h.y
 

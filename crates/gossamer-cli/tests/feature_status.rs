@@ -122,23 +122,17 @@ fn status_filter_narrows_to_one_lifecycle_stage() {
 }
 
 #[test]
-fn check_mode_passes_when_shipped_items_have_tests() {
+fn check_mode_passes_when_shipped_item_has_docs_without_tier_evidence() {
     let tmp = scratch("ok");
     let docs = tmp.join("docs_src");
     fs::create_dir_all(docs.join("language")).unwrap();
     fs::create_dir_all(docs.join("stdlib")).unwrap();
 
-    // Single shipped item, with both doc page + passing sidecar entry.
+    // Shipped means available and documented. Only Stable requires
+    // compatibility evidence from the sidecar.
     let sidecar = tmp.join("sidecar.json");
     fs::write(docs.join("language/if_let.md"), "Status: shipped\n").unwrap();
-    fs::write(
-        &sidecar,
-        r#"[
-  {"name":"lang::if_let","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}}
-]
-"#,
-    )
-    .unwrap();
+    fs::write(&sidecar, "[]\n").unwrap();
 
     // Filter down to the one path so unrelated registry entries don't
     // bring the check down.
@@ -160,17 +154,16 @@ fn check_mode_passes_when_shipped_items_have_tests() {
 }
 
 #[test]
-fn check_mode_fails_when_shipped_lacks_test() {
-    let tmp = scratch("missing-test");
+fn check_mode_passes_when_shipped_lacks_tier_evidence() {
+    let tmp = scratch("shipped-no-tier-evidence");
     let docs = tmp.join("docs_src");
     fs::create_dir_all(docs.join("language")).unwrap();
-    // Doc page exists, but no sidecar - `--check` should bail.
     fs::write(docs.join("language/match.md"), "Status: shipped\n").unwrap();
 
     let sidecar = tmp.join("sidecar.json");
     fs::write(&sidecar, "[]\n").unwrap();
 
-    let (code, _, stderr) = run(&[
+    let (code, stdout, stderr) = run(&[
         "feature-status",
         "--check",
         "--filter",
@@ -180,11 +173,9 @@ fn check_mode_fails_when_shipped_lacks_test() {
         "--docs-root",
         docs.to_str().unwrap(),
     ]);
-    assert_ne!(code, 0, "check should fail when test sidecar is empty");
-    assert!(
-        stderr.contains("missing tier-parity test")
-            || stderr.contains("feature-status check failed"),
-        "expected failure message, got {stderr}",
+    assert_eq!(
+        code, 0,
+        "shipped item should require docs, not Stable evidence: stdout={stdout} stderr={stderr}"
     );
 }
 

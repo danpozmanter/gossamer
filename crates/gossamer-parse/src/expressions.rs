@@ -316,11 +316,30 @@ impl Parser<'_> {
                 }
             }
         }
+        if has_pipe_dotdot_placeholder(&rhs) {
+            self.record(ParseError::PipeDotDotPlaceholder, rhs.span);
+        }
         let lhs_span = lhs.span;
         let mut piped = Some(lhs);
         if substitute_pipe_placeholder(&mut rhs, &mut piped) {
+            if contains_pipe_placeholder(&rhs) {
+                self.record(ParseError::PipePlaceholderInvalid, rhs.span);
+            }
             rhs.span = self.join(lhs_span, rhs.span);
             return rhs;
+        }
+        match substitute_pipe_argument_placeholder(&mut rhs, &mut piped) {
+            PipeArgumentPlaceholder::None => {}
+            PipeArgumentPlaceholder::Substituted => {
+                if contains_pipe_placeholder(&rhs) {
+                    self.record(ParseError::PipePlaceholderInvalid, rhs.span);
+                }
+                rhs.span = self.join(lhs_span, rhs.span);
+                return rhs;
+            }
+            PipeArgumentPlaceholder::Invalid => {
+                self.record(ParseError::PipePlaceholderInvalid, rhs.span);
+            }
         }
         let lhs = piped.take().expect("piped value left unconsumed");
         let rhs_span = rhs.span;
@@ -364,6 +383,9 @@ impl Parser<'_> {
     }
 
     fn parse_prefix_inner(&mut self) -> Expr {
+        if self.peek_range_op().is_some() {
+            return self.parse_open_range_prefix();
+        }
         if let Some(prefix_op) = self.peek_unary_op() {
             let op_span = self.peek_span();
             self.bump();
@@ -387,6 +409,34 @@ impl Parser<'_> {
             );
         }
         self.parse_postfix()
+    }
+
+    /// Parses a range with an omitted lower bound: `..end`, `..=end`, or
+    /// `..`. The normal infix path handles an omitted upper bound.
+    fn parse_open_range_prefix(&mut self) -> Expr {
+        let start_span = self.peek_span();
+        let kind = if self.eat_punct(Punct::DotDotEq) {
+            RangeKind::Inclusive
+        } else {
+            self.bump();
+            RangeKind::Exclusive
+        };
+        let end = if is_expression_start(self) {
+            Some(Box::new(self.parse_expr_with_prec(RANGE_PREC, false)))
+        } else {
+            None
+        };
+        let end_span = end.as_ref().map_or(self.last_span(), |expr| expr.span);
+        let id = self.alloc_id();
+        Expr::new(
+            id,
+            self.join(start_span, end_span),
+            ExprKind::Range {
+                start: None,
+                end,
+                kind,
+            },
+        )
     }
 
     fn peek_unary_op(&self) -> Option<UnaryOp> {
@@ -619,7 +669,7 @@ impl Parser<'_> {
         self.with_struct_literals_allowed(|p| {
             let mut args = Vec::new();
             while !p.at_punct(Punct::RParen) && !p.at_eof() {
-                if p.at_punct(Punct::DotDot) || p.at_punct(Punct::DotDotDot) {
+                if p.at_punct(Punct::DotDotDot) {
                     p.bump();
                     continue;
                 }
@@ -1461,7 +1511,12 @@ impl Parser<'_> {
             }
         }
         self.expect_punct(Punct::RBrace, "to close struct literal");
-        ExprKind::Struct { path, fields, base }
+        ExprKind::Struct {
+            path,
+            fields,
+            base,
+            syntax: gossamer_ast::expr::StructExprSyntax::Braced,
+        }
     }
 
     /// Gossamer exposes a deliberately narrow macro surface: only
@@ -2204,6 +2259,109 @@ fn substitute_pipe_placeholder(expr: &mut Expr, value: &mut Option<Expr>) -> boo
         }
         _ => false,
     }
+}
+
+/// Result of searching the immediate arguments of a piped call for `_`.
+/// The placeholder is intentionally limited to direct arguments: allowing it
+/// to escape into arbitrary nested expressions would make the pipe target
+/// unclear and leave the resolver to report an unrelated unresolved name.
+enum PipeArgumentPlaceholder {
+    None,
+    Substituted,
+    Invalid,
+}
+
+/// Replaces the one direct `_` argument in a call or method call with the
+/// piped value. A trailing `_` is allowed as an explicit spelling of the
+/// ordinary data-last pipe rule, while a non-trailing one selects that exact
+/// argument position.
+fn substitute_pipe_argument_placeholder(
+    expr: &mut Expr,
+    value: &mut Option<Expr>,
+) -> PipeArgumentPlaceholder {
+    let (ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. }) = &mut expr.kind else {
+        return PipeArgumentPlaceholder::None;
+    };
+    let placeholders: Vec<usize> = args
+        .iter()
+        .enumerate()
+        .filter_map(|(index, arg)| match &arg.kind {
+            ExprKind::Path(path) if is_pipe_placeholder(path) => Some(index),
+            _ => None,
+        })
+        .collect();
+    match placeholders.as_slice() {
+        [] => PipeArgumentPlaceholder::None,
+        &[index] => {
+            let piped = value
+                .take()
+                .expect("piped value must exist while substituting a placeholder");
+            args[index] = piped;
+            PipeArgumentPlaceholder::Substituted
+        }
+        _ => PipeArgumentPlaceholder::Invalid,
+    }
+}
+
+/// Whether an unsubstituted `_` remains anywhere in the immediate pipe step.
+/// This rejects both repeated placeholders and nested forms such as
+/// `x |> outer(inner(_))`; only the top-level call argument list may select
+/// the value being piped.
+fn contains_pipe_placeholder(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Path(path) => is_pipe_placeholder(path),
+        ExprKind::Call { callee, args } => {
+            contains_pipe_placeholder(callee) || args.iter().any(contains_pipe_placeholder)
+        }
+        ExprKind::MethodCall { receiver, args, .. } => {
+            contains_pipe_placeholder(receiver) || args.iter().any(contains_pipe_placeholder)
+        }
+        ExprKind::FieldAccess { receiver, .. } => contains_pipe_placeholder(receiver),
+        ExprKind::Index { base, index } => {
+            contains_pipe_placeholder(base) || contains_pipe_placeholder(index)
+        }
+        ExprKind::Unary { operand, .. }
+        | ExprKind::Cast { value: operand, .. }
+        | ExprKind::Try(operand)
+        | ExprKind::Go(operand) => contains_pipe_placeholder(operand),
+        ExprKind::Binary { lhs, rhs, .. }
+        | ExprKind::Assign {
+            place: lhs,
+            value: rhs,
+            ..
+        } => contains_pipe_placeholder(lhs) || contains_pipe_placeholder(rhs),
+        ExprKind::Tuple(items) => items.iter().any(contains_pipe_placeholder),
+        ExprKind::Array(ArrayExpr::List(items)) => items.iter().any(contains_pipe_placeholder),
+        ExprKind::Array(ArrayExpr::Repeat { value, count }) => {
+            contains_pipe_placeholder(value) || contains_pipe_placeholder(count)
+        }
+        ExprKind::Range { start, end, .. } => {
+            start.as_deref().is_some_and(contains_pipe_placeholder)
+                || end.as_deref().is_some_and(contains_pipe_placeholder)
+        }
+        ExprKind::Return(value) => value.as_deref().is_some_and(contains_pipe_placeholder),
+        ExprKind::Break { value, .. } => value.as_deref().is_some_and(contains_pipe_placeholder),
+        _ => false,
+    }
+}
+
+/// `..` is range syntax. A bare open range supplied directly to a pipe call is
+/// not a valid pipe placeholder, and format-macro expansion must not silently
+/// combine it with the implicit trailing pipe argument.
+fn has_pipe_dotdot_placeholder(expr: &Expr) -> bool {
+    let (ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. }) = &expr.kind else {
+        return false;
+    };
+    args.iter().any(|arg| {
+        matches!(
+            &arg.kind,
+            ExprKind::Range {
+                start: None,
+                end: None,
+                kind: RangeKind::Exclusive,
+            }
+        )
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -153,6 +153,56 @@ fn assert_vm_output(tag: &str, src: &str, expected: &str) {
 // through `assert_vm_output`.
 
 #[test]
+fn image_png_jpeg_round_trip_and_invalid_input_match_native() {
+    let src = r#"
+use std::image
+fn main() {
+    let source = image::filled(2, 1, 0xff0000ff)
+    println(image::set_pixel(source, 1, 0, 0x00ff00ff))
+    let png = image::encode_png_base64(source)
+    let decoded = image::decode_base64(png)
+    println(image::width(decoded))
+    println(image::height(decoded))
+    println(image::pixel(decoded, 1, 0))
+    println(image::decode_base64("not base64") == 0)
+    let jpeg = image::decode_base64(image::encode_jpeg_base64(source, 90))
+    println(image::width(jpeg))
+    println(image::height(jpeg))
+}
+"#;
+    assert_vm_output("image_png_jpeg", src, "true\n2\n1\n16711935\ntrue\n2\n1");
+}
+
+#[test]
+fn fs_temp_resources_create_unique_paths_and_reject_unsafe_prefixes_across_tiers() {
+    let src = r#"
+use std::fs
+fn main() {
+    match fs::temp_dir("gossamer-fs-tier") {
+        Ok(path) => {
+            println(fs::is_dir(path))
+            let _ = fs::remove_dir_all(path)
+        },
+        Err(_) => println(false),
+    }
+    match fs::temp_file("gossamer-fs-tier") {
+        Ok((file, path)) => {
+            println(fs::is_file(path))
+            file.close()
+            let _ = fs::remove_file(path)
+        },
+        Err(_) => println(false),
+    }
+    match fs::temp_dir("../unsafe") {
+        Ok(_) => println(false),
+        Err(_) => println(true),
+    }
+}
+"#;
+    assert_vm_output("fs_temp_resources", src, "true\ntrue\ntrue");
+}
+
+#[test]
 fn slog_carries_fields_across_tiers() {
     let src = r#"
 use std::slog
@@ -851,6 +901,23 @@ fn main() {
 }
 "#,
         "32",
+    );
+}
+
+#[test]
+fn crypto_x509_crl_verifier_rejects_missing_crl_on_vm_and_native() {
+    assert_vm_output(
+        "crypto_x509_crl_verifier",
+        r#"
+use std::crypto
+fn main() {
+    match crypto::x509::verify_server_certificate_with_crls("", "", "localhost", "") {
+        Ok(_) => println!("accepted"),
+        Err(_) => println!("rejected"),
+    }
+}
+"#,
+        "rejected",
     );
 }
 

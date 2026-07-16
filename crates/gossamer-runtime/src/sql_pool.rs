@@ -157,18 +157,36 @@ impl Pool {
 
     /// Eagerly opens connections up to [`PoolConfig::min`].
     pub fn fill(&self) -> Result<(), Error> {
-        let mut state = self.state.lock();
-        while state.live < state.config.min {
-            let conn = crate::sql::open(&state.driver, &state.url)?;
+        loop {
+            // Reserve a slot under the lock, but open the driver connection
+            // after releasing it. A networked driver's `open` may block for
+            // DNS or a handshake, neither of which should stall pool state
+            // inspection or a returning checkout.
+            let (driver, url) = {
+                let mut state = self.state.lock();
+                if state.live >= state.config.min {
+                    return Ok(());
+                }
+                state.live += 1;
+                (state.driver.clone(), state.url.clone())
+            };
+            let conn = match crate::sql::open(&driver, &url) {
+                Ok(conn) => conn,
+                Err(error) => {
+                    let mut state = self.state.lock();
+                    state.live -= 1;
+                    self.cv.notify_all();
+                    return Err(error);
+                }
+            };
             let now = Instant::now();
+            let mut state = self.state.lock();
             state.idle.push_back(IdleConn {
                 conn,
                 created: now,
                 last_used: now,
             });
-            state.live += 1;
         }
-        Ok(())
     }
 
     /// Acquires a connection, blocking up to

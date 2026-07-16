@@ -376,6 +376,96 @@ pub unsafe extern "C" fn gos_rt_os_cwd() -> i128 {
 /// is_symlink: i64, size: i64, modified_ms: i64]`. Field
 /// indices match the MIR projections emitted for
 /// `entry.<field>` access.
+struct DirInfoData {
+    name: String,
+    path: String,
+    is_file: bool,
+    is_dir: bool,
+    is_symlink: bool,
+    size: i64,
+    modified_ms: i64,
+}
+
+fn dir_info(entry: std::fs::DirEntry) -> Option<DirInfoData> {
+    let entry_path = entry.path();
+    // Use std::fs::metadata (opens a handle) rather than entry.metadata()
+    // (reads from FindFile cache on Windows). The latter returns 0 for
+    // directory sizes on Windows because WIN32_FIND_DATA stores nFileSize=0
+    // for directories; the former calls GetFileInformationByHandle and
+    // returns the real NTFS directory-index allocation, matching what the
+    // interpreter gets via the same syscall path.
+    let meta = std::fs::metadata(&entry_path).ok()?;
+    let ft = entry.file_type().ok()?;
+    Some(DirInfoData {
+        name: entry.file_name().to_string_lossy().into_owned(),
+        path: entry_path.to_string_lossy().into_owned(),
+        is_file: ft.is_file(),
+        is_dir: ft.is_dir(),
+        is_symlink: ft.is_symlink(),
+        size: i64::try_from(meta.len()).unwrap_or(0),
+        modified_ms: meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .and_then(|d| i64::try_from(d.as_millis()).ok())
+            .unwrap_or(0),
+    })
+}
+
+fn list_dir_data(path: &str) -> Result<Vec<DirInfoData>, std::io::Error> {
+    let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(path)?.flatten().collect();
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    Ok(entries.into_iter().filter_map(dir_info).collect())
+}
+
+fn walk_dir_data(root: &str) -> Result<Vec<DirInfoData>, std::io::Error> {
+    let mut out = Vec::new();
+    let mut stack = vec![std::path::PathBuf::from(root)];
+    while let Some(dir) = stack.pop() {
+        let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(&dir)?.flatten().collect();
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            let child = entry.path();
+            let Some(info) = dir_info(entry) else {
+                continue;
+            };
+            if info.is_dir && !info.is_symlink {
+                stack.push(child);
+            }
+            out.push(info);
+        }
+    }
+    Ok(out)
+}
+
+fn dir_infos_result(entries: Vec<DirInfoData>) -> i128 {
+    let out = unsafe { gos_rt_vec_new(8) };
+    for entry in entries {
+        let name_cs = alloc_cstring(entry.name.as_bytes()) as i64;
+        let path_cs = alloc_cstring(entry.path.as_bytes()) as i64;
+        // 7 fields * 8 bytes = 56 bytes. Route through the tracing collector
+        // so the blob participates in mark/sweep instead of leaking.
+        let blob = super::gc::gos_rt_gc_alloc(56) as *mut i64;
+        if blob.is_null() {
+            continue;
+        }
+        unsafe {
+            *blob.add(0) = name_cs;
+            *blob.add(1) = path_cs;
+            *blob.add(2) = i64::from(entry.is_file);
+            *blob.add(3) = i64::from(entry.is_dir);
+            *blob.add(4) = i64::from(entry.is_symlink);
+            *blob.add(5) = entry.size;
+            *blob.add(6) = entry.modified_ms;
+        }
+        let entry_val = blob as i64;
+        unsafe {
+            gos_rt_vec_push(out, std::ptr::addr_of!(entry_val).cast::<u8>());
+        }
+    }
+    unsafe { gos_rt_result_new(0, out as i64) }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_fs_list_dir(path: *const c_char) -> i128 {
     ffi_entry!(0i128, {
@@ -384,65 +474,20 @@ pub unsafe extern "C" fn gos_rt_fs_list_dir(path: *const c_char) -> i128 {
         } else {
             unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
         };
-        let mut entries: Vec<std::fs::DirEntry> = match std::fs::read_dir(&p) {
-            Ok(it) => it.flatten().collect(),
-            Err(e) => {
+        match crate::sched_global::run_blocking("fs-list-dir", move || list_dir_data(&p)) {
+            Ok(Ok(entries)) => dir_infos_result(entries),
+            Ok(Err(e)) => {
                 let msg = format!("list_dir: {e}");
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
-                return unsafe { gos_rt_result_new(1, err as i64) };
+                unsafe { gos_rt_result_new(1, err as i64) }
             }
-        };
-        entries.sort_by_key(std::fs::DirEntry::file_name);
-        let out = unsafe { gos_rt_vec_new(8) };
-        for entry in entries {
-            let entry_path = entry.path();
-            // Use std::fs::metadata (opens a handle) rather than entry.metadata()
-            // (reads from FindFile cache on Windows). The latter returns 0 for
-            // directory sizes on Windows because WIN32_FIND_DATA stores nFileSize=0
-            // for directories; the former calls GetFileInformationByHandle and
-            // returns the real NTFS directory-index allocation, matching what the
-            // interpreter gets via the same syscall path.
-            let Ok(meta) = std::fs::metadata(&entry_path) else {
-                continue;
-            };
-            let Ok(ft) = entry.file_type() else { continue };
-            let name_str = entry.file_name().to_string_lossy().into_owned();
-            let path_str = entry_path.to_string_lossy().into_owned();
-            let name_cs = alloc_cstring(name_str.as_bytes()) as i64;
-            let path_cs = alloc_cstring(path_str.as_bytes()) as i64;
-            let is_file = i64::from(ft.is_file());
-            let is_dir = i64::from(ft.is_dir());
-            let is_symlink = i64::from(ft.is_symlink());
-            let size = i64::try_from(meta.len()).unwrap_or(0);
-            let modified_ms = meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .and_then(|d| i64::try_from(d.as_millis()).ok())
-                .unwrap_or(0);
-            // 7 fields * 8 bytes = 56 bytes. Route through the
-            // tracing collector so the blob participates in
-            // mark/sweep instead of leaking after every list_dir.
-            let blob = super::gc::gos_rt_gc_alloc(56) as *mut i64;
-            if blob.is_null() {
-                continue;
-            }
-            unsafe {
-                *blob.add(0) = name_cs;
-                *blob.add(1) = path_cs;
-                *blob.add(2) = is_file;
-                *blob.add(3) = is_dir;
-                *blob.add(4) = is_symlink;
-                *blob.add(5) = size;
-                *blob.add(6) = modified_ms;
-            }
-            let entry_val = blob as i64;
-            unsafe {
-                gos_rt_vec_push(out, std::ptr::addr_of!(entry_val).cast::<u8>());
+            Err(e) => {
+                let cs = std::ffi::CString::new(e).unwrap_or_default();
+                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                unsafe { gos_rt_result_new(1, err as i64) }
             }
         }
-        unsafe { gos_rt_result_new(0, out as i64) }
     })
 }
 
@@ -456,71 +501,19 @@ pub unsafe extern "C" fn gos_rt_fs_walk_dir(path: *const c_char) -> i128 {
         } else {
             unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
         };
-        let out = unsafe { gos_rt_vec_new(8) };
-        let mut stack: Vec<std::path::PathBuf> = vec![std::path::PathBuf::from(&root)];
-        while let Some(dir) = stack.pop() {
-            // An unreadable directory (including a missing root) is an
-            // Err, matching the VM tier's walk; skipping it silently
-            // would hand back Ok([]) for a nonexistent root.
-            let read = match std::fs::read_dir(&dir) {
-                Ok(read) => read,
-                Err(e) => {
-                    let msg = format!("{e}");
-                    let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                    let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
-                    return unsafe { gos_rt_result_new(1, err as i64) };
-                }
-            };
-            let mut entries: Vec<std::fs::DirEntry> = read.flatten().collect();
-            entries.sort_by_key(std::fs::DirEntry::file_name);
-            for entry in entries {
-                let path_buf = entry.path();
-                // Same reason as in gos_rt_fs_list_dir: use std::fs::metadata
-                // rather than entry.metadata() so directory sizes agree with
-                // the interpreter on Windows.
-                let Ok(meta) = std::fs::metadata(&path_buf) else {
-                    continue;
-                };
-                let Ok(ft) = entry.file_type() else { continue };
-                let name_str = entry.file_name().to_string_lossy().into_owned();
-                let path_str = path_buf.to_string_lossy().into_owned();
-                let name_cs = alloc_cstring(name_str.as_bytes()) as i64;
-                let path_cs = alloc_cstring(path_str.as_bytes()) as i64;
-                let is_file = i64::from(ft.is_file());
-                let is_dir = i64::from(ft.is_dir());
-                let is_symlink = i64::from(ft.is_symlink());
-                let size = i64::try_from(meta.len()).unwrap_or(0);
-                let modified_ms = meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .and_then(|d| i64::try_from(d.as_millis()).ok())
-                    .unwrap_or(0);
-                // 7 fields * 8 bytes = 56 bytes. Route through the
-                // tracing collector - symmetric with list_dir.
-                let blob = super::gc::gos_rt_gc_alloc(56) as *mut i64;
-                if blob.is_null() {
-                    continue;
-                }
-                unsafe {
-                    *blob.add(0) = name_cs;
-                    *blob.add(1) = path_cs;
-                    *blob.add(2) = is_file;
-                    *blob.add(3) = is_dir;
-                    *blob.add(4) = is_symlink;
-                    *blob.add(5) = size;
-                    *blob.add(6) = modified_ms;
-                }
-                let entry_val = blob as i64;
-                unsafe {
-                    gos_rt_vec_push(out, std::ptr::addr_of!(entry_val).cast::<u8>());
-                }
-                if is_dir == 1 && is_symlink == 0 {
-                    stack.push(path_buf);
-                }
+        match crate::sched_global::run_blocking("fs-walk-dir", move || walk_dir_data(&root)) {
+            Ok(Ok(entries)) => dir_infos_result(entries),
+            Ok(Err(e)) => {
+                let cs = std::ffi::CString::new(e.to_string()).unwrap_or_default();
+                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                unsafe { gos_rt_result_new(1, err as i64) }
+            }
+            Err(e) => {
+                let cs = std::ffi::CString::new(e).unwrap_or_default();
+                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                unsafe { gos_rt_result_new(1, err as i64) }
             }
         }
-        unsafe { gos_rt_result_new(0, out as i64) }
     })
 }
 
@@ -723,12 +716,15 @@ pub unsafe extern "C" fn gos_rt_exec_run(prog: *const c_char, args: *mut GosVec)
                 }
             }
         }
-        let mut command = std::process::Command::new(&prog_str);
-        command.args(&cmd_args);
-        command.stdout(std::process::Stdio::piped());
-        command.stderr(std::process::Stdio::piped());
-        match command.output() {
-            Ok(out) => {
+        let display_prog = prog_str.clone();
+        match crate::sched_global::run_blocking("exec-run", move || {
+            let mut command = std::process::Command::new(&prog_str);
+            command.args(&cmd_args);
+            command.stdout(std::process::Stdio::piped());
+            command.stderr(std::process::Stdio::piped());
+            command.output()
+        }) {
+            Ok(Ok(out)) => {
                 let stdout_str = String::from_utf8_lossy(&out.stdout).into_owned();
                 let stderr_str = String::from_utf8_lossy(&out.stderr).into_owned();
                 let code = i64::from(out.status.code().unwrap_or(-1));
@@ -743,8 +739,14 @@ pub unsafe extern "C" fn gos_rt_exec_run(prog: *const c_char, args: *mut GosVec)
                 let blob = Box::into_raw(Box::new([stdout_cs, stderr_cs, code])).cast::<i64>();
                 gos_rt_result_new(0, blob as i64)
             }
+            Ok(Err(e)) => {
+                let msg = format!("exec::run({display_prog}): {e}");
+                let cs = std::ffi::CString::new(msg).unwrap_or_default();
+                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                unsafe { gos_rt_result_new(1, err as i64) }
+            }
             Err(e) => {
-                let msg = format!("exec::run({prog_str}): {e}");
+                let msg = format!("exec::run({display_prog}): {e}");
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }

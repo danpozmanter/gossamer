@@ -103,6 +103,41 @@ fn string_roundtrips() {
     }
 }
 
+/// Heap-backed strings and typed numeric storage cross `GossamerValue` as
+/// shared VM handles. This guards against accidentally rebuilding their
+/// buffers while marshalling a JIT `Value` argument or return.
+#[test]
+fn raw_heap_handles_preserve_vm_backing_storage() {
+    let string = Value::String(SmolStr::from(
+        "a string longer than seven bytes".to_string(),
+    ));
+    let Value::String(before_string) = &string else {
+        unreachable!()
+    };
+    let decoded_string = Value::from_raw(string.to_raw());
+    let Value::String(after_string) = decoded_string else {
+        panic!("string raw handle must decode as String")
+    };
+    assert_eq!(
+        before_string.as_str().as_ptr(),
+        after_string.as_str().as_ptr()
+    );
+
+    let ints = Arc::new(vec![1_i64, 2, 3]);
+    let decoded_ints = Value::from_raw(Value::IntArray(Arc::clone(&ints)).to_raw());
+    let Value::IntArray(after_ints) = decoded_ints else {
+        panic!("typed i64 raw handle must retain typed storage")
+    };
+    assert!(Arc::ptr_eq(&ints, &after_ints));
+
+    let floats = Arc::new(vec![1.0_f64, 2.0, 3.0]);
+    let decoded_floats = Value::from_raw(Value::FloatVec(Arc::clone(&floats)).to_raw());
+    let Value::FloatVec(after_floats) = decoded_floats else {
+        panic!("typed f64 raw handle must retain typed storage")
+    };
+    assert!(Arc::ptr_eq(&floats, &after_floats));
+}
+
 #[test]
 fn smolstr_uppercase_fast_path_matches_unicode_contract() {
     assert_eq!(

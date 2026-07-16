@@ -4,8 +4,9 @@
  * `x |> f` desugars to `f(x)`; `x |> f(a, b)` desugars to
  * `f(a, b, x)` (the piped value lands in the *last* positional
  * slot). `x |> recv.m(a)` pipes into an external receiver's last
- * argument: `recv.m(a, x)`. The `_` placeholder instead makes the
- * piped value the *receiver*: `x |> _.m(a)` is `x.m(a)`, and bare
+ * argument: `recv.m(a, x)`. One direct `_` selects another argument
+ * position: `x |> f(_, a)` is `f(x, a)`. The `_` placeholder instead
+ * makes the piped value the *receiver* in `x |> _.m(a)`, and bare
  * `x |> _.trim` is `x.trim()`. `|>` is left-associative with very
  * low precedence, so `a |> f |> g` reads as `g(f(a))` without
  * parentheses.

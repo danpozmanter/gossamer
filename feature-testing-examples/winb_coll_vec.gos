@@ -108,10 +108,10 @@ fn main() {
     }
 
     // Vec of struct elements: contains / index_of by value equality.
-    let items = [Item { id: 1, tag: "a" }, Item { id: 2, tag: "b" }, Item { id: 3, tag: "c" }]
-    println!("has b {}", items.contains(&Item { id: 2, tag: "b" }))
-    println!("has z {}", items.contains(&Item { id: 9, tag: "z" }))
-    show_opt_i64("struct index_of", items.index_of(&Item { id: 3, tag: "c" }))
+    let items = [Item(1, "a"), Item(2, "b"), Item(3, "c")]
+    println!("has b {}", items.contains(&Item(2, "b")))
+    println!("has z {}", items.contains(&Item(9, "z")))
+    show_opt_i64("struct index_of", items.index_of(&Item(3, "c")))
 
     // Vec of struct: iterate and read fields.
     print!("items ")

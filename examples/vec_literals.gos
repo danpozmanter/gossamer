@@ -39,7 +39,7 @@ fn main() {
     println!("scores(true) has {} entries", scores(true).len())
 
     // Struct field.
-    let basket = Basket { fruits: ["apple", "pear"] }
+    let basket = Basket(["apple", "pear"])
     println!("basket holds {} and {}", basket.fruits[0], basket.fruits[1])
 
     // Arguments.

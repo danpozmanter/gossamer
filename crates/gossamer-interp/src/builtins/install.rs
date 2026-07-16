@@ -104,6 +104,10 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
     {
         globals.push(("http::serve", native("http::serve", native_http_serve)));
         globals.push((
+            "httptest::server",
+            native("httptest::server", native_httptest_server),
+        ));
+        globals.push((
             "http::serve_tls",
             native("http::serve_tls", native_http_serve_tls),
         ));
@@ -457,6 +461,7 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "runtime",
         &[
             ("collect_cycles", builtin_runtime_collect_cycles),
+            ("cycle_collection_supported", builtin_runtime_cycle_collection_supported),
             ("arena_push", builtin_runtime_region_noop),
             ("arena_pop", builtin_runtime_region_noop),
             ("scheduler_stats_json", builtin_runtime_scheduler_stats_json),
@@ -1780,4 +1785,3 @@ fn install_regex_builtins(globals: &mut Vec<(&'static str, Value)>) {
         }
     }
 }
-

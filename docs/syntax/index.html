@@ -1143,6 +1143,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1194,6 +1196,34 @@
 
 
     Overview
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../misc/tooling_faithful_fmt/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Formatter behavior
 
 
 
@@ -2227,7 +2257,7 @@ the module's. Tooling reads these by position.</p>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="k">type</span> <span class="nc">Id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kt">i64</span><span class="w">            </span><span class="c1">// transparent type alias</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="k">struct</span> <span class="nc">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="kt">f64</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="kt">f64</span> <span class="p">}</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="k">struct</span> <span class="nc">Pair</span><span class="p">(</span><span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="p">)</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="k">struct</span> <span class="nc">Pair</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">first</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">second</span>: <span class="kt">i64</span> <span class="p">}</span>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="k">enum</span> <span class="nc">Shape</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span><span class="n">Circle</span><span class="p">(</span><span class="kt">f64</span><span class="p">),</span>
@@ -2267,14 +2297,14 @@ site - no turbofish annotation is needed:</p>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="c1">// Parameters inferred: Pair&lt;i64, String&gt;</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Pair</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">fst</span>: <span class="mi">42</span><span class="p">,</span><span class="w"> </span><span class="n">snd</span>: <span class="s">&quot;answer&quot;</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Pair</span><span class="p">(</span><span class="mi">42</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;answer&quot;</span><span class="p">)</span>
 <a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{} = {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">fst</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">snd</span><span class="p">)</span><span class="w">   </span><span class="c1">// 42 = answer</span>
 <a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
 <a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">    </span><span class="c1">// Same struct, different instantiation: Pair&lt;i64, i64&gt;</span>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">nums</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Pair</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">fst</span>: <span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="n">snd</span>: <span class="mi">32</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">nums</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Pair</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span>
 <a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">nums</span><span class="p">.</span><span class="n">fst</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">nums</span><span class="p">.</span><span class="n">snd</span><span class="p">)</span><span class="w">  </span><span class="c1">// 42</span>
 <a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>
-<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Cell</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">value</span>: <span class="mi">99</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Cell</span><span class="p">(</span><span class="mi">99</span><span class="p">)</span>
 <a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">c</span><span class="p">.</span><span class="n">value</span><span class="p">)</span><span class="w">              </span><span class="c1">// 99</span>
 <a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="p">}</span>
 </code></pre></div>
@@ -2313,6 +2343,12 @@ parentheses needed:</p>
 <a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="c1">// Equivalent nested form:</span>
 <a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="kd">let</span><span class="w"> </span><span class="n">same</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="n">add</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="n">double</span><span class="p">(</span><span class="mi">3</span><span class="p">)))</span>
 </code></pre></div>
+<p>Use one direct <code>_</code> argument when the value belongs in a different
+position: <code>text |&gt; strings::slice(_, 1, 3)</code> becomes
+<code>strings::slice(text, 1, 3)</code>. A trailing <code>_</code> is accepted but is only
+an explicit spelling of the default data-last rule. <code>_</code> can also be
+the receiver in forms such as <code>text |&gt; _.trim</code>; it may not be used
+more than once in one pipe step.</p>
 <h2 id="pattern-matching">Pattern matching<a class="headerlink" href="#pattern-matching" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>_</code> - wildcard.</li>
@@ -2405,14 +2441,11 @@ goroutine, freeing the worker thread to run other goroutines.
 Channels are typed: <code>channel()</code> / <code>channel(0)</code> is unbuffered,
 <code>channel(n)</code> is bounded, and <code>channel::unbounded()</code> is the explicit
 queue form. <code>select</code> multiplexes sends and receives.</p>
-<p>Scheduling is cooperative with watchdog-assisted preemption: a
-goroutine yields at safepoints (every park point above, plus
-function-call / scheduler-step boundaries), and a watchdog forces a
-yield - and interrupts blocking syscalls via <code>SIGURG</code> / a Windows APC -
-when a worker runs too long. A goroutine in a tight, call-free compute
-loop is not asynchronously preempted yet, so it yields only at its next
-call or park point; on the M:N pool, other goroutines keep running on
-the other worker threads meanwhile. See
+<p>Scheduling uses watchdog-requested cooperative safepoints. Park points and
+function boundaries yield, and native loops poll every 1,024 taken backedges.
+The watchdog requests coroutine suspension and may interrupt a blocking syscall
+with <code>SIGURG</code> or a Windows APC. The VM yields its OS worker at the same
+backedge interval but retains its separate bounded worker-pool limitation. See
 <a href="../design/runtime/#preemption">runtime design - Preemption</a>.</p>
 <h2 id="closures-and-higher-order-fns">Closures and higher-order fns<a class="headerlink" href="#closures-and-higher-order-fns" title="Permanent link">&para;</a></h2>
 <p>Lambdas use <code>|param: T| body</code>; captures from the enclosing scope

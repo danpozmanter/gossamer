@@ -1,0 +1,11 @@
+fn main() {
+    let mut total = 0
+    for round in 0..2_000 {
+        let mut values: [i64] = []
+        for i in 0..1_000 {
+            values.push((i * 17 + round) % 251)
+        }
+        total += values[123] + values[987] + values.len() as i64
+    }
+    println!("{}", total)
+}

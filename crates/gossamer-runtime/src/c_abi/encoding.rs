@@ -233,7 +233,7 @@ pub unsafe extern "C" fn gos_rt_html_template_render_json(
     })
 }
 
-fn base64_encode(data: &[u8]) -> String {
+pub(crate) fn base64_encode(data: &[u8]) -> String {
     const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {

@@ -471,7 +471,9 @@ fn visit_expr(expr: &Expr, out: &mut Vec<RawToken>) {
                 visit_expr(part, out);
             }
         }
-        ExprKind::Struct { path, fields, base } => {
+        ExprKind::Struct {
+            path, fields, base, ..
+        } => {
             if let Some(seg) = path.segments.first() {
                 push(
                     out,

@@ -120,6 +120,8 @@ pub(crate) fn install_fs_extras(globals: &mut Vec<(&'static str, Value)>) {
             ("metadata", builtin_fs_metadata),
             ("copy", builtin_os_copy),
             ("canonicalize", builtin_os_canonicalize),
+            ("temp_dir", builtin_fs_temp_dir),
+            ("temp_file", builtin_fs_temp_file),
         ],
         globals,
     );
@@ -207,6 +209,19 @@ fn fetch_file_handle(id: i64) -> Option<Arc<parking_lot::Mutex<std::fs::File>>> 
     FS_FILE_REGISTRY.with(|r| r.borrow().get(&id).cloned())
 }
 
+/// Duplicate a handle while holding its registry/object locks only briefly.
+/// The duplicate can then move to the scheduler blocking pool without making a
+/// second goroutine wait on the language-level file handle for the duration of
+/// an OS syscall.
+fn clone_file_handle(id: i64) -> Result<std::fs::File, Value> {
+    let Some(file) = fetch_file_handle(id) else {
+        return Err(err_variant("File: stale handle"));
+    };
+    file.lock()
+        .try_clone()
+        .map_err(|e| err_variant(e.to_string()))
+}
+
 fn fetch_open_options_handle(id: i64) -> Option<Arc<parking_lot::Mutex<FsOpenOptionsState>>> {
     FS_OPEN_OPTIONS_REGISTRY.with(|r| r.borrow().get(&id).cloned())
 }
@@ -227,9 +242,12 @@ pub(crate) fn builtin_fs_file_open(args: &[Value]) -> RuntimeResult<Value> {
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
-    match std::fs::File::open(path) {
-        Ok(file) => Ok(ok_variant(insert_file_handle(file))),
-        Err(e) => Ok(err_variant(e.to_string())),
+    match gossamer_runtime::sched_global::run_blocking("fs-file-open", move || {
+        std::fs::File::open(path)
+    }) {
+        Ok(Ok(file)) => Ok(ok_variant(insert_file_handle(file))),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -238,9 +256,52 @@ pub(crate) fn builtin_fs_file_create(args: &[Value]) -> RuntimeResult<Value> {
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
-    match std::fs::File::create(path) {
-        Ok(file) => Ok(ok_variant(insert_file_handle(file))),
-        Err(e) => Ok(err_variant(e.to_string())),
+    match gossamer_runtime::sched_global::run_blocking("fs-file-create", move || {
+        std::fs::File::create(path)
+    }) {
+        Ok(Ok(file)) => Ok(ok_variant(insert_file_handle(file))),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
+    }
+}
+
+/// Creates a unique directory beneath the system temporary root. The caller
+/// owns the returned directory and should remove it with `fs::remove_dir_all`.
+pub(crate) fn builtin_fs_temp_dir(args: &[Value]) -> RuntimeResult<Value> {
+    let prefix = match arg_str_at(args, 0, "fs::temp_dir", "prefix") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    match gossamer_runtime::sched_global::run_blocking("fs-temp-dir", move || {
+        gossamer_std::fs::temp_dir(&prefix)
+    }) {
+        Ok(Ok(path)) => Ok(ok_variant(Value::String(
+            path.to_string_lossy().into_owned().into(),
+        ))),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
+    }
+}
+
+/// Creates a unique temporary file and returns its streaming handle plus path.
+/// Closing/removing the file remains the caller's responsibility.
+pub(crate) fn builtin_fs_temp_file(args: &[Value]) -> RuntimeResult<Value> {
+    let prefix = match arg_str_at(args, 0, "fs::temp_file", "prefix") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    match gossamer_runtime::sched_global::run_blocking("fs-temp-file", move || {
+        gossamer_std::fs::temp_file(&prefix)
+    }) {
+        Ok(Ok((file, path))) => Ok(ok_variant(Value::Tuple(
+            vec![
+                insert_file_handle(file),
+                Value::String(path.to_string_lossy().into_owned().into()),
+            ]
+            .into(),
+        ))),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -295,9 +356,11 @@ pub(crate) fn builtin_fs_open_options_open(args: &[Value]) -> RuntimeResult<Valu
     let Some(opts) = fetch_open_options_handle(id) else {
         return Ok(err_variant("OpenOptions::open: stale handle"));
     };
-    match std_open_options(&opts.lock()).open(path) {
-        Ok(file) => Ok(ok_variant(insert_file_handle(file))),
-        Err(e) => Ok(err_variant(e.to_string())),
+    let open = std_open_options(&opts.lock());
+    match gossamer_runtime::sched_global::run_blocking("fs-open-options", move || open.open(path)) {
+        Ok(Ok(file)) => Ok(ok_variant(insert_file_handle(file))),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -310,18 +373,22 @@ pub(crate) fn builtin_fs_file_read(args: &[Value]) -> RuntimeResult<Value> {
         .and_then(value_to_int)
         .unwrap_or(4096)
         .clamp(1, 1 << 24);
-    let Some(file) = fetch_file_handle(id) else {
-        return Ok(err_variant("File::read: stale handle"));
+    let mut file = match clone_file_handle(id) {
+        Ok(file) => file,
+        Err(_) => return Ok(err_variant("File::read: stale handle")),
     };
-    let mut buf = vec![0u8; max as usize];
-    match file.lock().read(&mut buf) {
-        Ok(n) => {
+    match gossamer_runtime::sched_global::run_blocking("fs-file-read", move || {
+        let mut buf = vec![0u8; max as usize];
+        file.read(&mut buf).map(|n| {
             buf.truncate(n);
-            Ok(ok_variant(Value::Array(Arc::new(
-                buf.into_iter().map(|b| Value::Int(i64::from(b))).collect(),
-            ))))
-        }
-        Err(e) => Ok(err_variant(e.to_string())),
+            buf
+        })
+    }) {
+        Ok(Ok(buf)) => Ok(ok_variant(Value::Array(Arc::new(
+            buf.into_iter().map(|b| Value::Int(i64::from(b))).collect(),
+        )))),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -329,13 +396,17 @@ pub(crate) fn builtin_fs_file_read_to_string(args: &[Value]) -> RuntimeResult<Va
     let Some(id) = args.first().and_then(handle_id) else {
         return Ok(err_variant("File::read_to_string: missing handle"));
     };
-    let Some(file) = fetch_file_handle(id) else {
-        return Ok(err_variant("File::read_to_string: stale handle"));
+    let mut file = match clone_file_handle(id) {
+        Ok(file) => file,
+        Err(_) => return Ok(err_variant("File::read_to_string: stale handle")),
     };
-    let mut out = String::new();
-    match file.lock().read_to_string(&mut out) {
-        Ok(_) => Ok(ok_variant(Value::String(out.into()))),
-        Err(e) => Ok(err_variant(e.to_string())),
+    match gossamer_runtime::sched_global::run_blocking("fs-file-read-string", move || {
+        let mut out = String::new();
+        file.read_to_string(&mut out).map(|_| out)
+    }) {
+        Ok(Ok(out)) => Ok(ok_variant(Value::String(out.into()))),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -354,12 +425,17 @@ pub(crate) fn builtin_fs_file_write(args: &[Value]) -> RuntimeResult<Value> {
             .collect(),
         _ => return Ok(err_variant("File::write: expected string or byte array")),
     };
-    let Some(file) = fetch_file_handle(id) else {
-        return Ok(err_variant("File::write: stale handle"));
+    let mut file = match clone_file_handle(id) {
+        Ok(file) => file,
+        Err(_) => return Ok(err_variant("File::write: stale handle")),
     };
-    match file.lock().write_all(&bytes) {
-        Ok(()) => Ok(ok_variant(Value::Int(bytes.len() as i64))),
-        Err(e) => Ok(err_variant(e.to_string())),
+    let written = bytes.len() as i64;
+    match gossamer_runtime::sched_global::run_blocking("fs-file-write", move || {
+        file.write_all(&bytes)
+    }) {
+        Ok(Ok(())) => Ok(ok_variant(Value::Int(written))),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -367,12 +443,14 @@ pub(crate) fn builtin_fs_file_flush(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(handle_id) else {
         return Ok(err_variant("File::flush: missing handle"));
     };
-    let Some(file) = fetch_file_handle(id) else {
-        return Ok(err_variant("File::flush: stale handle"));
+    let mut file = match clone_file_handle(id) {
+        Ok(file) => file,
+        Err(_) => return Ok(err_variant("File::flush: stale handle")),
     };
-    match file.lock().flush() {
-        Ok(()) => Ok(ok_variant(Value::Unit)),
-        Err(e) => Ok(err_variant(e.to_string())),
+    match gossamer_runtime::sched_global::run_blocking("fs-file-flush", move || file.flush()) {
+        Ok(Ok(())) => Ok(ok_variant(Value::Unit)),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 

@@ -1,8 +1,9 @@
 //! Package-management subcommands: `add`, `remove`, `tidy`,
-//! `fetch`, `vendor`, `publish`, `yank`, `login`, `logout`, `owner`.
+//! `fetch`, `update`, `vendor`, `publish`, `yank`, `login`, `logout`, `owner`.
 //! Each operates on the nearest enclosing `project.toml` (or an
 //! explicit `--manifest PATH`).
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -146,7 +147,7 @@ pub(crate) fn add(spec: &str, manifest: Option<PathBuf>) -> Result<()> {
         .with_context(|| format!("invalid version `{version_text}`"))?;
     let source = fs::read_to_string(&path).map_err(|e| friendly_io_error(e, &path))?;
     let mut m = gossamer_pkg::Manifest::parse(&source)?;
-    let changed = gossamer_pkg::add_registry(&mut m, &id, version);
+    let changed = gossamer_pkg::add_registry(&mut m, &id, version.clone());
     fs::write(&path, m.render()).with_context(|| format!("writing {}", path.display()))?;
     println!(
         "add: {action} {id} ({version})",
@@ -350,15 +351,87 @@ pub(crate) fn remove(id_text: &str, manifest: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// `gos tidy [--manifest PATH]` - re-renders the manifest so
-/// whitespace + entry ordering match the canonical layout.
+/// `gos tidy [--manifest PATH]` - removes direct project dependencies
+/// unused by any `.gos` source and renders canonical manifest ordering.
 pub(crate) fn tidy(manifest: Option<PathBuf>) -> Result<()> {
     let path = manifest.unwrap_or_else(|| PathBuf::from("project.toml"));
+    let project_root = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     let source = fs::read_to_string(&path).map_err(|e| friendly_io_error(e, &path))?;
-    let m = gossamer_pkg::Manifest::parse(&source)?;
+    let mut m = gossamer_pkg::Manifest::parse(&source)?;
+    let mut source_files = Vec::new();
+    collect_project_sources(&project_root, &mut source_files)?;
+    source_files.sort();
+
+    let used = project_imports(&source_files)?;
+    let declared: Vec<String> = m.dependencies.keys().cloned().collect();
+    if !source_files.is_empty() {
+        m.dependencies.retain(|id, _| used.contains(id));
+    }
+    let removed: Vec<String> = declared
+        .into_iter()
+        .filter(|id| !m.dependencies.contains_key(id))
+        .collect();
     fs::write(&path, m.render()).with_context(|| format!("writing {}", path.display()))?;
-    println!("tidy: canonicalised {}", path.display());
+    println!(
+        "tidy: canonicalised {} ({} source file(s), {} unused dependency/dependencies removed)",
+        path.display(),
+        source_files.len(),
+        removed.len(),
+    );
+    for id in removed {
+        println!("  removed {id}");
+    }
     Ok(())
+}
+
+fn collect_project_sources(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    const SKIP_DIRS: &[&str] = &[".git", ".gos-bindings", ".gos-cache", "target", "vendor"];
+    for entry in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            let name = entry.file_name();
+            if SKIP_DIRS.iter().any(|skip| name == *skip) {
+                continue;
+            }
+            collect_project_sources(&path, out)?;
+        } else if file_type.is_file()
+            && path.extension().and_then(|extension| extension.to_str()) == Some("gos")
+        {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn project_imports(files: &[PathBuf]) -> Result<BTreeSet<String>> {
+    let mut imports = BTreeSet::new();
+    let mut sources = gossamer_lex::SourceMap::new();
+    for path in files {
+        let source = fs::read_to_string(path).map_err(|e| friendly_io_error(e, path))?;
+        let file = sources.add_file(path.to_string_lossy().into_owned(), source.clone());
+        let (parsed, diagnostics) = gossamer_parse::parse_source_file(&source, file);
+        if !diagnostics.is_empty() {
+            return Err(anyhow!(
+                "tidy: refusing to edit the manifest because {} has {} parse error(s)",
+                path.display(),
+                diagnostics.len(),
+            ));
+        }
+        for declaration in parsed.uses {
+            if let gossamer_ast::UseTarget::Project { id, .. } = declaration.target {
+                imports.insert(id);
+            }
+        }
+    }
+    Ok(imports)
 }
 
 /// `gos fetch [--manifest PATH] [--offline] [--update]` -

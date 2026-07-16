@@ -887,6 +887,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -938,6 +940,34 @@
 
 
     Overview
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../misc/tooling_faithful_fmt/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Formatter behavior
 
 
 
@@ -2592,11 +2622,11 @@ write the conversion table out by hand:</p>
 <ul>
 <li>The M:N work-stealing scheduler is live; goroutines are parked by the
   netpoller when blocked on I/O.</li>
-<li>Scheduling is cooperative with watchdog-assisted preemption (Go's
-  pre-1.14 model plus signal-based interruption of blocking syscalls).
-  Unlike Go 1.14+, a tight, call-free compute loop is not yet
-  asynchronously preempted at loop back-edges - it yields at its next
-  call or park point. See
+<li>Scheduling uses watchdog-requested cooperative safepoints. Native compiled
+  loops poll at amortized backedges and suspend the current coroutine. The VM
+  yields its bounded OS worker pool at backedges but cannot suspend and resume a
+  bytecode frame on a one-worker pool. This remains weaker than Go's fully
+  asynchronous goroutine preemption. See
   <a href="../../design/runtime/#preemption">runtime design - Preemption</a>.</li>
 <li>Channels are created with <code>channel()</code> / <code>channel::&lt;T&gt;()</code>.
   <code>channel()</code> and <code>channel(0)</code> are unbuffered rendezvous channels,

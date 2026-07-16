@@ -16,6 +16,7 @@
 use gossamer_ast::{ItemKind, SourceFile};
 use gossamer_diagnostics::Diagnostic;
 use gossamer_lex::FileId;
+use gossamer_pkg::Edition;
 use gossamer_resolve::{ResolveError, resolve_source_file};
 use gossamer_types::{
     ExhaustivenessError, TyCtxt, check_arena_escapes, check_exhaustiveness, typecheck_source_file,
@@ -63,7 +64,23 @@ impl FrontendOutcome {
 /// applies `autoderive::augment_source` before calling.
 #[must_use]
 pub fn check_frontend(source: &str, file_id: FileId) -> FrontendOutcome {
-    let cache_key = FrontendCacheKey::new(source, env!("CARGO_PKG_VERSION"));
+    check_frontend_with_edition(source, file_id, Edition::E2026)
+}
+
+/// Runs the shared frontend under a project-selected language edition. The
+/// current edition reaches cache partitioning and later lowering; eager 2026
+/// remains the compatibility default for callers without a project manifest.
+#[must_use]
+pub fn check_frontend_with_edition(
+    source: &str,
+    file_id: FileId,
+    edition: Edition,
+) -> FrontendOutcome {
+    let cache_key = FrontendCacheKey::new_with_context(
+        source,
+        env!("CARGO_PKG_VERSION"),
+        &format!("edition={}", edition.as_str()),
+    );
     let trace = std::env::var_os("GOSSAMER_CACHE_TRACE").is_some();
     let (sf, parse_diags, parsed_from_source) =
         if let Some(cached) = load_blob::<SourceFile>(&cache_key) {

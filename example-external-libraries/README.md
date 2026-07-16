@@ -22,6 +22,29 @@ builds a per-project runner that statically links every binding,
 and the runner re-enters `gossamer_cli::run_main` with every
 binding installed in the interpreter / type-checker.
 
+## Ecosystem adapters
+
+Ecosystem packages stay outside the compiler and standard library. A
+thin Rust wrapper selects the small, typed API it wants to expose and
+uses the normal `gossamer-binding` vocabulary:
+
+| Package kind | Binding shapes |
+|---|---|
+| database drivers and Redis | `Result`, typed row tuples, `Bytes`, opaque connection handles |
+| protobuf/RPC, MessagePack, and CBOR | `Bytes`, `Vec`, `Variant`, `Result`, callbacks for streaming |
+| OpenTelemetry | `HashMap` attributes, `Variant` values, callbacks |
+| OAuth/OIDC | `Result<String, String>` tokens and opaque client/session handles |
+| testing and CLI parsing | `Result`, strings, tuples, vectors, and maps |
+
+The complete boundary contract, ownership rules, and tier limits are
+in [`crates/gossamer-binding/ABI_0_4.md`](../crates/gossamer-binding/ABI_0_4.md).
+The runner-backed regression
+`external_binding_supports_ecosystem_library_shapes_without_builtins`
+in `crates/gossamer-cli/tests/cli/pkg_bindings.rs` creates an ordinary
+out-of-tree binding package and exercises the database, telemetry,
+CLI, and token paths end to end. This route needs no new compiler
+builtins or repository-specific bridge.
+
 ## Running the examples
 
 ```sh

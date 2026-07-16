@@ -11,6 +11,105 @@ use std::sync::{
     atomic::{AtomicI64, AtomicU64, Ordering},
 };
 
+/// Runtime-managed work observed during one benchmark measurement scope.
+///
+/// The counters are deliberately thread-local: benchmark targets may run in
+/// parallel, and each target must report only the allocations and ownership
+/// work performed by its own VM. They cover runtime allocations, reference
+/// count operations, and bytes copied by the VM/JIT trampoline, rather than
+/// arbitrary Rust allocator activity in the compiler or harness.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BenchmarkCounters {
+    /// Runtime-managed allocations, including RC nodes, strings, and Vec storage.
+    pub allocations: u64,
+    /// Requested bytes for the counted runtime-managed allocations.
+    pub allocation_bytes: u64,
+    /// Runtime ARC retain operations.
+    pub arc_retains: u64,
+    /// Runtime ARC release operations.
+    pub arc_releases: u64,
+    /// VM/JIT aggregate or string marshalling copies.
+    pub boundary_copies: u64,
+    /// Bytes transferred by VM/JIT marshalling copies.
+    pub boundary_copy_bytes: u64,
+}
+
+thread_local! {
+    static BENCHMARK_COUNTERS: std::cell::Cell<(bool, BenchmarkCounters)> =
+        const { std::cell::Cell::new((false, BenchmarkCounters {
+            allocations: 0,
+            allocation_bytes: 0,
+            arc_retains: 0,
+            arc_releases: 0,
+            boundary_copies: 0,
+            boundary_copy_bytes: 0,
+        })) };
+}
+
+/// Start a fresh per-thread benchmark measurement scope.
+pub fn begin_benchmark_counters() {
+    BENCHMARK_COUNTERS.with(|counters| counters.set((true, BenchmarkCounters::default())));
+}
+
+/// Stop the current per-thread benchmark measurement scope and return its data.
+#[must_use]
+pub fn finish_benchmark_counters() -> BenchmarkCounters {
+    BENCHMARK_COUNTERS.with(|counters| {
+        let (enabled, snapshot) = counters.get();
+        counters.set((false, BenchmarkCounters::default()));
+        if enabled {
+            snapshot
+        } else {
+            BenchmarkCounters::default()
+        }
+    })
+}
+
+#[inline]
+fn with_benchmark_counters(update: impl FnOnce(&mut BenchmarkCounters)) {
+    BENCHMARK_COUNTERS.with(|counters| {
+        let (enabled, mut snapshot) = counters.get();
+        if enabled {
+            update(&mut snapshot);
+            counters.set((enabled, snapshot));
+        }
+    });
+}
+
+/// Record one runtime-managed allocation and its requested byte footprint.
+#[inline]
+pub fn benchmark_allocation(bytes: usize) {
+    with_benchmark_counters(|counters| {
+        counters.allocations = counters.allocations.saturating_add(1);
+        counters.allocation_bytes = counters.allocation_bytes.saturating_add(bytes as u64);
+    });
+}
+
+/// Record one runtime ARC retain.
+#[inline]
+pub fn benchmark_arc_retain() {
+    with_benchmark_counters(|counters| {
+        counters.arc_retains = counters.arc_retains.saturating_add(1);
+    });
+}
+
+/// Record one runtime ARC release.
+#[inline]
+pub fn benchmark_arc_release() {
+    with_benchmark_counters(|counters| {
+        counters.arc_releases = counters.arc_releases.saturating_add(1);
+    });
+}
+
+/// Record one VM/JIT boundary copy and the bytes moved.
+#[inline]
+pub fn benchmark_boundary_copy(bytes: usize) {
+    with_benchmark_counters(|counters| {
+        counters.boundary_copies = counters.boundary_copies.saturating_add(1);
+        counters.boundary_copy_bytes = counters.boundary_copy_bytes.saturating_add(bytes as u64);
+    });
+}
+
 pub static AGGR_LIVE: AtomicI64 = AtomicI64::new(0);
 pub static RC_LIVE: AtomicI64 = AtomicI64::new(0);
 pub static STR_LIVE: AtomicI64 = AtomicI64::new(0);
@@ -181,6 +280,7 @@ fn record_vec_bytes(requested: usize, usable: usize) {
 /// layout size instead because they intentionally use a different allocator.
 #[inline]
 pub fn vec_inline_alloc(requested: usize, usable: usize) {
+    benchmark_allocation(requested);
     if !vec_alloc_stats_enabled() {
         return;
     }
@@ -191,6 +291,7 @@ pub fn vec_inline_alloc(requested: usize, usable: usize) {
 
 #[inline]
 pub fn vec_split_alloc(requested: usize, usable: usize) {
+    benchmark_allocation(requested);
     if !vec_alloc_stats_enabled() {
         return;
     }
@@ -201,6 +302,7 @@ pub fn vec_split_alloc(requested: usize, usable: usize) {
 
 #[inline]
 pub fn vec_owner_alloc(requested: usize, usable: usize) {
+    benchmark_allocation(requested);
     if !vec_alloc_stats_enabled() {
         return;
     }
@@ -211,6 +313,7 @@ pub fn vec_owner_alloc(requested: usize, usable: usize) {
 
 #[inline]
 pub fn vec_region_alloc(requested: usize) {
+    benchmark_allocation(requested);
     if !vec_alloc_stats_enabled() {
         return;
     }
@@ -229,6 +332,7 @@ pub fn vec_region_alloc(requested: usize) {
 /// the existing block's usable size and does not increase `heap`.
 #[inline]
 pub fn rc_alloc(payload: usize, usable: usize, region: bool, reuse: bool) {
+    benchmark_allocation(payload);
     if !rc_alloc_stats_enabled() {
         return;
     }
@@ -293,4 +397,41 @@ pub fn map_format(entries: usize) {
     arm();
     MAP_FORMAT_CALLS.fetch_add(1, Ordering::Relaxed);
     MAP_FORMAT_ENTRIES.fetch_add(entries as u64, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn benchmark_counters_are_scoped_and_thread_local() {
+        begin_benchmark_counters();
+        benchmark_allocation(24);
+        benchmark_arc_retain();
+        benchmark_arc_release();
+        benchmark_boundary_copy(7);
+        assert_eq!(
+            finish_benchmark_counters(),
+            BenchmarkCounters {
+                allocations: 1,
+                allocation_bytes: 24,
+                arc_retains: 1,
+                arc_releases: 1,
+                boundary_copies: 1,
+                boundary_copy_bytes: 7,
+            }
+        );
+        assert_eq!(finish_benchmark_counters(), BenchmarkCounters::default());
+
+        let other = std::thread::spawn(|| {
+            begin_benchmark_counters();
+            benchmark_allocation(3);
+            finish_benchmark_counters()
+        })
+        .join()
+        .expect("benchmark counter thread must finish");
+        assert_eq!(other.allocations, 1);
+        assert_eq!(other.allocation_bytes, 3);
+        assert_eq!(finish_benchmark_counters(), BenchmarkCounters::default());
+    }
 }

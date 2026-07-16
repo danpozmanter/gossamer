@@ -10,16 +10,21 @@
 
 ## 0. Contract status
 
-This document distinguishes three contract levels:
+This document distinguishes four active lifecycle levels:
 
 - **Stable**: a feature named Stable by `gos feature-status` has a
   compatibility commitment under §17. Stable language syntax and semantics in
   this document are normative for the active edition.
+- **Shipped**: the feature is included in release artifacts and documented,
+  but is not yet protected by the Stable compatibility commitment.
 - **Experimental**: the syntax or API is implemented enough to be exposed,
   but may change incompatibly, gain limits, or be withdrawn in a later
   release. Experimental APIs are not part of the 1.0 compatibility promise.
 - **Planned**: documentation of an intended direction only. Planned surface
   has no implementation or compatibility commitment.
+
+`Removed` entries are retained as historical records so tooling can explain a
+withdrawn path. They are not active surface.
 
 The generated `gos feature-status` registry is authoritative for the status
 of individual language and standard-library entries. This specification is
@@ -37,8 +42,8 @@ aliases do not become Stable merely because they remain wired.
 ## 1. Introduction
 
 Gossamer is a general-purpose, automatically memory-managed, statically
-typed programming language with first-class concurrency. It runs on the
-same target set as Go, compiles to a single self-contained binary, and
+typed programming language with first-class concurrency. It supports the
+explicit target tiers in §11.1, compiles to a single self-contained binary, and
 shares Go's runtime model (M:N goroutine scheduler, channels, automatic
 memory management). Its surface syntax, type system, and error-handling
 discipline are taken from Rust (2024 edition): `fn` declarations, `let`
@@ -87,9 +92,9 @@ The language is designed so that:
 - The type system is decidable and cheap to check (no higher-rank types,
   no higher-kinded types, no type-level computation beyond const
   evaluation of sizeof-like queries).
-- Compile speed is competitive with Go (target: 50k-100k LoC/s
-  single-core frontend throughput; Cranelift backend for debug builds
-  adds <30% over frontend time).
+- Compile-speed goals are measured by the checked-in performance suite. Native
+  debug and release builds both use LLVM; Cranelift is reserved for in-process
+  JIT tier-up under `gos run`.
 
 Notation follows the Go specification's EBNF conventions. Lowercase
 productions are lexical terminals; CamelCase productions are grammatical
@@ -99,8 +104,9 @@ non-terminals.
 
 ## 2. Source representation
 
-Source files are UTF-8 encoded Unicode. Files have extension `.gos`
-(placeholder). One file declares exactly one package (see §15).
+Source files are UTF-8 encoded Unicode and have extension `.gos`. Files are
+module-oriented; they do not contain a Go-style `package` declaration. Project
+identity and dependencies are declared in `project.toml` (§6.4 and §16).
 
 ```
 newline        = U+000A
@@ -399,7 +405,7 @@ let words: Vec<String> = ["yes", "wow"]      // let annotation
 let zeros: Vec<i64> = [0; 4]                  // repeat form
 fn names() -> Vec<String> { ["ada", "grace"] }   // return position
 struct Basket { fruits: Vec<String> }
-let b = Basket { fruits: ["apple", "pear"] }  // struct field
+let b = Basket(["apple", "pear"])  // struct field
 fn total(xs: Vec<i64>) -> i64 { /* … */ }
 total([1, 2, 3])                              // by-value argument
 fn count(xs: &[String]) -> i64 { xs.len() }
@@ -473,9 +479,10 @@ FnType = "fn" "(" [ TypeList ] ")" [ "->" Type ]
        | "FnOnce" "(" [ TypeList ] ")" [ "->" Type ]
 ```
 
-Plain `fn(...) -> ...` is a raw function-pointer shape; named function
-item coercion is not implemented. `Fn`,
-`FnMut`, `FnOnce` are closure traits (as in Rust). Closures that capture
+Plain `fn(...) -> ...` is a raw function-pointer shape. A bare named function
+coerces to a compatible `Fn(...) -> ...` callback when passed to a higher-order
+function or sequence combinator. `Fn`, `FnMut`, `FnOnce` are closure traits (as
+in Rust). Closures that capture
 the environment satisfy the appropriate closure trait and are
 heap-allocated. Because there is no borrow checker, `Fn` and `FnMut`
 collapse into essentially the same constraint; the distinction is
@@ -486,8 +493,6 @@ retained for readability and forward compatibility.
 ```
 StructDecl = [ "pub" ] "struct" Ident [ Generics ] StructBody [ WhereClause ]
 StructBody = "{" [ FieldList ] "}"
-           | "(" [ TypeList ] ")"        // tuple struct
-           | ";"                          // unit struct
 FieldList  = Field { "," Field } [ "," ]
 Field      = [ "pub" ] Ident ":" Type
 ```
@@ -501,16 +506,22 @@ Example:
 
 ```
 pub struct Point { pub x: f64, pub y: f64 }
-struct Wrapper(i32, i32);     // tuple struct
-struct Marker;                // unit struct
+struct Wrapper { first: i32, second: i32 }
+struct Marker {}
 ```
+
+Structs always declare named fields in braces and construct values with
+declaration-order arguments: `Point(1.0, 2.0)`, `Wrapper(1, 2)`, and
+`Marker()`. Tuple and unit struct declarations are rejected. Legacy braced
+construction remains accepted during the migration but is not the canonical
+constructor syntax.
 
 **Functional record update.** A struct literal may spread a base value
 with `..base` and override individual fields:
 
 ```
-let p2 = Point { ..p1, x: 10.0 }     // x overridden, y copied from p1
-let p3 = Point { x: 10.0, ..p1 }     // spread in any position
+Struct construction always uses declaration-order arguments: `Point(10.0,
+p1.y)`. Field-update literals are not part of the language.
 ```
 
 Explicit fields win over the base for the same name; exactly one `..base`
@@ -608,10 +619,9 @@ Method receivers:
   usable after the call.
 - `fn m(&self)` - shared access. With managed references this is
   just "pass the ref".
-- `fn m(&mut self)` - exclusive access. Same runtime as `&self`; used
-  by the type checker and the local borrow check (§7.5) to forbid
-  method calls on non-mut bindings and to prevent simultaneous aliases
-  within a function body.
+- `fn m(&mut self)` - writable access. Same runtime as `&self`; used by the
+  type checker to forbid mutating method calls on non-writable places. It does
+  not prevent simultaneous aliases (§7.5).
 
 ### 3.10 Generics
 
@@ -1039,6 +1049,17 @@ Desugaring rules (applied after parsing, before HIR lowering):
    → `(closure_expr)(x)` (arity must be 1).
 6. `x |> path::<T1, ..., Tk>(a1, ..., an)`:
    → `path::<T1, ..., Tk>(a1, ..., an, x)`.
+7. `x |> path(a1, ..., _, ..., an)` with exactly one direct `_` argument:
+   → `path(a1, ..., x, ..., an)`. This selects a non-trailing argument
+   position that the default data-last rule cannot express. A trailing `_` is
+   valid but redundant.
+8. `x |> _.method(a1, ..., an)`, `x |> _.field`, `x |> _[i]`, and `x |> _`:
+   → `x.method(a1, ..., an)`, `x.field`, `x[i]`, and `x` respectively.
+
+The direct-call placeholder may occur exactly once. It must be an immediate
+call argument, not part of a nested expression. The receiver forms in rule 8
+also consume the one available placeholder, so `x |> _.method(_, y)` is
+invalid.
 
 If the right operand is not a call form matching one of the above, the
 compiler emits `E0601: right-hand side of '|>' must be a callable`.
@@ -1052,21 +1073,12 @@ call.
 Examples:
 
 ```
-// Equivalent to: println(format!("hello {}", name))
-name |> format!("hello {}", ..) |> println
-```
+// The trailing `_` is explicit but has the same result as the default rule.
+name |> format!("hello {}", _) |> println
 
-Note: the `..` placeholder is **not** required - `|>` implicitly
-targets the last position. The code above would equivalently be
-written:
-
+// `_` is useful when the piped value belongs before other arguments.
+text |> strings::slice(_, 1, 3)
 ```
-name |> format!("hello {}", _) |> println   // _ is optional, sugar
-```
-
-The explicit placeholder forms (`..` or `_`) are purely documentary;
-the parser accepts them at the trailing position for readability but
-strips them during desugaring.
 
 Idiomatic iterator chains:
 
@@ -1271,7 +1283,8 @@ license = "Apache-2.0"
 Required fields:
 
 - `project.id` - the project identifier (see §6.5).
-- `project.version` - semver `MAJOR.MINOR.PATCH`.
+- `project.version` - SemVer 2.0.0 `MAJOR.MINOR.PATCH`, with optional
+  `-PRERELEASE` and `+BUILD` suffixes.
 
 Every other key is optional.
 
@@ -1512,24 +1525,31 @@ Every type has a zero value:
 
 ### 7.4 Ordering and atomics
 
-The memory model is the Go 1.19 memory model verbatim:
+Gossamer adopts data-race-free sequential consistency (DRF-SC) and the
+following implemented happens-before edges:
 
 - Channel operations establish happens-before relationships.
 - Mutex lock/unlock establish happens-before relationships.
-- `sync::Once` establishes happens-before relationships.
-- Atomics via `std::sync::atomic` (sequentially consistent by default;
-  relaxed/acquire/release available).
+- WaitGroup completion happens before a successful wait returns.
+- `sync::Once::call_once` publishes its completed body to every caller that
+  returns from the same `Once`.
+- Sequentially consistent atomic operations publish and acquire a
+  happens-before edge; explicit release stores pair with acquire loads.
+
+Relaxed atomic operations provide atomicity only and deliberately create no
+happens-before edge. Additional ordering modes must not be treated as Stable
+until their operation-level contract and detector support are registered.
 
 A runtime data-race detector ships behind `gos test --race`. When it
 is enabled, the LLVM AOT codegen instruments heap loads and stores with
 `gos_rt_race_access` calls and the runtime (`gossamer-runtime::race`)
 maintains a per-goroutine vector-clock happens-before model, recording
-synchronisation edges at channel handoff, mutex unlock, and WaitGroup
-done. Any access pair left unordered by a happens-before edge is
+synchronisation edges at channel handoff, mutex unlock, WaitGroup completion,
+`Once::call_once`, and the supported atomic acquire/release operations. Any
+access pair left unordered by a happens-before edge is
 reported and fails the test run. It is a testing instrument rather than
 an always-on runtime guard, and it sees the compiled-tier accesses the
-codegen instruments; the `Once::call_once` and atomic-load/store
-happens-before edges are not yet folded into the model.
+codegen instruments.
 
 ### 7.5 References and aliasing (reference mutability, no borrow checker)
 
@@ -1607,9 +1627,10 @@ the language today and nothing in this specification depends on it.
 
 A goroutine is a stackful coroutine scheduled cooperatively by the
 runtime. `go expr` spawns one. Each goroutine owns a fixed-size
-mmap'd stack (default 16 KiB; override with `GOSSAMER_GOROUTINE_STACK`).
-The stack lives below a guard page, so overflow traps as a
-deterministic SIGSEGV instead of clobbering arbitrary memory.
+mmap'd stack (default 1 MiB; override with `GOSSAMER_GOROUTINE_STACK`,
+clamped to a 32 KiB minimum). The operating system commits pages on demand.
+A byte-budget guard reports `GX0008` before the hardware guard page; the stack
+does not grow or shrink.
 
 **Argument discipline.** `go` captures values by managed reference the
 same way an ordinary closure does. `Copy` types (primitive numerics,
@@ -1619,10 +1640,8 @@ ownership transfer, no `move` keyword, and no "value becomes invalid
 after this point" semantics. This matches Go.
 
 A `go` call may not capture or pass a `&T` or `&mut T`. The tracked
-`&`/`&mut` access markers are scope-local (§7.5) and cannot be
-reasoned about across goroutine boundaries; permitting them would
-either require lifetime annotations (which we explicitly avoid) or
-silently weaken the local check. Pass the underlying value (managed
+`&`/`&mut` access markers are lexical write-intent markers (§7.5) and cannot be
+carried across goroutine boundaries. Pass the underlying value (managed
 reference, or `Copy`) instead.
 
 Cross-goroutine data races on shared mutable state are possible - the
@@ -1641,10 +1660,10 @@ The network poller (epoll on Linux, kqueue on macOS/BSD, IOCP on
 Windows) parks goroutines blocked on I/O without holding the
 underlying OS thread. Same path covers `time::sleep` (timer wheel),
 `channel.recv` / `channel.send` on a full or empty channel,
-`sync::Mutex` contention, `sync::WaitGroup::wait`, and any
-`std::fs` / `std::os::exec` syscall (which routes through a
-shared blocking-syscall pool that parks the goroutine while a
-real OS thread runs the syscall).
+`sync::Mutex` contention, and `sync::WaitGroup::wait`. Scheduler-aware network
+and selected HTTP/filesystem/process operations use a shared blocking pool.
+The remaining direct filesystem and process paths are Experimental until the
+builtin effect audit confirms that they cannot pin a scheduler worker.
 
 ### 8.2 Channels
 
@@ -1671,8 +1690,7 @@ copy for `Copy` types - the same rules as ordinary assignment or
 function call. No ownership transfer is implied; the sender retains
 access to whatever bindings it named. Sending a `&T` or `&mut T` on a
 channel is a compile error, for the same reason `go` cannot capture
-references: the local borrow check (§7.5) is scope-local and cannot
-follow an access marker across goroutine boundaries.
+references: lexical write-intent markers cannot cross a goroutine boundary.
 
 ### 8.3 Select
 
@@ -1846,78 +1864,27 @@ call advances the same state. `IntoIterator` is implicit:
 user struct with `fn next(&mut self) -> Option<T>` are all
 iterable directly.
 
-Built-in iterator types (lazy, single-pass unless noted):
-`RangeIter` (from `a..b` and `a..=b`), `VecIter`, `MapIter`,
-`FilterIter`, `FilterMapIter`, `TakeIter`, `SkipIter`,
-`TakeWhileIter`, `SkipWhileIter`, `ChainIter`, `ZipIter`,
-`EnumerateIter`, `FlatMapIter`, `WindowsIter`, `ChunksIter`,
-`PairwiseIter`, `RepeatIter`, `CycleIter`, `StepByIter`,
-`ScanIter`, `UnfoldIter`.
+The public `std::iter` module is currently Experimental and eager. Its free
+functions use data-last argument order (§4.6), accept `Vec<T>` inputs, and
+materialize `Vec` results for transformations such as `map`, `filter`, `take`,
+`skip`, `zip`, `chain`, `flatten`, `flat_map`, `scan`, `windows`, and `chunks`.
+Consumers including `fold`, `reduce`, `sum`, `count`, `any`, `all`, `find`, and
+`position` traverse that materialized sequence.
 
-Free functions in `std::iter`. Argument order is **data-last**
-(§4.6) so every entry threads with `|>`. Functions taking a callable
-accept any `Fn(...) -> _` (capturing closures and bare functions
-both qualify).
+Language `for` loops and range iteration remain single-pass. They do not imply
+that `std::iter` adapter chains are lazy. The accepted staged protocol specifies
+ownership, invalidation, closure state, early termination, typed MIR operations,
+tier parity, and edition migration in
+[`docs_src/design/lazy_iterators.md`](docs_src/design/lazy_iterators.md). The
+current eager signatures remain Experimental until that protocol is implemented.
 
-Transformations (lazy when chained - no intermediate `Vec`
-allocation between stages):
-
-- `map(f, it)` - apply `f` to every element.
-- `filter(p, it)` - keep elements where `p(elem)` is true.
-- `filter_map(f, it)` - apply `f`, keep the `Some` results.
-- `take(n, it)` / `skip(n, it)`.
-- `take_while(p, it)` / `skip_while(p, it)`.
-- `chain(a, b)`, `zip(a, b)`, `enumerate(it)`.
-- `flat_map(f, it)`, `flatten(it)`.
-- `windowed(n, it)`, `pairwise(it)`, `chunk_by_size(n, it)`.
-- `step_by(n, it)`, `cycle(it)`, `repeat(v, n)`.
-- `scan(init, f, it)`, `unfold(seed, f)`.
-
-Consumers (force the chain to completion, return a non-iterator):
-
-- `for_each(f, it)` - apply `f` for its side-effects; returns `()`.
-- `fold(init, f, it)`, `reduce(f, it) -> Option<T>`.
-- `sum(it)`, `sum_by(f, it)`, `product(it)`, `product_by(f, it)`.
-- `count(it)`.
-- `min(it) -> Option<T>`, `max`, `min_by`, `max_by`, `min_by_key`,
-  `max_by_key`.
-- `any(p, it)`, `all(p, it)`.
-- `find(p, it) -> Option<T>`, `position(p, it) -> Option<usize>`,
-  `find_map(f, it) -> Option<U>`.
-- `partition(p, it) -> (Vec<T>, Vec<T>)`.
-
-Materializers (consumers that build a collection):
-
-- `collect::<C>(it)` - into `Vec<T>`, `HashSet<T>`, `HashMap<K,V>`,
-  `BTreeMap<K,V>`, `String`, depending on the turbofish.
-- `group_by(key, it) -> HashMap<K, Vec<T>>`.
-- `count_by(key, it) -> HashMap<K, i64>`.
-- `sort_by(cmp, it) -> Vec<T>`, `sort_by_key(key, it) -> Vec<T>`.
-- `dedup(it) -> Vec<T>`, `reversed(it) -> Vec<T>`.
-- `unzip(it) -> (Vec<A>, Vec<B>)`.
-
-Constructors:
-
-- `range(a, b) -> RangeIter`, `range_inclusive(a, b) -> RangeIter`.
-- `repeat(v, n) -> RepeatIter`, `empty() -> EmptyIter`,
-  `once(v) -> OnceIter`.
-
-Example (lazy chain - `iter::filter` and `iter::map` never
-allocate intermediate `Vec`s):
+Current eager example:
 
 ```
-let total =
-  1..=100
-    |> iter::filter(|n| n % 2 == 0)
-    |> iter::map(|n| n * n)
-    |> iter::sum::<i64>()
-```
-
-Example (eager - input `Vec`, output `Vec`):
-
-```
-let xs = [3, 1, 4, 1, 5, 9, 2, 6]
-let sorted = xs |> iter::sort_by_key(|n| -n)
+let squares = [1, 2, 3, 4]
+  |> iter::filter(|n| n % 2 == 0)
+  |> iter::map(|n| n * n)
+let total = squares |> iter::sum
 ```
 
 ### 10.4a `std::option`
@@ -1970,14 +1937,16 @@ transformation when the chain doesn't return from the enclosing fn.
 
 ### 10.7 `std::collections`
 
-- `Vec<T>`, `HashMap<K, V>`, `BTreeMap<K, V>`, `HashSet<T>`,
-  `VecDeque<T>`, `LinkedList<T>`.
+- `Vec<T>`, `HashMap<K, V>`, `BTreeMap<K, V>`, `HashSet<T>`, and
+  `VecDeque<T>`. Sequence, heap, queue, stack, deque, and ordered-container
+  modules remain Experimental unless promoted by the feature registry.
 
 ### 10.8 `std::sync`
 
 - `Mutex<T>`, `RwLock<T>` (parking_lot-style: no poisoning).
 - `Once`, `WaitGroup`, `Barrier`.
-- `atomic::{AtomicI32, AtomicI64, AtomicUsize, AtomicBool, AtomicPtr}`.
+- `AtomicI64`, `AtomicU64`, and `AtomicBool`. Raw-pointer atomics are not
+  exposed because the safe language has no raw-pointer surface.
 
 ### 10.9 `std::time`
 
@@ -2053,22 +2022,23 @@ create a compatibility promise without improving fidelity.
 
 ### 11.1 Targets
 
-The table below is the supported OS x Arch matrix. CI exercises
-`linux-x86_64`, `linux-aarch64`, `darwin-x86_64`, `darwin-aarch64`, and
-`windows-x86_64`. The `linux-riscv64`, `freebsd-x86_64`, and
-`wasm32-wasi` rows are registered in the target table as groundwork but
-do not yet produce shippable native binaries.
+The table below is the support contract mirrored by
+`conformance/target_matrix.tsv`. Tier 1 runs VM, JIT, and AOT on native CI.
+Tier 2 supports release AOT output with VM differential evidence. Artifact and
+registered rows are not supported execution targets.
 
-| OS × Arch | Backend |
-|---|---|
-| linux-x86_64 | Cranelift + LLVM |
-| linux-aarch64 | Cranelift + LLVM |
-| linux-riscv64 | LLVM (planned, not yet shipped) |
-| darwin-x86_64 | Cranelift + LLVM |
-| darwin-aarch64 | Cranelift + LLVM |
-| windows-x86_64 | Cranelift + LLVM |
-| freebsd-x86_64 | LLVM (planned, not yet shipped) |
-| wasm32-wasi | planned, not yet shipped |
+| Tier | Target triple | Evidence |
+|---|---|---|
+| Tier 1 | `x86_64-unknown-linux-gnu` | native VM/JIT/AOT |
+| Tier 1 | `aarch64-unknown-linux-gnu` | native VM/JIT/AOT |
+| Tier 1 | `aarch64-apple-darwin` | native VM/JIT/AOT |
+| Tier 1 | `x86_64-pc-windows-msvc` | native VM/JIT/AOT |
+| Tier 2 | `x86_64-unknown-linux-musl` | release AOT with VM differential |
+| Tier 2 | `aarch64-unknown-linux-musl` | release AOT under QEMU with VM differential |
+| Artifact only | `x86_64-apple-darwin` | release artifact build only |
+| Registered | `riscv64gc-unknown-linux-gnu` | compile check only |
+| Registered | `wasm32-unknown-unknown` | platform-agnostic crate check only |
+| Registered | `wasm32-wasi` | platform-agnostic crate check only |
 
 ### 11.2 Linking
 
@@ -2103,7 +2073,9 @@ LLVM is the canonical native backend; the Cranelift code path is
 reserved for the in-process JIT inside `gossamer-interp` and is not
 reachable from `gos build`. Any MIR shape the LLVM lowerer cannot
 handle is a hard `gos build` failure rather than a silent per-function
-Cranelift fallback. The register-based bytecode VM is the sole `gos
+Cranelift fallback. `--allow-llvm-fallback` is an explicit Experimental
+diagnostic opt-out; an artifact produced with it is not a Stable
+contract-conforming release artifact. The register-based bytecode VM is the sole `gos
 run` / `gos test` engine and lowers every construct natively; there is
 no tree-walker interpreter. VM correctness is pinned by the tier-parity
 suite and the VM-vs-LLVM-AOT differential.
@@ -2272,6 +2244,10 @@ generate per-type code, and the `regex!` / `sql!` macros validate their
 argument at build time, failing the build on malformed input. See the
 [`comptime` language page](docs_src/language/comptime.md).
 
+Gossamer does not provide runtime reflection. Programs that require dynamic
+type inspection must use an explicit generated schema, tagged representation,
+or a `comptime`-generated adapter.
+
 The toolchain implements the six format-shaped macros (`println!`,
 `print!`, `eprintln!`, `eprint!`, `format!`, `panic!`), the desugar
 macros (`matches!`, `todo!`, `unimplemented!`, `unreachable!`, `dbg!`),
@@ -2361,16 +2337,22 @@ tree sha256. Checked into version control for reproducible builds.
 
 ### 16.4 Version selection
 
-Each dependency declares a semver **range** (default: `^x.y.z`). The
-resolver picks the minimum version that satisfies all consumers
-(minimum-version-selection, as in Go modules). This yields predictable
-upgrades without surprise version jumps.
+Each dependency declares a semver **range** (default: `^x.y.z`). The resolver
+picks the highest available version that satisfies every consumer range. The
+selected graph is pinned by `project.lock`; `--locked` rejects drift instead of
+selecting a newer version.
 
+Prerelease versions participate in SemVer precedence but are excluded from a
+normal caret requirement. A requirement must itself name a prerelease, such as
+`^1.2.0-rc.1`, to select prerelease candidates. Build metadata is retained in
+published versions and lockfiles but does not change resolution precedence.
 ### 16.5 Caches
 
-Content-addressable cache under `~/.gossamer/cache/<sha256>/`. Built
-artifacts cached per target under
-`~/.gossamer/build/<target>/<sha256>/`.
+Package source trees are content-addressed under
+`~/.gossamer/cache/pkg/<sha256>/source/`, overridden by `GOS_CACHE_DIR`.
+Frontend caches follow `GOSSAMER_CACHE_DIR`, then the platform XDG/user cache
+location. Project-native IR objects use `.gos-cache/ir-cache/`. These cache
+locations are performance details and may be removed with `gos clean`.
 
 ### 16.6 Subcommands
 
@@ -2383,21 +2365,27 @@ artifacts cached per target under
 - `gos test` - run the project's tests.
 - `gos fetch` - resolve and download (but do not build) all deps.
 - `gos update` - update deps within their declared ranges.
-- `gos tidy` - rewrite the manifest to its minimal closure.
+- `gos tidy` - parse project sources, remove direct project dependencies not
+  referenced by a string-quoted project import, and canonicalize manifest
+  ordering. Rust bindings are retained independently.
 - `gos vendor` - copy deps into `./vendor/`.
 - `gos doc` - generate HTML documentation.
 
 ### 16.7 Reproducibility
 
-Build output is a pure function of:
+`gos build --reproducible` produces a bit-identical artifact across clean
+builds when all of the following inputs are fixed:
 
 - Toolchain version.
 - Target triple.
 - Source file contents (current project plus all lockfile entries).
 - Build flags (release/debug, features).
+- Linker and external tool versions.
+- The reproducibility environment, including `SOURCE_DATE_EPOCH`.
 
-Backends are deterministic where possible (Cranelift fully; LLVM with
-`-frandom-seed`).
+Default builds prioritize host optimization and fast incremental reuse and are
+not a universal bit-identity contract. Cranelift JIT code is an in-process
+execution detail, not a reproducible artifact.
 
 ### 16.8 Registries (optional)
 

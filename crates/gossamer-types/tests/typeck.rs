@@ -696,6 +696,27 @@ fn piped_iter_map_closure_param_pins_to_elem_type() {
 }
 
 #[test]
+fn eager_iter_migration_aliases_preserve_combinator_types() {
+    let checked = run("use std::iter\n\
+         fn main() { let xs: Vec<String> = [\"a\", \"bb\"]\n\
+         let ys = xs |> iter::eager_map(|s| format!(\"[{s}]\"))\n\
+         let kept = ys |> iter::eager_filter(|s| s.len() > 2)\n\
+         let found = kept |> iter::eager_find(|s| s.len() > 3)\n\
+         let _ = found }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+
+    let mapped = let_init(&checked, "main", 1);
+    assert!(
+        matches!(closure_param_kind(&checked, mapped), TyKind::String),
+        "iter::eager_map must pin its closure parameter to the Vec element type"
+    );
+    let Some(TyKind::Vec(elem)) = checked.tcx.kind(checked.table.get(mapped.id).unwrap()) else {
+        panic!("iter::eager_map must type as Vec");
+    };
+    assert!(matches!(checked.tcx.kind(*elem), Some(TyKind::String)));
+}
+
+#[test]
 fn piped_result_default_with_closure_param_pins_to_err_type() {
     let checked = run("use std::result\n\
          fn fail() -> Result<i64, String> { Err(\"boom\") }\n\
@@ -979,11 +1000,33 @@ fn constructor_calls_are_not_flagged_as_non_callable() {
 }
 
 #[test]
-fn tuple_struct_associated_function_is_not_checked_as_constructor() {
+fn named_struct_associated_function_is_not_checked_as_constructor() {
     let checked = run(
-        "struct Pt(i64, i64)\nimpl Pt { fn origin() -> Pt { Pt(0, 0) } }\nfn main() { let p = Pt::origin() }\n",
+        "struct Pt { x: i64, y: i64 }\nimpl Pt { fn origin() -> Pt { Pt(0, 0) } }\nfn main() { let p = Pt::origin() }\n",
     );
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn struct_destructuring_requires_the_nominal_name() {
+    let d = diagnostics_for(
+        "struct Point { x: i64, y: i64 }\nfn main() { let p = Point { x: 1, y: 2 }; let (x, y) = p }\n",
+    );
+    assert!(has_code(&d, "GT0033"), "{d:?}");
+
+    let d = diagnostics_for("fn main() { let pair = (1, 2); let (x, y) = pair }\n");
+    assert!(!has_code(&d, "GT0033"), "{d:?}");
+}
+
+#[test]
+fn struct_construction_requires_parentheses() {
+    let d = diagnostics_for(
+        "struct Point { x: i64, y: i64 }\nfn main() { let _ = Point { x: 1, y: 2 } }\n",
+    );
+    assert!(has_code(&d, "GT0034"), "{d:?}");
+
+    let d = diagnostics_for("struct Point { x: i64, y: i64 }\nfn main() { let _ = Point(1, 2) }\n");
+    assert!(!has_code(&d, "GT0034"), "{d:?}");
 }
 
 #[test]
@@ -1328,6 +1371,36 @@ fn string_slice_rejects_missing_or_non_integer_bounds() {
         d.iter()
             .any(|x| matches!(x.error, TypeError::TypeMismatch { .. })),
         "a string bound must be rejected as non-integer: {d:?}"
+    );
+}
+
+#[test]
+fn string_slice_rejects_a_duplicate_receiver_argument() {
+    let d = diagnostics_for(
+        "fn main() {\n\
+         let s = \"world\"\n\
+         let _ = s.slice(s, 1, 3)\n\
+         let _ = s |> |s| s.slice(s, 1, 3)\n\
+         }\n",
+    );
+    assert!(
+        d.iter().any(|x| matches!(
+            x.error,
+            TypeError::CallArityMismatch { ref callee, expected: 2, found: 3 }
+                if callee == "strings::slice"
+        )),
+        "a repeated String receiver must be an arity error, not silently ignored: {d:?}"
+    );
+    assert_eq!(
+        d.iter()
+            .filter(|x| matches!(
+                x.error,
+                TypeError::CallArityMismatch { ref callee, expected: 2, found: 3 }
+                    if callee == "strings::slice"
+            ))
+            .count(),
+        2,
+        "the closure form from issue #36 must reject the duplicate receiver too: {d:?}"
     );
 }
 

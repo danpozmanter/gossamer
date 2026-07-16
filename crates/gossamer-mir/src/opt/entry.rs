@@ -63,6 +63,8 @@ pub fn optimise(body: &mut Body, tcx: &TyCtxt) {
     crate::verify::debug_verify_body(body);
     copy_propagate(body, tcx);
     crate::verify::debug_verify_body(body);
+    scalar_replace_short_lived_aggregates(body);
+    crate::verify::debug_verify_body(body);
     const_branch_elim(body);
     crate::verify::debug_verify_body(body);
     dead_block_sweep(body);
@@ -75,6 +77,263 @@ pub fn optimise(body: &mut Body, tcx: &TyCtxt) {
     crate::verify::debug_verify_body(body);
     bounds_check_versioning(body, tcx);
     crate::verify::debug_verify_body(body);
+}
+
+/// Eliminates a short-lived aggregate when every use is a direct scalar field
+/// read in the same block.  This is deliberately narrower than a general SSA
+/// conversion: it accepts only a single aggregate construction, no escaping
+/// use, no borrow, no whole-value copy, and operands whose source locals are
+/// not subsequently written.  Those rules preserve the construction-time
+/// snapshot semantics while making `Pair(a, b).right` use `b` directly on the
+/// VM as well as in the native tiers.
+pub(crate) fn scalar_replace_short_lived_aggregates(body: &mut Body) {
+    for block_index in 0..body.blocks.len() {
+        let candidates: Vec<(usize, Local, Vec<Operand>)> = {
+            let block = &body.blocks[block_index];
+            let mut candidates = Vec::new();
+            for (idx, stmt) in block.stmts.iter().enumerate() {
+                let StatementKind::Assign {
+                    place,
+                    rvalue: Rvalue::Aggregate { operands, .. },
+                } = &stmt.kind
+                else {
+                    continue;
+                };
+                if !place.is_simple()
+                    || !aggregate_is_confined_to_block(body, block_index, place.local)
+                    || !aggregate_operands_stable_after(&block.stmts, idx, operands)
+                    || !aggregate_uses_are_direct_fields(
+                        &block.stmts,
+                        idx,
+                        &block.terminator,
+                        place.local,
+                        operands.len(),
+                    )
+                {
+                    continue;
+                }
+                candidates.push((idx, place.local, operands.clone()));
+            }
+            candidates
+        };
+
+        let block = &mut body.blocks[block_index];
+        for (idx, local, operands) in candidates {
+            for stmt in block.stmts.iter_mut().skip(idx + 1) {
+                replace_aggregate_field_reads(&mut stmt.kind, local, &operands);
+            }
+            block.stmts[idx].kind = StatementKind::Nop;
+        }
+    }
+}
+
+/// Scalar replacement does not cross basic-block boundaries. A successor can
+/// observe the aggregate through a loop-carried or ordinary local, while this
+/// small pass only rewrites direct field reads in the construction block.
+fn aggregate_is_confined_to_block(body: &Body, source_block: usize, local: Local) -> bool {
+    body.blocks
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != source_block)
+        .all(|(_, block)| !block_mentions_local(block, local))
+}
+
+fn block_mentions_local(block: &BasicBlock, local: Local) -> bool {
+    block
+        .stmts
+        .iter()
+        .any(|stmt| statement_mentions_local(stmt, local))
+        || terminator_mentions_local(&block.terminator, local)
+}
+
+fn statement_mentions_local(stmt: &Statement, local: Local) -> bool {
+    match &stmt.kind {
+        StatementKind::Assign { place, rvalue } => {
+            scalar_place_mentions_local(place, local) || scalar_rvalue_mentions_local(rvalue, local)
+        }
+        StatementKind::StorageLive(marked) | StatementKind::StorageDead(marked) => *marked == local,
+        StatementKind::SetDiscriminant { place, .. } => scalar_place_mentions_local(place, local),
+        StatementKind::StaticStore { value, .. } => scalar_replacement_operand_mentions_local(value, local),
+        StatementKind::IterSource { dst, source, .. } => {
+            scalar_place_mentions_local(dst, local)
+                || scalar_replacement_operand_mentions_local(source, local)
+        }
+        StatementKind::IterAdapter {
+            dst,
+            upstream,
+            closure_or_arg,
+            ..
+        } => {
+            scalar_place_mentions_local(dst, local)
+                || scalar_place_mentions_local(upstream, local)
+                || closure_or_arg
+                    .as_ref()
+                    .is_some_and(|operand| scalar_replacement_operand_mentions_local(operand, local))
+        }
+        StatementKind::IterNext {
+            dst_option,
+            iter_place,
+            ..
+        } => {
+            scalar_place_mentions_local(dst_option, local)
+                || scalar_place_mentions_local(iter_place, local)
+        }
+        StatementKind::Nop => false,
+    }
+}
+
+fn scalar_rvalue_mentions_local(rvalue: &Rvalue, local: Local) -> bool {
+    match rvalue {
+        Rvalue::Use(operand) | Rvalue::UnaryOp { operand, .. } | Rvalue::Cast { operand, .. } => {
+            scalar_replacement_operand_mentions_local(operand, local)
+        }
+        Rvalue::BinaryOp { lhs, rhs, .. } => {
+            scalar_replacement_operand_mentions_local(lhs, local)
+                || scalar_replacement_operand_mentions_local(rhs, local)
+        }
+        Rvalue::Aggregate { operands, .. } | Rvalue::CallIntrinsic { args: operands, .. } => operands
+            .iter()
+            .any(|operand| scalar_replacement_operand_mentions_local(operand, local)),
+        Rvalue::Len(place) | Rvalue::Ref { place, .. } => scalar_place_mentions_local(place, local),
+        Rvalue::Repeat { value, .. } => scalar_replacement_operand_mentions_local(value, local),
+        Rvalue::StaticLoad(_) => false,
+    }
+}
+
+fn scalar_place_mentions_local(place: &Place, local: Local) -> bool {
+    place.local == local
+        || place
+            .projection
+            .iter()
+            .any(|projection| matches!(projection, Projection::Index(index) if *index == local))
+}
+
+fn aggregate_operands_stable_after(stmts: &[Statement], idx: usize, operands: &[Operand]) -> bool {
+    operands.iter().all(|operand| match operand {
+        Operand::Copy(place) => !stmts.iter().skip(idx + 1).any(|stmt| {
+            matches!(&stmt.kind, StatementKind::Assign { place: destination, .. } if destination.local == place.local)
+        }),
+        Operand::Const(_) | Operand::FnRef { .. } => true,
+    })
+}
+
+fn aggregate_uses_are_direct_fields(
+    stmts: &[Statement],
+    idx: usize,
+    terminator: &Terminator,
+    local: Local,
+    operand_count: usize,
+) -> bool {
+    for stmt in stmts.iter().skip(idx + 1) {
+        match &stmt.kind {
+            StatementKind::Assign { place, rvalue } => {
+                if place.local == local
+                    || !rvalue_uses_only_direct_fields(rvalue, local, operand_count)
+                {
+                    return false;
+                }
+            }
+            // A static store can outlive this frame, and neither the VM nor
+            // native backends may retain a pointer into the erased aggregate.
+            StatementKind::StaticStore { value, .. }
+                if scalar_replacement_operand_mentions_local(value, local) =>
+            {
+                return false;
+            }
+            StatementKind::SetDiscriminant { place, .. } if place.local == local => return false,
+            StatementKind::StorageLive(_)
+            | StatementKind::StorageDead(_)
+            | StatementKind::StaticStore { .. }
+            | StatementKind::Nop
+            | StatementKind::SetDiscriminant { .. }
+            | StatementKind::IterSource { .. }
+            | StatementKind::IterAdapter { .. }
+            | StatementKind::IterNext { .. } => {}
+        }
+    }
+    !terminator_mentions_local(terminator, local)
+}
+
+fn rvalue_uses_only_direct_fields(rvalue: &Rvalue, local: Local, operand_count: usize) -> bool {
+    let op_ok = |operand: &Operand| operand_is_direct_field_or_other(operand, local, operand_count);
+    match rvalue {
+        Rvalue::Use(operand) | Rvalue::UnaryOp { operand, .. } | Rvalue::Cast { operand, .. } => {
+            op_ok(operand)
+        }
+        Rvalue::BinaryOp { lhs, rhs, .. } => op_ok(lhs) && op_ok(rhs),
+        Rvalue::Aggregate { operands, .. } => operands.iter().all(op_ok),
+        Rvalue::Repeat { value, .. } => op_ok(value),
+        Rvalue::CallIntrinsic { args, .. } => args.iter().all(op_ok),
+        Rvalue::Len(place) | Rvalue::Ref { place, .. } => place.local != local,
+        Rvalue::StaticLoad(_) => true,
+    }
+}
+
+fn operand_is_direct_field_or_other(operand: &Operand, local: Local, operand_count: usize) -> bool {
+    match operand {
+        Operand::Copy(place) if place.local == local => matches!(
+            place.projection.as_slice(),
+            [Projection::Field(field)] if (*field as usize) < operand_count
+        ),
+        _ => true,
+    }
+}
+
+fn scalar_replacement_operand_mentions_local(operand: &Operand, local: Local) -> bool {
+    matches!(operand, Operand::Copy(place) if place.local == local)
+}
+
+fn terminator_mentions_local(terminator: &Terminator, local: Local) -> bool {
+    match terminator {
+        Terminator::Goto { .. } | Terminator::Return | Terminator::Unreachable | Terminator::Panic { .. } => false,
+        Terminator::SwitchInt { discriminant, .. } | Terminator::Assert { cond: discriminant, .. } => {
+            scalar_replacement_operand_mentions_local(discriminant, local)
+        }
+        Terminator::Call {
+            callee,
+            args,
+            destination,
+            ..
+        } => {
+            scalar_replacement_operand_mentions_local(callee, local)
+                || args
+                    .iter()
+                    .any(|arg| scalar_replacement_operand_mentions_local(arg, local))
+                || destination.local == local
+        }
+        Terminator::Drop { place, .. } => place.local == local,
+    }
+}
+
+fn replace_aggregate_field_reads(kind: &mut StatementKind, local: Local, operands: &[Operand]) {
+    let replace = |operand: &mut Operand| {
+        if let Operand::Copy(place) = operand
+            && place.local == local
+            && let [Projection::Field(field)] = place.projection.as_slice()
+            && let Some(source) = operands.get(*field as usize)
+        {
+            *operand = source.clone();
+        }
+    };
+    match kind {
+        StatementKind::Assign { rvalue, .. } => match rvalue {
+            Rvalue::Use(operand) | Rvalue::UnaryOp { operand, .. } | Rvalue::Cast { operand, .. } => {
+                replace(operand);
+            }
+            Rvalue::BinaryOp { lhs, rhs, .. } => {
+                replace(lhs);
+                replace(rhs);
+            }
+            Rvalue::Aggregate { operands, .. } | Rvalue::CallIntrinsic { args: operands, .. } => {
+                for operand in operands {
+                    replace(operand);
+                }
+            }
+            Rvalue::Repeat { value, .. } => replace(value),
+            Rvalue::Len(_) | Rvalue::Ref { .. } | Rvalue::StaticLoad(_) => {}
+        },
+        StatementKind::StorageLive(_) | StatementKind::StorageDead(_) | StatementKind::StaticStore { .. } | StatementKind::Nop | StatementKind::SetDiscriminant { .. } | StatementKind::IterSource { .. } | StatementKind::IterAdapter { .. } | StatementKind::IterNext { .. } => {}
+    }
 }
 
 /// Rewrites `Vec::new(elem_bytes)` into `gos_rt_vec_with_capacity(elem_bytes,
@@ -186,4 +445,3 @@ pub(crate) fn reserve_hashmaps_for_counted_insert_loops(body: &mut Body, tcx: &T
         }
     }
 }
-

@@ -181,7 +181,7 @@ pub enum ExprKind {
     /// Tuple expression `(a, b, c)` with two or more elements. The empty tuple
     /// `()` is represented by `Literal(Literal::Unit)`.
     Tuple(Vec<Expr>),
-    /// Struct literal `Path { field: value, .. }` with optional base expression.
+    /// Struct construction represented with named fields internally.
     Struct {
         /// Path naming the struct.
         path: PathExpr,
@@ -189,6 +189,8 @@ pub enum ExprKind {
         fields: Vec<StructExprField>,
         /// Optional `..base` functional update.
         base: Option<Box<Expr>>,
+        /// Source form that produced this construction.
+        syntax: StructExprSyntax,
     },
     /// Array expression `[a, b, c]` or `[value; count]`.
     Array(ArrayExpr),
@@ -217,6 +219,15 @@ pub enum ExprKind {
     /// variant, suppressing cascading diagnostics for the same malformed
     /// sub-expression.
     Error,
+}
+
+/// Source spelling of a struct construction before lowering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum StructExprSyntax {
+    /// Canonical constructor syntax: `Name(args...)`.
+    Parenthesized,
+    /// Legacy field-literal syntax: `Name { field: value }`.
+    Braced,
 }
 
 /// Literal values appearing in expressions and patterns.

@@ -2,9 +2,9 @@ struct S { a: i64, b: String }
 
 fn main() {
     let mut v: Vec<S> = Vec::new()
-    v.push(S { a: 1, b: "x" })
-    v.push(S { a: 2, b: "yy" })
-    v.push(S { a: 3, b: "zzz" })
+    v.push(S(1, "x"))
+    v.push(S(2, "yy"))
+    v.push(S(3, "zzz"))
     for s in v {
         println!("{} {}", s.a, s.b)
     }

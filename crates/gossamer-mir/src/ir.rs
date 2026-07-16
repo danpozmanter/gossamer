@@ -174,8 +174,85 @@ pub enum StatementKind {
         /// Value to store.
         value: Operand,
     },
+    /// Creates a typed iterator state from a concrete source. Iterator states
+    /// are linear: an adapter may take ownership of a state once, while
+    /// [`StatementKind::IterNext`] advances it in place.
+    IterSource {
+        /// Destination local that owns the newly-created state.
+        dst: Place,
+        /// Concrete source representation.
+        source_kind: IteratorSourceKind,
+        /// Range bounds or the source collection.
+        source: Operand,
+        /// Type yielded by each successful next operation.
+        item_ty: Ty,
+        /// Whether the state borrows or owns its source allocation.
+        ownership: IteratorOwnership,
+    },
+    /// Creates an adapter state that owns its upstream iterator state.
+    IterAdapter {
+        /// Destination local that owns the adapter state.
+        dst: Place,
+        /// Concrete adapter representation.
+        adapter_kind: IteratorAdapterKind,
+        /// Upstream iterator state. This is consumed by the adapter.
+        upstream: Place,
+        /// Closure or scalar adapter argument, where the adapter needs one.
+        closure_or_arg: Option<Operand>,
+        /// Type yielded by each successful next operation.
+        item_ty: Ty,
+    },
+    /// Advances a mutable iterator state and writes an `Option<Item>` result.
+    /// Repeated next operations are valid, including after exhaustion.
+    IterNext {
+        /// Destination receiving the typed `Option<Item>` result.
+        dst_option: Place,
+        /// Mutable iterator state to advance.
+        iter_place: Place,
+        /// Type yielded by `Some`.
+        item_ty: Ty,
+    },
     /// No-op preserved for alignment with rustc-style MIR dumps.
     Nop,
+}
+
+/// Concrete sources supported by the first typed iterator representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IteratorSourceKind {
+    /// Integer range state.
+    Range,
+    /// Borrowed slice or Vec state.
+    Slice,
+    /// Owning Vec state that moves elements out once.
+    VecInto,
+}
+
+/// Ownership mode of an iterator source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IteratorOwnership {
+    /// The state observes a source allocation without taking it over.
+    Borrowed,
+    /// The state owns the source allocation and its remaining elements.
+    Owning,
+}
+
+/// Concrete adapters supported by the first typed iterator representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IteratorAdapterKind {
+    /// Transform one source item through a closure.
+    Map,
+    /// Yield only items a predicate accepts.
+    Filter,
+    /// Bound the number of yielded items.
+    Take,
+    /// Discard a prefix before yielding.
+    Skip,
+    /// Pair items with their source index.
+    Enumerate,
+    /// Yield the first source then the second source.
+    Chain,
+    /// Pair items until either input is exhausted.
+    Zip,
 }
 
 /// Control-flow terminator closing a block.

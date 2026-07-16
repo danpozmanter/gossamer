@@ -180,11 +180,11 @@ Goroutine and channel syntax is the same. Behavioural notes:
 
 - The M:N work-stealing scheduler is live; goroutines are parked by the
   netpoller when blocked on I/O.
-- Scheduling is cooperative with watchdog-assisted preemption (Go's
-  pre-1.14 model plus signal-based interruption of blocking syscalls).
-  Unlike Go 1.14+, a tight, call-free compute loop is not yet
-  asynchronously preempted at loop back-edges - it yields at its next
-  call or park point. See
+- Scheduling uses watchdog-requested cooperative safepoints. Native compiled
+  loops poll at amortized backedges and suspend the current coroutine. The VM
+  yields its bounded OS worker pool at backedges but cannot suspend and resume a
+  bytecode frame on a one-worker pool. This remains weaker than Go's fully
+  asynchronous goroutine preemption. See
   [runtime design - Preemption](../design/runtime.md#preemption).
 - Channels are created with `channel()` / `channel::<T>()`.
   `channel()` and `channel(0)` are unbuffered rendezvous channels,

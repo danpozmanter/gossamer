@@ -121,6 +121,7 @@ impl Vm {
             released_snapshots: self.jit_counters.released_snapshots.get(),
             reused_artifacts: self.jit_counters.reused_artifacts.get(),
             ram_skipped_compiles: self.jit_counters.ram_skipped_compiles.get(),
+            code_size_skipped_compiles: self.jit_counters.code_size_skipped_compiles.get(),
             last_observed_rss_bytes: self.jit_counters.last_observed_rss_bytes.get(),
             peak_observed_rss_bytes: self.jit_counters.peak_observed_rss_bytes.get(),
             total_compile_time_us: self.jit_counters.total_compile_time_us.get(),
@@ -712,8 +713,13 @@ impl Vm {
         if let Some(cache_key) = cache_key.as_deref()
             && let Some(artifact) = thread_jit_artifact(cache_key)
         {
-            if self.install_jit_artifact(artifact) > 0 {
-                self.jit_counters.artifact_reused();
+            if self.jit_artifact_fits_code_cap(&artifact) {
+                if self.install_jit_artifact(artifact) > 0 {
+                    self.jit_counters.artifact_reused();
+                }
+            } else {
+                self.jit.write().compiled = JitCompileState::Failed;
+                self.jit_counters.code_size_skipped_compile();
             }
             self.release_terminal_jit_snapshot();
             return;
@@ -752,6 +758,12 @@ impl Vm {
         }
         let emitted_code_bytes = artifact.code_bytes;
         let artifact = Rc::new(artifact);
+        if !self.jit_artifact_fits_code_cap(&artifact) {
+            self.jit.write().compiled = JitCompileState::Failed;
+            self.jit_counters.code_size_skipped_compile();
+            self.release_terminal_jit_snapshot();
+            return;
+        }
         if let Some(cache_key) = cache_key {
             cache_thread_jit_artifact(cache_key, &artifact);
         }
@@ -810,6 +822,20 @@ impl Vm {
             *chunk_state.jit_resolve.borrow_mut() = crate::vm::JitResolve::Unresolved;
         }
         installed_count
+    }
+
+    /// Enforces an opt-in per-VM cap on retained native code. The cap is
+    /// checked for both fresh and cached artifacts, so a cache hit cannot
+    /// bypass a caller's memory budget. `0` and malformed values disable it.
+    fn jit_artifact_fits_code_cap(&self, artifact: &JitArtifact) -> bool {
+        let Some(cap) = jit_code_bytes_cap() else {
+            return true;
+        };
+        self.jit_counters
+            .emitted_code_bytes
+            .get()
+            .saturating_add(artifact.code_bytes)
+            <= cap
     }
 
     /// A terminal tier-up result has no future use for compiler snapshots in
@@ -1115,6 +1141,12 @@ fn jit_rss_sample_and_cap() -> Option<(u64, u64)> {
     }
     let cap_bytes = cap_mb.saturating_mul(1024 * 1024);
     current_process_rss_bytes().map(|rss| (rss, cap_bytes))
+}
+
+fn jit_code_bytes_cap() -> Option<u64> {
+    let cap = std::env::var("GOS_JIT_MAX_CODE_BYTES").ok()?;
+    let cap = cap.trim().parse::<u64>().ok()?;
+    (cap > 0).then_some(cap)
 }
 
 #[cfg(target_os = "linux")]

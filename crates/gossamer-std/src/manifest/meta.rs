@@ -79,6 +79,11 @@ pub const RUNTIME: StdModule = StdModule {
             doc: "Requests collection of unreachable reference cycles; returns `()`.",
         },
         StdItem {
+            name: "cycle_collection_supported",
+            kind: StdItemKind::Function,
+            doc: "Reports whether this execution tier reclaims unreachable reference cycles.",
+        },
+        StdItem {
             name: "scheduler_stats_json",
             kind: StdItemKind::Function,
             doc: "Returns a compact JSON snapshot of goroutine scheduler counters.",
@@ -142,6 +147,11 @@ pub const FLAG: StdModule = StdModule {
     path: "std::flag",
     summary: "Batteries-included CLI argument parsing.",
     items: &[
+        StdItem {
+            name: "Value",
+            kind: StdItemKind::Type,
+            doc: "Parsed command-line flag value.",
+        },
         StdItem {
             name: "Set",
             kind: StdItemKind::Type,
@@ -255,6 +265,68 @@ pub const TESTING: StdModule = StdModule {
             name: "wait_for_scheduler_idle",
             kind: StdItemKind::Function,
             doc: "Waits for the scheduler to become idle within a timeout.",
+        },
+    ],
+};
+
+pub const HTTPTEST: StdModule = StdModule {
+    path: "std::httptest",
+    summary: "Loopback HTTP fixtures for source integration tests.",
+    items: &[StdItem {
+        name: "server",
+        kind: StdItemKind::Function,
+        doc: "server(status, body) -> String: starts an isolated loopback static-response server and returns its http:// base URL. Use http::get or http::Client as the test client. The server is test-process scoped and stops when that process exits.",
+    }],
+};
+
+pub const IMAGE: StdModule = StdModule {
+    path: "std::image",
+    summary: "Opaque RGBA8 image handles with PNG and JPEG codecs.",
+    items: &[
+        StdItem {
+            name: "new",
+            kind: StdItemKind::Function,
+            doc: "Allocates a transparent image handle.",
+        },
+        StdItem {
+            name: "filled",
+            kind: StdItemKind::Function,
+            doc: "Allocates an image handle filled with a packed 0xRRGGBBAA colour.",
+        },
+        StdItem {
+            name: "decode_base64",
+            kind: StdItemKind::Function,
+            doc: "Decodes a base64 PNG or JPEG; returns zero for malformed input.",
+        },
+        StdItem {
+            name: "width",
+            kind: StdItemKind::Function,
+            doc: "Returns an image width in pixels.",
+        },
+        StdItem {
+            name: "height",
+            kind: StdItemKind::Function,
+            doc: "Returns an image height in pixels.",
+        },
+        StdItem {
+            name: "pixel",
+            kind: StdItemKind::Function,
+            doc: "Returns packed 0xRRGGBBAA, or -1 outside the image.",
+        },
+        StdItem {
+            name: "set_pixel",
+            kind: StdItemKind::Function,
+            doc: "Sets a packed 0xRRGGBBAA pixel and reports whether it was in bounds.",
+        },
+        StdItem {
+            name: "encode_png_base64",
+            kind: StdItemKind::Function,
+            doc: "Encodes an image as lossless base64 PNG.",
+        },
+        StdItem {
+            name: "encode_jpeg_base64",
+            kind: StdItemKind::Function,
+            doc: "Encodes an image as base64 JPEG at quality 1 through 100.",
         },
     ],
 };

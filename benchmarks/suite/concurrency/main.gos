@@ -1,0 +1,24 @@
+fn worker(id: i64, tx: Sender<i64>) {
+    let mut total = 0
+    for i in 0..100_000 {
+        total += (i + id) % 97
+    }
+    tx.send(total)
+}
+
+fn main() {
+    let (tx, rx) = channel::<i64>(8)
+    for id in 0..8 {
+        go worker(id, tx.clone())
+    }
+    let mut total = 0
+    let mut received = 0
+    while let Some(value) = rx.recv() {
+        total += value
+        received += 1
+        if received == 8 {
+            break
+        }
+    }
+    println!("{}", total)
+}

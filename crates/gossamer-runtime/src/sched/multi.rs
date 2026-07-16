@@ -81,6 +81,57 @@ pub enum ParkReason {
     Timer,
 }
 
+/// Snapshot of goroutines currently parked by wait category.
+///
+/// These are instantaneous counts, not accumulated contention or wait-time
+/// metrics. They are intended for diagnostics such as the pprof mutex and
+/// block endpoints.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ParkedReasonCounts {
+    /// Parks for which the runtime did not supply a more specific reason.
+    pub other: usize,
+    /// Goroutines waiting on a channel send or receive.
+    pub chan: usize,
+    /// Goroutines waiting on synchronization primitives.
+    pub sync: usize,
+    /// Goroutines waiting for socket readiness.
+    pub io: usize,
+    /// Goroutines waiting for a timer.
+    pub timer: usize,
+}
+
+/// Accumulated time goroutines spent parked, grouped by wait category.
+///
+/// Values are monotonic microseconds since the scheduler was created. They
+/// are deliberately cumulative, so callers can take two snapshots and
+/// compute a delta without coordinating with parked goroutines.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ParkWaitStats {
+    /// Time spent in generic runtime waits.
+    pub other_micros: u64,
+    /// Time spent waiting on channel operations.
+    pub chan_micros: u64,
+    /// Time spent waiting on synchronization primitives.
+    pub sync_micros: u64,
+    /// Time spent waiting for I/O readiness.
+    pub io_micros: u64,
+    /// Time spent waiting for timers.
+    pub timer_micros: u64,
+}
+
+/// One scheduler event captured by [`MultiScheduler::start_execution_trace`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecutionTraceEvent {
+    /// Monotonic timestamp in microseconds since scheduler process start.
+    pub timestamp_micros: u64,
+    /// Event name (`spawn`, `park`, or `unpark`).
+    pub name: &'static str,
+    /// Goroutine the event concerns.
+    pub gid: u32,
+    /// Wait category for a park event, otherwise `None`.
+    pub reason: Option<ParkReason>,
+}
+
 /// Statistics produced by [`MultiScheduler`].
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MultiStats {
@@ -113,6 +164,43 @@ struct AtomicStats {
     injects: AtomicU64,
     parks: AtomicU64,
     unparks: AtomicU64,
+}
+
+#[allow(
+    clippy::struct_field_names,
+    reason = "unit-bearing atomics mirror the public snapshot"
+)]
+#[derive(Default, Debug)]
+struct AtomicParkWaitStats {
+    other_micros: AtomicU64,
+    chan_micros: AtomicU64,
+    sync_micros: AtomicU64,
+    io_micros: AtomicU64,
+    timer_micros: AtomicU64,
+}
+
+impl AtomicParkWaitStats {
+    fn add(&self, reason: ParkReason, elapsed: Duration) {
+        let micros = elapsed.as_micros().min(u128::from(u64::MAX)) as u64;
+        let target = match reason {
+            ParkReason::Other => &self.other_micros,
+            ParkReason::Chan => &self.chan_micros,
+            ParkReason::Sync => &self.sync_micros,
+            ParkReason::Io => &self.io_micros,
+            ParkReason::Timer => &self.timer_micros,
+        };
+        target.fetch_add(micros, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> ParkWaitStats {
+        ParkWaitStats {
+            other_micros: self.other_micros.load(Ordering::Relaxed),
+            chan_micros: self.chan_micros.load(Ordering::Relaxed),
+            sync_micros: self.sync_micros.load(Ordering::Relaxed),
+            io_micros: self.io_micros.load(Ordering::Relaxed),
+            timer_micros: self.timer_micros.load(Ordering::Relaxed),
+        }
+    }
 }
 
 impl AtomicStats {
@@ -199,6 +287,8 @@ struct Shared {
     /// `1_000_000`.
     max_live: AtomicUsize,
     stats: AtomicStats,
+    park_wait: AtomicParkWaitStats,
+    trace: Mutex<Option<Vec<ExecutionTraceEvent>>>,
     /// Set to `true` when [`MultiScheduler::shutdown`] is called.
     /// Workers exit once their local deque is drained.
     stopping: AtomicBool,
@@ -238,6 +328,7 @@ struct ParkedEntry {
     /// Hint indicating which worker this task previously ran on, used
     /// to maintain locality on resume.
     home: usize,
+    parked_at: Instant,
 }
 
 impl fmt::Debug for Shared {
@@ -285,6 +376,8 @@ impl MultiScheduler {
             live_goroutines: AtomicUsize::new(0),
             max_live: AtomicUsize::new(default_max_live()),
             stats: AtomicStats::default(),
+            park_wait: AtomicParkWaitStats::default(),
+            trace: Mutex::new(None),
             stopping: AtomicBool::new(false),
             live_workers: AtomicUsize::new(0),
             target_workers: AtomicUsize::new(n),
@@ -313,6 +406,7 @@ impl MultiScheduler {
         let raw = self.inner.next_gid.fetch_add(1, Ordering::Relaxed);
         let gid = Gid(u32::try_from(raw & 0xFFFF_FFFF).unwrap_or(u32::MAX));
         crate::sigquit::register(gid.as_u32(), std::any::type_name::<T>());
+        self.trace_event("spawn", gid, None);
         // Wrap the task with a `GidStamped` adapter so the worker
         // publishes the goroutine's `gid` into the race-detector
         // thread-local before each `step` and clears it after. This
@@ -459,11 +553,17 @@ impl MultiScheduler {
     /// indicates which worker should pick the task back up; values
     /// outside the worker count fall through to the injector.
     pub fn park(&self, gid: Gid, reason: ParkReason, home: usize, task: SendTask) {
-        self.inner
-            .parked
-            .lock()
-            .insert(gid, ParkedEntry { task, reason, home });
+        self.inner.parked.lock().insert(
+            gid,
+            ParkedEntry {
+                task,
+                reason,
+                home,
+                parked_at: Instant::now(),
+            },
+        );
         self.inner.stats.parks.fetch_add(1, Ordering::Relaxed);
+        self.trace_event("park", gid, Some(reason));
     }
 
     /// Resurrects a previously parked goroutine. Returns `true` when a
@@ -496,6 +596,10 @@ impl MultiScheduler {
             return false;
         };
         drop(parked);
+        self.inner
+            .park_wait
+            .add(entry.reason, entry.parked_at.elapsed());
+        self.trace_event("unpark", gid, None);
         let home = entry.home;
         // INVARIANT (retired-inbox handoff): an inbox push for a
         // worker slot is legal only while holding the `workers`
@@ -537,6 +641,51 @@ impl MultiScheduler {
     #[must_use]
     pub fn parked_count(&self) -> usize {
         self.inner.parked.lock().len()
+    }
+
+    /// Returns a snapshot of currently parked goroutines grouped by reason.
+    #[must_use]
+    pub fn parked_reason_counts(&self) -> ParkedReasonCounts {
+        let mut counts = ParkedReasonCounts::default();
+        for entry in self.inner.parked.lock().values() {
+            match entry.reason {
+                ParkReason::Other => counts.other += 1,
+                ParkReason::Chan => counts.chan += 1,
+                ParkReason::Sync => counts.sync += 1,
+                ParkReason::Io => counts.io += 1,
+                ParkReason::Timer => counts.timer += 1,
+            }
+        }
+        counts
+    }
+
+    /// Returns accumulated goroutine park time by wait category.
+    #[must_use]
+    pub fn park_wait_stats(&self) -> ParkWaitStats {
+        self.inner.park_wait.snapshot()
+    }
+
+    /// Starts a fresh scheduler execution trace. Starting a new capture drops
+    /// any prior unfinished capture.
+    pub fn start_execution_trace(&self) {
+        *self.inner.trace.lock() = Some(Vec::new());
+    }
+
+    /// Stops capture and returns scheduler spawn, park, and unpark events.
+    #[must_use]
+    pub fn finish_execution_trace(&self) -> Vec<ExecutionTraceEvent> {
+        self.inner.trace.lock().take().unwrap_or_default()
+    }
+
+    fn trace_event(&self, name: &'static str, gid: Gid, reason: Option<ParkReason>) {
+        if let Some(events) = self.inner.trace.lock().as_mut() {
+            events.push(ExecutionTraceEvent {
+                timestamp_micros: now_micros_since_start(),
+                name,
+                gid: gid.as_u32(),
+                reason,
+            });
+        }
     }
 
     /// Asks every running goroutine to reach a safepoint at its next
@@ -703,6 +852,10 @@ impl Drop for WorkerHandleGuard {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "scheduler worker loop is intentionally linear"
+)]
 fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shared: Arc<Shared>) {
     crate::stack_guard::install_stack_guard();
     // Round-robin steal cursor - biases away from always poking the
@@ -809,9 +962,18 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
                             task,
                             reason,
                             home: index,
+                            parked_at: Instant::now(),
                         },
                     );
                     shared.stats.parks.fetch_add(1, Ordering::Relaxed);
+                    if let Some(events) = shared.trace.lock().as_mut() {
+                        events.push(ExecutionTraceEvent {
+                            timestamp_micros: now_micros_since_start(),
+                            name: "park",
+                            gid: gid.as_u32(),
+                            reason: Some(reason),
+                        });
+                    }
                     // Race-window protection: if `unpark(gid)`
                     // already fired (poller delivery between
                     // `arm()` and the park insertion), the gid is
@@ -823,6 +985,17 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
                         if let Some(entry) = parked.remove(&gid) {
                             drop(pre);
                             drop(parked);
+                            shared
+                                .park_wait
+                                .add(entry.reason, entry.parked_at.elapsed());
+                            if let Some(events) = shared.trace.lock().as_mut() {
+                                events.push(ExecutionTraceEvent {
+                                    timestamp_micros: now_micros_since_start(),
+                                    name: "unpark",
+                                    gid: gid.as_u32(),
+                                    reason: None,
+                                });
+                            }
                             shared.injector.push(entry.task);
                             shared.stats.unparks.fetch_add(1, Ordering::Relaxed);
                             // Wake any worker that may have parked
@@ -949,10 +1122,7 @@ fn next_task(
     shared: &Arc<Shared>,
     steal_cursor: &mut usize,
 ) -> Option<SendTask> {
-    if let Some(task) = deque.pop() {
-        return Some(task);
-    }
-    // 1) own inbox - unparked goroutines pinned to this worker
+    // 1) own inbox - unparked goroutines pinned to this worker.
     loop {
         match self_slot.inbox.steal_batch_and_pop(deque) {
             Steal::Success(task) => {
@@ -963,8 +1133,10 @@ fn next_task(
             Steal::Retry => {}
         }
     }
-    // 2) global injector (new spawns from the main thread or from
-    //    other non-worker contexts)
+    // 2) Global injector. Check it before the local deque so a task
+    // that was cooperatively preempted cannot immediately select
+    // itself forever while newly spawned work waits in the injector.
+    // This is essential for fairness when the pool has one worker.
     loop {
         match shared.injector.steal_batch_and_pop(deque) {
             Steal::Success(task) => {
@@ -974,6 +1146,10 @@ fn next_task(
             Steal::Empty => break,
             Steal::Retry => {}
         }
+    }
+    // 3) Tasks that previously yielded on this worker.
+    if let Some(task) = deque.pop() {
+        return Some(task);
     }
     // Peer-stealing is disabled: stackful coroutines from
     // [`gossamer_coro::Goroutine`] (built on `corosensei`) are not
@@ -1036,7 +1212,7 @@ impl<T: Task> Task for GidStamped<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     struct CountTask {
         counter: Arc<AtomicUsize>,
@@ -1056,6 +1232,48 @@ mod tests {
                 Step::Yield
             }
         }
+    }
+
+    struct CoroTask(gossamer_coro::Goroutine);
+
+    impl Task for CoroTask {
+        fn step(&mut self) -> Step {
+            let yielder = self.0.yielder_ptr();
+            if !yielder.is_null() {
+                gossamer_coro::set_current_yielder(yielder);
+            }
+            let done = self.0.resume();
+            gossamer_coro::clear_current_yielder();
+            if done { Step::Done } else { Step::Yield }
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn watchdog_preempts_tight_loop_on_one_worker() {
+        let sched = MultiScheduler::new(1);
+        let peer_ran = Arc::new(AtomicBool::new(false));
+        let stop = Arc::clone(&peer_ran);
+        sched.spawn(CoroTask(gossamer_coro::Goroutine::new(Box::new(
+            move || {
+                while !stop.load(Ordering::Acquire) {
+                    let _ = crate::preempt::gos_rt_preempt_check_and_yield();
+                    std::hint::spin_loop();
+                }
+            },
+        ))));
+        let peer = Arc::clone(&peer_ran);
+        sched.spawn(CoroTask(gossamer_coro::Goroutine::new(Box::new(
+            move || peer.store(true, Ordering::Release),
+        ))));
+
+        let stats = sched.run();
+        assert!(peer_ran.load(Ordering::Acquire));
+        assert!(
+            stats.yields > 0,
+            "tight loop should reach a preemption yield"
+        );
+        assert_eq!(stats.finished, 2);
     }
 
     #[test]
@@ -1088,9 +1306,62 @@ mod tests {
         let gid = Gid(99);
         sched.park(gid, ParkReason::Other, 0, task);
         assert_eq!(sched.parked_count(), 1);
+        assert_eq!(
+            sched.parked_reason_counts(),
+            ParkedReasonCounts {
+                other: 1,
+                ..ParkedReasonCounts::default()
+            }
+        );
         assert!(sched.unpark(gid));
         assert_eq!(sched.parked_count(), 0);
+        assert_eq!(sched.parked_reason_counts(), ParkedReasonCounts::default());
         let _ = sched.run();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // starts worker threads that sigaltstack; Miri has no signals
+    fn park_wait_stats_accumulate_by_reason() {
+        let sched = MultiScheduler::new(1);
+        let task: SendTask = Box::new(CountTask {
+            counter: Arc::new(AtomicUsize::new(0)),
+            budget: 1,
+        });
+        let gid = Gid(100);
+        sched.park(gid, ParkReason::Sync, 0, task);
+        std::thread::sleep(Duration::from_millis(2));
+        assert!(sched.unpark(gid));
+        assert!(
+            sched.park_wait_stats().sync_micros >= 1_000,
+            "parked synchronization wait was not accumulated"
+        );
+        sched.shutdown();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // starts worker threads that sigaltstack; Miri has no signals
+    fn execution_trace_records_park_and_unpark() {
+        let sched = MultiScheduler::new(1);
+        let task: SendTask = Box::new(CountTask {
+            counter: Arc::new(AtomicUsize::new(0)),
+            budget: 1,
+        });
+        let gid = Gid(101);
+        sched.start_execution_trace();
+        sched.park(gid, ParkReason::Chan, 0, task);
+        assert!(sched.unpark(gid));
+        let trace = sched.finish_execution_trace();
+        assert!(
+            trace
+                .iter()
+                .any(|event| event.name == "park" && event.reason == Some(ParkReason::Chan))
+        );
+        assert!(
+            trace
+                .iter()
+                .any(|event| event.name == "unpark" && event.gid == gid.as_u32())
+        );
+        sched.shutdown();
     }
 
     #[test]

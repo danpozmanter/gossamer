@@ -19,14 +19,14 @@ fn classify(n: i64) -> String {
 
 enum Shape {
     Circle(f64),
-    Rect { w: f64, h: f64 },
+    Rect(f64, f64),
     Line,
 }
 
 fn area(shape: &Shape) -> f64 {
     match shape {
         Shape::Circle(r) => 3.14159 * r * r,
-        Shape::Rect { w, h } => w * h,
+        Shape::Rect(w, h) => w * h,
         Shape::Line => 0.0,
     }
 }
@@ -83,7 +83,7 @@ fn main() {
     // trait-dispatched pattern
     let shapes = [
         Shape::Circle(1.5),
-        Shape::Rect { w: 2.0, h: 4.0 },
+        Shape::Rect(2.0, 4.0),
         Shape::Line,
     ]
     for s in shapes {

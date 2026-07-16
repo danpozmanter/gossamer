@@ -553,9 +553,10 @@ fn occurs(infer: &InferCtxt, tcx: &TyCtxt, vid: TyVid, ty: Ty) -> bool {
 fn occurs_in_kind(infer: &InferCtxt, tcx: &TyCtxt, vid: TyVid, kind: &TyKind) -> bool {
     match kind {
         TyKind::Tuple(parts) => parts.iter().any(|t| occurs(infer, tcx, vid, *t)),
-        TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
-            occurs(infer, tcx, vid, *elem)
-        }
+        TyKind::Array { elem, .. }
+        | TyKind::Slice(elem)
+        | TyKind::Vec(elem)
+        | TyKind::Iterator(elem) => occurs(infer, tcx, vid, *elem),
         TyKind::HashMap { key, value } => {
             occurs(infer, tcx, vid, *key) || occurs(infer, tcx, vid, *value)
         }

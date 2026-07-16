@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use gossamer_hir::lower_source_file;
 use gossamer_interp::{Vm, set_stdout_writer};
 use gossamer_lex::SourceMap;
-use gossamer_parse::parse_source_file;
+use gossamer_parse::autoderive::parse_with_autoderive;
 use gossamer_resolve::resolve_source_file;
 use gossamer_types::{TyCtxt, typecheck_source_file};
 
@@ -28,7 +28,7 @@ fn capture_writer(text: &str) {
 fn run_main(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("custom_iter.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (sf, parse_diags) = parse_with_autoderive(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
     let mut tcx = TyCtxt::new();
@@ -59,7 +59,7 @@ impl Iterator for Counter {
     }
 }
 fn main() {
-    let mut c = Counter { next_value: 0, end: 5 }
+    let mut c = Counter(0, 5)
     let mut total = 0
     for x in c { total = total + x }
     println!("total={}", total)
@@ -83,7 +83,7 @@ impl Iterator for Counter {
     }
 }
 fn main() {
-    let mut c = Counter { next_value: 3, end: 3 }
+    let mut c = Counter(3, 3)
     let mut count = 0
     for _x in c { count = count + 1 }
     println!("count={}", count)
@@ -145,9 +145,9 @@ impl Iterator for Range2 {
 }
 fn main() {
     let mut acc = 0
-    let mut outer = Range2 { cur: 0, end: 3 }
+    let mut outer = Range2(0, 3)
     for i in outer {
-        let mut inner = Range2 { cur: 0, end: 3 }
+        let mut inner = Range2(0, 3)
         for j in inner { acc = acc + i * j }
     }
     println!("acc={}", acc)

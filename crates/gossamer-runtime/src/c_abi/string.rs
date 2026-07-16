@@ -307,6 +307,7 @@ where
     // owner(16) + rc(4) + cap(4) + len(4) + tag(1) + content(cap) + NUL(1).
     // Refcount at the FRONT keeps cap(-9)/len(-5)/tag(-1) offsets unchanged.
     let total = STRING_BODY_OFFSET + cap + 1;
+    crate::c_abi::ledger::benchmark_allocation(total);
     // Inside an arena region, allocate the bytes from the region (freed
     // wholesale at pop; `gos_rt_str_free` skips the region tag). Else use an
     // explicitly 8-byte-aligned global allocation. The payload begins at
@@ -393,6 +394,7 @@ pub unsafe extern "C" fn gos_rt_str_free(s: *mut c_char) {
         if !is_managed_string(s) {
             return;
         }
+        crate::c_abi::ledger::benchmark_arc_release();
         // Refcounted carrier: [owner][rc:u32][cap:u32][len:u32][tag][content][NUL].
         // Carrier validation above establishes that the legacy suffix belongs
         // to a live runtime allocation.
@@ -441,6 +443,7 @@ pub(crate) unsafe fn gos_rt_str_retain(s: *const c_char) {
     if !is_managed_string(s) {
         return;
     }
+    crate::c_abi::ledger::benchmark_arc_retain();
     let hdr = unsafe { s.cast::<u8>().sub(13) };
     let rc = u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] });
     if rc & STR_SHARED != 0 {

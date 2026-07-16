@@ -122,8 +122,8 @@ fn native_binary(output_dir: &Path, stem: &str) -> PathBuf {
 fn stable_fixture_manifest_runs_on_every_execution_tier() {
     let fixtures = fixture_rows();
     assert!(
-        fixtures.len() >= 2,
-        "keep at least two independent Stable conformance fixtures"
+        fixtures.len() >= 5,
+        "keep at least five focused Stable conformance fixtures"
     );
 
     for (source, expected) in fixtures {

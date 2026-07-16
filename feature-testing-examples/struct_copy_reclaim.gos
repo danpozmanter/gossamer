@@ -7,7 +7,7 @@ fn case_none() -> i64 {
     let mut total = 0
     let mut i = 0
     while i < 1000 {
-        let n = Node { val: i, next: None }
+        let n = Node(i, None)
         total += n.val
         i += 1
     }
@@ -20,8 +20,8 @@ fn case_two_slots() -> i64 {
     let mut total = 0
     let mut i = 0
     while i < 1000 {
-        let inner = Node { val: i, next: None }
-        let a = Node { val: i, next: Some(inner) }
+        let inner = Node(i, None)
+        let a = Node(i, Some(inner))
         let b = a
         total += a.val + b.val
         i += 1
@@ -34,8 +34,8 @@ fn case_borrow() -> i64 {
     let mut total = 0
     let mut i = 0
     while i < 1000 {
-        let inner = Node { val: i + 1, next: None }
-        let a = Node { val: i, next: Some(inner) }
+        let inner = Node(i + 1, None)
+        let a = Node(i, Some(inner))
         if let Some(nxt) = &a.next {
             total += nxt.val
         }
@@ -46,8 +46,8 @@ fn case_borrow() -> i64 {
 
 // Case 4: ownership returned out of the producing frame.
 fn make_chain(v: i64) -> Node {
-    let inner = Node { val: v + 1, next: None }
-    Node { val: v, next: Some(inner) }
+    let inner = Node(v + 1, None)
+    Node(v, Some(inner))
 }
 
 fn case_return() -> i64 {
@@ -68,9 +68,9 @@ fn case_chain() -> i64 {
     let mut total = 0
     let mut i = 0
     while i < 2000 {
-        let n3 = Node { val: 3, next: None }
-        let n2 = Node { val: 2, next: Some(n3) }
-        let n1 = Node { val: 1, next: Some(n2) }
+        let n3 = Node(3, None)
+        let n2 = Node(2, Some(n3))
+        let n1 = Node(1, Some(n2))
         if let Some(a) = &n1.next {
             if let Some(b) = &a.next {
                 total += b.val

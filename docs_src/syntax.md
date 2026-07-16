@@ -30,7 +30,7 @@ static MAX: u32 = 1024
 type Id = i64            // transparent type alias
 
 struct Point { x: f64, y: f64 }
-struct Pair(i64, i64)
+struct Pair { first: i64, second: i64 }
 
 enum Shape {
     Circle(f64),
@@ -79,14 +79,14 @@ struct Cell<T>    { value: T }
 
 fn main() {
     // Parameters inferred: Pair<i64, String>
-    let p = Pair { fst: 42, snd: "answer" }
+    let p = Pair(42, "answer")
     println!("{} = {}", p.fst, p.snd)   // 42 = answer
 
     // Same struct, different instantiation: Pair<i64, i64>
-    let nums = Pair { fst: 10, snd: 32 }
+    let nums = Pair(10, 32)
     println!("{}", nums.fst + nums.snd)  // 42
 
-    let c = Cell { value: 99 }
+    let c = Cell(99)
     println!("{}", c.value)              // 99
 }
 ```
@@ -135,6 +135,13 @@ let n = 3 |> double |> add(10) |> clamp(0, 100)
 // Equivalent nested form:
 let same = clamp(0, 100, add(10, double(3)))
 ```
+
+Use one direct `_` argument when the value belongs in a different
+position: `text |> strings::slice(_, 1, 3)` becomes
+`strings::slice(text, 1, 3)`. A trailing `_` is accepted but is only
+an explicit spelling of the default data-last rule. `_` can also be
+the receiver in forms such as `text |> _.trim`; it may not be used
+more than once in one pipe step.
 
 ## Pattern matching
 
@@ -256,14 +263,11 @@ Channels are typed: `channel()` / `channel(0)` is unbuffered,
 `channel(n)` is bounded, and `channel::unbounded()` is the explicit
 queue form. `select` multiplexes sends and receives.
 
-Scheduling is cooperative with watchdog-assisted preemption: a
-goroutine yields at safepoints (every park point above, plus
-function-call / scheduler-step boundaries), and a watchdog forces a
-yield - and interrupts blocking syscalls via `SIGURG` / a Windows APC -
-when a worker runs too long. A goroutine in a tight, call-free compute
-loop is not asynchronously preempted yet, so it yields only at its next
-call or park point; on the M:N pool, other goroutines keep running on
-the other worker threads meanwhile. See
+Scheduling uses watchdog-requested cooperative safepoints. Park points and
+function boundaries yield, and native loops poll every 1,024 taken backedges.
+The watchdog requests coroutine suspension and may interrupt a blocking syscall
+with `SIGURG` or a Windows APC. The VM yields its OS worker at the same
+backedge interval but retains its separate bounded worker-pool limitation. See
 [runtime design - Preemption](design/runtime.md#preemption).
 
 ## Closures and higher-order fns

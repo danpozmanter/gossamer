@@ -1,6 +1,7 @@
 // Deterministic, cross-tier HashMap iteration: keys(), values(), and
 // iter() all traverse in key-sorted order (bit-identical on every tier).
 use std::collections::HashMap
+
 fn main() {
     let mut m: HashMap<String, i64> = HashMap::new()
     m.insert("zebra", 1)

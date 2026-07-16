@@ -40,6 +40,7 @@ static FILE_HANDLES: Mutex<Option<HashMap<i64, Arc<Mutex<std::fs::File>>>>> = Mu
 static OPEN_OPTIONS_HANDLES: Mutex<Option<HashMap<i64, Arc<Mutex<GosOpenOptions>>>>> =
     Mutex::new(None);
 static NEXT_FS_HANDLE: AtomicI64 = AtomicI64::new(1);
+static NEXT_TEMP_RESOURCE: AtomicI64 = AtomicI64::new(1);
 
 fn next_fs_handle() -> i64 {
     NEXT_FS_HANDLE.fetch_add(1, Ordering::Relaxed)
@@ -59,6 +60,15 @@ fn file_clone(h: i64) -> Option<Arc<Mutex<std::fs::File>>> {
         .lock()
         .as_ref()
         .and_then(|m| m.get(&h).cloned())
+}
+
+/// Take an independent OS handle before queueing a blocking operation. This
+/// keeps both the registry lock and the per-handle mutex out of the blocking
+/// pool closure, so another goroutine can close or use the original handle.
+fn duplicate_file(h: i64) -> std::io::Result<Option<std::fs::File>> {
+    file_clone(h)
+        .map(|file| file.lock().try_clone())
+        .transpose()
 }
 
 fn insert_open_options(opts: GosOpenOptions) -> i64 {
@@ -99,14 +109,38 @@ fn fs_io_err(err: &std::io::Error, context: &str) -> i128 {
     fs_err(&msg)
 }
 
+fn temp_prefix(prefix: *const c_char, operation: &str) -> Result<String, i128> {
+    if prefix.is_null() {
+        return Err(fs_err(&format!("{operation}: null prefix")));
+    }
+    let prefix = unsafe { CStr::from_ptr(prefix).to_string_lossy().into_owned() };
+    if prefix.contains(['/', '\\', '\0']) || matches!(prefix.as_str(), "." | "..") {
+        return Err(fs_err(
+            "temporary-resource prefix must be a single path component",
+        ));
+    }
+    Ok(prefix)
+}
+
+fn temp_resource_path(prefix: &str) -> std::path::PathBuf {
+    let n = NEXT_TEMP_RESOURCE.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    std::env::temp_dir().join(format!(
+        "gossamer-{prefix}-{:x}-{nanos:x}-{n}",
+        std::process::id()
+    ))
+}
+
 // ---------------------------------------------------------------
 // fs / path helpers - read_to_string, write, create_dir_all,
 // path::join. Mirror Rust std::fs minus the typed Error.
-// Filesystem syscalls are synchronous in every host kernel; the
-// goroutine running these calls parks the OS worker for the
-// kernel's duration. The scheduler's natural fan-out (one M per
-// blocked goroutine, capped at `worker_count_cap`) keeps the
-// run queue moving for callers that batch fs work in parallel.
+// Filesystem syscalls are synchronous in every host kernel. Core
+// reads, writes, and handle operations run through `run_blocking`,
+// which parks a compiled goroutine while an OS thread performs the
+// syscall. Pointer decoding and Gossamer heap allocation stay on the
+// calling goroutine.
 // ---------------------------------------------------------------
 
 #[unsafe(no_mangle)]
@@ -115,10 +149,12 @@ pub unsafe extern "C" fn gos_rt_fs_read_to_string(path: *const c_char) -> *mut c
         if path.is_null() {
             return alloc_cstring(b"");
         }
-        let p = unsafe { CStr::from_ptr(path).to_str() }.unwrap_or("");
-        match std::fs::read_to_string(p) {
-            Ok(text) => alloc_cstring(text.as_bytes()),
-            Err(_) => alloc_cstring(b""),
+        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        match crate::sched_global::run_blocking("fs-read-string", move || {
+            std::fs::read_to_string(p)
+        }) {
+            Ok(Ok(text)) => alloc_cstring(text.as_bytes()),
+            Ok(Err(_)) | Err(_) => alloc_cstring(b""),
         }
     })
 }
@@ -138,17 +174,21 @@ pub unsafe extern "C" fn gos_rt_fs_read_to_string_result(path: *const c_char) ->
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
-        match std::fs::read_to_string(&p) {
-            Ok(text) => {
+        let context = p.clone();
+        match crate::sched_global::run_blocking("fs-read-string", move || {
+            std::fs::read_to_string(p)
+        }) {
+            Ok(Ok(text)) => {
                 let s = alloc_cstring(text.as_bytes());
                 unsafe { gos_rt_result_new(0, s as i64) }
             }
-            Err(e) => {
-                let msg = classify_io_error(&e, &p);
+            Ok(Err(e)) => {
+                let msg = classify_io_error(&e, &context);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -159,9 +199,12 @@ pub unsafe extern "C" fn gos_rt_fs_write(path: *const c_char, contents: *const c
         if path.is_null() || contents.is_null() {
             return 0;
         }
-        let p = unsafe { CStr::from_ptr(path).to_str() }.unwrap_or("");
-        let c = unsafe { CStr::from_ptr(contents).to_str() }.unwrap_or("");
-        i64::from(std::fs::write(p, c).is_ok())
+        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let c = unsafe { CStr::from_ptr(contents).to_bytes().to_vec() };
+        i64::from(
+            crate::sched_global::run_blocking("fs-write", move || std::fs::write(p, c))
+                .is_ok_and(|result| result.is_ok()),
+        )
     })
 }
 
@@ -171,8 +214,11 @@ pub unsafe extern "C" fn gos_rt_fs_create_dir_all(path: *const c_char) -> i64 {
         if path.is_null() {
             return 0;
         }
-        let p = unsafe { CStr::from_ptr(path).to_str() }.unwrap_or("");
-        i64::from(std::fs::create_dir_all(p).is_ok())
+        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        i64::from(
+            crate::sched_global::run_blocking("fs-mkdir-all", move || std::fs::create_dir_all(p))
+                .is_ok_and(|result| result.is_ok()),
+        )
     })
 }
 
@@ -187,7 +233,10 @@ pub unsafe extern "C" fn gos_rt_os_remove_file(path: *const c_char) -> i64 {
             return 0;
         }
         let p = unsafe { CStr::from_ptr(path).to_str() }.unwrap_or("");
-        i64::from(std::fs::remove_file(p).is_ok())
+        i64::from(
+            crate::sched_global::run_blocking("fs-remove-file", move || std::fs::remove_file(p))
+                .is_ok_and(|result| result.is_ok()),
+        )
     })
 }
 
@@ -214,9 +263,11 @@ pub unsafe extern "C" fn gos_rt_fs_file_open(path: *const c_char) -> i128 {
             return fs_err("File::open: null path");
         }
         let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
-        match std::fs::File::open(&p) {
-            Ok(file) => unsafe { gos_rt_result_new(0, insert_file(file)) },
-            Err(e) => fs_io_err(&e, &p),
+        let context = p.clone();
+        match crate::sched_global::run_blocking("fs-open", move || std::fs::File::open(p)) {
+            Ok(Ok(file)) => unsafe { gos_rt_result_new(0, insert_file(file)) },
+            Ok(Err(e)) => fs_io_err(&e, &context),
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -229,9 +280,66 @@ pub unsafe extern "C" fn gos_rt_fs_file_create(path: *const c_char) -> i128 {
             return fs_err("File::create: null path");
         }
         let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
-        match std::fs::File::create(&p) {
-            Ok(file) => unsafe { gos_rt_result_new(0, insert_file(file)) },
-            Err(e) => fs_io_err(&e, &p),
+        let context = p.clone();
+        match crate::sched_global::run_blocking("fs-create", move || std::fs::File::create(p)) {
+            Ok(Ok(file)) => unsafe { gos_rt_result_new(0, insert_file(file)) },
+            Ok(Err(e)) => fs_io_err(&e, &context),
+            Err(e) => fs_err(&e),
+        }
+    })
+}
+
+/// `fs::temp_dir(prefix) -> Result<String, Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_temp_dir(prefix: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        let prefix = match temp_prefix(prefix, "fs::temp_dir") {
+            Ok(prefix) => prefix,
+            Err(error) => return error,
+        };
+        let path = temp_resource_path(&prefix);
+        let context = path.to_string_lossy().into_owned();
+        match crate::sched_global::run_blocking("fs-temp-dir", move || std::fs::create_dir(&path)) {
+            Ok(Ok(())) => {
+                let path = alloc_cstring(context.as_bytes());
+                unsafe { gos_rt_result_new(0, path as i64) }
+            }
+            Ok(Err(error)) => fs_io_err(&error, &context),
+            Err(error) => fs_err(&error),
+        }
+    })
+}
+
+/// `fs::temp_file(prefix) -> Result<(File, String), Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_temp_file(prefix: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        let prefix = match temp_prefix(prefix, "fs::temp_file") {
+            Ok(prefix) => prefix,
+            Err(error) => return error,
+        };
+        let path = temp_resource_path(&prefix);
+        let context = path.to_string_lossy().into_owned();
+        match crate::sched_global::run_blocking("fs-temp-file", move || {
+            std::fs::OpenOptions::new()
+                .create_new(true)
+                .read(true)
+                .write(true)
+                .open(path)
+        }) {
+            Ok(Ok(file)) => {
+                let pair = unsafe { gos_rt_gc_alloc(16) }.cast::<i64>();
+                if pair.is_null() {
+                    return fs_err("fs::temp_file: allocation failed");
+                }
+                unsafe {
+                    *pair = insert_file(file);
+                    *pair.add(1) = alloc_cstring(context.as_bytes()) as i64;
+                    gos_rt_result_new(0, pair as i64)
+                }
+            }
+            Ok(Err(error)) => fs_io_err(&error, &context),
+            Err(error) => fs_err(&error),
         }
     })
 }
@@ -274,9 +382,12 @@ pub unsafe extern "C" fn gos_rt_fs_open_options_open(h: i64, path: *const c_char
             return fs_err("OpenOptions::open: stale handle");
         };
         let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
-        match apply_open_options(&opts.lock()).open(&p) {
-            Ok(file) => unsafe { gos_rt_result_new(0, insert_file(file)) },
-            Err(e) => fs_io_err(&e, &p),
+        let open = apply_open_options(&opts.lock());
+        let context = p.clone();
+        match crate::sched_global::run_blocking("fs-open-options", move || open.open(p)) {
+            Ok(Ok(file)) => unsafe { gos_rt_result_new(0, insert_file(file)) },
+            Ok(Err(e)) => fs_io_err(&e, &context),
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -285,17 +396,25 @@ pub unsafe extern "C" fn gos_rt_fs_open_options_open(h: i64, path: *const c_char
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_fs_file_read(h: i64, max: i64) -> i128 {
     ffi_entry!(0i128, {
-        let Some(file) = file_clone(h) else {
+        let Some(mut file) = (match duplicate_file(h) {
+            Ok(file) => file,
+            Err(e) => return fs_io_err(&e, "File::read"),
+        }) else {
             return fs_err("File::read: stale handle");
         };
         let cap = max.clamp(1, 1 << 24) as usize;
-        let mut buf = vec![0u8; cap];
-        match file.lock().read(&mut buf) {
-            Ok(n) => {
+        match crate::sched_global::run_blocking("fs-file-read", move || {
+            let mut buf = vec![0u8; cap];
+            file.read(&mut buf).map(|n| {
                 buf.truncate(n);
-                unsafe { gos_rt_result_new(0, super::encoding::bytes_to_gosvec(&buf) as i64) }
-            }
-            Err(e) => fs_io_err(&e, "File::read"),
+                buf
+            })
+        }) {
+            Ok(Ok(buf)) => unsafe {
+                gos_rt_result_new(0, super::encoding::bytes_to_gosvec(&buf) as i64)
+            },
+            Ok(Err(e)) => fs_io_err(&e, "File::read"),
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -304,13 +423,19 @@ pub unsafe extern "C" fn gos_rt_fs_file_read(h: i64, max: i64) -> i128 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_fs_file_read_to_string(h: i64) -> i128 {
     ffi_entry!(0i128, {
-        let Some(file) = file_clone(h) else {
+        let Some(mut file) = (match duplicate_file(h) {
+            Ok(file) => file,
+            Err(e) => return fs_io_err(&e, "File::read_to_string"),
+        }) else {
             return fs_err("File::read_to_string: stale handle");
         };
-        let mut text = String::new();
-        match file.lock().read_to_string(&mut text) {
-            Ok(_) => unsafe { gos_rt_result_new(0, alloc_cstring(text.as_bytes()) as i64) },
-            Err(e) => fs_io_err(&e, "File::read_to_string"),
+        match crate::sched_global::run_blocking("fs-file-read-string", move || {
+            let mut text = String::new();
+            file.read_to_string(&mut text).map(|_| text)
+        }) {
+            Ok(Ok(text)) => unsafe { gos_rt_result_new(0, alloc_cstring(text.as_bytes()) as i64) },
+            Ok(Err(e)) => fs_io_err(&e, "File::read_to_string"),
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -322,13 +447,18 @@ pub unsafe extern "C" fn gos_rt_fs_file_write(
     data: *const crate::c_abi::vec::GosVec,
 ) -> i128 {
     ffi_entry!(0i128, {
-        let Some(file) = file_clone(h) else {
+        let Some(mut file) = (match duplicate_file(h) {
+            Ok(file) => file,
+            Err(e) => return fs_io_err(&e, "File::write"),
+        }) else {
             return fs_err("File::write: stale handle");
         };
         let bytes = unsafe { super::encoding::gosvec_u8(data) };
-        match file.lock().write_all(&bytes) {
-            Ok(()) => unsafe { gos_rt_result_new(0, bytes.len() as i64) },
-            Err(e) => fs_io_err(&e, "File::write"),
+        let len = bytes.len();
+        match crate::sched_global::run_blocking("fs-file-write", move || file.write_all(&bytes)) {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, len as i64) },
+            Ok(Err(e)) => fs_io_err(&e, "File::write"),
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -337,12 +467,16 @@ pub unsafe extern "C" fn gos_rt_fs_file_write(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_fs_file_flush(h: i64) -> i128 {
     ffi_entry!(0i128, {
-        let Some(file) = file_clone(h) else {
+        let Some(mut file) = (match duplicate_file(h) {
+            Ok(file) => file,
+            Err(e) => return fs_io_err(&e, "File::flush"),
+        }) else {
             return fs_err("File::flush: stale handle");
         };
-        match file.lock().flush() {
-            Ok(()) => unsafe { gos_rt_result_new(0, 0) },
-            Err(e) => fs_io_err(&e, "File::flush"),
+        match crate::sched_global::run_blocking("fs-file-flush", move || file.flush()) {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(e)) => fs_io_err(&e, "File::flush"),
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -375,14 +509,16 @@ pub unsafe extern "C" fn gos_rt_os_write_file_result(
         }
         let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
         let c = unsafe { CStr::from_ptr(contents).to_bytes().to_vec() };
-        match std::fs::write(&p, &c) {
-            Ok(()) => unsafe { gos_rt_result_new(0, 0) },
-            Err(e) => {
-                let msg = classify_io_error(&e, &p);
+        let context = p.clone();
+        match crate::sched_global::run_blocking("fs-write-file", move || std::fs::write(p, c)) {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(e)) => {
+                let msg = classify_io_error(&e, &context);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -427,14 +563,18 @@ pub unsafe extern "C" fn gos_rt_os_write_file_bytes_result(
                 std::slice::from_raw_parts(v.ptr.as_ptr(), v.len as usize * v.elem_bytes as usize)
             }
         };
-        match std::fs::write(&p, bytes) {
-            Ok(()) => unsafe { gos_rt_result_new(0, 0) },
-            Err(e) => {
-                let msg = classify_io_error(&e, &p);
+        let context = p.clone();
+        let bytes = bytes.to_vec();
+        match crate::sched_global::run_blocking("fs-write-bytes", move || std::fs::write(p, bytes))
+        {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(e)) => {
+                let msg = classify_io_error(&e, &context);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -454,8 +594,9 @@ pub unsafe extern "C" fn gos_rt_fs_read_bytes_result(path: *const c_char) -> i12
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
-        match std::fs::read(&p) {
-            Ok(bytes) => {
+        let context = p.clone();
+        match crate::sched_global::run_blocking("fs-read-bytes", move || std::fs::read(p)) {
+            Ok(Ok(bytes)) => {
                 let len_i64 = bytes.len() as i64;
                 let v = unsafe { crate::c_abi::vec::gos_rt_vec_with_capacity(1, len_i64) };
                 if !bytes.is_empty() {
@@ -473,12 +614,13 @@ pub unsafe extern "C" fn gos_rt_fs_read_bytes_result(path: *const c_char) -> i12
                 }
                 unsafe { gos_rt_result_new(0, v as i64) }
             }
-            Err(e) => {
-                let msg = classify_io_error(&e, &p);
+            Ok(Err(e)) => {
+                let msg = classify_io_error(&e, &context);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -494,14 +636,17 @@ pub unsafe extern "C" fn gos_rt_os_mkdir_all_result(path: *const c_char) -> i128
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
-        match std::fs::create_dir_all(&p) {
-            Ok(()) => unsafe { gos_rt_result_new(0, 0) },
-            Err(e) => {
-                let msg = classify_io_error(&e, &p);
+        let context = p.clone();
+        match crate::sched_global::run_blocking("fs-mkdir-all", move || std::fs::create_dir_all(p))
+        {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(e)) => {
+                let msg = classify_io_error(&e, &context);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -516,14 +661,18 @@ pub unsafe extern "C" fn gos_rt_os_remove_dir_all_result(path: *const c_char) ->
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
-        match std::fs::remove_dir_all(&p) {
-            Ok(()) => unsafe { gos_rt_result_new(0, 0) },
-            Err(e) => {
-                let msg = classify_io_error(&e, &p);
+        let context = p.clone();
+        match crate::sched_global::run_blocking("fs-remove-dir-all", move || {
+            std::fs::remove_dir_all(p)
+        }) {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(e)) => {
+                let msg = classify_io_error(&e, &context);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -541,14 +690,16 @@ pub unsafe extern "C" fn gos_rt_fs_create_dir(path: *const c_char) -> i128 {
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
-        match std::fs::create_dir(&p) {
-            Ok(()) => unsafe { gos_rt_result_new(0, 0) },
-            Err(e) => {
-                let msg = classify_io_error(&e, &p);
+        let context = p.clone();
+        match crate::sched_global::run_blocking("fs-create-dir", move || std::fs::create_dir(p)) {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(e)) => {
+                let msg = classify_io_error(&e, &context);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -567,14 +718,16 @@ pub unsafe extern "C" fn gos_rt_fs_remove_dir(path: *const c_char) -> i128 {
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
-        match std::fs::remove_dir(&p) {
-            Ok(()) => unsafe { gos_rt_result_new(0, 0) },
-            Err(e) => {
-                let msg = classify_io_error(&e, &p);
+        let context = p.clone();
+        match crate::sched_global::run_blocking("fs-remove-dir", move || std::fs::remove_dir(p)) {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(e)) => {
+                let msg = classify_io_error(&e, &context);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -589,14 +742,16 @@ pub unsafe extern "C" fn gos_rt_os_remove_file_result(path: *const c_char) -> i1
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
-        match std::fs::remove_file(&p) {
-            Ok(()) => unsafe { gos_rt_result_new(0, 0) },
-            Err(e) => {
-                let msg = classify_io_error(&e, &p);
+        let context = p.clone();
+        match crate::sched_global::run_blocking("fs-remove-file", move || std::fs::remove_file(p)) {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(e)) => {
+                let msg = classify_io_error(&e, &context);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -612,14 +767,16 @@ pub unsafe extern "C" fn gos_rt_fs_rename(from: *const c_char, to: *const c_char
         }
         let f = unsafe { CStr::from_ptr(from).to_string_lossy().into_owned() };
         let t = unsafe { CStr::from_ptr(to).to_string_lossy().into_owned() };
-        match std::fs::rename(&f, &t) {
-            Ok(()) => unsafe { gos_rt_result_new(0, 0) },
-            Err(e) => {
-                let msg = classify_io_error(&e, &f);
+        let context = f.clone();
+        match crate::sched_global::run_blocking("fs-rename", move || std::fs::rename(f, t)) {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(e)) => {
+                let msg = classify_io_error(&e, &context);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -633,14 +790,18 @@ pub unsafe extern "C" fn gos_rt_env_set_current_dir(path: *const c_char) -> i128
         } else {
             unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
         };
-        match std::env::set_current_dir(&p) {
-            Ok(()) => unsafe { gos_rt_result_new(0, 0) },
-            Err(e) => {
-                let msg = classify_io_error(&e, &p);
+        let context = p.clone();
+        match crate::sched_global::run_blocking("env-set-current-dir", move || {
+            std::env::set_current_dir(p)
+        }) {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(e)) => {
+                let msg = classify_io_error(&e, &context);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -919,14 +1080,16 @@ pub unsafe extern "C" fn gos_rt_fs_copy(src: *const c_char, dst: *const c_char) 
         } else {
             unsafe { CStr::from_ptr(dst).to_string_lossy().into_owned() }
         };
-        match std::fs::copy(&src, &dst) {
-            Ok(n) => unsafe { gos_rt_result_new(0, i64::try_from(n).unwrap_or(i64::MAX)) },
-            Err(e) => {
-                let msg = classify_io_error(&e, &format!("{src} -> {dst}"));
+        let context = format!("{src} -> {dst}");
+        match crate::sched_global::run_blocking("fs-copy", move || std::fs::copy(src, dst)) {
+            Ok(Ok(n)) => unsafe { gos_rt_result_new(0, i64::try_from(n).unwrap_or(i64::MAX)) },
+            Ok(Err(e)) => {
+                let msg = classify_io_error(&e, &context);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -940,18 +1103,21 @@ pub unsafe extern "C" fn gos_rt_fs_canonicalize(path: *const c_char) -> i128 {
         } else {
             unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
         };
-        match std::fs::canonicalize(&p) {
-            Ok(abs) => {
+        let context = p.clone();
+        match crate::sched_global::run_blocking("fs-canonicalize", move || std::fs::canonicalize(p))
+        {
+            Ok(Ok(abs)) => {
                 let s = abs.to_string_lossy().into_owned();
                 let ptr = alloc_cstring(s.as_bytes()) as i64;
                 unsafe { gos_rt_result_new(0, ptr) }
             }
-            Err(e) => {
-                let msg = classify_io_error(&e, &p);
+            Ok(Err(e)) => {
+                let msg = classify_io_error(&e, &context);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -989,9 +1155,12 @@ pub unsafe extern "C" fn gos_rt_bufio_read_to_string(path: *const c_char) -> i12
         } else {
             unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
         };
-        match std::fs::read_to_string(&p) {
-            Ok(text) => unsafe { gos_rt_result_new(0, alloc_cstring(text.as_bytes()) as i64) },
-            Err(e) => err_io(&e),
+        match crate::sched_global::run_blocking("bufio-read-string", move || {
+            std::fs::read_to_string(p)
+        }) {
+            Ok(Ok(text)) => unsafe { gos_rt_result_new(0, alloc_cstring(text.as_bytes()) as i64) },
+            Ok(Err(e)) => err_io(&e),
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -1005,12 +1174,15 @@ pub unsafe extern "C" fn gos_rt_bufio_read_lines_of(path: *const c_char) -> i128
         } else {
             unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
         };
-        match std::fs::read_to_string(&p) {
-            Ok(text) => {
+        match crate::sched_global::run_blocking("bufio-read-lines", move || {
+            std::fs::read_to_string(p)
+        }) {
+            Ok(Ok(text)) => {
                 let lines: Vec<String> = text.lines().map(str::to_string).collect();
                 ok_str_vec(&lines)
             }
-            Err(e) => err_io(&e),
+            Ok(Err(e)) => err_io(&e),
+            Err(e) => fs_err(&e),
         }
     })
 }
@@ -1027,12 +1199,14 @@ pub unsafe extern "C" fn gos_rt_net_resolve(host: *const c_char) -> i128 {
             unsafe { CStr::from_ptr(host).to_str().unwrap_or("") }.to_string()
         };
         let needle = if h.contains(':') { h } else { format!("{h}:0") };
-        match needle.to_socket_addrs() {
-            Ok(addrs) => {
-                let ips: Vec<String> = addrs.map(|a| a.ip().to_string()).collect();
-                ok_str_vec(&ips)
-            }
-            Err(e) => err_io(&e),
+        match crate::sched_global::run_blocking("net-resolve", move || {
+            needle
+                .to_socket_addrs()
+                .map(|addrs| addrs.map(|a| a.ip().to_string()).collect::<Vec<_>>())
+        }) {
+            Ok(Ok(ips)) => ok_str_vec(&ips),
+            Ok(Err(e)) => err_io(&e),
+            Err(e) => fs_err(&e),
         }
     })
 }

@@ -176,6 +176,15 @@ impl TcpStream {
         Ok(Self { inner, mio: mirror })
     }
 
+    /// Duplicates the underlying socket while preserving this wrapper's
+    /// netpoller-aware nonblocking configuration.
+    pub fn try_clone(&self) -> Result<Self, IoError> {
+        self.inner
+            .try_clone()
+            .map_err(|e| IoError::from_std(e, "TcpStream::try_clone"))
+            .and_then(Self::from_std)
+    }
+
     /// Sets the per-syscall read timeout on the underlying socket.
     pub fn set_read_timeout(&self, timeout: Option<Duration>) -> Result<(), IoError> {
         self.inner
@@ -928,6 +937,14 @@ impl UnixStream {
         let inner = std::os::unix::net::UnixStream::connect(path)
             .map_err(|e| IoError::from_std(e, path))?;
         Ok(Self { inner })
+    }
+
+    /// Duplicates the underlying Unix-domain socket for blocking-pool I/O.
+    pub fn try_clone(&self) -> Result<Self, IoError> {
+        self.inner
+            .try_clone()
+            .map(|inner| Self { inner })
+            .map_err(|e| IoError::from_std(e, "UnixStream::try_clone"))
     }
 
     /// Reads up to `buf.len()` bytes.

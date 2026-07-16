@@ -1022,6 +1022,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1073,6 +1075,34 @@
 
 
     Overview
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../misc/tooling_faithful_fmt/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Formatter behavior
 
 
 
@@ -2003,8 +2033,10 @@
 <a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;src/lib.gos&quot;</span>
 </code></pre></div>
 <p><code>gos add example.org/lib@1.2.3</code> appends the dependency.
-<code>gos remove example.org/lib</code> drops it. <code>gos tidy</code> re-serialises
-the file in canonical form.</p>
+<code>gos remove example.org/lib</code> drops it. <code>gos update</code> refreshes selected versions
+within declared ranges. <code>gos tidy</code> parses project sources, removes direct
+project dependencies that are not imported, and writes canonical ordering.
+Rust binding dependencies are retained independently.</p>
 <p>The default convention is still: <code>src/main.gos</code> ⇒ binary,
 <code>src/lib.gos</code> ⇒ library, project id ⇒ output name. The
 <code>[[bin]]</code> / <code>[lib]</code> sections let you override the entry-point

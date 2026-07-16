@@ -136,6 +136,15 @@ pub fn scheduler_stats_json() -> String {
     )
 }
 
+/// Returns whether this Rust-hosted runtime has a cycle collector.
+///
+/// Gossamer's compiled tiers return `true`; the bytecode VM returns `false`
+/// because its `Arc`-backed heap intentionally has no cycle collector.
+#[must_use]
+pub const fn cycle_collection_supported() -> bool {
+    true
+}
+
 // --- runtime::caller / runtime::stack (P1 stdlib) -------------------
 
 /// One frame in a [`stack`] or `callers` dump.
@@ -207,8 +216,12 @@ fn collect_frames() -> Vec<StackFrame> {
     Vec::new()
 }
 
-/// Registers a finalizer for an `Arc`-managed value. Invokes
-/// `finalize` when the last clone of `value` is dropped.
+/// Registers a finalizer for an `Arc`-managed value.
+///
+/// `finalize` runs when this returned guard is dropped while it owns the last
+/// `Arc` reference. Clones obtained through [`Finalizer::clone_inner`] keep
+/// the value alive, but do not retain the callback after the guard itself has
+/// gone away.
 ///
 /// Internally just wraps the value in a guard type - the
 /// finalizer fires on `Drop`. Mirrors Go's
@@ -225,7 +238,7 @@ pub fn set_finalizer<T: Send + Sync + 'static>(
 }
 
 /// Handle returned by [`set_finalizer`]. Dropping it triggers
-/// the finalizer when this was the last reference to `T`.
+/// the finalizer only when this guard holds the last reference to `T`.
 pub struct Finalizer<T: Send + Sync + 'static> {
     inner: std::sync::Arc<T>,
     finalize: Option<Box<dyn FnOnce(&T) + Send>>,
@@ -237,8 +250,11 @@ impl<T: Send + Sync + 'static> Finalizer<T> {
         &self.inner
     }
 
-    /// Returns a clone of the inner `Arc`. The finalizer will
-    /// only fire when ALL clones have been dropped.
+    /// Returns a clone of the inner `Arc`.
+    ///
+    /// The clone keeps the value alive. If it outlives this guard, the
+    /// callback is not retained and therefore will not run when the clone
+    /// eventually drops.
     pub fn clone_inner(&self) -> std::sync::Arc<T> {
         std::sync::Arc::clone(&self.inner)
     }
@@ -348,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn finalizer_does_not_run_while_other_refs_live() {
+    fn finalizer_only_runs_at_guard_drop_when_it_is_last_reference() {
         let fired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let fired_for_finalize = std::sync::Arc::clone(&fired);
         let value = std::sync::Arc::new(7_i64);
@@ -361,5 +377,9 @@ mod tests {
         }
         assert!(!fired.load(std::sync::atomic::Ordering::Acquire));
         drop(outside_ref);
+        assert!(
+            !fired.load(std::sync::atomic::Ordering::Acquire),
+            "a clone that outlives the guard cannot invoke a callback the guard no longer owns"
+        );
     }
 }

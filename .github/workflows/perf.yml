@@ -185,9 +185,9 @@ jobs:
           }' "$CURRENT"
 
           if [[ ! -f "$BASELINE" ]]; then
-            echo "No baseline yet - this run establishes one."
-            cp "$CURRENT" "$BASELINE"
-            exit 0
+            echo "PERF ABORT: accepted baseline cache is missing." >&2
+            echo "Restore the last main-branch baseline or run the documented manual baseline update; CI never establishes one implicitly." >&2
+            exit 1
           fi
 
           # Time and peak-RSS regression check. `bench:` lines are calibrated

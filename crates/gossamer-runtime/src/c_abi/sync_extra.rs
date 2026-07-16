@@ -16,6 +16,7 @@
 #![allow(clippy::wildcard_imports)]
 
 use parking_lot::{Condvar, Mutex, Once};
+use std::sync::atomic::{AtomicI64, Ordering};
 
 // ---------------------------------------------------------------
 // sync::Barrier - fixed-participant rendezvous
@@ -126,12 +127,18 @@ fn env_fn_addr(env: *const u8) -> Option<*const ()> {
 
 pub struct GosOnce {
     inner: Once,
+    /// Goroutine that completed the once body. Every caller returning from
+    /// `call_once` acquires this publication for race-detector purposes.
+    completed_by: AtomicI64,
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_once_new() -> *mut GosOnce {
     ffi_entry!(std::ptr::null_mut(), {
-        Box::into_raw(Box::new(GosOnce { inner: Once::new() }))
+        Box::into_raw(Box::new(GosOnce {
+            inner: Once::new(),
+            completed_by: AtomicI64::new(-1),
+        }))
     })
 }
 
@@ -157,7 +164,29 @@ pub unsafe extern "C" fn gos_rt_once_call(o: *mut GosOnce, env: *const u8) -> i6
                     f(env);
                 }
             }
+            o.completed_by
+                .store(i64::from(crate::race::current_gid()), Ordering::Release);
         });
+        let from = o.completed_by.load(Ordering::Acquire);
+        if from >= 0 {
+            crate::race::record_sync(u32::try_from(from).unwrap_or(0), crate::race::current_gid());
+        }
         ran
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn once_records_the_goroutine_that_published_its_body() {
+        crate::race::set_current_gid(703);
+        let once = unsafe { gos_rt_once_new() };
+        assert_eq!(unsafe { gos_rt_once_call(once, std::ptr::null()) }, 1);
+        assert_eq!(unsafe { &*once }.completed_by.load(Ordering::Acquire), 703);
+        crate::race::set_current_gid(704);
+        assert_eq!(unsafe { gos_rt_once_call(once, std::ptr::null()) }, 0);
+        unsafe { drop(Box::from_raw(once)) };
+    }
 }

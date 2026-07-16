@@ -1138,6 +1138,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_fs_file_write as *const u8,
         ),
         (
+            "gos_rt_fs_temp_dir",
+            crate::c_abi::gos_rt_fs_temp_dir as *const u8,
+        ),
+        (
+            "gos_rt_fs_temp_file",
+            crate::c_abi::gos_rt_fs_temp_file as *const u8,
+        ),
+        (
             "gos_rt_fs_list_dir",
             crate::c_abi::gos_rt_fs_list_dir as *const u8,
         ),
@@ -3447,6 +3455,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_runtime_scheduler_stats_json as *const u8,
         ),
         (
+            "gos_rt_runtime_cycle_collection_supported",
+            crate::c_abi::gos_rt_runtime_cycle_collection_supported as *const u8,
+        ),
+        (
             "gos_rt_rwlock_get",
             crate::c_abi::gos_rt_rwlock_get as *const u8,
         ),
@@ -4589,6 +4601,46 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_testing_wait_for_scheduler_idle as *const u8,
         ),
         (
+            "gos_rt_httptest_server",
+            crate::c_abi::gos_rt_httptest_server as *const u8,
+        ),
+        (
+            "gos_rt_image_new",
+            crate::c_abi::gos_rt_image_new as *const u8,
+        ),
+        (
+            "gos_rt_image_filled",
+            crate::c_abi::gos_rt_image_filled as *const u8,
+        ),
+        (
+            "gos_rt_image_decode_base64",
+            crate::c_abi::gos_rt_image_decode_base64 as *const u8,
+        ),
+        (
+            "gos_rt_image_width",
+            crate::c_abi::gos_rt_image_width as *const u8,
+        ),
+        (
+            "gos_rt_image_height",
+            crate::c_abi::gos_rt_image_height as *const u8,
+        ),
+        (
+            "gos_rt_image_pixel",
+            crate::c_abi::gos_rt_image_pixel as *const u8,
+        ),
+        (
+            "gos_rt_image_set_pixel",
+            crate::c_abi::gos_rt_image_set_pixel as *const u8,
+        ),
+        (
+            "gos_rt_image_encode_png_base64",
+            crate::c_abi::gos_rt_image_encode_png_base64 as *const u8,
+        ),
+        (
+            "gos_rt_image_encode_jpeg_base64",
+            crate::c_abi::gos_rt_image_encode_jpeg_base64 as *const u8,
+        ),
+        (
             "gos_rt_thread_num_cpus",
             crate::c_abi::gos_rt_thread_num_cpus as *const u8,
         ),
@@ -5274,6 +5326,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_x509_parse_pem_raw",
             crate::c_abi::gos_rt_x509_parse_pem_raw as *const u8,
+        ),
+        (
+            "gos_rt_x509_verify_server_certificate_with_crls",
+            crate::c_abi::gos_rt_x509_verify_server_certificate_with_crls as *const u8,
         ),
         (
             "gos_rt_xml_encode",

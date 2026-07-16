@@ -114,6 +114,23 @@ enum Command {
         /// a hard build failure.
         #[arg(long)]
         release: bool,
+        /// Emit LLVM instrumentation that writes raw execution profiles to
+        /// this path when the resulting release binary exits.
+        #[arg(
+            long,
+            value_name = "PATH",
+            requires = "release",
+            conflicts_with = "pgo_profile"
+        )]
+        pgo_collect: Option<PathBuf>,
+        /// Optimise a release build with a merged LLVM `.profdata` file.
+        #[arg(
+            long,
+            value_name = "PATH",
+            requires = "release",
+            conflicts_with = "pgo_collect"
+        )]
+        pgo_profile: Option<PathBuf>,
         /// Embed DWARF debug information so `gdb` / `lldb` can step
         /// through Gossamer source. Sets the `GOS_BUILD_DEBUG` env
         /// var the LLVM lowerer reads. Also suppresses the default
@@ -227,6 +244,16 @@ enum Command {
         /// even when the existing lock pins a satisfying version.
         #[arg(long)]
         update: bool,
+    },
+    /// Resolve the newest dependency versions allowed by the manifest,
+    /// refresh the local cache, and rewrite `project.lock`.
+    Update {
+        /// Path to the manifest. Defaults to `./project.toml`.
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Resolve using only registry metadata and packages already cached.
+        #[arg(long)]
+        offline: bool,
     },
     /// Publish the current project to a registry.
     Publish {
@@ -495,7 +522,7 @@ enum Command {
     /// item. Joins the registry in
     /// `gossamer_std::manifest::FEATURE_STATUS` with per-tier
     /// outcomes loaded from `target/debug/.feature-status.json`.
-    /// Pass `--check` to enforce the CI gate (every `Shipped` item
+    /// Pass `--check` to enforce the CI gate (every `Stable` item
     /// must have a doc page plus an all-tiers-pass test record).
     #[command(name = "feature-status")]
     FeatureStatus {
@@ -503,13 +530,13 @@ enum Command {
         #[arg(long, default_value = "table")]
         format: String,
         /// CI gate mode - exit non-zero with a punch list when any
-        /// `Shipped` item lacks a doc page or a passing tier-parity test.
+        /// `Stable` item lacks a doc page or a passing tier-parity test.
         #[arg(long)]
         check: bool,
         /// Optional glob filter on the qualified path (`std::http::*`).
         #[arg(long)]
         filter: Option<String>,
-        /// Optional status filter (`shipped` / `experimental` / `planned` / `removed`).
+        /// Optional status filter (`stable` / `shipped` / `experimental` / `planned` / `removed`).
         #[arg(long)]
         status: Option<String>,
         /// Override the JSON sidecar path. Defaults to
@@ -566,6 +593,8 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
             file,
             target,
             release,
+            pgo_collect,
+            pgo_profile,
             debug_info,
             dynamic,
             reproducible,
@@ -574,6 +603,7 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
             allow_llvm_fallback,
         }) => {
             crate::cmd::pkg::enforce_lockfile_if_requested(locked)?;
+            configure_pgo(release, pgo_collect, pgo_profile)?;
             // 0.9.0 default: a release build that silently falls
             // back to Cranelift is a regression dressed up as a
             // feature. Default-on strict-lowering for --release
@@ -621,6 +651,7 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
             offline,
             update,
         }) => cmd::pkg::fetch(manifest, offline, update),
+        Some(Command::Update { manifest, offline }) => cmd::pkg::fetch(manifest, offline, true),
         Some(Command::Vendor { manifest, out }) => cmd::pkg::vendor(manifest, out),
         Some(Command::Publish {
             manifest,
@@ -736,6 +767,37 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
     }
 }
 
+fn configure_pgo(
+    release: bool,
+    collect: Option<PathBuf>,
+    profile: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    use gossamer_codegen_llvm::PgoMode;
+
+    if collect.is_some() && profile.is_some() {
+        return Err(anyhow::anyhow!(
+            "--pgo-collect and --pgo-profile cannot be used together"
+        ));
+    }
+    if (collect.is_some() || profile.is_some()) && !release {
+        return Err(anyhow::anyhow!("PGO requires `gos build --release`"));
+    }
+    let mode = match (collect, profile) {
+        (Some(path), None) => Some(PgoMode::Collect(path)),
+        (None, Some(path)) if path.is_file() => Some(PgoMode::Profile(path)),
+        (None, Some(path)) => {
+            return Err(anyhow::anyhow!(
+                "PGO profile does not exist or is not a file: {}",
+                path.display()
+            ));
+        }
+        (None, None) => None,
+        (Some(_), Some(_)) => unreachable!("checked above"),
+    };
+    gossamer_codegen_llvm::set_pgo_mode(mode);
+    Ok(())
+}
+
 fn dispatch_feature_status(
     format: &str,
     check: bool,
@@ -748,7 +810,7 @@ fn dispatch_feature_status(
         .ok_or_else(|| anyhow::anyhow!("unknown --format: {format} (table|json|markdown)"))?;
     let status = match status {
         Some(tag) => Some(gossamer_std::manifest::Status::parse(tag).ok_or_else(|| {
-            anyhow::anyhow!("unknown --status: {tag} (shipped|experimental|planned|removed)")
+            anyhow::anyhow!("unknown --status: {tag} (stable|shipped|experimental|planned|removed)")
         })?),
         None => None,
     };
@@ -845,7 +907,7 @@ fn dispatch_build(
 
 #[cfg(test)]
 mod tests {
-    use super::Cli;
+    use super::{Cli, configure_pgo};
     use clap::Parser;
 
     #[test]
@@ -895,6 +957,66 @@ mod tests {
             "x86_64-unknown-linux-gnu",
         ]);
         assert!(ok.is_ok());
+    }
+
+    #[test]
+    fn build_subcommand_parses_release_pgo_modes() {
+        assert!(
+            Cli::try_parse_from([
+                "gos",
+                "build",
+                "--release",
+                "--pgo-collect",
+                "workload.profraw",
+                "hello.gos",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "gos",
+                "build",
+                "--release",
+                "--pgo-profile",
+                "merged.profdata",
+                "hello.gos",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "gos",
+                "build",
+                "--pgo-collect",
+                "workload.profraw",
+                "hello.gos",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "gos",
+                "build",
+                "--release",
+                "--pgo-collect",
+                "workload.profraw",
+                "--pgo-profile",
+                "merged.profdata",
+                "hello.gos",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn pgo_profile_requires_an_existing_file() {
+        let err = configure_pgo(
+            true,
+            None,
+            Some(std::path::PathBuf::from("does-not-exist.profdata")),
+        )
+        .expect_err("missing profile must be rejected before a build begins");
+        assert!(err.to_string().contains("does not exist"));
     }
 
     #[test]

@@ -18,8 +18,8 @@ use gossamer_hir::lower_source_file;
 use gossamer_lex::SourceMap;
 use gossamer_mir::verify::{VerifyError, verify_body};
 use gossamer_mir::{
-    BlockId, Body, Local, Operand, Place, Statement, StatementKind, Terminator, lower_program,
-    optimise,
+    BlockId, Body, IteratorAdapterKind, IteratorOwnership, IteratorSourceKind, Local, Operand,
+    Place, Statement, StatementKind, Terminator, lower_program, optimise,
 };
 use gossamer_parse::parse_source_file;
 use gossamer_resolve::resolve_source_file;
@@ -491,4 +491,126 @@ fn aggregate_operand_count_is_detected() {
         )),
         "expected AggregateOperandCount in {errors:?}",
     );
+}
+
+#[test]
+fn typed_iterator_statements_preserve_linear_state_shape() {
+    let (mut bodies, tcx) = build("fn id(x: i64) -> i64 { x }\n");
+    let body = &mut bodies[0];
+    let span = body.span;
+    let i64_ty = body.locals[0].ty;
+    for _ in 0..3 {
+        body.locals.push(LocalDecl {
+            ty: i64_ty,
+            debug_name: None,
+            mutable: true,
+            region: false,
+        });
+    }
+    body.blocks[0].stmts.splice(
+        0..0,
+        [
+            Statement {
+                kind: StatementKind::IterSource {
+                    dst: Place::local(Local(2)),
+                    source_kind: IteratorSourceKind::Range,
+                    source: Operand::Const(ConstValue::Int(0)),
+                    item_ty: i64_ty,
+                    ownership: IteratorOwnership::Owning,
+                },
+                span,
+            },
+            Statement {
+                kind: StatementKind::IterAdapter {
+                    dst: Place::local(Local(3)),
+                    adapter_kind: IteratorAdapterKind::Take,
+                    upstream: Place::local(Local(2)),
+                    closure_or_arg: Some(Operand::Const(ConstValue::Int(3))),
+                    item_ty: i64_ty,
+                },
+                span,
+            },
+            Statement {
+                kind: StatementKind::IterNext {
+                    dst_option: Place::local(Local(4)),
+                    iter_place: Place::local(Local(3)),
+                    item_ty: i64_ty,
+                },
+                span,
+            },
+        ],
+    );
+    verify_body_typed(body, &tcx).expect("well-formed typed iterator MIR must verify");
+}
+
+#[test]
+fn typed_iterator_verifier_rejects_aliased_or_mismatched_states() {
+    let (mut bodies, _) = build("fn id(x: i64) -> i64 { x }\n");
+    let body = &mut bodies[0];
+    let span = body.span;
+    let i64_ty = body.locals[0].ty;
+    for _ in 0..3 {
+        body.locals.push(LocalDecl {
+            ty: i64_ty,
+            debug_name: None,
+            mutable: true,
+            region: false,
+        });
+    }
+    body.blocks[0].stmts.splice(
+        0..0,
+        [
+            Statement {
+                kind: StatementKind::IterSource {
+                    dst: Place {
+                        local: Local(2),
+                        projection: vec![gossamer_mir::Projection::Field(0)],
+                    },
+                    source_kind: IteratorSourceKind::Slice,
+                    source: Operand::Const(ConstValue::Int(0)),
+                    item_ty: i64_ty,
+                    ownership: IteratorOwnership::Owning,
+                },
+                span,
+            },
+            Statement {
+                kind: StatementKind::IterAdapter {
+                    dst: Place::local(Local(3)),
+                    adapter_kind: IteratorAdapterKind::Map,
+                    upstream: Place::local(Local(2)),
+                    closure_or_arg: None,
+                    item_ty: i64_ty,
+                },
+                span,
+            },
+            Statement {
+                kind: StatementKind::IterAdapter {
+                    dst: Place::local(Local(4)),
+                    adapter_kind: IteratorAdapterKind::Filter,
+                    upstream: Place::local(Local(2)),
+                    closure_or_arg: None,
+                    item_ty: i64_ty,
+                },
+                span,
+            },
+        ],
+    );
+    let errors = verify_body(body).expect_err("invalid iterator state must fail");
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, VerifyError::IteratorStateProjected { .. }))
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, VerifyError::IteratorOwnershipMismatch { .. }))
+    );
+    assert!(errors.iter().any(|e| matches!(
+        e,
+        VerifyError::IteratorStateConsumedTwice {
+            local: Local(2),
+            ..
+        }
+    )));
 }

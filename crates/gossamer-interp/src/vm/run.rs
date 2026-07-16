@@ -4,6 +4,17 @@
 )]
 use super::*;
 
+const VM_PREEMPT_INTERVAL: u16 = 1024;
+
+#[inline]
+fn poll_vm_backedge(countdown: &mut u16) {
+    *countdown -= 1;
+    if *countdown == 0 {
+        std::thread::yield_now();
+        *countdown = VM_PREEMPT_INTERVAL;
+    }
+}
+
 /// How a bytecode frame completed.
 ///
 /// A tail call is deliberately returned to [`Vm::apply`] rather than invoked
@@ -34,7 +45,7 @@ pub(crate) struct SuspendedFrame {
     pub(crate) registers: Vec<Value>,
     pub(crate) floats: Vec<f64>,
     pub(crate) ints: Vec<i64>,
-    pub(crate) ref_cells: Vec<(usize, Arc<parking_lot::Mutex<Value>>)>,
+    pub(crate) ref_cells: Vec<(usize, Arc<ThreadConfinedCell>)>,
     pub(crate) pc: u32,
     #[cfg(feature = "fuel")]
     pub(crate) prev_pc: u32,
@@ -190,6 +201,7 @@ impl Vm {
         let _prof_dump = ProfDump(chunk.name);
         let instrs: &[Op] = &chunk.instrs;
         let instr_count = instrs.len();
+        let mut preempt_countdown = VM_PREEMPT_INTERVAL;
         // Several specialized opcodes have a generic method-call fallback.
         // A user-defined method resolves to `Global::Fn`; it must use the
         // same suspended-frame protocol as `Op::Call`, not recurse through
@@ -431,14 +443,25 @@ impl Vm {
                         true,
                     )?;
                 }
-                Op::Jump { target } => pc = target,
+                Op::Jump { target } => {
+                    if target < pc {
+                        poll_vm_backedge(&mut preempt_countdown);
+                    }
+                    pc = target;
+                }
                 Op::BranchIf { cond, target } => {
                     if truthy(&registers[cond as usize])? {
+                        if target < pc {
+                            poll_vm_backedge(&mut preempt_countdown);
+                        }
                         pc = target;
                     }
                 }
                 Op::BranchIfNot { cond, target } => {
                     if !truthy(&registers[cond as usize])? {
+                        if target < pc {
+                            poll_vm_backedge(&mut preempt_countdown);
+                        }
                         pc = target;
                     }
                 }
@@ -2321,6 +2344,22 @@ impl Vm {
                 Op::MoveI64 { dst_i, src_i } => {
                     ints[dst_i as usize] = ints[src_i as usize];
                 }
+                Op::Struct2I64 {
+                    dst,
+                    type_name,
+                    field0,
+                    field1,
+                    first_i,
+                    second_i,
+                } => {
+                    registers[dst as usize] = Value::struct_2_i64(
+                        chunk.shape_names[type_name as usize],
+                        chunk.shape_names[field0 as usize],
+                        ints[first_i as usize],
+                        chunk.shape_names[field1 as usize],
+                        ints[second_i as usize],
+                    );
+                }
 
                 // ----- Phase 2 fused / typed field access -----
                 Op::FieldGetF64 {
@@ -2686,6 +2725,9 @@ impl Vm {
                     target,
                 } => unsafe {
                     if *ints.get_unchecked(lhs_i as usize) < *ints.get_unchecked(rhs_i as usize) {
+                        if target < pc {
+                            poll_vm_backedge(&mut preempt_countdown);
+                        }
                         pc = target;
                     }
                 },
@@ -2695,6 +2737,9 @@ impl Vm {
                     target,
                 } => unsafe {
                     if *ints.get_unchecked(lhs_i as usize) >= *ints.get_unchecked(rhs_i as usize) {
+                        if target < pc {
+                            poll_vm_backedge(&mut preempt_countdown);
+                        }
                         pc = target;
                     }
                 },
@@ -2704,6 +2749,9 @@ impl Vm {
                     target,
                 } => unsafe {
                     if *ints.get_unchecked(lhs_i as usize) > *ints.get_unchecked(rhs_i as usize) {
+                        if target < pc {
+                            poll_vm_backedge(&mut preempt_countdown);
+                        }
                         pc = target;
                     }
                 },
@@ -2714,6 +2762,9 @@ impl Vm {
                 } => unsafe {
                     if *floats.get_unchecked(lhs_f as usize) < *floats.get_unchecked(rhs_f as usize)
                     {
+                        if target < pc {
+                            poll_vm_backedge(&mut preempt_countdown);
+                        }
                         pc = target;
                     }
                 },
@@ -2725,6 +2776,9 @@ impl Vm {
                     if *floats.get_unchecked(lhs_f as usize)
                         >= *floats.get_unchecked(rhs_f as usize)
                     {
+                        if target < pc {
+                            poll_vm_backedge(&mut preempt_countdown);
+                        }
                         pc = target;
                     }
                 },
@@ -2742,6 +2796,7 @@ impl Vm {
                     let next = (*ints.get_unchecked(counter_i as usize)).wrapping_add(1);
                     *ints.get_unchecked_mut(counter_i as usize) = next;
                     if next < *ints.get_unchecked(end_i as usize) {
+                        poll_vm_backedge(&mut preempt_countdown);
                         pc = target;
                     }
                 },
@@ -2753,6 +2808,7 @@ impl Vm {
                     let next = (*ints.get_unchecked(counter_i as usize)).wrapping_add(1);
                     *ints.get_unchecked_mut(counter_i as usize) = next;
                     if next <= *ints.get_unchecked(end_i as usize) {
+                        poll_vm_backedge(&mut preempt_countdown);
                         pc = target;
                     }
                 },
@@ -2973,12 +3029,12 @@ impl Vm {
                 Op::CellNew { dst, src } => {
                     let inner = registers[src as usize].clone();
                     registers[dst as usize] =
-                        Value::MutCell(Arc::new(parking_lot::Mutex::new(inner)));
+                        Value::MutCell(Arc::new(ThreadConfinedCell::new(inner)));
                 }
                 Op::CellNewMove { dst, src } => {
                     let inner = std::mem::replace(&mut registers[src as usize], Value::Unit);
                     registers[dst as usize] =
-                        Value::MutCell(Arc::new(parking_lot::Mutex::new(inner)));
+                        Value::MutCell(Arc::new(ThreadConfinedCell::new(inner)));
                 }
                 Op::CellTake { dst, cell } => {
                     // Last use of the cell, so move its inner out rather than
@@ -3505,7 +3561,7 @@ fn promote_scalar_push(recv: &Value, new_value: &Value) -> Option<Value> {
     }
 }
 
-fn publish_ref_cells(cells: &[(usize, Arc<parking_lot::Mutex<Value>>)], registers: &mut [Value]) {
+fn publish_ref_cells(cells: &[(usize, Arc<ThreadConfinedCell>)], registers: &mut [Value]) {
     // Move (not clone) each `&mut` param's final value back into its cell.
     // Cloning would leave the value referenced by both the cell and the
     // returning frame's register, so the caller's `CellTake` would receive

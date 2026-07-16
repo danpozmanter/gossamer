@@ -46,7 +46,7 @@ fn unwrap<T>(w: Wrapper<T>) -> T {
 }
 
 fn rewrap<T>(v: T) -> Wrapper<T> {
-    Wrapper { value: v }
+    Wrapper(v)
 }
 
 impl<A, B> Pair<A, B> {
@@ -60,33 +60,33 @@ impl<A, B> Pair<A, B> {
 
 fn main() {
     // Field access, scalar / struct / nested payloads.
-    let ws = Wrapper { value: 42 }
+    let ws = Wrapper(42)
     println!("{}", ws.value)
 
-    let wp = Wrapper { value: Point { x: 1, y: 2 } }
+    let wp = Wrapper(Point(1, 2))
     println!("{} {}", wp.value.x, wp.value.y)
 
-    let wn = Wrapper { value: Wrapper { value: 7 } }
+    let wn = Wrapper(Wrapper(7))
     println!("{}", wn.value.value)
 
     // Methods on a generic struct, scalar / struct payload.
-    let mi = Wrapper { value: 5 }
+    let mi = Wrapper(5)
     println!("{}", mi.get())
 
-    let mp = Wrapper { value: Point { x: 8, y: 9 } }
+    let mp = Wrapper(Point(8, 9))
     let p = mp.get()
     println!("{} {}", p.x, p.y)
 
     // Two type parameters, methods returning each, mixed scalar / string / float.
-    let a = Pair { fst: 10, snd: "hi" }
+    let a = Pair(10, "hi")
     println!("{} {}", a.first(), a.second())
-    let b = Pair { fst: "x", snd: 3.5 }
+    let b = Pair("x", 3.5)
     println!("{} {}", b.first(), b.second())
 
     // A generic struct holding a struct, stored in an array and read in a loop.
     let xs = [
-        Wrapper { value: Point { x: 1, y: 2 } },
-        Wrapper { value: Point { x: 3, y: 4 } },
+        Wrapper(Point(1, 2)),
+        Wrapper(Point(3, 4)),
     ]
     let mut sum = 0
     for w in xs {
@@ -96,13 +96,13 @@ fn main() {
 
     // A generic struct passed through a generic function, and returned from
     // one, with scalar and string instantiations.
-    println!("{}", unwrap(Wrapper { value: 100 }))
-    println!("{}", unwrap(Wrapper { value: "thru" }))
+    println!("{}", unwrap(Wrapper(100)))
+    println!("{}", unwrap(Wrapper("thru")))
     println!("{}", rewrap(11).value)
     println!("{}", rewrap("ret").value)
 
     // `&mut self` mutation of a generic struct's field.
-    let mut cell = Cell { value: 1 }
+    let mut cell = Cell(1)
     cell.set(99)
     println!("{}", cell.get())
 }

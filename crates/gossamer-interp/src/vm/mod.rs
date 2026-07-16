@@ -93,7 +93,7 @@ use crate::bytecode;
 use crate::bytecode::{FnChunk, ImmArithKind, Op};
 use crate::compile::compile_fn;
 use crate::jit_call;
-use crate::value::{MapKey, RuntimeError, RuntimeResult, SmolStr, Value};
+use crate::value::{MapKey, RuntimeError, RuntimeResult, SmolStr, ThreadConfinedCell, Value};
 
 /// Linked program: every global the VM needs to execute a call.
 ///
@@ -340,6 +340,9 @@ pub struct JitMetrics {
     /// Compile attempts skipped because `GOS_JIT_MAX_RSS_MB` was set and the
     /// process was already at or above that resident-memory cap.
     pub ram_skipped_compiles: u64,
+    /// Artifacts rejected because installing them would exceed
+    /// `GOS_JIT_MAX_CODE_BYTES` for this VM.
+    pub code_size_skipped_compiles: u64,
     /// Last process RSS observed by the JIT tier-up gate, in bytes. `0` means
     /// no RSS sample was available.
     pub last_observed_rss_bytes: u64,
@@ -380,6 +383,7 @@ pub(crate) struct JitCounters {
     released_snapshots: Cell<u64>,
     reused_artifacts: Cell<u64>,
     ram_skipped_compiles: Cell<u64>,
+    code_size_skipped_compiles: Cell<u64>,
     last_observed_rss_bytes: Cell<u64>,
     peak_observed_rss_bytes: Cell<u64>,
     total_compile_time_us: Cell<u64>,
@@ -436,6 +440,11 @@ impl JitCounters {
     pub(crate) fn ram_skipped_compile(&self, rss_bytes: u64) {
         Self::bump(&self.ram_skipped_compiles);
         self.last_observed_rss_bytes.set(rss_bytes);
+    }
+
+    #[inline]
+    pub(crate) fn code_size_skipped_compile(&self) {
+        Self::bump(&self.code_size_skipped_compiles);
     }
 
     #[inline]
@@ -2198,6 +2207,18 @@ mod tests {
             RuntimeError::Type(msg) => assert!(msg.contains("invalid bytecode")),
             other => panic!("unexpected error variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn loop_entry_tiering_spends_its_admission_counter_on_first_call() {
+        let eager = ChunkState::new(0, 0, 0, 128, false, true);
+        assert_eq!(
+            eager.hot_counter.get(),
+            1,
+            "a loop-bearing chunk must reach JIT admission on its first call"
+        );
+        let ordinary = ChunkState::new(0, 0, 0, 128, false, false);
+        assert!(ordinary.hot_counter.get() > 1);
     }
 
     #[test]

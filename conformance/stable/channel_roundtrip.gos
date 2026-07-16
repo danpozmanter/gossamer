@@ -1,0 +1,17 @@
+use std::sync::channel
+
+fn send_values(tx: Sender<i64>) {
+    tx.send(4)
+    tx.send(9)
+    tx.close()
+}
+
+fn main() {
+    let (tx, rx) = channel()
+    go send_values(tx)
+    let mut total = 0
+    while let Some(value) = rx.recv() {
+        total += value
+    }
+    println!("total={}", total)
+}

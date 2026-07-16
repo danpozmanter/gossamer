@@ -511,9 +511,16 @@ pub mod ecdsa {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod x509 {
-    //! Minimal X.509 v3 certificate inspection.
+    //! X.509 v3 certificate inspection and TLS server-certificate
+    //! verification.
 
     use crate::errors::Error;
+    use rustls::RootCertStore;
+    use rustls::client::WebPkiServerVerifier;
+    use rustls::client::danger::ServerCertVerifier;
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+    use std::sync::Arc;
 
     /// Inspected certificate fields. Only the load-bearing pieces are
     /// surfaced; the raw DER is preserved for callers needing the rest.
@@ -570,6 +577,59 @@ pub mod x509 {
             san_dns,
             sha256,
         })
+    }
+
+    /// Verifies a PEM-encoded TLS server certificate chain against a
+    /// PEM-encoded private root store, hostname, and PEM CRLs.
+    ///
+    /// This is the Gossamer-callable form of the same fail-closed policy used
+    /// by [`crate::tls::client_config_with_crls`]: the full chain and hostname
+    /// are checked by rustls/webpki, unknown revocation status is rejected, and
+    /// CRLs past `nextUpdate` are rejected. The leaf certificate must be first
+    /// in `chain_pem`; remaining certificates are passed as intermediates.
+    pub fn verify_server_certificate_with_crls(
+        chain_pem: &[u8],
+        roots_pem: &[u8],
+        hostname: &str,
+        crl_pem: &[u8],
+    ) -> Result<(), Error> {
+        let chain = CertificateDer::pem_slice_iter(chain_pem)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| Error::new(format!("x509: certificate chain: {e}")))?;
+        let (leaf, intermediates) = chain
+            .split_first()
+            .ok_or_else(|| Error::new("x509: certificate chain contains no certificates"))?;
+
+        let mut roots = RootCertStore::empty();
+        let root_certs = CertificateDer::pem_slice_iter(roots_pem)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| Error::new(format!("x509: roots: {e}")))?;
+        if root_certs.is_empty() {
+            return Err(Error::new("x509: roots contain no certificates"));
+        }
+        for root in root_certs {
+            roots
+                .add(root)
+                .map_err(|e| Error::new(format!("x509: root: {e}")))?;
+        }
+
+        let crls = rustls::pki_types::CertificateRevocationListDer::pem_slice_iter(crl_pem)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| Error::new(format!("x509: CRL: {e}")))?;
+        if crls.is_empty() {
+            return Err(Error::new("x509: CRL input contains no X509 CRLs"));
+        }
+        let verifier = WebPkiServerVerifier::builder(Arc::new(roots))
+            .with_crls(crls)
+            .enforce_revocation_expiration()
+            .build()
+            .map_err(|e| Error::new(format!("x509: verifier: {e}")))?;
+        let server_name = ServerName::try_from(hostname.to_owned())
+            .map_err(|e| Error::new(format!("x509: hostname: {e}")))?;
+        verifier
+            .verify_server_cert(leaf, intermediates, &server_name, &[], UnixTime::now())
+            .map(|_| ())
+            .map_err(|e| Error::new(format!("x509: verify server certificate: {e}")))
     }
 }
 

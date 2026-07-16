@@ -1,0 +1,9 @@
+fn increment(value: i64) -> i64 { value + 1 }
+
+fn apply(f: Fn(i64) -> i64, value: i64) -> i64 {
+    f(value)
+}
+
+fn main() {
+    println!("callback={}", apply(increment, 41))
+}

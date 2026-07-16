@@ -39,6 +39,7 @@ fn main() -> Result<()> {
             println!("  docs-all            run every docs generator");
             println!("  lint-budget         tally #[allow(...)] sites per crate");
             println!("  audit-allows        list every #[allow(...)] with surrounding context");
+            println!("  migrate-struct-constructors <PATH>  rewrite braced struct constructors");
             Ok(())
         }
         Some("docs-stdlib") => regenerate_stdlib_docs(),
@@ -55,11 +56,52 @@ fn main() -> Result<()> {
         }
         Some("lint-budget") => report_lint_budget(),
         Some("audit-allows") => audit_allows(),
+        Some("migrate-struct-constructors") => {
+            let path = args
+                .get(1)
+                .context("migrate-struct-constructors requires a path")?;
+            migrate_struct_constructors(Path::new(path))
+        }
         Some(other) => {
             eprintln!("xtask: unknown subcommand {other:?}");
             std::process::exit(2);
         }
     }
+}
+
+fn migrate_struct_constructors(path: &Path) -> Result<()> {
+    let mut files = Vec::new();
+    collect_gos_files(path, &mut files)?;
+    for file in files {
+        let source =
+            fs::read_to_string(&file).with_context(|| format!("reading {}", file.display()))?;
+        let mut map = gossamer_lex::SourceMap::new();
+        let file_id = map.add_file(file.display().to_string(), source.clone());
+        let migrated =
+            gossamer_parse::autoderive::migrate_braced_struct_constructors(&source, file_id)
+                .map_err(|diags| {
+                    anyhow::anyhow!("{} parse error(s) in {}", diags.len(), file.display())
+                })?;
+        if migrated != source {
+            fs::write(&file, migrated).with_context(|| format!("writing {}", file.display()))?;
+            println!("xtask: migrated {}", file.display());
+        }
+    }
+    Ok(())
+}
+
+fn collect_gos_files(path: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    if path.is_file() {
+        if path.extension().is_some_and(|ext| ext == "gos") {
+            out.push(path.to_path_buf());
+        }
+        return Ok(());
+    }
+    for entry in fs::read_dir(path).with_context(|| format!("reading {}", path.display()))? {
+        let entry = entry?;
+        collect_gos_files(&entry.path(), out)?;
+    }
+    Ok(())
 }
 
 /// Rewrites `docs_src/stdlib.md` using the data in
@@ -912,9 +954,8 @@ fn render_diagnostics_page(entries: &[(&str, &str, &str, &str)]) -> String {
     out
 }
 
-/// Coverage state for a stdlib module across the toolchain's
-/// execution paths. Hand-curated in `STDLIB_SUPPORT`; updated
-/// in PRs that wire a previously-missing item.
+/// Legacy module-level evidence across the toolchain's execution
+/// paths. This does not imply that every item in the module is wired.
 #[derive(Clone, Copy)]
 struct StdlibSupport {
     path: &'static str,
@@ -936,11 +977,11 @@ enum Coverage {
 }
 
 impl Coverage {
-    fn glyph(self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
-            Self::Full => "✓",
-            Self::Partial => "◑",
-            Self::Missing => "✗",
+            Self::Full => "module-only",
+            Self::Partial => "partial",
+            Self::Missing => "none",
         }
     }
 }
@@ -1230,7 +1271,8 @@ const fn item(
     }
 }
 
-/// Rewrites `docs_src/stdlib_coverage.md` from the curated table.
+/// Rewrites `docs_src/stdlib_coverage.md` from the complete manifest,
+/// augmented with the legacy module-level evidence table.
 fn regenerate_stdlib_coverage() -> Result<()> {
     let workspace_root = locate_workspace_root()?;
     let out_path = workspace_root.join("docs_src/stdlib_coverage.md");
@@ -1248,34 +1290,58 @@ fn render_stdlib_coverage_page(items: &[StdlibSupport]) -> String {
     writeln!(
         out,
         "Auto-generated. Do not hand-edit. Re-run `cargo xtask\n\
-         stdlib-coverage` after changing the support state of a\n\
-         module."
+         stdlib-coverage` after changing the manifest or support evidence."
     )
     .unwrap();
     writeln!(out).unwrap();
     writeln!(
         out,
-        "Columns:\n\n\
-         - **Interp** - `gos run` (bytecode VM with optional deferred Cranelift JIT tier-up).\n\
-         - **Compiled** - `gos build` and `gos build --release` (LLVM AOT).\n\
-         - **Tests** - at least one integration test exercising the item.\n\n\
-         Glyphs: ✓ supported · ◑ partial · ✗ missing.\n"
+        "The module table includes every manifest module. `module-only` means\n\
+         legacy evidence exists for at least one item; it is not proof that\n\
+         every declared item works. `partial` records a known partial surface,\n\
+         and `none` means no evidence record exists. The item inventory is the\n\
+         compatibility-audit queue and intentionally makes missing item-level\n\
+         evidence visible.\n"
     )
     .unwrap();
-    writeln!(out, "| Module | Interp | Compiled | Tests | Notes |").unwrap();
-    writeln!(out, "|--------|:------:|:--------:|:-----:|-------|").unwrap();
-    for entry in items {
-        writeln!(
-            out,
-            "| `{}` | {} | {} | {} | {} |",
-            entry.path,
-            entry.interp.glyph(),
-            entry.compiled.glyph(),
-            entry.tested.glyph(),
-            entry.notes,
-        )
-        .unwrap();
+    writeln!(
+        out,
+        "| Module | Lifecycle | Items | Interp evidence | Compiled evidence | Test evidence | Notes |"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "|--------|-----------|------:|-----------------|-------------------|---------------|-------|"
+    )
+    .unwrap();
+    for module in gossamer_std::manifest::ALL_MODULES {
+        let status = gossamer_std::manifest::feature_status::lookup(module.path)
+            .map_or("experimental", |entry| entry.status.tag());
+        if let Some(entry) = items.iter().find(|entry| entry.path == module.path) {
+            writeln!(
+                out,
+                "| `{}` | {} | {} | {} | {} | {} | {} |",
+                module.path,
+                status,
+                module.items.len(),
+                entry.interp.label(),
+                entry.compiled.label(),
+                entry.tested.label(),
+                entry.notes,
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                out,
+                "| `{}` | {} | {} | none | none | none | No module-level evidence record. |",
+                module.path,
+                status,
+                module.items.len(),
+            )
+            .unwrap();
+        }
     }
+    render_declared_item_inventory(&mut out);
     writeln!(out).unwrap();
     writeln!(out, "## How to regenerate this page").unwrap();
     writeln!(out).unwrap();
@@ -1285,18 +1351,15 @@ fn render_stdlib_coverage_page(items: &[StdlibSupport]) -> String {
     writeln!(out).unwrap();
     writeln!(
         out,
-        "- A module is marked `Interp ✓` when at least one of its\n\
-         items resolves through `gossamer-interp::builtins::install`.\n\
-         A `◑` means some items resolve and some do not.\n\
-         A `✗` means none of the items are wired.\n\n\
-         - A module is marked `Compiled ✓` when at least one of its\n\
-         items has a runtime symbol declared in\n\
-         `gossamer-codegen-llvm/src/emit.rs::RUNTIME_DECLARATIONS`\n\
-         and the runtime/JIT symbol registry, or is\n\
-         dispatched as a method via\n\
-         `gossamer-mir/src/lower.rs::lower_method_call`.\n\n\
-         - A module is marked `Tests ✓` when at least one\n\
-         integration / parity / phase test exercises it."
+        "- `module-only` is legacy evidence that at least one item has the\n\
+         corresponding implementation or test path. It must not be used as a\n\
+         complete-module claim.\n\n\
+         - `partial` records an explicitly incomplete implementation.\n\n\
+         - `none` records missing module-level evidence, not proof that the\n\
+         implementation is absent.\n\n\
+         - Stable promotion requires item-level executable evidence keyed by\n\
+         canonical item path; this page does not infer evidence from source-text\n\
+         matches."
     )
     .unwrap();
     writeln!(out).unwrap();
@@ -1310,4 +1373,30 @@ fn render_stdlib_coverage_page(items: &[StdlibSupport]) -> String {
     )
     .unwrap();
     out
+}
+
+fn render_declared_item_inventory(out: &mut String) {
+    writeln!(out).unwrap();
+    writeln!(out, "## Declared item inventory").unwrap();
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "Every public manifest item appears below. `not item-audited` is a\n\
+         deliberate non-claim until executable per-tier evidence is linked to\n\
+         the canonical item path."
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "| Item | Kind | Lifecycle | Evidence |").unwrap();
+    writeln!(out, "|------|------|-----------|----------|").unwrap();
+    for record in gossamer_std::registry::item_records() {
+        writeln!(
+            out,
+            "| `{}` | {:?} | {} | not item-audited |",
+            record.path,
+            record.kind,
+            record.status.tag(),
+        )
+        .unwrap();
+    }
 }

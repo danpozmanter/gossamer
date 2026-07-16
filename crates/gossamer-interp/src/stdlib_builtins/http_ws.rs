@@ -137,16 +137,14 @@ pub(crate) fn builtin_ws_connect(args: &[Value]) -> RuntimeResult<Value> {
         Ok(parts) => parts,
         Err(e) => return Ok(err_variant(format!("websocket::connect: {e}"))),
     };
-    let mut stream = match TcpStream::connect(&authority) {
-        Ok(s) => s,
-        Err(e) => return Ok(err_variant(format!("websocket::connect: {e}"))),
-    };
-    if let Err(e) = gossamer_ws::client_handshake(&mut stream, &authority, &path) {
-        return Ok(err_variant(format!("websocket::connect: {e}")));
+    match gossamer_runtime::sched_global::run_blocking("websocket-connect", move || {
+        let mut stream = TcpStream::connect(&authority).map_err(|e| e.to_string())?;
+        gossamer_ws::client_handshake(&mut stream, &authority, &path).map_err(|e| e.to_string())?;
+        Ok::<_, String>(WebSocket::client(stream))
+    }) {
+        Ok(Ok(ws)) => Ok(ok_variant(Value::Int(register_conn(ws)))),
+        Ok(Err(e)) | Err(e) => Ok(err_variant(format!("websocket::connect: {e}"))),
     }
-    Ok(ok_variant(Value::Int(register_conn(WebSocket::client(
-        stream,
-    )))))
 }
 
 /// `websocket::send_text(ws, s) -> Result<(), Error>`.
@@ -231,4 +229,29 @@ pub(crate) fn builtin_ws_close(args: &[Value]) -> RuntimeResult<Value> {
         unregister_conn(h);
     }
     Ok(ok_variant(Value::Unit))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn websocket_connect_completes_a_real_upgrade() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let addr = listener.local_addr().expect("listener address");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept client");
+            gossamer_ws::server_accept(&mut stream).expect("server handshake");
+        });
+
+        let result = builtin_ws_connect(&[Value::String(format!("ws://{addr}/chat").into())])
+            .expect("connect call");
+        let Value::Variant(inner) = result else {
+            panic!("expected Result variant");
+        };
+        assert_eq!(inner.name, "Ok");
+        let handle = inner.fields[0].clone();
+        builtin_ws_close(&[handle]).expect("close websocket");
+        server.join().expect("server thread");
+    }
 }

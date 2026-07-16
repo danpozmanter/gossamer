@@ -20,14 +20,14 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use gossamer_resolve::DefId;
 use gossamer_types::{Ty, TyCtxt, TyKind};
 
 use crate::ir::{
-    AggregateKind, BasicBlock, BlockId, Body, ConstValue, Local, Operand, Place, Projection,
-    Rvalue, StatementKind, Terminator, UnOp,
+    AggregateKind, BasicBlock, BlockId, Body, ConstValue, IteratorOwnership, IteratorSourceKind,
+    Local, Operand, Place, Projection, Rvalue, StatementKind, Terminator, UnOp,
 };
 
 /// Single failure recorded by [`verify_body`].
@@ -160,6 +160,33 @@ pub enum VerifyError {
         /// Block containing the call.
         block: BlockId,
     },
+    /// A typed iterator operation used a projected place. Iterator states are
+    /// linear locals, so projections would let aliases bypass consumption and
+    /// drop tracking.
+    IteratorStateProjected {
+        /// Function name.
+        body: String,
+        /// Block containing the operation.
+        block: BlockId,
+    },
+    /// A source kind was paired with an ownership mode that cannot preserve
+    /// its lifetime contract.
+    IteratorOwnershipMismatch {
+        /// Function name.
+        body: String,
+        /// Block containing the source operation.
+        block: BlockId,
+    },
+    /// More than one adapter attempted to take ownership of the same iterator
+    /// state.
+    IteratorStateConsumedTwice {
+        /// Function name.
+        body: String,
+        /// Block containing the second consuming adapter.
+        block: BlockId,
+        /// Iterator local consumed twice.
+        local: Local,
+    },
 }
 
 /// Walks `body` and accumulates every structural invariant
@@ -234,10 +261,81 @@ pub fn verify_body(body: &Body) -> Result<(), Vec<VerifyError>> {
         }
         check_block(body, block, n_blocks, n_locals, &mut errors);
     }
+    check_iterator_states(body, &mut errors);
     if errors.is_empty() {
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+/// Checks the linear-storage invariants unique to typed iterator statements.
+fn check_iterator_states(body: &Body, errors: &mut Vec<VerifyError>) {
+    let mut consumed: HashSet<Local> = HashSet::new();
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                StatementKind::IterSource {
+                    dst,
+                    source_kind,
+                    ownership,
+                    ..
+                } => {
+                    if !dst.is_simple() {
+                        errors.push(VerifyError::IteratorStateProjected {
+                            body: body.name.clone(),
+                            block: block.id,
+                        });
+                    }
+                    let ownership_matches = matches!(
+                        (source_kind, ownership),
+                        (IteratorSourceKind::Slice, IteratorOwnership::Borrowed)
+                            | (
+                                IteratorSourceKind::Range | IteratorSourceKind::VecInto,
+                                IteratorOwnership::Owning
+                            )
+                    );
+                    if !ownership_matches {
+                        errors.push(VerifyError::IteratorOwnershipMismatch {
+                            body: body.name.clone(),
+                            block: block.id,
+                        });
+                    }
+                }
+                StatementKind::IterAdapter { dst, upstream, .. } => {
+                    if !dst.is_simple() || !upstream.is_simple() {
+                        errors.push(VerifyError::IteratorStateProjected {
+                            body: body.name.clone(),
+                            block: block.id,
+                        });
+                    }
+                    if !consumed.insert(upstream.local) {
+                        errors.push(VerifyError::IteratorStateConsumedTwice {
+                            body: body.name.clone(),
+                            block: block.id,
+                            local: upstream.local,
+                        });
+                    }
+                }
+                StatementKind::IterNext {
+                    dst_option,
+                    iter_place,
+                    ..
+                } if !dst_option.is_simple() || !iter_place.is_simple() => {
+                    errors.push(VerifyError::IteratorStateProjected {
+                        body: body.name.clone(),
+                        block: block.id,
+                    });
+                }
+                StatementKind::Assign { .. }
+                | StatementKind::StorageLive(_)
+                | StatementKind::StorageDead(_)
+                | StatementKind::SetDiscriminant { .. }
+                | StatementKind::StaticStore { .. }
+                | StatementKind::IterNext { .. }
+                | StatementKind::Nop => {}
+            }
+        }
     }
 }
 
@@ -283,6 +381,30 @@ fn check_statement(
         }
         StatementKind::StaticStore { value, .. } => {
             check_operand(body, block, value, n_locals, errors);
+        }
+        StatementKind::IterSource { dst, source, .. } => {
+            check_place(body, block, dst, n_locals, errors);
+            check_operand(body, block, source, n_locals, errors);
+        }
+        StatementKind::IterAdapter {
+            dst,
+            upstream,
+            closure_or_arg,
+            ..
+        } => {
+            check_place(body, block, dst, n_locals, errors);
+            check_place(body, block, upstream, n_locals, errors);
+            if let Some(arg) = closure_or_arg {
+                check_operand(body, block, arg, n_locals, errors);
+            }
+        }
+        StatementKind::IterNext {
+            dst_option,
+            iter_place,
+            ..
+        } => {
+            check_place(body, block, dst_option, n_locals, errors);
+            check_place(body, block, iter_place, n_locals, errors);
         }
         StatementKind::Nop => {}
     }

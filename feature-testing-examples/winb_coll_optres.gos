@@ -36,7 +36,7 @@ fn main() {
     println!("flatten {}", nested |> option::flatten |> option::unwrap_or(0))
 
     // ---- Option, struct payloads ----
-    let sp: Option<Point> = Some(Point { x: 1, y: 2 })
+    let sp: Option<Point> = Some(Point(1, 2))
     let np: Option<Point> = None
     match sp {
         Some(p) => println!("struct some {} {}", p.x, p.y),
@@ -46,7 +46,7 @@ fn main() {
     // map a struct option to a scalar.
     println!("struct map {}", sp |> option::map(|p: Point| p.x + p.y) |> option::unwrap_or(0))
     // and_then producing a new struct option, read back.
-    let moved = sp |> option::and_then(|p: Point| Some(Point { x: p.x + 10, y: p.y + 20 }))
+    let moved = sp |> option::and_then(|p: Point| Some(Point(p.x + 10, p.y + 20)))
     match moved {
         Some(p) => println!("struct and_then {} {}", p.x, p.y),
         None => println!("struct and_then none"),
@@ -67,14 +67,14 @@ fn main() {
         |> result::unwrap_or_else(|e: errors::Error| println!("r unwrap_or_else {}", e))
 
     // ---- Result, struct payloads ----
-    let rsp: Result<Point, errors::Error> = Ok(Point { x: 5, y: 6 })
+    let rsp: Result<Point, errors::Error> = Ok(Point(5, 6))
     let rbad: Result<Point, errors::Error> = Err(errors::new("nope"))
     match rsp {
         Ok(p) => println!("r struct ok {} {}", p.x, p.y),
         Err(e) => println!("r struct err {}", e),
     }
     println!("r struct map {}", rsp |> result::map(|p: Point| p.x * p.y) |> result::unwrap_or(0))
-    let rmoved = rsp |> result::and_then(|p: Point| Ok(Point { x: p.x + 1, y: p.y + 1 }))
+    let rmoved = rsp |> result::and_then(|p: Point| Ok(Point(p.x + 1, p.y + 1)))
     match rmoved {
         Ok(p) => println!("r struct and_then {} {}", p.x, p.y),
         Err(_) => println!("r struct and_then err"),

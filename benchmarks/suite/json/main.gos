@@ -1,0 +1,18 @@
+use std::errors
+
+struct Record {
+    id: i64,
+    name: String,
+    active: bool,
+}
+fn main() -> Result<(), errors::Error> {
+    let value = Record(42, "gossamer", true)
+    let mut total = 0
+    for _ in 0..10_000 {
+        let text = to_json::<Record>(&value)?
+        let decoded: Record = from_json::<Record>(&text)?
+        total += decoded.id + decoded.name.len() as i64
+    }
+    println!("{}", total)
+    Ok(())
+}

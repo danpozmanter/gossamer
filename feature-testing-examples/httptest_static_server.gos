@@ -1,0 +1,13 @@
+// A detached loopback fixture created by std::httptest. The returned URL is
+// already bound, so the existing http client can request it without a manual
+// sleep or fixed-port coordination.
+
+use std::{http, httptest}
+
+fn main() {
+    let base = httptest::server(201, "fixture body")
+    match http::get(base + "/status", []) {
+        Ok(response) => println!("status={} body={}", response.status, response.body),
+        Err(error) => println!("request error: {}", error),
+    }
+}

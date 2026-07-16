@@ -119,10 +119,10 @@ fn main() {
     }
 
     let pts = [
-        Point3 { x: 3, y: 0, z: 0 },
-        Point3 { x: 0, y: 5, z: 0 },
-        Point3 { x: 0, y: 0, z: 7 },
-        Point3 { x: 1, y: 2, z: 3 },
+        Point3(3, 0, 0),
+        Point3(0, 5, 0),
+        Point3(0, 0, 7),
+        Point3(1, 2, 3),
     ]
     for p in pts {
         println!("{}", on_axis(&p))
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn struct_rest_on_axis() {
-        let p = super::Point3 { x: 9, y: 0, z: 0 }
+        let p = super::Point3(9, 0, 0)
         let desc = super::on_axis(&p)
         let _ = testing::check(&desc.contains("x-axis"), "x-axis detected")
         let _ = testing::check(&desc.contains("9"), "x=9 in description")
@@ -183,7 +183,7 @@ mod tests {
 
     #[test]
     fn struct_rest_off_axis() {
-        let p = super::Point3 { x: 1, y: 2, z: 3 }
+        let p = super::Point3(1, 2, 3)
         let desc = super::on_axis(&p)
         let _ = testing::check(&desc.contains("off-axis"), "off-axis detected")
     }

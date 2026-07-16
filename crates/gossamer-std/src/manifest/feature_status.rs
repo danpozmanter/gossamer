@@ -1,11 +1,12 @@
 //! Lifecycle status registry - declares whether each documented
-//! stdlib module and language feature is `Shipped`, `Experimental`,
-//! `Planned`, or `Removed`.
+//! stdlib module and language feature is `Stable`, `Shipped`,
+//! `Experimental`, `Planned`, or `Removed`.
 //!
 //! Single source of truth for the `gos feature-status` subcommand
 //! and the "Status: ..." markers emitted into the per-module doc
 //! pages. `Experimental` is the default for manifest modules;
-//! `Shipped` must be an explicit, evidence-backed claim.
+//! `Shipped` must be explicit and `Stable` additionally requires
+//! all-tier contract evidence.
 //!
 //! Drift between this table and the rendered doc pages is gated
 //! by `gos doc --emit-stdlib --check`.
@@ -15,8 +16,11 @@
 /// Lifecycle stage of a stdlib module or documented language feature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Status {
-    /// Implemented across every tier the manifest claims and ready
-    /// for production use. Doc page + cross-tier parity test required.
+    /// Compatibility-protected surface implemented across every
+    /// supported tier. Doc page + cross-tier contract test required.
+    Stable,
+    /// Included in release artifacts and documented. Shipped means
+    /// available, not yet protected by the Stable compatibility policy.
     Shipped,
     /// Surface is wired but has known gaps (partial implementation,
     /// platform-specific, or pending audit). Doc page required;
@@ -31,12 +35,121 @@ pub enum Status {
     Removed,
 }
 
+/// Execution implementation covered by an item contract.
+///
+/// This deliberately lives beside lifecycle status rather than in the test
+/// harness: the contract says what is supported, while a sidecar says what was
+/// observed in one particular run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EvidenceTier {
+    /// Bytecode VM execution.
+    Vm,
+    /// Cranelift JIT execution.
+    Cranelift,
+    /// LLVM AOT execution.
+    Llvm,
+}
+
+impl EvidenceTier {
+    /// Stable machine-readable name used in JSON evidence output.
+    #[must_use]
+    pub const fn tag(self) -> &'static str {
+        match self {
+            Self::Vm => "vm",
+            Self::Cranelift => "cranelift",
+            Self::Llvm => "llvm",
+        }
+    }
+}
+
+/// Item-level audit metadata derived from a canonical registry identifier.
+///
+/// Paths in `positive_tests` and `negative_tests` are deliberately IDs, not
+/// prose. A later test-ledger generator can therefore reject a reference to a
+/// non-existent item without changing the public registry model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemEvidence {
+    /// Lifecycle state duplicated into the evidence payload for consumers that
+    /// only ingest the ledger JSON.
+    pub status: Status,
+    /// Tiers claimed by this item.
+    pub supported_tiers: &'static [EvidenceTier],
+    /// Targets claimed by this item. `host` is intentionally conservative for
+    /// surfaces without cross-target execution evidence.
+    pub supported_targets: &'static [&'static str],
+    /// Generated canonical documentation location.
+    pub doc_path: Option<String>,
+    /// Positive test IDs or paths associated with this item.
+    pub positive_tests: Vec<String>,
+    /// Negative test IDs or paths associated with this item.
+    pub negative_tests: Vec<String>,
+    /// Explicit limitations, empty only for a fully specified contract.
+    pub known_limits: Vec<String>,
+}
+
+const VM_ONLY: &[EvidenceTier] = &[EvidenceTier::Vm];
+const ALL_TIERS: &[EvidenceTier] = &[
+    EvidenceTier::Vm,
+    EvidenceTier::Cranelift,
+    EvidenceTier::Llvm,
+];
+const HOST_TARGET: &[&str] = &["host"];
+
+/// Materializes the audit ledger fields for one canonical item ID.
+///
+/// The function is also used for flattened stdlib exports, which makes the
+/// item ledger complete even where a module has no hand-written lifecycle
+/// override. Test arrays start empty until a fixture explicitly claims the
+/// item; this is honest metadata rather than an inferred passing result.
+#[must_use]
+pub fn item_evidence(path: &str, status: Status) -> ItemEvidence {
+    let doc_path = if let Some(rest) = path.strip_prefix("std::") {
+        Some(format!("docs_src/stdlib/{}.md", rest.replace("::", "_")))
+    } else if let Some(rest) = path.strip_prefix("lang::") {
+        Some(format!("docs_src/language/{}.md", rest.replace("::", "_")))
+    } else {
+        Some(format!("docs_src/misc/{}.md", path.replace("::", "_")))
+    };
+    let (supported_tiers, known_limits) = match status {
+        Status::Stable => (ALL_TIERS, Vec::new()),
+        Status::Shipped => (
+            VM_ONLY,
+            vec!["Compiled-tier evidence is not yet a compatibility guarantee.".to_string()],
+        ),
+        Status::Experimental => (
+            VM_ONLY,
+            vec![
+                "Experimental surface; consult the item documentation before relying on it."
+                    .to_string(),
+            ],
+        ),
+        Status::Planned => (
+            &[][..],
+            vec!["Planned surface; no implementation contract.".to_string()],
+        ),
+        Status::Removed => (
+            &[][..],
+            vec!["Removed surface; retained only for migration guidance.".to_string()],
+        ),
+    };
+    ItemEvidence {
+        status,
+        supported_tiers,
+        supported_targets: HOST_TARGET,
+        doc_path,
+        positive_tests: Vec::new(),
+        negative_tests: Vec::new(),
+        known_limits,
+    }
+}
+
 impl Status {
     /// Returns the short lowercase tag printed in the table and
     /// embedded in doc pages (`"shipped"`, `"experimental"`, ...).
     #[must_use]
     pub const fn tag(self) -> &'static str {
         match self {
+            Status::Stable => "stable",
             Status::Shipped => "shipped",
             Status::Experimental => "experimental",
             Status::Planned => "planned",
@@ -50,6 +163,7 @@ impl Status {
     #[must_use]
     pub fn parse(tag: &str) -> Option<Status> {
         match tag {
+            "stable" => Some(Status::Stable),
             "shipped" => Some(Status::Shipped),
             "experimental" => Some(Status::Experimental),
             "planned" => Some(Status::Planned),
@@ -191,16 +305,16 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     FeatureStatus {
         path: "std::tls",
         status: Status::Shipped,
-        doc: "TLS surface (rustls-backed) - handshake works; mTLS auth + custom verifiers still maturing.",
+        doc: "TLS surface (rustls-backed) - handshake and host-configured mTLS work. The all-tier x509 verifier exposes fail-closed CRL-backed server-chain validation; public TLS connection configuration remains in progress.",
     },
     FeatureStatus {
         path: "std::runtime::collect_cycles",
-        status: Status::Shipped,
+        status: Status::Experimental,
         doc: "Explicit cycle-collection hook. It returns `()`; native collection covers thread-local RC graphs, while the bytecode VM currently treats it as a no-op.",
     },
     FeatureStatus {
         path: "std::database::sql",
-        status: Status::Shipped,
+        status: Status::Experimental,
         doc: "Driver-pluggable SQL access (Conn, Tx, Stmt, Rows, Pool, migrate_up, query::Select). Host drivers register at startup via gossamer_runtime::sql::register; Gossamer-native drivers use sql::register_native. No driver ships in the box.",
     },
     FeatureStatus {
@@ -322,6 +436,21 @@ pub fn lookup(path: &str) -> Option<FeatureStatus> {
     None
 }
 
+/// Returns the lifecycle contract for one canonical manifest item.
+///
+/// A module's lifecycle entry describes the module index and must never
+/// silently promote each exported item. Item promotion therefore requires an
+/// exact, qualified registry entry such as `std::runtime::collect_cycles`.
+/// Unlisted manifest items deliberately remain Experimental until their own
+/// evidence is recorded.
+#[must_use]
+pub fn item_status(path: &str) -> Status {
+    FEATURE_STATUS
+        .iter()
+        .find(|entry| entry.path == path)
+        .map_or(Status::Experimental, |entry| entry.status)
+}
+
 /// Returns every entry in the registry merged with the implicit
 /// stdlib defaults. Stdlib modules that don't appear in
 /// `FEATURE_STATUS` are synthesised as `Experimental`. Entries are
@@ -352,7 +481,7 @@ mod tests {
 
     #[test]
     fn status_tag_round_trips() {
-        for tag in ["shipped", "experimental", "planned", "removed"] {
+        for tag in ["stable", "shipped", "experimental", "planned", "removed"] {
             let parsed = Status::parse(tag).expect("known tag");
             assert_eq!(parsed.tag(), tag);
         }
@@ -368,6 +497,21 @@ mod tests {
     fn weak_references_remain_explicitly_experimental() {
         let entry = lookup("lang::weak_references").expect("weak-reference status");
         assert_eq!(entry.status, Status::Experimental);
+    }
+
+    #[test]
+    fn item_evidence_has_all_audit_fields_and_canonical_doc_location() {
+        let evidence = item_evidence("std::encoding::json::parse", Status::Experimental);
+        assert_eq!(evidence.status, Status::Experimental);
+        assert_eq!(evidence.supported_tiers, VM_ONLY);
+        assert_eq!(evidence.supported_targets, HOST_TARGET);
+        assert_eq!(
+            evidence.doc_path.as_deref(),
+            Some("docs_src/stdlib/encoding_json_parse.md")
+        );
+        assert!(evidence.positive_tests.is_empty());
+        assert!(evidence.negative_tests.is_empty());
+        assert!(!evidence.known_limits.is_empty());
     }
 
     #[test]
@@ -406,6 +550,16 @@ mod tests {
     fn lookup_defaults_stdlib_modules_to_experimental() {
         let entry = lookup("std::fmt").expect("fmt in manifest");
         assert_eq!(entry.status, Status::Experimental);
+    }
+
+    #[test]
+    fn module_promotion_does_not_promote_unlisted_items() {
+        assert_eq!(lookup("std::process").unwrap().status, Status::Shipped);
+        assert_eq!(item_status("std::process::run"), Status::Experimental);
+        assert_eq!(
+            item_status("std::runtime::collect_cycles"),
+            Status::Experimental
+        );
     }
 
     #[test]

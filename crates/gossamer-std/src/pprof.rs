@@ -168,20 +168,111 @@ pub fn goroutine_profile() -> Vec<u8> {
     buf.render().into_bytes()
 }
 
-/// Returns a mutex-contention profile. Wraps the same underlying
-/// goroutine snapshot but filters to those parked on a mutex; for
-/// now this returns an empty profile until per-mutex contention
-/// counters are wired through `gossamer_std::sync` (Phase 2).
+/// Returns accumulated mutex/synchronization contention time. Sample weights
+/// are microseconds spent parked since process start.
 #[must_use]
+#[cfg(not(target_arch = "wasm32"))]
+pub fn mutex_profile() -> Vec<u8> {
+    let waits = gossamer_runtime::sched_global::scheduler().park_wait_stats();
+    render_wait_profile("sync", waits.sync_micros)
+}
+
+/// The cooperative wasm scheduler has no blocking mutex park accounting.
+#[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn mutex_profile() -> Vec<u8> {
     ProfileBuffer::default().render().into_bytes()
 }
 
-/// Returns a block profile (goroutines blocked on channel ops,
-/// I/O, etc.). Empty until per-park-reason counters land - Phase 2.
+/// Returns accumulated wait time for channel operations, I/O, timers, and
+/// unspecified runtime waits. Sample weights are microseconds.
 #[must_use]
+#[cfg(not(target_arch = "wasm32"))]
+pub fn block_profile() -> Vec<u8> {
+    let waits = gossamer_runtime::sched_global::scheduler().park_wait_stats();
+    let mut buf = ProfileBuffer::default();
+    record_wait_sample(&mut buf, "channel", waits.chan_micros);
+    record_wait_sample(&mut buf, "io", waits.io_micros);
+    record_wait_sample(&mut buf, "timer", waits.timer_micros);
+    record_wait_sample(&mut buf, "other", waits.other_micros);
+    buf.render().into_bytes()
+}
+
+/// The cooperative wasm scheduler has no blocking wait accounting.
+#[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn block_profile() -> Vec<u8> {
     ProfileBuffer::default().render().into_bytes()
+}
+
+/// Captures scheduler execution events for `duration` and returns Chrome trace
+/// JSON. The capture includes goroutine spawns and park/unpark transitions.
+#[must_use]
+#[cfg(not(target_arch = "wasm32"))]
+pub fn execution_trace(duration: Duration) -> Vec<u8> {
+    let scheduler = gossamer_runtime::sched_global::scheduler();
+    scheduler.start_execution_trace();
+    std::thread::sleep(duration);
+    let events = scheduler.finish_execution_trace();
+    let mut out = String::from("{\"traceEvents\":[");
+    for (index, event) in events.iter().enumerate() {
+        if index != 0 {
+            out.push(',');
+        }
+        let reason = match event.reason {
+            Some(gossamer_runtime::sched::ParkReason::Other) => "other",
+            Some(gossamer_runtime::sched::ParkReason::Chan) => "channel",
+            Some(gossamer_runtime::sched::ParkReason::Sync) => "sync",
+            Some(gossamer_runtime::sched::ParkReason::Io) => "io",
+            Some(gossamer_runtime::sched::ParkReason::Timer) => "timer",
+            None => "",
+        };
+        out.push_str(&format!(
+            "{{\"name\":\"{}\",\"ph\":\"i\",\"s\":\"t\",\"ts\":{},\"pid\":1,\"tid\":{},\"args\":{{\"reason\":\"{}\"}}}}",
+            event.name, event.timestamp_micros, event.gid, reason
+        ));
+    }
+    out.push_str("]}");
+    out.into_bytes()
+}
+
+/// wasm runs goroutines cooperatively and does not collect scheduler events.
+#[must_use]
+#[cfg(target_arch = "wasm32")]
+pub fn execution_trace(_duration: Duration) -> Vec<u8> {
+    b"{\"traceEvents\":[]}".to_vec()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn render_wait_profile(reason: &str, micros: u64) -> Vec<u8> {
+    let mut buf = ProfileBuffer::default();
+    record_wait_sample(&mut buf, reason, micros);
+    buf.render().into_bytes()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn record_wait_sample(buf: &mut ProfileBuffer, reason: &str, micros: u64) {
+    if micros == 0 {
+        return;
+    }
+    buf.record(Sample {
+        weight: micros,
+        stack: vec![Frame {
+            function: format!("runtime.park.{reason}"),
+            file: String::new(),
+            line: 0,
+        }],
+    });
+}
+
+#[cfg(test)]
+fn render_blocked_counts(counts: gossamer_runtime::sched::ParkedReasonCounts) -> String {
+    let mut buf = ProfileBuffer::default();
+    record_wait_sample(&mut buf, "channel", counts.chan as u64);
+    record_wait_sample(&mut buf, "io", counts.io as u64);
+    record_wait_sample(&mut buf, "timer", counts.timer as u64);
+    record_wait_sample(&mut buf, "other", counts.other as u64);
+    buf.render()
 }
 
 /// Routes a request path under `/debug/pprof/...` to the right
@@ -195,6 +286,7 @@ pub fn block_profile() -> Vec<u8> {
 /// - `/debug/pprof/goroutine` → goroutine snapshot.
 /// - `/debug/pprof/mutex` → mutex contention profile.
 /// - `/debug/pprof/block` → block profile.
+/// - `/debug/pprof/trace?seconds=N` → Chrome scheduler execution trace.
 /// - `/debug/pprof/` → index page listing the others.
 #[must_use]
 pub fn route(path: &str, query: &str) -> Option<Vec<u8>> {
@@ -209,6 +301,10 @@ pub fn route(path: &str, query: &str) -> Option<Vec<u8>> {
         "goroutine" => Some(goroutine_profile()),
         "mutex" => Some(mutex_profile()),
         "block" => Some(block_profile()),
+        "trace" => {
+            let secs = parse_query_seconds(query).unwrap_or(1);
+            Some(execution_trace(Duration::from_secs(secs)))
+        }
         _ => None,
     }
 }
@@ -225,7 +321,7 @@ fn parse_query_seconds(query: &str) -> Option<u64> {
 fn index_page() -> String {
     let mut out = String::new();
     out.push_str("/debug/pprof/\n");
-    for endpoint in ["profile", "heap", "goroutine", "mutex", "block"] {
+    for endpoint in ["profile", "heap", "goroutine", "mutex", "block", "trace"] {
         out.push_str(&format!("  {endpoint}\n"));
     }
     out
@@ -234,6 +330,7 @@ fn index_page() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gossamer_runtime::sched::ParkedReasonCounts;
 
     #[test]
     fn buffer_records_and_drains() {
@@ -268,5 +365,33 @@ mod tests {
     fn goroutine_profile_includes_at_least_self() {
         let _ = goroutine_profile();
         // Smoke: just ensure the call returns without panicking.
+    }
+
+    #[test]
+    fn accumulated_wait_profiles_label_wait_reasons() {
+        let counts = ParkedReasonCounts {
+            chan: 2,
+            io: 3,
+            timer: 5,
+            other: 7,
+            sync: 11,
+        };
+        let mutex = String::from_utf8(render_wait_profile("sync", counts.sync as u64)).unwrap();
+        assert!(mutex.contains("samples=11"));
+        assert!(mutex.contains("runtime.park.sync"));
+
+        let block = render_blocked_counts(counts);
+        assert!(block.contains("runtime.park.channel"));
+        assert!(block.contains("runtime.park.io"));
+        assert!(block.contains("runtime.park.timer"));
+        assert!(block.contains("runtime.park.other"));
+        assert!(!block.contains("runtime.park.sync"));
+    }
+
+    #[test]
+    fn execution_trace_is_chrome_trace_json() {
+        let trace = String::from_utf8(execution_trace(Duration::ZERO)).unwrap();
+        assert!(trace.starts_with("{\"traceEvents\":["));
+        assert!(trace.ends_with("]}"));
     }
 }

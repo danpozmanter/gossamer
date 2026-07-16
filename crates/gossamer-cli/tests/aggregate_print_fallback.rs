@@ -48,7 +48,7 @@ fn show(p: Point) {
 }
 
 fn main() {
-    let p = Point { x: 7, y: 11 }
+    let p = Point(7, 11)
     show(p)
 }
 "#,

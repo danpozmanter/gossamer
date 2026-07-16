@@ -2,57 +2,969 @@
 # Stdlib coverage matrix
 
 Auto-generated. Do not hand-edit. Re-run `cargo xtask
-stdlib-coverage` after changing the support state of a
-module.
+stdlib-coverage` after changing the manifest or support evidence.
 
-Columns:
+The module table includes every manifest module. `module-only` means
+legacy evidence exists for at least one item; it is not proof that
+every declared item works. `partial` records a known partial surface,
+and `none` means no evidence record exists. The item inventory is the
+compatibility-audit queue and intentionally makes missing item-level
+evidence visible.
 
-- **Interp** - `gos run` (bytecode VM with optional deferred Cranelift JIT tier-up).
-- **Compiled** - `gos build` and `gos build --release` (LLVM AOT).
-- **Tests** - at least one integration test exercising the item.
+| Module | Lifecycle | Items | Interp evidence | Compiled evidence | Test evidence | Notes |
+|--------|-----------|------:|-----------------|-------------------|---------------|-------|
+| `std::fmt` | experimental | 9 | module-only | module-only | module-only | println / print / eprintln / eprint / format / write / writeln. |
+| `std::io` | experimental | 10 | module-only | module-only | module-only | stdout, stderr, stdin, write, write_byte, write_byte_array, flush, read_line, read_to_string. |
+| `std::os` | experimental | 2 | module-only | module-only | module-only | args, env, exit, read_file, write_file, mkdir, mkdir_all, read_dir. |
+| `std::os::exec` | shipped | 11 | module-only | module-only | module-only | Command builder + output / status / spawn / kill / wait. Wired through interp builtins, MIR lower, and C ABI. |
+| `std::os::signal` | experimental | 5 | module-only | module-only | module-only | on(signum) + Notifier::wait/try_wait. Wired through interp builtins, MIR lower, and C ABI. |
+| `std::env` | experimental | 9 | none | none | none | No module-level evidence record. |
+| `std::process` | shipped | 12 | none | none | none | No module-level evidence record. |
+| `std::thread` | shipped | 2 | none | none | none | No module-level evidence record. |
+| `std::strings` | experimental | 40 | module-only | module-only | module-only | split, trim, contains, find, replace, to_lower, to_upper, starts_with, ends_with. |
+| `std::strconv` | experimental | 10 | module-only | module-only | module-only | parse_i64, parse_u64, parse_f64, parse_bool, format_i64, format_f64. |
+| `std::collections` | experimental | 5 | module-only | module-only | module-only | Vec, HashMap, HashSet, VecDeque (both ends), BTreeMap (String/i64 keys). |
+| `std::net` | experimental | 6 | module-only | module-only | module-only | TcpListener, TcpStream. UdpSocket partial. |
+| `std::http` | experimental | 29 | module-only | module-only | module-only | HTTP/1.1 + HTTP/2 server + client (push + trailers); HTTP/3 via std::http_h3. |
+| `std::encoding::json` | experimental | 21 | module-only | module-only | module-only | encode + decode + Value. |
+| `std::sync` | experimental | 13 | module-only | module-only | module-only | Mutex, WaitGroup, AtomicI64. RwLock, Once partial. |
+| `std::time` | experimental | 13 | module-only | module-only | module-only | now, sleep, format_rfc3339, parse_rfc3339. |
+| `std::panic` | experimental | 1 | module-only | module-only | module-only | panic + catch_unwind. |
+| `std::errors` | experimental | 6 | module-only | module-only | module-only | new, newf, wrap, is, join. |
+| `std::flag` | experimental | 8 | module-only | module-only | module-only | Set with string/int/uint/float/bool/duration/string_list, --help, equals form. Subcommands deferred to v1.x. |
+| `std::path` | shipped | 9 | module-only | module-only | module-only | join, split, base, dir, ext, clean. |
+| `std::fs` | experimental | 23 | module-only | module-only | module-only | read_dir, walk_dir, mkdir_all, remove_all, copy, rename. |
+| `std::bytes` | experimental | 5 | module-only | module-only | module-only | Buffer, Builder, index_of, split, replace. |
+| `std::bufio` | experimental | 7 | module-only | module-only | module-only | Reader, Writer, Scanner with split_lines / split_words. |
+| `std::net::url` | shipped | 5 | module-only | module-only | module-only | Url, query_escape, query_unescape. |
+| `std::slog` | experimental | 8 | module-only | module-only | module-only | Logger, Field, TextHandler, JsonHandler with escape coverage. |
+| `std::encoding::base64` | experimental | 2 | module-only | module-only | module-only | encode + decode. |
+| `std::encoding::hex` | experimental | 2 | module-only | module-only | module-only | encode + decode. |
+| `std::encoding::binary` | experimental | 18 | module-only | module-only | module-only | put_u16/u32/u64/i16/i32/i64 and get_u16/u32/u64/i16/i32/i64, both be and le variants. |
+| `std::context` | experimental | 1 | module-only | module-only | module-only | background, with_cancel, with_deadline, with_timeout. |
+| `std::crypto::rand` | experimental | 1 | module-only | module-only | module-only | fill, bytes. |
+| `std::crypto::sha256` | experimental | 2 | module-only | module-only | module-only | digest, hex. |
+| `std::crypto::hmac` | experimental | 2 | module-only | module-only | module-only | sha256_mac. |
+| `std::crypto::subtle` | experimental | 1 | module-only | module-only | module-only | constant_time_eq. |
+| `std::utf8` | experimental | 14 | module-only | module-only | module-only | is_valid, rune_count. |
+| `std::math::rand` | experimental | 1 | module-only | module-only | module-only | Rng (SplitMix64). |
+| `std::testing` | experimental | 5 | module-only | module-only | module-only | Runner, check, check_eq, check_ok. |
+| `std::runtime` | experimental | 6 | module-only | module-only | module-only | max_procs, set_max_procs, num_cpus, caller, stack, set_finalizer. |
+| `std::tls` | shipped | 0 | module-only | module-only | module-only | rustls-backed; ServerConfig, ClientConfig. |
+| `std::regex` | experimental | 10 | module-only | module-only | module-only | compile, is_match, find, find_all, captures, replace, split. |
+| `std::compress::gzip` | experimental | 3 | module-only | module-only | module-only | encode/decode + Level. Wired through builtins, MIR lower, and C ABI. |
+| `std::crypto::sha512` | experimental | 2 | none | none | none | No module-level evidence record. |
+| `std::crypto::blake3` | experimental | 2 | none | none | none | No module-level evidence record. |
+| `std::crypto::aead` | experimental | 4 | none | none | none | No module-level evidence record. |
+| `std::crypto::ed25519` | experimental | 3 | none | none | none | No module-level evidence record. |
+| `std::crypto::ecdsa` | experimental | 3 | none | none | none | No module-level evidence record. |
+| `std::crypto::x509` | experimental | 2 | none | none | none | No module-level evidence record. |
+| `std::crypto::kdf` | experimental | 4 | none | none | none | No module-level evidence record. |
+| `std::encoding::yaml` | experimental | 7 | none | none | none | No module-level evidence record. |
+| `std::html::template` | shipped | 1 | none | none | none | No module-level evidence record. |
+| `std::html` | experimental | 2 | none | none | none | No module-level evidence record. |
+| `std::database::sql` | experimental | 17 | none | none | none | No module-level evidence record. |
+| `std::math` | experimental | 46 | none | none | none | No module-level evidence record. |
+| `std::math::bits` | experimental | 13 | none | none | none | No module-level evidence record. |
+| `std::unicode` | experimental | 37 | none | none | none | No module-level evidence record. |
+| `std::encoding::csv` | experimental | 3 | none | none | none | No module-level evidence record. |
+| `std::encoding::pem` | experimental | 4 | none | none | none | No module-level evidence record. |
+| `std::utf16` | experimental | 5 | none | none | none | No module-level evidence record. |
+| `std::iter` | experimental | 50 | none | none | none | No module-level evidence record. |
+| `std::option` | experimental | 12 | none | none | none | No module-level evidence record. |
+| `std::result` | experimental | 10 | none | none | none | No module-level evidence record. |
+| `std::http::router` | experimental | 6 | none | none | none | No module-level evidence record. |
+| `std::http::middleware` | experimental | 7 | none | none | none | No module-level evidence record. |
+| `std::http::static_files` | experimental | 3 | none | none | none | No module-level evidence record. |
+| `std::http::proxy` | experimental | 3 | none | none | none | No module-level evidence record. |
+| `std::http::websocket` | experimental | 12 | none | none | none | No module-level evidence record. |
+| `std::http::sse` | experimental | 5 | none | none | none | No module-level evidence record. |
+| `std::http::chunked` | experimental | 4 | none | none | none | No module-level evidence record. |
+| `std::http::native_client` | experimental | 6 | none | none | none | No module-level evidence record. |
+| `std::archive::zip` | experimental | 3 | none | none | none | No module-level evidence record. |
+| `std::archive::tar` | experimental | 3 | none | none | none | No module-level evidence record. |
+| `std::compress::flate` | experimental | 2 | none | none | none | No module-level evidence record. |
+| `std::compress::zlib` | experimental | 2 | none | none | none | No module-level evidence record. |
+| `std::compress::bzip2` | experimental | 2 | none | none | none | No module-level evidence record. |
+| `std::encoding::xml` | experimental | 6 | none | none | none | No module-level evidence record. |
+| `std::encoding::base32` | experimental | 6 | none | none | none | No module-level evidence record. |
+| `std::encoding::ascii85` | experimental | 2 | none | none | none | No module-level evidence record. |
+| `std::hash::fnv` | experimental | 3 | none | none | none | No module-level evidence record. |
+| `std::hash::crc32` | experimental | 3 | none | none | none | No module-level evidence record. |
+| `std::hash::adler32` | experimental | 3 | none | none | none | No module-level evidence record. |
+| `std::math::big` | experimental | 33 | none | none | none | No module-level evidence record. |
+| `std::crypto::insecure` | experimental | 4 | none | none | none | No module-level evidence record. |
+| `std::uuid` | experimental | 5 | none | none | none | No module-level evidence record. |
+| `std::os::user` | experimental | 6 | none | none | none | No module-level evidence record. |
+| `std::net::netip` | experimental | 11 | none | none | none | No module-level evidence record. |
+| `std::net::ip` | experimental | 10 | none | none | none | No module-level evidence record. |
+| `std::mime` | experimental | 9 | none | none | none | No module-level evidence record. |
+| `std::encoding::toml` | experimental | 4 | none | none | none | No module-level evidence record. |
+| `std::collections::heap` | experimental | 4 | none | none | none | No module-level evidence record. |
+| `std::collections::queue` | experimental | 4 | none | none | none | No module-level evidence record. |
+| `std::collections::stack` | experimental | 4 | none | none | none | No module-level evidence record. |
+| `std::collections::deque` | experimental | 7 | none | none | none | No module-level evidence record. |
+| `std::collections::ordered_vec` | experimental | 7 | none | none | none | No module-level evidence record. |
+| `std::collections::ordered_set` | experimental | 4 | none | none | none | No module-level evidence record. |
+| `std::collections::ordered_map` | experimental | 5 | none | none | none | No module-level evidence record. |
+| `std::http::cookie` | experimental | 5 | none | none | none | No module-level evidence record. |
+| `std::http::csrf` | experimental | 8 | none | none | none | No module-level evidence record. |
+| `std::http::form` | experimental | 2 | none | none | none | No module-level evidence record. |
+| `std::http::health` | experimental | 2 | none | none | none | No module-level evidence record. |
+| `std::http::multipart` | experimental | 5 | none | none | none | No module-level evidence record. |
+| `std::http::query` | experimental | 1 | none | none | none | No module-level evidence record. |
+| `std::http::session` | experimental | 8 | none | none | none | No module-level evidence record. |
+| `std::http::state` | experimental | 2 | none | none | none | No module-level evidence record. |
+| `std::jwt` | experimental | 10 | none | none | none | No module-level evidence record. |
+| `std::lifecycle` | experimental | 1 | none | none | none | No module-level evidence record. |
+| `std::validate` | experimental | 3 | none | none | none | No module-level evidence record. |
+| `std::crypto::password` | experimental | 3 | none | none | none | No module-level evidence record. |
+| `std::metrics` | experimental | 6 | none | none | none | No module-level evidence record. |
+| `std::trace` | experimental | 8 | none | none | none | No module-level evidence record. |
+| `std::http_h3` | experimental | 4 | none | none | none | No module-level evidence record. |
+| `std::compress::zstd` | experimental | 3 | none | none | none | No module-level evidence record. |
 
-Glyphs: ✓ supported · ◑ partial · ✗ missing.
+## Declared item inventory
 
-| Module | Interp | Compiled | Tests | Notes |
-|--------|:------:|:--------:|:-----:|-------|
-| `std::fmt` | ✓ | ✓ | ✓ | println / print / eprintln / eprint / format / write / writeln. |
-| `std::io` | ✓ | ✓ | ✓ | stdout, stderr, stdin, write, write_byte, write_byte_array, flush, read_line, read_to_string. |
-| `std::os` | ✓ | ✓ | ✓ | args, env, exit, read_file, write_file, mkdir, mkdir_all, read_dir. |
-| `std::os::exec` | ✓ | ✓ | ✓ | Command builder + output / status / spawn / kill / wait. Wired through interp builtins, MIR lower, and C ABI. |
-| `std::os::signal` | ✓ | ✓ | ✓ | on(signum) + Notifier::wait/try_wait. Wired through interp builtins, MIR lower, and C ABI. |
-| `std::strings` | ✓ | ✓ | ✓ | split, trim, contains, find, replace, to_lower, to_upper, starts_with, ends_with. |
-| `std::strconv` | ✓ | ✓ | ✓ | parse_i64, parse_u64, parse_f64, parse_bool, format_i64, format_f64. |
-| `std::collections` | ✓ | ✓ | ✓ | Vec, HashMap, HashSet, VecDeque (both ends), BTreeMap (String/i64 keys). |
-| `std::net` | ✓ | ✓ | ✓ | TcpListener, TcpStream. UdpSocket partial. |
-| `std::http` | ✓ | ✓ | ✓ | HTTP/1.1 + HTTP/2 server + client (push + trailers); HTTP/3 via std::http_h3. |
-| `std::encoding::json` | ✓ | ✓ | ✓ | encode + decode + Value. |
-| `std::encoding::base64` | ✓ | ✓ | ✓ | encode + decode. |
-| `std::encoding::hex` | ✓ | ✓ | ✓ | encode + decode. |
-| `std::encoding::binary` | ✓ | ✓ | ✓ | put_u16/u32/u64/i16/i32/i64 and get_u16/u32/u64/i16/i32/i64, both be and le variants. |
-| `std::sync` | ✓ | ✓ | ✓ | Mutex, WaitGroup, AtomicI64. RwLock, Once partial. |
-| `std::time` | ✓ | ✓ | ✓ | now, sleep, format_rfc3339, parse_rfc3339. |
-| `std::panic` | ✓ | ✓ | ✓ | panic + catch_unwind. |
-| `std::errors` | ✓ | ✓ | ✓ | new, newf, wrap, is, join. |
-| `std::flag` | ✓ | ✓ | ✓ | Set with string/int/uint/float/bool/duration/string_list, --help, equals form. Subcommands deferred to v1.x. |
-| `std::path` | ✓ | ✓ | ✓ | join, split, base, dir, ext, clean. |
-| `std::fs` | ✓ | ✓ | ✓ | read_dir, walk_dir, mkdir_all, remove_all, copy, rename. |
-| `std::bytes` | ✓ | ✓ | ✓ | Buffer, Builder, index_of, split, replace. |
-| `std::bufio` | ✓ | ✓ | ✓ | Reader, Writer, Scanner with split_lines / split_words. |
-| `std::net::url` | ✓ | ✓ | ✓ | Url, query_escape, query_unescape. |
-| `std::slog` | ✓ | ✓ | ✓ | Logger, Field, TextHandler, JsonHandler with escape coverage. |
-| `std::context` | ✓ | ✓ | ✓ | background, with_cancel, with_deadline, with_timeout. |
-| `std::crypto::rand` | ✓ | ✓ | ✓ | fill, bytes. |
-| `std::crypto::sha256` | ✓ | ✓ | ✓ | digest, hex. |
-| `std::crypto::hmac` | ✓ | ✓ | ✓ | sha256_mac. |
-| `std::crypto::subtle` | ✓ | ✓ | ✓ | constant_time_eq. |
-| `std::sort` | ✓ | ✓ | ✓ | sort, sort_stable, binary_search. |
-| `std::utf8` | ✓ | ✓ | ✓ | is_valid, rune_count. |
-| `std::math::rand` | ✓ | ✓ | ✓ | Rng (SplitMix64). |
-| `std::testing` | ✓ | ✓ | ✓ | Runner, check, check_eq, check_ok. |
-| `std::runtime` | ✓ | ✓ | ✓ | max_procs, set_max_procs, num_cpus, caller, stack, set_finalizer. |
-| `std::tls` | ✓ | ✓ | ✓ | rustls-backed; ServerConfig, ClientConfig. |
-| `std::regex` | ✓ | ✓ | ✓ | compile, is_match, find, find_all, captures, replace, split. |
-| `std::compress::gzip` | ✓ | ✓ | ✓ | encode/decode + Level. Wired through builtins, MIR lower, and C ABI. |
+Every public manifest item appears below. `not item-audited` is a
+deliberate non-claim until executable per-tier evidence is linked to
+the canonical item path.
+
+| Item | Kind | Lifecycle | Evidence |
+|------|------|-----------|----------|
+| `std::archive::tar::TarEntry` | Type | experimental | not item-audited |
+| `std::archive::tar::read` | Function | experimental | not item-audited |
+| `std::archive::tar::write` | Function | experimental | not item-audited |
+| `std::archive::zip::ZipEntry` | Type | experimental | not item-audited |
+| `std::archive::zip::read` | Function | experimental | not item-audited |
+| `std::archive::zip::write` | Function | experimental | not item-audited |
+| `std::bufio::Reader` | Type | experimental | not item-audited |
+| `std::bufio::Scanner` | Type | experimental | not item-audited |
+| `std::bufio::Writer` | Type | experimental | not item-audited |
+| `std::bufio::read_lines` | Function | experimental | not item-audited |
+| `std::bufio::read_lines_of` | Function | experimental | not item-audited |
+| `std::bufio::read_to_string` | Function | experimental | not item-audited |
+| `std::bufio::split_whitespace` | Function | experimental | not item-audited |
+| `std::bytes::Buffer` | Type | experimental | not item-audited |
+| `std::bytes::Builder` | Type | experimental | not item-audited |
+| `std::bytes::index_of` | Function | experimental | not item-audited |
+| `std::bytes::replace` | Function | experimental | not item-audited |
+| `std::bytes::split` | Function | experimental | not item-audited |
+| `std::collections::BTreeMap` | Type | experimental | not item-audited |
+| `std::collections::HashMap` | Type | experimental | not item-audited |
+| `std::collections::HashSet` | Type | experimental | not item-audited |
+| `std::collections::Vec` | Type | experimental | not item-audited |
+| `std::collections::VecDeque` | Type | experimental | not item-audited |
+| `std::collections::deque::len` | Function | experimental | not item-audited |
+| `std::collections::deque::peek_back` | Function | experimental | not item-audited |
+| `std::collections::deque::peek_front` | Function | experimental | not item-audited |
+| `std::collections::deque::pop_back` | Function | experimental | not item-audited |
+| `std::collections::deque::pop_front` | Function | experimental | not item-audited |
+| `std::collections::deque::push_back` | Function | experimental | not item-audited |
+| `std::collections::deque::push_front` | Function | experimental | not item-audited |
+| `std::collections::heap::len` | Function | experimental | not item-audited |
+| `std::collections::heap::peek` | Function | experimental | not item-audited |
+| `std::collections::heap::pop` | Function | experimental | not item-audited |
+| `std::collections::heap::push` | Function | experimental | not item-audited |
+| `std::collections::ordered_map::contains_key` | Function | experimental | not item-audited |
+| `std::collections::ordered_map::get` | Function | experimental | not item-audited |
+| `std::collections::ordered_map::insert` | Function | experimental | not item-audited |
+| `std::collections::ordered_map::len` | Function | experimental | not item-audited |
+| `std::collections::ordered_map::remove` | Function | experimental | not item-audited |
+| `std::collections::ordered_set::contains` | Function | experimental | not item-audited |
+| `std::collections::ordered_set::insert` | Function | experimental | not item-audited |
+| `std::collections::ordered_set::len` | Function | experimental | not item-audited |
+| `std::collections::ordered_set::remove` | Function | experimental | not item-audited |
+| `std::collections::ordered_vec::contains` | Function | experimental | not item-audited |
+| `std::collections::ordered_vec::index_of` | Function | experimental | not item-audited |
+| `std::collections::ordered_vec::insert` | Function | experimental | not item-audited |
+| `std::collections::ordered_vec::len` | Function | experimental | not item-audited |
+| `std::collections::ordered_vec::peek_max` | Function | experimental | not item-audited |
+| `std::collections::ordered_vec::peek_min` | Function | experimental | not item-audited |
+| `std::collections::ordered_vec::remove_at` | Function | experimental | not item-audited |
+| `std::collections::queue::len` | Function | experimental | not item-audited |
+| `std::collections::queue::peek` | Function | experimental | not item-audited |
+| `std::collections::queue::pop` | Function | experimental | not item-audited |
+| `std::collections::queue::push` | Function | experimental | not item-audited |
+| `std::collections::stack::len` | Function | experimental | not item-audited |
+| `std::collections::stack::peek` | Function | experimental | not item-audited |
+| `std::collections::stack::pop` | Function | experimental | not item-audited |
+| `std::collections::stack::push` | Function | experimental | not item-audited |
+| `std::compress::bzip2::compress` | Function | experimental | not item-audited |
+| `std::compress::bzip2::decompress` | Function | experimental | not item-audited |
+| `std::compress::flate::compress` | Function | experimental | not item-audited |
+| `std::compress::flate::decompress` | Function | experimental | not item-audited |
+| `std::compress::gzip::Level` | Type | experimental | not item-audited |
+| `std::compress::gzip::decode` | Function | experimental | not item-audited |
+| `std::compress::gzip::encode` | Function | experimental | not item-audited |
+| `std::compress::zlib::compress` | Function | experimental | not item-audited |
+| `std::compress::zlib::decompress` | Function | experimental | not item-audited |
+| `std::compress::zstd::decode` | Function | experimental | not item-audited |
+| `std::compress::zstd::encode` | Function | experimental | not item-audited |
+| `std::compress::zstd::encode_level` | Function | experimental | not item-audited |
+| `std::context::Context` | Type | experimental | not item-audited |
+| `std::crypto::aead::aes_256_gcm_open` | Function | experimental | not item-audited |
+| `std::crypto::aead::aes_256_gcm_seal` | Function | experimental | not item-audited |
+| `std::crypto::aead::chacha20_poly1305_open` | Function | experimental | not item-audited |
+| `std::crypto::aead::chacha20_poly1305_seal` | Function | experimental | not item-audited |
+| `std::crypto::blake3::digest` | Function | experimental | not item-audited |
+| `std::crypto::blake3::hex` | Function | experimental | not item-audited |
+| `std::crypto::ecdsa::keypair_pem` | Function | experimental | not item-audited |
+| `std::crypto::ecdsa::sign_pem` | Function | experimental | not item-audited |
+| `std::crypto::ecdsa::verify_pem` | Function | experimental | not item-audited |
+| `std::crypto::ed25519::keypair` | Function | experimental | not item-audited |
+| `std::crypto::ed25519::sign` | Function | experimental | not item-audited |
+| `std::crypto::ed25519::verify` | Function | experimental | not item-audited |
+| `std::crypto::hmac::sha256_hex` | Function | experimental | not item-audited |
+| `std::crypto::hmac::sha256_mac` | Function | experimental | not item-audited |
+| `std::crypto::insecure::md5` | Function | experimental | not item-audited |
+| `std::crypto::insecure::md5_hex` | Function | experimental | not item-audited |
+| `std::crypto::insecure::sha1` | Function | experimental | not item-audited |
+| `std::crypto::insecure::sha1_hex` | Function | experimental | not item-audited |
+| `std::crypto::kdf::argon2id_hash` | Function | experimental | not item-audited |
+| `std::crypto::kdf::argon2id_verify` | Function | experimental | not item-audited |
+| `std::crypto::kdf::pbkdf2_sha256` | Function | experimental | not item-audited |
+| `std::crypto::kdf::scrypt_interactive` | Function | experimental | not item-audited |
+| `std::crypto::password::hash` | Function | experimental | not item-audited |
+| `std::crypto::password::needs_rehash` | Function | experimental | not item-audited |
+| `std::crypto::password::verify` | Function | experimental | not item-audited |
+| `std::crypto::rand::bytes` | Function | experimental | not item-audited |
+| `std::crypto::sha256::digest` | Function | experimental | not item-audited |
+| `std::crypto::sha256::hex` | Function | experimental | not item-audited |
+| `std::crypto::sha512::digest` | Function | experimental | not item-audited |
+| `std::crypto::sha512::hex` | Function | experimental | not item-audited |
+| `std::crypto::subtle::constant_time_eq` | Function | experimental | not item-audited |
+| `std::crypto::x509::CertInfo` | Type | experimental | not item-audited |
+| `std::crypto::x509::parse_pem` | Function | experimental | not item-audited |
+| `std::database::sql::Conn` | Type | experimental | not item-audited |
+| `std::database::sql::Driver` | Trait | experimental | not item-audited |
+| `std::database::sql::Error` | Type | experimental | not item-audited |
+| `std::database::sql::IsolationLevel` | Type | experimental | not item-audited |
+| `std::database::sql::Pool` | Type | experimental | not item-audited |
+| `std::database::sql::PoolConfig` | Type | experimental | not item-audited |
+| `std::database::sql::PooledConn` | Type | experimental | not item-audited |
+| `std::database::sql::Row` | Type | experimental | not item-audited |
+| `std::database::sql::Rows` | Type | experimental | not item-audited |
+| `std::database::sql::Select` | Type | experimental | not item-audited |
+| `std::database::sql::Stmt` | Type | experimental | not item-audited |
+| `std::database::sql::Tx` | Type | experimental | not item-audited |
+| `std::database::sql::Value` | Type | experimental | not item-audited |
+| `std::database::sql::drivers` | Function | experimental | not item-audited |
+| `std::database::sql::migrate_up` | Function | experimental | not item-audited |
+| `std::database::sql::open` | Function | experimental | not item-audited |
+| `std::database::sql::register_native` | Function | experimental | not item-audited |
+| `std::encoding::ascii85::decode` | Function | experimental | not item-audited |
+| `std::encoding::ascii85::encode` | Function | experimental | not item-audited |
+| `std::encoding::base32::decode` | Function | experimental | not item-audited |
+| `std::encoding::base32::decode_hex` | Function | experimental | not item-audited |
+| `std::encoding::base32::decode_string` | Function | experimental | not item-audited |
+| `std::encoding::base32::encode` | Function | experimental | not item-audited |
+| `std::encoding::base32::encode_hex` | Function | experimental | not item-audited |
+| `std::encoding::base32::encode_string` | Function | experimental | not item-audited |
+| `std::encoding::base64::decode` | Function | experimental | not item-audited |
+| `std::encoding::base64::encode` | Function | experimental | not item-audited |
+| `std::encoding::binary::get_u16_be` | Function | experimental | not item-audited |
+| `std::encoding::binary::get_u16_le` | Function | experimental | not item-audited |
+| `std::encoding::binary::get_u32_be` | Function | experimental | not item-audited |
+| `std::encoding::binary::get_u32_le` | Function | experimental | not item-audited |
+| `std::encoding::binary::get_u64_be` | Function | experimental | not item-audited |
+| `std::encoding::binary::get_u64_le` | Function | experimental | not item-audited |
+| `std::encoding::binary::get_u8` | Function | experimental | not item-audited |
+| `std::encoding::binary::put_u16_be` | Function | experimental | not item-audited |
+| `std::encoding::binary::put_u16_le` | Function | experimental | not item-audited |
+| `std::encoding::binary::put_u32_be` | Function | experimental | not item-audited |
+| `std::encoding::binary::put_u32_le` | Function | experimental | not item-audited |
+| `std::encoding::binary::put_u64_be` | Function | experimental | not item-audited |
+| `std::encoding::binary::put_u64_le` | Function | experimental | not item-audited |
+| `std::encoding::binary::put_u8` | Function | experimental | not item-audited |
+| `std::encoding::binary::put_uvarint` | Function | experimental | not item-audited |
+| `std::encoding::binary::put_varint` | Function | experimental | not item-audited |
+| `std::encoding::binary::uvarint` | Function | experimental | not item-audited |
+| `std::encoding::binary::varint` | Function | experimental | not item-audited |
+| `std::encoding::csv::parse_line` | Function | experimental | not item-audited |
+| `std::encoding::csv::read` | Function | experimental | not item-audited |
+| `std::encoding::csv::write` | Function | experimental | not item-audited |
+| `std::encoding::hex::decode` | Function | experimental | not item-audited |
+| `std::encoding::hex::encode` | Function | experimental | not item-audited |
+| `std::encoding::json::Deserialize` | Trait | experimental | not item-audited |
+| `std::encoding::json::Error` | Type | experimental | not item-audited |
+| `std::encoding::json::Serialize` | Trait | experimental | not item-audited |
+| `std::encoding::json::Value` | Type | experimental | not item-audited |
+| `std::encoding::json::as_array` | Function | experimental | not item-audited |
+| `std::encoding::json::as_bool` | Function | experimental | not item-audited |
+| `std::encoding::json::as_f64` | Function | experimental | not item-audited |
+| `std::encoding::json::as_i64` | Function | experimental | not item-audited |
+| `std::encoding::json::as_str` | Function | experimental | not item-audited |
+| `std::encoding::json::at` | Function | experimental | not item-audited |
+| `std::encoding::json::decode` | Function | experimental | not item-audited |
+| `std::encoding::json::encode` | Function | experimental | not item-audited |
+| `std::encoding::json::encode_pretty` | Function | experimental | not item-audited |
+| `std::encoding::json::get` | Function | experimental | not item-audited |
+| `std::encoding::json::is_null` | Function | experimental | not item-audited |
+| `std::encoding::json::keys` | Function | experimental | not item-audited |
+| `std::encoding::json::len` | Function | experimental | not item-audited |
+| `std::encoding::json::parse` | Function | experimental | not item-audited |
+| `std::encoding::json::render` | Function | experimental | not item-audited |
+| `std::encoding::json::set` | Function | experimental | not item-audited |
+| `std::encoding::json::valid` | Function | experimental | not item-audited |
+| `std::encoding::pem::Block` | Type | experimental | not item-audited |
+| `std::encoding::pem::decode` | Function | experimental | not item-audited |
+| `std::encoding::pem::decode_all` | Function | experimental | not item-audited |
+| `std::encoding::pem::encode` | Function | experimental | not item-audited |
+| `std::encoding::toml::from_json` | Function | experimental | not item-audited |
+| `std::encoding::toml::is_valid` | Function | experimental | not item-audited |
+| `std::encoding::toml::pretty` | Function | experimental | not item-audited |
+| `std::encoding::toml::to_json` | Function | experimental | not item-audited |
+| `std::encoding::xml::Event` | Type | experimental | not item-audited |
+| `std::encoding::xml::Reader` | Type | experimental | not item-audited |
+| `std::encoding::xml::Writer` | Type | experimental | not item-audited |
+| `std::encoding::xml::encode` | Function | experimental | not item-audited |
+| `std::encoding::xml::escape` | Function | experimental | not item-audited |
+| `std::encoding::xml::parse` | Function | experimental | not item-audited |
+| `std::encoding::yaml::Value` | Type | experimental | not item-audited |
+| `std::encoding::yaml::encode` | Function | experimental | not item-audited |
+| `std::encoding::yaml::from_json` | Function | experimental | not item-audited |
+| `std::encoding::yaml::is_valid` | Function | experimental | not item-audited |
+| `std::encoding::yaml::parse` | Function | experimental | not item-audited |
+| `std::encoding::yaml::parse_all` | Function | experimental | not item-audited |
+| `std::encoding::yaml::to_json` | Function | experimental | not item-audited |
+| `std::env::args` | Function | experimental | not item-audited |
+| `std::env::current_dir` | Function | experimental | not item-audited |
+| `std::env::home_dir` | Function | experimental | not item-audited |
+| `std::env::program_name` | Function | experimental | not item-audited |
+| `std::env::set_current_dir` | Function | experimental | not item-audited |
+| `std::env::set_var` | Function | experimental | not item-audited |
+| `std::env::temp_dir` | Function | experimental | not item-audited |
+| `std::env::unset_var` | Function | experimental | not item-audited |
+| `std::env::var` | Function | experimental | not item-audited |
+| `std::errors::Error` | Type | experimental | not item-audited |
+| `std::errors::is` | Function | experimental | not item-audited |
+| `std::errors::join` | Function | experimental | not item-audited |
+| `std::errors::new` | Function | experimental | not item-audited |
+| `std::errors::newf` | Function | experimental | not item-audited |
+| `std::errors::wrap` | Function | experimental | not item-audited |
+| `std::flag::Error` | Type | experimental | not item-audited |
+| `std::flag::Set` | Type | experimental | not item-audited |
+| `std::flag::Value` | Type | experimental | not item-audited |
+| `std::flag::bool` | Function | experimental | not item-audited |
+| `std::flag::define` | Function | experimental | not item-audited |
+| `std::flag::int` | Function | experimental | not item-audited |
+| `std::flag::parse` | Function | experimental | not item-audited |
+| `std::flag::string` | Function | experimental | not item-audited |
+| `std::fmt::Debug` | Trait | experimental | not item-audited |
+| `std::fmt::Display` | Trait | experimental | not item-audited |
+| `std::fmt::eprint` | Macro | experimental | not item-audited |
+| `std::fmt::eprintln` | Macro | experimental | not item-audited |
+| `std::fmt::format` | Macro | experimental | not item-audited |
+| `std::fmt::print` | Macro | experimental | not item-audited |
+| `std::fmt::println` | Macro | experimental | not item-audited |
+| `std::fmt::write` | Macro | experimental | not item-audited |
+| `std::fmt::writeln` | Macro | experimental | not item-audited |
+| `std::fs::File` | Type | experimental | not item-audited |
+| `std::fs::OpenOptions` | Type | experimental | not item-audited |
+| `std::fs::canonicalize` | Function | experimental | not item-audited |
+| `std::fs::copy` | Function | experimental | not item-audited |
+| `std::fs::create` | Function | experimental | not item-audited |
+| `std::fs::create_dir` | Function | experimental | not item-audited |
+| `std::fs::create_dir_all` | Function | experimental | not item-audited |
+| `std::fs::exists` | Function | experimental | not item-audited |
+| `std::fs::file_size` | Function | experimental | not item-audited |
+| `std::fs::is_dir` | Function | experimental | not item-audited |
+| `std::fs::is_file` | Function | experimental | not item-audited |
+| `std::fs::is_symlink` | Function | experimental | not item-audited |
+| `std::fs::metadata` | Function | experimental | not item-audited |
+| `std::fs::open` | Function | experimental | not item-audited |
+| `std::fs::read` | Function | experimental | not item-audited |
+| `std::fs::read_dir` | Function | experimental | not item-audited |
+| `std::fs::read_to_string` | Function | experimental | not item-audited |
+| `std::fs::remove_dir` | Function | experimental | not item-audited |
+| `std::fs::remove_dir_all` | Function | experimental | not item-audited |
+| `std::fs::remove_file` | Function | experimental | not item-audited |
+| `std::fs::rename` | Function | experimental | not item-audited |
+| `std::fs::walk_dir` | Function | experimental | not item-audited |
+| `std::fs::write` | Function | experimental | not item-audited |
+| `std::hash::adler32::checksum` | Function | experimental | not item-audited |
+| `std::hash::adler32::checksum_string` | Function | experimental | not item-audited |
+| `std::hash::adler32::update` | Function | experimental | not item-audited |
+| `std::hash::crc32::checksum` | Function | experimental | not item-audited |
+| `std::hash::crc32::checksum_string` | Function | experimental | not item-audited |
+| `std::hash::crc32::update` | Function | experimental | not item-audited |
+| `std::hash::fnv::hash32` | Function | experimental | not item-audited |
+| `std::hash::fnv::hash64` | Function | experimental | not item-audited |
+| `std::hash::fnv::hash_string` | Function | experimental | not item-audited |
+| `std::html::escape` | Function | experimental | not item-audited |
+| `std::html::template::render_json` | Function | experimental | not item-audited |
+| `std::html::unescape` | Function | experimental | not item-audited |
+| `std::http::Client` | Type | experimental | not item-audited |
+| `std::http::Headers` | Type | experimental | not item-audited |
+| `std::http::Http2Config` | Type | experimental | not item-audited |
+| `std::http::Http2Error` | Type | experimental | not item-audited |
+| `std::http::Http2Handler` | Trait | experimental | not item-audited |
+| `std::http::Http2ServerHandle` | Type | experimental | not item-audited |
+| `std::http::Http2StreamingHandler` | Trait | experimental | not item-audited |
+| `std::http::Method` | Type | experimental | not item-audited |
+| `std::http::PushOptions` | Type | experimental | not item-audited |
+| `std::http::PushStream` | Type | experimental | not item-audited |
+| `std::http::Request` | Type | experimental | not item-audited |
+| `std::http::Response` | Type | experimental | not item-audited |
+| `std::http::ResponseStream` | Type | experimental | not item-audited |
+| `std::http::Server` | Type | experimental | not item-audited |
+| `std::http::StatusCode` | Type | experimental | not item-audited |
+| `std::http::StreamingResponseWriter` | Type | experimental | not item-audited |
+| `std::http::Trailers` | Type | experimental | not item-audited |
+| `std::http::chunked::Reader` | Type | experimental | not item-audited |
+| `std::http::chunked::Writer` | Type | experimental | not item-audited |
+| `std::http::chunked::decode` | Function | experimental | not item-audited |
+| `std::http::chunked::encode` | Function | experimental | not item-audited |
+| `std::http::cookie::Cookie` | Type | experimental | not item-audited |
+| `std::http::cookie::CookieBuilder` | Type | experimental | not item-audited |
+| `std::http::cookie::SameSite` | Type | experimental | not item-audited |
+| `std::http::cookie::parse_cookie_header` | Function | experimental | not item-audited |
+| `std::http::cookie::serialize` | Function | experimental | not item-audited |
+| `std::http::csrf::Config` | Type | experimental | not item-audited |
+| `std::http::csrf::RouteAuth` | Type | experimental | not item-audited |
+| `std::http::csrf::attach_cookie` | Function | experimental | not item-audited |
+| `std::http::csrf::check` | Function | experimental | not item-audited |
+| `std::http::csrf::extract_token` | Function | experimental | not item-audited |
+| `std::http::csrf::issue_token` | Function | experimental | not item-audited |
+| `std::http::csrf::origin_allowed` | Function | experimental | not item-audited |
+| `std::http::csrf::verify_token` | Function | experimental | not item-audited |
+| `std::http::delete` | Function | experimental | not item-audited |
+| `std::http::form::Form` | Type | experimental | not item-audited |
+| `std::http::form::FormBuilder` | Type | experimental | not item-audited |
+| `std::http::get` | Function | experimental | not item-audited |
+| `std::http::head` | Function | experimental | not item-audited |
+| `std::http::health::Health` | Type | experimental | not item-audited |
+| `std::http::health::Probe` | Trait | experimental | not item-audited |
+| `std::http::middleware::Chain` | Type | experimental | not item-audited |
+| `std::http::middleware::Handler` | Trait | experimental | not item-audited |
+| `std::http::middleware::accepts_gzip` | Function | experimental | not item-audited |
+| `std::http::middleware::bearer_ok` | Function | experimental | not item-audited |
+| `std::http::middleware::decode_basic_auth` | Function | experimental | not item-audited |
+| `std::http::middleware::new_request_id` | Function | experimental | not item-audited |
+| `std::http::middleware::tag` | Function | experimental | not item-audited |
+| `std::http::multipart::Config` | Type | experimental | not item-audited |
+| `std::http::multipart::Form` | Type | experimental | not item-audited |
+| `std::http::multipart::Part` | Type | experimental | not item-audited |
+| `std::http::multipart::PartData` | Type | experimental | not item-audited |
+| `std::http::multipart::parse` | Function | experimental | not item-audited |
+| `std::http::native_client::Client` | Type | experimental | not item-audited |
+| `std::http::native_client::Error` | Type | experimental | not item-audited |
+| `std::http::native_client::delete` | Function | experimental | not item-audited |
+| `std::http::native_client::get` | Function | experimental | not item-audited |
+| `std::http::native_client::post` | Function | experimental | not item-audited |
+| `std::http::native_client::put` | Function | experimental | not item-audited |
+| `std::http::options` | Function | experimental | not item-audited |
+| `std::http::post` | Function | experimental | not item-audited |
+| `std::http::proxy::Director` | Type | experimental | not item-audited |
+| `std::http::proxy::Proxy` | Type | experimental | not item-audited |
+| `std::http::proxy::forward` | Function | experimental | not item-audited |
+| `std::http::put` | Function | experimental | not item-audited |
+| `std::http::query::Query` | Type | experimental | not item-audited |
+| `std::http::request` | Function | experimental | not item-audited |
+| `std::http::request_bytes` | Function | experimental | not item-audited |
+| `std::http::router::Handler` | Trait | experimental | not item-audited |
+| `std::http::router::Params` | Type | experimental | not item-audited |
+| `std::http::router::Router` | Type | experimental | not item-audited |
+| `std::http::router::add` | Function | experimental | not item-audited |
+| `std::http::router::lookup` | Function | experimental | not item-audited |
+| `std::http::router::new` | Function | experimental | not item-audited |
+| `std::http::serve` | Function | experimental | not item-audited |
+| `std::http::serve_h2c` | Function | experimental | not item-audited |
+| `std::http::serve_tls` | Function | experimental | not item-audited |
+| `std::http::session::SerializationMode` | Type | experimental | not item-audited |
+| `std::http::session::Session` | Type | experimental | not item-audited |
+| `std::http::session::SessionConfig` | Type | experimental | not item-audited |
+| `std::http::session::SessionStore` | Trait | experimental | not item-audited |
+| `std::http::session::SignedCookieStore` | Type | experimental | not item-audited |
+| `std::http::session::sign` | Function | experimental | not item-audited |
+| `std::http::session::verify` | Function | experimental | not item-audited |
+| `std::http::session::with_session` | Function | experimental | not item-audited |
+| `std::http::sse::Event` | Type | experimental | not item-audited |
+| `std::http::sse::Stream` | Type | experimental | not item-audited |
+| `std::http::sse::encode_comment` | Function | experimental | not item-audited |
+| `std::http::sse::encode_event` | Function | experimental | not item-audited |
+| `std::http::sse::encode_retry` | Function | experimental | not item-audited |
+| `std::http::state::AppState` | Type | experimental | not item-audited |
+| `std::http::state::State` | Type | experimental | not item-audited |
+| `std::http::static_files::FileServer` | Type | experimental | not item-audited |
+| `std::http::static_files::mime_for_path` | Function | experimental | not item-audited |
+| `std::http::static_files::serve_file` | Function | experimental | not item-audited |
+| `std::http::stream` | Function | experimental | not item-audited |
+| `std::http::websocket::Error` | Type | experimental | not item-audited |
+| `std::http::websocket::Message` | Type | experimental | not item-audited |
+| `std::http::websocket::WebSocket` | Type | experimental | not item-audited |
+| `std::http::websocket::accept` | Function | experimental | not item-audited |
+| `std::http::websocket::accept_key` | Function | experimental | not item-audited |
+| `std::http::websocket::close` | Function | experimental | not item-audited |
+| `std::http::websocket::connect` | Function | experimental | not item-audited |
+| `std::http::websocket::is_websocket_upgrade` | Function | experimental | not item-audited |
+| `std::http::websocket::recv` | Function | experimental | not item-audited |
+| `std::http::websocket::send_binary` | Function | experimental | not item-audited |
+| `std::http::websocket::send_text` | Function | experimental | not item-audited |
+| `std::http::websocket::serve` | Function | experimental | not item-audited |
+| `std::http_h3::Client` | Type | experimental | not item-audited |
+| `std::http_h3::H3Error` | Type | experimental | not item-audited |
+| `std::http_h3::Handler` | Trait | experimental | not item-audited |
+| `std::http_h3::serve` | Function | experimental | not item-audited |
+| `std::io::BufReader` | Type | experimental | not item-audited |
+| `std::io::BufWriter` | Type | experimental | not item-audited |
+| `std::io::Copy` | Function | experimental | not item-audited |
+| `std::io::Error` | Type | experimental | not item-audited |
+| `std::io::ReadAll` | Function | experimental | not item-audited |
+| `std::io::Reader` | Trait | experimental | not item-audited |
+| `std::io::Writer` | Trait | experimental | not item-audited |
+| `std::io::stderr` | Function | experimental | not item-audited |
+| `std::io::stdin` | Function | experimental | not item-audited |
+| `std::io::stdout` | Function | experimental | not item-audited |
+| `std::iter::all` | Function | experimental | not item-audited |
+| `std::iter::any` | Function | experimental | not item-audited |
+| `std::iter::chain` | Function | experimental | not item-audited |
+| `std::iter::chunk_by` | Function | experimental | not item-audited |
+| `std::iter::chunks` | Function | experimental | not item-audited |
+| `std::iter::collect` | Function | experimental | not item-audited |
+| `std::iter::count` | Function | experimental | not item-audited |
+| `std::iter::count_by` | Function | experimental | not item-audited |
+| `std::iter::dedup` | Function | experimental | not item-audited |
+| `std::iter::empty` | Function | experimental | not item-audited |
+| `std::iter::enumerate` | Function | experimental | not item-audited |
+| `std::iter::filter` | Function | experimental | not item-audited |
+| `std::iter::filter_map` | Function | experimental | not item-audited |
+| `std::iter::find` | Function | experimental | not item-audited |
+| `std::iter::find_map` | Function | experimental | not item-audited |
+| `std::iter::flat_map` | Function | experimental | not item-audited |
+| `std::iter::flatten` | Function | experimental | not item-audited |
+| `std::iter::fold` | Function | experimental | not item-audited |
+| `std::iter::for_each` | Function | experimental | not item-audited |
+| `std::iter::map` | Function | experimental | not item-audited |
+| `std::iter::max` | Function | experimental | not item-audited |
+| `std::iter::max_by` | Function | experimental | not item-audited |
+| `std::iter::max_by_key` | Function | experimental | not item-audited |
+| `std::iter::min` | Function | experimental | not item-audited |
+| `std::iter::min_by` | Function | experimental | not item-audited |
+| `std::iter::min_by_key` | Function | experimental | not item-audited |
+| `std::iter::once` | Function | experimental | not item-audited |
+| `std::iter::pairwise` | Function | experimental | not item-audited |
+| `std::iter::partition` | Function | experimental | not item-audited |
+| `std::iter::position` | Function | experimental | not item-audited |
+| `std::iter::product` | Function | experimental | not item-audited |
+| `std::iter::product_by` | Function | experimental | not item-audited |
+| `std::iter::range` | Function | experimental | not item-audited |
+| `std::iter::range_inclusive` | Function | experimental | not item-audited |
+| `std::iter::reduce` | Function | experimental | not item-audited |
+| `std::iter::repeat` | Function | experimental | not item-audited |
+| `std::iter::rev` | Function | experimental | not item-audited |
+| `std::iter::scan` | Function | experimental | not item-audited |
+| `std::iter::skip` | Function | experimental | not item-audited |
+| `std::iter::skip_while` | Function | experimental | not item-audited |
+| `std::iter::sort_by` | Function | experimental | not item-audited |
+| `std::iter::sort_by_key` | Function | experimental | not item-audited |
+| `std::iter::step_by` | Function | experimental | not item-audited |
+| `std::iter::sum` | Function | experimental | not item-audited |
+| `std::iter::sum_by` | Function | experimental | not item-audited |
+| `std::iter::take` | Function | experimental | not item-audited |
+| `std::iter::take_while` | Function | experimental | not item-audited |
+| `std::iter::unzip` | Function | experimental | not item-audited |
+| `std::iter::windows` | Function | experimental | not item-audited |
+| `std::iter::zip` | Function | experimental | not item-audited |
+| `std::jwt::Alg` | Type | experimental | not item-audited |
+| `std::jwt::Claims` | Type | experimental | not item-audited |
+| `std::jwt::Header` | Type | experimental | not item-audited |
+| `std::jwt::VerifyOpts` | Type | experimental | not item-audited |
+| `std::jwt::sign_eddsa` | Function | experimental | not item-audited |
+| `std::jwt::sign_es256` | Function | experimental | not item-audited |
+| `std::jwt::sign_hs` | Function | experimental | not item-audited |
+| `std::jwt::verify_eddsa` | Function | experimental | not item-audited |
+| `std::jwt::verify_es256` | Function | experimental | not item-audited |
+| `std::jwt::verify_hs` | Function | experimental | not item-audited |
+| `std::lifecycle::Lifecycle` | Type | experimental | not item-audited |
+| `std::math::E` | Const | experimental | not item-audited |
+| `std::math::INF` | Const | experimental | not item-audited |
+| `std::math::LN_10` | Const | experimental | not item-audited |
+| `std::math::LN_2` | Const | experimental | not item-audited |
+| `std::math::LOG10_E` | Const | experimental | not item-audited |
+| `std::math::LOG2_E` | Const | experimental | not item-audited |
+| `std::math::MAX_F64` | Const | experimental | not item-audited |
+| `std::math::MIN_POSITIVE_F64` | Const | experimental | not item-audited |
+| `std::math::NAN` | Const | experimental | not item-audited |
+| `std::math::NEG_INF` | Const | experimental | not item-audited |
+| `std::math::PHI` | Const | experimental | not item-audited |
+| `std::math::PI` | Const | experimental | not item-audited |
+| `std::math::SQRT_2` | Const | experimental | not item-audited |
+| `std::math::abs` | Function | experimental | not item-audited |
+| `std::math::acos` | Function | experimental | not item-audited |
+| `std::math::asin` | Function | experimental | not item-audited |
+| `std::math::atan` | Function | experimental | not item-audited |
+| `std::math::atan2` | Function | experimental | not item-audited |
+| `std::math::big::Int` | Type | experimental | not item-audited |
+| `std::math::big::Uint` | Type | experimental | not item-audited |
+| `std::math::big::factorial` | Function | experimental | not item-audited |
+| `std::math::big::int_abs` | Function | experimental | not item-audited |
+| `std::math::big::int_add` | Function | experimental | not item-audited |
+| `std::math::big::int_cmp` | Function | experimental | not item-audited |
+| `std::math::big::int_div` | Function | experimental | not item-audited |
+| `std::math::big::int_from_i64` | Function | experimental | not item-audited |
+| `std::math::big::int_from_str` | Function | experimental | not item-audited |
+| `std::math::big::int_gcd` | Function | experimental | not item-audited |
+| `std::math::big::int_is_negative` | Function | experimental | not item-audited |
+| `std::math::big::int_is_positive` | Function | experimental | not item-audited |
+| `std::math::big::int_is_zero` | Function | experimental | not item-audited |
+| `std::math::big::int_lcm` | Function | experimental | not item-audited |
+| `std::math::big::int_mul` | Function | experimental | not item-audited |
+| `std::math::big::int_neg` | Function | experimental | not item-audited |
+| `std::math::big::int_pow` | Function | experimental | not item-audited |
+| `std::math::big::int_rem` | Function | experimental | not item-audited |
+| `std::math::big::int_sub` | Function | experimental | not item-audited |
+| `std::math::big::int_to_hex` | Function | experimental | not item-audited |
+| `std::math::big::int_to_i64` | Function | experimental | not item-audited |
+| `std::math::big::int_to_str` | Function | experimental | not item-audited |
+| `std::math::big::uint_add` | Function | experimental | not item-audited |
+| `std::math::big::uint_bit_len` | Function | experimental | not item-audited |
+| `std::math::big::uint_from_str` | Function | experimental | not item-audited |
+| `std::math::big::uint_from_u64` | Function | experimental | not item-audited |
+| `std::math::big::uint_is_zero` | Function | experimental | not item-audited |
+| `std::math::big::uint_mul` | Function | experimental | not item-audited |
+| `std::math::big::uint_pow` | Function | experimental | not item-audited |
+| `std::math::big::uint_pow_mod` | Function | experimental | not item-audited |
+| `std::math::big::uint_to_hex` | Function | experimental | not item-audited |
+| `std::math::big::uint_to_str` | Function | experimental | not item-audited |
+| `std::math::big::uint_to_u64` | Function | experimental | not item-audited |
+| `std::math::bits::add` | Function | experimental | not item-audited |
+| `std::math::bits::count_ones` | Function | experimental | not item-audited |
+| `std::math::bits::count_zeros` | Function | experimental | not item-audited |
+| `std::math::bits::div` | Function | experimental | not item-audited |
+| `std::math::bits::leading_zeros` | Function | experimental | not item-audited |
+| `std::math::bits::len` | Function | experimental | not item-audited |
+| `std::math::bits::mul` | Function | experimental | not item-audited |
+| `std::math::bits::reverse_bits` | Function | experimental | not item-audited |
+| `std::math::bits::reverse_bytes` | Function | experimental | not item-audited |
+| `std::math::bits::rotate_left` | Function | experimental | not item-audited |
+| `std::math::bits::rotate_right` | Function | experimental | not item-audited |
+| `std::math::bits::sub` | Function | experimental | not item-audited |
+| `std::math::bits::trailing_zeros` | Function | experimental | not item-audited |
+| `std::math::cbrt` | Function | experimental | not item-audited |
+| `std::math::ceil` | Function | experimental | not item-audited |
+| `std::math::clamp` | Function | experimental | not item-audited |
+| `std::math::copysign` | Function | experimental | not item-audited |
+| `std::math::cos` | Function | experimental | not item-audited |
+| `std::math::cosh` | Function | experimental | not item-audited |
+| `std::math::exp` | Function | experimental | not item-audited |
+| `std::math::exp2` | Function | experimental | not item-audited |
+| `std::math::floor` | Function | experimental | not item-audited |
+| `std::math::hypot` | Function | experimental | not item-audited |
+| `std::math::is_inf` | Function | experimental | not item-audited |
+| `std::math::is_nan` | Function | experimental | not item-audited |
+| `std::math::ln` | Function | experimental | not item-audited |
+| `std::math::log` | Function | experimental | not item-audited |
+| `std::math::log10` | Function | experimental | not item-audited |
+| `std::math::log2` | Function | experimental | not item-audited |
+| `std::math::max` | Function | experimental | not item-audited |
+| `std::math::min` | Function | experimental | not item-audited |
+| `std::math::positive_diff` | Function | experimental | not item-audited |
+| `std::math::pow` | Function | experimental | not item-audited |
+| `std::math::rand::Rng` | Type | experimental | not item-audited |
+| `std::math::rem` | Function | experimental | not item-audited |
+| `std::math::round` | Function | experimental | not item-audited |
+| `std::math::sin` | Function | experimental | not item-audited |
+| `std::math::sinh` | Function | experimental | not item-audited |
+| `std::math::sqrt` | Function | experimental | not item-audited |
+| `std::math::tan` | Function | experimental | not item-audited |
+| `std::math::tanh` | Function | experimental | not item-audited |
+| `std::math::trunc` | Function | experimental | not item-audited |
+| `std::metrics::Counter` | Type | experimental | not item-audited |
+| `std::metrics::Gauge` | Type | experimental | not item-audited |
+| `std::metrics::Histogram` | Type | experimental | not item-audited |
+| `std::metrics::Metric` | Type | experimental | not item-audited |
+| `std::metrics::Registry` | Type | experimental | not item-audited |
+| `std::metrics::serve_metrics` | Function | experimental | not item-audited |
+| `std::mime::boundary` | Function | experimental | not item-audited |
+| `std::mime::charset` | Function | experimental | not item-audited |
+| `std::mime::extension_by_type` | Function | experimental | not item-audited |
+| `std::mime::is_valid` | Function | experimental | not item-audited |
+| `std::mime::param` | Function | experimental | not item-audited |
+| `std::mime::parse` | Function | experimental | not item-audited |
+| `std::mime::sub` | Function | experimental | not item-audited |
+| `std::mime::top` | Function | experimental | not item-audited |
+| `std::mime::type_by_extension` | Function | experimental | not item-audited |
+| `std::net::TcpListener` | Type | experimental | not item-audited |
+| `std::net::TcpStream` | Type | experimental | not item-audited |
+| `std::net::UdpSocket` | Type | experimental | not item-audited |
+| `std::net::UnixListener` | Type | experimental | not item-audited |
+| `std::net::UnixStream` | Type | experimental | not item-audited |
+| `std::net::ip::is_loopback` | Function | experimental | not item-audited |
+| `std::net::ip::is_multicast` | Function | experimental | not item-audited |
+| `std::net::ip::is_private` | Function | experimental | not item-audited |
+| `std::net::ip::is_unspecified` | Function | experimental | not item-audited |
+| `std::net::ip::is_v4` | Function | experimental | not item-audited |
+| `std::net::ip::is_v6` | Function | experimental | not item-audited |
+| `std::net::ip::is_valid` | Function | experimental | not item-audited |
+| `std::net::ip::octets` | Function | experimental | not item-audited |
+| `std::net::ip::parse` | Function | experimental | not item-audited |
+| `std::net::ip::to_string` | Function | experimental | not item-audited |
+| `std::net::lookup` | Function | experimental | not item-audited |
+| `std::net::netip::host_of` | Function | experimental | not item-audited |
+| `std::net::netip::is_loopback` | Function | experimental | not item-audited |
+| `std::net::netip::is_multicast` | Function | experimental | not item-audited |
+| `std::net::netip::is_private` | Function | experimental | not item-audited |
+| `std::net::netip::is_unspecified` | Function | experimental | not item-audited |
+| `std::net::netip::is_v4` | Function | experimental | not item-audited |
+| `std::net::netip::is_v6` | Function | experimental | not item-audited |
+| `std::net::netip::is_valid` | Function | experimental | not item-audited |
+| `std::net::netip::join_addr_port` | Function | experimental | not item-audited |
+| `std::net::netip::normalize` | Function | experimental | not item-audited |
+| `std::net::netip::port_of` | Function | experimental | not item-audited |
+| `std::net::url::Url` | Type | experimental | not item-audited |
+| `std::net::url::path_escape` | Function | experimental | not item-audited |
+| `std::net::url::path_unescape` | Function | experimental | not item-audited |
+| `std::net::url::query_escape` | Function | experimental | not item-audited |
+| `std::net::url::query_unescape` | Function | experimental | not item-audited |
+| `std::option::and_then` | Function | experimental | not item-audited |
+| `std::option::filter` | Function | experimental | not item-audited |
+| `std::option::flatten` | Function | experimental | not item-audited |
+| `std::option::is_none` | Function | experimental | not item-audited |
+| `std::option::is_some` | Function | experimental | not item-audited |
+| `std::option::iter` | Function | experimental | not item-audited |
+| `std::option::map` | Function | experimental | not item-audited |
+| `std::option::or` | Function | experimental | not item-audited |
+| `std::option::or_else` | Function | experimental | not item-audited |
+| `std::option::unwrap_or` | Function | experimental | not item-audited |
+| `std::option::unwrap_or_else` | Function | experimental | not item-audited |
+| `std::option::zip` | Function | experimental | not item-audited |
+| `std::os::arch` | Function | experimental | not item-audited |
+| `std::os::exec::Child` | Type | experimental | not item-audited |
+| `std::os::exec::Pipeline` | Type | experimental | not item-audited |
+| `std::os::exec::Signal` | Type | experimental | not item-audited |
+| `std::os::exec::kill` | Function | experimental | not item-audited |
+| `std::os::exec::kill_group` | Function | experimental | not item-audited |
+| `std::os::exec::pipeline_run` | Function | experimental | not item-audited |
+| `std::os::exec::run` | Function | experimental | not item-audited |
+| `std::os::exec::signal` | Function | experimental | not item-audited |
+| `std::os::exec::spawn` | Function | experimental | not item-audited |
+| `std::os::exec::spawn_piped` | Function | experimental | not item-audited |
+| `std::os::exec::wait_timeout` | Function | experimental | not item-audited |
+| `std::os::family` | Function | experimental | not item-audited |
+| `std::os::signal::Notifier` | Type | experimental | not item-audited |
+| `std::os::signal::Signal` | Type | experimental | not item-audited |
+| `std::os::signal::on` | Function | experimental | not item-audited |
+| `std::os::signal::try_wait` | Function | experimental | not item-audited |
+| `std::os::signal::wait` | Function | experimental | not item-audited |
+| `std::os::user::current_gid` | Function | experimental | not item-audited |
+| `std::os::user::current_home` | Function | experimental | not item-audited |
+| `std::os::user::current_name` | Function | experimental | not item-audited |
+| `std::os::user::current_uid` | Function | experimental | not item-audited |
+| `std::os::user::lookup_name` | Function | experimental | not item-audited |
+| `std::os::user::lookup_uid` | Function | experimental | not item-audited |
+| `std::panic::panic` | Macro | experimental | not item-audited |
+| `std::path::extension` | Function | experimental | not item-audited |
+| `std::path::file_name` | Function | experimental | not item-audited |
+| `std::path::file_stem` | Function | experimental | not item-audited |
+| `std::path::is_absolute` | Function | experimental | not item-audited |
+| `std::path::join` | Function | experimental | not item-audited |
+| `std::path::normalize` | Function | experimental | not item-audited |
+| `std::path::parent` | Function | experimental | not item-audited |
+| `std::path::split` | Function | experimental | not item-audited |
+| `std::path::starts_with` | Function | experimental | not item-audited |
+| `std::process::Child` | Type | experimental | not item-audited |
+| `std::process::abort` | Function | experimental | not item-audited |
+| `std::process::exit` | Function | experimental | not item-audited |
+| `std::process::id` | Function | experimental | not item-audited |
+| `std::process::kill` | Function | experimental | not item-audited |
+| `std::process::kill_group` | Function | experimental | not item-audited |
+| `std::process::pipeline_run` | Function | experimental | not item-audited |
+| `std::process::run` | Function | experimental | not item-audited |
+| `std::process::signal` | Function | experimental | not item-audited |
+| `std::process::spawn` | Function | experimental | not item-audited |
+| `std::process::spawn_piped` | Function | experimental | not item-audited |
+| `std::process::wait_timeout` | Function | experimental | not item-audited |
+| `std::regex::Pattern` | Type | experimental | not item-audited |
+| `std::regex::captures` | Function | experimental | not item-audited |
+| `std::regex::captures_all` | Function | experimental | not item-audited |
+| `std::regex::compile` | Function | experimental | not item-audited |
+| `std::regex::find` | Function | experimental | not item-audited |
+| `std::regex::find_all` | Function | experimental | not item-audited |
+| `std::regex::is_match` | Function | experimental | not item-audited |
+| `std::regex::replace` | Function | experimental | not item-audited |
+| `std::regex::replace_all` | Function | experimental | not item-audited |
+| `std::regex::split` | Function | experimental | not item-audited |
+| `std::result::and_then` | Function | experimental | not item-audited |
+| `std::result::err` | Function | experimental | not item-audited |
+| `std::result::is_err` | Function | experimental | not item-audited |
+| `std::result::is_ok` | Function | experimental | not item-audited |
+| `std::result::map` | Function | experimental | not item-audited |
+| `std::result::map_err` | Function | experimental | not item-audited |
+| `std::result::ok` | Function | experimental | not item-audited |
+| `std::result::or_else` | Function | experimental | not item-audited |
+| `std::result::unwrap_or` | Function | experimental | not item-audited |
+| `std::result::unwrap_or_else` | Function | experimental | not item-audited |
+| `std::runtime::arena_pop` | Function | experimental | not item-audited |
+| `std::runtime::arena_push` | Function | experimental | not item-audited |
+| `std::runtime::collect_cycles` | Function | experimental | not item-audited |
+| `std::runtime::cycle_collection_supported` | Function | experimental | not item-audited |
+| `std::runtime::scheduler_stats_json` | Function | experimental | not item-audited |
+| `std::runtime::set_panic_hook` | Function | experimental | not item-audited |
+| `std::slog::Field` | Type | experimental | not item-audited |
+| `std::slog::JsonHandler` | Type | experimental | not item-audited |
+| `std::slog::Logger` | Type | experimental | not item-audited |
+| `std::slog::TextHandler` | Type | experimental | not item-audited |
+| `std::slog::debug` | Function | experimental | not item-audited |
+| `std::slog::error` | Function | experimental | not item-audited |
+| `std::slog::info` | Function | experimental | not item-audited |
+| `std::slog::warn` | Function | experimental | not item-audited |
+| `std::strconv::format_f64` | Function | experimental | not item-audited |
+| `std::strconv::format_i64` | Function | experimental | not item-audited |
+| `std::strconv::format_i64_radix` | Function | experimental | not item-audited |
+| `std::strconv::parse_bool` | Function | experimental | not item-audited |
+| `std::strconv::parse_f64` | Function | experimental | not item-audited |
+| `std::strconv::parse_i64` | Function | experimental | not item-audited |
+| `std::strconv::parse_i64_radix` | Function | experimental | not item-audited |
+| `std::strconv::parse_u64` | Function | experimental | not item-audited |
+| `std::strconv::quote` | Function | experimental | not item-audited |
+| `std::strconv::unquote` | Function | experimental | not item-audited |
+| `std::strings::bytes` | Function | experimental | not item-audited |
+| `std::strings::center` | Function | experimental | not item-audited |
+| `std::strings::chars` | Function | experimental | not item-audited |
+| `std::strings::contains` | Function | experimental | not item-audited |
+| `std::strings::contains_any` | Function | experimental | not item-audited |
+| `std::strings::count` | Function | experimental | not item-audited |
+| `std::strings::ends_with` | Function | experimental | not item-audited |
+| `std::strings::equal_fold` | Function | experimental | not item-audited |
+| `std::strings::find` | Function | experimental | not item-audited |
+| `std::strings::find_any` | Function | experimental | not item-audited |
+| `std::strings::join` | Function | experimental | not item-audited |
+| `std::strings::lines` | Function | experimental | not item-audited |
+| `std::strings::pad_left` | Function | experimental | not item-audited |
+| `std::strings::pad_right` | Function | experimental | not item-audited |
+| `std::strings::repeat` | Function | experimental | not item-audited |
+| `std::strings::replace` | Function | experimental | not item-audited |
+| `std::strings::replacen` | Function | experimental | not item-audited |
+| `std::strings::rfind` | Function | experimental | not item-audited |
+| `std::strings::rfind_any` | Function | experimental | not item-audited |
+| `std::strings::rsplit_once` | Function | experimental | not item-audited |
+| `std::strings::slice` | Function | experimental | not item-audited |
+| `std::strings::split` | Function | experimental | not item-audited |
+| `std::strings::split_once` | Function | experimental | not item-audited |
+| `std::strings::split_whitespace` | Function | experimental | not item-audited |
+| `std::strings::splitn` | Function | experimental | not item-audited |
+| `std::strings::starts_with` | Function | experimental | not item-audited |
+| `std::strings::strip_prefix` | Function | experimental | not item-audited |
+| `std::strings::strip_suffix` | Function | experimental | not item-audited |
+| `std::strings::to_bool` | Function | experimental | not item-audited |
+| `std::strings::to_f64` | Function | experimental | not item-audited |
+| `std::strings::to_i64` | Function | experimental | not item-audited |
+| `std::strings::to_lowercase` | Function | experimental | not item-audited |
+| `std::strings::to_title` | Function | experimental | not item-audited |
+| `std::strings::to_uppercase` | Function | experimental | not item-audited |
+| `std::strings::trim` | Function | experimental | not item-audited |
+| `std::strings::trim_end` | Function | experimental | not item-audited |
+| `std::strings::trim_end_matches` | Function | experimental | not item-audited |
+| `std::strings::trim_matches` | Function | experimental | not item-audited |
+| `std::strings::trim_start` | Function | experimental | not item-audited |
+| `std::strings::trim_start_matches` | Function | experimental | not item-audited |
+| `std::sync::AtomicBool` | Type | experimental | not item-audited |
+| `std::sync::AtomicI32` | Type | experimental | not item-audited |
+| `std::sync::AtomicI64` | Type | experimental | not item-audited |
+| `std::sync::AtomicU64` | Type | experimental | not item-audited |
+| `std::sync::Barrier` | Type | experimental | not item-audited |
+| `std::sync::Channel` | Type | experimental | not item-audited |
+| `std::sync::Map` | Type | experimental | not item-audited |
+| `std::sync::Mutex` | Type | experimental | not item-audited |
+| `std::sync::Once` | Type | experimental | not item-audited |
+| `std::sync::RwLock` | Type | experimental | not item-audited |
+| `std::sync::WaitGroup` | Type | experimental | not item-audited |
+| `std::sync::channel` | Function | experimental | not item-audited |
+| `std::sync::channel_unbounded` | Function | experimental | not item-audited |
+| `std::testing::Runner` | Type | experimental | not item-audited |
+| `std::testing::check` | Function | experimental | not item-audited |
+| `std::testing::check_eq` | Function | experimental | not item-audited |
+| `std::testing::check_ok` | Function | experimental | not item-audited |
+| `std::testing::wait_for_scheduler_idle` | Function | experimental | not item-audited |
+| `std::thread::num_cpus` | Function | experimental | not item-audited |
+| `std::thread::yield_now` | Function | experimental | not item-audited |
+| `std::time::Duration` | Type | experimental | not item-audited |
+| `std::time::Instant` | Type | experimental | not item-audited |
+| `std::time::SystemTime` | Type | experimental | not item-audited |
+| `std::time::format_rfc3339` | Function | experimental | not item-audited |
+| `std::time::monotonic_ms` | Function | experimental | not item-audited |
+| `std::time::monotonic_nanos` | Function | experimental | not item-audited |
+| `std::time::now` | Function | experimental | not item-audited |
+| `std::time::now_ms` | Function | experimental | not item-audited |
+| `std::time::now_nanos` | Function | experimental | not item-audited |
+| `std::time::parse_rfc3339` | Function | experimental | not item-audited |
+| `std::time::since_ms` | Function | experimental | not item-audited |
+| `std::time::sleep` | Function | experimental | not item-audited |
+| `std::time::unix_ms` | Function | experimental | not item-audited |
+| `std::trace::EndedSpan` | Type | experimental | not item-audited |
+| `std::trace::Span` | Type | experimental | not item-audited |
+| `std::trace::SpanContext` | Type | experimental | not item-audited |
+| `std::trace::SpanGuard` | Type | experimental | not item-audited |
+| `std::trace::SpanId` | Type | experimental | not item-audited |
+| `std::trace::SpanStatus` | Type | experimental | not item-audited |
+| `std::trace::TraceId` | Type | experimental | not item-audited |
+| `std::trace::Tracer` | Type | experimental | not item-audited |
+| `std::unicode::combining_class` | Function | experimental | not item-audited |
+| `std::unicode::fold_case` | Function | experimental | not item-audited |
+| `std::unicode::grapheme_count` | Function | experimental | not item-audited |
+| `std::unicode::graphemes` | Function | experimental | not item-audited |
+| `std::unicode::is_assigned` | Function | experimental | not item-audited |
+| `std::unicode::is_control` | Function | experimental | not item-audited |
+| `std::unicode::is_digit` | Function | experimental | not item-audited |
+| `std::unicode::is_graphic` | Function | experimental | not item-audited |
+| `std::unicode::is_letter` | Function | experimental | not item-audited |
+| `std::unicode::is_lower` | Function | experimental | not item-audited |
+| `std::unicode::is_mark` | Function | experimental | not item-audited |
+| `std::unicode::is_nfc` | Function | experimental | not item-audited |
+| `std::unicode::is_nfd` | Function | experimental | not item-audited |
+| `std::unicode::is_nfkc` | Function | experimental | not item-audited |
+| `std::unicode::is_nfkd` | Function | experimental | not item-audited |
+| `std::unicode::is_number` | Function | experimental | not item-audited |
+| `std::unicode::is_print` | Function | experimental | not item-audited |
+| `std::unicode::is_punct` | Function | experimental | not item-audited |
+| `std::unicode::is_space` | Function | experimental | not item-audited |
+| `std::unicode::is_symbol` | Function | experimental | not item-audited |
+| `std::unicode::is_title` | Function | experimental | not item-audited |
+| `std::unicode::is_upper` | Function | experimental | not item-audited |
+| `std::unicode::nfc` | Function | experimental | not item-audited |
+| `std::unicode::nfd` | Function | experimental | not item-audited |
+| `std::unicode::nfkc` | Function | experimental | not item-audited |
+| `std::unicode::nfkd` | Function | experimental | not item-audited |
+| `std::unicode::sentence_count` | Function | experimental | not item-audited |
+| `std::unicode::sentences` | Function | experimental | not item-audited |
+| `std::unicode::simple_fold` | Function | experimental | not item-audited |
+| `std::unicode::to_lower` | Function | experimental | not item-audited |
+| `std::unicode::to_lower_str` | Function | experimental | not item-audited |
+| `std::unicode::to_title` | Function | experimental | not item-audited |
+| `std::unicode::to_upper` | Function | experimental | not item-audited |
+| `std::unicode::to_upper_str` | Function | experimental | not item-audited |
+| `std::unicode::word_bounds` | Function | experimental | not item-audited |
+| `std::unicode::word_count` | Function | experimental | not item-audited |
+| `std::unicode::words` | Function | experimental | not item-audited |
+| `std::utf16::decode_surrogate_pair` | Function | experimental | not item-audited |
+| `std::utf16::decode_to_string` | Function | experimental | not item-audited |
+| `std::utf16::encode_string` | Function | experimental | not item-audited |
+| `std::utf16::is_surrogate` | Function | experimental | not item-audited |
+| `std::utf16::rune_len` | Function | experimental | not item-audited |
+| `std::utf8::append_rune` | Function | experimental | not item-audited |
+| `std::utf8::decode_last_rune` | Function | experimental | not item-audited |
+| `std::utf8::decode_last_rune_in_string` | Function | experimental | not item-audited |
+| `std::utf8::decode_rune` | Function | experimental | not item-audited |
+| `std::utf8::decode_rune_in_string` | Function | experimental | not item-audited |
+| `std::utf8::full_rune` | Function | experimental | not item-audited |
+| `std::utf8::full_rune_in_string` | Function | experimental | not item-audited |
+| `std::utf8::is_valid` | Function | experimental | not item-audited |
+| `std::utf8::rune_count` | Function | experimental | not item-audited |
+| `std::utf8::rune_count_in_string` | Function | experimental | not item-audited |
+| `std::utf8::rune_len` | Function | experimental | not item-audited |
+| `std::utf8::rune_start` | Function | experimental | not item-audited |
+| `std::utf8::valid_rune` | Function | experimental | not item-audited |
+| `std::utf8::valid_string` | Function | experimental | not item-audited |
+| `std::uuid::is_valid` | Function | experimental | not item-audited |
+| `std::uuid::normalize` | Function | experimental | not item-audited |
+| `std::uuid::simple` | Function | experimental | not item-audited |
+| `std::uuid::v4` | Function | experimental | not item-audited |
+| `std::uuid::v7` | Function | experimental | not item-audited |
+| `std::validate::Errors` | Type | experimental | not item-audited |
+| `std::validate::FieldError` | Type | experimental | not item-audited |
+| `std::validate::Validate` | Trait | experimental | not item-audited |
 
 ## How to regenerate this page
 
@@ -62,20 +974,18 @@ cargo xtask stdlib-coverage
 
 ## How to interpret the columns
 
-- A module is marked `Interp ✓` when at least one of its
-items resolves through `gossamer-interp::builtins::install`.
-A `◑` means some items resolve and some do not.
-A `✗` means none of the items are wired.
+- `module-only` is legacy evidence that at least one item has the
+corresponding implementation or test path. It must not be used as a
+complete-module claim.
 
-- A module is marked `Compiled ✓` when at least one of its
-items has a runtime symbol declared in
-`gossamer-codegen-llvm/src/emit.rs::RUNTIME_DECLARATIONS`
-and the runtime/JIT symbol registry, or is
-dispatched as a method via
-`gossamer-mir/src/lower.rs::lower_method_call`.
+- `partial` records an explicitly incomplete implementation.
 
-- A module is marked `Tests ✓` when at least one
-integration / parity / phase test exercises it.
+- `none` records missing module-level evidence, not proof that the
+implementation is absent.
+
+- Stable promotion requires item-level executable evidence keyed by
+canonical item path; this page does not infer evidence from source-text
+matches.
 
 ## Cross-references
 

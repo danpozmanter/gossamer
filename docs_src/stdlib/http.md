@@ -151,19 +151,16 @@ fn serve(&self, r: http::Request) -> http::Response {
 - `Response::text(status, body)` - sets `content-type: text/plain; charset=utf-8`.
 - `Response::json(status, body)` - sets `content-type: application/json`.
 - `Response::stream(status, content_type, rs)` - streamed body; see below.
-- Struct literal - every field is optional and defaults sensibly:
+- `http::Response(status, body_bytes, content_type)` - constructs a binary
+  response without a lossy round-trip through `String`; `body_bytes` is `[u8]`.
 
 ```text
-http::Response {
-    status: 202,
-    body: "lit",                       // String or [u8] byte array
-    content_type: "text/x-custom",
-    headers: [("x-k", "kv")],
-}
+http::Response(202, [65, 0, 66], "application/octet-stream")
+    .with_header("x-k", "kv")
 ```
 
-A byte-array `body` is written verbatim, so handlers can return binary payloads
-(images, gzip) without a lossy round-trip through `String`.
+The byte array is written verbatim, so handlers can return binary payloads
+(images, gzip) including embedded NUL bytes.
 
 ### `with_header` chaining
 

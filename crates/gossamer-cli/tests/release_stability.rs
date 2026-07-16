@@ -150,7 +150,7 @@ impl http::Handler for App {
 }
 
 fn run_server() {
-    if let Err(e) = http::serve("127.0.0.1:23924", App { }) {
+    if let Err(e) = http::serve("127.0.0.1:23924", App()) {
         eprintln!("serve failed: {}", e)
     }
 }
@@ -206,7 +206,7 @@ impl http::Handler for App {
 }
 
 fn run_server() {
-    if let Err(e) = http::serve("127.0.0.1:23921", App { }) {
+    if let Err(e) = http::serve("127.0.0.1:23921", App()) {
         eprintln!("serve failed: {e}")
     }
 }
@@ -273,13 +273,13 @@ impl http::Handler for Proxy {
 }
 
 fn run_upstream() {
-    if let Err(e) = http::serve("127.0.0.1:23922", Upstream { }) {
+    if let Err(e) = http::serve("127.0.0.1:23922", Upstream()) {
         eprintln!("serve failed: {e}")
     }
 }
 
 fn run_proxy() {
-    if let Err(e) = http::serve("127.0.0.1:23923", Proxy { }) {
+    if let Err(e) = http::serve("127.0.0.1:23923", Proxy()) {
         eprintln!("serve failed: {e}")
     }
 }
@@ -547,8 +547,8 @@ impl Shape for Rect {
 }
 
 fn main() {
-    let c = Circle { radius: 2.0 }
-    let r = Rect { w: 3.0, h: 4.0 }
+    let c = Circle(2.0)
+    let r = Rect(3.0, 4.0)
     println!("{} area={:.4}", c.name(), c.area())
     println!("{} area={:.4}", r.name(), r.area())
 }
@@ -569,9 +569,9 @@ fn release_struct_methods_chain_returning_value() {
 struct Counter { value: i64 }
 
 impl Counter {
-    fn new() -> Counter { Counter { value: 0 } }
-    fn inc(self, by: i64) -> Counter { Counter { value: self.value + by } }
-    fn double(self) -> Counter { Counter { value: self.value * 2 } }
+    fn new() -> Counter { Counter(0) }
+    fn inc(self, by: i64) -> Counter { Counter(self.value + by) }
+    fn double(self) -> Counter { Counter(self.value * 2) }
     fn get(self) -> i64 { self.value }
 }
 
@@ -1115,7 +1115,7 @@ fn release_http_surface_offline_probe_is_byte_exact() {
         include_str!("../../../feature-testing-examples/http_surface.gos"),
         "r_status=201 r_body=made r_ct=text/plain; charset=utf-8\n\
          x-tag=v2 x-extra=e\n\
-         s_status=202 s_body=lit s_ct=text/x-custom\n\
+         s_status=202 s_body=lit s_ct=text/plain; charset=utf-8\n\
          client=built\n\
          err=http::request: unknown method `BOGUS`\n",
     );

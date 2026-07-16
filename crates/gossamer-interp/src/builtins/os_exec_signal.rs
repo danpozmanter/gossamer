@@ -120,15 +120,19 @@ fn builtin_os_read_file(args: &[Value]) -> RuntimeResult<Value> {
     let Some(path) = args.first().and_then(as_str) else {
         return Ok(err_variant("read_file: path argument must be a string"));
     };
-    match os_std::read_file(path) {
-        Ok(bytes) => {
+    let path = path.to_string();
+    match gossamer_runtime::sched_global::run_blocking("os-read-file", move || {
+        os_std::read_file(&path)
+    }) {
+        Ok(Ok(bytes)) => {
             let values: Vec<Value> = bytes
                 .into_iter()
                 .map(|b| Value::Int(i64::from(b)))
                 .collect();
             Ok(ok_variant(Value::Array(Arc::new(values))))
         }
-        Err(e) => Ok(err_variant(format!("{e}"))),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -138,9 +142,13 @@ fn builtin_os_read_file_to_string(args: &[Value]) -> RuntimeResult<Value> {
             "read_file_to_string: path argument must be a string",
         ));
     };
-    match os_std::read_file_to_string(path) {
-        Ok(text) => Ok(ok_variant(Value::String(text.into()))),
-        Err(e) => Ok(err_variant(format!("{e}"))),
+    let path = path.to_string();
+    match gossamer_runtime::sched_global::run_blocking("os-read-file-string", move || {
+        os_std::read_file_to_string(&path)
+    }) {
+        Ok(Ok(text)) => Ok(ok_variant(Value::String(text.into()))),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -171,9 +179,13 @@ fn builtin_os_write_file(args: &[Value]) -> RuntimeResult<Value> {
             ));
         }
     };
-    match os_std::write_file(path, &bytes) {
-        Ok(()) => Ok(ok_variant(Value::Unit)),
-        Err(e) => Ok(err_variant(format!("{e}"))),
+    let path = path.to_string();
+    match gossamer_runtime::sched_global::run_blocking("os-write-file", move || {
+        os_std::write_file(&path, &bytes)
+    }) {
+        Ok(Ok(())) => Ok(ok_variant(Value::Unit)),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -181,9 +193,13 @@ fn builtin_os_remove_file(args: &[Value]) -> RuntimeResult<Value> {
     let Some(path) = args.first().and_then(as_str) else {
         return Ok(err_variant("remove_file: path argument must be a string"));
     };
-    match os_std::remove_file(path) {
-        Ok(()) => Ok(ok_variant(Value::Unit)),
-        Err(e) => Ok(err_variant(format!("{e}"))),
+    let path = path.to_string();
+    match gossamer_runtime::sched_global::run_blocking("os-remove-file", move || {
+        os_std::remove_file(&path)
+    }) {
+        Ok(Ok(())) => Ok(ok_variant(Value::Unit)),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -193,9 +209,13 @@ fn builtin_fs_remove_dir_all(args: &[Value]) -> RuntimeResult<Value> {
             "remove_dir_all: path argument must be a string",
         ));
     };
-    match std::fs::remove_dir_all(path) {
-        Ok(()) => Ok(ok_variant(Value::Unit)),
-        Err(e) => Ok(err_variant(format!("{e}"))),
+    let path = path.to_string();
+    match gossamer_runtime::sched_global::run_blocking("fs-remove-dir-all", move || {
+        std::fs::remove_dir_all(path)
+    }) {
+        Ok(Ok(())) => Ok(ok_variant(Value::Unit)),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -203,9 +223,13 @@ fn builtin_fs_remove_dir(args: &[Value]) -> RuntimeResult<Value> {
     let Some(path) = args.first().and_then(as_str) else {
         return Ok(err_variant("remove_dir: path argument must be a string"));
     };
-    match std::fs::remove_dir(path) {
-        Ok(()) => Ok(ok_variant(Value::Unit)),
-        Err(e) => Ok(err_variant(format!("{e}"))),
+    let path = path.to_string();
+    match gossamer_runtime::sched_global::run_blocking("fs-remove-dir", move || {
+        std::fs::remove_dir(path)
+    }) {
+        Ok(Ok(())) => Ok(ok_variant(Value::Unit)),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -234,9 +258,13 @@ fn builtin_fs_canonicalize(args: &[Value]) -> RuntimeResult<Value> {
     let Some(path) = args.first().and_then(as_str) else {
         return Ok(err_variant("canonicalize: path argument must be a string"));
     };
-    match fs_std::canonicalize(path) {
-        Ok(p) => Ok(ok_variant(Value::String(p.into()))),
-        Err(e) => Ok(err_variant(format!("{e}"))),
+    let path = path.to_string();
+    match gossamer_runtime::sched_global::run_blocking("fs-canonicalize", move || {
+        fs_std::canonicalize(&path)
+    }) {
+        Ok(Ok(p)) => Ok(ok_variant(Value::String(p.into()))),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -247,9 +275,14 @@ fn builtin_os_rename(args: &[Value]) -> RuntimeResult<Value> {
     let Some(to) = args.get(1).and_then(as_str) else {
         return Ok(err_variant("rename: destination path must be a string"));
     };
-    match os_std::rename(from, to) {
-        Ok(()) => Ok(ok_variant(Value::Unit)),
-        Err(e) => Ok(err_variant(format!("{e}"))),
+    let from = from.to_string();
+    let to = to.to_string();
+    match gossamer_runtime::sched_global::run_blocking("os-rename", move || {
+        os_std::rename(&from, &to)
+    }) {
+        Ok(Ok(())) => Ok(ok_variant(Value::Unit)),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -335,6 +368,13 @@ fn builtin_runtime_collect_cycles(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Unit)
 }
 
+/// The VM deliberately uses `Arc`-backed values and has no tracing cycle
+/// collector. Exposing that fact lets portable programs select an explicit
+/// weak-reference cleanup path instead of inferring it from the execution tier.
+fn builtin_runtime_cycle_collection_supported(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Bool(false))
+}
+
 fn builtin_runtime_scheduler_stats_json(_args: &[Value]) -> RuntimeResult<Value> {
     let scheduler = gossamer_runtime::sched_global::scheduler();
     let stats = scheduler.stats();
@@ -405,18 +445,23 @@ fn builtin_exec_run(args: &[Value]) -> RuntimeResult<Value> {
     let Some(prog) = args.first().and_then(as_str) else {
         return Ok(err_variant("exec::run: program argument must be a string"));
     };
-    let mut cmd = exec_std::Command::new(prog);
+    let prog = prog.to_owned();
+    let mut cmd_args = Vec::new();
     if let Some(Value::Array(arr)) = args.get(1) {
         for arg in arr.iter() {
             if let Some(s) = as_str(arg) {
-                cmd = cmd.arg(s);
+                cmd_args.push(s.to_owned());
             }
         }
     }
-    cmd = cmd.stdout(exec_std::Stdio::Piped);
-    cmd = cmd.stderr(exec_std::Stdio::Piped);
-    match cmd.output() {
-        Ok(out) => {
+    match gossamer_runtime::sched_global::run_blocking("exec-run", move || {
+        let mut cmd = std::process::Command::new(prog);
+        cmd.args(cmd_args);
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        cmd.output()
+    }) {
+        Ok(Ok(out)) => {
             let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
             let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
             let code = i64::from(out.status.code().unwrap_or(-1));
@@ -430,7 +475,8 @@ fn builtin_exec_run(args: &[Value]) -> RuntimeResult<Value> {
                 Arc::unwrap_or_clone(Arc::new(fields)),
             )))
         }
-        Err(e) => Ok(err_variant(format!("{e}"))),
+        Ok(Err(e)) => Ok(err_variant(format!("{e}"))),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -448,25 +494,31 @@ fn builtin_exec_spawn(args: &[Value]) -> RuntimeResult<Value> {
         ));
     };
     let prog = prog.to_owned();
-    let mut cmd = StdCommand::new(&prog);
+    let mut cmd_args = Vec::new();
     if let Some(Value::Array(arr)) = args.get(1) {
         for arg in arr.iter() {
             if let Some(s) = as_str(arg) {
-                cmd.arg(s);
+                cmd_args.push(s.to_owned());
             }
         }
     }
-    cmd.stdin(StdStdio::null());
-    cmd.stdout(StdStdio::null());
-    cmd.stderr(StdStdio::null());
-    match cmd.spawn() {
-        Ok(child) => {
+    let display_prog = prog.clone();
+    match gossamer_runtime::sched_global::run_blocking("exec-spawn", move || {
+        let mut cmd = StdCommand::new(&prog);
+        cmd.args(cmd_args);
+        cmd.stdin(StdStdio::null());
+        cmd.stdout(StdStdio::null());
+        cmd.stderr(StdStdio::null());
+        cmd.spawn()
+    }) {
+        Ok(Ok(child)) => {
             let pid = i64::from(child.id());
             // Detach: forget the Child so its Drop doesn't wait.
             std::mem::forget(child);
             Ok(ok_variant(Value::Int(pid)))
         }
-        Err(e) => Ok(err_variant(format!("exec::spawn({prog}): {e}"))),
+        Ok(Err(e)) => Ok(err_variant(format!("exec::spawn({display_prog}): {e}"))),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -573,23 +625,29 @@ fn builtin_exec_kill(args: &[Value]) -> RuntimeResult<Value> {
     }
     #[cfg(unix)]
     {
-        let status = StdCommand::new("/bin/kill")
-            .arg("-TERM")
-            .arg(format!("{pid}"))
-            .stdout(StdStdio::null())
-            .stderr(StdStdio::null())
-            .status();
-        Ok(Value::Bool(matches!(status, Ok(s) if s.success())))
+        let pid = *pid;
+        let status = gossamer_runtime::sched_global::run_blocking("exec-kill", move || {
+            StdCommand::new("/bin/kill")
+                .arg("-TERM")
+                .arg(format!("{pid}"))
+                .stdout(StdStdio::null())
+                .stderr(StdStdio::null())
+                .status()
+        });
+        Ok(Value::Bool(matches!(status, Ok(Ok(s)) if s.success())))
     }
     #[cfg(windows)]
     {
         use std::process::{Command as StdCommand, Stdio as StdStdio};
-        let status = StdCommand::new("taskkill")
-            .args(["/F", "/PID", &format!("{pid}")])
-            .stdout(StdStdio::null())
-            .stderr(StdStdio::null())
-            .status();
-        Ok(Value::Bool(matches!(status, Ok(s) if s.success())))
+        let pid = *pid;
+        let status = gossamer_runtime::sched_global::run_blocking("exec-kill", move || {
+            StdCommand::new("taskkill")
+                .args(["/F", "/PID", &format!("{pid}")])
+                .stdout(StdStdio::null())
+                .stderr(StdStdio::null())
+                .status()
+        });
+        Ok(Value::Bool(matches!(status, Ok(Ok(s)) if s.success())))
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -652,8 +710,10 @@ fn builtin_exec_pipeline_run(args: &[Value]) -> RuntimeResult<Value> {
     if stages.is_empty() {
         return Ok(err_variant("exec::pipeline_run: empty pipeline"));
     }
-    match run_pipeline_stages(stages) {
-        Ok((stdout, stderr, code)) => {
+    match gossamer_runtime::sched_global::run_blocking("exec-pipeline", move || {
+        run_pipeline_stages(stages)
+    }) {
+        Ok(Ok((stdout, stderr, code))) => {
             let fields = vec![
                 ("stdout", Value::String(SmolStr::from(stdout))),
                 ("stderr", Value::String(SmolStr::from(stderr))),
@@ -664,6 +724,7 @@ fn builtin_exec_pipeline_run(args: &[Value]) -> RuntimeResult<Value> {
                 Arc::unwrap_or_clone(Arc::new(fields)),
             )))
         }
+        Ok(Err(e)) => Ok(err_variant(e)),
         Err(e) => Ok(err_variant(e)),
     }
 }
@@ -977,8 +1038,14 @@ fn builtin_bufio_scanner_new(args: &[Value]) -> RuntimeResult<Value> {
     use std::io::Read;
     let is_stdin = args.first().is_some_and(|v| stream_fd(v) == 0);
     let lines: Vec<Value> = if is_stdin {
-        let mut buf = String::new();
-        let _ = std::io::stdin().read_to_string(&mut buf);
+        let read = gossamer_runtime::sched_global::run_blocking("stdin-scanner-read", || {
+            let mut buf = String::new();
+            std::io::stdin().read_to_string(&mut buf).map(|_| buf)
+        });
+        let mut buf = match read {
+            Ok(Ok(buf)) => buf,
+            Ok(Err(_)) | Err(_) => String::new(),
+        };
         buf.shrink_to_fit();
         buf.lines()
             .map(|s| Value::String(SmolStr::from(s.to_string())))
@@ -1105,8 +1172,11 @@ fn builtin_bufio_read_lines(args: &[Value]) -> RuntimeResult<Value> {
             "bufio::read_lines: path argument must be a string",
         ));
     };
-    match std::fs::read_to_string(path) {
-        Ok(mut contents) => {
+    let path = path.to_string();
+    match gossamer_runtime::sched_global::run_blocking("bufio-read-lines", move || {
+        std::fs::read_to_string(path)
+    }) {
+        Ok(Ok(mut contents)) => {
             contents.shrink_to_fit();
             let lines: Vec<Value> = contents
                 .lines()
@@ -1114,7 +1184,84 @@ fn builtin_bufio_read_lines(args: &[Value]) -> RuntimeResult<Value> {
                 .collect();
             Ok(ok_variant(Value::Array(Arc::new(lines))))
         }
-        Err(e) => Ok(err_variant(format!("{e}"))),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
+#[cfg(test)]
+mod blocking_file_tests {
+    use super::*;
+
+    fn ok_payload(value: Value) -> Value {
+        match value {
+            Value::Variant(inner) if inner.name == "Ok" => inner.fields[0].clone(),
+            other => panic!("expected Ok result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn whole_file_builtins_preserve_text_and_lines() {
+        let path = std::env::temp_dir().join(format!(
+            "gossamer-blocking-file-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let path_value = Value::String(path.to_string_lossy().into_owned().into());
+        ok_payload(
+            builtin_os_write_file(&[path_value.clone(), Value::String("one\ntwo\n".into())])
+                .expect("write file"),
+        );
+        assert!(matches!(
+            ok_payload(
+                builtin_os_read_file_to_string(std::slice::from_ref(&path_value))
+                    .expect("read file")
+            ),
+            Value::String(text) if text.as_str() == "one\ntwo\n"
+        ));
+        let lines = ok_payload(
+            builtin_bufio_read_lines(std::slice::from_ref(&path_value)).expect("read lines"),
+        );
+        assert!(matches!(lines, Value::Array(lines) if lines.len() == 2));
+
+        let renamed = path.with_extension("renamed");
+        let renamed_value = Value::String(renamed.to_string_lossy().into_owned().into());
+        ok_payload(
+            builtin_os_rename(&[path_value, renamed_value.clone()]).expect("rename file"),
+        );
+        assert!(matches!(
+            ok_payload(
+                builtin_fs_canonicalize(std::slice::from_ref(&renamed_value))
+                    .expect("canonicalize file")
+            ),
+            Value::String(path) if path.as_str().ends_with(".renamed")
+        ));
+        ok_payload(builtin_os_remove_file(&[renamed_value]).expect("remove file"));
+
+        let dir = std::env::temp_dir().join(format!(
+            "gossamer-blocking-dir-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        std::fs::create_dir(&dir).expect("create fixture dir");
+        ok_payload(
+            builtin_fs_remove_dir(&[Value::String(dir.to_string_lossy().into_owned().into())])
+                .expect("remove dir"),
+        );
+        assert!(!dir.exists());
+
+        let nested = std::env::temp_dir().join(format!(
+            "gossamer-blocking-tree-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        std::fs::create_dir_all(nested.join("child")).expect("create nested fixture");
+        ok_payload(
+            builtin_fs_remove_dir_all(&[Value::String(
+                nested.to_string_lossy().into_owned().into(),
+            )])
+            .expect("remove dir all"),
+        );
+        assert!(!nested.exists());
+    }
+}

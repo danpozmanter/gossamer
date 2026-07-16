@@ -16,7 +16,7 @@ fn main() {
     let ys = xs.clone()
     println!("vec: {} {}", ys.len(), ys[2])
 
-    let p = Point { x: 3, y: 4 }
+    let p = Point(3, 4)
     let q = p.clone()
     println!("point: {} {}", q.x, q.y)
 

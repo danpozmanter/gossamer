@@ -18,8 +18,8 @@ impl Square {
 }
 
 fn main() {
-    let c = Circle { radius: 3.0 }
-    let s = Square { side: 4.0 }
+    let c = Circle(3.0)
+    let s = Square(4.0)
 
     // Method-style dispatch
     println!("{} area = {}", c.name(), c.area())
@@ -44,30 +44,30 @@ mod tests {
 
     #[test]
     fn circle_area_pi() {
-        let c = super::Circle { radius: 1.0 }
+        let c = super::Circle(1.0)
         let a = c.area()
         let _ = testing::check(a > 3.14 && a < 3.15, "unit circle area ≈ 3.14159")
     }
 
     #[test]
     fn square_area() {
-        let s = super::Square { side: 4.0 }
+        let s = super::Square(4.0)
         let a = s.area()
         let _ = testing::check(a > 15.9 && a < 16.1, "4x4=16")
     }
 
     #[test]
     fn name_methods() {
-        let c = super::Circle { radius: 1.0 }
-        let s = super::Square { side: 1.0 }
+        let c = super::Circle(1.0)
+        let s = super::Square(1.0)
         let _ = testing::check_eq(&c.name(), &"circle", "circle name")
         let _ = testing::check_eq(&s.name(), &"square", "square name")
     }
 
     #[test]
     fn describe_methods() {
-        let c = super::Circle { radius: 3.0 }
-        let s = super::Square { side: 4.0 }
+        let c = super::Circle(3.0)
+        let s = super::Square(4.0)
         let _ = testing::check(c.describe().contains("3"), "circle describe has radius")
         let _ = testing::check(s.describe().contains("4"), "square describe has side")
     }

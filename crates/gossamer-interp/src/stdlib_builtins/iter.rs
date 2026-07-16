@@ -145,6 +145,26 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         globals.push((qualified, crate::builtins::builtin_pub(qualified, *call)));
     }
 
+    // Explicit compatibility spellings for code migrated before the lazy
+    // edition changes these names to return iterator state. Keep these aliases
+    // on the same entry points as their eager counterparts.
+    let eager_static_aliases: &[(&str, BuiltinFnPub)] = &[
+        ("eager_chain", builtin_iter_chain),
+        ("eager_collect", builtin_iter_collect),
+        ("eager_count", builtin_iter_count),
+        ("eager_enumerate", builtin_iter_enumerate),
+        ("eager_range", builtin_iter_range),
+        ("eager_range_inclusive", builtin_iter_range_inclusive),
+        ("eager_skip", builtin_iter_skip),
+        ("eager_sum", builtin_iter_sum),
+        ("eager_take", builtin_iter_take),
+        ("eager_zip", builtin_iter_zip),
+    ];
+    for (short, call) in eager_static_aliases {
+        let qualified: &'static str = Box::leak(format!("iter::{short}").into_boxed_str());
+        globals.push((qualified, crate::builtins::builtin_pub(qualified, *call)));
+    }
+
     // Closure-taking functions - must be `native` to access the interpreter.
     let native_entries: &[(&str, NativeCall)] = &[
         ("for_each", native_iter_for_each),
@@ -175,6 +195,19 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("count_by", native_iter_count_by),
     ];
     for (short, call) in native_entries {
+        let qualified: &'static str = Box::leak(format!("iter::{short}").into_boxed_str());
+        globals.push((qualified, Value::native(qualified, *call)));
+    }
+
+    let eager_native_aliases: &[(&str, NativeCall)] = &[
+        ("eager_all", native_iter_all),
+        ("eager_any", native_iter_any),
+        ("eager_filter", native_iter_filter),
+        ("eager_find", native_iter_find),
+        ("eager_fold", native_iter_fold),
+        ("eager_map", native_iter_map),
+    ];
+    for (short, call) in eager_native_aliases {
         let qualified: &'static str = Box::leak(format!("iter::{short}").into_boxed_str());
         globals.push((qualified, Value::native(qualified, *call)));
     }

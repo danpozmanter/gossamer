@@ -131,9 +131,12 @@ pub(crate) fn install_http_static_files(globals: &mut Vec<(&'static str, Value)>
 
 pub(crate) fn builtin_static_serve_file(args: &[Value]) -> RuntimeResult<Value> {
     let path = arg_str(args.first());
-    match std::fs::read(&path) {
-        Ok(bytes) => {
-            let mime = guess_mime_from_path(&path);
+    let mime_path = path.clone();
+    match gossamer_runtime::sched_global::run_blocking("http-static-read", move || {
+        std::fs::read(path)
+    }) {
+        Ok(Ok(bytes)) => {
+            let mime = guess_mime_from_path(&mime_path);
             let mut fields = vec![
                 ("status", Value::Int(200)),
                 (
@@ -151,7 +154,8 @@ pub(crate) fn builtin_static_serve_file(args: &[Value]) -> RuntimeResult<Value> 
                 Arc::unwrap_or_clone(Arc::new(fields)),
             )))
         }
-        Err(e) => Ok(err_variant(format!("{e}"))),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -182,5 +186,25 @@ pub(crate) fn guess_mime_from_path(path: &str) -> &'static str {
         "txt" | "md" => "text/plain; charset=utf-8",
         "xml" => "application/xml",
         _ => "application/octet-stream",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serve_file_reads_through_blocking_pool() {
+        let path = std::env::temp_dir().join(format!(
+            "gossamer-static-file-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        std::fs::write(&path, "static body").expect("write fixture");
+        let result =
+            builtin_static_serve_file(&[Value::String(path.to_string_lossy().into_owned().into())])
+                .expect("serve file");
+        assert!(matches!(result, Value::Variant(inner) if inner.name == "Ok"));
+        std::fs::remove_file(path).expect("remove fixture");
     }
 }

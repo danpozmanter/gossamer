@@ -99,6 +99,13 @@ shared pool. The pool size defaults to `num_cpus()`, overridable
 via `GOSSAMER_MAX_PROCS=N` or `runtime::set_max_procs(n)` from
 user code.
 
+Deferred JIT promotion reports compile time, emitted native-code bytes, and
+process RSS through VM diagnostics. Set `GOS_JIT_MAX_CODE_BYTES=N` to reject a
+promotion whose retained code would exceed `N` bytes for that VM; set
+`GOS_JIT_MAX_RSS_MB=N` to reject a promotion before compilation when the
+process is already at its RSS budget. A rejected artifact releases its MIR
+snapshot and remains on bytecode.
+
 A `MultiScheduler` owns:
 
 - one work-stealing deque per worker M (a `crossbeam_deque::Worker`),
@@ -157,16 +164,17 @@ to the injector instead of leaving it parked.
 
 ## Preemption
 
-Scheduling is **cooperative with watchdog-assisted preemption** - the
-Go pre-1.14 model plus the first half of Go's async-preemption work.
+Scheduling uses cooperative safepoints with watchdog-requested preemption.
 
 A goroutine yields the worker M at *safepoints*:
 
 - every park point - channel send/recv, `select`, mutex contention,
-  `time::sleep`, network reads, filesystem syscalls (see *Goroutines*
-  above),
+  `time::sleep`, scheduler-aware network reads, and core filesystem operations,
 - function-call / scheduler-step boundaries, where the worker can
-  reclaim the coroutine between `step()` invocations.
+  reclaim the coroutine between `step()` invocations,
+- amortized loop back-edge polls. LLVM and Cranelift poll every 1,024 taken
+  backedges and suspend the current coroutine when the watchdog phase changes.
+  The bytecode VM yields its OS worker every 1,024 taken backedges.
 
 The watchdog thread (`sched::multi::watchdog_loop`, 5 ms tick) escalates
 against a worker that has not reached a safepoint:
@@ -180,19 +188,19 @@ against a worker that has not reached a safepoint:
   importantly, interrupts a blocking syscall the worker is stuck
   inside (the kernel returns `EINTR`).
 
-**Current limitation.** The safepoint poll at *loop back-edges* is
-deliberately not emitted by the LLVM and Cranelift backends:
-`emit_preempt_check` is a no-op stub because an opaque runtime call on
-every back-edge blocks `opt -O3` from vectorising tight numeric inner
-loops (the difference between sub-second and multi-second runs on
-spectral-norm / n-body). The interpreter likewise does not poll at
-back-edges. So a goroutine spinning in a tight, call-free, pure-compute
-loop is **not** asynchronously preempted today - it yields only when it
-makes a call or reaches a park point. Because the pool is M:N, such a
-goroutine starves at most one worker thread; the other workers keep
-running every other goroutine. Emitting real back-edge safepoints
-(behind a flag that preserves the vectoriser fast path) is the planned
-completion of async preemption.
+The compiled hot path is a decrement and branch; the runtime call occurs only
+when the counter expires, preserving a bounded polling cost. The native
+scheduler has a one-worker fairness regression that proves a call-free loop
+hands control to a runnable peer. The VM uses a separate bounded OS-thread pool,
+so its backedge poll yields an OS worker rather than suspending a stackful
+coroutine. A VM configured with one goroutine worker can still be monopolized by
+one nonterminating task; replacing that pool with resumable VM frames remains a
+tracked limitation.
+
+Not every host operation is scheduler-aware yet. Core filesystem file and path
+I/O, HTTP client work, channels, timers, and socket readiness are routed or
+parked. Specialty filesystem bridges, some process pipe operations, compression,
+terminal calls, and third-party binding code still require effect-ledger audit.
 
 ## Netpoller
 

@@ -24,7 +24,12 @@ fn synthesize_stdlib_wrappers(source: &str) -> String {
     if source.contains("time::after") {
         stdlib_wrappers.push_str(TIME_TIMER_WRAPPERS);
     }
-    stdlib_wrappers
+    // Wrapper templates are authored in one place but compile as ordinary
+    // Gossamer source. Canonicalize their constructors before injection so
+    // generated code follows the same public syntax rule as user programs.
+    let mut map = gossamer_lex::SourceMap::new();
+    let file = map.add_file("<stdlib-wrappers>", stdlib_wrappers.clone());
+    migrate_braced_struct_constructors(&stdlib_wrappers, file).unwrap_or(stdlib_wrappers)
 }
 
 /// Real-struct + wrapper source for `std::encoding::pem`. The
@@ -947,4 +952,3 @@ fn __gos_http_request_form_file(r: http::Request, name: &String) -> Option<__gos
 }
 
 "##;
-

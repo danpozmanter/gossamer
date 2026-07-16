@@ -54,6 +54,21 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+  macos-deployment-target:
+    name: macOS 15 deployment target
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-test-setup
+        with:
+          cache-prefix: v2-macos-15-deployment-target
+      - name: Verify final Mach-O deployment target
+        run: |
+          "$CARGO_BIN" test -p gossamer-cli --test cli \
+            macos_build_records_15_0_deployment_target -- \
+            --exact --nocapture
+
   test-native:
     name: Test native (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

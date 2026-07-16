@@ -394,7 +394,9 @@ fn walk_expr_other<V: Visitor + ?Sized>(visitor: &mut V, expr: &Expr) {
                 visitor.visit_expr(expr);
             }
         }
-        ExprKind::Struct { path, fields, base } => {
+        ExprKind::Struct {
+            path, fields, base, ..
+        } => {
             visitor.visit_path_expr(path);
             for field in fields {
                 walk_struct_expr_field(visitor, field);

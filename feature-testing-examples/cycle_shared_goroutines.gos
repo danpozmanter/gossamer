@@ -38,18 +38,18 @@ fn main() {
     let mut round = 0
     while round < 200 {
         // A value that escapes to the worker goroutine (marked shared).
-        let escaped = Node { id: round, next: None, shared: None }
+        let escaped = Node(round, None, None)
         tx.send(escaped)
 
         // A thread-local cycle a <-> b whose member also references a
         // node built from shared-adjacent data. The cycle dies at the end
         // of the round; the collector reclaims it and releases the
         // out-edge exactly once.
-        let mut a = Node { id: round * 2, next: None, shared: None }
-        let mut b = Node { id: round * 3, next: None, shared: None }
+        let mut a = Node(round * 2, None, None)
+        let mut b = Node(round * 3, None, None)
         b.next = Some(Box::new(a))
         a.next = Some(Box::new(b))
-        a.shared = Some(Box::new(Node { id: round, next: None, shared: None }))
+        a.shared = Some(Box::new(Node(round, None, None)))
         total += a.id
         if let Some(n) = a.next {
             total += n.id

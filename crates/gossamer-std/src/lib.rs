@@ -96,6 +96,8 @@ pub mod http_state;
 pub mod http_static_files;
 /// WebSocket (RFC 6455) - first-party stdlib support.
 pub mod http_websocket;
+/// In-memory RGBA image model with PNG and JPEG codecs.
+pub mod image;
 pub mod io;
 pub mod iter;
 /// JWT (JSON Web Tokens, RFC 7519) - HS256/384/512, ES256, EdDSA.

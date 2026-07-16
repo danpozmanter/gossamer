@@ -382,7 +382,9 @@ impl Walker {
                     self.visit_expr(part);
                 }
             }
-            ExprKind::Struct { path, fields, base } => {
+            ExprKind::Struct {
+                path, fields, base, ..
+            } => {
                 self.visit_struct_path(path, expr);
                 for field in fields {
                     self.visit_struct_expr_field(expr.id, field, expr.span);

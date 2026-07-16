@@ -160,9 +160,12 @@ pub(crate) fn native_file_server_serve(
             return Ok(ok_variant(super::http_router::http_404_response()));
         }
     };
-    match std::fs::read(&full) {
-        Ok(bytes) => {
-            let mime = super::http_static_files::guess_mime_from_path(&full.to_string_lossy());
+    let mime_path = full.to_string_lossy().into_owned();
+    match gossamer_runtime::sched_global::run_blocking("http-static-read", move || {
+        std::fs::read(full)
+    }) {
+        Ok(Ok(bytes)) => {
+            let mime = super::http_static_files::guess_mime_from_path(&mime_path);
             let total = bytes.len() as u64;
             let range_header = request_header(args.get(1), "range");
             use gossamer_runtime::c_abi::http_bridges::{
@@ -203,6 +206,6 @@ pub(crate) fn native_file_server_serve(
             };
             Ok(ok_variant(response))
         }
-        Err(_) => Ok(ok_variant(super::http_router::http_404_response())),
+        Ok(Err(_)) | Err(_) => Ok(ok_variant(super::http_router::http_404_response())),
     }
 }

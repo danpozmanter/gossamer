@@ -1865,6 +1865,7 @@ impl<'a> Builder<'a> {
             accept_kind,
             Some("net::accept_pair" | "net::unix_accept_pair")
         );
+        let temp_file_pair = accept_kind == Some("fs::temp_file_pair");
         let accept_stream_kind = if accept_kind == Some("net::unix_accept_pair") {
             "net::UnixStream"
         } else {
@@ -1946,6 +1947,9 @@ impl<'a> Builder<'a> {
             if accept_pair && field_idx == 0 {
                 self.local_runtime_kind
                     .insert(element_local, accept_stream_kind);
+            }
+            if temp_file_pair && field_idx == 0 {
+                self.local_runtime_kind.insert(element_local, "fs::File");
             }
             let projection = vec![crate::ir::Projection::Field(
                 u32::try_from(field_idx).expect("tuple projection overflow"),

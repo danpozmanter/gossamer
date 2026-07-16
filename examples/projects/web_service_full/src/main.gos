@@ -44,9 +44,9 @@ struct Note { id: i64, body: String }
 // request goroutines the server fans out to.
 fn seed_notes() -> [Note] {
     [
-        Note { id: 1, body: "first note" },
-        Note { id: 2, body: "second note" },
-        Note { id: 3, body: "third note" },
+        Note(1, "first note"),
+        Note(2, "second note"),
+        Note(3, "third note"),
     ]
 }
 
@@ -168,7 +168,7 @@ fn list_notes(_r: http::Request) -> Result<http::Response, http::Error> {
 
 fn create_note(r: http::Request) -> Result<http::Response, http::Error> {
     let body = extract_body(&r.body)
-    let created = Note { id: seed_notes().len() + 1, body: body }
+    let created = Note(seed_notes().len() + 1, body)
     slog::info("POST /notes")
     Ok(http::Response::json(201, render_note_json(&created)))
 }
@@ -261,14 +261,14 @@ mod web_service_tests {
 
     #[test]
     fn note_json_escapes_quotes() {
-        let note = super::Note { id: 7, body: "a\"b" }
+        let note = super::Note(7, "a\"b")
         let out = super::render_note_json(&note)
         let _ = testing::check_eq(&out, &"{\"id\":7,\"body\":\"a\\\"b\"}", "escaped note json")
     }
 
     #[test]
     fn html_escapes_markup() {
-        let note = super::Note { id: 1, body: "<script>" }
+        let note = super::Note(1, "<script>")
         let notes = [note]
         let out = super::render_notes_html(&notes)
         let _ = testing::check(out.contains("&lt;script&gt;"), "markup escaped")

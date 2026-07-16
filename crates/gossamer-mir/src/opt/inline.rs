@@ -637,6 +637,41 @@ fn remap_statement_full(stmt: &Statement, remap: &impl Fn(Local) -> Local) -> St
             target: target.clone(),
             value: remap_operand_full(value, remap),
         },
+        StatementKind::IterSource {
+            dst,
+            source_kind,
+            source,
+            item_ty,
+            ownership,
+        } => StatementKind::IterSource {
+            dst: remap_place_full(dst, remap),
+            source_kind: *source_kind,
+            source: remap_operand_full(source, remap),
+            item_ty: *item_ty,
+            ownership: *ownership,
+        },
+        StatementKind::IterAdapter {
+            dst,
+            adapter_kind,
+            upstream,
+            closure_or_arg,
+            item_ty,
+        } => StatementKind::IterAdapter {
+            dst: remap_place_full(dst, remap),
+            adapter_kind: *adapter_kind,
+            upstream: remap_place_full(upstream, remap),
+            closure_or_arg: closure_or_arg.as_ref().map(|arg| remap_operand_full(arg, remap)),
+            item_ty: *item_ty,
+        },
+        StatementKind::IterNext {
+            dst_option,
+            iter_place,
+            item_ty,
+        } => StatementKind::IterNext {
+            dst_option: remap_place_full(dst_option, remap),
+            iter_place: remap_place_full(iter_place, remap),
+            item_ty: *item_ty,
+        },
         StatementKind::Nop => StatementKind::Nop,
     };
     Statement {
@@ -1014,4 +1049,3 @@ pub(crate) fn aggregate_locals(body: &Body, tcx: &TyCtxt) -> Vec<bool> {
         })
         .collect()
 }
-

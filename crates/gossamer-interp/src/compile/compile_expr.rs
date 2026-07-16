@@ -2857,6 +2857,9 @@ impl<'tcx> FnBuilder<'tcx> {
         args: &[HirExpr],
         result_ty: Ty,
     ) -> RuntimeResult<Reg> {
+        if let Some(reg) = self.try_compile_struct2_i64(callee, args, result_ty)? {
+            return Ok(reg);
+        }
         // Typed-IntMap construction fast path: when the callee is
         // `HashMap::new` and the result type is `HashMap<i64, i64>`,
         // emit a dedicated `Op::BuildIntMap` so the receiver lands
@@ -3082,6 +3085,160 @@ impl<'tcx> FnBuilder<'tcx> {
             self.compile_place_store(place, tmp)?;
         }
         Ok(dst)
+    }
+
+    /// Recognises the HIR lowering of `Pair(a, b)` / a two-field positional
+    /// struct constructor and keeps both scalar operands in the integer
+    /// register file. The generic `__struct` builtin remains the fallback for
+    /// named fields, non-integer payloads, and every other arity.
+    fn try_compile_struct2_i64(
+        &mut self,
+        callee: &HirExpr,
+        args: &[HirExpr],
+        result_ty: Ty,
+    ) -> RuntimeResult<Option<Reg>> {
+        if let HirExprKind::Path { def: Some(def), .. } = &callee.kind
+            && args.len() == 2
+            && args
+                .iter()
+                .all(|arg| matches!(self.tcx.kind(arg.ty), Some(TyKind::Int(_))))
+            && self.tcx.struct_field_tys(*def).is_some_and(|tys| {
+                tys.len() == 2
+                    && tys
+                        .iter()
+                        .all(|ty| matches!(self.tcx.kind(*ty), Some(TyKind::Int(_))))
+            })
+            && let Some(type_name) = self.tcx.def_name(*def)
+            && matches!(self.tcx.kind(result_ty), Some(TyKind::Adt { def: result_def, .. }) if *result_def == *def)
+        {
+            let first = self.compile_expr_ex(&args[0])?;
+            let first_i = self.as_i64(first);
+            let second = self.compile_expr_ex(&args[1])?;
+            let second_i = self.as_i64(second);
+            let dst = self.alloc_reg();
+            let type_name = self.shape_name_idx(type_name);
+            let field0 = self.shape_name_idx("0");
+            let field1 = self.shape_name_idx("1");
+            self.emit(Op::Struct2I64 {
+                dst,
+                type_name,
+                field0,
+                field1,
+                first_i,
+                second_i,
+            });
+            return Ok(Some(dst));
+        }
+        if let HirExprKind::Path { segments, .. } = &callee.kind
+            && let [segment] = segments.as_slice()
+            && args.len() == 2
+            && args
+                .iter()
+                .all(|arg| matches!(self.tcx.kind(arg.ty), Some(TyKind::Int(_))))
+            && let Some((def, field_names)) = self.layouts.iter().find(|(def, names)| {
+                names.len() == 2 && self.tcx.def_name(**def) == Some(segment.name.as_str())
+            })
+            && self.tcx.struct_field_tys(*def).is_some_and(|tys| {
+                tys.len() == 2
+                    && tys
+                        .iter()
+                        .all(|ty| matches!(self.tcx.kind(*ty), Some(TyKind::Int(_))))
+            })
+            && matches!(self.tcx.kind(result_ty), Some(TyKind::Adt { def: result_def, .. }) if *result_def == *def)
+        {
+            let type_name = segment.name.clone();
+            let field0 = field_names[0].clone();
+            let field1 = field_names[1].clone();
+            let first = self.compile_expr_ex(&args[0])?;
+            let first_i = self.as_i64(first);
+            let second = self.compile_expr_ex(&args[1])?;
+            let second_i = self.as_i64(second);
+            let dst = self.alloc_reg();
+            let type_name = self.shape_name_idx(&type_name);
+            let field0 = self.shape_name_idx(&field0);
+            let field1 = self.shape_name_idx(&field1);
+            self.emit(Op::Struct2I64 {
+                dst,
+                type_name,
+                field0,
+                field1,
+                first_i,
+                second_i,
+            });
+            return Ok(Some(dst));
+        }
+        if let HirExprKind::Path { def: Some(def), .. } = &callee.kind
+            && let Some(field_tys) = self.tcx.struct_field_tys(*def)
+            && field_tys.len() == 2
+            && field_tys
+                .iter()
+                .all(|ty| matches!(self.tcx.kind(*ty), Some(TyKind::Int(_))))
+            && args.len() == 2
+            && args
+                .iter()
+                .all(|arg| matches!(self.tcx.kind(arg.ty), Some(TyKind::Int(_))))
+            && let Some(field_names) = self.layouts.get(def).filter(|names| names.len() == 2)
+            && let Some(type_name) = self.tcx.def_name(*def)
+            && matches!(self.tcx.kind(result_ty), Some(TyKind::Adt { def: result_def, .. }) if result_def == def)
+        {
+            let field0 = field_names[0].clone();
+            let field1 = field_names[1].clone();
+            let first = self.compile_expr_ex(&args[0])?;
+            let first_i = self.as_i64(first);
+            let second = self.compile_expr_ex(&args[1])?;
+            let second_i = self.as_i64(second);
+            let dst = self.alloc_reg();
+            let type_name = self.shape_name_idx(type_name);
+            let field0 = self.shape_name_idx(&field0);
+            let field1 = self.shape_name_idx(&field1);
+            self.emit(Op::Struct2I64 {
+                dst,
+                type_name,
+                field0,
+                field1,
+                first_i,
+                second_i,
+            });
+            return Ok(Some(dst));
+        }
+        let HirExprKind::Path { segments, .. } = &callee.kind else {
+            return Ok(None);
+        };
+        if !matches!(segments.as_slice(), [segment] if segment.name == "__struct")
+            || args.len() != 5
+        {
+            return Ok(None);
+        }
+        let (
+            HirExprKind::Literal(HirLiteral::String(type_name)),
+            HirExprKind::Literal(HirLiteral::String(field0)),
+            HirExprKind::Literal(HirLiteral::String(field1)),
+        ) = (&args[0].kind, &args[1].kind, &args[3].kind)
+        else {
+            return Ok(None);
+        };
+        if !matches!(self.tcx.kind(args[2].ty), Some(TyKind::Int(_)))
+            || !matches!(self.tcx.kind(args[4].ty), Some(TyKind::Int(_)))
+        {
+            return Ok(None);
+        }
+        let first = self.compile_expr_ex(&args[2])?;
+        let first_i = self.as_i64(first);
+        let second = self.compile_expr_ex(&args[4])?;
+        let second_i = self.as_i64(second);
+        let dst = self.alloc_reg();
+        let type_name = self.shape_name_idx(type_name);
+        let field0 = self.shape_name_idx(field0);
+        let field1 = self.shape_name_idx(field1);
+        self.emit(Op::Struct2I64 {
+            dst,
+            type_name,
+            field0,
+            field1,
+            first_i,
+            second_i,
+        });
+        Ok(Some(dst))
     }
 
     /// True when a call's callee is the `__concat` string builder that

@@ -1,8 +1,8 @@
 // A by-value struct with a `Vec` / `[T]` field: construction moves the vector
-// in, a struct copy / `..base` update shares it (retained through the vec
+// in, and a copied positional constructor shares it (retained through the vec
 // count), a field extract borrows it, and every owner frees it exactly once at
 // death. Exercises the drop pass's Vec/Slice field teardown and the Cranelift
-// single-slot-aggregate and struct-update lowering across all three tiers.
+// single-slot-aggregate lowering across all three tiers.
 
 struct Rec { data: [i64], name: String }
 struct Box2 { data: [i64] }
@@ -18,7 +18,7 @@ fn make(n: i64) -> Rec {
         v.push(i * 2)
         i += 1
     }
-    Rec { data: v, name: "row" }
+    Rec(v, "row")
 }
 
 // Single-field struct: the whole aggregate is one word (its vec).
@@ -29,7 +29,7 @@ fn make_box(n: i64) -> Box2 {
         v.push(i)
         i += 1
     }
-    Box2 { data: v }
+    Box2(v)
 }
 
 fn sum_of(xs: &[i64]) -> i64 {
@@ -65,14 +65,14 @@ fn main() {
         let mut nv: [i64] = []
         nv.push(r)
         nv.push(r + 1)
-        let o = Outer { inner: Inner { xs: nv, tag: "t" }, id: r }
+        let o = Outer(Inner(nv, "t"), r)
         total += sum_of(&o.inner.xs) + o.id + o.inner.tag.len()
 
-        // `..base` update sharing the vec field
+        // Positional copy sharing the vec field
         let mut bv: [i64] = []
         bv.push(r * 3)
-        let base = Tagged { data: bv, name: "b", id: r }
-        let upd = Tagged { ..base, id: r + 1 }
+        let base = Tagged(bv, "b", r)
+        let upd = Tagged(base.data, base.name, r + 1)
         total += sum_of(&base.data) + sum_of(&upd.data) + upd.id + upd.name.len()
 
         r += 1

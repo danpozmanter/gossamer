@@ -44,29 +44,48 @@ use gossamer_codegen_cranelift::{JitFn, JitKind, TupleElem};
 use gossamer_runtime::c_abi as rt;
 
 use crate::value::{
-    NativeEnumShape, NativeFieldKind, NativeStructShape, SmolStr, StructInner, Value, VariantInner,
-    native_struct_shape,
+    NativeEnumShape, NativeFieldKind, NativeStructShape, SmolStr, StructInner, ThreadConfinedCell,
+    Value, VariantInner, native_struct_shape,
 };
 
 /// One trampoline-owned native object built for an aggregate parameter,
 /// recorded so it can be written back (for `&mut` params) and freed once
 /// the JIT body returns. `cell` is `Some` only for a `&mut` argument
 /// whose mutations the caller must observe.
-type NativeArg = (JitKind, i64, Option<Arc<parking_lot::Mutex<Value>>>);
+type NativeArg = (JitKind, i64, Option<Arc<ThreadConfinedCell>>);
 
 /// Builds a fresh, trampoline-owned native object for an aggregate
 /// parameter from the VM value, returning its heap pointer as `i64`.
 /// `None` when `value` is not a shape this kind can marshal (the caller
 /// then falls back to bytecode).
 fn build_native_arg(kind: JitKind, value: &Value) -> Option<i64> {
-    match kind {
+    let result = match kind {
         JitKind::NativeVecI64 => build_native_vec_i64(value),
         JitKind::NativeVecF64 => build_native_vec_f64(value),
         JitKind::NativeVecTupleIF => build_native_vec_tuple_if(value),
         JitKind::NativeStr => build_native_str(value),
         JitKind::U8VecHandle => build_native_u8vec(value),
         _ => None,
+    };
+    if result.is_some() {
+        let bytes = match (kind, value) {
+            (JitKind::NativeVecI64, Value::IntArray(values)) => values.len().saturating_mul(8),
+            (JitKind::NativeVecI64, Value::Array(values)) => values.len().saturating_mul(8),
+            (JitKind::NativeVecF64, Value::FloatVec(values)) => values.len().saturating_mul(8),
+            (JitKind::NativeVecF64, Value::FloatArray(values)) => {
+                values.data.len().saturating_mul(8)
+            }
+            (JitKind::NativeVecF64, Value::Array(values)) => values.len().saturating_mul(8),
+            (JitKind::NativeVecTupleIF, Value::Array(values)) => values.len().saturating_mul(16),
+            (JitKind::NativeStr, Value::String(value)) => value.len(),
+            (JitKind::U8VecHandle, _) => {
+                crate::builtins::u8vec_snapshot_bytes(value).map_or(0, |bytes| bytes.len())
+            }
+            _ => 0,
+        };
+        rt::ledger::benchmark_boundary_copy(bytes);
     }
+    result
 }
 
 /// Builds an owned `*mut GosVec` of 8-byte `f64` slots from a VM float
@@ -223,9 +242,11 @@ fn read_native_u8vec(ptr: i64) -> Vec<u8> {
     // SAFETY: `v` is a live `GosU8Vec` the trampoline built; `len`/`get`
     // read initialised in-bounds bytes.
     let len = unsafe { rt::gos_rt_heap_u8_len(v) }.max(0);
-    (0..len)
+    let bytes: Vec<u8> = (0..len)
         .map(|i| unsafe { rt::gos_rt_heap_u8_get(v, i) } as u8)
-        .collect()
+        .collect();
+    rt::ledger::benchmark_boundary_copy(bytes.len());
+    bytes
 }
 
 /// Builds an owned `*mut GosVec` of 8-byte `i64` slots from a VM integer
@@ -1193,7 +1214,7 @@ fn free_natives(natives: &[NativeArg], ret: Option<(JitKind, i64)>) {
 /// One `&mut String` write-through cell: a heap-boxed slot holding the native
 /// string pointer (so the JIT body's pointer-to-slot append / realloc updates
 /// it), paired with the caller's binding the final value is read back into.
-type StrCell = (Box<i64>, std::sync::Arc<parking_lot::Mutex<Value>>);
+type StrCell = (Box<i64>, Arc<ThreadConfinedCell>);
 
 /// Recursively frees the native enum trees marshalled in for `EnumPtr`
 /// `Value::Variant` params (each was built by `build_variant_to_native_enum`
@@ -1392,9 +1413,9 @@ macro_rules! call_through {
             | JitKind::U8VecHandle => {
                 unreachable!("native aggregate returns are canonicalized to I64")
             }
-            // Struct returns are declined in `prepare`, so a `StructPtr`
-            // return never reaches a stub.
-            JitKind::StructPtr(_) => unreachable!("struct returns are declined in prepare"),
+            // Struct returns are canonicalized to I64 in `prepare` and decoded
+            // from their caller-owned sret block by `invoke_prepared_native`.
+            JitKind::StructPtr(_) => unreachable!("struct returns are decoded in invoke_prepared_native"),
             // A tuple return is canonicalised to `I64` in `prepare` and decoded
             // in `invoke_prepared_native`; the stub only ever sees the `I64`.
             JitKind::TupleReturn(_) => {
@@ -2721,9 +2742,14 @@ pub(crate) struct Prepared {
     /// path copies and frees the `Ok` string payload or decodes the `Err`.
     result_native_str: bool,
     /// `Some(kind)` when the real return was a native aggregate
-    /// (`NativeStr` / `NativeVecI64`); the raw pointer is read back and
-    /// freed after the call.
+    /// (`NativeStr` / native `Vec` / `StructPtr`); the raw pointer is read
+    /// back and freed after the call when it owns a runtime allocation.
     native_return: Option<JitKind>,
+    /// `Some(shape_idx)` when the real return is a registered flat struct.
+    /// The compiled body uses its sret ABI, so dispatch provides a
+    /// caller-owned flat field block as a hidden trailing parameter and
+    /// decodes it after the call. The shape index sizes and types that block.
+    struct_return: Option<u32>,
     /// `Some(elems)` when the real return was a 2-tuple: the stub yields a
     /// pointer to the `gos_rt_aggr_alloc` block (`[elem@i*8]`); the native
     /// path reads each slot per `TupleElem`, builds a `Value::Tuple`, and
@@ -2788,10 +2814,10 @@ fn trace_prepare_fail(name: &str, reason: &str) {
 /// Resolves dispatch data for `jit`, or `None` if the trampoline can't
 /// cover its shape (the caller then keeps the body on bytecode).
 pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
-    // A 2-tuple return adds a hidden sret pointer arg, so the body's native
+    // Structural returns add a hidden sret pointer arg, so the body's native
     // arity is one more than its user param count.
-    let is_tuple_ret = matches!(jit.returns, JitKind::TupleReturn(_));
-    let native_arity = jit.params.len() + usize::from(is_tuple_ret);
+    let is_sret_return = matches!(jit.returns, JitKind::TupleReturn(_) | JitKind::StructPtr(_));
+    let native_arity = jit.params.len() + usize::from(is_sret_return);
     if native_arity > MAX_ARGS {
         trace_prepare_fail(&jit.name, "native arity exceeds MAX_ARGS");
         return None;
@@ -2831,13 +2857,10 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
             None,
             false,
         ),
-        // A struct return is a pointer to a stack-local block that would
-        // dangle past the call; body_kinds already declines these, but
-        // guard here too rather than mis-marshal a raw pointer.
-        JitKind::StructPtr(_) => {
-            trace_prepare_fail(&jit.name, "struct return not marshalled");
-            return None;
-        }
+        // Struct returns use the same structural-return ABI as tuples: the
+        // caller supplies a flat field-slot block and the body returns that
+        // stable pointer after filling it.
+        k @ JitKind::StructPtr(_) => (JitKind::I64, None, Some(k), None, false),
         // A 2-tuple return is a pointer to a heap (`gos_rt_aggr_alloc`)
         // block; the stub reads it as `I64` and the native path decodes the
         // slots into a `Value::Tuple`.
@@ -2846,6 +2869,10 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
     };
     let tuple_return = match jit.returns {
         JitKind::TupleReturn(elems) => Some(elems),
+        _ => None,
+    };
+    let struct_return = match jit.returns {
+        JitKind::StructPtr(idx) => Some(idx),
         _ => None,
     };
     // An `EnumPtr` param or return whose shape carries `Vec`-bearing variants
@@ -2887,6 +2914,7 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
         result_enum,
         result_native_str,
         native_return,
+        struct_return,
         tuple_return,
         has_native,
         verified: std::cell::Cell::new(false),
@@ -3251,13 +3279,30 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
         slots[i] = slot;
     }
     let n = jit.params.len();
-    // A 2-tuple body uses the sret ABI: pass a caller-owned 16-byte result
-    // buffer as the hidden trailing arg. The body fills it (no per-call heap
-    // block) and returns its pointer, which `raw` then reads directly - the
-    // buffer lives on this stack frame, so there is nothing to free.
+    // Structural returns use a caller-owned hidden trailing result block. A
+    // tuple's fixed two slots live on this stack frame; a struct's shape-sized
+    // field block owns any string slots the body returns and releases them
+    // when it drops after decoding.
     let mut sret_buf = [0i64; 2];
+    let mut struct_sret = match p.struct_return {
+        Some(idx) => {
+            let Some(shape) = native_struct_shape(idx) else {
+                free_in_flight(&natives, &built_enums, &str_cells);
+                return Dispatch::Fallback;
+            };
+            Some(NativeStructBacking {
+                // Empty structs still cross through a one-word ABI slot.
+                slots: vec![0; shape.fields.len().max(1)].into_boxed_slice(),
+                shape,
+            })
+        }
+        None => None,
+    };
     let n_call = if p.tuple_return.is_some() {
         slots[n] = Slot::I(sret_buf.as_mut_ptr() as i64);
+        n + 1
+    } else if let Some(backing) = &mut struct_sret {
+        slots[n] = Slot::I(backing.as_ptr());
         n + 1
     } else {
         n

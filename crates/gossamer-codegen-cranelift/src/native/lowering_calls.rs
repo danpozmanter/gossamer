@@ -300,6 +300,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_fs_file_read" => (&[types::I64, types::I64], Some(types::I128)),
         "gos_rt_fs_file_read_to_string" => (&[types::I64], Some(types::I128)),
         "gos_rt_fs_file_write" => (&[types::I64, ptr_ty], Some(types::I128)),
+        "gos_rt_fs_temp_dir" | "gos_rt_fs_temp_file" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_fs_open_options_new" => (&[], Some(types::I64)),
         "gos_rt_fs_open_options_append"
         | "gos_rt_fs_open_options_create"
@@ -695,7 +696,20 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_testing_check" => (&[types::I8, ptr_ty], Some(types::I8)),
         "gos_rt_testing_check_eq_i64" => (&[types::I64, types::I64, ptr_ty], Some(types::I8)),
         "gos_rt_testing_wait_for_scheduler_idle" => (&[types::I64], Some(types::I8)),
+        "gos_rt_httptest_server" => (&[types::I64, ptr_ty], Some(ptr_ty)),
+        "gos_rt_image_new" => (&[types::I64, types::I64], Some(types::I64)),
+        "gos_rt_image_filled" => (&[types::I64, types::I64, types::I64], Some(types::I64)),
+        "gos_rt_image_decode_base64" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_image_width" | "gos_rt_image_height" => (&[types::I64], Some(types::I64)),
+        "gos_rt_image_pixel" => (&[types::I64, types::I64, types::I64], Some(types::I64)),
+        "gos_rt_image_set_pixel" => (
+            &[types::I64, types::I64, types::I64, types::I64],
+            Some(types::I64),
+        ),
+        "gos_rt_image_encode_png_base64" => (&[types::I64], Some(ptr_ty)),
+        "gos_rt_image_encode_jpeg_base64" => (&[types::I64, types::I64], Some(ptr_ty)),
         "gos_rt_runtime_scheduler_stats_json" => (&[], Some(ptr_ty)),
+        "gos_rt_runtime_cycle_collection_supported" => (&[], Some(types::I8)),
         "gos_rt_parse_i64_result" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_count_by_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_filter_map_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),

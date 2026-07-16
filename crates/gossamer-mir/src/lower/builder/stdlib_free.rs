@@ -352,6 +352,7 @@ impl<'a> Builder<'a> {
         resolved = resolved.or_else(|| self.lower_collections_free(joined, args));
         resolved = resolved.or_else(|| self.lower_collections_2_free(joined, args));
         resolved = resolved.or_else(|| self.lower_url_runtime_misc_free(joined, args));
+        resolved = resolved.or_else(|| self.lower_image_free(joined, args));
         resolved = resolved.or_else(|| self.lower_http_free(joined, args));
         resolved = resolved.or_else(|| self.lower_http_2_free(joined, args));
         resolved = resolved.or_else(|| self.lower_http_3_free(joined, args));
@@ -612,6 +613,15 @@ impl<'a> Builder<'a> {
                 "gos_rt_os_remove_dir_all_result",
                 self.result_unit_error_adt_ty(),
             ),
+            "fs::temp_dir" => ("gos_rt_fs_temp_dir", self.result_string_error_adt_ty()),
+            "fs::temp_file" => {
+                let file = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let path = self.tcx.string_ty();
+                let pair = self
+                    .tcx
+                    .intern(gossamer_types::TyKind::Tuple(vec![file, path]));
+                ("gos_rt_fs_temp_file", self.result_of(pair))
+            }
             _ => return None,
         })
     }
@@ -981,6 +991,11 @@ impl<'a> Builder<'a> {
             "crypto::aead::chacha20_poly1305_open" | "aead::chacha20_poly1305_open" => (
                 "gos_rt_crypto_chacha20poly1305_open",
                 self.result_vec_u8_error_ty(),
+            ),
+            "crypto::x509::verify_server_certificate_with_crls"
+            | "x509::verify_server_certificate_with_crls" => (
+                "gos_rt_x509_verify_server_certificate_with_crls",
+                self.result_unit_error_adt_ty(),
             ),
             "crypto::ed25519::keypair" | "ed25519::keypair" => {
                 let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
@@ -2967,6 +2982,10 @@ impl<'a> Builder<'a> {
             "url::query_unescape" => ("gos_rt_url_query_unescape", self.tcx.string_ty()),
             "url::path_unescape" => ("gos_rt_url_path_unescape", self.tcx.string_ty()),
             "runtime::collect_cycles" => ("gos_rt_collect_cycles", self.tcx.unit()),
+            "runtime::cycle_collection_supported" => (
+                "gos_rt_runtime_cycle_collection_supported",
+                self.tcx.bool_ty(),
+            ),
             "runtime::scheduler_stats_json" => {
                 ("gos_rt_runtime_scheduler_stats_json", self.tcx.string_ty())
             }
@@ -2992,6 +3011,29 @@ impl<'a> Builder<'a> {
                 // Pass-through identity in compiled mode - assumes
                 // happy path.
                 ("", self.tcx.int_ty(gossamer_types::IntTy::I64))
+            }
+            "httptest::server" => ("gos_rt_httptest_server", self.tcx.string_ty()),
+            _ => return None,
+        })
+    }
+
+    fn lower_image_free(
+        &mut self,
+        joined: &str,
+        _args: &[HirExpr],
+    ) -> Option<(&'static str, gossamer_types::Ty)> {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        Some(match joined {
+            "image::new" => ("gos_rt_image_new", i64_ty),
+            "image::filled" => ("gos_rt_image_filled", i64_ty),
+            "image::decode_base64" => ("gos_rt_image_decode_base64", i64_ty),
+            "image::width" => ("gos_rt_image_width", i64_ty),
+            "image::height" => ("gos_rt_image_height", i64_ty),
+            "image::pixel" => ("gos_rt_image_pixel", i64_ty),
+            "image::set_pixel" => ("gos_rt_image_set_pixel", self.tcx.bool_ty()),
+            "image::encode_png_base64" => ("gos_rt_image_encode_png_base64", self.tcx.string_ty()),
+            "image::encode_jpeg_base64" => {
+                ("gos_rt_image_encode_jpeg_base64", self.tcx.string_ty())
             }
             _ => return None,
         })
@@ -3671,6 +3713,7 @@ impl<'a> Builder<'a> {
             "gos_rt_tcp_listener_bind" => Some("net::TcpListener"),
             "gos_rt_tcp_stream_connect" => Some("net::TcpStream"),
             "gos_rt_fs_file_open" | "gos_rt_fs_file_create" => Some("fs::File"),
+            "gos_rt_fs_temp_file" => Some("fs::temp_file_pair"),
             "gos_rt_fs_open_options_new" => Some("fs::OpenOptions"),
             "gos_rt_unix_listener_bind" => Some("net::UnixListener"),
             "gos_rt_unix_stream_connect" => Some("net::UnixStream"),

@@ -153,6 +153,13 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
+            StatementKind::IterSource { .. }
+            | StatementKind::IterAdapter { .. }
+            | StatementKind::IterNext { .. } => {
+                return Err(BuildError::Unsupported(
+                    "typed iterator MIR reached LLVM before iterator lowering",
+                ));
+            }
             StatementKind::Nop => {}
             StatementKind::SetDiscriminant { place, variant } => {
                 // Stores the variant index at offset 0 of the

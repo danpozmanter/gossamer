@@ -154,6 +154,9 @@ mio = { workspace = true }
 # Same feature set as gossamer-std (TLS via rustls, gzip, cookies)
 # for parity with `gos run`.
 ureq = { version = "3", features = ["cookies"] }
+png = "0.17"
+jpeg-decoder = "0.3"
+jpeg-encoder = "0.6"
 
 # Raw TLS-over-socket (`net::TcpStream::start_tls`) for the compiled
 # tier. Same rustls feature set + roots as gossamer-std's HTTP client

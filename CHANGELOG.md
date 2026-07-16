@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.29.0 - Contracts, all-tier runtime, optimization, and standard-library depth
+
+### Release contracts and packages
+
+- Added distinct Stable and Shipped lifecycle states, item-level evidence and
+  stdlib inventory, all-status export-drift checks, and an unfiltered release
+  gate. Shipped modules no longer promote unlisted exports.
+- Aligned the SPEC and user documentation with supported targets, tier
+  behavior, package resolution, memory limits, iterator status, and release
+  guarantees.
+- Added `gos update`, source-aware dependency removal in `gos tidy`, and
+  validated `project.toml` editions. Existing projects retain eager 2026
+  iterator semantics; 2027 reserves the lazy signature migration.
+
+### Language and iterator groundwork
+
+- Enforced positional struct construction across the parser, formatter, REPL,
+  VM, native tiers, fixtures, wrappers, and binary HTTP responses.
+- Fixed pipe placeholders: `_` selects one direct argument or receiver;
+  repeated and nested placeholders, and duplicate String slice receivers, now
+  report precise errors.
+- Added internal linear `Iterator<T>` MIR state, source/adapter/next
+  verification, Rust-hosted lazy range/slice/owned-Vec sources, adapters and
+  terminals, plus callable `iter::eager_*` compatibility aliases.
+
+### Scheduler, I/O, and observability
+
+- Added amortized VM, Cranelift, and LLVM loop preemption and one-worker
+  scheduler fairness coverage.
+- Routed filesystem, process, stdin/stdout/stderr, terminal, TCP/Unix/TLS,
+  HTTP/WebSocket, UDP, and SQL blocking operations through scheduler workers
+  without holding registry or object locks; hardened the TSan UDP wake test.
+- Added block and mutex wait profiles, scheduler Chrome traces, wasm-portable
+  pprof behavior, and `runtime::cycle_collection_supported()`.
+
+### Performance and build tooling
+
+- Expanded `gos bench` with allocation, requested-byte, ARC, JIT tier-up,
+  compile-time, code-size, RSS, and trampoline-copy telemetry, plus matched
+  Gossamer/Go benchmarks and checked-in evidence.
+- Reduced VM/JIT overhead through typed positional struct construction, raw
+  heap-backed String and numeric storage, thread-confined write-back cells,
+  flat-struct JIT sret, loop-entry tiering, scalar aggregate replacement, and
+  build-phase source-map/RSS release.
+- Added JIT code-budget controls and metrics, plus release PGO collection and
+  profile options with validation and stale-profile warnings.
+
+### Standard library, networking, and ecosystem
+
+- Added OS, in-memory, subtree, and embedded-asset filesystems with
+  deterministic walk/glob behavior and all-tier `fs::temp_dir`/`temp_file`.
+- Added race-free `testing::TestServer` and all-tier `httptest::server`, HTTP
+  diagnostics transport examples and benchmarks, cookie/transport test
+  coverage, and fail-closed CRL-backed X.509/TLS verification.
+- Added all-tier RGBA8 image handles with PNG/JPEG codecs, plus expanded Rust
+  binding shapes including `Result<Bytes, String>` for ecosystem packages.
+
 ## 0.28.6 - Tuple structs, REPL declarations, and reference mutability
 
 - Split some large low-risk source modules and tests.

@@ -32,7 +32,7 @@ impl Neg for Sign {
 struct Wrap<T> { v: T }
 
 impl<T> Add for Wrap<T> {
-    fn add(self, o: Wrap<T>) -> Wrap<T> { Wrap { v: self.v + o.v } }
+    fn add(self, o: Wrap<T>) -> Wrap<T> { Wrap(self.v + o.v) }
 }
 
 fn show(s: Sign) {
@@ -52,10 +52,10 @@ fn main() {
     acc += Sign::Pos(2)
     acc += Sign::Neg(4)
     show(acc)
-    let a = Wrap { v: 3 }
-    let b = Wrap { v: 4 }
+    let a = Wrap(3)
+    let b = Wrap(4)
     println!("{}", (a + b).v)
-    let c = Wrap { v: 1.5 }
-    let d = Wrap { v: 0.25 }
+    let c = Wrap(1.5)
+    let d = Wrap(0.25)
     println!("{}", (c + d).v)
 }

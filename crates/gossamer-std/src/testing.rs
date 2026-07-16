@@ -14,6 +14,101 @@
 
 use crate::errors::Error;
 
+/// Loopback HTTP server for integration tests.
+///
+/// `TestServer` binds `127.0.0.1:0` before its worker starts, so every
+/// instance receives an isolated OS-assigned port without a bind-twice race.
+/// The worker is stopped and joined by [`TestServer::shutdown`] or [`Drop`].
+/// It is a Rust-hosted test helper while the public Gossamer `httptest`
+/// surface is being wired through the frontend and native tiers.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct TestServer {
+    address: std::net::SocketAddr,
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    worker: Option<std::thread::JoinHandle<std::io::Result<()>>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl TestServer {
+    /// Starts a loopback server that dispatches every request to `handler`.
+    ///
+    /// The server is ready to accept connections when this returns. Call
+    /// [`Self::url`] or [`Self::url_for`] when constructing client requests.
+    pub fn start<H>(handler: H) -> std::io::Result<Self>
+    where
+        H: FnMut(crate::http::Request) -> crate::http::Response + Send + 'static,
+    {
+        Self::start_with_config(crate::http::server::Config::default(), handler)
+    }
+
+    /// Starts a loopback server with an explicit HTTP-server configuration.
+    ///
+    /// The supplied configuration's shutdown flag is retained by this helper,
+    /// so callers should not share it with another server.
+    pub fn start_with_config<H>(
+        config: crate::http::server::Config,
+        handler: H,
+    ) -> std::io::Result<Self>
+    where
+        H: FnMut(crate::http::Request) -> crate::http::Response + Send + 'static,
+    {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let shutdown = std::sync::Arc::clone(&config.shutdown);
+        let worker = std::thread::Builder::new()
+            .name("gossamer-test-http-server".to_string())
+            .spawn(move || crate::http::server::run(listener, &config, handler))?;
+        Ok(Self {
+            address,
+            shutdown,
+            worker: Some(worker),
+        })
+    }
+
+    /// Socket address assigned to this server.
+    #[must_use]
+    pub const fn addr(&self) -> std::net::SocketAddr {
+        self.address
+    }
+
+    /// Base HTTP URL for this server, without a trailing slash.
+    #[must_use]
+    pub fn url(&self) -> String {
+        format!("http://{}", self.address)
+    }
+
+    /// Resolves `path` against [`Self::url`].
+    ///
+    /// A leading slash is optional. An empty path resolves to `/`.
+    #[must_use]
+    pub fn url_for(&self, path: &str) -> String {
+        format!("{}/{}", self.url(), path.trim_start_matches('/'))
+    }
+
+    /// Stops the server and joins its worker thread.
+    ///
+    /// This is idempotent. A panic in the server worker is reported as an I/O
+    /// error instead of being silently discarded by a test.
+    pub fn shutdown(&mut self) -> std::io::Result<()> {
+        self.shutdown
+            .store(true, std::sync::atomic::Ordering::Release);
+        let Some(worker) = self.worker.take() else {
+            return Ok(());
+        };
+        match worker.join() {
+            Ok(result) => result,
+            Err(_) => Err(std::io::Error::other("HTTP test-server worker panicked")),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
+    }
+}
+
 /// Asserts `cond`, returning an `Err` on failure with the supplied
 /// message.
 pub fn check(cond: bool, message: &str) -> Result<(), Error> {
@@ -329,5 +424,28 @@ mod tests {
         assert_eq!(runner.results()[1].name, "b");
         assert_eq!(runner.results()[2].name, "c");
         assert!(!runner.results()[1].ok);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_server_round_trips_requests_and_joins_cleanly() {
+        let mut server = TestServer::start(|request| {
+            assert_eq!(request.path, "/status");
+            assert_eq!(request.query, "full=1");
+            crate::http::Response::text(crate::http::StatusCode::OK, "ready")
+        })
+        .expect("start test server");
+
+        assert!(server.url().starts_with("http://127.0.0.1:"));
+        assert_eq!(server.url_for(""), format!("{}/", server.url()));
+        assert_eq!(server.url_for("status"), format!("{}/status", server.url()));
+
+        let response =
+            crate::http::get(&server.url_for("/status?full=1"), &[]).expect("request test server");
+        assert_eq!(response.status, crate::http::StatusCode::OK);
+        assert_eq!(response.body, b"ready");
+
+        server.shutdown().expect("join test server");
+        server.shutdown().expect("repeated shutdown is harmless");
     }
 }

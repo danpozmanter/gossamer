@@ -16,6 +16,7 @@ pub mod build;
 pub mod frontend;
 pub mod frontend_cache;
 pub mod link;
+pub mod macos_deployment;
 pub mod pipeline;
 pub mod target;
 
@@ -29,7 +30,7 @@ pub use build::{
     BuildCache, BuildError, BuildGraph, BuildOutput, Crate, Profile, build_workspace,
     fingerprint as crate_fingerprint, fingerprint_all, timed,
 };
-pub use frontend::{FrontendOutcome, check_frontend};
+pub use frontend::{FrontendOutcome, check_frontend, check_frontend_with_edition};
 pub use frontend_cache::{
     FrontendCacheKey, cache_dir, load_blob, load_blob_in, raw_blob_path, raw_blob_path_in,
     store_blob, store_blob_in, store_raw, store_raw_in,

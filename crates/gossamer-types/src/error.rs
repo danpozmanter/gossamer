@@ -95,6 +95,19 @@ pub enum TypeError {
         /// Human-readable description of the missing patterns.
         missing: String,
     },
+    /// A nominal struct or enum was destructured with an anonymous tuple
+    /// pattern, which would bypass its declared name and field labels.
+    #[error("destructuring `{ty}` requires its struct or variant name")]
+    StructPatternNameRequired {
+        /// The nominal type being destructured.
+        ty: String,
+    },
+    /// A named struct was constructed with the removed field-literal form.
+    #[error("struct `{name}` must be constructed with parentheses")]
+    StructConstructorParenthesesRequired {
+        /// The nominal struct name.
+        name: String,
+    },
     /// `value as T` was requested between two types that are not in
     /// the `as`-cast whitelist (non-primitive source, struct source,
     /// etc.).
@@ -395,6 +408,10 @@ impl TypeError {
             Self::UnresolvedOp { .. } => "unresolved-op",
             Self::UnresolvedOpImpl { .. } => "unresolved-op-impl",
             Self::NonExhaustiveMatch { .. } => "non-exhaustive-match",
+            Self::StructPatternNameRequired { .. } => "struct-pattern-name-required",
+            Self::StructConstructorParenthesesRequired { .. } => {
+                "struct-constructor-parentheses-required"
+            }
             Self::InvalidCast { .. } => "invalid-cast",
             Self::UnknownField { .. } => "unknown-field",
             Self::DiscardedResult => "discarded-result",
@@ -434,6 +451,8 @@ impl TypeError {
             Self::UnresolvedMethod { .. } => "GT0002",
             Self::UnresolvedOp { .. } | Self::UnresolvedOpImpl { .. } => "GT0003",
             Self::NonExhaustiveMatch { .. } => "GT0004",
+            Self::StructPatternNameRequired { .. } => "GT0033",
+            Self::StructConstructorParenthesesRequired { .. } => "GT0034",
             Self::InvalidCast { .. } => "GT0005",
             Self::UnknownField { .. } => "GT0006",
             Self::DiscardedResult => "GT0007",
@@ -611,6 +630,20 @@ impl TypeDiagnostic {
                 out = out
                     .with_help(format!("add an arm for: {missing}"))
                     .with_note("match expressions must cover every possible value");
+            }
+            TypeError::StructPatternNameRequired { ty } => {
+                out = out
+                    .with_help(format!("write `{ty} {{ field, .. }}` with its declared fields"))
+                    .with_note(
+                        "parenthesized patterns destructure tuples only; structs are nominal and use named-field patterns",
+                    );
+            }
+            TypeError::StructConstructorParenthesesRequired { name } => {
+                out = out
+                    .with_help(format!("write `{name}(...)` in declared field order"))
+                    .with_note(
+                        "struct declarations use braces; struct construction uses parentheses",
+                    );
             }
             TypeError::InvalidCast { from, to } => {
                 out = out

@@ -15,7 +15,7 @@ fixtures on native CI. They are the supported 1.0 execution contract.
 |---|---|
 | `x86_64-unknown-linux-gnu` | `ubuntu-latest` |
 | `aarch64-unknown-linux-gnu` | `ubuntu-24.04-arm` |
-| `aarch64-apple-darwin` | `macos-latest` |
+| `aarch64-apple-darwin` | `macos-15` |
 | `x86_64-pc-windows-msvc` | `windows-latest` |
 
 ## Tier 2
@@ -48,3 +48,26 @@ wasm32-...` is not a supported deployment path.
 Targets not listed above are Experimental. A local build, a generated object
 file, or a package artifact alone does not promote a target, ABI, allocator,
 or standard-library surface to Stable.
+
+## macOS deployment target
+
+Release artifacts, the embedded runtime, user Rust bindings, and executables
+produced by `gos build` use `MACOSX_DEPLOYMENT_TARGET=15.0`. macOS 15 is the
+supported deployment baseline and the native build regression runs on a
+`macos-15` GitHub Actions runner.
+
+Building the complete toolchain from source for macOS 11 through 14 is allowed
+as an unsupported, best-effort configuration. Export one target for both the
+toolchain build and every later `gos build` invocation so the runtime archive,
+Rust bindings, and final executable agree:
+
+```sh
+export MACOSX_DEPLOYMENT_TARGET=11.0
+cargo build --release -p gossamer-cli
+./target/release/gos build --release path/to/main.gos
+```
+
+Replace `11.0` with the desired deployment target from `11.0` through `14.x`.
+These older targets do not run in Gossamer CI and are not supported release
+configurations. Building requires an installed Xcode or Command Line Tools SDK
+that can target the selected macOS version.

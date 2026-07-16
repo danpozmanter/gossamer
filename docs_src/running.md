@@ -27,7 +27,8 @@ Once `gos` is on your `PATH`, every subcommand takes either a
 | `gos watch --command check .` | Re-run `gos check` on every change |
 | `gos add example.org/lib@1.2.3` | Add a dependency to `project.toml` |
 | `gos remove example.org/lib` | Drop a dependency |
-| `gos tidy` | Re-canonicalise the manifest |
+| `gos update` | Update locked dependencies within declared ranges |
+| `gos tidy` | Remove unused project dependencies and canonicalise the manifest |
 | `gos fetch` / `gos vendor` | Populate the package cache / vendor tree |
 | `gos` (no args) | Interactive REPL |
 | `gos repl` then `%help strings::trim` | Show stdlib or language help from the manifest |

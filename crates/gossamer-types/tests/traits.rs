@@ -70,7 +70,7 @@ trait Greet {
     fn hello(&self) -> i32
 }
 
-struct Foo
+struct Foo {}
 
 impl Greet for Foo {
     fn hello(&self) -> i32 { 1i32 }
@@ -98,7 +98,7 @@ trait Tag {
     fn tag(&self) -> i32
 }
 
-struct Foo
+struct Foo {}
 
 impl Tag for Foo {
     fn tag(&self) -> i32 { 0i32 }
@@ -127,7 +127,7 @@ trait Api {
     fn beta(&self) -> i32
 }
 
-struct Target
+struct Target {}
 
 impl Api for Target {
     fn beta(&self) -> i32 { 2i32 }
@@ -169,7 +169,7 @@ trait Serde {
 #[test]
 fn method_signature_lowers_primitive_types() {
     let source = r"
-struct Target
+struct Target {}
 
 impl Target {
     fn width(&self) -> i32 { 0i32 }

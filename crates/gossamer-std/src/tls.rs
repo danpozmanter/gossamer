@@ -22,8 +22,9 @@
 
 use std::sync::Arc;
 
+use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::pem::PemObject;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+use rustls::pki_types::{CertificateDer, CertificateRevocationListDer, PrivateKeyDer, ServerName};
 use rustls::server::WebPkiClientVerifier;
 use rustls::{
     ClientConnection, RootCertStore, ServerConfig as RustlsServerConfig, ServerConnection,
@@ -194,6 +195,50 @@ pub fn server_config_with_client_auth(
     })
 }
 
+/// Mutual-TLS server configuration with fail-closed certificate
+/// revocation checking. `client_crl_pem` must contain one or more PEM
+/// `X509 CRL` blocks issued by the client trust roots. Rustls verifies
+/// every non-root certificate in the presented chain, rejects unknown
+/// revocation status, and rejects expired CRLs.
+///
+/// Use this form when client certificates are long-lived or issued to
+/// devices that may need to be revoked. The simpler
+/// [`server_config_with_client_auth`] intentionally does not perform
+/// revocation checks because it has no CRL input.
+pub fn server_config_with_client_auth_and_crls(
+    cert: CertKey,
+    client_ca_pem: &[u8],
+    client_crl_pem: &[u8],
+) -> Result<ServerConfig, Error> {
+    install_ring_provider();
+    let certs = read_certs(&cert.cert_pem).map_err(|e| wrap_err("cert parse", e))?;
+    if certs.is_empty() {
+        return Err(Error::new(
+            "std::tls::server_config_with_client_auth_and_crls: no server certificates",
+        ));
+    }
+    let key = read_private_key(&cert.key_pem).map_err(|e| wrap_err("key parse", e))?;
+    let roots = read_root_store(client_ca_pem, "client ca")?;
+    let crls = read_crls(client_crl_pem).map_err(|e| wrap_err("client crl", e))?;
+    if crls.is_empty() {
+        return Err(Error::new(
+            "std::tls::server_config_with_client_auth_and_crls: no client CRLs in PEM",
+        ));
+    }
+    let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
+        .with_crls(crls)
+        .enforce_revocation_expiration()
+        .build()
+        .map_err(|e| wrap_err("client verifier", e))?;
+    let config = RustlsServerConfig::builder()
+        .with_client_cert_verifier(verifier)
+        .with_single_cert(certs, key)
+        .map_err(|e| wrap_err("build server config", e))?;
+    Ok(ServerConfig {
+        inner: Arc::new(config),
+    })
+}
+
 /// Sets the ALPN protocol list negotiated with each connecting
 /// client. Standard values: `b"h2"`, `b"http/1.1"`. Returns a fresh
 /// [`ServerConfig`] - the input is not mutated.
@@ -259,6 +304,45 @@ pub fn client_config_with_certificate(
     })
 }
 
+/// Client TLS configuration with explicit CRL-based server-certificate
+/// revocation checking. The Mozilla trust store is always included;
+/// `extra_roots_pem` adds private trust anchors. `server_crl_pem` must
+/// contain one or more PEM `X509 CRL` blocks. Verification is
+/// fail-closed for unknown status and expired CRLs and continues to
+/// enforce the SNI hostname supplied to [`ClientConfig::new_connection`].
+///
+/// This is deliberately separate from [`client_config`]: revocation
+/// data is deployment-specific and an absent CRL must not be mistaken
+/// for a successful revocation check.
+pub fn client_config_with_crls(
+    extra_roots_pem: Option<&[u8]>,
+    server_crl_pem: &[u8],
+) -> Result<ClientConfig, Error> {
+    install_ring_provider();
+    let roots = client_roots(extra_roots_pem)?;
+    let crls = read_crls(server_crl_pem).map_err(|e| wrap_err("server crl", e))?;
+    if crls.is_empty() {
+        return Err(Error::new(
+            "std::tls::client_config_with_crls: no server CRLs in PEM",
+        ));
+    }
+    let verifier = WebPkiServerVerifier::builder(Arc::new(roots))
+        .with_crls(crls)
+        .enforce_revocation_expiration()
+        .build()
+        .map_err(|e| wrap_err("server verifier", e))?;
+    let config = rustls::ClientConfig::builder()
+        .with_webpki_verifier(verifier)
+        .with_no_client_auth();
+    Ok(ClientConfig {
+        inner: Arc::new(config),
+        extra_roots_pem: extra_roots_pem.map(|pem| Arc::new(pem.to_vec())),
+        client_cert_pem: None,
+        client_key_pem: None,
+        alpn_protocols: Vec::new(),
+    })
+}
+
 /// Adds an ALPN protocol list to a client config.
 #[must_use]
 pub fn client_with_alpn(config: ClientConfig, protocols: &[&[u8]]) -> ClientConfig {
@@ -286,6 +370,37 @@ fn read_certs(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>, std::io::Error
     CertificateDer::pem_slice_iter(pem)
         .collect::<Result<Vec<_>, _>>()
         .map_err(std::io::Error::other)
+}
+
+fn read_crls(pem: &[u8]) -> Result<Vec<CertificateRevocationListDer<'static>>, std::io::Error> {
+    CertificateRevocationListDer::pem_slice_iter(pem)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(std::io::Error::other)
+}
+
+fn read_root_store(pem: &[u8], context: &str) -> Result<RootCertStore, Error> {
+    let mut roots = RootCertStore::empty();
+    let certs = read_certs(pem).map_err(|e| wrap_err(context, e))?;
+    if certs.is_empty() {
+        return Err(Error::new(format!(
+            "std::tls: {context}: no certificates in PEM"
+        )));
+    }
+    for cert in certs {
+        roots.add(cert).map_err(|e| wrap_err(context, e))?;
+    }
+    Ok(roots)
+}
+
+fn client_roots(extra_roots_pem: Option<&[u8]>) -> Result<RootCertStore, Error> {
+    let mut roots = RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    if let Some(pem) = extra_roots_pem {
+        for cert in read_certs(pem).map_err(|e| wrap_err("extra roots", e))? {
+            roots.add(cert).map_err(|e| wrap_err("extra root", e))?;
+        }
+    }
+    Ok(roots)
 }
 
 fn read_private_key(pem: &[u8]) -> Result<PrivateKeyDer<'static>, std::io::Error> {
@@ -321,5 +436,102 @@ mod tests {
         let with_alpn = client_with_alpn(cfg, &[b"h2", b"http/1.1"]);
         assert_eq!(with_alpn.inner.alpn_protocols.len(), 2);
         assert_eq!(with_alpn.inner.alpn_protocols[0], b"h2".to_vec());
+    }
+
+    #[test]
+    fn client_crl_config_rejects_missing_crl() {
+        let err = client_config_with_crls(None, b"").unwrap_err();
+        assert!(err.message().contains("no server CRLs"));
+    }
+
+    #[test]
+    fn client_crl_config_accepts_a_signed_crl_for_a_custom_root() {
+        use rcgen::{
+            BasicConstraints, CertificateParams, CertificateRevocationListParams, CertifiedIssuer,
+            ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, SerialNumber, date_time_ymd,
+        };
+        use rustls::StreamOwned;
+        use rustls::pki_types::PrivatePkcs8KeyDer;
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+
+        let mut params = CertificateParams::new(vec!["test-ca.invalid".to_owned()]).unwrap();
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        let issuer = CertifiedIssuer::self_signed(params, KeyPair::generate().unwrap()).unwrap();
+        let crl = CertificateRevocationListParams {
+            this_update: date_time_ymd(2025, 1, 1),
+            next_update: date_time_ymd(2030, 1, 1),
+            crl_number: SerialNumber::from(1_u64),
+            issuing_distribution_point: None,
+            revoked_certs: Vec::new(),
+            key_identifier_method: rcgen::KeyIdMethod::Sha256,
+        }
+        .signed_by(&issuer)
+        .unwrap();
+
+        let ca_pem = issuer.pem();
+        let crl_pem = crl.pem().unwrap();
+        let config = client_config_with_crls(Some(ca_pem.as_bytes()), crl_pem.as_bytes())
+            .expect("signed CRL and custom root configure a verifier");
+        assert!(config.extra_roots_pem().is_some());
+
+        let mut server_params = CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
+        server_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        let server_key = KeyPair::generate().unwrap();
+        let server_cert = server_params.signed_by(&server_key, &issuer).unwrap();
+        crate::crypto::x509::verify_server_certificate_with_crls(
+            server_cert.pem().as_bytes(),
+            ca_pem.as_bytes(),
+            "localhost",
+            crl_pem.as_bytes(),
+        )
+        .expect("public verifier accepts a CA-signed localhost certificate and current CRL");
+        assert!(
+            crate::crypto::x509::verify_server_certificate_with_crls(
+                server_cert.pem().as_bytes(),
+                ca_pem.as_bytes(),
+                "wrong.invalid",
+                crl_pem.as_bytes(),
+            )
+            .is_err()
+        );
+        let server = RustlsServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![CertificateDer::from(server_cert.der().to_vec())],
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(server_key.serialize_der())),
+            )
+            .unwrap();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let join = std::thread::spawn(move || {
+            let (socket, _) = listener.accept().unwrap();
+            let conn = ServerConnection::new(Arc::new(server)).unwrap();
+            let mut tls = StreamOwned::new(conn, socket);
+            let mut byte = [0_u8; 1];
+            tls.read_exact(&mut byte).unwrap();
+            assert_eq!(byte, [0xA5]);
+        });
+        let conn = config.new_connection("localhost").unwrap();
+        let socket = TcpStream::connect(address).unwrap();
+        let mut tls = StreamOwned::new(conn, socket);
+        tls.write_all(&[0xA5]).unwrap();
+        tls.flush().unwrap();
+        join.join().unwrap();
+    }
+
+    #[test]
+    fn mtls_crl_config_rejects_missing_server_cert_before_crl_parsing() {
+        let err = server_config_with_client_auth_and_crls(
+            CertKey {
+                cert_pem: Vec::new(),
+                key_pem: Vec::new(),
+            },
+            b"",
+            b"",
+        )
+        .unwrap_err();
+        assert!(err.message().contains("no server certificates"));
     }
 }

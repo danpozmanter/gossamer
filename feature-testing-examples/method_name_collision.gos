@@ -28,7 +28,7 @@ impl Store {
 }
 
 fn main() {
-    let s = Store { base: 100 }
+    let s = Store(100)
     match s.load(&"abc") {
         Ok(v) => println!("load ok {}", v),
         Err(e) => println!("load err {}", e.message()),

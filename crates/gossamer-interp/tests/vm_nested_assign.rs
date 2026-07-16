@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use gossamer_hir::lower_source_file;
 use gossamer_interp::{Vm, set_stdout_writer};
 use gossamer_lex::SourceMap;
-use gossamer_parse::parse_source_file;
+use gossamer_parse::autoderive::parse_with_autoderive;
 use gossamer_resolve::resolve_source_file;
 use gossamer_types::{TyCtxt, typecheck_source_file};
 
@@ -22,7 +22,7 @@ fn capture_writer(text: &str) {
 fn run_main(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("nested_assign.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (sf, parse_diags) = parse_with_autoderive(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
     let mut tcx = TyCtxt::new();
@@ -44,7 +44,7 @@ fn nested_field_assignment() {
 struct Inner { v: i64 }
 struct Outer { inner: Inner, tag: i64 }
 fn main() {
-    let mut o = Outer { inner: Inner { v: 1 }, tag: 9 }
+    let mut o = Outer(Inner(1), 9)
     o.inner.v = 42
     println!("{} {}", o.inner.v, o.tag)
 }
@@ -70,7 +70,7 @@ fn field_of_indexed_assignment() {
     let src = r#"
 struct Cell { v: i64 }
 fn main() {
-    let mut row = [Cell { v: 1 }, Cell { v: 2 }]
+    let mut row = [Cell(1), Cell(2)]
     row[1].v = 55
     println!("{} {}", row[0].v, row[1].v)
 }

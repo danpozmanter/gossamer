@@ -90,7 +90,7 @@ impl VersionCatalogue {
         let bucket = self.entries.entry(id.as_str().to_string()).or_default();
         if !bucket.iter().any(|e| e.version == entry.version) {
             bucket.push(entry);
-            bucket.sort_by_key(|e| e.version);
+            bucket.sort_by_key(|e| e.version.clone());
         }
     }
 
@@ -99,7 +99,7 @@ impl VersionCatalogue {
     pub fn versions(&self, id: &ProjectId) -> Vec<Version> {
         self.entries
             .get(id.as_str())
-            .map(|v| v.iter().map(|e| e.version).collect())
+            .map(|v| v.iter().map(|e| e.version.clone()).collect())
             .unwrap_or_default()
     }
 
@@ -113,8 +113,8 @@ impl VersionCatalogue {
 
     /// Returns the catalogue entry for `id @ version`, if known.
     #[must_use]
-    pub fn entry(&self, id: &ProjectId, version: Version) -> Option<&CatalogueEntry> {
-        self.entries(id).iter().find(|e| e.version == version)
+    pub fn entry(&self, id: &ProjectId, version: &Version) -> Option<&CatalogueEntry> {
+        self.entries(id).iter().find(|e| &e.version == version)
     }
 
     /// Fetches the registry index for `id` from `registry_url` via
@@ -257,7 +257,7 @@ mod index_tests {
 
         assert!(parse_index_json(index, &id, &mut catalogue).unwrap());
         let entry = catalogue
-            .entry(&id, Version::parse("1.2.3").unwrap())
+            .entry(&id, &Version::parse("1.2.3").unwrap())
             .unwrap();
         assert_eq!(
             entry.yank_reason.as_deref(),
@@ -311,7 +311,7 @@ impl Requirement {
     #[must_use]
     pub fn from_spec(id: ProjectId, spec: &DependencySpec) -> Self {
         let spec = match spec {
-            DependencySpec::Registry(range) => RequirementSpec::Range(*range),
+            DependencySpec::Registry(range) => RequirementSpec::Range(range.clone()),
             DependencySpec::Inline(inline) => RequirementSpec::Inline(inline.clone()),
         };
         Self { id, spec }
@@ -445,7 +445,7 @@ impl Resolver {
         let candidates = self.catalogue.versions(id);
         // Highest matching wins. Iterate in reverse to pick the
         // highest version that satisfies every consumer's range.
-        for &version in candidates.iter().rev() {
+        for version in candidates.iter().rev() {
             if ranges.iter().all(|r| r.matches(version)) {
                 if let Some(entry) = self.catalogue.entry(id, version)
                     && entry.yanked
@@ -454,7 +454,7 @@ impl Resolver {
                 }
                 return Ok(Resolved {
                     id: id.clone(),
-                    pin: ResolvedSource::Registry(version),
+                    pin: ResolvedSource::Registry(version.clone()),
                 });
             }
         }
@@ -510,7 +510,10 @@ pub fn resolve_transitive(
             id_index.entry(raw_id.clone()).or_insert(id.clone());
             match spec {
                 DependencySpec::Registry(range) => {
-                    ranges.entry(raw_id.clone()).or_default().push(*range);
+                    ranges
+                        .entry(raw_id.clone())
+                        .or_default()
+                        .push(range.clone());
                 }
                 DependencySpec::Inline(inline) => {
                     inlines
@@ -577,14 +580,14 @@ fn pick_highest(
             id: id.as_str().to_string(),
         });
     }
-    for &v in candidates.iter().rev() {
+    for v in candidates.iter().rev() {
         if ranges.iter().all(|r| r.matches(v)) {
             if let Some(entry) = catalogue.entry(id, v)
                 && entry.yanked
             {
                 continue;
             }
-            return Ok(ResolvedSource::Registry(v));
+            return Ok(ResolvedSource::Registry(v.clone()));
         }
     }
     let detail = format!(

@@ -214,6 +214,36 @@ fn main() {
 }
 
 #[test]
+fn cycle_collection_capability_is_explicit_on_every_tier() {
+    let dir = fresh_dir("cycle-collection-capability");
+    let src = dir.join("capability.gos");
+    fs::write(
+        &src,
+        r"
+use std::runtime
+
+fn main() {
+    println(runtime::cycle_collection_supported())
+}
+",
+    )
+    .expect("write source");
+
+    let vm = run_vm(&src);
+    assert_eq!(vm.0.trim(), "false", "VM stderr: {}", vm.1);
+
+    for (tag, release) in [("cranelift", false), ("llvm", true)] {
+        let out = dir.join(tag);
+        fs::create_dir_all(&out).unwrap();
+        let bin = build_native(&src, release, &out).expect("build native capability probe");
+        let native = run_native(&bin);
+        assert_eq!(native.0.trim(), "true", "{tag} stderr: {}", native.1);
+    }
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn lexical_nonescaping_region_has_vm_and_native_parity() {
     let src = r"
 enum Node { Leaf(i64), Pair(Node, Node) }

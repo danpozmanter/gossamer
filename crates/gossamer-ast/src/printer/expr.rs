@@ -142,7 +142,9 @@ impl Printer {
                     self.print_expr_prec(end, PREC_RANGE + 1);
                 }
             }
-            ExprKind::Struct { path, fields, base } => {
+            ExprKind::Struct {
+                path, fields, base, ..
+            } => {
                 self.print_struct_expr(path, fields, base.as_deref());
             }
             _ => self.print_expr_terminal(expr),
@@ -435,65 +437,25 @@ impl Printer {
         base: Option<&Expr>,
     ) {
         self.print_path_expr(path);
-        self.write(" {");
-        if fields.is_empty() && base.is_none() {
-            self.write("}");
-            return;
-        }
-        let inline = self.speculative(|probe| {
-            for (index, field) in fields.iter().enumerate() {
-                if index > 0 {
-                    probe.write(",");
-                }
-                probe.write(" ");
-                probe.write_ident(&field.name);
-                if let Some(value) = &field.value {
-                    probe.write(": ");
-                    probe.print_expr(value);
-                }
+        self.write("(");
+        for (index, field) in fields.iter().enumerate() {
+            if index > 0 {
+                self.write(", ");
             }
-            if let Some(base) = base {
-                if !fields.is_empty() {
-                    probe.write(",");
-                }
-                probe.write(" ..");
-                probe.print_expr(base);
-            }
-        });
-        if self.current_column() + inline.len() + 2 < super::MAX_LINE_WIDTH
-            && !inline.contains('\n')
-        {
-            self.write(&inline);
-            self.write(" }");
-            return;
-        }
-        self.newline();
-        self.indent_in();
-        let name_width = fields
-            .iter()
-            .map(|f| f.name.name.chars().count())
-            .max()
-            .unwrap_or(0);
-        for field in fields {
-            self.write_ident(&field.name);
             if let Some(value) = &field.value {
-                let padding = name_width.saturating_sub(field.name.name.chars().count());
-                if padding > 0 {
-                    self.write(&" ".repeat(padding));
-                }
-                self.write(": ");
                 self.print_expr(value);
+            } else {
+                self.write_ident(&field.name);
             }
-            self.write(",");
-            self.newline();
         }
         if let Some(base) = base {
+            if !fields.is_empty() {
+                self.write(", ");
+            }
             self.write("..");
             self.print_expr(base);
-            self.newline();
         }
-        self.indent_out();
-        self.write("}");
+        self.write(")");
     }
 
     fn print_array(&mut self, array: &ArrayExpr) {

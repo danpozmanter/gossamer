@@ -883,6 +883,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -934,6 +936,34 @@
 
 
     Overview
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../misc/tooling_faithful_fmt/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Formatter behavior
 
 
 
@@ -1727,10 +1757,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#tuple-structs" class="md-nav__link">
+  <a href="#declaration-and-construction" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Tuple structs
+        Declaration and construction
 
     </span>
   </a>
@@ -1784,8 +1814,7 @@
 <h2 id="functional-record-update">Functional record update<a class="headerlink" href="#functional-record-update" title="Permanent link">&para;</a></h2>
 <p>A struct literal may spread a base value with <code>..base</code> and override
 individual fields:</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">p2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">..</span><span class="n">p1</span><span class="p">,</span><span class="w"> </span><span class="n">x</span>: <span class="mi">10</span><span class="w"> </span><span class="p">}</span><span class="w">   </span><span class="c1">// x overridden, the rest copied from p1</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">p3</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="o">..</span><span class="n">p1</span><span class="w"> </span><span class="p">}</span><span class="w">   </span><span class="c1">// the spread may appear in any position</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">p2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Point</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="n">p1</span><span class="p">.</span><span class="n">y</span><span class="p">)</span>
 </code></pre></div>
 <ul>
 <li>Explicit fields win over the base for the same name.</li>
@@ -1794,18 +1823,18 @@ individual fields:</p>
   so the base stays usable after the update with no double-free. Output
   is identical across the VM, Cranelift, and LLVM tiers.</li>
 </ul>
-<h2 id="tuple-structs">Tuple structs<a class="headerlink" href="#tuple-structs" title="Permanent link">&para;</a></h2>
-<p>A struct may carry positional fields instead of named ones:</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">struct</span> <span class="nc">Pt</span><span class="p">(</span><span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="p">)</span>
+<h2 id="declaration-and-construction">Declaration and construction<a class="headerlink" href="#declaration-and-construction" title="Permanent link">&para;</a></h2>
+<p>Struct declarations always use named fields in braces. Construction uses
+parentheses, with arguments assigned in declaration order:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">struct</span> <span class="nc">Pt</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="kt">i64</span> <span class="p">}</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Pt</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">)</span><span class="w">            </span><span class="c1">// construction</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{} {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="c1">// positional access</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="kd">let</span><span class="w"> </span><span class="n">Pt</span><span class="p">(</span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">p</span><span class="w">            </span><span class="c1">// destructuring (also in `match` and fn params)</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Pt</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">)</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{} {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">y</span><span class="p">)</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="kd">let</span><span class="w"> </span><span class="n">Pt</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">y</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">p</span>
 </code></pre></div>
-<p>Tuple fields are modelled as named fields <code>"0".."N-1"</code>, so construction,
-<code>.N</code> access, destructuring, <code>#[derive(...)]</code>, and serde all work the same
-as on a named struct. <code>to_json</code> / <code>from_json</code> use a position-keyed object
-(<code>{"0": 3, "1": 4}</code>).</p>
+<p>Use <code>struct Marker {}</code> and <code>Marker()</code> for an empty struct. Tuple declarations
+such as <code>struct Pt(i64, i64)</code> and bare unit declarations such as <code>struct
+Marker</code> are rejected.</p>
 <h2 id="value-semantics-copy-and-compare-with-no-derive">Value semantics: copy and compare with no derive<a class="headerlink" href="#value-semantics-copy-and-compare-with-no-derive" title="Permanent link">&para;</a></h2>
 <p>Structs are value types. Binding or <code>.clone()</code>-ing copies the whole value
 (heap children retained), and <code>==</code> / <code>!=</code> / <code>&lt;</code> / <code>&lt;=</code> / <code>&gt;</code> / <code>&gt;=</code> are
@@ -1814,10 +1843,10 @@ is comparable (scalars, <code>String</code>, nested comparable types). Ordering 
 lexicographic by field declaration order:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">struct</span> <span class="nc">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="kt">i64</span> <span class="p">}</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="mi">2</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Point</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span>
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">a</span><span class="p">.</span><span class="n">clone</span><span class="p">()</span><span class="w">                          </span><span class="c1">// `clone` is a universal builtin</span>
 <a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w">                     </span><span class="c1">// true, no derive</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="mi">3</span><span class="w"> </span><span class="p">})</span><span class="w">   </span><span class="c1">// true (lexicographic by field)</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">Point</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">))</span><span class="w">   </span><span class="c1">// true (lexicographic by field)</span>
 </code></pre></div>
 <p>A user <code>impl</code> of <code>eq</code> / <code>cmp</code> overrides the synthesized comparison.</p>
 <h2 id="derivable-traits">Derivable traits<a class="headerlink" href="#derivable-traits" title="Permanent link">&para;</a></h2>

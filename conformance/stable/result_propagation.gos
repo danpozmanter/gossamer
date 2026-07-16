@@ -1,0 +1,13 @@
+fn doubled(value: i64) -> Result<i64, String> {
+    if value < 0 {
+        return Err("negative".to_string())
+    }
+    Ok(value * 2)
+}
+
+fn main() {
+    match doubled(21) {
+        Ok(value) => println!("result={}", value),
+        Err(err) => println!("error={}", err),
+    }
+}

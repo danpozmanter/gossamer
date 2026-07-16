@@ -17,8 +17,10 @@
 #![allow(unsafe_code)]
 
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
+use std::cell::{Cell, UnsafeCell};
 use std::collections::VecDeque;
 use std::fmt;
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -90,6 +92,107 @@ impl JsonInner {
     #[must_use]
     pub fn to_owned_value(&self) -> gossamer_std::json::Value {
         self.as_value().clone()
+    }
+}
+
+/// A mutable VM value that is confined to the OS thread that created it.
+///
+/// `MutCell` values are created only by `CellNew` / `CellNewMove` around an
+/// immediate `&mut` call, then consumed by its matching `CellTake`. They do
+/// not escape that call protocol or cross a goroutine boundary. Keeping their
+/// `Arc` handle lets [`Value`] retain its process-wide transport properties,
+/// while avoiding a mutex acquisition on each local read or write.
+///
+/// The owner check is a defensive boundary around the `UnsafeCell`: should a
+/// future compiler path accidentally let a transient cell cross threads, it
+/// panics before dereferencing the value instead of creating a data race.
+/// The borrow flag preserves the mutex's exclusive-access contract and makes
+/// accidental re-entrant access fail deterministically.
+pub struct ThreadConfinedCell {
+    owner: std::thread::ThreadId,
+    borrowed: Cell<bool>,
+    value: UnsafeCell<Value>,
+}
+
+// Access to `value` is permitted only after `lock` verifies that the current
+// thread is `owner`. `ThreadConfinedCellGuard` is !Send, so a borrowed value
+// cannot be moved to another thread. The Arc control block remains atomic,
+// making handle clones and drops safe even when an invalid handle is moved.
+unsafe impl Send for ThreadConfinedCell {}
+unsafe impl Sync for ThreadConfinedCell {}
+
+impl fmt::Debug for ThreadConfinedCell {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ThreadConfinedCell")
+            .field("owner", &self.owner)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ThreadConfinedCell {
+    #[must_use]
+    pub(crate) fn new(value: Value) -> Self {
+        Self {
+            owner: std::thread::current().id(),
+            borrowed: Cell::new(false),
+            value: UnsafeCell::new(value),
+        }
+    }
+
+    /// Borrows the transient value on its owner thread.
+    ///
+    /// Panics if a foreign thread or a re-entrant caller attempts access,
+    /// preserving the exclusive-access contract formerly provided by `Mutex`.
+    pub fn lock(&self) -> ThreadConfinedCellGuard<'_> {
+        assert_eq!(
+            self.owner,
+            std::thread::current().id(),
+            "transient VM MutCell accessed from a different thread"
+        );
+        assert!(
+            !self.borrowed.replace(true),
+            "transient VM MutCell accessed re-entrantly"
+        );
+        ThreadConfinedCellGuard {
+            cell: self,
+            // A guard must remain on its owner thread: its Drop resets a
+            // thread-local borrow flag and it may expose `&mut Value`.
+            _not_send: PhantomData,
+        }
+    }
+
+    fn into_inner(self) -> Value {
+        self.value.into_inner()
+    }
+}
+
+/// Exclusive, non-send access to a [`ThreadConfinedCell`] value.
+pub struct ThreadConfinedCellGuard<'a> {
+    cell: &'a ThreadConfinedCell,
+    _not_send: PhantomData<std::rc::Rc<()>>,
+}
+
+impl std::ops::Deref for ThreadConfinedCellGuard<'_> {
+    type Target = Value;
+
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: `lock` checked the owning thread and set the exclusive
+        // borrow flag before constructing this guard. The guard is !Send.
+        unsafe { &*self.cell.value.get() }
+    }
+}
+
+impl std::ops::DerefMut for ThreadConfinedCellGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        // SAFETY: as above, and `&mut self` guarantees the caller has the
+        // guard's unique mutable access for the duration of this borrow.
+        unsafe { &mut *self.cell.value.get() }
+    }
+}
+
+impl Drop for ThreadConfinedCellGuard<'_> {
+    fn drop(&mut self) {
+        self.cell.borrowed.set(false);
     }
 }
 
@@ -203,7 +306,7 @@ pub enum Value {
     /// out - write-through `&mut` parameter semantics on top of the
     /// VM's clone-on-write value model. Never escapes the call
     /// protocol: no user-visible op ever observes a `MutCell`.
-    MutCell(Arc<parking_lot::Mutex<Value>>),
+    MutCell(Arc<ThreadConfinedCell>),
     /// Poisoned / uninitialised sentinel.
     Void,
 }
@@ -1502,9 +1605,35 @@ impl Value {
     /// Constructs a [`Value::Struct`].
     #[must_use]
     pub fn struct_(name: impl AsRef<str>, fields: Vec<(&'static str, Value)>) -> Self {
+        Self::struct_with_tag(intern_type_tag(name.as_ref()), fields)
+    }
+
+    /// Constructs a [`Value::Struct`] from an already-interned type tag.
+    ///
+    /// Positional constructors keep their zero-field sentinel in the global
+    /// table, so cloning that tag avoids taking the global type-tag lock for
+    /// every aggregate built in a hot loop.
+    #[must_use]
+    pub(crate) fn struct_with_tag(name: TypeTag, fields: Vec<(&'static str, Value)>) -> Self {
         Self::Struct(Arc::new(StructInner {
-            name: intern_type_tag(name.as_ref()),
+            name,
             fields: fields.into_boxed_slice(),
+        }))
+    }
+
+    /// Constructs a two-field integer struct without a temporary argument
+    /// vector. Used by the bytecode VM's typed positional-constructor opcode.
+    #[must_use]
+    pub(crate) fn struct_2_i64(
+        name: &'static str,
+        field0: &'static str,
+        first: i64,
+        field1: &'static str,
+        second: i64,
+    ) -> Self {
+        Self::Struct(Arc::new(StructInner {
+            name: type_tag_from_static(name),
+            fields: Box::new([(field0, Self::Int(first)), (field1, Self::Int(second))]),
         }))
     }
     /// Constructs a [`Value::FloatArray`].
@@ -1959,11 +2088,11 @@ impl Value {
                 from_singleton(payload)
             }
             Self::String(s) => {
-                // Materialise into an `Arc<String>` for the
-                // raw-layout side table. Inline `SmolStr` content
-                // is copied; heap content is reference-bumped via
-                // a re-Arc.
-                let id = register_heap(RegistryEntry::String(Arc::new(s.as_str().to_string())));
+                // Preserve the VM string allocation in the raw side table.
+                // `SmolStr::clone` is a refcount bump for heap strings and a
+                // word copy for inline strings, so this boundary neither
+                // materialises an `Arc<String>` nor copies its bytes.
+                let id = register_heap(RegistryEntry::String(s.clone()));
                 from_heap_handle(id)
             }
             // The compact raw ABI has no JSON-tree representation. JSON
@@ -1978,28 +2107,21 @@ impl Value {
                 let id = register_heap(RegistryEntry::Array(Arc::clone(a)));
                 from_heap_handle(id)
             }
-            Self::FloatArray(_) => {
-                // Rehydrate into a `Value::Array<Value::Struct>`
-                // before handing across the ABI boundary - the raw
-                // representation has no slot for flat f64 aggregates.
-                let arr = self.float_array_to_value_array();
-                let Value::Array(a) = arr else { unreachable!() };
-                let id = register_heap(RegistryEntry::Array(a));
+            Self::FloatArray(data) => {
+                // The tagged word only names a VM-owned side-table entry, so
+                // retain the typed storage instead of rehydrating every
+                // element into a boxed array at the JIT boundary.
+                let id = register_heap(RegistryEntry::FloatArray(Arc::clone(data)));
                 from_heap_handle(id)
             }
             Self::IntArray(data) => {
-                // Same idea: rehydrate the flat-i64 representation
-                // into the boxed `Vec<Value::Int>` shape so the
-                // raw-layout consumers see a regular array.
-                let boxed: Vec<Value> = data.iter().copied().map(Value::Int).collect();
-                let id = register_heap(RegistryEntry::Array(Arc::new(boxed)));
+                // Keep the compact typed storage shared across the boundary.
+                let id = register_heap(RegistryEntry::IntArray(Arc::clone(data)));
                 from_heap_handle(id)
             }
             Self::FloatVec(data) => {
-                // Rehydrate flat-f64 storage into a `Value::Array<Value::Float>`
-                // before crossing the FFI boundary.
-                let boxed: Vec<Value> = data.iter().copied().map(Value::Float).collect();
-                let id = register_heap(RegistryEntry::Array(Arc::new(boxed)));
+                // Keep the compact typed storage shared across the boundary.
+                let id = register_heap(RegistryEntry::FloatVec(Arc::clone(data)));
                 from_heap_handle(id)
             }
             Self::Variant(inner) => {
@@ -2069,9 +2191,12 @@ impl Value {
                 let id = to_heap_handle(raw);
                 match take_heap(id) {
                     Some(RegistryEntry::Int(n)) => Self::Int(n),
-                    Some(RegistryEntry::String(s)) => Self::String(SmolStr::from_arc(s)),
+                    Some(RegistryEntry::String(s)) => Self::String(s),
                     Some(RegistryEntry::Tuple(t)) => Self::Tuple(t),
                     Some(RegistryEntry::Array(a)) => Self::Array(a),
+                    Some(RegistryEntry::FloatArray(a)) => Self::FloatArray(a),
+                    Some(RegistryEntry::IntArray(a)) => Self::IntArray(a),
+                    Some(RegistryEntry::FloatVec(a)) => Self::FloatVec(a),
                     Some(RegistryEntry::Variant(inner)) => Self::Variant(inner),
                     Some(RegistryEntry::Struct(inner)) => Self::Struct(inner),
                     Some(RegistryEntry::Closure(c)) => Self::Closure(c),
@@ -2504,12 +2629,19 @@ impl RuntimeError {
 enum RegistryEntry {
     /// Integer that did not fit in the i56 immediate range.
     Int(i64),
-    /// GC-managed UTF-8 string.
-    String(Arc<String>),
+    /// VM string storage. Heap strings stay in their original compact
+    /// allocation; inline strings remain a single copied word.
+    String(SmolStr),
     /// Tuple aggregate.
     Tuple(Arc<Vec<Value>>),
     /// Array / Vec aggregate.
     Array(Arc<Vec<Value>>),
+    /// Flat f64 struct-array storage.
+    FloatArray(Arc<FloatArrayInner>),
+    /// Flat i64 array storage.
+    IntArray(Arc<Vec<i64>>),
+    /// Flat f64 vector storage.
+    FloatVec(Arc<Vec<f64>>),
     /// Enum variant or tuple-struct constructor payload.
     Variant(Arc<VariantInner>),
     /// Struct-shaped aggregate.
@@ -3413,6 +3545,31 @@ mod repr_tests {
             "Message { text: \"hello\", value: Ok([\"wow\", 'a']) }"
         );
         assert_eq!(Value::String("wow".into()).to_string(), "wow");
+    }
+}
+
+#[cfg(test)]
+mod thread_confined_cell_tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::Arc;
+
+    use super::{ThreadConfinedCell, Value};
+
+    #[test]
+    fn thread_confined_cell_rejects_foreign_access_before_deref() {
+        let cell = Arc::new(ThreadConfinedCell::new(Value::Int(7)));
+        assert!(matches!(&*cell.lock(), Value::Int(7)));
+
+        let foreign = Arc::clone(&cell);
+        let rejected = std::thread::spawn(move || {
+            catch_unwind(AssertUnwindSafe(|| {
+                let _guard = foreign.lock();
+            }))
+            .is_err()
+        })
+        .join()
+        .expect("foreign thread did not panic");
+        assert!(rejected, "foreign access must not reach the UnsafeCell");
     }
 }
 

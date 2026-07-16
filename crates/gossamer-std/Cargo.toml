@@ -153,6 +153,12 @@ chrono-tz = { version = "0.10", default-features = false }
 # HTTP client surface (`std::http::Client`). HTTPS, redirects, pool.
 ureq = { version = "3", features = ["cookies", "json"] }
 
+# Raster image model and PNG/JPEG codecs (`std::image`). Keep the codecs
+# narrowly scoped instead of enabling a broad image-format umbrella.
+png = "0.17"
+jpeg-decoder = "0.3"
+jpeg-encoder = "0.6"
+
 # POSIX user / group lookup (`std::os::user`).
 nix = { version = "0.31", default-features = false, features = ["user", "fs", "process", "signal"] }
 

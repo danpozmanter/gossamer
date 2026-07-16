@@ -1,5 +1,4 @@
-// Struct update syntax (`..base`) - exercises functional record
-// update so all three tiers see the same values.
+// Positional field copying from an existing struct across all three tiers.
 
 struct Config {
     host: String,
@@ -9,22 +8,17 @@ struct Config {
 }
 
 fn default_config() -> Config {
-    Config {
-        host: "localhost",
-        port: 8080,
-        verbose: false,
-        retries: 3,
-    }
+    Config("localhost", 8080, false, 3)
 }
 
 fn main() {
     let base = default_config()
-    let custom = Config { port: 9090, verbose: true, ..base }
+    let custom = Config(base.host, 9090, true, base.retries)
     println!("host = {}", custom.host)
     println!("port = {}", custom.port)
     println!("verbose = {}", custom.verbose)
     println!("retries = {}", custom.retries)
-    let extra = Config { host: "example.com", ..custom }
+    let extra = Config("example.com", custom.port, custom.verbose, custom.retries)
     println!("host2 = {}", extra.host)
     println!("port2 = {}", extra.port)
     println!("verbose2 = {}", extra.verbose)

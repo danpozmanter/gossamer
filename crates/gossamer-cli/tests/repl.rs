@@ -232,9 +232,9 @@ fn repl_bindings_show_immutable_values_without_let_prefix() {
 }
 
 #[test]
-fn repl_tuple_struct_constructors_and_declarations_are_visible() {
+fn repl_named_struct_constructor_is_consistent_and_legacy_declarations_fail() {
     let out = run_repl(
-        "struct Pair(i64, i64)\n\
+        "struct Pair { x: i64, y: i64 }\n\
          let p = Pair(0, 0)\n\
          p\n\
          %declarations\n",
@@ -242,20 +242,47 @@ fn repl_tuple_struct_constructors_and_declarations_are_visible() {
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("binding added (1 total)"),
-        "tuple struct constructor should be callable; stdout: {}; stderr: {}",
+        "named struct constructor should be callable; stdout: {}; stderr: {}",
         out.stdout,
         out.stderr
     );
     assert!(
-        out.stdout.contains("Out[3]: Pair(0, 0)"),
-        "tuple struct value should render in REPL output; stdout: {}",
+        out.stdout.contains("Out[3]: Pair { x: 0, y: 0 }"),
+        "named struct value should render with fields; stdout: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("  1: struct Pair(i64, i64)"),
+        out.stdout.contains("  1: struct Pair { x: i64, y: i64 }"),
         "%declarations should list accumulated declarations; stdout: {}",
         out.stdout
     );
+
+    let legacy = run_repl("struct Legacy(i64)\nstruct Marker\n");
+    assert!(
+        legacy
+            .stderr
+            .contains("`{ field: Type }` after a struct name"),
+        "legacy tuple and unit declarations must be rejected; stderr: {}",
+        legacy.stderr
+    );
+}
+
+#[test]
+fn repl_open_ranges_take_a_bounded_prefix() {
+    let out = run_repl("(10..).take(5)\n(10..=).take(5)\n(..10).take(5)\n(..=10).take(5)\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for expected in [
+        "Out[1]: [10, 11, 12, 13, 14]",
+        "Out[2]: [10, 11, 12, 13, 14]",
+        "Out[3]: [0, 1, 2, 3, 4]",
+        "Out[4]: [0, 1, 2, 3, 4]",
+    ] {
+        assert!(
+            out.stdout.contains(expected),
+            "missing `{expected}`; stdout: {}",
+            out.stdout
+        );
+    }
 }
 
 #[test]

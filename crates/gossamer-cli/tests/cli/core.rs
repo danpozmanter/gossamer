@@ -224,6 +224,83 @@ fn build_subcommand_produces_runnable_output() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn build_rss_profile_reports_frontend_release_and_backend_peak() {
+    let dir = env::temp_dir().join(format!("gos-build-rss-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source_path = dir.join("rss.gos");
+    std::fs::write(&source_path, "fn main() { println(\"rss\") }\n").unwrap();
+
+    let out = Command::new(gos_bin())
+        .arg("build")
+        .arg(&source_path)
+        .env("GOS_PROFILE_RSS", "1")
+        .output()
+        .expect("spawn build with RSS profiling");
+    assert!(
+        out.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    for stage in [
+        "build_frontend_checked",
+        "build_frontend_released",
+        "build_backend_emitted",
+    ] {
+        assert!(stderr.contains(&format!("rss: stage={stage} ")), "{stderr}");
+    }
+    assert!(stderr.contains("peak_bytes="), "{stderr}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_build_records_15_0_deployment_target() {
+    let dir = env::temp_dir().join(format!(
+        "gos-macos-deployment-target-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source_path = dir.join("deployment_target.gos");
+    std::fs::write(&source_path, "fn main() { println(\"macos-15\") }\n").unwrap();
+
+    let build = Command::new(gos_bin())
+        .arg("build")
+        .arg(&source_path)
+        .env_remove("MACOSX_DEPLOYMENT_TARGET")
+        .output()
+        .expect("spawn gos build");
+    assert!(
+        build.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let binary = dir
+        .join("target")
+        .join("debug")
+        .join("deployment_target");
+    let metadata = Command::new("otool")
+        .arg("-l")
+        .arg(&binary)
+        .output()
+        .expect("run otool");
+    assert!(
+        metadata.status.success(),
+        "otool failed: {}",
+        String::from_utf8_lossy(&metadata.stderr)
+    );
+    let metadata = String::from_utf8(metadata.stdout).expect("otool output is UTF-8");
+    assert!(
+        metadata.lines().any(|line| line.trim() == "minos 15.0"),
+        "Mach-O does not record macOS 15.0 as LC_BUILD_VERSION minos:\n{metadata}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn build_output_handles_empty_argv_for_flag_define_programs() {
     let dir = env::temp_dir().join(format!("gos-build-argv-{}", std::process::id()));
@@ -635,3 +712,74 @@ fn build_rejects_removed_output_flag() {
     let _ = std::fs::remove_file(&fixture);
 }
 
+#[test]
+fn update_is_a_first_class_package_command() {
+    let out = Command::new(gos_bin())
+        .args(["update", "--help"])
+        .output()
+        .expect("spawn update help");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("newest dependency versions"), "{stdout}");
+    assert!(stdout.contains("--offline"), "{stdout}");
+}
+
+#[test]
+fn tidy_removes_only_unimported_project_dependencies() {
+    let dir = env::temp_dir().join(format!("gos-tidy-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let manifest = dir.join("project.toml");
+    std::fs::write(
+        &manifest,
+        "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\n\n[dependencies]\n\"example.com/used\" = \"1.0.0\"\n\"example.com/unused\" = \"1.0.0\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.gos"),
+        "use \"example.com/used\" as used\nfn main() { used::run() }\n",
+    )
+    .unwrap();
+
+    let out = Command::new(gos_bin())
+        .args(["tidy", "--manifest"])
+        .arg(&manifest)
+        .output()
+        .expect("spawn tidy");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rewritten = std::fs::read_to_string(&manifest).unwrap();
+    assert!(rewritten.contains("example.com/used"), "{rewritten}");
+    assert!(!rewritten.contains("example.com/unused"), "{rewritten}");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("1 unused dependency/dependencies removed")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn tidy_does_not_edit_manifest_when_a_source_file_has_parse_errors() {
+    let dir = env::temp_dir().join(format!("gos-tidy-parse-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let manifest = dir.join("project.toml");
+    let original = "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\n\n[dependencies]\n\"example.com/keep\" = \"1.0.0\"\n";
+    std::fs::write(&manifest, original).unwrap();
+    std::fs::write(dir.join("src/main.gos"), "fn main( {\n").unwrap();
+
+    let out = Command::new(gos_bin())
+        .args(["tidy", "--manifest"])
+        .arg(&manifest)
+        .output()
+        .expect("spawn tidy");
+    assert!(!out.status.success(), "tidy must reject malformed source");
+    assert_eq!(std::fs::read_to_string(&manifest).unwrap(), original);
+    let _ = std::fs::remove_dir_all(&dir);
+}

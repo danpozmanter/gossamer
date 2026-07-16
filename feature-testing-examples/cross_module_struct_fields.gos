@@ -5,7 +5,7 @@
 // a real Field projection on every tier.
 mod util {
     pub struct Rec { pub name: String, pub age: i64 }
-    pub fn make(name: String, age: i64) -> Rec { Rec { name: name, age: age } }
+    pub fn make(name: String, age: i64) -> Rec { Rec(name, age) }
     pub fn birthday(r: &mut util::Rec) { r.age += 1 }
 }
 

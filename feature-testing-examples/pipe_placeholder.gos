@@ -11,6 +11,7 @@
 // `_.method` composes with the data-last `iter::*` free-function pipe steps.
 
 use std::iter
+use std::strings
 
 struct Point {
     x: i64,
@@ -44,6 +45,14 @@ fn main() {
     // identity
     println!("{}", 42 |> _)
 
+    // a direct `_` selects an argument position, including inside a format
+    // macro after it expands to its ordinary call form.
+    println!("{}", "world" |> format!("hello, {}", _))
+    match "world" |> strings::slice(_, 1, 4) {
+        Ok(part) => println!("{}", part),
+        Err(_) => println!("slice failed"),
+    }
+
     // mixed with data-last iter steps; `_.len()` consumes the iter result
     let evens = [1, 2, 3, 4, 5, 6] |> iter::filter(|x: i64| x % 2 == 0) |> _.len()
     println!("{}", evens)
@@ -55,7 +64,7 @@ fn main() {
 
     // placeholder threads a struct receiver into a free function's last slot
     // is still available the old way; `_.field`-style access uses a closure:
-    let lab = Point { x: 7, y: 9 } |> |p: Point| label(p)
+    let lab = Point(7, 9) |> |p: Point| label(p)
     println!("{}", lab)
 }
 
@@ -88,6 +97,20 @@ mod tests {
     #[test]
     fn identity_pipe() {
         let _ = testing::check((99 |> _) == 99, "x |> _ is identity")
+    }
+
+    #[test]
+    fn direct_argument_placeholder() {
+        let greeting = "world" |> format!("hello, {}", _)
+        let _ = testing::check(greeting == "hello, world", "format argument receives pipe value")
+        match "world" |> strings::slice(_, 1, 4) {
+            Ok(part) => {
+                let _ = testing::check(part == "orl", "non-trailing placeholder selects first argument")
+            },
+            Err(_) => {
+                let _ = testing::check(false, "slice should succeed")
+            },
+        }
     }
 
     #[test]

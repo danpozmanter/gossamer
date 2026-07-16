@@ -23,23 +23,31 @@ pub(crate) fn profile_rss_stage(stage: &str) {
     }
     #[cfg(target_os = "linux")]
     {
-        let rss_bytes = std::fs::read_to_string("/proc/self/status")
-            .ok()
-            .and_then(|status| {
-                status.lines().find_map(|line| {
-                    let rest = line.strip_prefix("VmRSS:")?;
-                    let kib = rest.split_whitespace().next()?.parse::<u64>().ok()?;
-                    Some(kib.saturating_mul(1024))
-                })
-            });
-        if let Some(rss_bytes) = rss_bytes {
-            eprintln!("rss: stage={stage} bytes={rss_bytes}");
+        if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+            let rss_bytes = proc_status_memory_bytes(&status, "VmRSS:");
+            let peak_rss_bytes = proc_status_memory_bytes(&status, "VmHWM:");
+            if let Some(rss_bytes) = rss_bytes {
+                if let Some(peak_rss_bytes) = peak_rss_bytes {
+                    eprintln!("rss: stage={stage} bytes={rss_bytes} peak_bytes={peak_rss_bytes}");
+                } else {
+                    eprintln!("rss: stage={stage} bytes={rss_bytes}");
+                }
+            }
         }
     }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = stage;
     }
+}
+
+#[cfg(target_os = "linux")]
+fn proc_status_memory_bytes(status: &str, field: &str) -> Option<u64> {
+    status.lines().find_map(|line| {
+        let rest = line.strip_prefix(field)?;
+        let kib = rest.split_whitespace().next()?.parse::<u64>().ok()?;
+        Some(kib.saturating_mul(1024))
+    })
 }
 
 /// Pretty-prints frontend stage timings for `gos check --timings`.
@@ -96,7 +104,11 @@ pub(crate) fn load_and_check_with_sf(
     // `gos check` / `gos build` so a program rejected by any one is
     // rejected by all. `check_frontend` synthesizes the implicit `fn
     // main` for an entry file's top-level statements, so `sf` carries it.
-    let outcome = gossamer_driver::check_frontend(source, file_id);
+    let outcome = gossamer_driver::check_frontend_with_edition(
+        source,
+        file_id,
+        crate::paths::project_edition(),
+    );
     profile_rss_stage("frontend_checked");
     if !outcome.diagnostics.is_empty() {
         for diag in &outcome.diagnostics {
@@ -116,4 +128,22 @@ pub(crate) fn load_and_check_with_sf(
     let program = gossamer_hir::lower_source_file(&sf, &resolutions, &table, &mut tcx);
     profile_rss_stage("hir_lowered");
     Ok((program, sf, tcx))
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn proc_status_memory_bytes_parses_resident_and_high_water_marks() {
+        let status = "Name:\tgos\nVmRSS:\t  123 kB\nVmHWM:\t456 kB\n";
+        assert_eq!(
+            super::proc_status_memory_bytes(status, "VmRSS:"),
+            Some(125_952)
+        );
+        assert_eq!(
+            super::proc_status_memory_bytes(status, "VmHWM:"),
+            Some(466_944)
+        );
+        assert_eq!(super::proc_status_memory_bytes(status, "VmSize:"), None);
+    }
 }

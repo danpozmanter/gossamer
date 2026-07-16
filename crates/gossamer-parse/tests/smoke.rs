@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use gossamer_lex::SourceMap;
-use gossamer_parse::parse_source_file;
+use gossamer_parse::{ParseError, parse_source_file};
 
 fn example(name: &str) -> String {
     format!("{}/../../examples/{name}", env!("CARGO_MANIFEST_DIR"))
@@ -263,5 +263,54 @@ fn use_brace_group_accepts_nested_groups() {
             (vec!["encoding"], "yaml"),
             (vec![], "strings"),
         ]
+    );
+}
+
+/// A direct `_` in a pipe call is replaced before resolution. This covers the
+/// macro-expansion path as well as a non-trailing argument, which the default
+/// data-last pipe rule cannot express.
+#[test]
+fn pipe_direct_argument_placeholder_parses_and_desugars() {
+    let source = "use std::strings\nfn main() {\n\
+        let greeting = \"world\" |> format!(\"hello, {}\", _)\n\
+        let part = \"world\" |> strings::slice(_, 1, 4)\n\
+    }\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("pipe_args.gos", source.to_string());
+    let (_sf, diags) = parse_source_file(source, file);
+    assert!(
+        diags.is_empty(),
+        "direct pipe placeholders must be consumed during parsing: {diags:?}"
+    );
+}
+
+#[test]
+fn pipe_rejects_multiple_direct_argument_placeholders() {
+    let source = "fn main() {\n\
+        let _ = 1 |> pair(_, _)\n\
+        let _ = 1 |> outer(inner(_))\n\
+    }\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("pipe_many_args.gos", source.to_string());
+    let (_sf, diags) = parse_source_file(source, file);
+    assert!(
+        diags
+            .iter()
+            .any(|diag| matches!(diag.error, ParseError::PipePlaceholderInvalid)),
+        "repeated or nested pipe placeholders need a focused parse error: {diags:?}"
+    );
+}
+
+#[test]
+fn pipe_rejects_dotdot_as_a_placeholder() {
+    let source = "fn main() { let _ = \"world\" |> format!(\"hello, {}\", ..) }\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("pipe_dotdot.gos", source.to_string());
+    let (_sf, diags) = parse_source_file(source, file);
+    assert!(
+        diags
+            .iter()
+            .any(|diag| matches!(diag.error, ParseError::PipeDotDotPlaceholder)),
+        "`..` must not be interpreted as a pipe placeholder: {diags:?}"
     );
 }

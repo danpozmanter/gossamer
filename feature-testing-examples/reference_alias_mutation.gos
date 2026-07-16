@@ -19,7 +19,7 @@ fn reset(c: &mut Counter) {
 }
 
 fn alias_test() {
-    let a = Counter { value: 10 }
+    let a = Counter(10)
 
     // Read-only reference: inspect just reads the value.
     let via_ref = inspect(&a)
@@ -47,13 +47,13 @@ mod tests {
 
     #[test]
     fn inspect_reads_value() {
-        let c = super::Counter { value: 42 }
+        let c = super::Counter(42)
         let _ = testing::check_eq(&super::inspect(&c), &42, "inspect returns value")
     }
 
     #[test]
     fn increment_adds_one() {
-        let mut c = super::Counter { value: 0 }
+        let mut c = super::Counter(0)
         super::increment(&mut c)
         let _ = testing::check_eq(&c.value, &1, "increment from 0 → 1")
         super::increment(&mut c)
@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn reset_zeroes_value() {
-        let mut c = super::Counter { value: 99 }
+        let mut c = super::Counter(99)
         super::reset(&mut c)
         let _ = testing::check_eq(&c.value, &0, "reset → 0")
     }

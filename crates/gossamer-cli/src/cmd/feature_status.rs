@@ -1,5 +1,5 @@
 //! `gos feature-status` - prints every language / stdlib feature
-//! with its lifecycle stage (shipped, experimental, planned, removed)
+//! with its lifecycle stage (stable, shipped, experimental, planned, removed)
 //! plus optional per-tier test status read from a JSON sidecar.
 //!
 //! The lifecycle data is the single source of truth in
@@ -10,11 +10,11 @@
 //! `gos test --tier-parity --report=status`. Missing file is
 //! reported as `(no test data)`.
 //!
-//! `--check` enforces the CI gate: every `Shipped` item must have
-//! a doc page on disk (`docs_src/stdlib/<slug>.md` or
-//! `docs_src/language/<slug>.md`) plus an all-tiers-pass record
-//! in the JSON sidecar. `Experimental` items only need the doc
-//! page; `Planned` and `Removed` items aren't gated.
+//! `--check` enforces the CI gate: every `Stable` item must have a
+//! doc page on disk (`docs_src/stdlib/<slug>.md` or
+//! `docs_src/language/<slug>.md`) plus an all-tiers-pass record in
+//! the JSON sidecar. `Shipped` and `Experimental` items need the
+//! doc page; `Planned` and `Removed` items aren't gated.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -106,7 +106,7 @@ pub struct FeatureStatusOpts {
     pub check: bool,
     /// Optional glob narrowing the displayed entries (`std::http::*`).
     pub filter: Option<String>,
-    /// Optional status filter (`shipped` / `experimental` / `planned` / `removed`).
+    /// Optional status filter (`stable` / `shipped` / `experimental` / `planned` / `removed`).
     pub status: Option<Status>,
     /// Override for the JSON sidecar path (defaults to
     /// `target/debug/.feature-status.json`).
@@ -345,6 +345,30 @@ fn print_json(rows: &[Row], has_tiers: bool) {
         }
         out.push_str(",\"doc_description\":");
         out.push_str(&json_string(row.entry.doc));
+        let evidence = feature_status::item_evidence(row.entry.path, row.entry.status);
+        out.push_str(",\"evidence\":{");
+        out.push_str("\"status\":");
+        out.push_str(&json_string(evidence.status.tag()));
+        out.push_str(",\"supported_tiers\":");
+        json_string_array(
+            &mut out,
+            evidence.supported_tiers.iter().map(|tier| tier.tag()),
+        );
+        out.push_str(",\"supported_targets\":");
+        json_string_array(&mut out, evidence.supported_targets.iter().copied());
+        out.push_str(",\"doc_path\":");
+        out.push_str(
+            &evidence
+                .doc_path
+                .map_or_else(|| "null".to_string(), |path| json_string(&path)),
+        );
+        out.push_str(",\"positive_tests\":");
+        json_string_array(&mut out, evidence.positive_tests.iter().map(String::as_str));
+        out.push_str(",\"negative_tests\":");
+        json_string_array(&mut out, evidence.negative_tests.iter().map(String::as_str));
+        out.push_str(",\"known_limits\":");
+        json_string_array(&mut out, evidence.known_limits.iter().map(String::as_str));
+        out.push('}');
         out.push('}');
     }
     out.push_str("\n]\n");
@@ -388,10 +412,10 @@ fn check_mode(
     let mut failures: Vec<String> = Vec::new();
     for entry in entries {
         match entry.status {
-            Status::Shipped => {
+            Status::Stable => {
                 if doc_page_for(entry.path, docs_root).is_none() {
                     failures.push(format!(
-                        "{}: shipped item missing doc page under {}",
+                        "{}: stable item missing doc page under {}",
                         entry.path,
                         docs_root.display(),
                     ));
@@ -399,20 +423,21 @@ fn check_mode(
                 match tiers.get(entry.path) {
                     Some(t) if t.all_pass() => {}
                     Some(_) => failures.push(format!(
-                        "{}: shipped item failed at least one tier in test sidecar",
+                        "{}: stable item failed at least one tier in test sidecar",
                         entry.path,
                     )),
                     None => failures.push(format!(
-                        "{}: shipped item missing tier-parity test (no sidecar entry)",
+                        "{}: stable item missing tier-parity test (no sidecar entry)",
                         entry.path,
                     )),
                 }
             }
-            Status::Experimental => {
+            Status::Shipped | Status::Experimental => {
                 if doc_page_for(entry.path, docs_root).is_none() {
                     failures.push(format!(
-                        "{}: experimental item missing doc page under {}",
+                        "{}: {} item missing doc page under {}",
                         entry.path,
+                        entry.status.tag(),
                         docs_root.display(),
                     ));
                 }
@@ -669,6 +694,19 @@ fn json_string(s: &str) -> String {
     out
 }
 
+/// Writes a JSON string array without introducing a serialization dependency
+/// for the small, closed feature-status output format.
+fn json_string_array<'a>(out: &mut String, values: impl IntoIterator<Item = &'a str>) {
+    out.push('[');
+    for (index, value) in values.into_iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push_str(&json_string(value));
+    }
+    out.push(']');
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -751,6 +789,23 @@ mod tests {
     }
 
     #[test]
+    fn json_output_includes_item_evidence_fields() {
+        let mut output = String::new();
+        let evidence = feature_status::item_evidence("lang::if", Status::Shipped);
+        output.push_str(&json_string(evidence.status.tag()));
+        json_string_array(
+            &mut output,
+            evidence.supported_tiers.iter().map(|tier| tier.tag()),
+        );
+        assert_eq!(output, "\"shipped\"[\"vm\"]");
+        assert_eq!(
+            evidence.doc_path.as_deref(),
+            Some("docs_src/language/if.md")
+        );
+        assert!(!evidence.known_limits.is_empty());
+    }
+
+    #[test]
     fn check_mode_passes_when_shipped_have_tests_and_docs() {
         let tmp = tempdir();
         let docs = tmp.join("docs_src");
@@ -758,7 +813,7 @@ mod tests {
         fs::create_dir_all(docs.join("stdlib")).unwrap();
         let entry = FeatureStatus {
             path: "lang::if",
-            status: Status::Shipped,
+            status: Status::Stable,
             doc: "Conditional expression.",
         };
         fs::write(docs.join("language/if.md"), "Status: shipped\n").unwrap();
@@ -781,7 +836,7 @@ mod tests {
         fs::create_dir_all(docs.join("language")).unwrap();
         let entry = FeatureStatus {
             path: "lang::zzz_undocumented",
-            status: Status::Shipped,
+            status: Status::Stable,
             doc: "",
         };
         let mut tiers = BTreeMap::new();
@@ -805,7 +860,7 @@ mod tests {
         fs::write(docs.join("language/match.md"), "Status: shipped\n").unwrap();
         let entry = FeatureStatus {
             path: "lang::match",
-            status: Status::Shipped,
+            status: Status::Stable,
             doc: "",
         };
         let tiers = BTreeMap::new();

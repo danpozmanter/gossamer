@@ -13,14 +13,11 @@ struct B { a: A, flag: bool }
 struct C { b: B, label: String }
 
 fn make_scalar() -> Result<Outer, errors::Error> {
-    Ok(Outer { structured_output: Inner { code: 42 } })
+    Ok(Outer(Inner(42)))
 }
 
 fn make_opt(k: i64) -> Option<C> {
-    Some(C {
-        b: B { a: A { n: k, tag: format!("t{}", k) }, flag: k > 0 },
-        label: format!("L{}", k),
-    })
+    Some(C(B(A(k, format!("t{}", k)), k > 0), format!("L{}", k)))
 }
 
 fn main() {

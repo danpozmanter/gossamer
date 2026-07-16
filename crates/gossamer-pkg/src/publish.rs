@@ -1267,7 +1267,7 @@ mod tests {
         let posts = uploader.take_posts();
         let upload: serde_json::Value = serde_json::from_slice(&posts[0].1).unwrap();
         assert_eq!(upload["id"], "example.com/widget");
-        assert_eq!(upload["version"], "1.2.3");
+        assert_eq!(upload["version"], "1.2.3+build.7");
         let owner: serde_json::Value = serde_json::from_slice(&posts[1].1).unwrap();
         assert_eq!(owner["user"], "a\"quoted\nowner");
     }

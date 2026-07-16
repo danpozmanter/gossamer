@@ -32,13 +32,13 @@ impl http::Handler for App {
         http::Response::text(
             200,
             "form_user=" + &user + " form_role=" + &role
-                + " missing=[" + &missing + "] " + &auth,
+            + " missing=[" + &missing + "] " + &auth,
         )
     }
 }
 
 fn serve_app() {
-    if let Err(e) = http::serve("127.0.0.1:23896", App { }) {
+    if let Err(e) = http::serve("127.0.0.1:23896", App()) {
         eprintln!("serve failed: {e}")
     }
 }

@@ -137,10 +137,13 @@ fn builtin_stream_read_line(args: &[Value]) -> RuntimeResult<Value> {
     if fd != 0 {
         return Ok(ok_variant(Value::Int(0)));
     }
-    let stdin = std::io::stdin();
-    let mut line = String::new();
-    match stdin.lock().read_line(&mut line) {
-        Ok(n) => {
+    let read = gossamer_runtime::sched_global::run_blocking("stdin-read-line", || {
+        let stdin = std::io::stdin();
+        let mut line = String::new();
+        stdin.lock().read_line(&mut line).map(|n| (n, line))
+    });
+    match read {
+        Ok(Ok((n, line))) => {
             let mut guard = cell.lock();
             let Some(existing) = as_str(&guard) else {
                 return Ok(err_variant(
@@ -152,7 +155,8 @@ fn builtin_stream_read_line(args: &[Value]) -> RuntimeResult<Value> {
             *guard = Value::String(SmolStr::from(out));
             Ok(ok_variant(Value::Int(n as i64)))
         }
-        Err(e) => Ok(err_variant(format!("read_line: {e}"))),
+        Ok(Err(e)) => Ok(err_variant(format!("read_line: {e}"))),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -162,14 +166,17 @@ fn builtin_stream_read_to_string(args: &[Value]) -> RuntimeResult<Value> {
     if fd != 0 {
         return Ok(Value::String(SmolStr::from(String::new())));
     }
-    let stdin = std::io::stdin();
-    let mut buf = String::new();
-    match stdin.lock().read_to_string(&mut buf) {
-        Ok(_) => {
+    let read = gossamer_runtime::sched_global::run_blocking("stdin-read-to-string", || {
+        let stdin = std::io::stdin();
+        let mut buf = String::new();
+        stdin.lock().read_to_string(&mut buf).map(|_| buf)
+    });
+    match read {
+        Ok(Ok(mut buf)) => {
             buf.shrink_to_fit();
             Ok(Value::String(buf.into()))
         }
-        Err(_) => Ok(Value::String(SmolStr::from(String::new()))),
+        Ok(Err(_)) | Err(_) => Ok(Value::String(SmolStr::from(String::new()))),
     }
 }
 
@@ -184,14 +191,17 @@ fn builtin_io_read_all(args: &[Value]) -> RuntimeResult<Value> {
     if fd != 0 {
         return Ok(Value::String(SmolStr::from(String::new())));
     }
-    let stdin = std::io::stdin();
-    let mut buf = String::new();
-    match stdin.lock().read_to_string(&mut buf) {
-        Ok(_) => {
+    let read = gossamer_runtime::sched_global::run_blocking("stdin-read-all", || {
+        let stdin = std::io::stdin();
+        let mut buf = String::new();
+        stdin.lock().read_to_string(&mut buf).map(|_| buf)
+    });
+    match read {
+        Ok(Ok(mut buf)) => {
             buf.shrink_to_fit();
             Ok(Value::String(buf.into()))
         }
-        Err(_) => Ok(Value::String(SmolStr::from(String::new()))),
+        Ok(Err(_)) | Err(_) => Ok(Value::String(SmolStr::from(String::new()))),
     }
 }
 
@@ -207,14 +217,17 @@ fn builtin_io_copy(args: &[Value]) -> RuntimeResult<Value> {
     if src_fd != 0 {
         return Ok(Value::Int(0));
     }
-    let stdin = std::io::stdin();
-    let mut buf = String::new();
-    let n = match stdin.lock().read_to_string(&mut buf) {
-        Ok(n) => {
+    let read = gossamer_runtime::sched_global::run_blocking("stdin-copy", || {
+        let stdin = std::io::stdin();
+        let mut buf = String::new();
+        stdin.lock().read_to_string(&mut buf).map(|n| (n, buf))
+    });
+    let (n, buf) = match read {
+        Ok(Ok((n, mut buf))) => {
             buf.shrink_to_fit();
-            n as i64
+            (n as i64, buf)
         }
-        Err(_) => return Ok(Value::Int(0)),
+        Ok(Err(_)) | Err(_) => return Ok(Value::Int(0)),
     };
     if dst_fd == 2 {
         write_stderr(&buf);
@@ -625,6 +638,42 @@ fn native_http_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runti
         // panic (native-tier parity).
         Err(err) => Ok(err_variant(format!("http::serve: {err}"))),
     }
+}
+
+/// `httptest::server(status, body) -> String` starts a detached loopback
+/// static responder. Keeping it callback-free lets the interpreter release
+/// its mutable dispatcher before returning the URL, matching compiled tiers.
+#[cfg(not(target_arch = "wasm32"))]
+fn native_httptest_server(
+    _dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    if args.len() != 2 {
+        return Err(RuntimeError::Arity {
+            expected: 2,
+            found: args.len(),
+        });
+    }
+    let status = match args[0] {
+        Value::Int(value) if (100..=599).contains(&value) => value,
+        Value::Int(_) => 500,
+        ref value => {
+            return Err(RuntimeError::Type(format!(
+                "expected HTTP status integer, got {value}"
+            )));
+        }
+    };
+    let body = match &args[1] {
+        Value::String(body) => body.as_str().to_string(),
+        value => {
+            return Err(RuntimeError::Type(format!(
+                "expected response body string, got {value}"
+            )));
+        }
+    };
+    let url = gossamer_runtime::c_abi::testing::httptest_server(status, &body)
+        .map_err(|error| RuntimeError::Panic(format!("httptest::server: {error}")))?;
+    Ok(Value::String(url.into()))
 }
 
 /// `http::serve_tls(addr, cert_pem, key_pem, handler) -> Result<(), Error>`.
@@ -1209,4 +1258,3 @@ fn unwrap_result(value: &Value) -> &Value {
 }
 
 static SIGINT_HOOKED: AtomicBool = AtomicBool::new(false);
-

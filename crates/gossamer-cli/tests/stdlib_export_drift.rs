@@ -41,22 +41,40 @@ fn resolver_stdlib_table_matches_runtime() {
 const ALLOWED_UNMANIFESTED: &[&str] = &[
     // Each entry's canonical spelling is the manifest member; these
     // are convenience / deprecated aliases the runtime keeps callable.
-    "channel::new",                           // -> sync::channel
-    "channel::unbounded",                     // -> sync::channel_unbounded
-    "fs::create_dir",                         // -> fs::create_dir_all
-    "fs::create_dir_all",                     // -> fs::create_dir_all
-    "fs::read",                               // -> fs::read
-    "math::rem",                              // -> math::rem
-    "os::home",                               // -> env::home_dir
-    "os::list_dir",                           // -> os::read_dir
-    "os::set_cwd",                            // -> env::set_current_dir
-    "path::walk",                             // -> fs::walk_dir
-    "thread::sleep_ms",                       // -> time::sleep
-    "encoding::utf16::is_surrogate",          // -> utf16::is_surrogate
-    "encoding::utf16::rune_len",              // -> utf16::rune_len
+    "channel::new",       // -> sync::channel
+    "channel::unbounded", // -> sync::channel_unbounded
+    "fs::create_dir",     // -> fs::create_dir_all
+    "fs::create_dir_all", // -> fs::create_dir_all
+    "fs::read",           // -> fs::read
+    "math::rem",          // -> math::rem
+    "os::home",           // -> env::home_dir
+    "os::list_dir",       // -> os::read_dir
+    "os::set_cwd",        // -> env::set_current_dir
+    "path::walk",         // -> fs::walk_dir
+    "thread::sleep_ms",   // -> time::sleep
+    // Edition-2027 migration targets retain the eager implementations while
+    // the unprefixed iterator names transition to lazy state values.
+    "iter::eager_all",
+    "iter::eager_any",
+    "iter::eager_chain",
+    "iter::eager_collect",
+    "iter::eager_count",
+    "iter::eager_enumerate",
+    "iter::eager_filter",
+    "iter::eager_find",
+    "iter::eager_fold",
+    "iter::eager_map",
+    "iter::eager_range",
+    "iter::eager_range_inclusive",
+    "iter::eager_skip",
+    "iter::eager_sum",
+    "iter::eager_take",
+    "iter::eager_zip",
+    "encoding::utf16::is_surrogate", // -> utf16::is_surrogate
+    "encoding::utf16::rune_len",     // -> utf16::rune_len
     "encoding::utf16::decode_surrogate_pair", // -> utf16::decode_surrogate_pair
-    "encoding::utf16::encode_string",         // -> utf16::encode_string
-    "encoding::utf16::decode_to_string",      // -> utf16::decode_to_string
+    "encoding::utf16::encode_string", // -> utf16::encode_string
+    "encoding::utf16::decode_to_string", // -> utf16::decode_to_string
 ];
 
 /// Every registered `module::fn` must name a member the canonical
@@ -98,15 +116,19 @@ fn registry_members_match_manifest() {
             if segs.first() == Some(&"std") {
                 segs.remove(0);
             }
-            let member = segs[segs.len() - 1];
             let binding_segs = &segs[..segs.len() - 1];
-            // Type-associated methods are not manifest members.
-            if binding_segs
+            let type_name = binding_segs
                 .last()
-                .is_some_and(|s| s.chars().next().is_some_and(char::is_uppercase))
-            {
-                return false;
-            }
+                .filter(|segment| segment.chars().next().is_some_and(char::is_uppercase))
+                .copied();
+            // Type-associated methods do not need a manifest entry for every
+            // method: the manifest describes the type export. They must,
+            // however, belong to a manifest-listed Type, so a runtime-only
+            // type or an accidental owner-name typo cannot silently drift.
+            let (binding_segs, member) = match type_name {
+                Some(type_name) => (&binding_segs[..binding_segs.len() - 1], type_name),
+                None => (binding_segs, segs[segs.len() - 1]),
+            };
             let binding = binding_segs.join("::");
             let matched = binding_to_paths
                 .get(binding.as_str())
@@ -126,7 +148,7 @@ fn registry_members_match_manifest() {
     );
 }
 
-/// Manifest `Function` items whose implementation is reached through a
+/// Manifest item exports whose implementation is reached through a
 /// parse-time call rewrite (`gossamer-parse`), so the public spelling is
 /// absent from the interp builtin registry yet the call resolves on every
 /// tier. A closed, mechanism-annotated list: each entry is rewritten /
@@ -156,8 +178,6 @@ const MANIFEST_IMPL_VIA_REWRITE: &[&str] = &[
 #[test]
 fn manifest_functions_have_implementations() {
     use std::collections::{HashMap, HashSet};
-
-    use gossamer_std::manifest::feature_status::{Status, lookup};
 
     // Canonical path (no `std::`) -> itself, plus last-segment -> path,
     // so a registered `json::parse` and a manifest `encoding::json` both
@@ -203,10 +223,6 @@ fn manifest_functions_have_implementations() {
 
     let phantoms: Vec<String> = gossamer_std::manifest::ALL_MODULES
         .iter()
-        // A module whose lifecycle status departs from `Shipped`
-        // (Experimental / Planned) is honestly disclosed by
-        // `gos feature-status`; its surface is allowed to have gaps.
-        .filter(|m| lookup(m.path).is_none_or(|e| e.status == Status::Shipped))
         .flat_map(|m| {
             let path = m.path.strip_prefix("std::").unwrap_or(m.path);
             m.items

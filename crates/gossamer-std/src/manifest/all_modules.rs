@@ -108,6 +108,8 @@ pub const ALL_MODULES: &[StdModule] = &[
     UTF8,
     MATH_RAND,
     TESTING,
+    HTTPTEST,
+    IMAGE,
     RUNTIME,
     TLS,
     REGEX,

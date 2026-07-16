@@ -1,0 +1,28 @@
+// HTTP diagnostics and transport consumer benchmark.
+//
+// The fixture is process-scoped, so repeated benchmark samples reuse the
+// same pre-bound loopback responder while every iteration still performs a
+// real client transport round trip and validates the response diagnostics.
+
+use std::{http, httptest}
+
+fn readiness_diagnostic(url: String) -> i64 {
+    match http::get(url + "/ready", []) {
+        Ok(response) => {
+            if response.status == 200 && response.body == "ready" {
+                response.status + response.body.len() as i64
+            } else {
+                -1
+            }
+        },
+        Err(_) => -1,
+    }
+}
+
+#[bench]
+fn bench_http_diagnostics_transport_observed() -> i64 {
+    let base = httptest::server(200, "ready")
+    readiness_diagnostic(base)
+}
+
+fn main() { }

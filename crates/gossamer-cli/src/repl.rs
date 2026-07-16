@@ -757,7 +757,7 @@ fn rebuild_session(declarations: &[String]) -> std::result::Result<(), String> {
     let source = declarations.join("\n") + "\nfn __irepl_probe() { }\n";
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file("irepl".to_string(), source.clone());
-    let (sf, parse_diags) = gossamer_parse::parse_source_file(&source, file);
+    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&source, file);
     if !parse_diags.is_empty() {
         return Err(format_parse_diags(&parse_diags, &map, file));
     }
@@ -782,7 +782,7 @@ fn build_and_call(
 ) -> std::result::Result<gossamer_interp::Value, String> {
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file("irepl".to_string(), source.to_string());
-    let (sf, parse_diags) = gossamer_parse::parse_source_file(source, file);
+    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(source, file);
     if !parse_diags.is_empty() {
         return Err(format_parse_diags(&parse_diags, &map, file));
     }

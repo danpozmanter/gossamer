@@ -1,0 +1,11 @@
+use std::image
+
+#[bench]
+fn bench_image_png_jpeg_round_trip_observed() -> i64 {
+    let source = image::filled(64, 64, 0x336699ff)
+    let png = image::encode_png_base64(source)
+    let decoded = image::decode_base64(png)
+    image::width(decoded)
+}
+
+fn main() { }

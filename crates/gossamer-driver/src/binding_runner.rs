@@ -1068,6 +1068,7 @@ fn run_cargo_build(
     if let Some(t) = cargo_target {
         cmd.arg("--target").arg(t);
     }
+    configure_macos_cargo_build(&mut cmd, cargo_target);
     cmd.arg("--manifest-path").arg(manifest_path);
     if kind_value.is_empty() {
         cmd.arg(kind_flag);
@@ -1100,6 +1101,13 @@ fn run_cargo_build(
         });
     }
     Ok(())
+}
+
+fn configure_macos_cargo_build(command: &mut Command, cargo_target: Option<&str>) {
+    if crate::macos_deployment::is_macos_target(cargo_target, cfg!(target_os = "macos")) {
+        let deployment_target = crate::macos_deployment::effective_deployment_target();
+        crate::macos_deployment::set_command_deployment_target(command, &deployment_target);
+    }
 }
 
 /// Reads `stream` to EOF on its own thread, returning the join handle so
@@ -1329,6 +1337,21 @@ mod tests {
         assert!(status.success());
         assert_eq!(stdout_text, "DONE");
         assert_eq!(stderr_text.len(), STDERR_BYTES);
+    }
+
+    #[test]
+    fn rust_binding_cargo_build_inherits_macos_deployment_target() {
+        let mut command = Command::new("cargo");
+        configure_macos_cargo_build(&mut command, Some("aarch64-apple-darwin"));
+        let configured = command
+            .get_envs()
+            .find(|(name, _)| *name == crate::macos_deployment::MACOSX_DEPLOYMENT_TARGET_ENV)
+            .and_then(|(_, value)| value)
+            .expect("binding Cargo deployment target environment");
+        assert_eq!(
+            configured,
+            crate::macos_deployment::effective_deployment_target().as_str()
+        );
     }
 
     #[test]

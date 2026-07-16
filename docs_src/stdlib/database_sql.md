@@ -1,6 +1,6 @@
 # `std::database::sql`
 
-Status: shipped
+Status: experimental
 
 Driver-pluggable SQL database access. No driver ships in the box; bring your own (Postgres, MySQL, SQLite, ...) by registering one at startup.
 

@@ -883,6 +883,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -934,6 +936,34 @@
 
 
     Overview
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../misc/tooling_faithful_fmt/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Formatter behavior
 
 
 
@@ -1793,6 +1823,16 @@
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>create_dir_all</code></a></td>
 <td><code>fn create_dir_all(path: String) -&gt; Result&lt;(), io::Error&gt;</code></td>
 <td>Creates a directory and any missing ancestors.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>temp_dir</code></a></td>
+<td><code>fn temp_dir(prefix: String) -&gt; Result&lt;String, io::Error&gt;</code></td>
+<td>Creates a unique directory under the system temporary root. The caller removes it explicitly.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>temp_file</code></a></td>
+<td><code>fn temp_file(prefix: String) -&gt; Result&lt;(fs::File, String), io::Error&gt;</code></td>
+<td>Creates a unique temporary file and returns its streaming handle plus path. Close and remove it explicitly.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>exists</code></a></td>

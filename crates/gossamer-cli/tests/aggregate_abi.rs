@@ -193,7 +193,7 @@ fn struct_returned_by_value_fields_read_by_caller() {
 struct Point3 { x: i64, y: i64, z: i64 }
 
 fn make_point() -> Point3 {
-    Point3 { x: 11, y: 22, z: 33 }
+    Point3(11, 22, 33)
 }
 
 fn main() {
@@ -202,6 +202,26 @@ fn main() {
 }
 "#;
     assert_three_tier_parity("struct_return", src, "x=11 y=22 z=33");
+}
+
+#[test]
+fn short_lived_scalar_aggregate_is_identical_across_tiers() {
+    // The MIR scalar-replacement pass may remove `pair` entirely because both
+    // uses are direct field reads. Keep the inputs non-constant so this is a
+    // real construction/read path rather than compile-time arithmetic.
+    let src = r#"
+struct Pair { left: i64, right: i64 }
+
+fn add_pair(left: i64, right: i64) -> i64 {
+    let pair = Pair(left, right)
+    pair.left * 31 + pair.right
+}
+
+fn main() {
+    println!("{}", add_pair(7, 11))
+}
+"#;
+    assert_three_tier_parity("short_lived_scalar_aggregate", src, "228");
 }
 
 #[test]
@@ -220,7 +240,7 @@ fn dump(p: Point3) {
 }
 
 fn main() {
-    let p = Point3 { x: 7, y: 11, z: 13 }
+    let p = Point3(7, 11, 13)
     dump(p)
     println!("outside x={} y={} z={}", p.x, p.y, p.z)
 }
@@ -244,7 +264,7 @@ fn shift(mut p: Point) -> Point {
 }
 
 fn main() {
-    let original = Point { x: 1, y: 2 }
+    let original = Point(1, 2)
     let shifted = shift(original)
     println!("orig=({},{}) shifted=({},{})", original.x, original.y, shifted.x, shifted.y)
 }
@@ -264,9 +284,9 @@ struct Point3 { x: i64, y: i64, z: i64 }
 
 fn main() {
     let pts = [
-        Point3 { x: 1, y: 2, z: 3 },
-        Point3 { x: 4, y: 5, z: 6 },
-        Point3 { x: 7, y: 8, z: 9 },
+        Point3(1, 2, 3),
+        Point3(4, 5, 6),
+        Point3(7, 8, 9),
     ]
     let mut sum = 0
     for i in 0..3 {
@@ -322,9 +342,9 @@ fn find(target: i64, grid: [Coord; 3]) -> Option<Coord> {
 
 fn main() {
     let grid = [
-        Coord { row: 1, col: 2 },
-        Coord { row: 3, col: 4 },
-        Coord { row: 5, col: 6 },
+        Coord(1, 2),
+        Coord(3, 4),
+        Coord(5, 6),
     ]
     match find(7, grid) {
         Some(c) => println!("found ({},{})", c.row, c.col),
@@ -351,7 +371,7 @@ struct Parsed { width: i64, height: i64 }
 
 fn parse_dim(s: String) -> Result<Parsed, errors::Error> {
     if s == "10x20" {
-        Ok(Parsed { width: 10, height: 20 })
+        Ok(Parsed(10, 20))
     } else {
         Err(errors::new("bad dim"))
     }
@@ -382,13 +402,8 @@ fn struct_update_base_with_scalar_and_string_fields() {
 struct Outer { label: String, tag: String, n: i64, m: i64 }
 
 fn main() {
-    let base = Outer {
-        label: "alpha".to_string(),
-        tag: "first".to_string(),
-        n: 42,
-        m: 17,
-    }
-    let updated = Outer { n: 99, ..base }
+    let base = Outer("alpha".to_string(), "first".to_string(), 42, 17)
+    let updated = Outer(base.label, base.tag, 99, base.m)
     println!("label={} tag={}", updated.label, updated.tag)
     println!("n={} m={}", updated.n, updated.m)
 }
@@ -407,12 +422,8 @@ struct Inner { tag: String, count: i64 }
 struct Outer { inner: Inner, label: String, n: i64 }
 
 fn main() {
-    let base = Outer {
-        inner: Inner { tag: "first".to_string(), count: 7 },
-        label: "alpha".to_string(),
-        n: 42,
-    }
-    let updated = Outer { n: 99, ..base }
+    let base = Outer(Inner("first".to_string(), 7), "alpha".to_string(), 42)
+    let updated = Outer(base.inner, base.label, 99)
     println!("inner.tag={} inner.count={}", updated.inner.tag, updated.inner.count)
     println!("label={} n={}", updated.label, updated.n)
 }
@@ -436,10 +447,7 @@ struct Inner { x: i64, y: i64 }
 struct Outer { inner: Inner, tag: String }
 
 fn main() {
-    let o = Outer {
-        inner: Inner { x: 100, y: 200 },
-        tag: "t".to_string(),
-    }
+    let o = Outer(Inner(100, 200), "t".to_string())
     println!("{} {} {}", o.inner.x, o.inner.y, o.tag)
 }
 "#;
@@ -453,10 +461,7 @@ struct Inner { x: i64, y: i64 }
 struct Outer { inner: Inner, tag: String }
 
 fn main() {
-    let mut o = Outer {
-        inner: Inner { x: 1, y: 2 },
-        tag: "t".to_string(),
-    }
+    let mut o = Outer(Inner(1, 2), "t".to_string())
     o.inner.x = 100
     o.inner.y = 200
     println!("{} {} {}", o.inner.x, o.inner.y, o.tag)
@@ -525,11 +530,11 @@ fn parallel_lowering_aggregate_chain_across_call_boundaries() {
 struct Dims { w: i64, h: i64 }
 
 fn make_dims(w: i64, h: i64) -> Dims {
-    Dims { w: w, h: h }
+    Dims(w, h)
 }
 
 fn scale_dims(d: Dims, factor: i64) -> Dims {
-    Dims { w: d.w * factor, h: d.h * factor }
+    Dims(d.w * factor, d.h * factor)
 }
 
 fn area(d: Dims) -> i64 {

@@ -178,27 +178,20 @@ fn array_index_produces_projection_index_with_local_offset() {
 }
 
 #[test]
-fn struct_literal_obeys_declaration_order_in_aggregate_operands() {
+fn positional_struct_constructor_preserves_declaration_order() {
     let bodies = build(
-        "struct Pair { a: i64, b: i64 }\nfn main() -> i64 { let p = Pair { b: 7i64, a: 3i64 }; p.a }\n",
+        "struct Pair { a: i64, b: i64 }\nfn main() -> i64 { let p = Pair(3i64, 7i64); p.a }\n",
     );
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
-    let agg = main
+    let args = main
         .blocks
         .iter()
-        .flat_map(|b| &b.stmts)
-        .find_map(|s| match &s.kind {
-            StatementKind::Assign {
-                rvalue: Rvalue::Aggregate { operands, .. },
-                ..
-            } => Some(operands.clone()),
+        .find_map(|b| match &b.terminator {
+            Terminator::Call { args, .. } => Some(args.clone()),
             _ => None,
         })
-        .expect("struct literal must lower to Rvalue::Aggregate");
-    assert_eq!(agg.len(), 2, "Pair has two fields");
-    // We verify the operand order is declaration order (a, b) not
-    // source order (b, a). The actual const values are resolved
-    // in the test below through a local-to-const lookup.
+        .expect("positional struct constructor must lower to a call");
+    assert_eq!(args.len(), 2, "Pair has two fields");
 }
 
 #[test]

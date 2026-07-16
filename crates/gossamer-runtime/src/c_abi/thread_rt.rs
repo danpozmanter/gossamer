@@ -39,3 +39,10 @@ pub unsafe extern "C" fn gos_rt_runtime_scheduler_stats_json() -> *mut std::os::
         std::ffi::CString::new(text).unwrap_or_default().into_raw()
     })
 }
+
+/// `runtime::cycle_collection_supported() -> bool` - compiled tiers run the
+/// native trial-deletion collector, unlike the Arc-backed bytecode VM.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_runtime_cycle_collection_supported() -> bool {
+    true
+}

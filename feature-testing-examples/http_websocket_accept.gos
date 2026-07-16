@@ -40,7 +40,7 @@ impl http::Handler for App {
 }
 
 fn serve_ws() {
-    if let Err(e) = http::serve("127.0.0.1:23891", App { }) {
+    if let Err(e) = http::serve("127.0.0.1:23891", App()) {
         eprintln!("serve failed: {e}")
     }
 }

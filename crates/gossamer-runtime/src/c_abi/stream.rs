@@ -80,11 +80,14 @@ pub unsafe extern "C" fn gos_rt_io_copy(dst: *const GosStream, src: *const GosSt
             return 0;
         }
         unsafe { gos_rt_flush_stdout() };
-        let stdin = std::io::stdin();
-        let mut buf = String::new();
-        let n = match stdin.lock().read_to_string(&mut buf) {
-            Ok(n) => n as i64,
-            Err(_) => return 0,
+        let read = crate::sched_global::run_blocking("stdin-copy", || {
+            let stdin = std::io::stdin();
+            let mut buf = String::new();
+            stdin.lock().read_to_string(&mut buf).map(|n| (n, buf))
+        });
+        let (n, buf) = match read {
+            Ok(Ok((n, buf))) => (n as i64, buf),
+            Ok(Err(_)) | Err(_) => return 0,
         };
         unsafe { write_fd(dst_fd, buf.as_bytes()) };
         n
@@ -103,11 +106,14 @@ pub unsafe extern "C" fn gos_rt_io_read_all(reader: *const GosStream) -> *mut c_
             return alloc_cstring(b"");
         }
         unsafe { gos_rt_flush_stdout() };
-        let stdin = std::io::stdin();
-        let mut buf = String::new();
-        match stdin.lock().read_to_string(&mut buf) {
-            Ok(_) => alloc_cstring(buf.as_bytes()),
-            Err(_) => alloc_cstring(b""),
+        let read = crate::sched_global::run_blocking("stdin-read-all", || {
+            let stdin = std::io::stdin();
+            let mut buf = String::new();
+            stdin.lock().read_to_string(&mut buf).map(|_| buf)
+        });
+        match read {
+            Ok(Ok(buf)) => alloc_cstring(buf.as_bytes()),
+            Ok(Err(_)) | Err(_) => alloc_cstring(b""),
         }
     })
 }
@@ -134,21 +140,13 @@ fn raw_write_fd(fd: i32, bytes: &[u8]) {
     if bytes.is_empty() {
         return;
     }
-    use std::io::Write;
     // Today the runtime only routes fds 1 and 2; fd 0 is read-only.
     // Other fds will land here once `open()` is wired - at that
-    // point this dispatch grows. Going through `std::io` keeps the
-    // call cross-platform (no `extern "C" fn write` symbol on
-    // Windows MSVC).
+    // point this dispatch grows. `write_terminal` hands the OS
+    // write to a blocking worker, keeping a one-worker scheduler
+    // responsive even when a terminal or redirected pipe stalls.
     match fd {
-        1 => {
-            let stdout = std::io::stdout();
-            let _ = stdout.lock().write_all(bytes);
-        }
-        2 => {
-            let stderr = std::io::stderr();
-            let _ = stderr.lock().write_all(bytes);
-        }
+        1 | 2 => crate::c_abi::write_terminal(fd, bytes),
         _ => {}
     }
 }
@@ -324,10 +322,13 @@ pub unsafe extern "C" fn gos_rt_stream_read_line(
             return gos_rt_result_new(0, 0);
         }
         unsafe { gos_rt_flush_stdout() };
-        let stdin = std::io::stdin();
-        let mut line = String::new();
-        match stdin.lock().read_line(&mut line) {
-            Ok(n) => {
+        let read = crate::sched_global::run_blocking("stdin-read-line", || {
+            let stdin = std::io::stdin();
+            let mut line = String::new();
+            stdin.lock().read_line(&mut line).map(|n| (n, line))
+        });
+        match read {
+            Ok(Ok((n, line))) => {
                 let current = unsafe { *buf_slot };
                 let mut out = if current.is_null() {
                     String::new()
@@ -343,7 +344,8 @@ pub unsafe extern "C" fn gos_rt_stream_read_line(
                 }
                 gos_rt_result_new(0, n as i64)
             }
-            Err(e) => stream_read_line_err(&format!("read_line: {e}")),
+            Ok(Err(e)) => stream_read_line_err(&format!("read_line: {e}")),
+            Err(e) => stream_read_line_err(&e),
         }
     })
 }
@@ -358,11 +360,14 @@ pub unsafe extern "C" fn gos_rt_stream_read_to_string(stream: *const GosStream) 
             return alloc_cstring(b"");
         }
         unsafe { gos_rt_flush_stdout() };
-        let stdin = std::io::stdin();
-        let mut buf = String::new();
-        match stdin.lock().read_to_string(&mut buf) {
-            Ok(_) => alloc_cstring(buf.as_bytes()),
-            Err(_) => alloc_cstring(b""),
+        let read = crate::sched_global::run_blocking("stdin-read-to-string", || {
+            let stdin = std::io::stdin();
+            let mut buf = String::new();
+            stdin.lock().read_to_string(&mut buf).map(|_| buf)
+        });
+        match read {
+            Ok(Ok(buf)) => alloc_cstring(buf.as_bytes()),
+            Ok(Err(_)) | Err(_) => alloc_cstring(b""),
         }
     })
 }

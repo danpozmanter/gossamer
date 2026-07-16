@@ -54,6 +54,13 @@ pub enum ParseError {
     /// The right-hand side of `|>` did not match any of the forms in SPEC §4.6.
     #[error("E0601: right-hand side of `|>` must be a callable")]
     PipeRhsInvalid,
+    /// A pipe placeholder was repeated or placed somewhere it cannot select a
+    /// call argument.
+    #[error("E0602: pipe placeholder `_` must occur exactly once in a direct call argument")]
+    PipePlaceholderInvalid,
+    /// An open range was used where a pipe placeholder was intended.
+    #[error("E0603: `..` is a range expression, not a pipe placeholder")]
+    PipeDotDotPlaceholder,
     /// An assignment appeared in a non-statement expression position.
     #[error("assignment is only valid at statement position")]
     AssignmentNotAllowed,
@@ -227,6 +234,20 @@ impl ParseError {
                 "GP0007",
                 "right-hand side of `|>` must be a callable".to_string(),
                 None,
+            ),
+            ParseError::PipePlaceholderInvalid => (
+                "GP0023",
+                "pipe placeholder `_` must occur exactly once in a direct call argument"
+                    .to_string(),
+                Some("place one `_` directly in the call argument list".to_string()),
+            ),
+            ParseError::PipeDotDotPlaceholder => (
+                "GP0024",
+                "`..` is a range expression, not a pipe placeholder".to_string(),
+                Some(
+                    "use `_`, or omit the placeholder for the default trailing position"
+                        .to_string(),
+                ),
             ),
             ParseError::AssignmentNotAllowed => (
                 "GP0008",

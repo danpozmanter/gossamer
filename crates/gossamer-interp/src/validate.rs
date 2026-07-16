@@ -1128,6 +1128,36 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, receiver)?;
                 check_pool(op_idx, u32::from(name_idx), consts_len, PoolKind::Consts)?;
             }
+            Op::Struct2I64 {
+                dst,
+                type_name,
+                field0,
+                field1,
+                first_i,
+                second_i,
+            } => {
+                check_v(op_idx, dst)?;
+                check_i(op_idx, first_i)?;
+                check_i(op_idx, second_i)?;
+                check_pool(
+                    op_idx,
+                    u32::from(type_name),
+                    shape_names_len,
+                    PoolKind::ShapeNames,
+                )?;
+                check_pool(
+                    op_idx,
+                    u32::from(field0),
+                    shape_names_len,
+                    PoolKind::ShapeNames,
+                )?;
+                check_pool(
+                    op_idx,
+                    u32::from(field1),
+                    shape_names_len,
+                    PoolKind::ShapeNames,
+                )?;
+            }
             Op::IndexedFieldGet {
                 dst,
                 base,
@@ -1659,6 +1689,15 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
         | Op::LeU64 { dst_v, .. }
         | Op::GtU64 { dst_v, .. }
         | Op::GeU64 { dst_v, .. } => effect.v_writes.push(dst_v),
+        Op::Struct2I64 {
+            dst,
+            first_i,
+            second_i,
+            ..
+        } => {
+            effect.v_writes.push(dst);
+            effect.i_reads.extend([first_i, second_i]);
+        }
         Op::LoadConstF64 { dst_f, .. }
         | Op::IntToFloatF64 { dst_f, .. }
         | Op::UnboxF64 { dst_f, .. }
@@ -1800,6 +1839,9 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
             add_v_span(&mut effect.v_reads, first, count);
         }
         Op::BuildArrayRepeat { value, count, .. } => effect.v_reads.extend([value, count]),
+        Op::Struct2I64 {
+            first_i, second_i, ..
+        } => effect.i_reads.extend([first_i, second_i]),
         Op::BuildRange { start, end, .. } => effect.v_reads.extend([start, end]),
         Op::CellTake { cell, .. } => effect.v_reads.push(cell),
         Op::IndexGet { base, index, .. }

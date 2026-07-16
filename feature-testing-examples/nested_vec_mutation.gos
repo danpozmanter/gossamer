@@ -17,7 +17,7 @@ fn main() {
     groups[0].push(3)
     println!("nested: {}", groups[0].len())
 
-    let mut b = Bag { items: [] }
+    let mut b = Bag([])
     b.items.push(10)
     b.items.push(20)
     println!("field: {} {}", b.items.len(), b.items[1])

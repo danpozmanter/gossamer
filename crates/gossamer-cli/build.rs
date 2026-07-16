@@ -35,6 +35,10 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "../gossamer-driver/src/macos_deployment.rs"]
+#[allow(unreachable_pub)]
+mod macos_deployment;
+
 /// Runtime symbols that intentionally have no codegen dispatch arm.
 /// Add a one-line comment justifying each entry.
 const KNOWN_UNUSED_RUNTIME_SYMBOLS: &[&str] = &[
@@ -101,6 +105,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../gossamer-abi/src/registry.rs");
     println!("cargo:rerun-if-env-changed=GOS_RUNTIME_LIB");
     println!("cargo:rerun-if-env-changed=GOSSAMER_SKIP_DISPATCH_PARITY");
+    println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
 
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest
@@ -225,6 +230,10 @@ fn build_runtime_into(
         .arg("--target-dir")
         .arg(&inner_target)
         .current_dir(workspace_root);
+    if macos_deployment::is_macos_target(triple, cfg!(target_os = "macos")) {
+        let deployment_target = macos_deployment::effective_deployment_target();
+        macos_deployment::set_command_deployment_target(&mut cmd, &deployment_target);
+    }
     // Keep the static archive used by `gos build` in step with the runtime
     // linked into the CLI itself.
     if env::var_os("CARGO_FEATURE_INLINE_VEC_WORDS_6").is_some() {

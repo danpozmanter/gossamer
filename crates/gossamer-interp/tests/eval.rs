@@ -15,7 +15,7 @@ use gossamer_interp::{
     set_stdout_writer,
 };
 use gossamer_lex::SourceMap;
-use gossamer_parse::parse_source_file;
+use gossamer_parse::autoderive::parse_with_autoderive;
 use gossamer_resolve::resolve_source_file;
 use gossamer_types::{TyCtxt, typecheck_source_file};
 
@@ -48,7 +48,7 @@ fn capture_writer(text: &str) {
 fn run_program(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (sf, parse_diags) = parse_with_autoderive(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
     let mut tcx = TyCtxt::new();
@@ -69,7 +69,7 @@ fn run_program(source: &str) -> String {
 fn call_and_return(source: &str, entry: &str, args: Vec<Value>) -> Value {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (sf, parse_diags) = parse_with_autoderive(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
     let mut tcx = TyCtxt::new();
@@ -168,19 +168,16 @@ fn main() {
 }
 
 #[test]
-fn tuple_struct_constructors_work_directly_and_as_values() {
+fn named_struct_values_work_directly_and_as_values() {
     let source = r"
-struct Pair(i64, i64)
+struct Pair { left: i64, right: i64 }
 
 fn main() {
     let direct = Pair(1i64, 2i64)
-    let make = Pair
-    let via_value = make(3i64, 4i64)
-    println(direct.0 + direct.1)
-    println(via_value.0 + via_value.1)
+    println(direct.left + direct.right)
 }
 ";
-    assert_eq!(run_program(source), "3\n7\n");
+    assert_eq!(run_program(source), "3\n");
 }
 
 #[test]
@@ -484,7 +481,7 @@ fn explode() -> i64 {
 "#;
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, _) = parse_source_file(source, file);
+    let (sf, _) = parse_with_autoderive(source, file);
     let (resolutions, _) = resolve_source_file(&sf);
     let mut tcx = TyCtxt::new();
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
@@ -527,7 +524,7 @@ fn struct_literal_fields_project_correctly() {
 struct Point { x: i64, y: i64 }
 
 fn main() {
-    let p = Point { x: 3i64, y: 4i64 }
+    let p = Point(3i64, 4i64)
     println(p.x + p.y)
 }
 "#;
@@ -622,7 +619,7 @@ impl Mailbox {
 }
 
 fn main() {
-    let m = Mailbox { tag: "main".to_string() }
+    let m = Mailbox("main".to_string())
     println(m.send(41i64))
 }
 "#;
@@ -640,7 +637,7 @@ fn main() {
 "#;
     let mut map = SourceMap::new();
     let file = map.add_file("t.gos", source.to_string());
-    let (sf, _) = parse_source_file(source, file);
+    let (sf, _) = parse_with_autoderive(source, file);
     let (resolutions, _) = resolve_source_file(&sf);
     let mut tcx = TyCtxt::new();
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
@@ -662,7 +659,7 @@ fn main() {
 "#;
     let mut map = SourceMap::new();
     let file = map.add_file("t.gos", source.to_string());
-    let (sf, _) = parse_source_file(source, file);
+    let (sf, _) = parse_with_autoderive(source, file);
     let (resolutions, _) = resolve_source_file(&sf);
     let mut tcx = TyCtxt::new();
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);

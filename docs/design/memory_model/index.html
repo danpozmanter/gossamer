@@ -887,6 +887,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -938,6 +940,34 @@
 
 
     Overview
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../misc/tooling_faithful_fmt/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Formatter behavior
 
 
 
@@ -1898,9 +1928,12 @@ between them.</p>
   acquire the lock.</li>
 <li><code>WaitGroup::done</code> synchronizes with a <code>wait</code> that observes the count
   reach zero.</li>
+<li><code>Once::call_once</code> publishes the completed initialization body to every
+  caller that returns from the same <code>Once</code>.</li>
 <li>Atomic operations synchronize according to the operation's documented
-  ordering. Current stdlib atomics use conservative acquire/release or
-  stronger runtime ordering for their exposed methods.</li>
+  ordering. Sequentially consistent operations and release-store/acquire-load
+  pairs establish detector-visible edges. Relaxed operations are atomic but do
+  not establish an ordering edge.</li>
 </ul>
 <h2 id="channels">Channels<a class="headerlink" href="#channels" title="Permanent link">&para;</a></h2>
 <p><code>channel()</code> and <code>channel(0)</code> create an unbuffered rendezvous channel.

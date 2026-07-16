@@ -9,9 +9,9 @@ fn case_overwrite() -> i64 {
     let mut total = 0
     let mut i = 0
     while i < 1000 {
-        let first = Node { val: 1, next: None }
-        let mut a = Node { val: i, next: Some(first) }
-        let second = Node { val: 2, next: None }
+        let first = Node(1, None)
+        let mut a = Node(i, Some(first))
+        let second = Node(2, None)
         a.next = Some(second)
         if let Some(n) = &a.next {
             total += n.val
@@ -27,10 +27,10 @@ fn case_alias_after_overwrite() -> i64 {
     let mut total = 0
     let mut i = 0
     while i < 1000 {
-        let first = Node { val: 7, next: None }
-        let mut a = Node { val: i, next: Some(first) }
+        let first = Node(7, None)
+        let mut a = Node(i, Some(first))
         let saved = a.next
-        let second = Node { val: 9, next: None }
+        let second = Node(9, None)
         a.next = Some(second)
         if let Some(s) = &saved {
             total += s.val
@@ -46,7 +46,7 @@ fn case_alias_after_overwrite() -> i64 {
 // Err-side multi-slot payload: the error copy is reclaimed too.
 fn fail_with(v: i64) -> Result<i64, Big> {
     if v >= 0 {
-        Err(Big { a: v, b: v + 1 })
+        Err(Big(v, v + 1))
     } else {
         Ok(v)
     }

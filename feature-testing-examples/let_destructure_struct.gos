@@ -7,14 +7,14 @@ struct Nested { p: Point, label: String }
 enum Shape { Pair(i64, i64), Single(i64) }
 
 fn main() {
-    let p = Point { x: 3, y: 4 }
+    let p = Point(3, 4)
     let Point { x, y } = p
     println!("{} {}", x, y)
 
     let Point { x: a, y: b } = p
     println!("{} {}", a, b)
 
-    let nested = Nested { p: Point { x: 10, y: 20 }, label: "hi" }
+    let nested = Nested(Point(10, 20), "hi")
     let Nested { p: Point { x: nx, y: ny }, label } = nested
     println!("{} {} {}", nx, ny, label)
 

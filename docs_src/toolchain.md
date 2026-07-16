@@ -11,7 +11,7 @@ the implementation by a rev.
 | `gos parse FILE` | Print the AST. |
 | `gos check [--timings] FILE` | Parse + resolve + typecheck + exhaustiveness. With `--timings`, prints per-stage wall-clock times. Parse output is cached by source hash - re-invocations on an unchanged file reuse the parsed AST. Set `GOSSAMER_CACHE_TRACE=1` to log cache hits. |
 | `gos run FILE` | Execute via the register-based bytecode VM. Recursive helper workloads may promote through the in-process Cranelift JIT. |
-| `gos build [--release] [--target TRIPLE] FILE` | Produce a native binary (ELF/Mach-O/PE) by lowering through MIR + LLVM (`llc -O0`; `--release` runs the full `opt -O3 | llc -O3` pipeline) and linking the user's `.o` against `libgossamer_runtime.a`. The Cranelift code path is reserved for the in-process JIT (`gos run`), not this command. Tier 2 cross deployment is `{x86_64,aarch64}-unknown-linux-musl`, QEMU-differential-tested in CI. Other registered triples are not supported merely because a local link succeeds; macOS/Windows as cross targets are out of scope. |
+| `gos build [--release] [--target TRIPLE] FILE` | Produce a native binary (ELF/Mach-O/PE) by lowering through MIR + LLVM (`llc -O0`; `--release` runs the full `opt -O3 | llc -O3` pipeline) and linking the user's `.o` against `libgossamer_runtime.a`. Release builds may use `--pgo-collect PATH.profraw` to emit an instrumented binary or `--pgo-profile PATH.profdata` to apply merged LLVM profile data; the modes conflict, profile input must exist, and an input older than the source produces a warning. The Cranelift code path is reserved for the in-process JIT (`gos run`), not this command. Tier 2 cross deployment is `{x86_64,aarch64}-unknown-linux-musl`, QEMU-differential-tested in CI. Other registered triples are not supported merely because a local link succeeds; macOS/Windows as cross targets are out of scope. |
 
 ## Formatting + linting + docs
 
@@ -27,7 +27,7 @@ the implementation by a rev.
 | Command | Purpose |
 |---------|---------|
 | `gos test PATH` | Run `#[test]` functions **and** doc-tests extracted from `` ``` ``-fenced code inside `//` doc comments. `` ```text `` and other language tags are skipped. Accepts a file or a directory. |
-| `gos bench [--parallel N] [PATH]` | Discover and time `#[bench]` functions; reports `ns/op` per benchmark. Per-bench iteration counts auto-tune against a 50 ms calibration window (cap 2^20). `PATH` defaults to the project's `src/`. |
+| `gos bench [--parallel N] [PATH]` | Discover and time `#[bench]` functions; reports `ns/op` plus JIT tier-up, compile-time, native-code, peak-RSS, and bypassed-VM-work counters. Per-bench iteration counts auto-tune against a 50 ms calibration window (cap 2^20). `PATH` defaults to the project's `src/`. |
 
 ## Watch
 
@@ -49,7 +49,8 @@ the implementation by a rev.
 | `gos init ID` | Create `project.toml` in the CWD. |
 | `gos add SPEC` | Add a dependency (`name` or `name@version`). |
 | `gos remove ID` | Drop a dependency. |
-| `gos tidy` | Canonicalise the manifest. |
+| `gos update` | Update locked dependencies within declared ranges. |
+| `gos tidy` | Remove unused project dependencies and canonicalise the manifest. |
 | `gos fetch` | Populate the local cache. |
 | `gos vendor` | Copy fetched deps into `./vendor/`. |
 

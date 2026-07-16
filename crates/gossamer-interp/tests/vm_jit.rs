@@ -52,6 +52,32 @@ struct JitRssCapGuard {
     previous: Option<OsString>,
 }
 
+struct JitCodeCapGuard {
+    previous: Option<OsString>,
+}
+
+impl JitCodeCapGuard {
+    fn new(bytes: &str) -> Self {
+        let previous = std::env::var_os("GOS_JIT_MAX_CODE_BYTES");
+        // SAFETY: a `GosJitGuard` holds `JIT_ENV_LOCK` for this test.
+        unsafe { std::env::set_var("GOS_JIT_MAX_CODE_BYTES", bytes) };
+        Self { previous }
+    }
+}
+
+impl Drop for JitCodeCapGuard {
+    fn drop(&mut self) {
+        // SAFETY: a `GosJitGuard` still holds `JIT_ENV_LOCK` here.
+        unsafe {
+            if let Some(previous) = &self.previous {
+                std::env::set_var("GOS_JIT_MAX_CODE_BYTES", previous);
+            } else {
+                std::env::remove_var("GOS_JIT_MAX_CODE_BYTES");
+            }
+        };
+    }
+}
+
 impl JitRssCapGuard {
     fn new(megabytes: &str) -> Self {
         let previous = std::env::var_os("GOS_JIT_MAX_RSS_MB");
@@ -117,6 +143,40 @@ fn jit_dispatches_through_simple_arithmetic() {
     );
     let result = vm.call("main", Vec::new()).expect("main");
     assert!(matches!(result, Value::Int(42)));
+}
+
+#[test]
+fn jit_struct_return_uses_structural_return_buffer() {
+    // Registered flat structs are the common aggregate boundary shape in the
+    // VM's hot method/helper workloads. Codegen already emits their trailing
+    // sret parameter; exercise the trampoline's matching caller-owned block
+    // so returning the struct stays native instead of falling back.
+    let _g = GosJitGuard::new();
+    let source = "struct Pair { label: String, right: i64 }\nfn build_pair(n: i64) -> Pair {\n  let mut i = 0i64\n  while i < 100i64 { i = i + 1i64 }\n  Pair { label: \"native\", right: n + 1i64 }\n}\nfn main() -> i64 { 0i64 }\n";
+    let (vm, _) = build_vm(source);
+
+    // The body has 27 bytecode instructions, so 500 entries exceed the
+    // default 8,192-instruction admission floor without relying on the
+    // process-wide test-only JIT threshold overrides.
+    for _ in 0..500 {
+        vm.call("build_pair", vec![Value::Int(20)])
+            .expect("build_pair warm-up");
+    }
+    let result = vm
+        .call("build_pair", vec![Value::Int(20)])
+        .expect("build_pair");
+    let Value::Struct(pair) = result else {
+        panic!("JIT struct return must decode to Value::Struct");
+    };
+    assert_eq!(pair.name.as_str(), "Pair");
+    assert!(matches!(pair.fields[0].1, Value::String(ref s) if s.as_str() == "native"));
+    assert!(matches!(pair.fields[1].1, Value::Int(21)));
+
+    let metrics = vm.jit_metrics();
+    assert!(
+        metrics.resident_functions >= 1 && metrics.saved_vm_instructions > 0,
+        "the struct-returning body must dispatch natively: {metrics:?}"
+    );
 }
 
 #[test]
@@ -303,6 +363,41 @@ fn jit_metrics_report_ram_aware_tier_up_skip() {
 }
 
 #[test]
+fn jit_metrics_report_native_code_budget_skip() {
+    let _g = GosJitGuard::new();
+    let _code = JitCodeCapGuard::new("1");
+    let source = "fn fib(n: i64) -> i64 {\n  if n < 2i64 { n } else { fib(n - 1i64) + fib(n - 2i64) }\n}\nfn main() -> i64 { fib(10i64) }\n";
+    let (vm, _) = build_vm(source);
+
+    warm_up(&vm, "fib", &[Value::Int(8)]);
+    let metrics = vm.jit_metrics();
+    assert_eq!(
+        metrics.compile_attempts, 1,
+        "the cap is checked after exact code-size measurement: {metrics:?}"
+    );
+    assert_eq!(
+        metrics.successful_compiles, 0,
+        "over-budget code must not install: {metrics:?}"
+    );
+    assert_eq!(
+        metrics.resident_functions, 0,
+        "over-budget code must not remain reachable: {metrics:?}"
+    );
+    assert!(
+        metrics.code_size_skipped_compiles >= 1,
+        "code-budget skip must be observable: {metrics:?}"
+    );
+    assert_eq!(
+        metrics.emitted_code_bytes, 0,
+        "rejected code must not be reported as retained: {metrics:?}"
+    );
+    assert!(
+        metrics.released_snapshots >= 1,
+        "rejected code must release the MIR snapshot: {metrics:?}"
+    );
+}
+
+#[test]
 fn jit_reuses_immutable_artifact_for_overlapping_vms_on_one_thread() {
     let _g = GosJitGuard::new();
     let source = "fn artifact_cache_fib(n: i64) -> i64 {\n  if n < 2i64 { n } else { artifact_cache_fib(n - 1i64) + artifact_cache_fib(n - 2i64) }\n}\nfn main() -> i64 { artifact_cache_fib(10i64) }\n";
@@ -334,6 +429,32 @@ fn jit_reuses_immutable_artifact_for_overlapping_vms_on_one_thread() {
             Ok(Value::Int(55))
         ),
         "reused artifact must preserve bytecode-visible behavior"
+    );
+}
+
+#[test]
+fn jit_code_budget_applies_to_cached_artifacts() {
+    let _g = GosJitGuard::new();
+    let source = "fn cached_budget_fib(n: i64) -> i64 {\n  if n < 2i64 { n } else { cached_budget_fib(n - 1i64) + cached_budget_fib(n - 2i64) }\n}\nfn main() -> i64 { cached_budget_fib(10i64) }\n";
+    let (first, _) = build_vm(source);
+    warm_up(&first, "cached_budget_fib", &[Value::Int(8)]);
+    assert!(first.jit_metrics().emitted_code_bytes > 1);
+
+    let _code = JitCodeCapGuard::new("1");
+    let (second, _) = build_vm(source);
+    warm_up(&second, "cached_budget_fib", &[Value::Int(8)]);
+    let metrics = second.jit_metrics();
+    assert_eq!(
+        metrics.compile_attempts, 0,
+        "the cached artifact must avoid recompilation: {metrics:?}"
+    );
+    assert_eq!(
+        metrics.resident_functions, 0,
+        "the cached artifact must honor the new VM budget: {metrics:?}"
+    );
+    assert!(
+        metrics.code_size_skipped_compiles >= 1,
+        "cached code-budget skip must be observable: {metrics:?}"
     );
 }
 

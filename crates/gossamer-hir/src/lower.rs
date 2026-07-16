@@ -708,9 +708,9 @@ impl Lowerer<'_> {
                 HirExprKind::Tuple(elems.iter().map(|e| self.lower_expr(e)).collect())
             }
             AstExprKind::Select(arms) => self.lower_select(arms),
-            AstExprKind::Struct { path, fields, base } => {
-                self.lower_struct_literal(path, fields, base.as_deref(), expr.span)
-            }
+            AstExprKind::Struct {
+                path, fields, base, ..
+            } => self.lower_struct_literal(path, fields, base.as_deref(), expr.span),
             AstExprKind::MacroCall(_) => HirExprKind::Placeholder,
             AstExprKind::Array(arr) => HirExprKind::Array(self.lower_array(arr)),
             AstExprKind::Range {

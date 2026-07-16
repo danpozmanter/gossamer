@@ -28,7 +28,7 @@ fn count_vowels(text: &String) -> LetterCounts {
         if is_vowel(b) { vowels += 1 }
         else if is_letter(b) { consonants += 1 }
     }
-    LetterCounts { vowels, consonants }
+    LetterCounts(vowels, consonants)
 }
 
 fn main() {

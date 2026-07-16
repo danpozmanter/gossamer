@@ -8,7 +8,7 @@ use std::sync::channel
 struct M { v: i64, s: String }
 
 fn prod(tx: Sender<M>) {
-    tx.send(M { v: 7, s: format!("hi") })
+    tx.send(M(7, format!("hi")))
     tx.close()
 }
 

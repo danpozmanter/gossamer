@@ -73,7 +73,7 @@ use super::*;
 /// per-module reference). Used by `gos doc --emit-stdlib`. The
 /// page carries a `Status: ...` marker derived from
 /// `feature_status::lookup` so doc readers can see at a glance
-/// whether a module is `shipped`, `experimental`, `planned`, or
+/// whether a module is `stable`, `shipped`, `experimental`, `planned`, or
 /// `removed`.
 #[must_use]
 pub fn render_module_markdown(module: &StdModule) -> String {

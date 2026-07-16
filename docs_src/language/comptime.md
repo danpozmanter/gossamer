@@ -192,6 +192,10 @@ automatic.
 The shipped surface is compile-time *evaluation*, *reflection over
 named structs*, *comptime parameters*, *build-time validation*, and
 *code generation* (a `for` over `typeInfo::<T>()` and `codegen!`).
+Gossamer deliberately does not provide runtime reflection. Libraries that
+need dynamic inspection must expose an explicit generated schema, tagged
+representation, or `comptime`-generated adapter; `typeInfo`, `autoderive`,
+and `codegen!` are the supported replacement for reflection-driven code.
 Comptime regions fold to scalar or string results. You can now write the
 reflection-driven `autoderive` shape yourself, but the built-in
 `to_json` / `from_json` serializers remain built in (not yet re-expressed

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gossamer.dev/benchmarks/suite/v1.json",
+  "title": "Gossamer cross-language benchmark result",
+  "type": "object",
+  "required": ["schema_version", "generated_at", "host", "toolchains", "runs", "results"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "host": {
+      "type": "object",
+      "required": ["os", "arch", "kernel", "cpu_count"],
+      "properties": {
+        "os": { "type": "string" },
+        "arch": { "type": "string" },
+        "kernel": { "type": "string" },
+        "cpu_count": { "type": "integer", "minimum": 1 },
+        "cpu_model": { "type": "string" },
+        "memory_bytes": { "type": ["integer", "null"], "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "toolchains": {
+      "type": "object",
+      "required": ["gos", "go", "rustc"],
+      "properties": {
+        "gos": { "type": "string" },
+        "go": { "type": "string" },
+        "rustc": { "type": "string" },
+        "llvm": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "runs": { "type": "integer", "minimum": 3 },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["workload", "tier", "samples_ns", "median_ns", "mad_ns", "peak_rss_kib", "compile_ns", "binary_bytes", "output_sha256"],
+        "properties": {
+          "workload": { "type": "string" },
+          "tier": { "enum": ["vm-no-jit", "vm-jit", "llvm-debug", "llvm-release", "go-release"] },
+          "samples_ns": { "type": "array", "minItems": 3, "items": { "type": "integer", "minimum": 0 } },
+          "median_ns": { "type": "integer", "minimum": 0 },
+          "mad_ns": { "type": "integer", "minimum": 0 },
+          "peak_rss_kib": { "type": "integer", "minimum": 0 },
+          "compile_ns": { "type": "integer", "minimum": 0 },
+          "binary_bytes": { "type": "integer", "minimum": 0 },
+          "output_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

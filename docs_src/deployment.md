@@ -191,11 +191,12 @@ Set this in the systemd unit's `Environment=` line.
 
 Goroutines are stackful coroutines multiplexed M:N onto the worker
 thread pool, not OS threads - a blocked goroutine costs its stack of
-mmap'd address space, not a thread. Each goroutine starts with a
-16 KiB stack; tune the default with `GOSSAMER_GOROUTINE_STACK`:
+mmap'd address space, not a thread. Each goroutine reserves 1 MiB by default;
+pages are committed as they are touched. Tune the reservation with
+`GOSSAMER_GOROUTINE_STACK` (minimum 32 KiB):
 
 ```sh
-GOSSAMER_GOROUTINE_STACK=32768 ./myservice  # 32 KiB stacks
+GOSSAMER_GOROUTINE_STACK=2097152 ./myservice  # 2 MiB stacks
 ```
 
 Idle goroutines are parked on the netpoller and consume constant
@@ -204,18 +205,17 @@ memory. The worker-thread count (not the goroutine count) follows
 
 ### Memory
 
-Gossamer reclaims memory deterministically: reference counting frees
-each value the moment its last reference dies, a cycle collector that
-runs automatically under allocation pressure (and on demand via
-`runtime::collect_cycles()`) handles reference cycles, and
-`arena { }` regions free short-lived graphs wholesale. There is no
-tracing collector, so there are no mark/sweep pauses and no GC tuning
-knobs to set - RAM tracks the live working set and stays predictable.
+Compiled tiers reclaim acyclic values with deterministic reference counting.
+Their thread-local cycle collector runs under allocation pressure and on demand
+through `runtime::collect_cycles()`. Objects shared across goroutines are
+excluded from that collector, and the bytecode VM does not collect cycles.
+Use `Weak<T>` to break cycles when cross-tier reclamation matters. `arena { }`
+regions free short-lived graphs wholesale.
 
-The allocator returns freed pages to the OS promptly, so resident
-memory follows the working set down as well as up. For container
-limits, size to the service's peak working set plus headroom for
-transient spikes, rather than a multiple to absorb collector slack.
+There is no tracing collector or GC tuning knob. Resident memory is still
+affected by allocator retention, fixed stack reservations, uncollectable
+cycles, JIT code, and caches, so size container limits from measured service
+peaks rather than assuming RSS immediately follows the live object graph.
 
 ## Health check / readiness
 

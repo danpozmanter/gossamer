@@ -73,7 +73,10 @@ pub enum JitKind {
     /// the VM-side struct-shape-table index. The trampoline builds a
     /// fresh block from the VM `Value::Struct`, passes its pointer, and
     /// for a `&mut` parameter writes the mutated block back into the
-    /// caller's binding. Integer register class.
+    /// caller's binding. A by-value return uses the native structural-return
+    /// ABI: the trampoline supplies a caller-owned block as a hidden trailing
+    /// argument and reads that block after the body returns. Integer register
+    /// class.
     StructPtr(u32),
     /// A `String` crossing the boundary as the runtime's native
     /// `*mut c_char` cstring pointer (the flat-ABI shape the codegen
@@ -1218,12 +1221,6 @@ fn body_kinds(
         enum_shapes,
         struct_shapes,
     )?;
-    // A struct RETURN is not marshalled back yet (the native body returns
-    // a pointer to a stack-local block that would dangle past the call).
-    // Keep struct-returning bodies on bytecode; struct PARAMS are fine.
-    if matches!(returns, JitKind::StructPtr(_)) {
-        return None;
-    }
     Some((params, returns))
 }
 
@@ -1542,6 +1539,8 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_fs_file_read"        => rt::gos_rt_fs_file_read,
         "gos_rt_fs_file_read_to_string" => rt::gos_rt_fs_file_read_to_string,
         "gos_rt_fs_file_write"       => rt::gos_rt_fs_file_write,
+        "gos_rt_fs_temp_dir"         => rt::gos_rt_fs_temp_dir,
+        "gos_rt_fs_temp_file"        => rt::gos_rt_fs_temp_file,
         "gos_rt_fs_open_options_append" => rt::gos_rt_fs_open_options_append,
         "gos_rt_fs_open_options_create" => rt::gos_rt_fs_open_options_create,
         "gos_rt_fs_open_options_create_new" => rt::gos_rt_fs_open_options_create_new,
@@ -1929,7 +1928,18 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_testing_check"       => rt::gos_rt_testing_check,
         "gos_rt_testing_check_eq_i64" => rt::gos_rt_testing_check_eq_i64,
         "gos_rt_testing_wait_for_scheduler_idle" => rt::gos_rt_testing_wait_for_scheduler_idle,
+        "gos_rt_httptest_server" => rt::gos_rt_httptest_server,
+        "gos_rt_image_new" => rt::gos_rt_image_new,
+        "gos_rt_image_filled" => rt::gos_rt_image_filled,
+        "gos_rt_image_decode_base64" => rt::gos_rt_image_decode_base64,
+        "gos_rt_image_width" => rt::gos_rt_image_width,
+        "gos_rt_image_height" => rt::gos_rt_image_height,
+        "gos_rt_image_pixel" => rt::gos_rt_image_pixel,
+        "gos_rt_image_set_pixel" => rt::gos_rt_image_set_pixel,
+        "gos_rt_image_encode_png_base64" => rt::gos_rt_image_encode_png_base64,
+        "gos_rt_image_encode_jpeg_base64" => rt::gos_rt_image_encode_jpeg_base64,
         "gos_rt_runtime_scheduler_stats_json" => rt::gos_rt_runtime_scheduler_stats_json,
+        "gos_rt_runtime_cycle_collection_supported" => rt::gos_rt_runtime_cycle_collection_supported,
         "gos_rt_parse_i64"           => rt::gos_rt_parse_i64,
         "gos_rt_parse_i64_result"    => rt::gos_rt_parse_i64_result,
         "gos_rt_iter_count_by_i64" => rt::gos_rt_iter_count_by_i64,

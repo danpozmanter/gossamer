@@ -17,8 +17,10 @@ the hardening roadmap. Reporting details are in
   switching - kept in the smallest possible scope.
 - No manual memory management in the language: there is no
   `free`, no raw pointers, and no `unsafe` keyword in Gossamer
-  source. Memory is reclaimed automatically (reference counting
-  plus an automatic cycle collector), so use-after-free and
+  source. Memory is reclaimed automatically by reference counting on every
+  tier, with a thread-local cycle collector on compiled tiers. The VM and
+  cross-goroutine object graphs can retain strong cycles, so use `Weak<T>` when
+  the graph can cycle. Use-after-free and
   double-free are not expressible in ordinary Gossamer code. The
   one escape hatch is the low-level `runtime::arena_push()` /
   `arena_pop()` primitive; its `arena { }` block form is statically

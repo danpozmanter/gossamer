@@ -46,6 +46,14 @@ impl FrontendCacheKey {
     /// toolchain identifier (typically `env!("CARGO_PKG_VERSION")`).
     #[must_use]
     pub fn new(source: &str, toolchain: &str) -> Self {
+        Self::new_with_context(source, toolchain, "edition=2026")
+    }
+
+    /// Computes a cache key with an explicit semantic context. An edition
+    /// changes source typing and lowering, so it must never share a cached AST
+    /// with a different edition.
+    #[must_use]
+    pub fn new_with_context(source: &str, toolchain: &str, context: &str) -> Self {
         // The build stamp changes when the frontend crates recompile, so a
         // development rebuild with an unchanged version string cannot
         // serve ASTs parsed by older frontend code.
@@ -59,13 +67,16 @@ impl FrontendCacheKey {
         // different build of the compiler. Mirrors the object cache's
         // `compiler_fingerprint`.
         let exe = exe_fingerprint();
-        let mut buf =
-            Vec::with_capacity(source.len() + toolchain.len() + stamp.len() + exe.len() + 8);
+        let mut buf = Vec::with_capacity(
+            source.len() + toolchain.len() + context.len() + stamp.len() + exe.len() + 10,
+        );
         buf.extend_from_slice(toolchain.as_bytes());
         buf.push(0);
         buf.extend_from_slice(stamp.as_bytes());
         buf.push(0);
         buf.extend_from_slice(exe.as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(context.as_bytes());
         buf.push(0);
         buf.extend_from_slice(source.as_bytes());
         Self {
@@ -269,6 +280,13 @@ mod tests {
         let a = FrontendCacheKey::new("fn main() {}\n", "0.0.0");
         let b = FrontendCacheKey::new("fn main() {}\n", "0.0.1");
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn cache_key_changes_when_edition_changes() {
+        let eager = FrontendCacheKey::new_with_context("fn main() {}\n", "0.0.0", "edition=2026");
+        let lazy = FrontendCacheKey::new_with_context("fn main() {}\n", "0.0.0", "edition=2027");
+        assert_ne!(eager, lazy);
     }
 
     #[test]

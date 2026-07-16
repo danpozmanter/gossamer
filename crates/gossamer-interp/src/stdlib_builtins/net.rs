@@ -269,8 +269,10 @@ pub(crate) fn builtin_tcp_stream_connect(args: &[Value]) -> RuntimeResult<Value>
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
-    match net_std::TcpStream::connect(&addr) {
-        Ok(stream) => {
+    match gossamer_runtime::sched_global::run_blocking("tcp-connect", move || {
+        net_std::TcpStream::connect(&addr)
+    }) {
+        Ok(Ok(stream)) => {
             let id = next_net_id();
             TCP_STREAM_REGISTRY.with(|r| {
                 r.borrow_mut()
@@ -278,7 +280,8 @@ pub(crate) fn builtin_tcp_stream_connect(args: &[Value]) -> RuntimeResult<Value>
             });
             Ok(ok_variant(handle_struct("net::TcpStream", id)))
         }
-        Err(e) => Ok(err_variant(format!("{e}"))),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -294,36 +297,40 @@ pub(crate) fn builtin_tcp_stream_read(args: &[Value]) -> RuntimeResult<Value> {
     let res = if tls_has(id) {
         match fetch_socket(&TLS_STREAM_REGISTRY, id) {
             Some(arc) => {
-                let mut buf = vec![0u8; max as usize];
-                match arc.lock().read(&mut buf) {
-                    Ok(n) => {
-                        buf.truncate(n);
-                        Ok(buf)
+                match gossamer_runtime::sched_global::run_blocking("tls-stream-read", move || {
+                    let mut buf = vec![0u8; max as usize];
+                    match arc.lock().read(&mut buf) {
+                        Ok(n) => {
+                            buf.truncate(n);
+                            Ok(buf)
+                        }
+                        Err(e) => Err(e.to_string()),
                     }
-                    Err(e) => Err(e.to_string()),
+                }) {
+                    Ok(result) => result,
+                    Err(e) => Err(e),
                 }
             }
             None => Err("TcpStream::read: stale handle".to_string()),
         }
     } else {
-        match fetch_socket(&TCP_STREAM_REGISTRY, id) {
-            Some(arc) => {
-                let mut guard = arc.lock();
-                match guard.as_mut() {
-                    Some(stream) => {
-                        let mut buf = vec![0u8; max as usize];
-                        match stream.read(&mut buf) {
-                            Ok(n) => {
-                                buf.truncate(n);
-                                Ok(buf)
-                            }
-                            Err(e) => Err(e.to_string()),
+        match clone_tcp_stream(id) {
+            Ok(mut stream) => {
+                match gossamer_runtime::sched_global::run_blocking("tcp-stream-read", move || {
+                    let mut buf = vec![0u8; max as usize];
+                    match stream.read(&mut buf) {
+                        Ok(n) => {
+                            buf.truncate(n);
+                            Ok(buf)
                         }
+                        Err(e) => Err(e.to_string()),
                     }
-                    None => Err("TcpStream::read: closed handle".to_string()),
+                }) {
+                    Ok(result) => result,
+                    Err(e) => Err(e),
                 }
             }
-            None => Err("TcpStream::read: stale handle".to_string()),
+            Err(e) => Err(e),
         }
     };
     match res {
@@ -341,41 +348,49 @@ pub(crate) fn builtin_tcp_stream_read_to_string(args: &[Value]) -> RuntimeResult
     let Some(id) = args.first().and_then(handle_id) else {
         return Ok(err_variant("TcpStream::read_to_string: missing handle"));
     };
-    let read_all = |stream: &mut dyn FnMut(&mut [u8]) -> Result<usize, String>| {
-        let mut out = Vec::new();
-        let mut chunk = [0u8; 4096];
-        loop {
-            match stream(&mut chunk) {
-                Ok(0) => break,
-                Ok(n) => out.extend_from_slice(&chunk[..n]),
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(String::from_utf8_lossy(&out).into_owned())
-    };
     let res = if tls_has(id) {
         match fetch_socket(&TLS_STREAM_REGISTRY, id) {
-            Some(arc) => {
-                let mut guard = arc.lock();
-                read_all(&mut |b| guard.read(b).map_err(|e| e.to_string()))
-            }
+            Some(arc) => match gossamer_runtime::sched_global::run_blocking(
+                "tls-stream-read-string",
+                move || {
+                    let mut guard = arc.lock();
+                    read_all_to_string(|buf| guard.read(buf).map_err(|e| e.to_string()))
+                },
+            ) {
+                Ok(result) => result,
+                Err(e) => Err(e),
+            },
             None => Err("TcpStream::read_to_string: stale handle".to_string()),
         }
     } else {
-        match fetch_socket(&TCP_STREAM_REGISTRY, id) {
-            Some(arc) => {
-                let mut guard = arc.lock();
-                match guard.as_mut() {
-                    Some(stream) => read_all(&mut |b| stream.read(b).map_err(|e| e.to_string())),
-                    None => Err("TcpStream::read_to_string: closed handle".to_string()),
-                }
-            }
-            None => Err("TcpStream::read_to_string: stale handle".to_string()),
+        match clone_tcp_stream(id) {
+            Ok(mut stream) => match gossamer_runtime::sched_global::run_blocking(
+                "tcp-stream-read-string",
+                move || read_all_to_string(|buf| stream.read(buf).map_err(|e| e.to_string())),
+            ) {
+                Ok(result) => result,
+                Err(e) => Err(e),
+            },
+            Err(e) => Err(e),
         }
     };
     match res {
         Ok(s) => Ok(ok_variant(Value::String(s.into()))),
         Err(e) => Ok(err_variant(e)),
+    }
+}
+
+fn read_all_to_string(
+    mut read: impl FnMut(&mut [u8]) -> Result<usize, String>,
+) -> Result<String, String> {
+    let mut out = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match read(&mut chunk) {
+            Ok(0) => break Ok(String::from_utf8_lossy(&out).into_owned()),
+            Ok(n) => out.extend_from_slice(&chunk[..n]),
+            Err(e) => break Err(e.clone()),
+        }
     }
 }
 
@@ -398,26 +413,48 @@ pub(crate) fn builtin_tcp_stream_write(args: &[Value]) -> RuntimeResult<Value> {
             ));
         }
     };
+    let bytes_len = bytes.len() as i64;
     let res = if tls_has(id) {
         match fetch_socket(&TLS_STREAM_REGISTRY, id) {
-            Some(arc) => arc.lock().write_all(&bytes).map_err(|e| e.to_string()),
-            None => Err("TcpStream::write: stale handle".to_string()),
-        }
-    } else {
-        match fetch_socket(&TCP_STREAM_REGISTRY, id) {
             Some(arc) => {
-                let mut guard = arc.lock();
-                match guard.as_mut() {
-                    Some(stream) => stream.write_all(&bytes).map_err(|e| e.to_string()),
-                    None => Err("TcpStream::write: closed handle".to_string()),
+                match gossamer_runtime::sched_global::run_blocking("tls-stream-write", move || {
+                    arc.lock().write_all(&bytes).map_err(|e| e.to_string())
+                }) {
+                    Ok(result) => result,
+                    Err(e) => Err(e),
                 }
             }
             None => Err("TcpStream::write: stale handle".to_string()),
         }
+    } else {
+        match clone_tcp_stream(id) {
+            Ok(mut stream) => {
+                match gossamer_runtime::sched_global::run_blocking("tcp-stream-write", move || {
+                    stream.write_all(&bytes).map_err(|e| e.to_string())
+                }) {
+                    Ok(result) => result,
+                    Err(e) => Err(e),
+                }
+            }
+            Err(e) => Err(e),
+        }
     };
     match res {
-        Ok(()) => Ok(ok_variant(Value::Int(bytes.len() as i64))),
+        Ok(()) => Ok(ok_variant(Value::Int(bytes_len))),
         Err(e) => Ok(err_variant(e)),
+    }
+}
+
+/// Duplicate a plaintext TCP descriptor while holding its registry/object lock
+/// only briefly. The duplicate shares the connection, but can block on a
+/// blocking-pool thread without pinning a scheduler worker or its registry.
+fn clone_tcp_stream(id: i64) -> Result<net_std::TcpStream, String> {
+    match fetch_socket(&TCP_STREAM_REGISTRY, id) {
+        Some(arc) => match arc.lock().as_ref() {
+            Some(stream) => stream.try_clone().map_err(|e| e.to_string()),
+            None => Err("TcpStream: closed handle".to_string()),
+        },
+        None => Err("TcpStream: stale handle".to_string()),
     }
 }
 
@@ -574,9 +611,12 @@ pub(crate) fn builtin_unix_listener_accept(args: &[Value]) -> RuntimeResult<Valu
     let Some(listener) = fetch_socket(&UNIX_LISTENER_REGISTRY, id) else {
         return Ok(err_variant("UnixListener::accept: stale handle"));
     };
-    let res = listener.lock().accept().map_err(|e| e.to_string());
-    match res {
-        Ok((stream, addr)) => {
+    let listener = match listener.lock().try_clone() {
+        Ok(listener) => listener,
+        Err(e) => return Ok(err_variant(e.to_string())),
+    };
+    match gossamer_runtime::sched_global::run_blocking("unix-accept", move || listener.accept()) {
+        Ok(Ok((stream, addr))) => {
             let sid = next_net_id();
             UNIX_STREAM_REGISTRY.with(|r| {
                 r.borrow_mut()
@@ -592,6 +632,7 @@ pub(crate) fn builtin_unix_listener_accept(args: &[Value]) -> RuntimeResult<Valu
             ]));
             Ok(ok_variant(pair))
         }
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
         Err(e) => Ok(err_variant(e)),
     }
 }
@@ -612,8 +653,10 @@ pub(crate) fn builtin_unix_stream_connect(args: &[Value]) -> RuntimeResult<Value
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
-    match std::os::unix::net::UnixStream::connect(&path) {
-        Ok(s) => {
+    match gossamer_runtime::sched_global::run_blocking("unix-connect", move || {
+        std::os::unix::net::UnixStream::connect(&path)
+    }) {
+        Ok(Ok(s)) => {
             let id = next_net_id();
             UNIX_STREAM_REGISTRY.with(|r| {
                 r.borrow_mut()
@@ -621,7 +664,8 @@ pub(crate) fn builtin_unix_stream_connect(args: &[Value]) -> RuntimeResult<Value
             });
             Ok(ok_variant(handle_struct("net::UnixStream", id)))
         }
-        Err(e) => Ok(err_variant(format!("{e}"))),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -635,18 +679,23 @@ pub(crate) fn builtin_unix_stream_read(args: &[Value]) -> RuntimeResult<Value> {
         .and_then(value_to_int)
         .unwrap_or(4096)
         .clamp(1, 1 << 24);
-    let res = match fetch_socket(&UNIX_STREAM_REGISTRY, id) {
-        Some(arc) => {
-            let mut buf = vec![0u8; max as usize];
-            match arc.lock().read(&mut buf) {
-                Ok(n) => {
-                    buf.truncate(n);
-                    Ok(buf)
+    let res = match clone_unix_stream(id) {
+        Ok(mut stream) => {
+            match gossamer_runtime::sched_global::run_blocking("unix-stream-read", move || {
+                let mut buf = vec![0u8; max as usize];
+                match stream.read(&mut buf) {
+                    Ok(n) => {
+                        buf.truncate(n);
+                        Ok(buf)
+                    }
+                    Err(e) => Err(e.to_string()),
                 }
-                Err(e) => Err(e.to_string()),
+            }) {
+                Ok(result) => result,
+                Err(e) => Err(e),
             }
         }
-        None => Err("UnixStream::read: stale handle".to_string()),
+        Err(e) => Err(e),
     };
     match res {
         Ok(bytes) => Ok(ok_variant(Value::Array(Arc::new(
@@ -664,20 +713,15 @@ pub(crate) fn builtin_unix_stream_read_to_string(args: &[Value]) -> RuntimeResul
     let Some(id) = args.first().and_then(handle_id) else {
         return Ok(err_variant("UnixStream::read_to_string: missing handle"));
     };
-    let res = match fetch_socket(&UNIX_STREAM_REGISTRY, id) {
-        Some(arc) => {
-            let mut guard = arc.lock();
-            let mut out = Vec::new();
-            let mut chunk = [0u8; 4096];
-            loop {
-                match guard.read(&mut chunk) {
-                    Ok(0) => break Ok(String::from_utf8_lossy(&out).into_owned()),
-                    Ok(n) => out.extend_from_slice(&chunk[..n]),
-                    Err(e) => break Err(e.to_string()),
-                }
-            }
-        }
-        None => Err("UnixStream::read_to_string: stale handle".to_string()),
+    let res = match clone_unix_stream(id) {
+        Ok(mut stream) => match gossamer_runtime::sched_global::run_blocking(
+            "unix-stream-read-string",
+            move || read_all_to_string(|buf| stream.read(buf).map_err(|e| e.to_string())),
+        ) {
+            Ok(result) => result,
+            Err(e) => Err(e),
+        },
+        Err(e) => Err(e),
     };
     match res {
         Ok(s) => Ok(ok_variant(Value::String(s.into()))),
@@ -706,14 +750,31 @@ pub(crate) fn builtin_unix_stream_write(args: &[Value]) -> RuntimeResult<Value> 
             ));
         }
     };
-    let res = match fetch_socket(&UNIX_STREAM_REGISTRY, id) {
-        Some(arc) => arc.lock().write_all(&bytes).map_err(|e| e.to_string()),
-        None => Err("UnixStream::write: stale handle".to_string()),
+    let bytes_len = bytes.len() as i64;
+    let res = match clone_unix_stream(id) {
+        Ok(mut stream) => {
+            match gossamer_runtime::sched_global::run_blocking("unix-stream-write", move || {
+                stream.write_all(&bytes).map_err(|e| e.to_string())
+            }) {
+                Ok(result) => result,
+                Err(e) => Err(e),
+            }
+        }
+        Err(e) => Err(e),
     };
     match res {
-        Ok(()) => Ok(ok_variant(Value::Int(bytes.len() as i64))),
+        Ok(()) => Ok(ok_variant(Value::Int(bytes_len))),
         Err(e) => Ok(err_variant(e)),
     }
+}
+
+#[cfg(unix)]
+fn clone_unix_stream(id: i64) -> Result<std::os::unix::net::UnixStream, String> {
+    fetch_socket(&UNIX_STREAM_REGISTRY, id)
+        .ok_or_else(|| "UnixStream: stale handle".to_string())?
+        .lock()
+        .try_clone()
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(unix)]
@@ -1111,5 +1172,36 @@ mod net_registry_tests {
         assert_eq!(echoed, b"ping", "round-trip payload mismatch");
 
         builtin_tcp_listener_close(std::slice::from_ref(&listener)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_connect_and_accept_use_real_socket_handles() {
+        let path = std::env::temp_dir().join(format!(
+            "gossamer-net-{}-{}",
+            std::process::id(),
+            next_net_id()
+        ));
+        let path = path.to_string_lossy().into_owned();
+        let listener =
+            unwrap_ok(builtin_unix_listener_bind(&[Value::String(path.clone().into())]).unwrap());
+
+        let client_path = path.clone();
+        let client = thread::spawn(move || {
+            unwrap_ok(builtin_unix_stream_connect(&[Value::String(client_path.into())]).unwrap())
+        });
+
+        let accepted =
+            unwrap_ok(builtin_unix_listener_accept(std::slice::from_ref(&listener)).unwrap());
+        let stream = match accepted {
+            Value::Tuple(parts) => parts[0].clone(),
+            other => panic!("expected (stream, addr) tuple, got {other:?}"),
+        };
+        let client = client.join().unwrap();
+
+        builtin_unix_stream_close(std::slice::from_ref(&stream)).unwrap();
+        builtin_unix_stream_close(std::slice::from_ref(&client)).unwrap();
+        builtin_unix_listener_close(std::slice::from_ref(&listener)).unwrap();
+        std::fs::remove_file(path).unwrap();
     }
 }

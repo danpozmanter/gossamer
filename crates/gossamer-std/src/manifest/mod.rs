@@ -92,7 +92,7 @@ pub use container::*;
 pub use crypto::*;
 pub use data::*;
 pub use encoding::*;
-pub use feature_status::{FEATURE_STATUS, FeatureStatus, Status};
+pub use feature_status::{EvidenceTier, FEATURE_STATUS, FeatureStatus, ItemEvidence, Status};
 pub use http::*;
 pub use math_iter::*;
 pub use meta::*;

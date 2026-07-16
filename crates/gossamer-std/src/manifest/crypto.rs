@@ -242,6 +242,11 @@ pub const CRYPTO_X509: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Parses one PEM-encoded certificate.",
         },
+        StdItem {
+            name: "verify_server_certificate_with_crls",
+            kind: StdItemKind::Function,
+            doc: "Fail-closed TLS server-chain, hostname, and CRL verification.",
+        },
     ],
 };
 

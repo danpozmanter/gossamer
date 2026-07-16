@@ -1,9 +1,7 @@
 // Offline cross-tier probe of the constructible HTTP surface - no
 // sockets, no server. Covers: `Response::text` + chained
 // `with_header` (replace-then-push, case-insensitive) read back via
-// field access on the constructed value; the `http::Response { … }`
-// struct literal (native-capable since the compiled-tier literal
-// lowering landed); `Client::builder()` configuration; and the
+// field access on a constructed value; `Client::builder()` configuration; and the
 // unknown-method error text of `http::request`, which fails before
 // any connection is dialed.
 //
@@ -37,12 +35,7 @@ fn main() {
         header_of(&headers, "x-extra")
     )
 
-    let s = http::Response {
-        status: 202,
-        body: "lit",
-        content_type: "text/x-custom",
-        headers: [("x-k", "kv")],
-    }
+    let s = http::Response::text(202, "lit").with_header("x-k", "kv")
     println!("s_status={} s_body={} s_ct={}", s.status, s.body, s.content_type)
 
     let strict = http::Client::builder().max_redirects(0).timeout_ms(5000).build()

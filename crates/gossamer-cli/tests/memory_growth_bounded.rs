@@ -437,7 +437,7 @@ fn make(n: i64) -> Rec {
         v.push(i * 2)
         i += 1
     }
-    Rec { data: v, name: \"row\" }
+    Rec(v, \"row\")
 }
 
 fn main() {

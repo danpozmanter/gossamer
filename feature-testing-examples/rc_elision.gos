@@ -8,11 +8,11 @@
 struct Tag { name: String, count: i64 }
 
 fn make_tag(prefix: &String, n: i64) -> Tag {
-    Tag { name: format!("{}-{}", prefix, n), count: n }
+    Tag(format!("{}-{}", prefix, n), n)
 }
 
 fn rename(t: Tag, suffix: &String) -> Tag {
-    Tag { name: t.name + suffix, count: t.count + 1 }
+    Tag(t.name + suffix, t.count + 1)
 }
 
 fn main() {

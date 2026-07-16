@@ -111,10 +111,14 @@ pub unsafe extern "C" fn gos_rt_udp_recv_from(h: i64, max: i64) -> i128 {
             return udp_err("UdpSocket::recv_from: stale handle");
         };
         let cap = max.clamp(1, 1 << 16) as usize;
-        let mut buf = vec![0u8; cap];
-        match sock.recv_from(&mut buf) {
-            Ok((n, from)) => {
+        match crate::sched_global::run_blocking("udp-recv-from", move || {
+            let mut buf = vec![0u8; cap];
+            sock.recv_from(&mut buf).map(|(n, from)| {
                 buf.truncate(n);
+                (buf, from)
+            })
+        }) {
+            Ok(Ok((buf, from))) => {
                 let bytes_vec = super::encoding::bytes_to_gosvec(&buf);
                 let addr_cs = super::string::alloc_cstring(from.to_string().as_bytes());
                 #[repr(C)]
@@ -128,7 +132,8 @@ pub unsafe extern "C" fn gos_rt_udp_recv_from(h: i64, max: i64) -> i128 {
                 }));
                 super::vec::gos_rt_result_new(0, pair as i64)
             }
-            Err(e) => udp_err(&format!("{e}")),
+            Ok(Err(e)) => udp_err(&format!("{e}")),
+            Err(e) => udp_err(&e),
         }
     })
 }
@@ -158,4 +163,58 @@ pub unsafe extern "C" fn gos_rt_udp_close(h: i64) {
             m.remove(&h);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[cfg(not(tsan))]
+    fn scheduler_wait_timeout() -> Duration {
+        Duration::from_secs(2)
+    }
+
+    #[cfg(tsan)]
+    fn scheduler_wait_timeout() -> Duration {
+        // TSan instruments the scheduler, blocking-worker handoff, and UDP
+        // receive path. Keep the ordinary regression quick while allowing
+        // the sanitizer build enough time to observe the real wake-up.
+        Duration::from_secs(20)
+    }
+
+    #[test]
+    fn receive_in_a_goroutine_resumes_after_a_datagram_arrives() {
+        let socket = UdpSocket::bind("127.0.0.1:0").expect("bind receiver");
+        let addr = socket.local_addr().expect("receiver address");
+        let handle = next_handle();
+        UDP_SOCKETS
+            .lock()
+            .get_or_insert_with(HashMap::new)
+            .insert(handle, Arc::new(socket));
+
+        let (tx, rx) = mpsc::sync_channel(1);
+        crate::sched_global::spawn(Box::new(move || {
+            let result = unsafe { gos_rt_udp_recv_from(handle, 64) };
+            let is_ok = result & i128::from(u64::MAX) == 0;
+            tx.send(is_ok).expect("report receive result");
+        }));
+
+        let sender = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            UdpSocket::bind("127.0.0.1:0")
+                .expect("bind sender")
+                .send_to(b"wake", addr)
+                .expect("send datagram");
+        });
+
+        assert!(
+            rx.recv_timeout(scheduler_wait_timeout())
+                .expect("scheduled receive should resume"),
+            "UDP receive must return an Ok runtime Result"
+        );
+        sender.join().expect("sender thread");
+        unsafe { gos_rt_udp_close(handle) };
+    }
 }

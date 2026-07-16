@@ -25,14 +25,20 @@ fn vec_work(n: i64) -> i64 {
 }
 
 fn struct_work(n: i64) -> i64 {
-    let mut pair = Pair { left: 1, right: 2 }
+    let mut pair = Pair(1, 2)
     let mut acc = 0
     for i in 0..n {
-        pair = Pair {
-            left: (pair.right + i) % 1_000_003,
-            right: (pair.left + pair.right) % 1_000_003,
-        }
+        pair = Pair((pair.right + i) % 1_000_003, (pair.left + pair.right) % 1_000_003)
         acc = (acc + pair.left - pair.right) % 1_000_003
+    }
+    acc
+}
+
+fn scalar_replacement_work(n: i64) -> i64 {
+    let mut acc = 0
+    for i in 0..n {
+        let pair = Pair(i, i + 1)
+        acc = (acc + pair.left * 31 + pair.right) % 1_000_003
     }
     acc
 }
@@ -58,6 +64,11 @@ fn bench_vec_growth_scan_observed() -> i64 {
 #[bench]
 fn bench_struct_fields_observed() -> i64 {
     struct_work(2_000)
+}
+
+#[bench]
+fn bench_scalar_replacement_observed() -> i64 {
+    scalar_replacement_work(2_000)
 }
 
 #[bench]

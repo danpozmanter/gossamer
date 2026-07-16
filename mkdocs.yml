@@ -80,6 +80,7 @@ nav:
       - Coverage matrix: stdlib_coverage.md
   - Toolchain:
       - Overview: toolchain.md
+      - Formatter behavior: misc/tooling_faithful_fmt.md
       - Lints: toolchain/lints.md
       - Diagnostics: toolchain/diagnostics.md
       - Building with Zig: toolchain/zig.md

@@ -14,4 +14,8 @@ fn main() {
         }
         Err(_e) => println!("parse_err"),
     }
+    match crypto::x509::verify_server_certificate_with_crls("", "", "localhost", "") {
+        Ok(_) => println!("missing_crl_rejected=false"),
+        Err(_) => println!("missing_crl_rejected=true"),
+    }
 }

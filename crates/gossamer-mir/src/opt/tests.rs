@@ -7,6 +7,7 @@ mod elision_tests {
         bounds_check_elim, elide_redundant_rc_pairs, fuse_slice_parse_ranges,
         local_branch_bounds_check_elim, loop_body_has_exactly_one_vec_push,
         reserve_bound_available_at_entry, reserve_vecs_for_counted_push_loops,
+        scalar_replace_short_lived_aggregates,
     };
     use crate::ir::{
         BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Projection,
@@ -53,6 +54,186 @@ mod elision_tests {
 
     fn is_nop(s: &Statement) -> bool {
         matches!(s.kind, StatementKind::Nop)
+    }
+
+    #[test]
+    fn scalar_replaces_non_escaping_field_only_aggregate() {
+        use gossamer_types::IntTy;
+        let mut tcx = TyCtxt::new();
+        let i64t = tcx.int_ty(IntTy::I64);
+        let pair = tcx.intern(gossamer_types::TyKind::Tuple(vec![i64t, i64t]));
+        let mut body = Body {
+            name: "scalar_replace".into(),
+            def: None,
+            arity: 0,
+            locals: vec![decl(i64t), decl(i64t), decl(i64t), decl(pair), decl(i64t)],
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    assign(
+                        Place::local(Local(1)),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(10))),
+                    ),
+                    assign(
+                        Place::local(Local(2)),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(20))),
+                    ),
+                    assign(
+                        Place::local(Local(3)),
+                        Rvalue::Aggregate {
+                            kind: crate::AggregateKind::Tuple,
+                            operands: vec![
+                                Operand::Copy(Place::local(Local(1))),
+                                Operand::Copy(Place::local(Local(2))),
+                            ],
+                        },
+                    ),
+                    assign(
+                        Place::local(Local(4)),
+                        Rvalue::Use(Operand::Copy(Place {
+                            local: Local(3),
+                            projection: vec![Projection::Field(1)],
+                        })),
+                    ),
+                    copy(0, 4),
+                ],
+                terminator: Terminator::Return,
+                span: span(),
+            }],
+            span: span(),
+        };
+
+        scalar_replace_short_lived_aggregates(&mut body);
+
+        assert!(is_nop(&body.blocks[0].stmts[2]));
+        assert!(matches!(
+            &body.blocks[0].stmts[3].kind,
+            StatementKind::Assign {
+                rvalue: Rvalue::Use(Operand::Copy(place)),
+                ..
+            } if *place == Place::local(Local(2))
+        ));
+    }
+
+    #[test]
+    fn scalar_replacement_preserves_construction_time_snapshot() {
+        use gossamer_types::IntTy;
+        let mut tcx = TyCtxt::new();
+        let i64t = tcx.int_ty(IntTy::I64);
+        let pair = tcx.intern(gossamer_types::TyKind::Tuple(vec![i64t, i64t]));
+        let mut body = Body {
+            name: "scalar_replace_snapshot".into(),
+            def: None,
+            arity: 0,
+            locals: vec![decl(i64t), decl(i64t), decl(i64t), decl(pair), decl(i64t)],
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    assign(
+                        Place::local(Local(1)),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(10))),
+                    ),
+                    assign(
+                        Place::local(Local(2)),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(20))),
+                    ),
+                    assign(
+                        Place::local(Local(3)),
+                        Rvalue::Aggregate {
+                            kind: crate::AggregateKind::Tuple,
+                            operands: vec![
+                                Operand::Copy(Place::local(Local(1))),
+                                Operand::Copy(Place::local(Local(2))),
+                            ],
+                        },
+                    ),
+                    assign(
+                        Place::local(Local(1)),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(99))),
+                    ),
+                    assign(
+                        Place::local(Local(4)),
+                        Rvalue::Use(Operand::Copy(Place {
+                            local: Local(3),
+                            projection: vec![Projection::Field(0)],
+                        })),
+                    ),
+                ],
+                terminator: Terminator::Return,
+                span: span(),
+            }],
+            span: span(),
+        };
+
+        scalar_replace_short_lived_aggregates(&mut body);
+
+        assert!(
+            !is_nop(&body.blocks[0].stmts[2]),
+            "rewriting through a later source mutation would lose the snapshot"
+        );
+    }
+
+    #[test]
+    fn scalar_replacement_keeps_aggregate_used_by_successor_block() {
+        use gossamer_types::IntTy;
+        let mut tcx = TyCtxt::new();
+        let i64t = tcx.int_ty(IntTy::I64);
+        let pair = tcx.intern(gossamer_types::TyKind::Tuple(vec![i64t, i64t]));
+        let mut body = Body {
+            name: "scalar_replace_successor_use".into(),
+            def: None,
+            arity: 0,
+            locals: vec![decl(i64t), decl(i64t), decl(i64t), decl(pair), decl(i64t)],
+            blocks: vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![
+                        assign(
+                            Place::local(Local(1)),
+                            Rvalue::Use(Operand::Const(ConstValue::Int(10))),
+                        ),
+                        assign(
+                            Place::local(Local(2)),
+                            Rvalue::Use(Operand::Const(ConstValue::Int(20))),
+                        ),
+                        assign(
+                            Place::local(Local(3)),
+                            Rvalue::Aggregate {
+                                kind: crate::AggregateKind::Tuple,
+                                operands: vec![
+                                    Operand::Copy(Place::local(Local(1))),
+                                    Operand::Copy(Place::local(Local(2))),
+                                ],
+                            },
+                        ),
+                    ],
+                    terminator: Terminator::Goto {
+                        target: BlockId(1),
+                    },
+                    span: span(),
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    stmts: vec![assign(
+                        Place::local(Local(4)),
+                        Rvalue::Use(Operand::Copy(Place {
+                            local: Local(3),
+                            projection: vec![Projection::Field(1)],
+                        })),
+                    )],
+                    terminator: Terminator::Return,
+                    span: span(),
+                },
+            ],
+            span: span(),
+        };
+
+        scalar_replace_short_lived_aggregates(&mut body);
+
+        assert!(
+            !is_nop(&body.blocks[0].stmts[2]),
+            "an aggregate read in a successor block must remain materialized"
+        );
     }
 
     fn intrinsic_name(s: &Statement) -> Option<&str> {

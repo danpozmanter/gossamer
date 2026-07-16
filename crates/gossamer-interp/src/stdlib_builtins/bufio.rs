@@ -123,21 +123,24 @@ pub(crate) fn builtin_bufio_read_to_string(args: &[Value]) -> RuntimeResult<Valu
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
-    match std::fs::File::open(&path) {
-        Ok(file) => {
-            let mut reader = bufio_std::Reader::new(file);
-            let mut out = String::new();
-            let mut chunk = [0u8; 4096];
-            loop {
-                match IoRead::read(&mut reader, &mut chunk) {
-                    Ok(0) => break,
-                    Ok(n) => out.push_str(&String::from_utf8_lossy(&chunk[..n])),
-                    Err(e) => return Ok(err_variant(format!("read: {e}"))),
-                }
+    let read_path = path.clone();
+    match gossamer_runtime::sched_global::run_blocking("bufio-read-to-string", move || {
+        let file = std::fs::File::open(&read_path)?;
+        let mut reader = bufio_std::Reader::new(file);
+        let mut out = String::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = IoRead::read(&mut reader, &mut chunk)?;
+            if n == 0 {
+                break;
             }
-            Ok(ok_variant(Value::String(out.into())))
+            out.push_str(&String::from_utf8_lossy(&chunk[..n]));
         }
-        Err(e) => Ok(err_variant(format!("open {path}: {e}"))),
+        Ok::<_, std::io::Error>(out)
+    }) {
+        Ok(Ok(out)) => Ok(ok_variant(Value::String(out.into()))),
+        Ok(Err(e)) => Ok(err_variant(format!("read {path}: {e}"))),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
@@ -146,15 +149,55 @@ pub(crate) fn builtin_bufio_read_lines_of(args: &[Value]) -> RuntimeResult<Value
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
-    match std::fs::read_to_string(&path) {
-        Ok(text) => Ok(ok_variant(string_array(strings_std::lines(&text)))),
-        Err(e) => Ok(err_variant(format!("{e}"))),
+    match gossamer_runtime::sched_global::run_blocking("bufio-read-lines", move || {
+        std::fs::read_to_string(path)
+    }) {
+        Ok(Ok(text)) => Ok(ok_variant(string_array(strings_std::lines(&text)))),
+        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 
 pub(crate) fn builtin_bufio_split_whitespace(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
     Ok(string_array(strings_std::split_whitespace(text)))
+}
+
+#[cfg(test)]
+mod bufio_blocking_tests {
+    use super::*;
+
+    fn ok_payload(value: Value) -> Value {
+        match value {
+            Value::Variant(inner) if inner.name.as_str() == "Ok" => inner
+                .fields
+                .first()
+                .cloned()
+                .expect("Ok must carry a payload"),
+            other => panic!("expected Ok result, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn file_read_builtins_preserve_text_and_lines() {
+        let path = std::env::temp_dir().join(format!(
+            "gossamer-bufio-{}-{}.txt",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        std::fs::write(&path, "first\nsecond\n").expect("write fixture");
+        let arg = Value::String(path.to_string_lossy().into_owned().into());
+
+        assert!(matches!(
+            ok_payload(builtin_bufio_read_to_string(std::slice::from_ref(&arg)).expect("read")),
+            Value::String(ref text) if text.as_str() == "first\nsecond\n"
+        ));
+        assert!(matches!(
+            ok_payload(builtin_bufio_read_lines_of(&[arg]).expect("lines")),
+            Value::Array(ref lines) if lines.len() == 2
+        ));
+        std::fs::remove_file(path).expect("remove fixture");
+    }
 }
 
 // ----------------------------------------------------------------------

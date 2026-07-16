@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use gossamer_hir::lower_source_file;
 use gossamer_interp::{Vm, set_stdout_writer};
 use gossamer_lex::SourceMap;
-use gossamer_parse::parse_source_file;
+use gossamer_parse::autoderive::parse_with_autoderive;
 use gossamer_resolve::resolve_source_file;
 use gossamer_types::{TyCtxt, typecheck_source_file};
 
@@ -25,7 +25,7 @@ fn capture_writer(text: &str) {
 fn run_vm_main(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (sf, parse_diags) = parse_with_autoderive(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
     let mut tcx = TyCtxt::new();
@@ -141,7 +141,7 @@ fn set_first(v: &mut Vec<i64>) {
 }
 
 fn main() {
-    let mut h = Holder { data: [0, 0] }
+    let mut h = Holder([0, 0])
     set_first(&mut h.data)
     println!("{}", h.data[0])
 }

@@ -16,7 +16,7 @@ struct Resp {
 }
 
 fn config(key: [u8]) -> Cfg {
-    Cfg { key: key, trusted: [] }
+    Cfg(key, [])
 }
 
 fn key_len(key: [u8]) -> i64 {
@@ -42,7 +42,7 @@ fn main() {
     let mut cfg = config(key)
     cfg.trusted = ["https://app.example.com"]
     let n = key_len(cfg.key)
-    let resp = Resp { body: "ok", headers: [] }
+    let resp = Resp("ok", [])
     let resp = attach(resp, &"tok")
     let sc = header_of(&resp.headers, "set-cookie")
     println!("key_len={n}")

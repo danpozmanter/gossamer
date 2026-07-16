@@ -39,7 +39,7 @@ impl Echo {
 }
 
 fn serve_echo() {
-    if let Err(e) = websocket::serve(&ADDR, Echo { }) {
+    if let Err(e) = websocket::serve(&ADDR, Echo()) {
         eprintln!("ws serve failed: {e}")
     }
 }

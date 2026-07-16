@@ -212,6 +212,11 @@ impl TyCtxt {
         ty
     }
 
+    /// Interns `Iterator<T>`, the linear state type used by lazy iterator MIR.
+    pub fn iterator_ty(&mut self, item: Ty) -> Ty {
+        self.intern(TyKind::Iterator(item))
+    }
+
     /// Returns the interned `()` type if it already exists. Immutable
     /// counterpart to [`unit`](Self::unit) for passes holding `&TyCtxt`
     /// (e.g. the drop/RC inserter, which must type a throwaway local as unit

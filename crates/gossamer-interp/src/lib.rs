@@ -15,6 +15,7 @@
 // See `vm.rs` for the full invariant list.
 #![deny(unsafe_code)]
 
+pub mod builtin_effects;
 mod builtins;
 mod bytecode;
 mod cast;

@@ -1,0 +1,23 @@
+// A service-readiness consumer with deterministic loopback transport
+// diagnostics. Replace the `httptest::server` call with a deployed service URL
+// in an application; the response-status handling remains the same.
+
+use std::{http, httptest}
+
+fn readiness_message(url: String) -> String {
+    match http::get(url + "/ready", []) {
+        Ok(response) => {
+            if response.status >= 200 && response.status < 300 {
+                format!("ready status={} body={}", response.status, response.body)
+            } else {
+                format!("unhealthy status={} body={}", response.status, response.body)
+            }
+        },
+        Err(error) => format!("transport diagnostic: {}", error),
+    }
+}
+
+fn main() {
+    let fixture = httptest::server(200, "database=up")
+    println!("{}", readiness_message(fixture))
+}

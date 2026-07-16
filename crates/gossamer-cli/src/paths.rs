@@ -455,6 +455,18 @@ pub(crate) fn project_context() -> ProjectContext {
     ctx
 }
 
+/// The current project's source edition, falling back to the compatibility
+/// edition for loose-file invocations and malformed or absent manifests.
+#[must_use]
+pub(crate) fn project_edition() -> gossamer_pkg::Edition {
+    project_context()
+        .manifest_result()
+        .and_then(Result::ok)
+        .map_or(gossamer_pkg::Edition::E2026, |manifest| {
+            manifest.project.edition
+        })
+}
+
 /// Walks up from the cwd looking for the nearest `project.toml`.
 /// Returns the directory that contains it (the project root).
 pub(crate) fn find_project_root() -> Option<PathBuf> {

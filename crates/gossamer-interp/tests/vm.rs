@@ -184,3 +184,15 @@ fn main() {
 "#;
     assert_eq!(run_vm_main(source), "collected\n");
 }
+
+#[test]
+fn runtime_cycle_collection_capability_reports_vm_limit() {
+    let source = r"
+use std::runtime
+
+fn main() {
+    println(runtime::cycle_collection_supported())
+}
+";
+    assert_eq!(run_vm_main(source), "false\n");
+}

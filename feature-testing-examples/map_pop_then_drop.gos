@@ -22,8 +22,8 @@ fn churn() -> i64 {
 
 fn main() {
     let mut m: HashMap<i64, Person> = HashMap::new()
-    m.insert(1, Person { name: format!("ada"), age: 36 })
-    m.insert(2, Person { name: format!("grace"), age: 45 })
+    m.insert(1, Person(format!("ada"), 36))
+    m.insert(2, Person(format!("grace"), 45))
 
     let popped = match HashMap::pop(m, 1) {
         Some(p) => p.name,

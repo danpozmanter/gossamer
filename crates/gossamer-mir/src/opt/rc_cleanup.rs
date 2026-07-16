@@ -66,6 +66,26 @@ fn stmt_mentions_local(stmt: &Statement, local: Local) -> bool {
         }
         StatementKind::SetDiscriminant { place, .. } => place_mentions_local(place, local),
         StatementKind::StaticStore { value, .. } => operand_mentions_local(value, local),
+        StatementKind::IterSource { dst, source, .. } => {
+            place_mentions_local(dst, local) || operand_mentions_local(source, local)
+        }
+        StatementKind::IterAdapter {
+            dst,
+            upstream,
+            closure_or_arg,
+            ..
+        } => {
+            place_mentions_local(dst, local)
+                || place_mentions_local(upstream, local)
+                || closure_or_arg
+                    .as_ref()
+                    .is_some_and(|arg| operand_mentions_local(arg, local))
+        }
+        StatementKind::IterNext {
+            dst_option,
+            iter_place,
+            ..
+        } => place_mentions_local(dst_option, local) || place_mentions_local(iter_place, local),
         StatementKind::StorageLive(l) | StatementKind::StorageDead(l) => *l == local,
         StatementKind::Nop => false,
     }
@@ -325,4 +345,3 @@ fn block_allocates_between(block: &BasicBlock, from: usize, to: usize) -> bool {
             _ => false,
         })
 }
-

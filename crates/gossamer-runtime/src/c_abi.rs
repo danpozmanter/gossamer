@@ -209,6 +209,8 @@ pub mod http_server;
 pub mod http_ws;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http_ws_accept;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod image;
 pub mod json;
 pub mod lcg;
 pub mod ledger;
@@ -330,6 +332,8 @@ pub use http_ws::*;
 pub use http_ws_accept::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub use http3::*;
+#[cfg(not(target_arch = "wasm32"))]
+pub use image::*;
 pub use json::*;
 pub use lcg::*;
 pub use len::*;
