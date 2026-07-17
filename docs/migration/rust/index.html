@@ -1943,6 +1943,10 @@ into a handful of rules.</p>
 <td>No explicit lifetimes. The runtime owns every heap aggregate (reference-counted); <code>&amp;T</code> is a plain shared reference whose validity the runtime guarantees, not a tracked borrow.</td>
 </tr>
 <tr>
+<td>One <code>&amp;mut</code> or many <code>&amp;</code> references, enforced by the borrow checker.</td>
+<td><code>&amp;</code> and <code>&amp;mut</code> are real aliases and writes through <code>&amp;mut</code> update the original place, including scalar and fixed-array places. Gossamer does not enforce exclusive borrowing, so overlapping mutable aliases remain the programmer's responsibility.</td>
+</tr>
+<tr>
 <td>Ownership-by-move, <code>Copy</code> marker trait.</td>
 <td>No move semantics. Non-trivial values are heap-allocated, reference-counted, and shared by reference; primitives are copied the same as Rust.</td>
 </tr>

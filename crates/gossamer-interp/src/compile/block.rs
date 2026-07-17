@@ -73,7 +73,7 @@ impl<'tcx> FnBuilder<'tcx> {
             let Some(typed) = self.lookup_local(name) else {
                 continue;
             };
-            if typed.kind == RegKind::Value {
+            if typed.kind == RegKind::Value && !self.reference_alias_regs.contains(&typed.reg) {
                 self.emit(Op::ClearRegs {
                     start: typed.reg,
                     count: 1,

@@ -70,6 +70,7 @@ impl<'a> Builder<'a> {
             blocks: Vec::new(),
             current: None,
             scopes: vec![HashMap::new()],
+            reference_aliases: vec![HashMap::new()],
             fn_span: span,
             structs,
             struct_defs,

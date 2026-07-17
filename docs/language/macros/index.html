@@ -1812,6 +1812,12 @@ Rust's width / fill / align / radix / precision grammar:</p>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;[{:&gt;8.2}]&quot;</span><span class="p">,</span><span class="w"> </span><span class="mf">3.14159</span><span class="p">)</span><span class="w">     </span><span class="c1">// [    3.14]</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">msg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="fm">format!</span><span class="p">(</span><span class="s">&quot;{} / {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="c1">// returns a String</span>
 </code></pre></div>
+<p>Like Rust's format macros, every explicit positional argument must match one
+positional placeholder, and the template must be a string literal. Extra and
+missing arguments are parse errors. A piped value must use an explicit <code>_</code>
+argument, for example <code>value |&gt; println!("result: {}", _)</code>; it is never
+silently appended after formatting. The plain <code>println(...)</code> and related
+functions remain variadic and join their arguments with spaces.</p>
 <p>A named capture also walks a field path: struct fields (<code>{a.balance}</code>),
 tuple indices (<code>{t.0}</code>), nesting (<code>{o.inner.hits}</code>), and specs on the
 path (<code>{a.balance:&gt;8}</code>, <code>{f.0:.2}</code>) all resolve against bindings in

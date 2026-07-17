@@ -429,16 +429,19 @@ type: `let g: Vec<Vec<i64>> = [[1, 2], [3]]` builds a Vec of Vecs.
   remains accessible.
 - `&T` - a **shared managed reference** to a value of type `T`. Not a
   raw pointer. Cannot be null. Created by `&expr`. Auto-dereferenced
-  for `.` access. Liveness is guaranteed by the runtime. A place reached
-  through `&T` cannot be assigned, even when the reference binding itself
-  is declared `mut` (§7.5).
+  for `.` access. A reference aliases its source place: it does not copy
+  the source, including for `Copy` values and fixed arrays. Liveness is
+  guaranteed by the runtime. A place reached through `&T` cannot be
+  assigned, even when the reference binding itself is declared `mut`
+  (§7.5).
 - `&mut T` - a **mutable managed reference**, used to signal write
   intent through a reference. Created by taking `&mut` of a writable
   place rooted at a `mut` binding or reached through another `&mut`.
-  Exclusivity is *not* enforced: no pass rejects two simultaneous `&mut`
-  to the same value, and a `&mut T` struct field is accepted. Does not
-  carry write-through across a `go` or channel boundary (see the
-  parameter-semantics paragraph below).
+  Writes through it update that source place. Exclusivity is *not*
+  enforced: no pass rejects two simultaneous `&mut` to the same value,
+  and a `&mut T` struct field is accepted. Does not carry write-through
+  across a `go` or channel boundary (see the parameter-semantics
+  paragraph below).
 
 Raw pointers (`*const T`, `*mut T`) are **not** part of the language
 today: the type spellings do not parse (`GP0001`), and there is no safe
@@ -791,9 +794,16 @@ evaluate to `()`. `loop` can return a value via `break value;`.
 
 ### 4.3 Reference expressions
 
-`&expr` creates a managed reference. `&mut expr` is the same runtime
-but requires `expr` to be a mutable place. In the absence of lifetimes
-and borrow checking, this is pure ergonomics.
+`&expr` creates a managed reference. `&mut expr` creates a writable
+managed reference and requires `expr` to be a mutable place. Both refer
+to the source place rather than copying it: after `let r = &mut x`, a
+write through `r` is observable through `x`. A fresh temporary, such as
+`&mut [1, 2]`, is also a writable source place.
+
+The reference capability is fixed by its type. `let mut r = &x` permits
+rebinding `r`, but `r` remains an `&T` and cannot write through a later
+target. `let r = &mut x` permits writes through `r` without permitting
+`r` itself to be rebound.
 
 `*expr` dereferences a managed reference (`&T -> T`); it is not
 restricted to `unsafe` and there are no raw pointers to dereference.
@@ -1551,7 +1561,7 @@ reported and fails the test run. It is a testing instrument rather than
 an always-on runtime guard, and it sees the compiled-tier accesses the
 codegen instruments.
 
-### 7.5 References and aliasing (reference mutability, no borrow checker)
+### 7.5 References and aliasing (write-through references, no borrow checker)
 
 Gossamer has no ownership transfer, no `move` keyword, and no lifetime
 annotations anywhere. All bindings stay live and accessible for the
@@ -1563,8 +1573,9 @@ owns this value now" does not exist.
 **There is no borrow checker and no aliasing-enforcement pass.** The type
 checker does enforce reference mutability: taking `&mut` requires a
 writable place, assignment through `&T` is rejected, and assignment
-through `&mut T` is accepted independently of whether the reference
-binding itself is `mut`. No compiler pass tracks reference activity,
+through `&mut T` writes through to its source place independently of
+whether the reference binding itself is `mut`. No compiler pass tracks
+reference activity,
 rejects two simultaneous `&mut`, or forbids `&mut` where a `&` is live.
 Programs that would violate a Rust-style exclusivity rule compile and run
 on every tier; `&mut counter` twice in a row is accepted, and a `&mut T`
@@ -1588,9 +1599,15 @@ this specification depends on adding scope-local exclusivity checks.
   creation, and select the mutating versus non-mutating method where
   dispatch distinguishes them.
 - `let mut reference = &value` permits rebinding `reference`; it does not
-  make the shared referent writable. Conversely, `let reference = &mut
-  value` permits writing through `reference` without making the reference
-  binding itself mutable.
+  make the shared referent writable. Its type remains `&T` after every
+  rebind. Conversely, `let reference = &mut value` permits writing through
+  `reference` without making the reference binding itself mutable.
+- References alias their source place on every tier. For example,
+  `let mut xs = [1, 2]; let r = &mut xs; r[0] = 0` leaves both `xs` and
+  `r` observing `[0, 2]`; it never creates a copy-on-write side value.
+- An immutable binding cannot be the source of `&mut`. Otherwise `let x =
+  value; let r = &mut x` would provide a write path to the value that `let
+  x` declares immutable.
 - `&mut Vec<T>` / `&mut [T]` parameters do carry write-through to the
   caller (§3.4), so the marker is load-bearing for that data flow even
   though exclusivity is unchecked.

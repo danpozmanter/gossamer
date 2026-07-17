@@ -88,12 +88,53 @@ impl<'a> Builder<'a> {
         None
     }
 
+    pub(crate) fn bind_reference_alias(&mut self, name: &str, local: Local) {
+        if let Some(scope) = self.reference_aliases.last_mut() {
+            scope.insert(name.to_string(), local);
+        }
+    }
+
+    pub(crate) fn reference_alias_local(&self, name: &str) -> Option<Local> {
+        for (scope, aliases) in self
+            .scopes
+            .iter()
+            .rev()
+            .zip(self.reference_aliases.iter().rev())
+        {
+            if scope.contains_key(name) {
+                return aliases.get(name).copied();
+            }
+        }
+        None
+    }
+
+    pub(crate) fn rebind_reference_alias(&mut self, name: &str, local: Local) -> bool {
+        for (scope, aliases) in self
+            .scopes
+            .iter_mut()
+            .rev()
+            .zip(self.reference_aliases.iter_mut().rev())
+        {
+            if scope.contains_key(name) {
+                if aliases.contains_key(name) {
+                    scope.insert(name.to_string(), local);
+                    aliases.insert(name.to_string(), local);
+                    return true;
+                }
+                return false;
+            }
+        }
+        false
+    }
+
     pub(crate) fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
+        self.reference_aliases.push(HashMap::new());
     }
 
     pub(crate) fn pop_scope(&mut self) {
         self.scopes.pop();
+        self.reference_aliases.pop();
     }
 
     /// Lowers the expressions in a defer frame in LIFO (reverse-registration)

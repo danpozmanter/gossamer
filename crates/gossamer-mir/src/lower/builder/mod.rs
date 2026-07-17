@@ -52,6 +52,10 @@ pub(crate) struct Builder<'a> {
     pub(crate) blocks: Vec<BasicBlock>,
     pub(crate) current: Option<BlockId>,
     pub(crate) scopes: Vec<HashMap<String, Local>>,
+    /// Names bound to a direct local reference. These names resolve to the
+    /// source local, while deref lowering uses the marker to avoid adding a
+    /// second physical dereference to that source place.
+    pub(crate) reference_aliases: Vec<HashMap<String, Local>>,
     pub(crate) fn_span: Span,
     pub(crate) structs: &'a HashMap<String, Vec<String>>,
     pub(crate) struct_defs: &'a HashMap<gossamer_resolve::DefId, String>,

@@ -36,10 +36,9 @@ One page per language feature. Source is `crates/gossamer-std/src/manifest/featu
 | [`lang::const`](const.md) | shipped | Compile-time constant binding. |
 | [`lang::static`](static.md) | shipped | Module-level mutable or immutable static slot. |
 | [`lang::type_alias`](type_alias.md) | shipped | Transparent type alias: `type X = T` (and generic `type Pair<A> = (A, A)`) is interchangeable with its target everywhere; a cyclic alias is rejected (`GT0024`). |
-| [`lang::mut_ref_params`](mut_ref_params.md) | shipped | `&mut Vec<T>` / `&mut [T]` parameters write through to the caller's storage on every tier. |
+| [`lang::mut_ref_params`](mut_ref_params.md) | shipped | `&mut T` references alias and write through to their source place; fixed arrays are copied at function-call boundaries. |
 | [`lang::unicode_identifiers`](unicode_identifiers.md) | shipped | Identifiers follow UAX #31 (matches Rust 2024). |
 | [`lang::comptime`](comptime.md) | shipped | Zig-style compile-time evaluation: `comptime { ... }` blocks, `comptime fn` calls, and `comptime` parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. `typeInfo::<T>()` reflects a type's fields, a `for (name, ty) in typeInfo::<T>()` loop unrolls into native per-field code, and `codegen!(...)` splices a `comptime fn`'s `String` back as source. Includes the `regex!` / `sql!` build-time validation macros. |
 | [`lang::move_keyword`](move_keyword.md) | planned | `move` closure capture keyword - parses, lowers to the same Fn shape as a non-move closure (the runtime manages ownership). |
 | [`lang::async_await`](async_await.md) | planned | `async fn` / `.await` - goroutines + channels cover the same shape today. |
 | [`lang::lifetimes`](lifetimes.md) | planned | Explicit lifetime annotations - not needed under the current memory model; tracked in case a borrow-checker mode lands. |
-

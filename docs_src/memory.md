@@ -67,14 +67,29 @@ automatic cycle reclamation that ARC leaves to the programmer.
 ## `&` and `&mut`
 
 `&x` means "read `x` without taking ownership". `&mut x` means
-"write `x` without taking ownership". The type checker rejects:
+"write `x` without taking ownership". Both are aliases of the source
+place, never copies. In particular:
+
+```gossamer
+let mut xs = [1, 2]
+let r = &mut xs
+r[0] = 0
+// xs and r both observe [0, 2]
+```
+
+`let mut r = &xs` makes the reference binding rebindable, not its
+referent writable. Its type remains `&T` after a rebind. Conversely,
+`let r = &mut xs` permits writes through `r` but does not make `r`
+rebindable. The type checker rejects:
 
 - A `&mut` taken on a non-`mut` binding.
 - An assignment through a shared `&T` reference.
 
 These are *correctness* rules, not lifetime proofs. You never
 write `'a`. Overlapping `&mut` references remain allowed; Gossamer does
-not perform Rust-style exclusivity analysis.
+not perform Rust-style exclusivity analysis. This differs from Rust's
+borrow checker, but it does not change reference identity: every alias
+still observes writes to the same source place.
 
 ## How reclamation works
 

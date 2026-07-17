@@ -94,6 +94,29 @@ impl<'tcx> FnBuilder<'tcx> {
         match &stmt.kind {
             HirStmtKind::Let { pattern, init, .. } => {
                 if let HirPatKind::Binding { name, .. } = &pattern.kind {
+                    // A direct local reference shares the source
+                    // register. Disable flat-array specialisation for that
+                    // register: the generic projected-store path preserves
+                    // the alias, whereas the flat path assumes one concrete
+                    // non-reference binding owns its representation.
+                    if let Some(HirExpr {
+                        kind:
+                            HirExprKind::Unary {
+                                op: HirUnaryOp::RefShared | HirUnaryOp::RefMut,
+                                operand,
+                            },
+                        ..
+                    }) = init
+                        && let HirExprKind::Path { segments, .. } = &operand.kind
+                        && let [segment] = segments.as_slice()
+                        && let Some(source) = self.lookup_local(&segment.name)
+                    {
+                        self.flat_int_locals.remove(&source.reg);
+                        self.flat_float_locals.remove(&source.reg);
+                        self.reference_alias_regs.insert(source.reg);
+                        self.bind_reference_local(&name.name, source);
+                        return Ok(false);
+                    }
                     if let Some(init) = init {
                         // Compile the init in its natural kind.
                         // Most exprs produce a freshly-allocated
@@ -255,6 +278,28 @@ impl<'tcx> FnBuilder<'tcx> {
         place: &HirExpr,
         value: &HirExpr,
     ) -> RuntimeResult<()> {
+        // Rebinding a `let mut r = &mut source` changes the reference's
+        // source place, not the old source value. Direct local references
+        // share a register with their current source, so update that binding
+        // during lowering before any ordinary assignment can write the old
+        // source.
+        if let HirExprKind::Path { segments, .. } = &place.kind
+            && let [name] = segments.as_slice()
+            && self.is_reference_binding(&name.name)
+            && let HirExprKind::Unary {
+                op: HirUnaryOp::RefShared | HirUnaryOp::RefMut,
+                operand,
+            } = &value.kind
+            && let HirExprKind::Path { segments, .. } = &operand.kind
+            && let [source_name] = segments.as_slice()
+            && let Some(source) = self.lookup_local(&source_name.name)
+            && self.rebind_reference_local(&name.name, source)
+        {
+            self.flat_int_locals.remove(&source.reg);
+            self.flat_float_locals.remove(&source.reg);
+            self.reference_alias_regs.insert(source.reg);
+            return Ok(());
+        }
         if self.try_compile_inplace_str_append(place, value)? {
             return Ok(());
         }

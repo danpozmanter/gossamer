@@ -1934,7 +1934,7 @@
 <tr>
 <td><a href="mut_ref_params/"><code>lang::mut_ref_params</code></a></td>
 <td>shipped</td>
-<td><code>&amp;mut Vec&lt;T&gt;</code> / <code>&amp;mut [T]</code> parameters write through to the caller's storage on every tier.</td>
+<td><code>&amp;mut T</code> references alias and write through to their source place; fixed arrays are copied at function-call boundaries.</td>
 </tr>
 <tr>
 <td><a href="unicode_identifiers/"><code>lang::unicode_identifiers</code></a></td>

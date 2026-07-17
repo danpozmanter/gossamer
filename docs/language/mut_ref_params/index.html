@@ -1756,7 +1756,15 @@
 
 <h1 id="langmut_ref_params"><code>lang::mut_ref_params</code><a class="headerlink" href="#langmut_ref_params" title="Permanent link">&para;</a></h1>
 <p>Status: shipped</p>
-<p><code>&amp;mut Vec&lt;T&gt;</code> / <code>&amp;mut [T]</code> parameters write through to the caller's storage on every tier.</p>
+<p><code>&amp;mut T</code> parameters write through to the caller's source place on every
+tier for scalar values, strings, vectors, slices, structs, and enums.
+<code>&amp;mut</code> references are aliases, not copied argument values. Gossamer does
+not impose Rust-style exclusive-borrow checking, so overlapping aliases
+are permitted, but every write is observed through the same source place.</p>
+<p>Fixed arrays are the ABI exception: a <code>[T; N]</code> argument is copied at a
+function-call boundary, so a mutable parameter observes and mutates that
+call-local copy. A local reference such as <code>let r = &amp;mut xs</code> still aliases
+its fixed-array source and writes through normally.</p>
 
 
 

@@ -213,6 +213,33 @@ fn gos_build_handles_tuples_and_arrays() {
 }
 
 #[test]
+fn gos_build_mut_reference_writes_through_to_fixed_array_source() {
+    assert_exit(
+        "mut_ref_array",
+        "fn main() -> i64 {\n    let mut xs = [1i64, 2i64]\n    let r = &mut xs\n    r[0i64] = 40i64\n    xs[0i64] + xs[1i64]\n}\n",
+        42,
+    );
+}
+
+#[test]
+fn gos_build_mut_reference_writes_through_to_scalar_source() {
+    assert_exit(
+        "mut_ref_scalar",
+        "fn main() -> i64 {\n    let mut value = 1i64\n    let r = &mut value\n    *r = 42i64\n    value\n}\n",
+        42,
+    );
+}
+
+#[test]
+fn gos_build_mut_reference_binding_rebinds_its_target() {
+    assert_exit(
+        "mut_ref_rebind",
+        "fn main() -> i64 {\n    let mut first = 1i64\n    let mut second = 2i64\n    let mut r = &mut first\n    r = &mut second\n    *r = 42i64\n    first + second\n}\n",
+        43,
+    );
+}
+
+#[test]
 fn gos_build_monomorphises_generic_function_calls() {
     assert_exit(
         "mono",
@@ -261,7 +288,7 @@ fn gos_build_handles_for_loop_over_range() {
 fn gos_build_handles_struct_literal_and_field_access() {
     assert_exit(
         "struct_field",
-        "struct Point { x: i64, y: i64 }\nfn main() -> i64 {\n    let p = Point { x: 10i64, y: 32i64 }\n    p.x + p.y\n}\n",
+        "struct Point { x: i64, y: i64 }\nfn main() -> i64 {\n    let p = Point(10i64, 32i64)\n    p.x + p.y\n}\n",
         42,
     );
 }

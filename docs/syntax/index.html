@@ -2357,8 +2357,9 @@ more than once in one pipe step.</p>
 <li><code>Point { x, y }</code> / <code>Point { x: a, y: b }</code> - struct destructure (and renamed).</li>
 <li><code>(a, b)</code> - tuple destructure.</li>
 <li><code>1..=5</code> / <code>1..5</code> - closed and exclusive range.</li>
-<li><code>..=hi</code> / <code>..hi</code> / <code>lo..</code> / <code>lo..=</code> - open-ended range (an open end
-  covers up to the type maximum).</li>
+<li><code>..=hi</code> / <code>..hi</code> / <code>lo..</code> - open-ended range (an open end covers up to
+  the type maximum). <code>lo..=</code> is a parse error because <code>..=</code> requires an
+  upper bound.</li>
 <li><code>a | b</code> - or-pattern.</li>
 <li><code>x @ 1..=3</code> - <code>@</code>-binding.</li>
 <li><code>..</code> - rest.</li>

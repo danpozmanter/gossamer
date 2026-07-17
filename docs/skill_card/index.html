@@ -2347,8 +2347,9 @@ Left-associative, very low precedence.</p>
   Generic structs <code>struct Wrapper&lt;T&gt;</code> + <code>impl&lt;T&gt;</code> work. Const-generic
   array length <code>fn sum&lt;const N: usize&gt;(xs: [i64; N])</code> is inferred
   from the argument (not usable as a bare value or repeat count).</li>
-<li><strong>References</strong>: <code>&amp;x</code> shared, <code>&amp;mut x</code> exclusive - aliasing intent
-  only; the runtime owns memory. No lifetimes, no borrow checker.</li>
+<li><strong>References</strong>: <code>&amp;x</code> is shared and <code>&amp;mut x</code> writes through to the same
+  source place; both are aliases, never copies. There are no lifetimes or
+  borrow checker, so <code>&amp;mut</code> is writable rather than exclusive.</li>
 <li><strong>Types</strong>: <code>bool char i8..i64 u8..u64 isize usize f32 f64 String
   [T] [T; N] (A, B) Option&lt;T&gt; Result&lt;T, E&gt; &amp;T</code> + user types. <code>i128</code>
   / <code>u128</code> are rejected (GT0014). Transparent <code>type Id = i64</code> /

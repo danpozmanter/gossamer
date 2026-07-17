@@ -1716,6 +1716,23 @@ impl<'a> Builder<'a> {
     }
 
     pub(crate) fn lower_assign(&mut self, place: &HirExpr, value: &HirExpr, span: Span) {
+        // Rebinding a reference binding changes the alias target. The name is
+        // bound directly to its current source local, so emitting an ordinary
+        // assignment here would overwrite the old source instead.
+        if let HirExprKind::Path { segments, .. } = &place.kind
+            && let [name] = segments.as_slice()
+            && self.reference_alias_local(&name.name).is_some()
+            && let HirExprKind::Unary {
+                op: HirUnaryOp::RefShared | HirUnaryOp::RefMut,
+                operand,
+            } = &value.kind
+            && let HirExprKind::Path { segments, .. } = &operand.kind
+            && let [source_name] = segments.as_slice()
+            && let Some(source) = self.lookup_local(&source_name.name)
+            && self.rebind_reference_alias(&name.name, source)
+        {
+            return;
+        }
         // A `static mut` assignment (`COUNTER = v`, `COUNTER += 1`) stores
         // into the live global cell. The RHS is lowered first so a read of
         // the same static inside it observes the pre-write value.
@@ -2442,6 +2459,12 @@ impl<'a> Builder<'a> {
                 op: gossamer_hir::HirUnaryOp::Deref,
                 operand,
             } => {
+                if let HirExprKind::Path { segments, .. } = &operand.kind
+                    && let [name] = segments.as_slice()
+                    && self.reference_alias_local(&name.name).is_some()
+                {
+                    return self.lower_place_expr(operand);
+                }
                 let mut base = self.lower_place_expr(operand)?;
                 base.projection.push(crate::ir::Projection::Deref);
                 Some(base)

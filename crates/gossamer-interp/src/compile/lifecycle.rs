@@ -28,6 +28,7 @@ impl<'tcx> FnBuilder<'tcx> {
             flat_locals: std::collections::HashMap::new(),
             flat_int_locals: std::collections::HashSet::new(),
             flat_float_locals: std::collections::HashSet::new(),
+            reference_alias_regs: std::collections::HashSet::new(),
             collection_locals: std::collections::HashSet::new(),
             flag_set_locals: std::collections::HashSet::new(),
             duration_cell_locals: std::collections::HashSet::new(),

@@ -85,6 +85,35 @@ impl<'tcx> FnBuilder<'tcx> {
         }
     }
 
+    pub(crate) fn bind_reference_local(&mut self, name: &str, typed: TypedReg) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.locals.insert(name.to_string(), typed);
+            scope.reference_bindings.insert(name.to_string());
+        }
+    }
+
+    pub(crate) fn is_reference_binding(&self, name: &str) -> bool {
+        for scope in self.scopes.iter().rev() {
+            if scope.locals.contains_key(name) {
+                return scope.reference_bindings.contains(name);
+            }
+        }
+        false
+    }
+
+    pub(crate) fn rebind_reference_local(&mut self, name: &str, typed: TypedReg) -> bool {
+        for scope in self.scopes.iter_mut().rev() {
+            if scope.locals.contains_key(name) {
+                if scope.reference_bindings.contains(name) {
+                    scope.locals.insert(name.to_string(), typed);
+                    return true;
+                }
+                return false;
+            }
+        }
+        false
+    }
+
     pub(crate) fn lookup_local(&self, name: &str) -> Option<TypedReg> {
         for scope in self.scopes.iter().rev() {
             if let Some(typed) = scope.locals.get(name) {

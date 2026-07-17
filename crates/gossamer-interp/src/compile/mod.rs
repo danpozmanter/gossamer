@@ -468,6 +468,11 @@ pub(crate) struct FnBuilder<'tcx> {
     /// Lets indexed reads / writes route through the typed-`f64`
     /// fast path that skips the `Value::Float` round-trip.
     pub(crate) flat_float_locals: std::collections::HashSet<Reg>,
+    /// Registers shared by a local reference binding and its source place.
+    /// Last-use clearing is disabled for these registers because the
+    /// consume analysis tracks names, while either name may still access the
+    /// same storage.
+    pub(crate) reference_alias_regs: std::collections::HashSet<Reg>,
     /// Registers bound by a pattern to an array / vec / slice value
     /// (`Some(arr)`, `(head, tail)`, …). A pattern binding's `Path`
     /// reference carries the binding's *declared* type only when the
@@ -561,6 +566,9 @@ pub(crate) struct FnBuilder<'tcx> {
 #[derive(Debug, Default)]
 pub(crate) struct Scope {
     pub(crate) locals: HashMap<String, TypedReg>,
+    /// Local names whose storage is a direct reference alias rather than an
+    /// independent value register.
+    pub(crate) reference_bindings: std::collections::HashSet<String>,
 }
 
 #[derive(Debug)]

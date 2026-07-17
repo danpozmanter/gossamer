@@ -291,6 +291,27 @@ impl<'a> Builder<'a> {
                         }
                     }
                 }
+                // A direct reference binding aliases its
+                // source place. Do not materialise a copied fixed array or
+                // scalar in `local`: bind the user name to the source local
+                // so reads and projected stores share the same storage.
+                if let HirPatKind::Binding { name, .. } = &pattern.kind
+                    && let Some(HirExpr {
+                        kind:
+                            HirExprKind::Unary {
+                                op: HirUnaryOp::RefShared | HirUnaryOp::RefMut,
+                                operand,
+                            },
+                        ..
+                    }) = init
+                    && let HirExprKind::Path { segments, .. } = &operand.kind
+                    && let [source] = segments.as_slice()
+                    && let Some(source_local) = self.lookup_local(&source.name)
+                {
+                    self.bind_local(&name.name, source_local);
+                    self.bind_reference_alias(&name.name, source_local);
+                    return;
+                }
                 if let Some(init) = init {
                     if let Some(mut value) = self.lower_expr(init) {
                         // Coerce a `json::Value`-typed initialiser

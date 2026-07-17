@@ -355,6 +355,51 @@ fn main() {
 }
 
 #[test]
+fn spec_7_5_mut_reference_aliases_fixed_array_source() {
+    let src = r#"
+fn main() {
+    let mut xs = [1, 2]
+    let r = &mut xs
+    r[0] = 0
+    if xs[0] != 0 { panic!("mutable reference did not write through") }
+}
+"#;
+    let (ok, _stdout, stderr) = run_program("spec_7_5_write_through", src, &[]);
+    assert!(ok, "write-through reference program failed: {stderr}");
+}
+
+#[test]
+fn spec_7_5_mut_reference_aliases_scalar_source() {
+    let src = r#"
+fn main() {
+    let mut value = 1i64
+    let r = &mut value
+    *r = 42i64
+    if value != 42i64 { panic!("mutable reference did not write through") }
+}
+"#;
+    let (ok, _stdout, stderr) = run_program("spec_7_5_scalar_write_through", src, &[]);
+    assert!(ok, "write-through reference program failed: {stderr}");
+}
+
+#[test]
+fn spec_7_5_mut_reference_binding_rebinds_its_target() {
+    let src = r#"
+fn main() {
+    let mut first = 1i64
+    let mut second = 2i64
+    let mut r = &mut first
+    r = &mut second
+    *r = 42i64
+    if first != 1i64 { panic!("rebind changed the old target") }
+    if second != 42i64 { panic!("rebind did not change the new target") }
+}
+"#;
+    let (ok, _stdout, stderr) = run_program("spec_7_5_reference_rebind", src, &[]);
+    assert!(ok, "rebindable reference program failed: {stderr}");
+}
+
+#[test]
 fn spec_7_5_aliased_mut_borrow_does_not_error() {
     // §7.5: `&mut` is an aliasing-intent marker only; there is no
     // exclusivity-enforcement pass. A program that would violate a
