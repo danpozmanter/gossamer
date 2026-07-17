@@ -49,6 +49,7 @@ pub fn typecheck_source_file(
     // width.
     checker.infer.default_unresolved_int_vars(checker.tcx);
     checker.infer.default_unresolved_float_vars(checker.tcx);
+    checker.check_deferred_type_mismatches();
     checker.check_deferred_structural();
     checker.resolve_table();
     (checker.table, checker.diagnostics)
@@ -213,6 +214,10 @@ struct TypeChecker<'a> {
     /// Structural uses whose operand was an unresolved inference var at
     /// first check; re-validated after integer/float defaulting.
     deferred_structural: Vec<DeferredStructural>,
+    /// Assignment mismatches whose outer shapes are already incompatible but
+    /// whose literal elements need integer/float defaulting before their
+    /// rendered types are useful to the user.
+    deferred_type_mismatches: Vec<(Ty, Ty, Span)>,
     /// Tuple-variant payload types keyed by `(enum_name,
     /// variant_name)`. Drives literal re-typing at variant
     /// constructor sites so `Value::Blob([1, 2, 3])` records a heap
@@ -386,6 +391,7 @@ impl<'a> TypeChecker<'a> {
             generic_method_ret_types: HashMap::new(),
             method_arities: HashMap::new(),
             deferred_structural: Vec::new(),
+            deferred_type_mismatches: Vec::new(),
             enum_variant_payloads: HashMap::new(),
             enum_tys: HashMap::new(),
             const_tys: HashMap::new(),
@@ -4723,6 +4729,24 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Emits mismatches held until numeric literal defaulting has made their
+    /// type names stable. This keeps a rejected `r = [2, 3]` diagnostic
+    /// readable as `&[i64; 2]` versus `[i64; 2]`, not inference variables.
+    fn check_deferred_type_mismatches(&mut self) {
+        let deferred = std::mem::take(&mut self.deferred_type_mismatches);
+        for (expected, found, span) in deferred {
+            let expected = self.deep_resolve(expected);
+            let found = self.deep_resolve(found);
+            self.emit(
+                TypeError::TypeMismatch {
+                    expected: render_ty(self.tcx, expected),
+                    found: render_ty(self.tcx, found),
+                },
+                span,
+            );
+        }
+    }
+
     fn maybe_reject_unknown_adt_method(&mut self, resolved: Ty, method: &str, span: Span) {
         if matches!(method, "clone") {
             return;
@@ -5853,10 +5877,30 @@ impl<'a> TypeChecker<'a> {
             }
             PlaceMut::Writable | PlaceMut::Unknown => {}
         }
-        // The place's type flows into the value as its expectation so
-        // `v = [2, 3]` against a `Vec<i64>` slot lays a heap Vec, not
-        // a fixed `[i64; 2]` desynced from the slot's layout.
-        let value_ty = self.check_expr_expecting(value, Expectation::HasType(place_ty));
+        let place_resolved = self.infer.resolve(self.tcx, place_ty);
+        let place_is_reference = matches!(self.tcx.kind(place_resolved), Some(TyKind::Ref { .. }));
+        // A reference binding must be rebound with another reference. Do not
+        // pass its referent through as a literal-shaping expectation: doing so
+        // would allow `let mut r = &value; r = value` to discard the `&`.
+        // Other assignment destinations retain the expected-type flow that
+        // shapes `[2, 3]` as a Vec for a `Vec<i64>` slot.
+        let value_ty = if place_is_reference {
+            self.check_expr(value)
+        } else {
+            self.check_expr_expecting(value, Expectation::HasType(place_ty))
+        };
+        if place_is_reference {
+            let value_resolved = self.infer.resolve(self.tcx, value_ty);
+            let value_is_reference_or_unresolved = matches!(
+                self.tcx.kind(value_resolved),
+                Some(TyKind::Ref { .. } | TyKind::Var(_) | TyKind::Error | TyKind::Never)
+            );
+            if !value_is_reference_or_unresolved {
+                self.deferred_type_mismatches
+                    .push((place_resolved, value_resolved, value.span));
+                return self.tcx.unit();
+            }
+        }
         // `s += &t` / `s += &str`: String append accepts a borrowed operand
         // on the right, mirroring the `+` concatenation operator. Only the
         // compound `+=` form relaxes; plain `=` still requires an owned String.

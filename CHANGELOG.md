@@ -16,6 +16,10 @@
 
 ### Language and iterator groundwork
 
+- Added REPL `%help` entries for every built-in macro and the prelude
+  assertion builtins, including format and pipe-placeholder guidance.
+- Fixed mutable reference rebinding: a `let mut x = &value` binding retains
+  its reference type and rejects assignment of a bare value.
 - Enforced positional struct construction across the parser, formatter, REPL,
   VM, native tiers, fixtures, wrappers, and binary HTTP responses.
 - Fixed pipe placeholders: `_` selects one direct argument or receiver;

@@ -197,7 +197,10 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     // with the `std::*` stdlib paths.
     // -----------------------------------------------------------------
     lang("lang::let", "Immutable binding."),
-    lang("lang::let_mut", "Mutable binding."),
+    lang(
+        "lang::let_mut",
+        "Mutable bindings can be reassigned and can be the source of `&mut`.",
+    ),
     lang("lang::if", "Conditional expression."),
     lang("lang::match", "Exhaustive pattern match expression."),
     lang("lang::if_let", "Single-variant pattern sugar."),
@@ -270,7 +273,7 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     ),
     lang(
         "lang::mut_ref_params",
-        "`&mut Vec<T>` / `&mut [T]` parameters write through to the caller's storage on every tier.",
+        "Local `&mut` aliases write through; `&mut Vec<T>` / `&mut [T]` parameters write through on every tier.",
     ),
     // Identifier rules - Unicode XID_Start / XID_Continue (UAX #31).
     lang(

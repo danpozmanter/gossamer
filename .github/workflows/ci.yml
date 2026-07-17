@@ -192,9 +192,14 @@ jobs:
           # newly added test is cross-platform by default (drift can only
           # over-test, never lose coverage). `rc_soundness` already self-skips
           # off Linux at runtime; listing it drops the redundant build+spawn.
+          # `ecosystem_bindings` builds a separate temporary Cargo workspace
+          # and exercises bytecode-level binding conversion only. Its output
+          # does not depend on the host object format or native codegen, and
+          # compiling that nested workspace on hosted Windows consumes most
+          # of the native job without adding platform coverage.
           linux_only="
             client_error_display dispatch_consistency doc_emit_stdlib
-            feature_status fmt_faithful stdlib_compiled_coverage
+            ecosystem_bindings feature_status fmt_faithful stdlib_compiled_coverage
             stdlib_export_drift rc_soundness
             emit dispatch_parity coff_pic_reloc macho_dead_strip
           "

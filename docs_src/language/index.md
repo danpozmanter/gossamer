@@ -5,7 +5,7 @@ One page per language feature. Source is `crates/gossamer-std/src/manifest/featu
 | Feature | Status | Summary |
 |---|---|---|
 | [`lang::let`](let.md) | shipped | Immutable binding. |
-| [`lang::let_mut`](let_mut.md) | shipped | Mutable binding. |
+| [`lang::let_mut`](let_mut.md) | shipped | Mutable bindings can be reassigned and can be the source of `&mut`. |
 | [`lang::if`](if.md) | shipped | Conditional expression. |
 | [`lang::match`](match.md) | shipped | Exhaustive pattern match expression. |
 | [`lang::if_let`](if_let.md) | shipped | Single-variant pattern sugar. |
@@ -36,7 +36,7 @@ One page per language feature. Source is `crates/gossamer-std/src/manifest/featu
 | [`lang::const`](const.md) | shipped | Compile-time constant binding. |
 | [`lang::static`](static.md) | shipped | Module-level mutable or immutable static slot. |
 | [`lang::type_alias`](type_alias.md) | shipped | Transparent type alias: `type X = T` (and generic `type Pair<A> = (A, A)`) is interchangeable with its target everywhere; a cyclic alias is rejected (`GT0024`). |
-| [`lang::mut_ref_params`](mut_ref_params.md) | shipped | `&mut T` references alias and write through to their source place; fixed arrays are copied at function-call boundaries. |
+| [`lang::mut_ref_params`](mut_ref_params.md) | shipped | Local `&mut` aliases write through; `&mut Vec<T>` / `&mut [T]` parameters write through on every tier. |
 | [`lang::unicode_identifiers`](unicode_identifiers.md) | shipped | Identifiers follow UAX #31 (matches Rust 2024). |
 | [`lang::comptime`](comptime.md) | shipped | Zig-style compile-time evaluation: `comptime { ... }` blocks, `comptime fn` calls, and `comptime` parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. `typeInfo::<T>()` reflects a type's fields, a `for (name, ty) in typeInfo::<T>()` loop unrolls into native per-field code, and `codegen!(...)` splices a `comptime fn`'s `String` back as source. Includes the `regex!` / `sql!` build-time validation macros. |
 | [`lang::move_keyword`](move_keyword.md) | planned | `move` closure capture keyword - parses, lowers to the same Fn shape as a non-move closure (the runtime manages ownership). |

@@ -257,6 +257,41 @@ fn assignment_through_shared_reference_is_rejected_precisely() {
 }
 
 #[test]
+fn mutable_reference_binding_cannot_be_rebound_to_its_referent() {
+    // `mut` permits rebinding `x`, but it does not erase the `&[i64; 2]`
+    // type inferred for that binding. A new reference is required.
+    let checked = run("fn main() { let mut x = &[1, 2]\n x = [2, 3] }\n");
+    let ItemKind::Fn(decl) = &checked.source.items[0].kind else {
+        panic!("expected fn");
+    };
+    let ExprKind::Block(block) = &decl.body.as_ref().expect("body").kind else {
+        panic!("expected block");
+    };
+    let ExprKind::Assign { place, value, .. } = &block.tail.as_ref().expect("assignment").kind
+    else {
+        panic!("expected assignment");
+    };
+    let place_ty = checked.table.get(place.id).expect("place typed");
+    let value_ty = checked.table.get(value.id).expect("value typed");
+    assert!(
+        checked
+            .diagnostics
+            .iter()
+            .any(|d| matches!(d.error, TypeError::TypeMismatch { .. })),
+        "expected reference-rebinding type mismatch: {:?}; place={}, value={}",
+        checked.diagnostics,
+        gossamer_types::render_ty(&checked.tcx, place_ty),
+        gossamer_types::render_ty(&checked.tcx, value_ty),
+    );
+}
+
+#[test]
+fn mutable_reference_binding_can_be_rebound_with_a_reference() {
+    let checked = run("fn main() { let mut x = &[1, 2]\n x = &[2, 3] }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
 fn overlapping_mutable_references_remain_accepted() {
     let checked = run(
         "fn main() { let mut a = [1, 2]\n let x = &mut a\n let y = &mut a\n x[0] = 0\n y[1] = 3 }\n",

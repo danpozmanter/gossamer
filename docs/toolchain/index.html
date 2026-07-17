@@ -2281,9 +2281,9 @@ interactive session. The first-slice supports:</p>
   lists the active set.</li>
 <li>Meta-commands <code>%quit</code>, <code>%history</code>, <code>%bindings</code>, <code>%reset</code>,
   <code>%help</code>, and <code>%ls</code>.</li>
-<li><code>%help &lt;symbol&gt;</code> shows stdlib module/item or language-feature
-  documentation from the manifest and feature-status registry;
-  <code>%help /regex/</code> searches that same surface.</li>
+<li><code>%help &lt;symbol&gt;</code> shows stdlib module/item, language-feature, prelude
+  builtin, or built-in macro documentation. Macro names retain their <code>!</code>,
+  for example <code>%help println!</code>; <code>%help /regex/</code> searches that same surface.</li>
 <li><code>%ls</code> lists stdlib modules; <code>%ls &lt;namespace-or-symbol&gt;</code> lists a
   module's items or matching symbols; <code>%ls /regex/</code> filters stdlib
   modules/items.</li>

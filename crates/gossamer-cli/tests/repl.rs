@@ -8,6 +8,7 @@
 //! never lands in captured output.
 
 use std::env;
+use std::fmt::Write as _;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -164,6 +165,25 @@ fn repl_mutable_assignment_persists_across_lines() {
         !out.stdout.contains("Steven"),
         "stale value returned after reassignment; stdout: {}",
         out.stdout
+    );
+}
+
+#[test]
+fn repl_rejects_rebinding_a_reference_with_its_referent() {
+    // `let mut` permits assigning a new `&[i64; 2]`, not replacing the
+    // reference binding with a bare `[i64; 2]` value.
+    let out = run_repl("let mut x = &[1, 2]\nx = [2, 3]\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("type mismatch"),
+        "reference-rebinding mismatch was not reported: {}",
+        out.stderr
+    );
+    assert!(
+        out.stderr
+            .contains("expected `&[i64; 2]`, found `[i64; 2]`"),
+        "reference-rebinding mismatch did not preserve both types: {}",
+        out.stderr
     );
 }
 
@@ -402,6 +422,36 @@ fn repl_meta_help_finds_stdlib_symbol() {
         out.stdout
             .contains("Removes leading and trailing whitespace."),
         "expected manifest doc text; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_help_covers_every_builtin_macro_and_prelude_assertion() {
+    let mut input = String::new();
+    for builtin in gossamer_parse::builtin_macros::BUILTIN_MACROS {
+        writeln!(&mut input, "%help {}", builtin.name).expect("write macro-help input");
+    }
+    input.push_str("%help assert\n%help assert_eq\n");
+    let out = run_repl(&input);
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for builtin in gossamer_parse::builtin_macros::BUILTIN_MACROS {
+        assert!(
+            out.stdout.contains(&format!("{} [macro]", builtin.name)),
+            "missing help for {}: {}",
+            builtin.name,
+            out.stdout
+        );
+        assert!(
+            out.stdout.contains(builtin.signature),
+            "missing signature for {}: {}",
+            builtin.name,
+            out.stdout
+        );
+    }
+    assert!(
+        out.stdout.contains("assert [builtin]") && out.stdout.contains("assert_eq [builtin]"),
+        "missing prelude assertion help: {}",
         out.stdout
     );
 }

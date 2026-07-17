@@ -1756,8 +1756,10 @@
 
 <h1 id="langlet_mut"><code>lang::let_mut</code><a class="headerlink" href="#langlet_mut" title="Permanent link">&para;</a></h1>
 <p>Status: shipped</p>
-<p>A mutable binding can be reassigned and can be the source of <code>&amp;mut</code>.
-The two permissions are distinct from a reference's own mutability:</p>
+<p>Mutable bindings can be reassigned and can be the source of <code>&amp;mut</code>.</p>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<p>Binding mutability and reference capability are separate:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">]</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">reference</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="n">value</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">reference</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="w">       </span><span class="c1">// writes value</span>
@@ -1765,8 +1767,8 @@ The two permissions are distinct from a reference's own mutability:</p>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">shared</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="n">value</span>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">shared</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="p">[</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">]</span><span class="w">       </span><span class="c1">// rebinds shared; it remains read-only</span>
 </code></pre></div>
-<p>An immutable binding cannot be used as the source of <code>&amp;mut</code>, because
-that would create a write path around its immutability.</p>
+<p>An immutable binding cannot be used as the source of <code>&amp;mut</code>, because that
+would create a write path around its immutability.</p>
 
 
 

@@ -13,6 +13,7 @@ use gossamer_ast::{
 };
 use gossamer_lex::{Keyword, Punct, Span, TokenKind};
 
+use crate::builtin_macros::{is_comptime_macro, is_desugar_macro, is_format_macro};
 use crate::diagnostic::ParseError;
 use crate::parser::Parser;
 use crate::patterns::{
@@ -1565,10 +1566,7 @@ impl Parser<'_> {
             MacroDelim::Paren
         };
 
-        let recognised = matches!(
-            macro_name.as_str(),
-            "format" | "println" | "print" | "eprintln" | "eprint" | "panic"
-        ) && delim == MacroDelim::Paren;
+        let recognised = is_format_macro(&macro_name) && delim == MacroDelim::Paren;
 
         if recognised {
             self.expect_punct(Punct::LParen, "to open macro invocation");
@@ -1582,7 +1580,10 @@ impl Parser<'_> {
         // fails the build rather than reaching runtime. The validator
         // returns the original string on success, folded in place by the
         // comptime pass.
-        if matches!(macro_name.as_str(), "regex" | "sql") && delim == MacroDelim::Paren {
+        if is_comptime_macro(&macro_name)
+            && matches!(macro_name.as_str(), "regex" | "sql")
+            && delim == MacroDelim::Paren
+        {
             self.expect_punct(Punct::LParen, "to open macro invocation");
             let args = self.parse_call_args();
             let validator = format!("__gos_{macro_name}_validate");
@@ -1596,7 +1597,7 @@ impl Parser<'_> {
         // call lowers to the synthesized identity `comptime fn`
         // `__gos_codegen`, which the comptime pass recognizes and renders
         // unquoted (as source) rather than as a string literal.
-        if macro_name == "codegen" && delim == MacroDelim::Paren {
+        if is_comptime_macro(&macro_name) && macro_name == "codegen" && delim == MacroDelim::Paren {
             self.expect_punct(Punct::LParen, "to open macro invocation");
             let args = self.parse_call_args();
             return self.alloc_function_call("__gos_codegen", args);
@@ -1605,12 +1606,7 @@ impl Parser<'_> {
         // Control-flow / inspection desugars (`matches!`, `todo!`,
         // `unimplemented!`, `unreachable!`, `dbg!`) expand to plain
         // constructs every tier already handles. See `expand_builtin_macro`.
-        if delim == MacroDelim::Paren
-            && matches!(
-                macro_name.as_str(),
-                "matches" | "todo" | "unimplemented" | "unreachable" | "dbg"
-            )
-        {
+        if delim == MacroDelim::Paren && is_desugar_macro(&macro_name) {
             return self.expand_builtin_macro(&macro_name);
         }
 
@@ -1841,6 +1837,11 @@ impl Parser<'_> {
                 }
             }
         }
+        // Retain surplus arguments in the recovery AST. The format-arity
+        // diagnostic above already rejects them, but keeping an explicit `_`
+        // lets pipe substitution recognize it and avoids a misleading second
+        // diagnostic claiming that the pipe had no placeholder.
+        concat_args.extend(positional_iter);
         let concat_call = self.alloc_function_call_expr("__concat", concat_args);
         if macro_name == "format" {
             return concat_call.kind;

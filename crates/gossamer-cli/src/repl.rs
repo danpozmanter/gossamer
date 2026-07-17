@@ -4,6 +4,7 @@
 //! hard limit defined in `GUIDELINES.md`.
 
 use anyhow::{Result, anyhow};
+use gossamer_parse::builtin_macros::{BUILTIN_MACROS, BuiltinMacro};
 use gossamer_std::registry::{StdItem, StdItemKind, StdModule};
 use regex::Regex;
 
@@ -12,6 +13,27 @@ use crate::paths::repl_history_path;
 const REPL_HELP_TEXT: &str = "meta-commands: %quit  %history  %bindings  %declarations  %reset  %help  %ls\n\
                          plain expressions render as Out[N]; declarations and\n\
                          `let` bindings persist across inputs.";
+
+struct PreludeBuiltinHelp {
+    name: &'static str,
+    signature: &'static str,
+    doc: &'static str,
+}
+
+// These prelude functions are runtime builtins rather than stdlib-manifest
+// exports. Every parser-recognized macro is sourced from BUILTIN_MACROS below.
+const PRELUDE_BUILTINS: &[PreludeBuiltinHelp] = &[
+    PreludeBuiltinHelp {
+        name: "assert",
+        signature: "assert(condition: bool, message?: String)",
+        doc: "Panics when condition is false.",
+    },
+    PreludeBuiltinHelp {
+        name: "assert_eq",
+        signature: "assert_eq(left, right, message?: String)",
+        doc: "Panics when left and right are not equal.",
+    },
+];
 
 #[allow(
     clippy::cognitive_complexity,
@@ -452,6 +474,12 @@ fn repl_help(arg: &str) -> std::result::Result<String, String> {
 
     let query = normalize_query(arg);
     let mut out = String::new();
+    for builtin in matching_builtin_macros(query) {
+        push_builtin_macro_help(&mut out, builtin);
+    }
+    for builtin in matching_prelude_builtins(query) {
+        push_prelude_builtin_help(&mut out, builtin);
+    }
     for module in matching_modules(query) {
         push_module_help(&mut out, &module);
     }
@@ -505,6 +533,22 @@ fn regex_argument(arg: &str) -> std::result::Result<Option<Regex>, String> {
 
 fn render_help_matches(pattern: &Regex) -> String {
     let mut out = String::new();
+    for builtin in BUILTIN_MACROS {
+        if pattern.is_match(builtin.name)
+            || pattern.is_match(builtin.signature)
+            || pattern.is_match(builtin.doc)
+        {
+            push_builtin_macro_help(&mut out, builtin);
+        }
+    }
+    for builtin in PRELUDE_BUILTINS {
+        if pattern.is_match(builtin.name)
+            || pattern.is_match(builtin.signature)
+            || pattern.is_match(builtin.doc)
+        {
+            push_prelude_builtin_help(&mut out, builtin);
+        }
+    }
     for module in gossamer_std::registry::modules() {
         if module_matches_regex(pattern, module) {
             push_module_help(&mut out, module);
@@ -597,6 +641,18 @@ fn push_item_help(out: &mut String, module: &StdModule, item: &StdItem) {
     out.push_str(&format!("  {}\n\n", item.doc));
 }
 
+fn push_builtin_macro_help(out: &mut String, builtin: &BuiltinMacro) {
+    out.push_str(&format!("{} [macro]\n", builtin.name));
+    out.push_str(&format!("  {}\n", builtin.signature));
+    out.push_str(&format!("  {}\n\n", builtin.doc));
+}
+
+fn push_prelude_builtin_help(out: &mut String, builtin: &PreludeBuiltinHelp) {
+    out.push_str(&format!("{} [builtin]\n", builtin.name));
+    out.push_str(&format!("  {}\n", builtin.signature));
+    out.push_str(&format!("  {}\n\n", builtin.doc));
+}
+
 fn push_feature_help(out: &mut String, feature: gossamer_std::manifest::FeatureStatus) {
     out.push_str(&format!("{} ({})\n", feature.path, feature.status.tag()));
     out.push_str(&format!("  {}\n\n", feature.doc));
@@ -640,6 +696,20 @@ fn matching_features(query: &str) -> Vec<gossamer_std::manifest::FeatureStatus> 
         .into_iter()
         .filter(|entry| !is_stdlib_module_path(entry.path))
         .filter(|entry| feature_query_matches(entry.path, query))
+        .collect()
+}
+
+fn matching_builtin_macros(query: &str) -> Vec<&'static BuiltinMacro> {
+    BUILTIN_MACROS
+        .iter()
+        .filter(|builtin| builtin.name == query)
+        .collect()
+}
+
+fn matching_prelude_builtins(query: &str) -> Vec<&'static PreludeBuiltinHelp> {
+    PRELUDE_BUILTINS
+        .iter()
+        .filter(|builtin| builtin.name == query)
         .collect()
 }
 

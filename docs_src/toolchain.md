@@ -77,9 +77,9 @@ interactive session. The first-slice supports:
   lists the active set.
 - Meta-commands `%quit`, `%history`, `%bindings`, `%reset`,
   `%help`, and `%ls`.
-- `%help <symbol>` shows stdlib module/item or language-feature
-  documentation from the manifest and feature-status registry;
-  `%help /regex/` searches that same surface.
+- `%help <symbol>` shows stdlib module/item, language-feature, prelude
+  builtin, or built-in macro documentation. Macro names retain their `!`,
+  for example `%help println!`; `%help /regex/` searches that same surface.
 - `%ls` lists stdlib modules; `%ls <namespace-or-symbol>` lists a
   module's items or matching symbols; `%ls /regex/` filters stdlib
   modules/items.

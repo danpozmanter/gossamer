@@ -10,6 +10,7 @@
 
 /// Compile-time source augmentation for derives, serde helpers, and rewrites.
 pub mod autoderive;
+pub mod builtin_macros;
 mod diagnostic;
 mod entry_main;
 mod expressions;
@@ -180,6 +181,27 @@ mod top_level_stmt_tests {
                 .iter()
                 .any(|d| matches!(d.error, ParseError::StatementOutsideEntry)),
             "expected StatementOutsideEntry, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn piped_format_with_an_extra_placeholder_reports_only_arity() {
+        let (_sf, diags) = parse("\"two\" |> println!(\"one\", _)\n");
+        assert!(
+            diags.iter().any(|diag| matches!(
+                diag.error,
+                ParseError::FormatArgumentCount {
+                    expected: 0,
+                    found: 1
+                }
+            )),
+            "expected format arity diagnostic: {diags:?}"
+        );
+        assert!(
+            !diags
+                .iter()
+                .any(|diag| matches!(diag.error, ParseError::PipedFormatArgumentNeedsPlaceholder)),
+            "explicit `_` must not trigger a missing-placeholder diagnostic: {diags:?}"
         );
     }
 

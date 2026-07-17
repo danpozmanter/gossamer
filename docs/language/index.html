@@ -1779,7 +1779,7 @@
 <tr>
 <td><a href="let_mut/"><code>lang::let_mut</code></a></td>
 <td>shipped</td>
-<td>Mutable binding.</td>
+<td>Mutable bindings can be reassigned and can be the source of <code>&amp;mut</code>.</td>
 </tr>
 <tr>
 <td><a href="if/"><code>lang::if</code></a></td>
@@ -1934,7 +1934,7 @@
 <tr>
 <td><a href="mut_ref_params/"><code>lang::mut_ref_params</code></a></td>
 <td>shipped</td>
-<td><code>&amp;mut T</code> references alias and write through to their source place; fixed arrays are copied at function-call boundaries.</td>
+<td>Local <code>&amp;mut</code> aliases write through; <code>&amp;mut Vec&lt;T&gt;</code> / <code>&amp;mut [T]</code> parameters write through on every tier.</td>
 </tr>
 <tr>
 <td><a href="unicode_identifiers/"><code>lang::unicode_identifiers</code></a></td>

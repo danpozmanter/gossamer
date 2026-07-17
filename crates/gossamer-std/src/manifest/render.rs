@@ -177,7 +177,6 @@ is regenerated from `manifest::FEATURE_STATUS` by \
             escape_table_cell(entry.doc),
         ));
     }
-    out.push('\n');
     out
 }
 
