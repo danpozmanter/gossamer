@@ -238,9 +238,9 @@ pub fn forget_waker(gid: Gid) {
 #[must_use]
 pub fn add_timer(deadline: Instant) -> Gid {
     let gid = alloc_runtime_gid();
-    let _ = scheduler();
-    let g = globals();
-    g.poller.lock().add_timer(deadline, gid);
+    with_poller(|poller| {
+        poller.add_timer(deadline, gid);
+    });
     gid
 }
 
@@ -249,14 +249,19 @@ pub fn add_timer(deadline: Instant) -> Gid {
 pub fn with_poller<R>(f: impl FnOnce(&mut OsPoller) -> R) -> R {
     let _ = scheduler();
     let g = globals();
+    // Interrupt an in-flight poll before waiting for the mutex. Waking only
+    // after registration is too late: the registering worker may already be
+    // blocked behind the poller thread, which holds this mutex across poll().
+    // This is especially expensive on Windows, where a 1 ms timeout can be
+    // rounded up to a full scheduler quantum.
+    let _ = g.poller_interrupt.wake();
     let result = {
         let mut poller = g.poller.lock();
         f(&mut poller)
     };
     // The closure may have registered a new I/O source or
     // dropped a timer in the wheel; wake the netpoller thread so
-    // it re-polls with the up-to-date state instead of finishing
-    // out its current 1-second poll cycle.
+    // it re-polls with the up-to-date state.
     let _ = g.poller_interrupt.wake();
     result
 }
@@ -269,7 +274,7 @@ pub fn with_poller<R>(f: impl FnOnce(&mut OsPoller) -> R) -> R {
 /// Returns `io::Error` when the poller's underlying `epoll`/`kqueue`
 /// rejects the call.
 pub fn drain_ready() -> io::Result<Vec<Readiness>> {
-    globals().poller.lock().poll(Some(Duration::ZERO))
+    with_poller(|poller| poller.poll(Some(Duration::ZERO)))
 }
 
 // ---------------------------------------------------------------

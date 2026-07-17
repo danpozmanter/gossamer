@@ -248,9 +248,9 @@ impl OsPoller {
     }
 
     /// Returns a clone of the interrupt-waker Arc. Callers fire
-    /// `.wake()` on it after acquiring + releasing the poller
-    /// lock to register / deregister an I/O source, ensuring the
-    /// poller thread re-enters its loop with the fresh state.
+    /// `.wake()` on it before waiting for the poller lock and after
+    /// changing poller state. The first wake releases an in-flight
+    /// `poll()`; the second makes the poller observe the fresh state.
     #[must_use]
     pub fn interrupt_handle(&self) -> std::sync::Arc<mio::Waker> {
         std::sync::Arc::clone(&self.interrupt)
@@ -408,9 +408,9 @@ impl Poller for OsPoller {
         // mio's `poll` can return early without events on every
         // platform - spurious wakeups, signal interruption, or
         // simply rounding the remaining timeout down to zero.
-        // Loop until we have at least one event ready or the
-        // caller-supplied deadline passes; recompute `combined`
-        // each iteration so the remaining wait shrinks toward
+        // Loop until we have an event, an interrupt asks us to release the
+        // poller lock, or the caller-supplied deadline passes. Recompute
+        // `combined` each iteration so the remaining wait shrinks toward
         // both the user's timeout and the next timer's deadline.
         let user_deadline = timeout.map(|t| Instant::now() + t);
         loop {
@@ -424,12 +424,14 @@ impl Poller for OsPoller {
             }
             let combined = self.next_timeout(user_remaining);
             self.poll.poll(&mut self.events, combined)?;
+            let mut interrupted = false;
             for event in &self.events {
                 let token = event.token();
                 if token == INTERRUPT_TOKEN {
                     // Interrupt waker fired - drain any expired
                     // timers + return so the caller can re-poll with
                     // up-to-date registrations.
+                    interrupted = true;
                     continue;
                 }
                 if let Some(&(source, interest, gid)) = self.by_token.get(&token) {
@@ -450,6 +452,9 @@ impl Poller for OsPoller {
             self.drain_expired_timers();
             if !self.pending.is_empty() {
                 return Ok(self.drain());
+            }
+            if interrupted {
+                return Ok(Vec::new());
             }
             // No events. If the user gave a timeout and it has
             // elapsed, return empty. Otherwise loop and re-poll.
@@ -505,6 +510,26 @@ mod tests {
             .poll(Some(Duration::from_millis(1)))
             .expect("OsPoller::poll");
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn interrupt_wakes_an_in_flight_poll() {
+        let mut poller = OsPoller::new().expect("OsPoller::new");
+        let interrupt = poller.interrupt_handle();
+        let wake = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            interrupt.wake().expect("wake poller");
+        });
+        let start = Instant::now();
+        let events = poller
+            .poll(Some(Duration::from_secs(5)))
+            .expect("OsPoller::poll");
+        wake.join().expect("poller interrupt thread panicked");
+        assert!(events.is_empty());
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "interrupt did not release poll promptly"
+        );
     }
 
     #[test]
