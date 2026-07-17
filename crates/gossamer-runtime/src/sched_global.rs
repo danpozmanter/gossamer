@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 
 use crate::sched::{Gid, MultiScheduler, OsPoller, ParkReason, Poller, Readiness, Step};
 
@@ -134,9 +134,16 @@ fn poller_loop() {
         }
         let events = {
             let mut poller = g.poller.lock();
-            poller
+            let events = poller
                 .poll(Some(Duration::from_millis(POLL_TICK_MS)))
-                .unwrap_or_default()
+                .unwrap_or_default();
+            // On Windows a nominal 1 ms mio timeout may sleep for a full
+            // scheduler quantum. Reacquiring an unfair mutex immediately
+            // afterward can starve timer registration long enough to strand
+            // thousands of goroutines behind the netpoller. Hand the lock to
+            // a waiting registrar before beginning the next poll cycle.
+            MutexGuard::unlock_fair(poller);
+            events
         };
         for ev in events {
             deliver_event(ev);
