@@ -24,7 +24,13 @@ fn growable_string_survives_the_arena_that_created_it() {
     unsafe {
         gos_rt_arena_push();
         let arena_string = gos_rt_str_with_capacity(64);
+        // Growable strings still use the arena fast path when they have no
+        // arena-backed source. The ABI tag lives immediately before content.
+        assert_eq!(*arena_string.cast::<u8>().sub(1), 0xAA);
         let promoted = gos_rt_str_append_bytes(arena_string, b"escaped".as_ptr(), 7);
+        // Copying arena storage promotes the result before the slab can be
+        // recycled over its source bytes.
+        assert_eq!(*promoted.cast::<u8>().sub(1), 0xAB);
         gos_rt_arena_pop();
 
         assert_eq!(CStr::from_ptr(promoted).to_bytes(), b"escaped");

@@ -246,6 +246,25 @@ pub(crate) unsafe fn copy_small_bytes(src: *const u8, dst: *mut u8, n: usize) {
     }
 }
 
+/// Copies a string part into a newly allocated builder, tolerating allocator
+/// address reuse that places the destination over stale source storage.
+#[inline]
+unsafe fn copy_builder_part(src: *const u8, dst: *mut u8, n: usize) {
+    let src_addr = src as usize;
+    let dst_addr = dst as usize;
+    let overlaps =
+        n != 0 && src_addr < dst_addr.saturating_add(n) && dst_addr < src_addr.saturating_add(n);
+    if overlaps {
+        // SAFETY: the caller provides readable/writable ranges of `n` bytes;
+        // `copy` explicitly permits overlap (memmove semantics).
+        unsafe { std::ptr::copy(src, dst, n) };
+    } else {
+        // SAFETY: the range check above proves the caller's valid ranges do
+        // not overlap, satisfying `copy_small_bytes`' stronger contract.
+        unsafe { copy_small_bytes(src, dst, n) };
+    }
+}
+
 /// Allocates an owned `Box<[u8]>` holding `src`'s bytes via the inline
 /// small-copy path, so short keys avoid a libc `memcpy` call (see
 /// [`copy_small_bytes`]). Used by the string-keyed map insert paths, where a
@@ -265,15 +284,29 @@ pub(crate) fn boxed_bytes(src: &[u8]) -> Box<[u8]> {
 /// `parts` are concatenated into the initial content (total must be <= cap).
 /// Returns a pointer to `content[0]`; the 9-byte header lives just before it.
 fn alloc_growable(parts: &[&[u8]], cap: usize) -> *mut c_char {
+    alloc_growable_forced(parts, cap, false)
+}
+
+/// Allocates a growable string, promoting it to the heap when `force_heap` is
+/// set or any non-empty input slice points into region storage.
+fn alloc_growable_forced(parts: &[&[u8]], cap: usize, force_heap: bool) -> *mut c_char {
     let content_len: usize = parts.iter().map(|p| p.len()).sum();
-    alloc_growable_with_fill(content_len, cap, |out| {
+    // A region-backed source can escape the compiler-generated arena scope
+    // that created it. If the destination were allocated in the next active
+    // region, slab recycling could place it over its own source bytes. Promote
+    // copies of region storage to the heap before allocating the destination.
+    let force_heap = force_heap
+        || parts
+            .iter()
+            .any(|part| crate::c_abi::rc::in_region_arena(part.as_ptr()));
+    alloc_growable_with_fill(content_len, cap, force_heap, |out| {
         let mut off = 0;
         for p in parts {
             // SAFETY: `alloc_growable_with_fill` passes `cap` writable content
             // bytes and `cap >= content_len`; this loop writes each input part
             // exactly once into the first `content_len` bytes.
             unsafe {
-                copy_small_bytes(p.as_ptr(), out.add(off), p.len());
+                copy_builder_part(p.as_ptr(), out.add(off), p.len());
             }
             off += p.len();
         }
@@ -282,7 +315,12 @@ fn alloc_growable(parts: &[&[u8]], cap: usize) -> *mut c_char {
 
 /// Allocates a growable runtime string and lets `fill` initialise exactly the
 /// first `content_len` bytes of the content region.
-fn alloc_growable_with_fill<F>(content_len: usize, cap: usize, fill: F) -> *mut c_char
+fn alloc_growable_with_fill<F>(
+    content_len: usize,
+    cap: usize,
+    force_heap: bool,
+    fill: F,
+) -> *mut c_char
 where
     F: FnOnce(*mut u8),
 {
@@ -308,20 +346,26 @@ where
     // Refcount at the FRONT keeps cap(-9)/len(-5)/tag(-1) offsets unchanged.
     let total = STRING_BODY_OFFSET + cap + 1;
     crate::c_abi::ledger::benchmark_allocation(total);
-    // Growable strings are mutable and can flow across compiler-generated
-    // arena scopes while being assembled. Region-allocating one lets a later
-    // loop iteration retain a pointer into a recycled slab; the next growth
-    // can then allocate over its own source bytes. Keep builders individually
-    // heap-owned until escape analysis can prove their complete lifetime lies
-    // within one arena. The explicitly 8-byte-aligned allocation also keeps
-    // the payload's low-bit shape stable for the C ABI discriminator.
-    let layout = Layout::from_size_align(total, 8).expect("string layout is valid");
-    // SAFETY: `layout` has non-zero size and a power-of-two alignment. The
-    // matching `dealloc` below reconstructs the exact same layout.
-    let base = unsafe { alloc(layout) };
-    if base.is_null() {
-        handle_alloc_error(layout);
-    }
+    // Inside an arena region, allocate fresh builders from the region. A copy
+    // whose source is already region-backed must be promoted to the heap so a
+    // recycled slab cannot place the destination over its own source bytes.
+    let region_base = if force_heap {
+        std::ptr::null_mut()
+    } else {
+        crate::c_abi::rc::region_alloc_bytes(total)
+    };
+    let (base, tag, zero_tail) = if region_base.is_null() {
+        let layout = Layout::from_size_align(total, 8).expect("string layout is valid");
+        // SAFETY: `layout` has non-zero size and a power-of-two alignment. The
+        // matching `dealloc` below reconstructs the exact same layout.
+        let base = unsafe { alloc(layout) };
+        if base.is_null() {
+            handle_alloc_error(layout);
+        }
+        (base, STR_BUILDER_TAG, true)
+    } else {
+        (region_base, STR_REGION_TAG, false)
+    };
     // SAFETY: `base` points to `total` writable bytes. Header fields and the
     // trailing zero region are initialised here; `fill` initialises the content
     // prefix promised by its caller.
@@ -330,20 +374,28 @@ where
         owner.write(StringOwner {
             abi_version: STRING_OWNER_VERSION,
             kind: STRING_OWNER_KIND,
-            destructor: STRING_DTOR_HEAP,
+            destructor: if tag == STR_REGION_TAG {
+                STRING_DTOR_REGION
+            } else {
+                STRING_DTOR_HEAP
+            },
             generation: NEXT_STRING_GENERATION.fetch_add(1, Ordering::Relaxed),
         });
         let hdr = base.add(STRING_OWNER_BYTES);
         std::ptr::copy_nonoverlapping(1u32.to_le_bytes().as_ptr(), hdr, 4);
         std::ptr::copy_nonoverlapping((cap as u32).to_le_bytes().as_ptr(), hdr.add(4), 4);
         std::ptr::copy_nonoverlapping((content_len as u32).to_le_bytes().as_ptr(), hdr.add(8), 4);
-        *hdr.add(12) = STR_BUILDER_TAG;
+        *hdr.add(12) = tag;
         let content = base.add(STRING_BODY_OFFSET);
         fill(content);
-        // Zero spare capacity and the NUL terminator. A no-spare string writes
-        // only the single trailing NUL.
-        std::ptr::write_bytes(content.add(content_len), 0, cap - content_len + 1);
-        crate::c_abi::ledger::str_inc();
+        if zero_tail {
+            // Region allocations arrive zeroed. Heap allocations need their
+            // spare capacity and trailing NUL initialized explicitly.
+            std::ptr::write_bytes(content.add(content_len), 0, cap - content_len + 1);
+        }
+        if tag != STR_REGION_TAG {
+            crate::c_abi::ledger::str_inc();
+        }
         content.cast::<c_char>()
     }
 }
@@ -486,7 +538,8 @@ pub fn alloc_cstring_from_slices(parts: &[&[u8]]) -> *mut c_char {
 /// expansion never applies and the output length equals the input length.
 fn alloc_ascii_upper_cstring(src: &[u8]) -> *mut c_char {
     let len = src.len();
-    alloc_growable_with_fill(len, len, |out| {
+    let force_heap = crate::c_abi::rc::in_region_arena(src.as_ptr());
+    alloc_growable_with_fill(len, len, force_heap, |out| {
         for (i, &b) in src.iter().enumerate() {
             let upper = if b.is_ascii_lowercase() {
                 b - (b'a' - b'A')
@@ -850,7 +903,13 @@ pub unsafe extern "C" fn gos_rt_str_concat(a: *const c_char, b: *const c_char) -
         } else {
             unsafe { gos_str_key_bytes(b) }
         };
-        alloc_cstring_from_slices(&[a_bytes, b_bytes])
+        let force_heap = crate::c_abi::rc::in_region_arena(a.cast())
+            || crate::c_abi::rc::in_region_arena(b.cast());
+        alloc_growable_forced(
+            &[a_bytes, b_bytes],
+            a_bytes.len() + b_bytes.len(),
+            force_heap,
+        )
     })
 }
 
@@ -888,7 +947,8 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
             } else {
                 unsafe { gos_str_key_bytes(a) }
             };
-            return alloc_growable(&[a_bytes], 64.max(a_bytes.len()));
+            let force_heap = crate::c_abi::rc::in_region_arena(a.cast());
+            return alloc_growable_forced(&[a_bytes], 64.max(a_bytes.len()), force_heap);
         }
 
         let b_bytes: &[u8] = unsafe { typed_str_bytes(b) };
@@ -940,7 +1000,9 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
         };
         let new_len = a_bytes.len() + len_b;
         let new_cap = (new_len * 2).max(64);
-        let result = alloc_growable(&[a_bytes, b_bytes], new_cap);
+        let force_heap = crate::c_abi::rc::in_region_arena(a.cast())
+            || crate::c_abi::rc::in_region_arena(b.cast());
+        let result = alloc_growable_forced(&[a_bytes, b_bytes], new_cap, force_heap);
         if is_managed_string(a) {
             unsafe { gos_rt_str_free(a.cast_mut()) };
         }
@@ -1003,7 +1065,13 @@ pub unsafe extern "C" fn gos_rt_str_append_bytes(
     } else {
         unsafe { gos_str_key_bytes(acc) }
     };
-    let result = alloc_growable(&[a_bytes, b_bytes], ((a_bytes.len() + len_b) * 2).max(64));
+    let force_heap =
+        crate::c_abi::rc::in_region_arena(acc.cast()) || crate::c_abi::rc::in_region_arena(b);
+    let result = alloc_growable_forced(
+        &[a_bytes, b_bytes],
+        ((a_bytes.len() + len_b) * 2).max(64),
+        force_heap,
+    );
     if is_managed_string(acc) {
         unsafe { gos_rt_str_free(acc.cast_mut()) };
     }

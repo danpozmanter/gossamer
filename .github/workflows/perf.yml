@@ -40,6 +40,17 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-perf-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Fingerprint perf runner CPU
+        id: perf_cpu
+        shell: bash
+        run: |
+          set -euo pipefail
+          cpu_model=$(awk -F: '/^model name|^Processor/ {print $2; exit}' /proc/cpuinfo | xargs)
+          [[ -n "$cpu_model" ]] || { echo "unable to identify runner CPU" >&2; exit 1; }
+          fingerprint=$(printf '%s' "$cpu_model" | sha256sum | cut -c1-16)
+          echo "model=$cpu_model"
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+
       - name: Restore perf baseline
         id: restore-baseline
         uses: actions/cache@v6
@@ -49,9 +60,12 @@ jobs:
           # most recent main baseline and compare against it; pushes to
           # main refresh it after a successful run. A cache can be evicted,
           # so the comparison step tolerates one baseline-seeding run.
-          key: perf-baseline-${{ runner.os }}-${{ github.base_ref == '' && github.sha || 'main' }}
+          # Hosted ubuntu-latest spans materially different CPU generations.
+          # Comparing their absolute ns/op values produces uniform false
+          # regressions, so each CPU model maintains its own accepted baseline.
+          key: perf-baseline-${{ runner.os }}-${{ steps.perf_cpu.outputs.fingerprint }}-${{ github.base_ref == '' && github.sha || 'main' }}
           restore-keys: |
-            perf-baseline-${{ runner.os }}-
+            perf-baseline-${{ runner.os }}-${{ steps.perf_cpu.outputs.fingerprint }}-
 
       - name: Build release `gos`
         run: cargo build --release -p gossamer-cli
@@ -248,9 +262,9 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         shell: bash
         run: |
-          # The cache restore key gives PRs the latest accepted main baseline.
-          # Keep that baseline representative of current main, not the fastest
-          # run ever seen on any hosted runner.
+          # The cache restore key gives PRs the latest accepted main baseline
+          # for this CPU model. Keep it representative of current main, not
+          # the fastest run ever seen on a matching hosted runner.
           CURRENT=.perf/current.txt
           BASELINE=.perf/baseline.txt
           cp "$CURRENT" "$BASELINE"
@@ -260,7 +274,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: .perf/baseline.txt
-          key: perf-baseline-${{ runner.os }}-${{ github.sha }}
+          key: perf-baseline-${{ runner.os }}-${{ steps.perf_cpu.outputs.fingerprint }}-${{ github.sha }}
 
       - name: Upload perf log
         if: always()

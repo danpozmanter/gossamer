@@ -243,6 +243,9 @@ fn main() {
 
 const EAGER_2026_COMPAT_OUTPUT: &str = "2 6 6 14\n";
 
+// Allocation telemetry prints through the runtime's Unix-only `libc::atexit`
+// hook; Windows still exercises lazy pipelines in the cross-tier tests.
+#[cfg(unix)]
 const LAZY_ITERATOR_ALLOCATION_SOURCE: &str = r#"use std::iter
 
 fn main() {
@@ -510,6 +513,9 @@ fn edition_2026_iterator_surface_remains_eager_on_all_tiers() {
 }
 
 #[test]
+// See `LAZY_ITERATOR_ALLOCATION_SOURCE`: the assertion reads Unix-only exit
+// telemetry, while functional lazy-pipeline coverage remains cross-platform.
+#[cfg(unix)]
 fn lazy_pipeline_allocates_only_its_collected_vec_on_llvm() {
     let dir = env::temp_dir().join(format!("gos-lazy-iter-allocs-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
