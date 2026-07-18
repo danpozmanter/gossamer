@@ -308,31 +308,20 @@ where
     // Refcount at the FRONT keeps cap(-9)/len(-5)/tag(-1) offsets unchanged.
     let total = STRING_BODY_OFFSET + cap + 1;
     crate::c_abi::ledger::benchmark_allocation(total);
-    // Inside an arena region, allocate the bytes from the region (freed
-    // wholesale at pop; `gos_rt_str_free` skips the region tag). Else use an
-    // explicitly 8-byte-aligned global allocation. The payload begins at
-    // offset 29; this makes it reliably odd, which is part of the C ABI's
-    // tagged-enum/RC-pointer discriminator. `Box<[u8]>` is only byte-aligned
-    // by contract and can make that payload even on a conforming allocator.
-    let region_base = crate::c_abi::rc::region_alloc_bytes(total);
-    // `zero_tail` is set for the global branch, which allocates uninitialised:
-    // the header, content, and trailing zero region are all written below
-    // before the buffer is read or freed, so the whole-allocation `vec![0u8;
-    // total]` memset is unnecessary. Only the bytes after the content must be
-    // zero, so `strlen` stops one byte past the content; region bytes arrive
-    // pre-zeroed and need no tail fill.
-    let (base, tag, zero_tail) = if region_base.is_null() {
-        let layout = Layout::from_size_align(total, 8).expect("string layout is valid");
-        // SAFETY: `layout` has non-zero size and a power-of-two alignment.
-        // The matching `dealloc` below reconstructs the exact same layout.
-        let base = unsafe { alloc(layout) };
-        if base.is_null() {
-            handle_alloc_error(layout);
-        }
-        (base, STR_BUILDER_TAG, true)
-    } else {
-        (region_base, STR_REGION_TAG, false)
-    };
+    // Growable strings are mutable and can flow across compiler-generated
+    // arena scopes while being assembled. Region-allocating one lets a later
+    // loop iteration retain a pointer into a recycled slab; the next growth
+    // can then allocate over its own source bytes. Keep builders individually
+    // heap-owned until escape analysis can prove their complete lifetime lies
+    // within one arena. The explicitly 8-byte-aligned allocation also keeps
+    // the payload's low-bit shape stable for the C ABI discriminator.
+    let layout = Layout::from_size_align(total, 8).expect("string layout is valid");
+    // SAFETY: `layout` has non-zero size and a power-of-two alignment. The
+    // matching `dealloc` below reconstructs the exact same layout.
+    let base = unsafe { alloc(layout) };
+    if base.is_null() {
+        handle_alloc_error(layout);
+    }
     // SAFETY: `base` points to `total` writable bytes. Header fields and the
     // trailing zero region are initialised here; `fill` initialises the content
     // prefix promised by its caller.
@@ -341,33 +330,20 @@ where
         owner.write(StringOwner {
             abi_version: STRING_OWNER_VERSION,
             kind: STRING_OWNER_KIND,
-            destructor: if tag == STR_REGION_TAG {
-                STRING_DTOR_REGION
-            } else {
-                STRING_DTOR_HEAP
-            },
+            destructor: STRING_DTOR_HEAP,
             generation: NEXT_STRING_GENERATION.fetch_add(1, Ordering::Relaxed),
         });
         let hdr = base.add(STRING_OWNER_BYTES);
         std::ptr::copy_nonoverlapping(1u32.to_le_bytes().as_ptr(), hdr, 4);
         std::ptr::copy_nonoverlapping((cap as u32).to_le_bytes().as_ptr(), hdr.add(4), 4);
         std::ptr::copy_nonoverlapping((content_len as u32).to_le_bytes().as_ptr(), hdr.add(8), 4);
-        *hdr.add(12) = tag;
+        *hdr.add(12) = STR_BUILDER_TAG;
         let content = base.add(STRING_BODY_OFFSET);
         fill(content);
-        if zero_tail {
-            // Zero the spare capacity and NUL terminator (`cap - content_len +
-            // 1` bytes); a no-spare string writes the single trailing NUL.
-            std::ptr::write_bytes(content.add(content_len), 0, cap - content_len + 1);
-        }
-        // Region-allocated strings are bulk-freed at
-        // `arena_pop` and intentionally skipped by `gos_rt_str_free`, so they
-        // never `str_dec`. Counting them in the per-string leak ledger would
-        // report a false positive (the memory is reclaimed wholesale at pop);
-        // only individually-managed (`STR_BUILDER`) strings are tracked.
-        if tag != STR_REGION_TAG {
-            crate::c_abi::ledger::str_inc();
-        }
+        // Zero spare capacity and the NUL terminator. A no-spare string writes
+        // only the single trailing NUL.
+        std::ptr::write_bytes(content.add(content_len), 0, cap - content_len + 1);
+        crate::c_abi::ledger::str_inc();
         content.cast::<c_char>()
     }
 }

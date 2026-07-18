@@ -12,6 +12,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
+#[cfg(unix)]
 use gossamer_std::exec;
 use gossamer_std::fs::{Event, Watcher};
 use gossamer_std::signal::{self, Notifier, sigs};
