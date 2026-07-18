@@ -79,6 +79,15 @@ fn parse_checked_json(text: &str) -> Result<serde_json::Value, serde_json::Error
     Ok(value)
 }
 
+/// Fully validates a document without constructing a DOM. Parsed documents
+/// stay in this compact form until an API actually projects a child or value.
+fn validate_checked_json(text: &str) -> Result<(), serde_json::Error> {
+    let mut deserializer = serde_json::Deserializer::from_str(text);
+    deserializer.disable_recursion_limit();
+    serde::de::IgnoredAny::deserialize(&mut deserializer)?;
+    deserializer.end()
+}
+
 // ---------------------------------------------------------------
 // JSON runtime - wraps `serde_json::Value` behind a heap pointer
 // so user code can do `json::parse(s)`, `value.field`, and
@@ -118,11 +127,36 @@ fn parse_checked_json(text: &str) -> Result<serde_json::Value, serde_json::Error
 ///
 /// See `~/dev/contexts/lang/fix_architecture_ownership.md`
 /// Stage 2 (final form).
+enum JsonTree {
+    Value(serde_json::Value),
+    Raw {
+        text: Box<str>,
+        parsed: std::sync::OnceLock<serde_json::Value>,
+    },
+}
+
+impl JsonTree {
+    fn value(&self) -> &serde_json::Value {
+        match self {
+            Self::Value(value) => value,
+            Self::Raw { text, parsed } => parsed
+                .get_or_init(|| parse_checked_json(text).expect("validated JSON must reparse")),
+        }
+    }
+
+    fn raw_text(&self) -> Option<&str> {
+        match self {
+            Self::Raw { text, parsed } if parsed.get().is_none() => Some(text),
+            _ => None,
+        }
+    }
+}
+
 pub struct GosJson {
     /// Owning shared reference to the parsed-once value tree. Kept
     /// alive for the duration of the GosJson; cloning a GosJson
     /// only bumps this refcount (not a deep copy).
-    tree: std::sync::Arc<serde_json::Value>,
+    tree: std::sync::Arc<JsonTree>,
     /// View into `tree`'s subtree. Always points to a sub-Value of
     /// `tree`'s root. Stable as long as `tree` is alive.
     view: SyncRawPtr<serde_json::Value>,
@@ -132,11 +166,21 @@ impl GosJson {
     /// Wraps a fresh `serde_json::Value` as the root of its own
     /// tree. Allocates one `Arc<Value>` and one `Box<GosJson>`.
     pub(crate) fn into_raw(value: serde_json::Value) -> *mut GosJson {
-        let tree = std::sync::Arc::new(value);
-        let view = std::sync::Arc::as_ptr(&tree);
+        let tree = std::sync::Arc::new(JsonTree::Value(value));
+        let view = std::ptr::from_ref(tree.value());
         Box::into_raw(Box::new(GosJson {
             tree,
             view: SyncRawPtr::new(view.cast_mut()),
+        }))
+    }
+
+    fn raw(text: &str) -> *mut GosJson {
+        Box::into_raw(Box::new(GosJson {
+            tree: std::sync::Arc::new(JsonTree::Raw {
+                text: text.into(),
+                parsed: std::sync::OnceLock::new(),
+            }),
+            view: SyncRawPtr::NULL,
         }))
     }
 
@@ -151,6 +195,14 @@ impl GosJson {
             tree: std::sync::Arc::clone(&self.tree),
             view: SyncRawPtr::new(std::ptr::from_ref(child).cast_mut()),
         }))
+    }
+
+    fn value(&self) -> &serde_json::Value {
+        if self.view.is_null() {
+            self.tree.value()
+        } else {
+            unsafe { &*self.view.as_const_ptr() }
+        }
     }
 
     fn null_ptr() -> *mut GosJson {
@@ -179,15 +231,12 @@ unsafe fn json_borrow<'a>(p: *const GosJson) -> Option<&'a serde_json::Value> {
         return None;
     }
     let json = unsafe { &*p };
-    if json.view.is_null() {
-        return None;
-    }
     // SAFETY: `view` was set by `Self::into_raw` (points at the
     // tree's root) or by `Self::child` (points at a sub-Value of
     // `self.tree`'s subtree). Either way the pointee lives as
     // long as `tree` does, which is at least until this `&GosJson`
     // dies - i.e. at least until this function returns.
-    Some(unsafe { &*json.view.as_const_ptr() })
+    Some(json.value())
 }
 
 /// Borrows the `serde_json::Value` a `GosJson` handle views, for
@@ -232,7 +281,7 @@ pub unsafe extern "C" fn gos_rt_json_valid(text: *const c_char) -> i8 {
         };
         let ok = checked_json_text(bytes)
             .ok()
-            .and_then(|s| parse_checked_json(s).ok())
+            .and_then(|s| validate_checked_json(s).ok())
             .is_some();
         i8::from(ok)
     })
@@ -249,9 +298,9 @@ pub unsafe extern "C" fn gos_rt_json_parse(text: *const c_char) -> i128 {
             unsafe { CStr::from_ptr(text).to_bytes() }
         };
         match checked_json_text(bytes) {
-            Ok(s) => match parse_checked_json(s) {
-                Ok(v) => {
-                    let ptr = GosJson::into_raw(v);
+            Ok(s) => match validate_checked_json(s) {
+                Ok(()) => {
+                    let ptr = GosJson::raw(s);
                     unsafe { gos_rt_result_new(0, ptr as i64) }
                 }
                 Err(error) => {
@@ -387,15 +436,67 @@ fn render_json_direct(value: &serde_json::Value, pretty: bool) -> *mut c_char {
     writer.finish()
 }
 
+fn render_json_raw(text: &str) -> *mut c_char {
+    use std::io::Write as _;
+
+    let mut writer = RuntimeJsonWriter::new(text.len().max(64 * 1024));
+    let bytes = text.as_bytes();
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut start = 0usize;
+    let mut offset = 0usize;
+    while offset < bytes.len() {
+        let byte = bytes[offset];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            offset += 1;
+            continue;
+        }
+        if byte == b'"' {
+            in_string = true;
+            offset += 1;
+            continue;
+        }
+        if byte.is_ascii_whitespace() {
+            let _ = writer.write_all(&bytes[start..offset]);
+            offset += 1;
+            while offset < bytes.len() && bytes[offset].is_ascii_whitespace() {
+                offset += 1;
+            }
+            start = offset;
+        } else {
+            offset += 1;
+        }
+    }
+    let _ = writer.write_all(&bytes[start..]);
+    writer.finish()
+}
+
+fn render_json_handle(json: &GosJson, pretty: bool) -> *mut c_char {
+    if !pretty
+        && json.view.is_null()
+        && let Some(text) = json.tree.raw_text()
+    {
+        return render_json_raw(text);
+    }
+    render_json_direct(json.value(), pretty)
+}
+
 /// `json::render(value) -> String`. Always returns a non-null
 /// C-string (empty on null input) into the GC arena.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_json_render(j: *const GosJson) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let Some(v) = (unsafe { json_borrow(j) }) else {
+        let Some(json) = (unsafe { json_handle(j) }) else {
             return alloc_cstring(b"");
         };
-        render_json_direct(v, false)
+        render_json_handle(json, false)
     })
 }
 
@@ -405,10 +506,10 @@ pub unsafe extern "C" fn gos_rt_json_render(j: *const GosJson) -> *mut c_char {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_json_render_pretty(j: *const GosJson) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let Some(v) = (unsafe { json_borrow(j) }) else {
+        let Some(json) = (unsafe { json_handle(j) }) else {
             return alloc_cstring(b"");
         };
-        render_json_direct(v, true)
+        render_json_handle(json, true)
     })
 }
 
@@ -444,7 +545,7 @@ pub unsafe extern "C" fn gos_rt_json_get(j: *const GosJson, key: *const c_char) 
         // `parent.tree`'s allocation; see `GosJson` doc. The
         // dereference produces a borrow that lives only inside this
         // function call.
-        let v = unsafe { &*parent.view.as_const_ptr() };
+        let v = parent.value();
         let key_bytes: &[u8] = if key.is_null() {
             b""
         } else {
@@ -471,7 +572,7 @@ pub unsafe extern "C" fn gos_rt_json_at(j: *const GosJson, idx: i64) -> *mut Gos
         if idx < 0 {
             return GosJson::null_ptr();
         }
-        let v = unsafe { &*parent.view.as_const_ptr() };
+        let v = parent.value();
         match v.get(idx as usize) {
             Some(child) => parent.child(child),
             None => GosJson::null_ptr(),
@@ -674,7 +775,7 @@ pub unsafe extern "C" fn gos_rt_json_get_opt(j: *const GosJson, key: *const c_ch
         let Ok(key_str) = std::str::from_utf8(key_bytes) else {
             return gos_rt_result_new(1, 0);
         };
-        let v = unsafe { &*parent.view.as_const_ptr() };
+        let v = parent.value();
         match v.get(key_str) {
             Some(child) => gos_rt_result_new(0, parent.child(child) as i64),
             None => gos_rt_result_new(1, 0),
@@ -730,7 +831,7 @@ pub unsafe extern "C" fn gos_rt_json_as_array_opt(j: *const GosJson) -> i128 {
         let Some(parent) = (unsafe { json_handle(j) }) else {
             return gos_rt_result_new(1, 0);
         };
-        let v = unsafe { &*parent.view.as_const_ptr() };
+        let v = parent.value();
         match v {
             serde_json::Value::Array(items) => {
                 // Each returned child handle needs one pointer slot. Reserve
@@ -986,7 +1087,7 @@ pub unsafe extern "C" fn gos_rt_json_set(
         let Some(parent) = (unsafe { json_handle(obj) }) else {
             return GosJson::null_ptr();
         };
-        let v = unsafe { &*parent.view.as_const_ptr() };
+        let v = parent.value();
         let serde_json::Value::Object(existing) = v else {
             return parent.child(v);
         };
@@ -1095,6 +1196,39 @@ mod tests {
         assert!(rendered.contains("\"short\":20.9"));
         unsafe { crate::c_abi::string::gos_rt_str_free(rendered_ptr) };
         unsafe { gos_rt_json_free(json) };
+    }
+
+    #[test]
+    fn untouched_json_renders_without_materialising_the_dom() {
+        let text = std::ffi::CString::new(" { \"value\" : 7 } ").unwrap();
+        let parsed = unsafe { gos_rt_json_parse(text.as_ptr()) };
+        let json = crate::c_abi::vec::gos_rt_result_payload(parsed) as *mut GosJson;
+        let handle = unsafe { &*json };
+        assert!(matches!(
+            &*handle.tree,
+            JsonTree::Raw { parsed, .. } if parsed.get().is_none()
+        ));
+        let rendered_ptr = unsafe { gos_rt_json_render(json) };
+        assert_eq!(
+            unsafe { CStr::from_ptr(rendered_ptr) }.to_bytes(),
+            br#"{"value":7}"#
+        );
+        assert!(matches!(
+            &*handle.tree,
+            JsonTree::Raw { parsed, .. } if parsed.get().is_none()
+        ));
+        let key = c"value";
+        let child = unsafe { gos_rt_json_get(json, key.as_ptr()) };
+        assert_eq!(unsafe { gos_rt_json_as_i64(child) }, 7);
+        assert!(matches!(
+            &*handle.tree,
+            JsonTree::Raw { parsed, .. } if parsed.get().is_some()
+        ));
+        unsafe {
+            gos_rt_str_free(rendered_ptr);
+            gos_rt_json_free(child);
+            gos_rt_json_free(json);
+        }
     }
 
     #[test]

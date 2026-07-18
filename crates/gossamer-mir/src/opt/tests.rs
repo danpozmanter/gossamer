@@ -635,6 +635,136 @@ mod elision_tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the regression keeps the complete branch-and-induction MIR shape visible"
+    )]
+    fn bounds_rewrites_unit_induction_after_branch_guard() {
+        use gossamer_types::IntTy;
+        let mut tcx = TyCtxt::new();
+        let unit = tcx.unit();
+        let i64t = tcx.int_ty(IntTy::I64);
+        let vec_i64 = tcx.intern(gossamer_types::TyKind::Vec(i64t));
+        let boolt = tcx.bool_ty();
+        let sp = span();
+        let mut body = Body {
+            name: "branch_induction".into(),
+            def: None,
+            arity: 1,
+            locals: vec![
+                decl(unit),
+                decl(vec_i64), // xs
+                decl(i64t),    // len
+                decl(i64t),    // index
+                decl(boolt),   // cmp
+                decl(i64t),    // element
+                decl(i64t),    // increment temporary
+            ],
+            blocks: vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![assign(
+                        Place::local(Local(3)),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    )],
+                    terminator: Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".to_string())),
+                        args: vec![Operand::Copy(Place::local(Local(1)))],
+                        destination: Place::local(Local(2)),
+                        target: Some(BlockId(1)),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    stmts: vec![assign(
+                        Place::local(Local(4)),
+                        Rvalue::BinaryOp {
+                            op: BinOp::Lt,
+                            lhs: Operand::Copy(Place::local(Local(3))),
+                            rhs: Operand::Copy(Place::local(Local(2))),
+                        },
+                    )],
+                    terminator: Terminator::SwitchInt {
+                        discriminant: Operand::Copy(Place::local(Local(4))),
+                        arms: vec![(0, BlockId(4))],
+                        default: BlockId(2),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(2),
+                    stmts: vec![],
+                    terminator: Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_vec_get_i64".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(Local(1))),
+                            Operand::Copy(Place::local(Local(3))),
+                        ],
+                        destination: Place::local(Local(5)),
+                        target: Some(BlockId(3)),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(3),
+                    stmts: vec![
+                        assign(
+                            Place::local(Local(6)),
+                            Rvalue::BinaryOp {
+                                op: BinOp::Add,
+                                lhs: Operand::Copy(Place::local(Local(3))),
+                                rhs: Operand::Const(ConstValue::Int(1)),
+                            },
+                        ),
+                        copy(3, 6),
+                    ],
+                    terminator: Terminator::Goto { target: BlockId(1) },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(4),
+                    stmts: vec![],
+                    terminator: Terminator::Return,
+                    span: sp,
+                },
+            ],
+            span: sp,
+        };
+
+        local_branch_bounds_check_elim(&mut body, &tcx);
+        let Terminator::Call { callee, .. } = &body.blocks[2].terminator else {
+            panic!("expected call terminator")
+        };
+        assert_eq!(
+            callee,
+            &Operand::Const(ConstValue::Str("gos_rt_vec_get_i64_unchecked".to_string()))
+        );
+
+        let StatementKind::Assign {
+            rvalue: Rvalue::BinaryOp { rhs, .. },
+            ..
+        } = &mut body.blocks[3].stmts[0].kind
+        else {
+            panic!("expected increment")
+        };
+        *rhs = Operand::Const(ConstValue::Int(2));
+        if let Terminator::Call { callee, .. } = &mut body.blocks[2].terminator {
+            *callee = Operand::Const(ConstValue::Str("gos_rt_vec_get_i64".to_string()));
+        }
+        local_branch_bounds_check_elim(&mut body, &tcx);
+        assert!(matches!(
+            &body.blocks[2].terminator,
+            Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                ..
+            } if name == "gos_rt_vec_get_i64"
+        ));
+    }
+
+    #[test]
     fn bounds_rewrites_zero_index_after_len_positive_guard() {
         use gossamer_types::IntTy;
         let mut tcx = TyCtxt::new();

@@ -470,8 +470,14 @@ pub(crate) unsafe fn try_pack_primitive_rows(outer: *mut GosVec) -> bool {
         };
         let row_ptr = std::ptr::with_exposed_provenance_mut::<GosVec>(slot);
         let row = unsafe { &*row_ptr };
-        for col in 0..width {
-            data[i * width + col] = unsafe { vec_elem_load_i64(row, col as i64) } as u64;
+        if width != 0 {
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    row.ptr.as_ptr(),
+                    data.as_mut_ptr().add(i * width).cast::<u8>(),
+                    width * std::mem::size_of::<u64>(),
+                );
+            }
         }
         let data_ptr = if width == 0 {
             std::ptr::NonNull::<u64>::dangling().as_ptr().cast::<u8>()
@@ -507,6 +513,7 @@ pub(crate) unsafe fn try_pack_primitive_rows(outer: *mut GosVec) -> bool {
     outer_ref.cap = outer_ref.len;
     outer_ref.elem_kind = vec_elem_kind::PACKED_ROWS;
     outer_ref.region_flag &= !VEC_SPLIT_FLAG;
+    crate::c_abi::ledger::vec_packed_conversion(row_count, words * std::mem::size_of::<u64>());
     true
 }
 
@@ -1917,4 +1924,29 @@ pub unsafe extern "C" fn gos_rt_main_exit_code_err(disc: i64, payload: i64) -> i
         }
         1
     })
+}
+
+#[cfg(test)]
+mod packed_row_tests {
+    use super::*;
+
+    #[test]
+    fn uniform_primitive_rows_pack_with_bulk_copy() {
+        unsafe {
+            let outer = gos_rt_vec_with_capacity_typed(8, PACKED_ROWS_MIN_ROWS, vec_elem_kind::VEC);
+            for row_index in 0..PACKED_ROWS_MIN_ROWS {
+                let row = gos_rt_vec_with_capacity(8, 3);
+                gos_rt_vec_push_i64(row, row_index);
+                gos_rt_vec_push_i64(row, row_index + 1);
+                gos_rt_vec_push_i64(row, row_index + 2);
+                let slot = row as usize;
+                gos_rt_vec_push(outer, std::ptr::addr_of!(slot).cast());
+            }
+            assert!(try_pack_primitive_rows(outer));
+            let row = packed_row_at(outer, 777).cast::<GosVec>();
+            assert_eq!(gos_rt_vec_get_i64(row, 0), 777);
+            assert_eq!(gos_rt_vec_get_i64(row, 2), 779);
+            crate::c_abi::map::gos_rt_vec_free(outer);
+        }
+    }
 }

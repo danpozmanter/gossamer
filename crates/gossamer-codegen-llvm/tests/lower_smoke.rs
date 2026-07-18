@@ -150,6 +150,52 @@ fn looping_main() -> (Body, TyCtxt) {
     (body, tcx)
 }
 
+fn acyclic_backward_numbered_main() -> (Body, TyCtxt) {
+    let mut tcx = TyCtxt::new();
+    let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+    let span = dummy_span();
+    let local = || LocalDecl {
+        ty: i64_ty,
+        debug_name: None,
+        mutable: false,
+        region: false,
+    };
+    let body = Body {
+        name: "main".to_string(),
+        def: None,
+        arity: 0,
+        locals: vec![local()],
+        blocks: vec![
+            BasicBlock {
+                id: BlockId(0),
+                stmts: Vec::new(),
+                terminator: Terminator::Goto { target: BlockId(2) },
+                span,
+            },
+            BasicBlock {
+                id: BlockId(1),
+                stmts: vec![Statement {
+                    span,
+                    kind: StatementKind::Assign {
+                        place: Place::local(Local(0)),
+                        rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    },
+                }],
+                terminator: Terminator::Return,
+                span,
+            },
+            BasicBlock {
+                id: BlockId(2),
+                stmts: Vec::new(),
+                terminator: Terminator::Goto { target: BlockId(1) },
+                span,
+            },
+        ],
+        span,
+    };
+    (body, tcx)
+}
+
 fn typed_iterator_main() -> (Body, TyCtxt) {
     let mut tcx = TyCtxt::new();
     let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
@@ -328,6 +374,21 @@ fn llvm_numeric_loop_has_native_preemption_poll() {
     assert!(
         ir.contains("gos_rt_preempt_check") && ir.contains("gos_preempt_counter"),
         "native loop back-edges must preserve cooperative preemption: {ir}"
+    );
+    assert!(
+        ir.contains("store i32 16384, ptr %gos_preempt_counter") && ir.contains("icmp sle i32"),
+        "native loops must use the bounded work-budget poll: {ir}"
+    );
+}
+
+#[test]
+fn llvm_acyclic_backward_numbered_edge_has_no_preemption_poll() {
+    let (body, tcx) = acyclic_backward_numbered_main();
+    let ir = gossamer_codegen_llvm::render_ir_to_string(&[body], &tcx, false)
+        .expect("acyclic MIR must render to LLVM IR");
+    assert!(
+        !ir.contains("call i32 @gos_rt_preempt_check_and_yield"),
+        "block numbering alone must not create a native safepoint: {ir}"
     );
 }
 

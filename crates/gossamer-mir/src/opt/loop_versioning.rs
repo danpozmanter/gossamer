@@ -543,6 +543,66 @@ enum BranchBoundFact {
     LenPositive { len: Local, xs: Local },
 }
 
+fn is_unit_increment_from(body: &Body, rvalue: &Rvalue, local: Local) -> bool {
+    let increment = match rvalue {
+        Rvalue::Use(Operand::Copy(place)) if place.projection.is_empty() => {
+            unique_def_rvalue(body, place.local)
+        }
+        other => Some(other),
+    };
+    matches!(
+        increment,
+        Some(Rvalue::BinaryOp {
+            op: BinOp::Add,
+            lhs: Operand::Copy(place),
+            rhs: Operand::Const(ConstValue::Int(1)),
+        }) if place.projection.is_empty() && place.local == local
+    ) || matches!(
+        increment,
+        Some(Rvalue::BinaryOp {
+            op: BinOp::Add,
+            lhs: Operand::Const(ConstValue::Int(1)),
+            rhs: Operand::Copy(place),
+        }) if place.projection.is_empty() && place.local == local
+    )
+}
+
+/// Proves the common queue-head shape: non-negative initialization followed
+/// only by `index = index + 1`, optionally through one temporary. At a strict
+/// `index < len` guard the increment cannot overflow because `len <= i64::MAX`.
+fn local_is_nonnegative_unit_induction(body: &Body, local: Local) -> bool {
+    let outside = |_| false;
+    let mut saw_base = false;
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            if place.local != local || !place.projection.is_empty() {
+                continue;
+            }
+            if is_unit_increment_from(body, rvalue, local) {
+                continue;
+            }
+            let nonnegative_base = match rvalue {
+                Rvalue::Use(Operand::Const(ConstValue::Int(n))) => *n >= 0,
+                Rvalue::Use(Operand::Copy(place)) if place.projection.is_empty() => {
+                    value_traces_nonneg(body, &outside, place.local, &mut Vec::new())
+                }
+                _ => false,
+            };
+            if !nonnegative_base {
+                return false;
+            }
+            saw_base = true;
+        }
+        if term_writes_bare(&block.terminator, local) {
+            return false;
+        }
+    }
+    saw_base
+}
+
 fn branch_bound_fact(body: &Body, block_index: usize) -> Option<(usize, BranchBoundFact)> {
     let block = &body.blocks[block_index];
     let Terminator::SwitchInt {
@@ -570,7 +630,9 @@ fn branch_bound_fact(body: &Body, block_index: usize) -> Option<(usize, BranchBo
         {
             let xs = bound_traces_to_len(body, &[], block_index, bound.local)?;
             let in_loop = |_| false;
-            if value_traces_nonneg(body, &in_loop, idx.local, &mut Vec::new()) {
+            if value_traces_nonneg(body, &in_loop, idx.local, &mut Vec::new())
+                || local_is_nonnegative_unit_induction(body, idx.local)
+            {
                 return Some((
                     true_successor,
                     BranchBoundFact::IndexLtLen {
@@ -1275,4 +1337,3 @@ fn emit_loop_version(
         redirect_terminator_target(&mut body.blocks[bi].terminator, h, entry_target);
     }
 }
-

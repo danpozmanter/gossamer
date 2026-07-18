@@ -71,12 +71,47 @@ pub fn optimise(body: &mut Body, tcx: &TyCtxt) {
     crate::verify::debug_verify_body(body);
     dead_store_elim(body, tcx);
     crate::verify::debug_verify_body(body);
+    let bounds_before = bounds_access_counts(body);
     bounds_check_elim(body, tcx);
+    let after_counted = bounds_access_counts(body);
     crate::verify::debug_verify_body(body);
     local_branch_bounds_check_elim(body, tcx);
+    let after_local = bounds_access_counts(body);
     crate::verify::debug_verify_body(body);
     bounds_check_versioning(body, tcx);
+    if std::env::var_os("GOS_BOUNDS_REMARKS").is_some() {
+        let after_versioning = bounds_access_counts(body);
+        eprintln!(
+            "gos-bounds: function={} checked_before={} counted_eliminated={} local_eliminated={} versioned_fast_paths={} checked_fallbacks={} unchecked_paths={}",
+            body.name,
+            bounds_before.0,
+            bounds_before.0.saturating_sub(after_counted.0),
+            after_counted.0.saturating_sub(after_local.0),
+            after_versioning.1.saturating_sub(after_local.1),
+            after_versioning.0,
+            after_versioning.1,
+        );
+    }
     crate::verify::debug_verify_body(body);
+}
+
+/// Returns checked access sites and unchecked fast-path sites in a body.
+fn bounds_access_counts(body: &Body) -> (usize, usize) {
+    body.blocks.iter().fold((0, 0), |mut counts, block| {
+        let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            ..
+        } = &block.terminator
+        else {
+            return counts;
+        };
+        match name.as_str() {
+            "gos_rt_vec_get_i64" | "gos_rt_vec_set_i64" => counts.0 += 1,
+            "gos_rt_vec_get_i64_unchecked" | "gos_rt_vec_set_i64_unchecked" => counts.1 += 1,
+            _ => {}
+        }
+        counts
+    })
 }
 
 /// Fast canonicalisation for unoptimised native builds.

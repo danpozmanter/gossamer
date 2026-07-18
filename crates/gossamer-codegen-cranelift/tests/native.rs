@@ -374,6 +374,15 @@ fn gos_build_mut_reference_binding_rebinds_its_target() {
 }
 
 #[test]
+fn gos_build_shared_reference_rebinding_does_not_overwrite_the_old_referent() {
+    assert_exit(
+        "shared_ref_rebind_literal",
+        "fn main() -> i64 {\n    let first = [1i64, 2i64]\n    let mut r = &first\n    r = &[2i64, 3i64]\n    first[0i64] * 10i64 + first[1i64]\n}\n",
+        12,
+    );
+}
+
+#[test]
 fn gos_build_monomorphises_generic_function_calls() {
     assert_exit(
         "mono",

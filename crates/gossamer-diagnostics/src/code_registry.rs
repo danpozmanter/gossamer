@@ -678,9 +678,14 @@ pub const REGISTRY: &[(&str, &str)] = &[
     (
         "GT0032",
         "A mutable reference was requested for a place rooted at an immutable binding.\n\
-                     Declare the source binding `mut` before taking `&mut`.\n\
-                     This checks write intent only; Gossamer still permits overlapping\n\
-                     mutable references and does not perform lifetime analysis.",
+                     Declare the source binding `mut` before taking `&mut`.",
+    ),
+    (
+        "GT0043",
+        "A second named mutable reference would overlap an active `&mut` binding.\n\
+                     Named mutable references are exclusive for their lexical scope.\n\
+                     End or narrow the earlier borrow before taking another `&mut` to the\n\
+                     same root binding.",
     ),
     (
         "GX0001",

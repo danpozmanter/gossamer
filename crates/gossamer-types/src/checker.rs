@@ -195,6 +195,10 @@ struct TypeChecker<'a> {
     /// Iterator locals consumed by a lazy adapter or terminal. This is a
     /// conservative source-level linearity check for simple named locals.
     consumed_iterators: HashMap<String, String>,
+    /// Lexically active named mutable borrows, keyed by referent root. This
+    /// is deliberately conservative: it prevents a second named `&mut`
+    /// binding while the first remains in scope.
+    mutable_borrows: Vec<HashMap<Box<str>, Box<str>>>,
     /// Ordered field name + type for every named struct, keyed by
     /// the struct's `DefId`. Built during `collect_signatures` so
     /// field-access and struct-literal expressions can resolve leaf
@@ -414,6 +418,7 @@ impl<'a> TypeChecker<'a> {
             recursion_depth: 0,
             recursion_limit_reported: false,
             consumed_iterators: HashMap::new(),
+            mutable_borrows: vec![HashMap::new()],
             struct_fields: checker_struct_fields,
             fn_sigs: HashMap::new(),
             method_arg_sigs: HashMap::new(),
@@ -1007,11 +1012,13 @@ impl<'a> TypeChecker<'a> {
     fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
         self.mut_scopes.push(HashMap::new());
+        self.mutable_borrows.push(HashMap::new());
     }
 
     fn pop_scope(&mut self) {
         self.scopes.pop();
         self.mut_scopes.pop();
+        self.mutable_borrows.pop();
     }
 
     fn bind_local(&mut self, name: &str, ty: Ty) {
@@ -1047,6 +1054,75 @@ impl<'a> TypeChecker<'a> {
             }
         }
         None
+    }
+
+    fn active_mutable_borrower(&self, root: &str) -> Option<&str> {
+        self.mutable_borrows
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(root).map(Box::as_ref))
+    }
+
+    fn register_named_mutable_borrow(&mut self, pattern: &Pattern, init: &Expr) {
+        let PatternKind::Ident { name, .. } = &pattern.kind else {
+            return;
+        };
+        let ExprKind::Unary {
+            op: UnaryOp::RefMut,
+            operand,
+        } = &init.kind
+        else {
+            return;
+        };
+        let Some(root) = Self::place_root_name(operand) else {
+            return;
+        };
+        if let Some(borrower) = self.active_mutable_borrower(&root).map(str::to_string) {
+            self.emit(
+                TypeError::MutableReferenceConflict { root, borrower },
+                operand.span,
+            );
+            return;
+        }
+        if let Some(scope) = self.mutable_borrows.last_mut() {
+            scope.insert(Box::from(root), name.name.clone().into_boxed_str());
+        }
+    }
+
+    fn rebind_named_mutable_borrow(&mut self, place: &Expr, value: &Expr) {
+        let ExprKind::Path(path) = &place.kind else {
+            return;
+        };
+        let [binding] = path.segments.as_slice() else {
+            return;
+        };
+        let ExprKind::Unary {
+            op: UnaryOp::RefMut,
+            operand,
+        } = &value.kind
+        else {
+            return;
+        };
+        let Some(root) = Self::place_root_name(operand) else {
+            return;
+        };
+        let binding = binding.name.name.as_str();
+        let owner_scope = self
+            .mutable_borrows
+            .iter()
+            .rposition(|scope| scope.values().any(|borrower| borrower.as_ref() == binding));
+        let Some(owner_scope) = owner_scope else {
+            return;
+        };
+        self.mutable_borrows[owner_scope].retain(|_, borrower| borrower.as_ref() != binding);
+        if let Some(borrower) = self.active_mutable_borrower(&root).map(str::to_string) {
+            self.emit(
+                TypeError::MutableReferenceConflict { root, borrower },
+                operand.span,
+            );
+            return;
+        }
+        self.mutable_borrows[owner_scope].insert(Box::from(root), Box::from(binding));
     }
 
     fn unify(&mut self, lhs: Ty, rhs: Ty, span: Span) {
@@ -6108,6 +6184,9 @@ impl<'a> TypeChecker<'a> {
             self.check_expr_expecting(value, Expectation::HasType(place_ty))
         };
         if place_is_reference {
+            self.rebind_named_mutable_borrow(place, value);
+        }
+        if place_is_reference {
             let value_resolved = self.infer.resolve(self.tcx, value_ty);
             let value_is_reference_or_unresolved = matches!(
                 self.tcx.kind(value_resolved),
@@ -6551,6 +6630,9 @@ impl<'a> TypeChecker<'a> {
                     self.unify(binding_ty, init_ty, init.span);
                 }
                 self.bind_pattern(pattern, binding_ty);
+                if let Some(init) = init {
+                    self.register_named_mutable_borrow(pattern, init);
+                }
             }
             StmtKind::Expr { expr, .. } => {
                 let expr_ty = self.check_expr(expr);

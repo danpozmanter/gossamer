@@ -959,24 +959,38 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         globals.push((qualified, Value::native(qualified, *call)));
     }
 
-    // Range expressions are Iterator values in every edition. Method-form
-    // adapters use the same receiver-last implementation as their free forms.
+    // Lazy iterator method calls use receiver-first syntax, while the
+    // `iter::*` free functions are data-last. Register every supported
+    // method form here so a lazy range cannot fall through to a missing
+    // bare-name lookup or an eager Vec-only implementation.
     for (short, call) in [
         ("map", native_vec_map_method as NativeCall),
         ("filter", native_vec_filter_method as NativeCall),
         ("fold", native_vec_fold_method as NativeCall),
+        ("for_each", native_vec_for_each_method as NativeCall),
+        ("any", native_vec_any_method as NativeCall),
+        ("all", native_vec_all_method as NativeCall),
+        ("find", native_vec_find_method as NativeCall),
+        ("position", native_vec_position_method as NativeCall),
+        ("max_by_key", native_vec_max_by_key_method as NativeCall),
+        ("min_by_key", native_vec_min_by_key_method as NativeCall),
     ] {
         let qualified: &'static str = Box::leak(format!("Iterator::{short}").into_boxed_str());
         globals.push((qualified, Value::native(qualified, call)));
     }
-    globals.push((
-        "Iterator::sum",
-        Value::native("Iterator::sum", native_iter_sum),
-    ));
-    globals.push((
-        "Iterator::take",
-        crate::builtins::builtin_pub("Iterator::take", builtin_iterator_take_method),
-    ));
+    for (short, call) in [
+        ("collect", builtin_iter_collect as BuiltinFnPub),
+        ("count", builtin_iter_count as BuiltinFnPub),
+        ("sum", builtin_iter_sum as BuiltinFnPub),
+        ("product", builtin_iter_product as BuiltinFnPub),
+        ("min", builtin_iter_min as BuiltinFnPub),
+        ("max", builtin_iter_max as BuiltinFnPub),
+        ("take", builtin_iterator_take_method as BuiltinFnPub),
+        ("skip", builtin_iterator_skip_method as BuiltinFnPub),
+    ] {
+        let qualified: &'static str = Box::leak(format!("Iterator::{short}").into_boxed_str());
+        globals.push((qualified, crate::builtins::builtin_pub(qualified, call)));
+    }
 }
 
 /// Rotates a method call's `(receiver, rest…)` argument list into the
@@ -1040,6 +1054,11 @@ pub(crate) fn builtin_vec_take_method(args: &[Value]) -> RuntimeResult<Value> {
 /// `iter.take(n)` with the receiver rotated into the data-last free form.
 pub(crate) fn builtin_iterator_take_method(args: &[Value]) -> RuntimeResult<Value> {
     builtin_iter_take(&rotate_receiver_last(args))
+}
+
+/// `iter.skip(n)` with the receiver rotated into the data-last free form.
+pub(crate) fn builtin_iterator_skip_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_skip(&rotate_receiver_last(args))
 }
 
 /// `xs.step_by(step)` - every `step`-th element starting at index 0;

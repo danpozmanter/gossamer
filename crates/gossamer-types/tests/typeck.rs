@@ -343,9 +343,24 @@ fn mutable_reference_binding_can_be_rebound_with_a_reference() {
 }
 
 #[test]
-fn overlapping_mutable_references_remain_accepted() {
+fn overlapping_mutable_references_are_rejected() {
     let checked = run(
         "fn main() { let mut a = [1, 2]\n let x = &mut a\n let y = &mut a\n x[0] = 0\n y[1] = 3 }\n",
+    );
+    assert!(
+        checked
+            .diagnostics
+            .iter()
+            .any(|d| matches!(d.error, TypeError::MutableReferenceConflict { .. })),
+        "expected overlapping mutable-reference diagnostic: {:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn mutable_reference_rebinding_releases_the_previous_root() {
+    let checked = run(
+        "fn main() { let mut a = [1, 2]\n let mut b = [3, 4]\n let mut r = &mut a\n r = &mut b\n let s = &mut a\n s[0] = 0\n r[0] = 5 }\n",
     );
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }

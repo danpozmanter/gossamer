@@ -691,7 +691,7 @@ impl<'tcx> FnBuilder<'tcx> {
     }
 
     /// Lowers a standalone range value to a lazy integer iterator. An omitted
-    /// upper bound uses Rust's profile-dependent `RangeFrom` overflow behavior.
+    /// lower bound starts at zero; an omitted upper bound stays open-ended.
     pub(crate) fn compile_range_value(
         &mut self,
         start: Option<&HirExpr>,
@@ -701,7 +701,7 @@ impl<'tcx> FnBuilder<'tcx> {
         let start_reg = match start {
             Some(e) => self.compile_expr(e)?,
             None => {
-                let idx = self.const_idx(ConstKey::Int(i64::MIN), Value::Int(i64::MIN));
+                let idx = self.const_idx(ConstKey::Int(0), Value::Int(0));
                 let r = self.alloc_reg();
                 self.emit(Op::LoadConst { dst: r, idx });
                 r

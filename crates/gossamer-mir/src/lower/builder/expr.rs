@@ -470,7 +470,8 @@ impl<'a> Builder<'a> {
                 inclusive,
             } => {
                 // Standalone ranges are lazy iterator state on every tier.
-                // An open upper bound uses Rust RangeFrom overflow semantics.
+                // An omitted lower bound starts at zero; an omitted upper
+                // bound remains an open-ended increasing iterator.
                 let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let lo_local = if let Some(s) = start {
                     self.lower_expr(s)?
@@ -478,7 +479,7 @@ impl<'a> Builder<'a> {
                     let l = self.fresh(i64_ty);
                     self.emit_assign(
                         Place::local(l),
-                        Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(i64::MIN)))),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(0))),
                         expr.span,
                     );
                     l
@@ -1714,9 +1715,7 @@ impl<'a> Builder<'a> {
                 op: HirUnaryOp::RefShared | HirUnaryOp::RefMut,
                 operand,
             } = &value.kind
-            && let HirExprKind::Path { segments, .. } = &operand.kind
-            && let [source_name] = segments.as_slice()
-            && let Some(source) = self.lookup_local(&source_name.name)
+            && let Some(source) = self.lower_expr(operand)
             && self.rebind_reference_alias(&name.name, source)
         {
             return;

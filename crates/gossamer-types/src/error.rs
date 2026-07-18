@@ -407,6 +407,14 @@ pub enum TypeError {
         /// Name of the immutable root binding.
         name: String,
     },
+    /// A second named mutable reference would overlap an existing one.
+    #[error("cannot take mutable reference to `{root}` while `{borrower}` is active")]
+    MutableReferenceConflict {
+        /// Root binding being borrowed again.
+        root: String,
+        /// Earlier named mutable-reference binding.
+        borrower: String,
+    },
 }
 
 impl TypeError {
@@ -453,6 +461,7 @@ impl TypeError {
             Self::AssignToImmutable { .. } => "assign-to-immutable",
             Self::AssignThroughSharedReference { .. } => "assign-through-shared-reference",
             Self::MutableReferenceToImmutable { .. } => "mutable-reference-to-immutable",
+            Self::MutableReferenceConflict { .. } => "mutable-reference-conflict",
         }
     }
 
@@ -496,6 +505,7 @@ impl TypeError {
             Self::AssignToImmutable { .. } => "GT0030",
             Self::AssignThroughSharedReference { .. } => "GT0031",
             Self::MutableReferenceToImmutable { .. } => "GT0032",
+            Self::MutableReferenceConflict { .. } => "GT0043",
         }
     }
 }
@@ -824,7 +834,14 @@ impl TypeDiagnostic {
                     .with_help(format!(
                         "declare the source mutable before borrowing it: `let mut {name} = ...`"
                     ))
-                    .with_note("`&mut` requires a mutable place; it does not enforce exclusivity");
+                    .with_note("`&mut` requires a mutable place");
+            }
+            TypeError::MutableReferenceConflict { root, borrower } => {
+                out = out
+                    .with_help(format!(
+                        "end or narrow `{borrower}` before borrowing `{root}` mutably again"
+                    ))
+                    .with_note("named mutable references are exclusive for their lexical scope");
             }
         }
         out

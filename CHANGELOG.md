@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.30.2 - Native execution and memory efficiency, fixes
+
+- Replace block-number loop detection in LLVM code generation with CFG
+  dominance checks, eliminating cooperative preemption polls on ordinary
+  backward control-flow joins.
+- Charge compiled loop safepoints by estimated natural-loop work with a bounded
+  16,384-unit budget. Native edit distance now runs at Go parity in the scaled
+  benchmark while preserving cooperative scheduler polling.
+- Add opt-in `GOS_PREEMPT_REMARKS`, `GOS_PREEMPT_STATS`, and
+  `GOS_BOUNDS_REMARKS` diagnostics for loop polling and bounds fast paths.
+- Elide checked vector access for non-negative queue indices advanced by one
+  under a matching `index < vec.len()` guard, while retaining checks for
+  larger or unprovable steps.
+- Keep validated parsed JSON compact until its first value access, and render
+  untouched documents directly without materializing a generic DOM.
+- Bulk-copy proven uniform primitive rows during packed nested-vector
+  conversion and report packed conversion rows and bytes in vec diagnostics.
+- Rebind mutable reference aliases to arbitrary new referents instead of
+  overwriting the previous referent, and reject overlapping named mutable
+  borrows.
+- Register lazy iterator methods on VM `Iterator` values and make open ranges
+  start at zero, fixing issue-reported `take` and empty `..0` behavior.
+
 ## 0.30.1 - Correctness and CI reliability
 
 - Prevented HTTP stress-test hangs with readiness polling, bounded retries,

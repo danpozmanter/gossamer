@@ -598,8 +598,11 @@ impl<'a> Lowerer<'a> {
                 Ok(())
             }
             Terminator::Goto { target } => {
-                if self.current_block.is_some_and(|src| target.as_u32() <= src) {
-                    self.emit_preempt_check();
+                if self
+                    .current_block
+                    .is_some_and(|src| self.is_cfg_back_edge(src, target.as_u32()))
+                {
+                    self.emit_preempt_check(target.as_u32());
                 }
                 writeln!(self.out, "  br label %bb{}", target.as_u32()).unwrap();
                 Ok(())
@@ -610,10 +613,14 @@ impl<'a> Lowerer<'a> {
                 default,
             } => {
                 let src = self.current_block.unwrap_or(u32::MAX);
-                let has_back_edge = arms.iter().any(|(_, target)| target.as_u32() <= src)
-                    || default.as_u32() <= src;
-                if has_back_edge {
-                    self.emit_preempt_check();
+                let back_target = arms
+                    .iter()
+                    .map(|(_, target)| target.as_u32())
+                    .chain(std::iter::once(default.as_u32()))
+                    .filter(|target| self.is_cfg_back_edge(src, *target))
+                    .min();
+                if let Some(target) = back_target {
+                    self.emit_preempt_check(target);
                 }
                 let v = self.lower_operand(discriminant)?;
                 let mut ty = render_ty(self.tcx, self.operand_ty(discriminant));

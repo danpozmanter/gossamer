@@ -38,8 +38,34 @@ thread_local! {
 /// Number of cooperative yields recorded - exposed for tests.
 static YIELD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
+/// Slow compiled safepoint calls, enabled only for diagnostics.
+static SLOW_POLL_COUNT: AtomicU64 = AtomicU64::new(0);
+static PREEMPT_STATS_ENABLED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn report_preempt_stats() {
+    eprintln!(
+        "gos-preempt-stats: slow_polls={} yields={}",
+        SLOW_POLL_COUNT.load(Ordering::Relaxed),
+        YIELD_COUNT.load(Ordering::Relaxed)
+    );
+}
+
+fn init_preempt_stats() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        if std::env::var_os("GOS_PREEMPT_STATS").is_some() {
+            PREEMPT_STATS_ENABLED.store(true, Ordering::Relaxed);
+            // SAFETY: `report_preempt_stats` has C ABI, takes no arguments,
+            // and accesses only process-lifetime atomic statics at exit.
+            unsafe { libc::atexit(report_preempt_stats) };
+        }
+    });
+}
+
 /// Initialises the SIGURG handler. Idempotent.
 pub fn init() {
+    init_preempt_stats();
     // Miri cannot model sigaction or a signal-delivery thread. The scheduler
     // remains cooperative there: safepoint polls still observe explicit
     // `request_yield_*` calls, while OS-signal preemption is exercised by the
@@ -162,6 +188,9 @@ pub extern "C" fn gos_rt_preempt_check() -> i32 {
 /// next safepoint will observe the same flag and try again.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_preempt_check_and_yield() -> i32 {
+    if PREEMPT_STATS_ENABLED.load(Ordering::Relaxed) {
+        SLOW_POLL_COUNT.fetch_add(1, Ordering::Relaxed);
+    }
     if should_yield() {
         note_yield();
         if gossamer_coro::in_goroutine() {

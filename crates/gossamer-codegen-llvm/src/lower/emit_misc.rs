@@ -92,20 +92,125 @@ impl<'a> Lowerer<'a> {
         .unwrap();
     }
 
-    /// Amortized back-edge safepoint for cooperative preemption. The hot path
-    /// is one decrement and branch; the runtime call occurs once per 1024
-    /// iterations and suspends the current stackful goroutine when requested.
-    pub(crate) fn emit_preempt_check(&mut self) {
+    fn successor_blocks(term: &Terminator) -> Vec<u32> {
+        match term {
+            Terminator::Goto { target } => vec![target.as_u32()],
+            Terminator::SwitchInt { arms, default, .. } => arms
+                .iter()
+                .map(|(_, target)| target.as_u32())
+                .chain(std::iter::once(default.as_u32()))
+                .collect(),
+            Terminator::Call { target, .. } => target.iter().map(|b| b.as_u32()).collect(),
+            Terminator::Assert { target, .. } | Terminator::Drop { target, .. } => {
+                vec![target.as_u32()]
+            }
+            Terminator::Return | Terminator::Unreachable | Terminator::Panic { .. } => Vec::new(),
+        }
+    }
+
+    /// A cycle edge is a back edge only when its target dominates its source.
+    /// Test dominance directly by asking whether the source remains reachable
+    /// from entry after removing the proposed target from the CFG.
+    pub(crate) fn is_cfg_back_edge(&self, source: u32, target: u32) -> bool {
+        if source as usize >= self.body.blocks.len() || target as usize >= self.body.blocks.len() {
+            return false;
+        }
+        if target == 0 {
+            return true;
+        }
+        let mut seen = vec![false; self.body.blocks.len()];
+        let mut pending = vec![0u32];
+        seen[0] = true;
+        while let Some(block) = pending.pop() {
+            if block == source {
+                return false;
+            }
+            for next in Self::successor_blocks(&self.body.blocks[block as usize].terminator) {
+                if next != target && !seen[next as usize] {
+                    seen[next as usize] = true;
+                    pending.push(next);
+                }
+            }
+        }
+        true
+    }
+
+    /// Returns the natural loop formed by a dominating target and its source.
+    fn natural_loop_blocks(&self, source: u32, target: u32) -> Vec<u32> {
+        let mut predecessors = vec![Vec::new(); self.body.blocks.len()];
+        for (block, data) in self.body.blocks.iter().enumerate() {
+            for successor in Self::successor_blocks(&data.terminator) {
+                predecessors[successor as usize].push(block as u32);
+            }
+        }
+        let mut included = vec![false; self.body.blocks.len()];
+        included[target as usize] = true;
+        included[source as usize] = true;
+        let mut pending = if source == target {
+            Vec::new()
+        } else {
+            vec![source]
+        };
+        while let Some(block) = pending.pop() {
+            for &pred in &predecessors[block as usize] {
+                if !included[pred as usize] {
+                    included[pred as usize] = true;
+                    pending.push(pred);
+                }
+            }
+        }
+        included
+            .into_iter()
+            .enumerate()
+            .filter_map(|(block, yes)| yes.then_some(block as u32))
+            .collect()
+    }
+
+    /// Estimates the work represented by a back edge. Calls dominate the
+    /// charge because they can hide allocation, hashing, or collection work;
+    /// statement count distinguishes tiny arithmetic loops from larger loop
+    /// bodies without requiring a target-specific instruction cost model.
+    fn preempt_charge(&self, target: u32) -> i32 {
+        let source = self.current_block.unwrap_or(target);
+        let mut statements = 0usize;
+        let mut calls = 0usize;
+        for block in self.natural_loop_blocks(source, target) {
+            let block = &self.body.blocks[block as usize];
+            statements += block.stmts.len();
+            if matches!(block.terminator, Terminator::Call { .. }) {
+                calls += 1;
+            }
+        }
+        // A maximum charge of 16 preserves the old 1024-iteration interval
+        // for expensive loops. A tiny loop charges one and polls every 16384
+        // iterations, which is still well below the scheduler watchdog slice.
+        (1 + statements / 8 + calls * 2).clamp(1, 16) as i32
+    }
+
+    /// Work-budgeted back-edge safepoint for cooperative preemption. The hot
+    /// path remains one subtraction and branch. The runtime call occurs after
+    /// 16384 estimated work units and suspends the current goroutine when
+    /// requested.
+    pub(crate) fn emit_preempt_check(&mut self, target: u32) {
         declare_rt(&mut self.runtime_refs, "gos_rt_preempt_check_and_yield");
         let seq = self.preempt_seq;
         self.preempt_seq += 1;
+        let charge = self.preempt_charge(target);
+        if std::env::var_os("GOS_PREEMPT_REMARKS").is_some() {
+            eprintln!(
+                "gos-preempt: function={} backedge=bb{}->bb{} charge={charge} budget=16384",
+                self.body.name,
+                self.current_block.unwrap_or(target),
+                target
+            );
+        }
         let current = self.fresh();
         let next = self.fresh();
         let expired = self.fresh();
         writeln!(self.out, "  {current} = load i32, ptr %gos_preempt_counter").unwrap();
-        writeln!(self.out, "  {next} = sub i32 {current}, 1").unwrap();
+        writeln!(self.out, "  {next} = sub i32 {current}, {charge}").unwrap();
         writeln!(self.out, "  store i32 {next}, ptr %gos_preempt_counter").unwrap();
-        writeln!(self.out, "  {expired} = icmp eq i32 {next}, 0").unwrap();
+        writeln!(self.out, "  {expired} = icmp sle i32 {next}, 0").unwrap();
         writeln!(
             self.out,
             "  br i1 {expired}, label %preempt_slow_{seq}, label %preempt_cont_{seq}"
@@ -118,7 +223,7 @@ impl<'a> Lowerer<'a> {
             "  {poll} = call i32 @gos_rt_preempt_check_and_yield()"
         )
         .unwrap();
-        writeln!(self.out, "  store i32 1024, ptr %gos_preempt_counter").unwrap();
+        writeln!(self.out, "  store i32 16384, ptr %gos_preempt_counter").unwrap();
         writeln!(self.out, "  br label %preempt_cont_{seq}").unwrap();
         writeln!(self.out, "preempt_cont_{seq}:").unwrap();
     }
