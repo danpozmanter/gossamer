@@ -355,6 +355,7 @@ fn http_wake_addrs() -> &'static parking_lot::Mutex<Vec<SocketAddr>> {
     ADDRS.get_or_init(|| parking_lot::Mutex::new(Vec::new()))
 }
 
+#[cfg(unix)]
 fn wake_http_acceptors() {
     let addrs = http_wake_addrs().lock().clone();
     for addr in addrs {
