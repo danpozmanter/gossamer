@@ -33,14 +33,14 @@ pub(crate) use test::TestOpts;
 /// Native stack reserved for the main thread that runs the bytecode VM.
 ///
 /// Shared with the goroutine worker threads in `gossamer-interp` so
-/// every VM-executing thread has the same generous reserve: the OS
+/// every VM-executing thread has the same explicit reserve: the OS
 /// main-thread stack is platform-dependent (8 MiB on Linux, roughly
 /// 1 MiB on Windows), the VM's native dispatch and in-process JIT both
 /// grow the real machine stack, and `MAX_CALL_DEPTH` only yields a
 /// clean error if its frames fit before the OS guard page.
 const VM_STACK_BYTES: usize = gossamer_interp::VM_THREAD_STACK_BYTES;
 
-/// Runs `f` on a dedicated thread with a large native stack
+/// Runs `f` on a dedicated thread with the VM native stack reserve
 /// ([`VM_STACK_BYTES`]) and returns its result, so the host's default
 /// main-thread stack never bounds a Gossamer program's recursion
 /// depth. A panic inside `f` is propagated to the caller unchanged.

@@ -548,10 +548,12 @@ impl Vm {
         // promoted function would silently stop recording line hits.
         if jit_call::jit_enabled() && has_jit_eligible_fn(program) && !self.coverage_active() {
             let mut jit_tcx = tcx.clone();
+            let slice_pattern_bodies = jit_slice_pattern_body_names(program);
             let (shapes, enum_shape_handles) = build_native_enum_shapes(program, &jit_tcx);
             let (struct_shapes, struct_shape_handles) =
                 build_native_struct_shapes(program, &jit_tcx);
             let mut bodies = gossamer_mir::lower_program(program, &mut jit_tcx);
+            bodies.retain(|body| !slice_pattern_bodies.contains(body.name.as_str()));
             // Monomorphise before the JIT sees the bodies, exactly as the LLVM
             // AOT pipeline does. A generic function / method / struct
             // instantiated with a concrete type must reach the JIT as a
@@ -567,9 +569,16 @@ impl Vm {
             // shape so programs that cannot promote a useful body do not
             // prepare the native compiler.
             if jit_backend::has_worthy_jit_body(&bodies, &jit_tcx, &shapes, &struct_shapes) {
-                gossamer_mir::inline_trivial_wrappers(&mut bodies);
-                gossamer_mir::inline_small_callees(&mut bodies);
-                gossamer_mir::inline_general(&mut bodies);
+                // Keep static-mut accessors as distinct bodies. Inlining one
+                // into a hot caller duplicates the accessor in MIR, after
+                // which the static-consistency gate correctly rejects the
+                // caller because the original body would remain on the VM's
+                // separate static cell.
+                if !jit_bodies_access_mut_static(&bodies) {
+                    gossamer_mir::inline_trivial_wrappers(&mut bodies);
+                    gossamer_mir::inline_small_callees(&mut bodies);
+                    gossamer_mir::inline_general(&mut bodies);
+                }
                 // Same post-inline cleanup the AOT pipeline runs: the
                 // cranelift lowering is shared with `gos build`, so the
                 // JIT must hand it the same MIR shape or the tiers can
@@ -577,6 +586,24 @@ impl Vm {
                 for body in &mut bodies {
                     gossamer_mir::optimise(body, &jit_tcx);
                 }
+                let compile_names =
+                    jit_backend::jit_compile_body_names(&bodies, &jit_tcx, &shapes, &struct_shapes);
+                if jit_call::jit_trace() {
+                    for decision in jit_backend::jit_promotion_report(
+                        &bodies,
+                        &jit_tcx,
+                        &shapes,
+                        &struct_shapes,
+                    ) {
+                        eprintln!(
+                            "jit: decision body={} admitted={} reasons={}",
+                            decision.name,
+                            decision.admitted,
+                            decision.reasons.join(","),
+                        );
+                    }
+                }
+                bodies.retain(|body| compile_names.contains(body.name.as_str()));
                 // Compute the eager-compile set from the post-inlining
                 // bodies now, while they are still in hand: the deferred
                 // compile below releases `mir_bodies` for spawn-free
@@ -683,33 +710,38 @@ impl Vm {
             self.release_terminal_jit_snapshot();
             return;
         }
-        // Clone the Arcs out so the `RefCell` borrows release before the
-        // compile, leaving the fields free to be dropped afterwards.
-        let Some(bodies) = self.mir_bodies.borrow().clone() else {
+        // Move compiler-only snapshots out before constructing Cranelift.
+        // Spawn-free programs normally have unique Arcs and transfer the
+        // underlying allocations without cloning. A spawned child may still
+        // share them, in which case cloning is the required isolation path.
+        let Some(bodies) = self.mir_bodies.borrow_mut().take() else {
             self.jit.write().compiled = JitCompileState::Failed;
             self.release_terminal_jit_snapshot();
             return;
         };
-        let Some(tcx) = self.tcx_snapshot.borrow().clone() else {
+        let Some(tcx) = self.tcx_snapshot.borrow_mut().take() else {
             self.jit.write().compiled = JitCompileState::Failed;
             self.release_terminal_jit_snapshot();
             return;
         };
-        let bodies = &bodies;
-        let tcx = &tcx;
+        let bodies = Arc::try_unwrap(bodies).unwrap_or_else(|shared| (*shared).clone());
         let trace = jit_call::jit_trace();
         let started = std::time::Instant::now();
         if let Some(rss_bytes) = current_process_rss_bytes() {
             self.jit_counters.observed_rss(rss_bytes);
         }
         let empty = std::collections::HashMap::new();
-        let shape_defs_arc = self.enum_shape_defs.borrow().clone();
+        let shape_defs_arc = self.enum_shape_defs.borrow_mut().take();
         let shape_defs: &std::collections::HashMap<u32, u32> =
             shape_defs_arc.as_deref().unwrap_or(&empty);
-        let struct_shape_defs_arc = self.struct_shape_defs.borrow().clone();
+        let struct_shape_defs_arc = self.struct_shape_defs.borrow_mut().take();
         let struct_shape_defs: &std::collections::HashMap<u32, u32> =
             struct_shape_defs_arc.as_deref().unwrap_or(&empty);
-        let cache_key = self.jit_cache_key.borrow().clone();
+        let cache_key = self.jit_cache_key.borrow_mut().take();
+        if self.jit_droppable.get() {
+            *self.jit_eager_names.borrow_mut() = Arc::new(std::collections::HashSet::new());
+            self.jit_counters.snapshots_released();
+        }
         if let Some(cache_key) = cache_key.as_deref()
             && let Some(artifact) = thread_jit_artifact(cache_key)
         {
@@ -726,8 +758,12 @@ impl Vm {
         }
 
         self.jit_counters.compile_started();
-        let artifact_result =
-            jit_backend::compile_to_jit_for_promotion(bodies, tcx, shape_defs, struct_shape_defs);
+        let artifact_result = jit_backend::compile_to_jit_for_promotion_owned(
+            bodies,
+            &tcx,
+            shape_defs,
+            struct_shape_defs,
+        );
         let elapsed = started.elapsed();
         self.jit_counters.compile_finished(elapsed);
         if let Some(rss_bytes) = current_process_rss_bytes() {
@@ -1109,28 +1145,46 @@ fn cache_thread_jit_artifact(key: Arc<str>, artifact: &Rc<JitArtifact>) {
     });
 }
 
-/// Full (rather than hashed) identity for code pages produced from a compiler
-/// snapshot. Sorted map entries avoid randomized `HashMap` iteration turning
-/// identical programs into a cache miss; string equality avoids collision
-/// risks at this unsafe ABI boundary.
+/// SHA-256 identity for code pages produced from a compiler snapshot. The
+/// formatter streams into the digest, so the VM retains a 64-byte key instead
+/// of a second debug-text copy of every MIR body and type-context entry.
 fn jit_artifact_key(
     bodies: &[Body],
     tcx: &TyCtxt,
     enum_shape_defs: &std::collections::HashMap<u32, u32>,
     struct_shape_defs: &std::collections::HashMap<u32, u32>,
 ) -> String {
+    use sha2::Digest as _;
+
+    struct DigestWriter(sha2::Sha256);
+    impl std::fmt::Write for DigestWriter {
+        fn write_str(&mut self, text: &str) -> std::fmt::Result {
+            use sha2::Digest as _;
+            self.0.update(text.as_bytes());
+            Ok(())
+        }
+    }
+
     fn sorted_map(map: &std::collections::HashMap<u32, u32>) -> Vec<(u32, u32)> {
         let mut entries: Vec<_> = map.iter().map(|(&key, &value)| (key, value)).collect();
         entries.sort_unstable();
         entries
     }
 
-    format!(
-        "bodies={bodies:?};tcx={};enum_shapes={:?};struct_shapes={:?}",
-        tcx.stable_snapshot_key(),
+    let mut digest = DigestWriter(sha2::Sha256::new());
+    use std::fmt::Write as _;
+    digest.0.update(b"gossamer-jit-artifact-v2\0");
+    write!(&mut digest, "bodies={bodies:?};tcx=").expect("hashing JIT MIR through fmt cannot fail");
+    let tcx_key = tcx.stable_snapshot_key();
+    digest.0.update(tcx_key.as_bytes());
+    write!(
+        &mut digest,
+        ";enum_shapes={:?};struct_shapes={:?}",
         sorted_map(enum_shape_defs),
         sorted_map(struct_shape_defs),
     )
+    .expect("hashing JIT shapes through fmt cannot fail");
+    format!("{:x}", digest.0.finalize())
 }
 
 fn jit_rss_sample_and_cap() -> Option<(u64, u64)> {

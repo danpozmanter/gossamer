@@ -25,6 +25,7 @@ gossamer-ws = { workspace = true }
 indexmap = { workspace = true }
 parking_lot = { workspace = true }
 rustc-hash = "2"
+sha2 = { workspace = true }
 smallvec = "1"
 thiserror = { workspace = true }
 

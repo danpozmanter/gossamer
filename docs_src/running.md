@@ -24,7 +24,7 @@ Once `gos` is on your `PATH`, every subcommand takes either a
 | `gos lint --deny-warnings .` | Fail CI on any warning |
 | `gos lint --explain unused_variable` | Long-form rationale for a lint |
 | `gos explain GT0001` | Long-form rationale for a diagnostic code |
-| `gos watch --command check .` | Re-run `gos check` on every change |
+| `gos watch [PATH] [--] [ARGS...]` | Restart a development service after validating local source changes |
 | `gos add example.org/lib@1.2.3` | Add a dependency to `project.toml` |
 | `gos remove example.org/lib` | Drop a dependency |
 | `gos update` | Update locked dependencies within declared ranges |
@@ -43,6 +43,17 @@ World")` file runs as-is. See
 [Top-level statements](language/top_level_statements.md). A project's
 entry file is `src/main.gos` by convention, or whatever
 `[project] entry` names in `project.toml`.
+
+`gos watch` is a restart-based development supervisor for HTTP services. It
+watches the project, its transitive local path dependencies, and manifests;
+after an edit it validates the revision in-process, gracefully terminates the
+old `gos run` child, waits for the port to be released, and starts a
+replacement. An invalid edit leaves the last known-good service running. It
+intentionally does not preserve in-memory state, WebSocket connections, or
+streaming responses, and is not a production zero-downtime deployment
+mechanism. Use `--debounce MS`, `--grace MS`, `--no-check`, `--clear`, and
+`--locked` to tune the loop. `gos dev` remains accepted as a compatibility
+alias.
 
 ## Environment variables
 

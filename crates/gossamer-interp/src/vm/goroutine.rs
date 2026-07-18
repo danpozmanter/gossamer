@@ -20,11 +20,9 @@ type GoroutineTask = Box<dyn FnOnce() + Send + 'static>;
 /// Spawns an OS thread that runs Gossamer goroutine code. Sizes its
 /// stack to [`crate::vm::VM_THREAD_STACK_BYTES`] - the same reserve the
 /// main VM thread uses - because a goroutine body runs the bytecode
-/// interpreter, whose frames are large; the small compiled-tier
-/// coroutine stack would let `MAX_CALL_DEPTH`'s frames overrun the OS
-/// guard page and abort the process on a workload the main thread runs
-/// fine. The byte-budget recursion guard is armed at the thread's
-/// shallowest point as a backstop.
+/// interpreter and JIT. The byte-budget recursion guard is armed at the
+/// thread's shallowest point so native recursion reports a clean overflow
+/// before reaching the OS guard page.
 #[cfg(not(target_arch = "wasm32"))]
 fn spawn_goroutine_thread<F: FnOnce() + Send + 'static>(
     name: &str,

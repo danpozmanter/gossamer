@@ -2,7 +2,10 @@
 
 use std::ffi::{CStr, CString};
 
-use gossamer_runtime::c_abi::{gos_rt_str_free, gos_rt_str_len, gos_rt_str_to_upper};
+use gossamer_runtime::c_abi::{
+    gos_rt_str_append_bytes, gos_rt_str_free, gos_rt_str_len, gos_rt_str_to_upper,
+    gos_rt_str_with_capacity,
+};
 
 fn upper(input: &str) -> String {
     let input = CString::new(input).expect("test input must not contain NUL");
@@ -13,6 +16,18 @@ fn upper(input: &str) -> String {
         let out = CStr::from_ptr(raw).to_str().unwrap().to_owned();
         gos_rt_str_free(raw);
         out
+    }
+}
+
+#[test]
+fn string_with_capacity_reuses_its_unique_buffer() {
+    unsafe {
+        let string = gos_rt_str_with_capacity(128);
+        let original = string;
+        let appended = gos_rt_str_append_bytes(string, b"hello".as_ptr(), 5);
+        assert_eq!(appended, original, "reserved buffer should grow in place");
+        assert_eq!(gos_rt_str_len(appended), 5);
+        gos_rt_str_free(appended);
     }
 }
 

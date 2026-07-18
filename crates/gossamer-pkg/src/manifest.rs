@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 use thiserror::Error;
 
+use crate::Edition;
 use crate::id::{ProjectId, ProjectIdError};
 use crate::version::{CaretRange, Version, VersionError};
 
@@ -88,15 +89,6 @@ pub struct ProjectTable {
     pub entry: Option<String>,
 }
 
-/// Source-language edition accepted by this toolchain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Edition {
-    /// Current edition with eager public iterator helpers.
-    E2026,
-    /// Staged edition that may opt into iterator-returning signatures.
-    E2027,
-}
-
 impl Edition {
     /// Parses the manifest spelling for a supported edition.
     fn parse(value: &str) -> Result<Self, ManifestError> {
@@ -104,15 +96,6 @@ impl Edition {
             "2026" => Ok(Self::E2026),
             "2027" => Ok(Self::E2027),
             _ => Err(ManifestError::UnsupportedEdition(value.to_string())),
-        }
-    }
-
-    /// Canonical manifest spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::E2026 => "2026",
-            Self::E2027 => "2027",
         }
     }
 }

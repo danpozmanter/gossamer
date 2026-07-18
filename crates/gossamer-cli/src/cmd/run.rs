@@ -8,8 +8,9 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
+use gossamer_pkg::Edition;
 
-use crate::loaders::{load_and_check, profile_rss_stage};
+use crate::loaders::{load_and_check_with_edition, profile_rss_stage};
 use crate::paths::{read_entry_source, resolve_entry_arg};
 
 /// How `gos run` executes a program. Single-variant marker kept so
@@ -51,6 +52,8 @@ fn run(file: &Path, _mode: RunMode, main_thread: bool, forwarded: &[String]) -> 
 }
 
 fn run_on_vm(file: &PathBuf, forwarded: &[String]) -> Result<()> {
+    let edition = crate::paths::project_edition_for_entry(file);
+    let lazy_iterators = edition == Edition::E2027;
     let user_source = read_entry_source(file)?;
     // Compile-time codegen pass: synthesize `from_json` / `to_json`
     // for every user struct so the resulting program has real
@@ -59,14 +62,14 @@ fn run_on_vm(file: &PathBuf, forwarded: &[String]) -> Result<()> {
     // Comptime fold: evaluate `comptime { ... }` / `comptime fn` calls
     // now and splice their result literals in, so the VM compiles a
     // constant identical to what the compiled tiers see.
-    let source = crate::comptime_fold::fold_comptime(&source, &file.to_string_lossy())?;
+    let source = crate::comptime_fold::fold_comptime(source, &file.to_string_lossy())?;
     profile_rss_stage("source_prepared");
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
     // Static checks always run first. A program with parse / resolve /
     // type errors has no business reaching the VM - execution would
     // either crash or produce unsound output.
-    let (program, tcx) = load_and_check(&source, file_id, &map)?;
+    let (program, tcx) = load_and_check_with_edition(&source, file_id, &map, edition)?;
     // The VM keeps the HIR and type context it needs for bytecode/JIT loading,
     // but it neither renders source diagnostics nor consults the SourceMap at
     // runtime. Release the augmented source and parse-time map before the VM
@@ -78,6 +81,7 @@ fn run_on_vm(file: &PathBuf, forwarded: &[String]) -> Result<()> {
     profile_rss_stage("frontend_released");
     gossamer_interp::set_program_name(&file.to_string_lossy());
     gossamer_interp::set_program_args(forwarded);
+    gossamer_interp::set_lazy_iterators_enabled(lazy_iterators);
     let mut vm = gossamer_interp::Vm::new();
     profile_rss_stage("vm_created");
     // `load` consumes `tcx` (moves the interner into the JIT snapshot).

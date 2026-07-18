@@ -28,8 +28,9 @@ pub mod native_symbols;
 
 pub use emit::{FunctionText, Module, emit_function, emit_module};
 pub use jit::{
-    JitArtifact, JitFn, JitKind, TupleElem, compile_to_jit, compile_to_jit_for_promotion,
-    has_worthy_jit_body, jit_eager_loop_bodies,
+    JitArtifact, JitBodyDecision, JitFn, JitKind, TupleElem, compile_to_jit,
+    compile_to_jit_for_promotion, compile_to_jit_for_promotion_owned, has_worthy_jit_body,
+    jit_compile_body_names, jit_eager_loop_bodies, jit_promotion_report,
 };
 pub use native::{
     CompileOptions, NativeObject, compile_to_object, compile_to_object_at_path,

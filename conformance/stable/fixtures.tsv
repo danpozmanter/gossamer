@@ -8,3 +8,4 @@ collections_and_result.gos	collections_and_result.out
 callbacks.gos	callbacks.out
 channel_roundtrip.gos	channel_roundtrip.out
 result_propagation.gos	result_propagation.out
+lazy_iterators.gos	lazy_iterators.out	2027

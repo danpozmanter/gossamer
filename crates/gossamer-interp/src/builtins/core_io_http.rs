@@ -587,7 +587,7 @@ fn native_http_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runti
         }
     }
     let shutdown = Arc::clone(&config.shutdown);
-    install_sigint_handler(shutdown);
+    install_http_shutdown_handler(shutdown);
 
     let errors = Mutex::new(Vec::<String>::new());
     let dispatch_cell = std::cell::RefCell::new(dispatch);
@@ -738,7 +738,7 @@ fn native_http_serve_tls(
         }
     }
     let shutdown = Arc::clone(&config.shutdown);
-    install_sigint_handler(shutdown);
+    install_http_shutdown_handler(shutdown);
 
     let errors = Mutex::new(Vec::<String>::new());
     let dispatch_cell = std::cell::RefCell::new(dispatch);
@@ -816,7 +816,7 @@ fn native_http2_bind_and_run_h2c(
     let (req_tx, req_rx) = mpsc::channel::<(http_std::Request, mpsc::Sender<http_std::Response>)>();
 
     let shutdown = Arc::new(AtomicBool::new(false));
-    install_sigint_handler(Arc::clone(&shutdown));
+    install_http_shutdown_handler(Arc::clone(&shutdown));
 
     let max_requests = HTTP_MAX_REQUESTS_OVERRIDE.load(Ordering::SeqCst);
 
@@ -963,7 +963,7 @@ fn native_http3_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runt
     let (req_tx, req_rx) = mpsc::channel::<(http_std::Request, mpsc::Sender<http_std::Response>)>();
 
     let shutdown = Arc::new(AtomicBool::new(false));
-    install_sigint_handler(Arc::clone(&shutdown));
+    install_http_shutdown_handler(Arc::clone(&shutdown));
     let max_requests = HTTP_MAX_REQUESTS_OVERRIDE.load(Ordering::SeqCst);
 
     let shutdown_for_server = Arc::clone(&shutdown);
@@ -1257,4 +1257,73 @@ fn unwrap_result(value: &Value) -> &Value {
     }
 }
 
+fn install_http_shutdown_handler(shutdown: Arc<AtomicBool>) {
+    register_http_shutdown(shutdown);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn register_http_shutdown(shutdown: Arc<AtomicBool>) {
+    use gossamer_std::signal::{self, sigs};
+    use std::sync::OnceLock;
+
+    static HTTP_SHUTDOWNS: OnceLock<parking_lot::Mutex<Vec<Arc<AtomicBool>>>> = OnceLock::new();
+    static HTTP_SIGNAL_HOOKED: AtomicBool = AtomicBool::new(false);
+
+    let registry = HTTP_SHUTDOWNS.get_or_init(|| parking_lot::Mutex::new(Vec::new()));
+    registry.lock().push(shutdown);
+
+    if HTTP_SIGNAL_HOOKED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let sigint = signal::on(sigs::SIGINT);
+    let sigterm = signal::on(sigs::SIGTERM);
+    std::thread::Builder::new()
+        .name("gossamer-http-shutdown".to_string())
+        .spawn(move || {
+            loop {
+                if sigint.wait_with_timeout(Duration::from_millis(50))
+                    || sigterm.wait_with_timeout(Duration::ZERO)
+                {
+                    if let Some(registry) = HTTP_SHUTDOWNS.get() {
+                        registry.lock().retain(|flag| {
+                            flag.store(true, Ordering::Release);
+                            Arc::strong_count(flag) > 1
+                        });
+                    }
+                }
+            }
+        })
+        .ok();
+}
+
+#[cfg(target_arch = "wasm32")]
+fn register_http_shutdown(_shutdown: Arc<AtomicBool>) {}
+
 static SIGINT_HOOKED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(test)]
+mod http_shutdown_tests {
+    use super::*;
+
+    #[test]
+    fn sigterm_marks_registered_http_shutdown_flags() {
+        let first = Arc::new(AtomicBool::new(false));
+        let second = Arc::new(AtomicBool::new(false));
+        install_http_shutdown_handler(Arc::clone(&first));
+        install_http_shutdown_handler(Arc::clone(&second));
+
+        gossamer_std::signal::deliver(gossamer_std::signal::sigs::SIGTERM);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while std::time::Instant::now() < deadline {
+            if first.load(Ordering::Acquire) && second.load(Ordering::Acquire) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(first.load(Ordering::Acquire));
+        assert!(second.load(Ordering::Acquire));
+    }
+}

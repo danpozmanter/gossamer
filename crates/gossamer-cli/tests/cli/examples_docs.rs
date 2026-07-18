@@ -280,6 +280,33 @@ fn perf_gate_benchmarks_keep_work_observable() {
 }
 
 #[test]
+fn crypto_x509_crl_benchmark_uses_the_public_verifier_and_checks_success() {
+    let fixture = workspace_root().join("benchmarks/perf/crypto_x509_crl.gos");
+    let source = std::fs::read_to_string(&fixture).expect("read crypto X.509 benchmark fixture");
+    assert!(
+        source.contains("fn bench_crypto_x509_crl_verify_observed() -> i64")
+            && source.contains("crypto::x509::verify_server_certificate_with_crls")
+            && source.contains("Ok(_) => 1"),
+        "the crypto benchmark must call the public verifier and retain its checked result"
+    );
+    let out = Command::new(gos_bin())
+        .args(["bench"])
+        .arg(&fixture)
+        .output()
+        .expect("spawn crypto X.509 benchmark");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("bench_crypto_x509_crl_verify_observed") && stdout.contains("ns/op"),
+        "expected checked crypto benchmark output, got: {stdout}"
+    );
+}
+
+#[test]
 fn http_diagnostics_transport_benchmark_uses_loopback_fixture() {
     let fixture = workspace_root().join("benchmarks/perf/http_diagnostics_transport.gos");
     let out = Command::new(gos_bin())

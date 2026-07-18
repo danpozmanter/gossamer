@@ -520,6 +520,24 @@ impl<'a> Builder<'a> {
         match (joined, args.len()) {
             // Non-closure constructors / accessors.
             ("iter::collect", 1) => {
+                if let TyKind::Iterator(elem) = self.tcx.kind_of(args[0].ty).clone() {
+                    let iter = self.lower_expr(&args[0])?;
+                    let dest_ty = self.tcx.intern(TyKind::Vec(elem));
+                    let helper = match self.tcx.kind_of(elem) {
+                        TyKind::Tuple(fields)
+                            if fields.len() == 2 && fields.iter().all(|field| *field == i64_ty) =>
+                        {
+                            "gos_rt_lazy_iter_collect_pair_i64"
+                        }
+                        _ => "gos_rt_lazy_iter_collect_i64",
+                    };
+                    return Some(self.emit_combinator_call(
+                        helper,
+                        vec![Operand::Copy(Place::local(iter))],
+                        dest_ty,
+                        span,
+                    ));
+                }
                 let v = self.lower_iter_vec_arg(&args[0])?;
                 let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_) | TyKind::Slice(_)) {
                     ty
@@ -534,6 +552,23 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("iter::count", 1) => {
+                if let TyKind::Iterator(elem) = self.tcx.kind_of(args[0].ty).clone() {
+                    let iter = self.lower_expr(&args[0])?;
+                    let helper = match self.tcx.kind_of(elem) {
+                        TyKind::Tuple(fields)
+                            if fields.len() == 2 && fields.iter().all(|field| *field == i64_ty) =>
+                        {
+                            "gos_rt_lazy_iter_count_pair_i64"
+                        }
+                        _ => "gos_rt_lazy_iter_count_i64",
+                    };
+                    return Some(self.emit_combinator_call(
+                        helper,
+                        vec![Operand::Copy(Place::local(iter))],
+                        i64_ty,
+                        span,
+                    ));
+                }
                 let v = self.lower_iter_vec_arg(&args[0])?;
                 let dest = self.fresh(i64_ty);
                 let next = self.new_block(span);
@@ -580,6 +615,20 @@ impl<'a> Builder<'a> {
             }
             ("iter::once", 1) => {
                 let v = self.lower_expr(&args[0])?;
+                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(_)) {
+                    let dest = self.fresh(ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_lazy_iter_once_i64".to_string(),
+                        )),
+                        args: vec![Operand::Copy(Place::local(v))],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
                 let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_) | TyKind::Slice(_)) {
                     ty
                 } else {
@@ -601,6 +650,15 @@ impl<'a> Builder<'a> {
             }
             ("iter::sum", 1) => {
                 // Element-type dispatch: f64 vec → sum_f64, otherwise sum_i64.
+                if matches!(self.tcx.kind_of(args[0].ty), TyKind::Iterator(_)) {
+                    let iter = self.lower_expr(&args[0])?;
+                    return Some(self.emit_combinator_call(
+                        "gos_rt_lazy_iter_sum_i64",
+                        vec![Operand::Copy(Place::local(iter))],
+                        i64_ty,
+                        span,
+                    ));
+                }
                 let v = self.lower_iter_vec_arg(&args[0])?;
                 let elem_is_f64 =
                     matches!(self.iter_element_kind(args[0].ty), Some(TyKind::Float(_)));
@@ -626,6 +684,15 @@ impl<'a> Builder<'a> {
                 Some(dest)
             }
             ("iter::product", 1) => {
+                if matches!(self.tcx.kind_of(args[0].ty), TyKind::Iterator(_)) {
+                    let iter = self.lower_expr(&args[0])?;
+                    return Some(self.emit_combinator_call(
+                        "gos_rt_lazy_iter_product_i64",
+                        vec![Operand::Copy(Place::local(iter))],
+                        i64_ty,
+                        span,
+                    ));
+                }
                 let v = self.lower_iter_vec_arg(&args[0])?;
                 let elem_is_f64 =
                     matches!(self.iter_element_kind(args[0].ty), Some(TyKind::Float(_)));
@@ -655,14 +722,49 @@ impl<'a> Builder<'a> {
             // scalar forms (`min(a, b)`) are handled separately; only the
             // single Vec/array argument reaches here.
             ("iter::min" | "min" | "math::min", 1) => {
+                if matches!(self.tcx.kind_of(args[0].ty), TyKind::Iterator(_)) {
+                    let iter = self.lower_expr(&args[0])?;
+                    return Some(self.emit_combinator_call(
+                        "gos_rt_lazy_iter_min_i64",
+                        vec![Operand::Copy(Place::local(iter))],
+                        ty,
+                        span,
+                    ));
+                }
                 self.lower_iter_simple_vec_i64_opt("gos_rt_iter_min_i64", args, span)
             }
             ("iter::max" | "max" | "math::max", 1) => {
+                if matches!(self.tcx.kind_of(args[0].ty), TyKind::Iterator(_)) {
+                    let iter = self.lower_expr(&args[0])?;
+                    return Some(self.emit_combinator_call(
+                        "gos_rt_lazy_iter_max_i64",
+                        vec![Operand::Copy(Place::local(iter))],
+                        ty,
+                        span,
+                    ));
+                }
                 self.lower_iter_simple_vec_i64_opt("gos_rt_iter_max_i64", args, span)
             }
             ("iter::range", 2) => {
                 let a = self.lower_expr(&args[0])?;
                 let b = self.lower_expr(&args[1])?;
+                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(_)) {
+                    let dest = self.fresh(ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_lazy_iter_range_i64".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(a)),
+                            Operand::Copy(Place::local(b)),
+                        ],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
                 let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
                 let dest = self.fresh(vec_i64);
                 let next = self.new_block(span);
@@ -681,6 +783,23 @@ impl<'a> Builder<'a> {
             ("iter::range_inclusive", 2) => {
                 let a = self.lower_expr(&args[0])?;
                 let b = self.lower_expr(&args[1])?;
+                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(_)) {
+                    let dest = self.fresh(ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_lazy_iter_range_inclusive_i64".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(a)),
+                            Operand::Copy(Place::local(b)),
+                        ],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
                 let dest = self.fresh(ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
@@ -700,6 +819,23 @@ impl<'a> Builder<'a> {
             ("iter::repeat", 2) => {
                 let v = self.lower_expr(&args[0])?;
                 let n = self.lower_expr(&args[1])?;
+                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(_)) {
+                    let dest = self.fresh(ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_lazy_iter_repeat_i64".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(v)),
+                            Operand::Copy(Place::local(n)),
+                        ],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
                 let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
                 let dest = self.fresh(vec_i64);
                 let next = self.new_block(span);
@@ -717,6 +853,24 @@ impl<'a> Builder<'a> {
             }
             ("iter::take", 2) => {
                 let n = self.lower_expr(&args[0])?;
+                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(_)) {
+                    let iter = self.lower_lazy_iter_i64_arg(&args[1])?;
+                    let dest = self.fresh(ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_lazy_iter_take_i64".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(n)),
+                            Operand::Copy(Place::local(iter)),
+                        ],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
                 let v = self.lower_iter_vec_arg(&args[1])?;
                 let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
                 let dest = self.fresh(vec_i64);
@@ -753,6 +907,24 @@ impl<'a> Builder<'a> {
             }
             ("iter::skip", 2) => {
                 let n = self.lower_expr(&args[0])?;
+                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(_)) {
+                    let iter = self.lower_lazy_iter_i64_arg(&args[1])?;
+                    let dest = self.fresh(ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_lazy_iter_skip_i64".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(n)),
+                            Operand::Copy(Place::local(iter)),
+                        ],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
                 let v = self.lower_iter_vec_arg(&args[1])?;
                 let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
                 let dest = self.fresh(vec_i64);
@@ -773,6 +945,25 @@ impl<'a> Builder<'a> {
                 self.lower_iter_simple_vec_in_vec_out("gos_rt_iter_reversed_i64", args, ty, span)
             }
             ("iter::chain", 2) => {
+                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(_)) {
+                    let a = self.lower_lazy_iter_i64_arg(&args[0])?;
+                    let b = self.lower_lazy_iter_i64_arg(&args[1])?;
+                    let dest = self.fresh(ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_lazy_iter_chain_i64".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(a)),
+                            Operand::Copy(Place::local(b)),
+                        ],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
                 let a = self.lower_iter_vec_arg(&args[0])?;
                 let b = self.lower_iter_vec_arg(&args[1])?;
                 let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
@@ -804,6 +995,21 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("iter::enumerate", 1) => {
+                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(_)) {
+                    let iter_local = self.lower_lazy_iter_i64_arg(&args[0])?;
+                    let dest = self.fresh(ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_lazy_iter_enumerate_i64".to_string(),
+                        )),
+                        args: vec![Operand::Copy(Place::local(iter_local))],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
                 let vec_local = self.lower_iter_vec_arg(&args[0])?;
                 let pair = self.tcx.intern(TyKind::Tuple(vec![i64_ty, i64_ty]));
                 let dest_ty = self.tcx.intern(TyKind::Vec(pair));
@@ -815,6 +1021,25 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("iter::zip", 2) => {
+                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(_)) {
+                    let a = self.lower_lazy_iter_i64_arg(&args[0])?;
+                    let b = self.lower_lazy_iter_i64_arg(&args[1])?;
+                    let dest = self.fresh(ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_lazy_iter_zip_i64".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(a)),
+                            Operand::Copy(Place::local(b)),
+                        ],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
                 let a = self.lower_iter_vec_arg(&args[0])?;
                 let b = self.lower_iter_vec_arg(&args[1])?;
                 let pair = self.tcx.intern(TyKind::Tuple(vec![i64_ty, i64_ty]));
@@ -925,6 +1150,29 @@ impl<'a> Builder<'a> {
                     .iter_element_kind(ty)
                     .map_or(i64_ty, |k| self.tcx.intern(k));
                 let out_is_f64 = matches!(self.tcx.kind_of(out_ty), TyKind::Float(_));
+                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(_))
+                    && !elem_is_f64
+                    && !out_is_f64
+                {
+                    let closure_local =
+                        self.lower_iter_closure(&args[0], &[i64_ty], out_ty, span)?;
+                    let iter_local = self.lower_lazy_iter_i64_arg(&args[1])?;
+                    let dest = self.fresh(ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_lazy_iter_map_i64".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(closure_local)),
+                            Operand::Copy(Place::local(iter_local)),
+                        ],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
                 let (in_ty, helper) = match (elem_is_f64, out_is_f64) {
                     (true, true) => (f64_ty, "gos_rt_iter_map_f64"),
                     (true, false) => (f64_ty, "gos_rt_iter_map_f64_word"),
@@ -952,6 +1200,26 @@ impl<'a> Builder<'a> {
                 let f64_ty = self.tcx.float_ty(gossamer_types::FloatTy::F64);
                 let elem_is_f64 =
                     matches!(self.iter_element_kind(args[1].ty), Some(TyKind::Float(_)));
+                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(_)) && !elem_is_f64 {
+                    let closure_local =
+                        self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
+                    let iter_local = self.lower_lazy_iter_i64_arg(&args[1])?;
+                    let dest = self.fresh(ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_lazy_iter_filter_i64".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(closure_local)),
+                            Operand::Copy(Place::local(iter_local)),
+                        ],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
                 let in_ty = if elem_is_f64 { f64_ty } else { i64_ty };
                 let helper = if elem_is_f64 {
                     "gos_rt_iter_filter_f64"
@@ -978,6 +1246,25 @@ impl<'a> Builder<'a> {
                 let init_local = self.lower_expr(&args[0])?;
                 let closure_local =
                     self.lower_iter_closure(&args[1], &[i64_ty, i64_ty], i64_ty, span)?;
+                if matches!(self.tcx.kind_of(args[2].ty), TyKind::Iterator(_)) {
+                    let iter_local = self.lower_expr(&args[2])?;
+                    let dest = self.fresh(i64_ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_lazy_iter_fold_i64".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(init_local)),
+                            Operand::Copy(Place::local(closure_local)),
+                            Operand::Copy(Place::local(iter_local)),
+                        ],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
                 let vec_local = self.lower_iter_vec_arg(&args[2])?;
                 let dest = self.fresh(i64_ty);
                 let next = self.new_block(span);
@@ -1014,6 +1301,24 @@ impl<'a> Builder<'a> {
             ("iter::any", 2) => {
                 let bool_ty = self.tcx.bool_ty();
                 let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
+                if matches!(self.tcx.kind_of(args[1].ty), TyKind::Iterator(_)) {
+                    let iter_local = self.lower_expr(&args[1])?;
+                    let dest = self.fresh(bool_ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_lazy_iter_any_i64".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(closure_local)),
+                            Operand::Copy(Place::local(iter_local)),
+                        ],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
                 // Bool-typed destination so `{}` renders true/false
                 // like the VM; the shim returns i64 0/1.
@@ -1034,6 +1339,24 @@ impl<'a> Builder<'a> {
             ("iter::all", 2) => {
                 let bool_ty = self.tcx.bool_ty();
                 let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
+                if matches!(self.tcx.kind_of(args[1].ty), TyKind::Iterator(_)) {
+                    let iter_local = self.lower_expr(&args[1])?;
+                    let dest = self.fresh(bool_ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_lazy_iter_all_i64".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(closure_local)),
+                            Operand::Copy(Place::local(iter_local)),
+                        ],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
                 // Bool-typed destination so `{}` renders true/false
                 // like the VM; the shim returns i64 0/1.
@@ -1056,6 +1379,18 @@ impl<'a> Builder<'a> {
                 // pattern matching on the result keeps working.
                 let bool_ty = self.tcx.bool_ty();
                 let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
+                if matches!(self.tcx.kind_of(args[1].ty), TyKind::Iterator(_)) {
+                    let iter_local = self.lower_expr(&args[1])?;
+                    return Some(self.emit_combinator_call(
+                        "gos_rt_lazy_iter_find_i64",
+                        vec![
+                            Operand::Copy(Place::local(closure_local)),
+                            Operand::Copy(Place::local(iter_local)),
+                        ],
+                        ty,
+                        span,
+                    ));
+                }
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
                 let value = self.fresh(i64_ty);
                 let after_value = self.new_block(span);
@@ -2092,6 +2427,26 @@ impl<'a> Builder<'a> {
             return Some(self.coerce_array_to_vec(raw, elem, len, arg.span));
         }
         Some(raw)
+    }
+
+    /// Lowers an edition-2027 scalar iterator input. Existing iterator state
+    /// passes through unchanged; Vec, slice, and fixed-array sources become a
+    /// retained borrowed runtime iterator handle before an adapter consumes
+    /// them.
+    fn lower_lazy_iter_i64_arg(&mut self, arg: &HirExpr) -> Option<Local> {
+        use gossamer_types::TyKind;
+        if matches!(self.tcx.kind_of(arg.ty), TyKind::Iterator(_)) {
+            return self.lower_expr(arg);
+        }
+        let source = self.lower_iter_vec_arg(arg)?;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let iter_ty = self.tcx.intern(TyKind::Iterator(i64_ty));
+        Some(self.emit_combinator_call(
+            "gos_rt_lazy_iter_from_vec_i64",
+            vec![Operand::Copy(Place::local(source))],
+            iter_ty,
+            arg.span,
+        ))
     }
 
     pub(crate) fn try_lower_for_hashmap_iter(

@@ -126,13 +126,353 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module, ModuleDeclarations};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use gossamer_mir::{
-    AssertMessage, BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue,
-    StatementKind, Terminator, UnOp,
+    AssertMessage, BinOp, Body, ConstValue, IteratorAdapterKind, IteratorSourceKind, Local,
+    Operand, Place, Projection, Rvalue, StatementKind, Terminator, UnOp,
 };
 use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 use rayon::prelude::*;
 
 use super::*;
+
+fn emit_lazy_iter_runtime_call(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    intrinsics: &mut IntrinsicContext,
+    name: &'static str,
+    args: &[ir::Value],
+) -> Result<Option<ir::Value>> {
+    let func = intrinsics.extern_fn_by_name(module, name)?;
+    let fref = module.declare_func_in_func(func, builder.func);
+    let call = builder.ins().call(fref, args);
+    Ok(builder.inst_results(call).first().copied())
+}
+
+fn store_typed_iter_value(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    locals: &mut HashMap<Local, Variable>,
+    body: &Body,
+    tcx: &TyCtxt,
+    place: &Place,
+    value: ir::Value,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<()> {
+    if place.projection.is_empty() {
+        define_var_to(
+            builder,
+            locals,
+            &intrinsics.body_cl_types,
+            place.local,
+            value,
+        );
+        return Ok(());
+    }
+    let leaf_ty = cl_type_of(tcx, resolve_place_ty(tcx, body, place), module);
+    lower_place_store(
+        module, builder, locals, body, tcx, place, value, leaf_ty, intrinsics,
+    )
+}
+
+fn emit_nonescaping_iter_next(
+    builder: &mut FunctionBuilder<'_>,
+    intrinsics: &mut IntrinsicContext,
+    local: Local,
+    allowed: ir::Value,
+) -> Option<(ir::Value, ir::Value)> {
+    match intrinsics.nonescaping_iter_state.get(&local).copied()? {
+        NonescapingIteratorState::Range { current, end } => {
+            let current_value = builder.use_var(current);
+            let end_value = builder.use_var(end);
+            let before_end = builder
+                .ins()
+                .icmp(IntCC::SignedLessThan, current_value, end_value);
+            let has_value = builder.ins().band(allowed, before_end);
+            let incremented = builder.ins().iadd_imm(current_value, 1);
+            let next_value = builder.ins().select(has_value, incremented, current_value);
+            builder.def_var(current, next_value);
+            Some((has_value, current_value))
+        }
+        NonescapingIteratorState::Take {
+            upstream,
+            remaining,
+        } => {
+            let remaining_value = builder.use_var(remaining);
+            let zero = builder.ins().iconst(types::I64, 0);
+            let has_budget = builder
+                .ins()
+                .icmp(IntCC::SignedGreaterThan, remaining_value, zero);
+            let upstream_allowed = builder.ins().band(allowed, has_budget);
+            let (has_value, value) =
+                emit_nonescaping_iter_next(builder, intrinsics, upstream, upstream_allowed)?;
+            let decremented = builder.ins().iadd_imm(remaining_value, -1);
+            let next_remaining = builder
+                .ins()
+                .select(has_value, decremented, remaining_value);
+            builder.def_var(remaining, next_remaining);
+            Some((has_value, value))
+        }
+    }
+}
+
+fn lower_typed_iterator_statement(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    locals: &mut HashMap<Local, Variable>,
+    body: &Body,
+    tcx: &TyCtxt,
+    statement: &gossamer_mir::Statement,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<bool> {
+    let ptr_ty = module.target_config().pointer_type();
+    match &statement.kind {
+        StatementKind::IterSource {
+            dst,
+            source_kind,
+            source,
+            ..
+        } => {
+            if intrinsics.nonescaping_iter_locals.contains(&dst.local)
+                && matches!(source_kind, IteratorSourceKind::Range)
+            {
+                let current = builder.declare_var(types::I64);
+                let end_var = builder.declare_var(types::I64);
+                let zero = builder.ins().iconst(types::I64, 0);
+                let end = lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    source,
+                    Some(types::I64),
+                    intrinsics,
+                )?;
+                builder.def_var(current, zero);
+                builder.def_var(end_var, end);
+                intrinsics.nonescaping_iter_state.insert(
+                    dst.local,
+                    NonescapingIteratorState::Range {
+                        current,
+                        end: end_var,
+                    },
+                );
+                return Ok(true);
+            }
+            let (name, args) = match source_kind {
+                IteratorSourceKind::Range => {
+                    let start = builder.ins().iconst(types::I64, 0);
+                    let end = lower_operand(
+                        module,
+                        builder,
+                        locals,
+                        body,
+                        tcx,
+                        source,
+                        Some(types::I64),
+                        intrinsics,
+                    )?;
+                    ("gos_rt_lazy_iter_range_i64", vec![start, end])
+                }
+                IteratorSourceKind::Slice | IteratorSourceKind::VecInto => {
+                    let source = lower_operand(
+                        module,
+                        builder,
+                        locals,
+                        body,
+                        tcx,
+                        source,
+                        Some(ptr_ty),
+                        intrinsics,
+                    )?;
+                    let source = coerce_arg_to(builder, source, ptr_ty)?;
+                    ("gos_rt_lazy_iter_from_vec_i64", vec![source])
+                }
+            };
+            let value = emit_lazy_iter_runtime_call(module, builder, intrinsics, name, &args)?
+                .unwrap_or_else(|| builder.ins().iconst(ptr_ty, 0));
+            store_typed_iter_value(module, builder, locals, body, tcx, dst, value, intrinsics)?;
+            Ok(true)
+        }
+        StatementKind::IterAdapter {
+            dst,
+            adapter_kind,
+            upstream,
+            closure_or_arg,
+            ..
+        } => {
+            if intrinsics.nonescaping_iter_locals.contains(&dst.local)
+                && matches!(adapter_kind, IteratorAdapterKind::Take)
+            {
+                let remaining = builder.declare_var(types::I64);
+                let count = match closure_or_arg {
+                    Some(arg) => lower_operand(
+                        module,
+                        builder,
+                        locals,
+                        body,
+                        tcx,
+                        arg,
+                        Some(types::I64),
+                        intrinsics,
+                    )?,
+                    None => builder.ins().iconst(types::I64, 0),
+                };
+                let zero = builder.ins().iconst(types::I64, 0);
+                let positive = builder.ins().icmp(IntCC::SignedGreaterThan, count, zero);
+                let count = builder.ins().select(positive, count, zero);
+                builder.def_var(remaining, count);
+                intrinsics.nonescaping_iter_state.insert(
+                    dst.local,
+                    NonescapingIteratorState::Take {
+                        upstream: upstream.local,
+                        remaining,
+                    },
+                );
+                return Ok(true);
+            }
+            let upstream = lower_place_read(
+                module,
+                builder,
+                locals,
+                body,
+                tcx,
+                upstream,
+                Some(ptr_ty),
+                intrinsics,
+            )?;
+            let upstream = coerce_arg_to(builder, upstream, ptr_ty)?;
+            let (name, args) = match adapter_kind {
+                IteratorAdapterKind::Take | IteratorAdapterKind::Skip => {
+                    let n = match closure_or_arg {
+                        Some(arg) => lower_operand(
+                            module,
+                            builder,
+                            locals,
+                            body,
+                            tcx,
+                            arg,
+                            Some(types::I64),
+                            intrinsics,
+                        )?,
+                        None => builder.ins().iconst(types::I64, 0),
+                    };
+                    let name = if matches!(adapter_kind, IteratorAdapterKind::Take) {
+                        "gos_rt_lazy_iter_take_i64"
+                    } else {
+                        "gos_rt_lazy_iter_skip_i64"
+                    };
+                    (name, vec![n, upstream])
+                }
+                IteratorAdapterKind::Map | IteratorAdapterKind::Filter => {
+                    let env = match closure_or_arg {
+                        Some(arg) => lower_operand(
+                            module,
+                            builder,
+                            locals,
+                            body,
+                            tcx,
+                            arg,
+                            Some(ptr_ty),
+                            intrinsics,
+                        )?,
+                        None => builder.ins().iconst(ptr_ty, 0),
+                    };
+                    let env = coerce_arg_to(builder, env, ptr_ty)?;
+                    let name = if matches!(adapter_kind, IteratorAdapterKind::Map) {
+                        "gos_rt_lazy_iter_map_i64"
+                    } else {
+                        "gos_rt_lazy_iter_filter_i64"
+                    };
+                    (name, vec![env, upstream])
+                }
+                IteratorAdapterKind::Enumerate => {
+                    ("gos_rt_lazy_iter_enumerate_i64", vec![upstream])
+                }
+                IteratorAdapterKind::Chain | IteratorAdapterKind::Zip => {
+                    let rhs = match closure_or_arg {
+                        Some(arg) => lower_operand(
+                            module,
+                            builder,
+                            locals,
+                            body,
+                            tcx,
+                            arg,
+                            Some(ptr_ty),
+                            intrinsics,
+                        )?,
+                        None => builder.ins().iconst(ptr_ty, 0),
+                    };
+                    let rhs = coerce_arg_to(builder, rhs, ptr_ty)?;
+                    let name = if matches!(adapter_kind, IteratorAdapterKind::Chain) {
+                        "gos_rt_lazy_iter_chain_i64"
+                    } else {
+                        "gos_rt_lazy_iter_zip_i64"
+                    };
+                    (name, vec![upstream, rhs])
+                }
+            };
+            let value = emit_lazy_iter_runtime_call(module, builder, intrinsics, name, &args)?
+                .unwrap_or_else(|| builder.ins().iconst(ptr_ty, 0));
+            store_typed_iter_value(module, builder, locals, body, tcx, dst, value, intrinsics)?;
+            Ok(true)
+        }
+        StatementKind::IterNext {
+            dst_option,
+            iter_place,
+            ..
+        } => {
+            if intrinsics
+                .nonescaping_iter_locals
+                .contains(&iter_place.local)
+            {
+                let allowed = builder.ins().iconst(types::I8, 1);
+                let (has_value, value) =
+                    emit_nonescaping_iter_next(builder, intrinsics, iter_place.local, allowed)
+                        .ok_or_else(|| anyhow!("missing nonescaping iterator state"))?;
+                let zero = builder.ins().iconst(types::I64, 0);
+                let one = builder.ins().iconst(types::I64, 1);
+                let disc = builder.ins().select(has_value, zero, one);
+                let payload = builder.ins().select(has_value, value, zero);
+                let packed = emit_lazy_iter_runtime_call(
+                    module,
+                    builder,
+                    intrinsics,
+                    "gos_rt_result_new",
+                    &[disc, payload],
+                )?
+                .unwrap_or_else(|| builder.ins().iconst(types::I128, 0));
+                store_typed_iter_value(
+                    module, builder, locals, body, tcx, dst_option, packed, intrinsics,
+                )?;
+                return Ok(true);
+            }
+            let iter = lower_place_read(
+                module,
+                builder,
+                locals,
+                body,
+                tcx,
+                iter_place,
+                Some(ptr_ty),
+                intrinsics,
+            )?;
+            let iter = coerce_arg_to(builder, iter, ptr_ty)?;
+            let value = emit_lazy_iter_runtime_call(
+                module,
+                builder,
+                intrinsics,
+                "gos_rt_lazy_iter_next_i64",
+                &[iter],
+            )?
+            .unwrap_or_else(|| builder.ins().iconst(types::I128, 0));
+            store_typed_iter_value(
+                module, builder, locals, body, tcx, dst_option, value, intrinsics,
+            )?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
 
 /// True when the return local (`Local::RETURN`) provably holds a freshly
 /// constructed standalone heap aggregate this frame exclusively owns, so its
@@ -407,12 +747,10 @@ pub(super) fn lower_statement(
     statement: &gossamer_mir::Statement,
     intrinsics: &mut IntrinsicContext,
 ) -> Result<()> {
+    if lower_typed_iterator_statement(module, builder, locals, body, tcx, statement, intrinsics)? {
+        return Ok(());
+    }
     match &statement.kind {
-        StatementKind::IterSource { .. }
-        | StatementKind::IterAdapter { .. }
-        | StatementKind::IterNext { .. } => {
-            bail!("native codegen: typed iterator MIR reached Cranelift before iterator lowering");
-        }
         StatementKind::Assign { place, rvalue } => {
             // Route rvalue-position intrinsic calls (gos_alloc,
             // gos_store, gos_load, …) through the same handler the
@@ -730,6 +1068,9 @@ pub(super) fn lower_statement(
             }
         }
         StatementKind::StorageLive(_) | StatementKind::StorageDead(_) | StatementKind::Nop => {}
+        StatementKind::IterSource { .. }
+        | StatementKind::IterAdapter { .. }
+        | StatementKind::IterNext { .. } => unreachable!("typed iterator statements handled above"),
         // SetDiscriminant: store variant index at offset 0 of the
         // enum's backing place. Matches the Downcast convention
         // (tag at slot 0, payload at +8).

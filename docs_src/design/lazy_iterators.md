@@ -1,18 +1,20 @@
 # Lazy iterator protocol
 
-Status: design accepted for staged implementation; public eager `std::iter`
-helpers remain Experimental in 0.29.0.
+Status: implemented for the 0.30 edition-2027 public surface. Projects using
+edition 2026 keep the historical eager `std::iter` behavior, and
+`iter::eager_*` aliases remain available as explicit eager compatibility
+helpers.
 
 ## Goals
 
-The public protocol must support lazy `map`, `filter`, `take`, `skip`,
+The public protocol supports lazy `map`, `filter`, `take`, `skip`,
 `enumerate`, `chain`, and `zip` without allocating an intermediate `Vec`.
-Terminal operations must stop the source as soon as their result is known and
-must preserve the same closure call order in the VM, Cranelift JIT, and LLVM.
+Terminal operations stop the source as soon as their result is known and
+preserve the same closure call order in the VM, Cranelift JIT, and LLVM.
 
-The protocol is internal in its first release. User implementations and dynamic
-iterator trait objects are deferred until representation and optimization data
-are available.
+The protocol is internal in this release. User implementations, extra adapters
+such as `filter_map` and `flat_map`, and dynamic iterator trait objects are
+deferred until representation and optimization data are available.
 
 ## Source ownership
 
@@ -78,40 +80,32 @@ required.
 
 ## Backend lowering
 
-The VM stores iterator state in typed native handles and adds source-specific
-`next` bytecodes for range, slice, and owning Vec. Adapter bytecodes call the
-existing closure dispatcher only when an item reaches that adapter.
+The VM stores iterator state in native handles and pulls from sources and
+adapters only when a terminal requests an item. Adapter closures are called only
+for items that reach the adapter.
 
-Cranelift and LLVM lower the same MIR states to stack or coroutine-frame
-aggregates when they do not escape. `IterNext` becomes a small state-machine
-branch. A runtime handle is permitted only when an iterator crosses an unknown
-FFI boundary or is stored in an erased aggregate.
+Cranelift JIT and LLVM AOT use the same public contract through opaque runtime
+handles for the supported 0.30 surface. Scalar `Iterator<i64>` pipelines cover
+sources, `map`, `filter`, `take`, `skip`, `chain`, and scalar terminals. Pair
+iterator handles cover `enumerate`, `zip`, `collect`, and `count` for
+`(i64, i64)` items. The internal `IterSource`, `IterAdapter`, and `IterNext`
+MIR statements are verified and preserved by optimization passes, but strict
+lowering rejects them if a future lowering path emits them before executable
+backend lowering is added.
 
-The cross-tier conformance fixture records result, closure side-effect order,
-panic text, and allocation count. Promotion requires identical output and zero
-intermediate Vec allocations for `range.map.filter.take.collect`.
+The cross-tier conformance fixture records result and closure side-effect
+order. Promotion requires identical output and no intermediate Vec allocation
+for `range.map.filter.take.collect`.
+
+The runnable `examples/projects/lazy_iterators` project shows the normal
+materialization boundary. `benchmarks/lazy_iterators` compares it with the
+permanently eager compatibility surface and pins equal output.
 
 ## Migration
 
-The existing eager signatures stay available under their current names for the
-0.29 line and retain Experimental status. The lazy protocol first lands behind
-the `edition = "2027"` project setting with iterator-returning signatures.
-Projects on the prior edition keep eager behavior. The formatter and migration
-tool can then rewrite explicitly eager code to `iter::eager_*` names before the
-old signatures are deprecated.
-
-## Work split
-
-1. Type and MIR owner: add linear iterator types, the three MIR operations,
-   validation, and drop elaboration.
-2. VM owner: implement range, slice, and owning Vec sources plus `IterNext`.
-3. Backend owners: lower the agreed MIR independently in Cranelift and LLVM.
-4. Stdlib owner: add adapters and terminals only after all three source kinds
-   pass parity tests.
-5. Test owner: add early termination, infinite source, mutation invalidation,
-   panic, captured state, and allocation-count fixtures.
-6. Migration owner: edition gate, eager aliases, diagnostics, and automated
-   rewrites.
-
-Tracks 2, 3, and 5 can proceed in parallel after track 1 freezes the MIR data
-layout. Tracks 4 and 6 depend on the first all-tier `next` fixture.
+The existing eager signatures remain the edition-2026 default. Projects that
+select `edition = "2027"` receive iterator-returning signatures. Code that
+depends on eager materialization can either insert `iter::collect` at the
+materialization boundary or rename the operation to its `iter::eager_*`
+compatibility spelling. Those aliases are permanently eager in both editions
+and share the canonical eager lowering paths on every execution tier.

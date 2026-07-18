@@ -108,6 +108,16 @@ pub struct JitArtifact {
     pub code_bytes: u64,
 }
 
+/// Static admission record matching the native backend API.
+pub struct JitBodyDecision {
+    /// Body name.
+    pub name: String,
+    /// Always false on wasm.
+    pub admitted: bool,
+    /// Stable rejection categories.
+    pub reasons: Vec<&'static str>,
+}
+
 /// wasm never promotes a body to native code.
 #[must_use]
 pub fn has_worthy_jit_body(
@@ -117,6 +127,35 @@ pub fn has_worthy_jit_body(
     _struct_shapes: &HashMap<u32, u32>,
 ) -> bool {
     false
+}
+
+/// wasm retains no native compiler snapshot.
+#[must_use]
+pub fn jit_compile_body_names(
+    _bodies: &[gossamer_mir::Body],
+    _tcx: &gossamer_types::TyCtxt,
+    _enum_shapes: &HashMap<u32, u32>,
+    _struct_shapes: &HashMap<u32, u32>,
+) -> std::collections::HashSet<String> {
+    std::collections::HashSet::new()
+}
+
+/// wasm reports every body as unavailable for native promotion.
+#[must_use]
+pub fn jit_promotion_report(
+    bodies: &[gossamer_mir::Body],
+    _tcx: &gossamer_types::TyCtxt,
+    _enum_shapes: &HashMap<u32, u32>,
+    _struct_shapes: &HashMap<u32, u32>,
+) -> Vec<JitBodyDecision> {
+    bodies
+        .iter()
+        .map(|body| JitBodyDecision {
+            name: body.name.clone(),
+            admitted: false,
+            reasons: vec!["native-jit-unavailable"],
+        })
+        .collect()
 }
 
 /// wasm promotes nothing, so there are no eager-compile candidates.
@@ -146,6 +185,17 @@ pub fn compile_to_jit(
 #[allow(clippy::missing_errors_doc)]
 pub fn compile_to_jit_for_promotion(
     _bodies: &[gossamer_mir::Body],
+    _tcx: &gossamer_types::TyCtxt,
+    _enum_shapes: &HashMap<u32, u32>,
+    _struct_shapes: &HashMap<u32, u32>,
+) -> Result<JitArtifact, String> {
+    Ok(JitArtifact::default())
+}
+
+/// Ownership-taking wasm stub matching the native backend API.
+#[allow(clippy::missing_errors_doc)]
+pub fn compile_to_jit_for_promotion_owned(
+    _bodies: Vec<gossamer_mir::Body>,
     _tcx: &gossamer_types::TyCtxt,
     _enum_shapes: &HashMap<u32, u32>,
     _struct_shapes: &HashMap<u32, u32>,

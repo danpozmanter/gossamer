@@ -233,6 +233,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_str_center" => (&[ptr_ty, types::I64, types::I64], Some(ptr_ty)),
         "gos_rt_str_slice" => (&[ptr_ty, types::I64, types::I64], Some(ptr_ty)),
         "gos_rt_str_clear" => (&[], Some(ptr_ty)),
+        "gos_rt_str_with_capacity" => (&[types::I64], Some(ptr_ty)),
         "gos_rt_str_truncate" => (&[ptr_ty, types::I64], Some(ptr_ty)),
         "gos_rt_str_rfind_opt" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_strings_join" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
@@ -712,6 +713,34 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_runtime_cycle_collection_supported" => (&[], Some(types::I8)),
         "gos_rt_parse_i64_result" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_count_by_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_lazy_iter_range_i64" => (&[types::I64, types::I64], Some(ptr_ty)),
+        "gos_rt_lazy_iter_range_inclusive_i64" => (&[types::I64, types::I64], Some(ptr_ty)),
+        "gos_rt_lazy_iter_from_vec_i64" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_lazy_iter_repeat_i64" => (&[types::I64, types::I64], Some(ptr_ty)),
+        "gos_rt_lazy_iter_once_i64" => (&[types::I64], Some(ptr_ty)),
+        "gos_rt_lazy_iter_take_i64" => (&[types::I64, ptr_ty], Some(ptr_ty)),
+        "gos_rt_lazy_iter_skip_i64" => (&[types::I64, ptr_ty], Some(ptr_ty)),
+        "gos_rt_lazy_iter_chain_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_lazy_iter_enumerate_i64" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_lazy_iter_zip_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_lazy_iter_map_i64" | "gos_rt_lazy_iter_filter_i64" => {
+            (&[ptr_ty, ptr_ty], Some(ptr_ty))
+        }
+        "gos_rt_lazy_iter_collect_i64" | "gos_rt_lazy_iter_collect_pair_i64" => {
+            (&[ptr_ty], Some(ptr_ty))
+        }
+        "gos_rt_lazy_iter_count_i64"
+        | "gos_rt_lazy_iter_count_pair_i64"
+        | "gos_rt_lazy_iter_sum_i64"
+        | "gos_rt_lazy_iter_product_i64" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_lazy_iter_drop_i64" | "gos_rt_lazy_iter_drop_pair_i64" => (&[ptr_ty], None),
+        "gos_rt_lazy_iter_fold_i64" => (&[types::I64, ptr_ty, ptr_ty], Some(types::I64)),
+        "gos_rt_lazy_iter_any_i64" | "gos_rt_lazy_iter_all_i64" => {
+            (&[ptr_ty, ptr_ty], Some(types::I64))
+        }
+        "gos_rt_lazy_iter_find_i64" => (&[ptr_ty, ptr_ty], Some(types::I128)),
+        "gos_rt_lazy_iter_min_i64" | "gos_rt_lazy_iter_max_i64" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_lazy_iter_next_i64" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_iter_filter_map_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_find_map_i64" => (&[ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_iter_flat_map_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),

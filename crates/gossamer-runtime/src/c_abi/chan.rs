@@ -126,9 +126,16 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
             }
             // Buffer full. Goroutines park; OS threads block.
             if gossamer_coro::in_goroutine() {
-                drop(guard);
+                // Publish our waiter entry before releasing `buf`. A receiver
+                // can otherwise consume the last queued value between the
+                // full-buffer check above and registration below, observe no
+                // parked sender, and leave this goroutine asleep forever.
+                // `park` records a pre-unpark wake that arrives after the
+                // queue registration but before suspension.
+                let mut guard = Some(guard);
                 crate::sched_global::park(crate::sched::ParkReason::Chan, |parker| {
                     chan.parked_send.lock().push_back(parker.gid);
+                    drop(guard.take());
                 });
                 // Cleanup: remove our gid from parked_send if still
                 // present (e.g. a parallel close fired with pre_unpark
@@ -224,10 +231,15 @@ pub unsafe extern "C" fn gos_rt_chan_recv(c: *mut GosChan, out: *mut u8) -> i32 
             }
             // Empty channel. Goroutines park; OS threads block.
             if gossamer_coro::in_goroutine() {
-                drop(guard);
+                // Register while still holding `buf`, pairing this empty
+                // check with waiter publication. Without that pairing a
+                // sender can queue a value in the gap, find no waiter to
+                // wake, and strand both goroutines indefinitely.
+                let mut guard = Some(guard);
                 crate::sched_global::park(crate::sched::ParkReason::Chan, |parker| {
                     chan.recv_waiters.fetch_add(1, Ordering::AcqRel);
                     chan.parked_recv.lock().push_back(parker.gid);
+                    drop(guard.take());
                 });
                 chan.recv_waiters.fetch_sub(1, Ordering::AcqRel);
                 if let Some(gid) = crate::sched_global::current_gid() {
@@ -418,10 +430,15 @@ pub unsafe extern "C" fn gos_rt_chan_recv_ctx_option(
                 break (1i64, 0i64);
             }
             if gossamer_coro::in_goroutine() {
-                drop(guard);
+                // Keep the empty-buffer check and receiver registration in
+                // one critical section, just like the unconditional recv
+                // path. Cancellation does not change the channel wakeup
+                // contract.
+                let mut guard = Some(guard);
                 crate::sched_global::park(crate::sched::ParkReason::Chan, |parker| {
                     chan.recv_waiters.fetch_add(1, Ordering::AcqRel);
                     chan.parked_recv.lock().push_back(parker.gid);
+                    drop(guard.take());
                 });
                 chan.recv_waiters.fetch_sub(1, Ordering::AcqRel);
                 if let Some(g) = crate::sched_global::current_gid() {
@@ -682,6 +699,25 @@ pub unsafe extern "C" fn gos_rt_select_arm_default(b: *mut SelectBuilder) {
     });
 }
 
+/// Checks whether a select arm became ready while the caller was publishing
+/// its waiter registrations. The check happens after every arm is registered,
+/// so a readiness transition cannot be lost between the main select poll and
+/// suspension.
+fn select_arm_is_ready(kind: u8, chan: &GosChan) -> bool {
+    let guard = chan.buf.lock();
+    match kind {
+        // Receive is ready for a queued value or a closed-and-drained channel.
+        0 => storage_len(&guard) != 0 || *chan.closed.lock(),
+        // Send is ready when buffer space exists. An unbuffered send instead
+        // needs a receiver that has already published its interest.
+        1 if chan.cap == 0 => {
+            chan.recv_waiters.load(Ordering::Acquire) > 0 || !chan.parked_recv.lock().is_empty()
+        }
+        1 => chan.cap < 0 || (storage_len(&guard) as i64) < chan.cap,
+        _ => false,
+    }
+}
+
 /// Polls the registered arms in pseudo-random order, parking the goroutine until one
 /// is ready when there is no default arm. Returns the chosen arm's source
 /// index (the default arm's index when nothing else is ready), or -1 on a null
@@ -769,6 +805,15 @@ pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
                         } else if *kind == 1 {
                             chan.parked_send.lock().push_back(parker.gid);
                         }
+                    }
+                    // An arm may have become ready after the initial poll but
+                    // before its waiter entry was published. Recheck after
+                    // all entries exist; `unpark` records a pre-unpark wake
+                    // until this coroutine has actually suspended.
+                    if arms.iter().any(|(kind, c, _)| {
+                        !c.is_null() && select_arm_is_ready(*kind, unsafe { &**c })
+                    }) {
+                        crate::sched_global::scheduler().unpark(parker.gid);
                     }
                 });
                 if let Some(gid) = crate::sched_global::current_gid() {

@@ -548,6 +548,16 @@ pub extern "C" fn gos_rt_str_clear() -> *mut c_char {
     alloc_cstring(b"")
 }
 
+/// Allocates an empty owned string with at least `capacity` writable bytes.
+/// This is the compiled implementation of `String::with_capacity`; subsequent
+/// unique `push_str` calls reuse the allocation until the reserved space is
+/// exhausted.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_str_with_capacity(capacity: i64) -> *mut c_char {
+    let capacity = usize::try_from(capacity.max(0)).unwrap_or(u32::MAX as usize);
+    alloc_growable(&[], capacity.min(u32::MAX as usize))
+}
+
 /// `s.truncate(n)` for compiled String method lowering. The public method takes
 /// a byte length; if `n` lands inside a UTF-8 scalar, truncate to the preceding
 /// valid boundary so the returned Gossamer String remains well-formed.
@@ -1022,6 +1032,32 @@ pub unsafe extern "C" fn gos_rt_str_append_bytes(
         unsafe { gos_rt_str_free(acc.cast_mut()) };
     }
     result
+}
+
+/// Writes `bytes` into an exclusively owned builder whose caller already
+/// reserved enough capacity, then publishes the new length and terminator.
+/// This is the internal bulk-writer path used by serializers that own the
+/// builder for their entire lifetime. It avoids repeating ownership and
+/// capacity checks for every small formatter fragment.
+///
+/// # Safety
+///
+/// `acc` must be a live, uniquely owned growable Gossamer string. `offset`
+/// must equal its current length, and `offset + bytes.len()` must not exceed
+/// its capacity.
+pub(crate) unsafe fn str_builder_write_reserved(acc: *mut c_char, offset: usize, bytes: &[u8]) {
+    let new_len = offset
+        .checked_add(bytes.len())
+        .expect("reserved string length overflow");
+    debug_assert!(unsafe { is_typed_builder(acc) });
+    debug_assert!(u32::try_from(new_len).is_ok());
+    unsafe {
+        let dst = acc.cast::<u8>().add(offset);
+        copy_small_bytes(bytes.as_ptr(), dst, bytes.len());
+        *dst.add(bytes.len()) = 0;
+        let len_header = acc.cast::<u8>().sub(5);
+        std::ptr::copy_nonoverlapping((new_len as u32).to_le_bytes().as_ptr(), len_header, 4);
+    }
 }
 
 /// Appends the decimal form of `n` straight onto growable string `acc`

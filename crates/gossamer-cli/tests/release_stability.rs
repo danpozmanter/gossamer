@@ -1244,11 +1244,11 @@ fn main() {
 }
 
 #[test]
-fn release_rejects_unrowed_combinator_closure_with_gt0013() {
-    // `iter::count` exists but has no checker signature row, so a
-    // closure argument's parameter type cannot be inferred - the
-    // realistic mistake is reaching for `count` where `count_by`
-    // is the predicate-taking form.
+fn release_rejects_count_with_predicate_as_wrong_arity() {
+    // `iter::count` now has an edition-aware checker row and remains a
+    // one-argument terminal. The realistic mistake is reaching for `count`
+    // where `count_by` is the predicate-taking form, so reject the extra
+    // closure as an arity error.
     assert_release_build_rejects(
         "reject_closure_param",
         r#"
@@ -1260,7 +1260,7 @@ fn main() {
     println!("{}", n)
 }
 "#,
-        "GT0013",
+        "GT0018",
     );
 }
 

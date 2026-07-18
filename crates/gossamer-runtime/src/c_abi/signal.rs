@@ -1195,6 +1195,7 @@ pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *mut GosVec, idx: i64) -> i12
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let vec = unsafe { &mut *v };
+        crate::c_abi::vec::bump_vec_mutation_generation(vec);
         let removed = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, idx) };
         // Shift the tail [idx+1, len) down one element so the removal is
         // reflected in place (the caller owns the returned element, so its
@@ -1226,6 +1227,7 @@ pub unsafe extern "C" fn gos_rt_vec_remove_at(v: *mut GosVec, idx: i64) {
             return;
         }
         let vec = unsafe { &mut *v };
+        crate::c_abi::vec::bump_vec_mutation_generation(vec);
         let stride = vec.elem_bytes as usize;
         if !vec.ptr.is_null() && idx + 1 < len {
             let base = vec.ptr.as_ptr();
@@ -1251,6 +1253,7 @@ pub unsafe extern "C" fn gos_rt_vec_pop_opt(v: *mut GosVec) -> i128 {
         if vec.len <= 0 {
             return unsafe { gos_rt_result_new(1, 0) };
         }
+        crate::c_abi::vec::bump_vec_mutation_generation(vec);
         vec.len -= 1;
         let value = unsafe { crate::c_abi::vec::vec_elem_payload_word(vec, vec.len) };
         unsafe { gos_rt_result_new(0, value) }
@@ -1267,6 +1270,7 @@ pub unsafe extern "C" fn gos_rt_vec_pop(v: *mut GosVec, out: *mut u8) -> i32 {
         if vec.len <= 0 {
             return 0;
         }
+        crate::c_abi::vec::bump_vec_mutation_generation(vec);
         vec.len -= 1;
         let src = unsafe { vec.ptr.add((vec.len as usize) * (vec.elem_bytes as usize)) };
         unsafe {

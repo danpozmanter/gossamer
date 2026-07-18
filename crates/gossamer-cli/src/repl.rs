@@ -863,11 +863,9 @@ fn build_and_call(
     let mut tcx = gossamer_types::TyCtxt::new();
     let (tbl, type_diags) = gossamer_types::typecheck_source_file(&sf, &res, &mut tcx);
     // REPL expressions are installed as the tail of a generated function with
-    // no written return annotation. The checker correctly diagnoses that
-    // synthetic function as returning a non-unit value; it is not a user
-    // error, because the REPL deliberately returns that value for `Out[N]`.
-    // The checker attaches this return mismatch to the generated body span.
-    // Suppress only that exact body-level diagnostic, never one from the
+    // no written return annotation. The REPL deliberately returns that value
+    // for `Out[N]`, so its tail is neither discarded nor a user error.
+    // Suppress only that exact generated-body diagnostic, never one from the
     // submitted expression's children or declarations.
     let tail_span = repl_generated_body_span(&sf);
     let user_type_diags: Vec<_> = type_diags
@@ -901,13 +899,13 @@ fn is_implicit_repl_tail_diag(
     diag: &gossamer_types::TypeDiagnostic,
     tail_span: Option<gossamer_lex::Span>,
 ) -> bool {
-    matches!(
-        (&diag.error, tail_span),
-        (
-            gossamer_types::TypeError::TypeMismatch { expected, .. },
-            Some(span),
-        ) if expected == "()" && diag.span == span
-    )
+    match (&diag.error, tail_span) {
+        (gossamer_types::TypeError::TypeMismatch { expected, .. }, Some(span)) => {
+            expected == "()" && diag.span == span
+        }
+        (gossamer_types::TypeError::DiscardedResult, Some(span)) => diag.span == span,
+        _ => false,
+    }
 }
 
 /// Renders hard resolver/type-checker failures before the REPL can lower a

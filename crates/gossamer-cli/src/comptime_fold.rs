@@ -22,9 +22,9 @@ use anyhow::{Result, anyhow};
 /// (the caller's real pass re-runs the gate and reports those errors).
 /// Returns `Err` when a comptime region is not compile-time-known or
 /// does not evaluate to a scalar or string.
-pub(crate) fn fold_comptime(augmented: &str, file_label: &str) -> Result<String> {
+pub(crate) fn fold_comptime(augmented: String, file_label: &str) -> Result<String> {
     if !augmented.contains("comptime") {
-        return Ok(augmented.to_string());
+        return Ok(augmented);
     }
 
     // Comptime evaluation runs the bytecode VM during compilation, whose
@@ -34,7 +34,6 @@ pub(crate) fn fold_comptime(augmented: &str, file_label: &str) -> Result<String>
     // recursion: the `build` and `check` paths reach here on the main
     // thread, unlike `run` / `test`, which already execute inside
     // `with_vm_stack`.
-    let augmented = augmented.to_string();
     let file_label = file_label.to_string();
     crate::cmd::with_vm_stack(move || fold_comptime_on_vm(augmented, file_label))
 }
@@ -56,6 +55,7 @@ fn fold_comptime_on_vm(augmented: String, file_label: String) -> Result<String> 
     }
 
     let gossamer_driver::CheckedFrontend {
+        edition: _,
         sf,
         resolutions,
         table,

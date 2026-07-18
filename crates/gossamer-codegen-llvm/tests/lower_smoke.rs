@@ -18,10 +18,12 @@
 use gossamer_codegen_llvm::{BuildError, compile_to_object};
 use gossamer_lex::{SourceMap, Span};
 use gossamer_mir::{
-    BasicBlock, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Rvalue, Statement,
-    StatementKind, Terminator,
+    BasicBlock, BlockId, Body, ConstValue, IteratorAdapterKind, IteratorOwnership,
+    IteratorSourceKind, Local, LocalDecl, Operand, Place, Rvalue, Statement, StatementKind,
+    Terminator,
 };
-use gossamer_types::TyCtxt;
+use gossamer_resolve::DefId;
+use gossamer_types::{IntTy, Substs, TyCtxt, TyKind};
 
 fn dummy_span() -> Span {
     let mut map = SourceMap::new();
@@ -85,6 +87,208 @@ fn trivial_main_returning_zero() -> (Body, TyCtxt) {
     (body, tcx)
 }
 
+fn looping_main() -> (Body, TyCtxt) {
+    let mut tcx = TyCtxt::new();
+    let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+    let span = dummy_span();
+    let body = Body {
+        name: "main".to_string(),
+        def: None,
+        arity: 0,
+        locals: vec![
+            LocalDecl {
+                ty: i64_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+            LocalDecl {
+                ty: i64_ty,
+                debug_name: None,
+                mutable: true,
+                region: false,
+            },
+        ],
+        blocks: vec![
+            BasicBlock {
+                id: BlockId(0),
+                stmts: vec![Statement {
+                    span,
+                    kind: StatementKind::Assign {
+                        place: Place::local(Local(1)),
+                        rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+                    },
+                }],
+                terminator: Terminator::Goto { target: BlockId(1) },
+                span,
+            },
+            BasicBlock {
+                id: BlockId(1),
+                stmts: Vec::new(),
+                terminator: Terminator::SwitchInt {
+                    discriminant: Operand::Copy(Place::local(Local(1))),
+                    arms: vec![(1, BlockId(1))],
+                    default: BlockId(2),
+                },
+                span,
+            },
+            BasicBlock {
+                id: BlockId(2),
+                stmts: vec![Statement {
+                    span,
+                    kind: StatementKind::Assign {
+                        place: Place::local(Local(0)),
+                        rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    },
+                }],
+                terminator: Terminator::Return,
+                span,
+            },
+        ],
+        span,
+    };
+    (body, tcx)
+}
+
+fn typed_iterator_main() -> (Body, TyCtxt) {
+    let mut tcx = TyCtxt::new();
+    let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+    let iter_i64 = tcx.iterator_ty(i64_ty);
+    let option_i64 = tcx.intern(TyKind::Adt {
+        def: DefId::local(u32::MAX - 1),
+        substs: Substs::from_types([i64_ty]),
+    });
+    let span = dummy_span();
+    let body = Body {
+        name: "main".to_string(),
+        def: None,
+        arity: 0,
+        locals: vec![
+            LocalDecl {
+                ty: i64_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+            LocalDecl {
+                ty: iter_i64,
+                debug_name: None,
+                mutable: true,
+                region: false,
+            },
+            LocalDecl {
+                ty: iter_i64,
+                debug_name: None,
+                mutable: true,
+                region: false,
+            },
+            LocalDecl {
+                ty: option_i64,
+                debug_name: None,
+                mutable: true,
+                region: false,
+            },
+        ],
+        blocks: vec![BasicBlock {
+            id: BlockId(0),
+            stmts: vec![
+                Statement {
+                    span,
+                    kind: StatementKind::IterSource {
+                        dst: Place::local(Local(1)),
+                        source_kind: IteratorSourceKind::Range,
+                        source: Operand::Const(ConstValue::Int(5)),
+                        item_ty: i64_ty,
+                        ownership: IteratorOwnership::Owning,
+                    },
+                },
+                Statement {
+                    span,
+                    kind: StatementKind::IterAdapter {
+                        dst: Place::local(Local(2)),
+                        adapter_kind: IteratorAdapterKind::Take,
+                        upstream: Place::local(Local(1)),
+                        closure_or_arg: Some(Operand::Const(ConstValue::Int(2))),
+                        item_ty: i64_ty,
+                    },
+                },
+                Statement {
+                    span,
+                    kind: StatementKind::IterNext {
+                        dst_option: Place::local(Local(3)),
+                        iter_place: Place::local(Local(2)),
+                        item_ty: i64_ty,
+                    },
+                },
+                Statement {
+                    span,
+                    kind: StatementKind::Assign {
+                        place: Place::local(Local(0)),
+                        rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    },
+                },
+            ],
+            terminator: Terminator::Return,
+            span,
+        }],
+        span,
+    };
+    (body, tcx)
+}
+
+fn string_len_main() -> (Body, TyCtxt) {
+    let mut tcx = TyCtxt::new();
+    let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+    let string_ty = tcx.intern(TyKind::String);
+    let span = dummy_span();
+    let body = Body {
+        name: "main".to_string(),
+        def: None,
+        arity: 0,
+        locals: vec![
+            LocalDecl {
+                ty: i64_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+            LocalDecl {
+                ty: string_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+        ],
+        blocks: vec![
+            BasicBlock {
+                id: BlockId(0),
+                stmts: vec![Statement {
+                    span,
+                    kind: StatementKind::Assign {
+                        place: Place::local(Local(1)),
+                        rvalue: Rvalue::Use(Operand::Const(ConstValue::Str("hello".to_string()))),
+                    },
+                }],
+                terminator: Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_str_len".to_string())),
+                    args: vec![Operand::Copy(Place::local(Local(1)))],
+                    destination: Place::local(Local(0)),
+                    target: Some(BlockId(1)),
+                },
+                span,
+            },
+            BasicBlock {
+                id: BlockId(1),
+                stmts: Vec::new(),
+                terminator: Terminator::Return,
+                span,
+            },
+        ],
+        span,
+    };
+    (body, tcx)
+}
+
 #[test]
 fn llvm_lowers_constant_return_to_object_bytes() {
     if skip_if_llvm_missing() {
@@ -117,9 +321,57 @@ fn llvm_lowers_constant_return_to_object_bytes() {
 }
 
 #[test]
+fn llvm_numeric_loop_has_native_preemption_poll() {
+    let (body, tcx) = looping_main();
+    let ir = gossamer_codegen_llvm::render_ir_to_string(&[body], &tcx, false)
+        .expect("loop MIR must render to LLVM IR");
+    assert!(
+        ir.contains("gos_rt_preempt_check") && ir.contains("gos_preempt_counter"),
+        "native loop back-edges must preserve cooperative preemption: {ir}"
+    );
+}
+
+#[test]
+fn llvm_string_len_reads_the_constant_time_header() {
+    let (body, tcx) = string_len_main();
+    let ir = gossamer_codegen_llvm::render_ir_to_string(&[body], &tcx, false)
+        .expect("string length MIR must render to LLVM IR");
+    assert!(
+        ir.contains("getelementptr i8") && ir.contains("i64 -5"),
+        "string length must address the length header: {ir}"
+    );
+    assert!(
+        ir.contains("load i32") && ir.contains("zext i32"),
+        "string length must load and widen the u32 header: {ir}"
+    );
+    assert!(
+        !ir.contains("call i64 @gos_rt_str_len") && !ir.contains("call i64 @strlen"),
+        "string length must not scan bytes: {ir}"
+    );
+    assert!(
+        !ir.contains("%%"),
+        "generated labels must be valid LLVM IR: {ir}"
+    );
+}
+
+#[test]
 fn llvm_build_error_displays_unsupported_kind() {
     let err = BuildError::Unsupported("test only");
     let msg = format!("{err}");
     assert!(msg.contains("unsupported"));
     assert!(msg.contains("test only"));
+}
+
+#[test]
+fn llvm_renders_typed_iterator_mir_as_lazy_runtime_calls() {
+    let (body, tcx) = typed_iterator_main();
+    let ir = gossamer_codegen_llvm::render_ir_to_string(&[body], &tcx, false)
+        .expect("typed iterator MIR must render to LLVM IR");
+    assert!(ir.contains("@\"gos_rt_lazy_iter_range_i64\""), "{ir}");
+    assert!(ir.contains("@\"gos_rt_lazy_iter_take_i64\""), "{ir}");
+    assert!(ir.contains("@\"gos_rt_lazy_iter_next_i64\""), "{ir}");
+    assert!(
+        !ir.contains("typed iterator MIR reached LLVM before iterator lowering"),
+        "{ir}"
+    );
 }

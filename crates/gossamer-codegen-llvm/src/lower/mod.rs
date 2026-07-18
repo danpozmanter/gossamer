@@ -134,12 +134,10 @@ pub(crate) struct Lowerer<'a> {
     /// populated by the emitter before calling
     /// [`Lowerer::lower`].
     pub(crate) strings: std::rc::Rc<std::cell::RefCell<StringPool>>,
-    /// MIR block currently being lowered. Terminator lowering
-    /// compares jump targets against it to detect back-edges and
-    /// place the cooperative-preemption check.
+    /// MIR block currently being lowered. Terminator lowering compares jump
+    /// targets against it to detect back-edges and place the cooperative poll.
     pub(crate) current_block: Option<u32>,
-    /// Monotonically-increasing counter for preempt-check label
-    /// suffixes so the LLVM IR has unique block names per call site.
+    /// Unique suffix for native preemption blocks in the emitted LLVM IR.
     pub(crate) preempt_seq: u32,
     /// Inter-procedural capture summary. The emitter populates
     /// this once per module (via `build_capture_summary`) and the
@@ -314,12 +312,12 @@ mod vec_elem_kind_llvm {
 fn llvm_vec_elem_kind_from_local(body: &Body, tcx: &TyCtxt, dest_local: Local) -> i32 {
     let ty = body.local_ty(dest_local);
     let inner = match tcx.kind(ty) {
-        Some(TyKind::Vec(inner) | TyKind::Slice(inner)) => *inner,
+        Some(TyKind::Vec(inner) | TyKind::Slice(inner) | TyKind::Iterator(inner)) => *inner,
         _ => return vec_elem_kind_llvm::PRIMITIVE,
     };
     match tcx.kind(inner) {
         Some(TyKind::String) => vec_elem_kind_llvm::STRING,
-        Some(TyKind::Vec(_) | TyKind::Slice(_)) => vec_elem_kind_llvm::VEC,
+        Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Iterator(_)) => vec_elem_kind_llvm::VEC,
         Some(TyKind::HashMap { .. }) => vec_elem_kind_llvm::MAP,
         Some(TyKind::DynError) => vec_elem_kind_llvm::ERROR,
         _ => vec_elem_kind_llvm::PRIMITIVE,
@@ -335,7 +333,7 @@ fn llvm_vec_elem_kind_from_local(body: &Body, tcx: &TyCtxt, dest_local: Local) -
 fn llvm_vec_elem_bytes_from_local(body: &Body, tcx: &TyCtxt, dest_local: Local) -> Option<i64> {
     let ty = body.local_ty(dest_local);
     let inner = match tcx.kind(ty) {
-        Some(TyKind::Vec(inner) | TyKind::Slice(inner)) => *inner,
+        Some(TyKind::Vec(inner) | TyKind::Slice(inner) | TyKind::Iterator(inner)) => *inner,
         _ => return None,
     };
     let bytes = match tcx.kind(inner) {

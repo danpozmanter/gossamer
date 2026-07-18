@@ -2083,7 +2083,7 @@ must be installed to compile natively on the Pi.
 | Mode | Command | Backend | Pipeline | Speed | Output quality |
 |---|---|---|---|---|---|
 | Interpret | `gos run file.gos` | Bytecode VM | Direct dispatch; in-process Cranelift JIT tiers up hot bodies | Fastest cold start | No native codegen |
-| Debug build | `gos build` | LLVM | `llc -O0` (no `opt` pre-pass) | Sub-second for small programs | ~2x slower than release |
+| Debug build | `gos build` | LLVM | minimal `opt` (`mem2reg`, `instcombine`, `simplifycfg`) then `llc -O0` | Sub-second for small programs | ~2x slower than release |
 | Release build | `gos build --release` | LLVM | `opt -O3 \| llc -O3 -mcpu=native -mattr=+prefer-256-bit` | Seconds for thousands of LoC | Vectorised, inlined |
 
 LLVM is the canonical native backend; the Cranelift code path is
@@ -2430,13 +2430,23 @@ The first index response alone must never establish publisher identity.
 
 ### 17.1 Editions and language compatibility
 
-- The language version string is `edition = "2026"` in the manifest.
+- The manifest defaults to `edition = "2026"`; this toolchain also accepts
+  `edition = "2027"`.
 - A compiler accepts editions it explicitly supports; accepting a manifest is
   not a promise that a future edition's semantics are understood.
 - Breaking Stable-language changes require a new edition. Diagnostics must
   name the edition or migration rule when rejecting an older source form.
 - Experimental syntax may change without an edition change, but it must be
   reported as Experimental by `gos feature-status` before it is accepted.
+
+Edition 2026 keeps the historical eager `std::iter` signatures. In edition
+2027, `iter::range`, `range_inclusive`, `map`, `filter`, `take`, `skip`,
+`enumerate`, `chain`, and `zip` produce linear `Iterator<T>` state. `fold`,
+`any`, `all`, `find`, `count`, `sum`, and `collect` consume that state once.
+Adapters pull only on terminal demand, and `any`, `all`, `find`, `take`, and
+`zip` stop as soon as their result is decided. The corresponding
+`iter::eager_*` names retain Vec-based behavior in every edition. A program
+that needs to materialize a 2027 iterator uses `iter::collect`.
 
 ### 17.2 Standard library compatibility
 

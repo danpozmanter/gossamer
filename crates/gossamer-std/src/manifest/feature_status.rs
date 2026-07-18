@@ -306,6 +306,11 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     // entries retain their specific documentation and namespace contracts.
     // -----------------------------------------------------------------
     FeatureStatus {
+        path: "std::crypto::x509",
+        status: Status::Shipped,
+        doc: "All-tier private-root X.509 parsing and fail-closed server verification with mandatory CRLs. System roots, revocation retrieval, issuance, and mutable source-level TLS configuration are deliberately out of scope.",
+    },
+    FeatureStatus {
         path: "std::tls",
         status: Status::Shipped,
         doc: "TLS surface (rustls-backed) - handshake and host-configured mTLS work. The all-tier x509 verifier exposes fail-closed CRL-backed server-chain validation; public TLS connection configuration remains in progress.",
@@ -494,6 +499,13 @@ mod tests {
     fn lookup_returns_explicit_entry() {
         let entry = lookup("std::tls").expect("tls registered");
         assert_eq!(entry.status, Status::Shipped);
+    }
+
+    #[test]
+    fn x509_private_root_contract_is_explicitly_shipped() {
+        let entry = lookup("std::crypto::x509").expect("x509 registered");
+        assert_eq!(entry.status, Status::Shipped);
+        assert!(entry.doc.contains("private-root"));
     }
 
     #[test]

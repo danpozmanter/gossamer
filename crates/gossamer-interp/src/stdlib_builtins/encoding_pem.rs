@@ -338,6 +338,9 @@ pub(crate) fn builtin_utf16_decode_to_string(args: &[Value]) -> RuntimeResult<Va
 
 /// Helper to extract elements from a `Value::Array` / `Value::IntArray`.
 pub(crate) fn collect_array(v: &Value) -> Vec<Value> {
+    if let Some(items) = crate::stdlib_builtins::iter::drain_lazy_iter(v) {
+        return items;
+    }
     match v {
         Value::Array(arr) => arr.as_ref().clone(),
         Value::IntArray(arr) => arr.iter().map(|&n| Value::Int(n)).collect(),

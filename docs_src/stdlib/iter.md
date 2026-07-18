@@ -6,6 +6,14 @@ Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
+## Edition behavior
+
+Edition 2026 keeps these canonical eager signatures. In edition 2027,
+`range`, `range_inclusive`, `map`, `filter`, `take`, `skip`, `enumerate`,
+`chain`, and `zip` form linear lazy `Iterator<T>` pipelines. Terminals consume
+that state once. Use `collect` to materialize it, or spell the matching
+`iter::eager_*` name to retain Vec behavior in either edition.
+
 ## API details and source
 
 The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.

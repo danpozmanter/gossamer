@@ -252,6 +252,10 @@ pub enum Value {
     /// scratch arrays read every f64 here straight into a typed
     /// register).
     FloatVec(Arc<Vec<f64>>),
+    /// Opaque VM-only lazy iterator state handle. The concrete state lives in
+    /// the stdlib `iter` registry so the `Value` enum does not recursively
+    /// carry iterator closures and upstream states.
+    LazyIter(i64),
     /// Enum variant or tuple-struct constructor payload.
     Variant(Arc<VariantInner>),
     /// Struct-shaped aggregate.
@@ -2152,6 +2156,7 @@ impl Value {
             Self::Map(_)
             | Self::IntMap(_)
             | Self::StrIntMap(_)
+            | Self::LazyIter(_)
             | Self::Builtin(_)
             | Self::Native(_)
             | Self::Weak(_)
@@ -2240,6 +2245,7 @@ impl fmt::Display for Value {
                 let elems: Vec<Value> = data.iter().copied().map(Value::Float).collect();
                 write_array(out, &elems)
             }
+            Self::LazyIter(_) => out.write_str("<iterator>"),
             Self::Variant(inner) => write_variant(out, inner.name.as_str(), &inner.fields),
             Self::Struct(inner) => {
                 // Placeholder expressions evaluate to this sentinel in the VM;
@@ -2324,6 +2330,7 @@ fn repr_value(value: &Value) -> String {
         Value::FloatArray(_) => repr_value(&Value::Array(Arc::new(value.float_array_elems()))),
         Value::IntArray(data) => format!("{:?}", data.as_slice()),
         Value::FloatVec(data) => format!("{:?}", data.as_slice()),
+        Value::LazyIter(_) => "<iterator>".to_string(),
         Value::Variant(inner) => {
             let fields = inner.fields.iter().map(repr_value).collect::<Vec<_>>();
             if fields.is_empty() {

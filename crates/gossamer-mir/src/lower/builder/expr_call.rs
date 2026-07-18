@@ -283,8 +283,21 @@ impl<'a> Builder<'a> {
             // downstream `push_str` (rewritten to `__concat`) sees
             // a null/garbage receiver instead of a real empty bytes
             // pointer.
-            if matches!(joined.as_str(), "String::new" | "String::with_capacity") && args.len() <= 1
-            {
+            if joined == "String::with_capacity" && args.len() == 1 {
+                let cap = self.lower_expr(&args[0])?;
+                let str_ty = self.tcx.string_ty();
+                let dest = self.fresh(str_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_str_with_capacity".to_string())),
+                    args: vec![Operand::Copy(Place::local(cap))],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                return Some(dest);
+            }
+            if joined == "String::new" && args.is_empty() {
                 let str_ty = self.tcx.string_ty();
                 let dest = self.fresh(str_ty);
                 self.emit_assign(

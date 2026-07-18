@@ -18,6 +18,8 @@ gossamer-mir = { workspace = true }
 gossamer-resolve = { workspace = true }
 gossamer-types = { workspace = true }
 parking_lot = { workspace = true }
+sha2 = { workspace = true }
+wait-timeout = { workspace = true }
 
 [dev-dependencies]
 gossamer-lex = { workspace = true }

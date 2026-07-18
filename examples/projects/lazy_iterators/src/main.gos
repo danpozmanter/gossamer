@@ -1,0 +1,10 @@
+use std::iter
+
+fn main() {
+    let result = iter::range(0, 20)
+        |> iter::map(|x| x * 3)
+        |> iter::filter(|x| x % 2 == 0)
+        |> iter::take(5)
+        |> iter::collect
+    println!("{:?}", result)
+}

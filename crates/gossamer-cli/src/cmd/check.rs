@@ -94,7 +94,7 @@ pub(crate) fn run(
     // Comptime fold makes `gos check` authoritative for comptime: a
     // region that is not compile-time-known is reported here, not
     // deferred to `run` / `build`.
-    let source = crate::comptime_fold::fold_comptime(&source, &file.to_string_lossy())?;
+    let source = crate::comptime_fold::fold_comptime(source, &file.to_string_lossy())?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
     let render_opts = gossamer_diagnostics::RenderOptions {

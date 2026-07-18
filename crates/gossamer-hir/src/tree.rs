@@ -14,10 +14,21 @@ use gossamer_types::Ty;
 use crate::ids::HirId;
 
 /// Whole program - the collection of items lowered from a source file.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct HirProgram {
+    /// Source edition whose semantic signature table produced this HIR.
+    pub edition: gossamer_pkg::Edition,
     /// Items in source order.
     pub items: Vec<HirItem>,
+}
+
+impl Default for HirProgram {
+    fn default() -> Self {
+        Self {
+            edition: gossamer_pkg::Edition::E2026,
+            items: Vec::new(),
+        }
+    }
 }
 
 /// One top-level item.

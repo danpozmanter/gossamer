@@ -179,9 +179,8 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(crate) fn emit_allocas(&mut self) {
-        // Amortized cooperative-preemption counter. Back-edges decrement this
-        // inline and enter the cold runtime poll only once per 1024 iterations.
-        // LLVM removes the slot from functions with no back-edge checks.
+        // Back-edges decrement this counter and enter the runtime's
+        // cooperative-preemption path only once per 1024 iterations.
         writeln!(self.out, "  %gos_preempt_counter = alloca i32").unwrap();
         writeln!(self.out, "  store i32 1024, ptr %gos_preempt_counter").unwrap();
         for (i, decl) in self.body.locals.iter().enumerate() {

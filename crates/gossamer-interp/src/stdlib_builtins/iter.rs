@@ -73,7 +73,7 @@
 //! All builtins return a `Result`-shaped variant (`Ok` / `Err`) on
 //! fallible operations so callers can chain `?` without wrapping.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap as StdHashMap;
 use std::io::Read as IoRead;
 use std::sync::Arc;
@@ -108,6 +108,631 @@ use crate::value::{
 /// Entry point invoked from `builtins::install`.
 use super::*;
 
+thread_local! {
+    static LAZY_ITERATORS_ENABLED: RefCell<bool> = const { RefCell::new(false) };
+    static NEXT_LAZY_ITER_ID: RefCell<i64> = const { RefCell::new(1) };
+    static LAZY_ITER_STATES: RefCell<StdHashMap<i64, LazyIterState>> = RefCell::new(StdHashMap::new());
+    static LAZY_VEC_BORROW_COUNT: Cell<usize> = const { Cell::new(0) };
+    static LAZY_VEC_BORROWERS: RefCell<StdHashMap<usize, usize>> = RefCell::new(StdHashMap::new());
+    static LAZY_VEC_GENERATIONS: RefCell<StdHashMap<usize, u64>> = RefCell::new(StdHashMap::new());
+    static LAZY_VEC_REPLACEMENTS: RefCell<StdHashMap<usize, StdHashMap<usize, Value>>> = RefCell::new(StdHashMap::new());
+}
+
+#[derive(Debug)]
+enum LazyIterState {
+    Array {
+        items: Arc<Vec<Value>>,
+        source_id: usize,
+        generation: u64,
+        index: usize,
+    },
+    IntArray {
+        items: Arc<Vec<i64>>,
+        source_id: usize,
+        generation: u64,
+        index: usize,
+    },
+    FloatVec {
+        items: Arc<Vec<f64>>,
+        source_id: usize,
+        generation: u64,
+        index: usize,
+    },
+    Range {
+        current: i64,
+        end: i64,
+        inclusive: bool,
+    },
+    Once {
+        item: Option<Value>,
+    },
+    Repeat {
+        item: Value,
+        remaining: usize,
+    },
+    Take {
+        upstream: Value,
+        remaining: usize,
+    },
+    Skip {
+        upstream: Value,
+        remaining: usize,
+    },
+    Enumerate {
+        upstream: Value,
+        index: i64,
+    },
+    Chain {
+        first: Value,
+        second: Value,
+        in_second: bool,
+    },
+    Zip {
+        left: Value,
+        right: Value,
+    },
+    Map {
+        f: Value,
+        upstream: Value,
+    },
+    Filter {
+        p: Value,
+        upstream: Value,
+    },
+    FilterMap {
+        f: Value,
+        upstream: Value,
+    },
+    FlatMap {
+        f: Value,
+        upstream: Value,
+        current: Option<Value>,
+    },
+    Scan {
+        acc: Value,
+        f: Value,
+        upstream: Value,
+    },
+    TakeWhile {
+        p: Value,
+        upstream: Value,
+        done: bool,
+    },
+    SkipWhile {
+        p: Value,
+        upstream: Value,
+        skipping: bool,
+    },
+}
+
+pub fn set_lazy_iterators_enabled(enabled: bool) {
+    let stale = LAZY_ITER_STATES.with(|states| {
+        states
+            .borrow_mut()
+            .drain()
+            .map(|(_, state)| state)
+            .collect::<Vec<_>>()
+    });
+    for state in stale {
+        discard_lazy_state(state);
+    }
+    LAZY_VEC_BORROW_COUNT.with(|count| count.set(0));
+    LAZY_VEC_BORROWERS.with(|borrowers| borrowers.borrow_mut().clear());
+    LAZY_VEC_GENERATIONS.with(|generations| generations.borrow_mut().clear());
+    LAZY_VEC_REPLACEMENTS.with(|replacements| replacements.borrow_mut().clear());
+    LAZY_ITERATORS_ENABLED.with(|cell| *cell.borrow_mut() = enabled);
+}
+
+fn lazy_iterators_enabled() -> bool {
+    LAZY_ITERATORS_ENABLED.with(|cell| *cell.borrow())
+}
+
+fn new_lazy_iter(state: LazyIterState) -> Value {
+    let id = NEXT_LAZY_ITER_ID.with(|next| {
+        let mut next = next.borrow_mut();
+        let id = *next;
+        *next = next.saturating_add(1);
+        id
+    });
+    LAZY_ITER_STATES.with(|states| {
+        states.borrow_mut().insert(id, state);
+    });
+    Value::LazyIter(id)
+}
+
+fn discard_lazy_value(value: &Value) {
+    let Value::LazyIter(id) = value else {
+        return;
+    };
+    let state = LAZY_ITER_STATES.with(|states| states.borrow_mut().remove(id));
+    if let Some(state) = state {
+        discard_lazy_state(state);
+    }
+}
+
+fn discard_lazy_state(state: LazyIterState) {
+    match state {
+        LazyIterState::Take { upstream, .. }
+        | LazyIterState::Skip { upstream, .. }
+        | LazyIterState::Enumerate { upstream, .. }
+        | LazyIterState::Map { upstream, .. }
+        | LazyIterState::Filter { upstream, .. }
+        | LazyIterState::FilterMap { upstream, .. }
+        | LazyIterState::Scan { upstream, .. }
+        | LazyIterState::TakeWhile { upstream, .. }
+        | LazyIterState::SkipWhile { upstream, .. } => discard_lazy_value(&upstream),
+        LazyIterState::Chain { first, second, .. } => {
+            discard_lazy_value(&first);
+            discard_lazy_value(&second);
+        }
+        LazyIterState::Zip { left, right } => {
+            discard_lazy_value(&left);
+            discard_lazy_value(&right);
+        }
+        LazyIterState::FlatMap {
+            upstream, current, ..
+        } => {
+            discard_lazy_value(&upstream);
+            if let Some(current) = current {
+                discard_lazy_value(&current);
+            }
+        }
+        LazyIterState::Array { source_id, .. }
+        | LazyIterState::IntArray { source_id, .. }
+        | LazyIterState::FloatVec { source_id, .. } => release_lazy_vec_source(source_id),
+        LazyIterState::Range { .. } | LazyIterState::Once { .. } | LazyIterState::Repeat { .. } => {
+        }
+    }
+}
+
+struct LazyStateGuard(Option<LazyIterState>);
+
+impl Drop for LazyStateGuard {
+    fn drop(&mut self) {
+        if let Some(state) = self.0.take() {
+            discard_lazy_state(state);
+        }
+    }
+}
+
+fn lazy_source(value: &Value) -> Value {
+    match value {
+        Value::LazyIter(_) => value.clone(),
+        Value::Array(items) => {
+            let source_id = Arc::as_ptr(items) as usize;
+            retain_lazy_vec_source(source_id);
+            new_lazy_iter(LazyIterState::Array {
+                items: Arc::clone(items),
+                source_id,
+                generation: lazy_vec_generation(source_id),
+                index: 0,
+            })
+        }
+        Value::IntArray(items) => {
+            let source_id = Arc::as_ptr(items) as usize;
+            retain_lazy_vec_source(source_id);
+            new_lazy_iter(LazyIterState::IntArray {
+                items: Arc::clone(items),
+                source_id,
+                generation: lazy_vec_generation(source_id),
+                index: 0,
+            })
+        }
+        Value::FloatVec(items) => {
+            let source_id = Arc::as_ptr(items) as usize;
+            retain_lazy_vec_source(source_id);
+            new_lazy_iter(LazyIterState::FloatVec {
+                items: Arc::clone(items),
+                source_id,
+                generation: lazy_vec_generation(source_id),
+                index: 0,
+            })
+        }
+        other => new_lazy_iter(LazyIterState::Array {
+            items: Arc::new(collect_array(other)),
+            source_id: 0,
+            generation: 0,
+            index: 0,
+        }),
+    }
+}
+
+fn retain_lazy_vec_source(source_id: usize) {
+    if source_id == 0 {
+        return;
+    }
+    LAZY_VEC_BORROW_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+    LAZY_VEC_BORROWERS.with(|borrowers| {
+        let mut borrowers = borrowers.borrow_mut();
+        let count = borrowers.entry(source_id).or_insert(0);
+        *count = count.saturating_add(1);
+    });
+}
+
+fn release_lazy_vec_source(source_id: usize) {
+    if source_id == 0 {
+        return;
+    }
+    let released_last = LAZY_VEC_BORROWERS.with(|borrowers| {
+        let mut borrowers = borrowers.borrow_mut();
+        let Some(count) = borrowers.get_mut(&source_id) else {
+            return false;
+        };
+        *count -= 1;
+        if *count == 0 {
+            borrowers.remove(&source_id);
+            true
+        } else {
+            false
+        }
+    });
+    LAZY_VEC_BORROW_COUNT.with(|count| count.set(count.get().saturating_sub(1)));
+    if released_last {
+        LAZY_VEC_GENERATIONS.with(|generations| {
+            generations.borrow_mut().remove(&source_id);
+        });
+        LAZY_VEC_REPLACEMENTS.with(|replacements| {
+            replacements.borrow_mut().remove(&source_id);
+        });
+    }
+}
+
+fn has_lazy_vec_borrowers() -> bool {
+    LAZY_VEC_BORROW_COUNT.with(|count| count.get() != 0)
+}
+
+fn lazy_vec_source_is_borrowed(source_id: usize) -> bool {
+    LAZY_VEC_BORROWERS.with(|borrowers| borrowers.borrow().contains_key(&source_id))
+}
+
+fn lazy_vec_generation(source_id: usize) -> u64 {
+    LAZY_VEC_GENERATIONS
+        .with(|generations| generations.borrow().get(&source_id).copied().unwrap_or(0))
+}
+
+/// Record a structural mutation before the VM applies copy-on-write to a Vec.
+/// Lazy sources retain the original Arc identity, so recording first lets the
+/// next pull reject the mutation even when the binding receives a new Arc.
+pub(crate) fn note_vec_structural_mutation(value: &Value) {
+    if !has_lazy_vec_borrowers() {
+        return;
+    }
+    let source_id = match value {
+        Value::Array(items) => Arc::as_ptr(items) as usize,
+        Value::IntArray(items) => Arc::as_ptr(items) as usize,
+        Value::FloatVec(items) => Arc::as_ptr(items) as usize,
+        _ => return,
+    };
+    if !lazy_vec_source_is_borrowed(source_id) {
+        return;
+    }
+    LAZY_VEC_GENERATIONS.with(|generations| {
+        let mut generations = generations.borrow_mut();
+        let generation = generations.entry(source_id).or_insert(0);
+        *generation = generation.wrapping_add(1);
+    });
+}
+
+/// Publish a non-structural element replacement to outstanding borrowed
+/// sources before the VM's copy-on-write store changes the binding's Arc.
+pub(crate) fn note_vec_element_replacement(value: &Value, index: i64, replacement: &Value) {
+    if index < 0 || !has_lazy_vec_borrowers() {
+        return;
+    }
+    let index = index as usize;
+    let source_id = match value {
+        Value::Array(items) if index < items.len() => Arc::as_ptr(items) as usize,
+        Value::IntArray(items) if index < items.len() => Arc::as_ptr(items) as usize,
+        Value::FloatVec(items) if index < items.len() => Arc::as_ptr(items) as usize,
+        _ => return,
+    };
+    if !lazy_vec_source_is_borrowed(source_id) {
+        return;
+    }
+    LAZY_VEC_REPLACEMENTS.with(|replacements| {
+        replacements
+            .borrow_mut()
+            .entry(source_id)
+            .or_default()
+            .insert(index, replacement.clone());
+    });
+}
+
+fn lazy_vec_replacement(source_id: usize, index: usize) -> Option<Value> {
+    LAZY_VEC_REPLACEMENTS.with(|replacements| {
+        replacements
+            .borrow()
+            .get(&source_id)
+            .and_then(|source| source.get(&index))
+            .cloned()
+    })
+}
+
+fn lazy_next(
+    source: &Value,
+    dispatch: &mut Option<&mut dyn NativeDispatch>,
+) -> RuntimeResult<Option<Value>> {
+    let Value::LazyIter(id) = source else {
+        let mut xs = collect_array(source).into_iter();
+        return Ok(xs.next());
+    };
+    let Some(state) = LAZY_ITER_STATES.with(|states| states.borrow_mut().remove(id)) else {
+        return Ok(None);
+    };
+    let mut guard = LazyStateGuard(Some(state));
+    let result = match guard.0.as_mut().expect("lazy iterator state guard") {
+        LazyIterState::Array {
+            items,
+            source_id,
+            generation,
+            index,
+        } => {
+            if *source_id != 0 && lazy_vec_generation(*source_id) != *generation {
+                return Err(crate::value::RuntimeError::Panic(
+                    "borrowed Vec source was structurally mutated during iteration".to_string(),
+                ));
+            }
+            let out =
+                lazy_vec_replacement(*source_id, *index).or_else(|| items.get(*index).cloned());
+            *index = index.saturating_add(usize::from(out.is_some()));
+            Ok(out)
+        }
+        LazyIterState::IntArray {
+            items,
+            source_id,
+            generation,
+            index,
+        } => {
+            if lazy_vec_generation(*source_id) != *generation {
+                return Err(crate::value::RuntimeError::Panic(
+                    "borrowed Vec source was structurally mutated during iteration".to_string(),
+                ));
+            }
+            let out = lazy_vec_replacement(*source_id, *index)
+                .or_else(|| items.get(*index).copied().map(Value::Int));
+            *index = index.saturating_add(usize::from(out.is_some()));
+            Ok(out)
+        }
+        LazyIterState::FloatVec {
+            items,
+            source_id,
+            generation,
+            index,
+        } => {
+            if lazy_vec_generation(*source_id) != *generation {
+                return Err(crate::value::RuntimeError::Panic(
+                    "borrowed Vec source was structurally mutated during iteration".to_string(),
+                ));
+            }
+            let out = lazy_vec_replacement(*source_id, *index)
+                .or_else(|| items.get(*index).copied().map(Value::Float));
+            *index = index.saturating_add(usize::from(out.is_some()));
+            Ok(out)
+        }
+        LazyIterState::Range {
+            current,
+            end,
+            inclusive,
+        } => {
+            let done = if *inclusive {
+                *current > *end
+            } else {
+                *current >= *end
+            };
+            if done {
+                Ok(None)
+            } else {
+                let out = *current;
+                *current = current.saturating_add(1);
+                Ok(Some(Value::Int(out)))
+            }
+        }
+        LazyIterState::Once { item } => Ok(item.take()),
+        LazyIterState::Repeat { item, remaining } => {
+            if *remaining == 0 {
+                Ok(None)
+            } else {
+                *remaining -= 1;
+                Ok(Some(item.clone()))
+            }
+        }
+        LazyIterState::Take {
+            upstream,
+            remaining,
+        } => {
+            if *remaining == 0 {
+                Ok(None)
+            } else {
+                *remaining -= 1;
+                lazy_next(upstream, dispatch)
+            }
+        }
+        LazyIterState::Skip {
+            upstream,
+            remaining,
+        } => {
+            let mut exhausted = false;
+            while *remaining > 0 {
+                if lazy_next(upstream, dispatch)?.is_none() {
+                    *remaining = 0;
+                    exhausted = true;
+                    break;
+                }
+                *remaining -= 1;
+            }
+            if exhausted {
+                Ok(None)
+            } else {
+                lazy_next(upstream, dispatch)
+            }
+        }
+        LazyIterState::Enumerate { upstream, index } => {
+            if let Some(value) = lazy_next(upstream, dispatch)? {
+                let pair = Value::Tuple(Arc::from(vec![Value::Int(*index), value]));
+                *index = index.saturating_add(1);
+                Ok(Some(pair))
+            } else {
+                Ok(None)
+            }
+        }
+        LazyIterState::Chain {
+            first,
+            second,
+            in_second,
+        } => {
+            if !*in_second && let Some(value) = lazy_next(first, dispatch)? {
+                Ok(Some(value))
+            } else {
+                *in_second = true;
+                lazy_next(second, dispatch)
+            }
+        }
+        LazyIterState::Zip { left, right } => {
+            if let Some(a) = lazy_next(left, dispatch)? {
+                if let Some(b) = lazy_next(right, dispatch)? {
+                    Ok(Some(Value::Tuple(Arc::from(vec![a, b]))))
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(None)
+            }
+        }
+        LazyIterState::Map { f, upstream } => {
+            if let Some(value) = lazy_next(upstream, dispatch)? {
+                if let Some(d) = dispatch.as_deref_mut() {
+                    d.call_value(f, vec![value]).map(Some)
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(None)
+            }
+        }
+        LazyIterState::Filter { p, upstream } => loop {
+            let Some(value) = lazy_next(upstream, dispatch)? else {
+                break Ok(None);
+            };
+            let Some(d) = dispatch.as_deref_mut() else {
+                break Ok(None);
+            };
+            if matches!(d.call_value(p, vec![value.clone()])?, Value::Bool(true)) {
+                break Ok(Some(value));
+            }
+        },
+        LazyIterState::FilterMap { f, upstream } => loop {
+            let Some(value) = lazy_next(upstream, dispatch)? else {
+                break Ok(None);
+            };
+            let Some(d) = dispatch.as_deref_mut() else {
+                break Ok(None);
+            };
+            if let Some(mapped) = some_payload(&d.call_value(f, vec![value])?) {
+                break Ok(Some(mapped));
+            }
+        },
+        LazyIterState::FlatMap {
+            f,
+            upstream,
+            current,
+        } => loop {
+            if let Some(active) = current.as_ref()
+                && let Some(value) = lazy_next(active, dispatch)?
+            {
+                break Ok(Some(value));
+            }
+            let Some(value) = lazy_next(upstream, dispatch)? else {
+                break Ok(None);
+            };
+            let Some(d) = dispatch.as_deref_mut() else {
+                break Ok(None);
+            };
+            *current = Some(lazy_source(&d.call_value(f, vec![value])?));
+        },
+        LazyIterState::Scan { acc, f, upstream } => {
+            if let Some(value) = lazy_next(upstream, dispatch)? {
+                if let Some(d) = dispatch.as_deref_mut() {
+                    *acc = d.call_value(f, vec![acc.clone(), value])?;
+                    Ok(Some(acc.clone()))
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(None)
+            }
+        }
+        LazyIterState::TakeWhile { p, upstream, done } => {
+            if *done {
+                Ok(None)
+            } else if let Some(value) = lazy_next(upstream, dispatch)? {
+                if let Some(d) = dispatch.as_deref_mut() {
+                    if matches!(d.call_value(p, vec![value.clone()])?, Value::Bool(true)) {
+                        Ok(Some(value))
+                    } else {
+                        *done = true;
+                        Ok(None)
+                    }
+                } else {
+                    Ok(None)
+                }
+            } else {
+                *done = true;
+                Ok(None)
+            }
+        }
+        LazyIterState::SkipWhile {
+            p,
+            upstream,
+            skipping,
+        } => loop {
+            let Some(value) = lazy_next(upstream, dispatch)? else {
+                break Ok(None);
+            };
+            if !*skipping {
+                break Ok(Some(value));
+            }
+            let Some(d) = dispatch.as_deref_mut() else {
+                break Ok(None);
+            };
+            if !matches!(d.call_value(p, vec![value.clone()])?, Value::Bool(true)) {
+                *skipping = false;
+                break Ok(Some(value));
+            }
+        },
+    };
+    if matches!(result, Ok(Some(_))) {
+        let state = guard.0.take().expect("live lazy iterator state");
+        LAZY_ITER_STATES.with(|states| {
+            states.borrow_mut().insert(*id, state);
+        });
+    }
+    result
+}
+
+pub(crate) fn drain_lazy_iter(value: &Value) -> Option<Vec<Value>> {
+    if !matches!(value, Value::LazyIter(_)) {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut dispatch = None;
+    while let Ok(Some(value)) = lazy_next(value, &mut dispatch) {
+        out.push(value);
+    }
+    Some(out)
+}
+
+fn drain_iter_with_dispatch(
+    value: &Value,
+    dispatch: &mut dyn NativeDispatch,
+) -> RuntimeResult<Vec<Value>> {
+    let mut out = Vec::new();
+    let mut dispatch = Some(dispatch);
+    while let Some(value) = lazy_next(value, &mut dispatch)? {
+        out.push(value);
+    }
+    Ok(out)
+}
+
 pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
     // Register only qualified `iter::*` names to avoid shadowing built-in
     // method dispatch (Option::map, Result::filter, Vec::any, etc.).
@@ -115,8 +740,6 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
     // Argument order is DATA-LAST throughout, matching SPEC §4.6 so
     // `xs |> iter::map(f)` desugars to `iter::map(f, xs)` and threads.
     let static_entries: &[(&str, BuiltinFnPub)] = &[
-        ("collect", builtin_iter_collect),
-        ("count", builtin_iter_count),
         ("empty", builtin_iter_empty),
         ("once", builtin_iter_once),
         ("take", builtin_iter_take),
@@ -128,10 +751,7 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("flatten", builtin_iter_flatten),
         ("rev", builtin_iter_reversed),
         ("dedup", builtin_iter_dedup),
-        ("sum", builtin_iter_sum),
         ("product", builtin_iter_product),
-        ("min", builtin_iter_min),
-        ("max", builtin_iter_max),
         ("range", builtin_iter_range),
         ("range_inclusive", builtin_iter_range_inclusive),
         ("repeat", builtin_iter_repeat),
@@ -149,16 +769,16 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
     // edition changes these names to return iterator state. Keep these aliases
     // on the same entry points as their eager counterparts.
     let eager_static_aliases: &[(&str, BuiltinFnPub)] = &[
-        ("eager_chain", builtin_iter_chain),
+        ("eager_chain", builtin_iter_eager_chain),
         ("eager_collect", builtin_iter_collect),
         ("eager_count", builtin_iter_count),
-        ("eager_enumerate", builtin_iter_enumerate),
-        ("eager_range", builtin_iter_range),
-        ("eager_range_inclusive", builtin_iter_range_inclusive),
-        ("eager_skip", builtin_iter_skip),
+        ("eager_enumerate", builtin_iter_eager_enumerate),
+        ("eager_range", builtin_iter_eager_range),
+        ("eager_range_inclusive", builtin_iter_eager_range_inclusive),
+        ("eager_skip", builtin_iter_eager_skip),
         ("eager_sum", builtin_iter_sum),
-        ("eager_take", builtin_iter_take),
-        ("eager_zip", builtin_iter_zip),
+        ("eager_take", builtin_iter_eager_take),
+        ("eager_zip", builtin_iter_eager_zip),
     ];
     for (short, call) in eager_static_aliases {
         let qualified: &'static str = Box::leak(format!("iter::{short}").into_boxed_str());
@@ -167,6 +787,11 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
 
     // Closure-taking functions - must be `native` to access the interpreter.
     let native_entries: &[(&str, NativeCall)] = &[
+        ("collect", native_iter_collect),
+        ("count", native_iter_count),
+        ("sum", native_iter_sum),
+        ("min", native_iter_min),
+        ("max", native_iter_max),
         ("for_each", native_iter_for_each),
         ("map", native_iter_map),
         ("filter", native_iter_filter),
@@ -202,10 +827,10 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
     let eager_native_aliases: &[(&str, NativeCall)] = &[
         ("eager_all", native_iter_all),
         ("eager_any", native_iter_any),
-        ("eager_filter", native_iter_filter),
+        ("eager_filter", native_iter_eager_filter),
         ("eager_find", native_iter_find),
         ("eager_fold", native_iter_fold),
-        ("eager_map", native_iter_map),
+        ("eager_map", native_iter_eager_map),
     ];
     for (short, call) in eager_native_aliases {
         let qualified: &'static str = Box::leak(format!("iter::{short}").into_boxed_str());
@@ -323,6 +948,9 @@ pub(crate) fn builtin_vec_step_by_method(args: &[Value]) -> RuntimeResult<Value>
 
 pub(crate) fn builtin_iter_collect(args: &[Value]) -> RuntimeResult<Value> {
     Ok(match args.first().unwrap_or(&Value::Unit) {
+        Value::LazyIter(_) => Value::Array(Arc::new(
+            drain_lazy_iter(args.first().unwrap_or(&Value::Unit)).unwrap_or_default(),
+        )),
         Value::Array(arr) => Value::Array(arr.clone()),
         Value::IntArray(arr) => {
             let out = arr.iter().copied().map(Value::Int).collect();
@@ -337,6 +965,11 @@ pub(crate) fn builtin_iter_collect(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_iter_once(args: &[Value]) -> RuntimeResult<Value> {
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::Once {
+            item: Some(args.first().cloned().unwrap_or(Value::Unit)),
+        }));
+    }
     Ok(Value::Array(Arc::new(vec![
         args.first().cloned().unwrap_or(Value::Unit),
     ])))
@@ -355,6 +988,9 @@ pub(crate) fn builtin_iter_step_by(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_iter_count(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(xs) = args.first().and_then(drain_lazy_iter) {
+        return Ok(Value::Int(xs.len() as i64));
+    }
     let n = match args.first() {
         Some(Value::Array(arr)) => arr.len(),
         Some(Value::IntArray(arr)) => arr.len(),
@@ -367,20 +1003,52 @@ pub(crate) fn builtin_iter_count(args: &[Value]) -> RuntimeResult<Value> {
 pub(crate) fn builtin_iter_take(args: &[Value]) -> RuntimeResult<Value> {
     let n = args.first().and_then(value_to_int).unwrap_or(0);
     let n = usize::try_from(n.max(0)).unwrap_or(0);
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::Take {
+            upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
+            remaining: n,
+        }));
+    }
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     let taken = iter_std::take(n, &xs);
     Ok(Value::Array(Arc::new(taken)))
 }
 
+fn builtin_iter_eager_take(args: &[Value]) -> RuntimeResult<Value> {
+    let n = args.first().and_then(value_to_int).unwrap_or(0);
+    let n = usize::try_from(n.max(0)).unwrap_or(0);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    Ok(Value::Array(Arc::new(iter_std::take(n, &xs))))
+}
+
 pub(crate) fn builtin_iter_skip(args: &[Value]) -> RuntimeResult<Value> {
     let n = args.first().and_then(value_to_int).unwrap_or(0);
     let n = usize::try_from(n.max(0)).unwrap_or(0);
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::Skip {
+            upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
+            remaining: n,
+        }));
+    }
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     let rest = iter_std::skip(n, &xs);
     Ok(Value::Array(Arc::new(rest)))
 }
 
+fn builtin_iter_eager_skip(args: &[Value]) -> RuntimeResult<Value> {
+    let n = args.first().and_then(value_to_int).unwrap_or(0);
+    let n = usize::try_from(n.max(0)).unwrap_or(0);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    Ok(Value::Array(Arc::new(iter_std::skip(n, &xs))))
+}
+
 pub(crate) fn builtin_iter_zip(args: &[Value]) -> RuntimeResult<Value> {
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::Zip {
+            left: lazy_source(args.first().unwrap_or(&Value::Unit)),
+            right: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
+        }));
+    }
     let a = collect_array(args.first().unwrap_or(&Value::Unit));
     let b = collect_array(args.get(1).unwrap_or(&Value::Unit));
     let zipped: Vec<Value> = a
@@ -391,7 +1059,24 @@ pub(crate) fn builtin_iter_zip(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Array(Arc::new(zipped)))
 }
 
+fn builtin_iter_eager_zip(args: &[Value]) -> RuntimeResult<Value> {
+    let a = collect_array(args.first().unwrap_or(&Value::Unit));
+    let b = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let zipped = a
+        .into_iter()
+        .zip(b)
+        .map(|(x, y)| Value::Tuple(Arc::from(vec![x, y])))
+        .collect();
+    Ok(Value::Array(Arc::new(zipped)))
+}
+
 pub(crate) fn builtin_iter_enumerate(args: &[Value]) -> RuntimeResult<Value> {
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::Enumerate {
+            upstream: lazy_source(args.first().unwrap_or(&Value::Unit)),
+            index: 0,
+        }));
+    }
     let xs = collect_array(args.first().unwrap_or(&Value::Unit));
     let enumerated: Vec<Value> = xs
         .into_iter()
@@ -401,7 +1086,30 @@ pub(crate) fn builtin_iter_enumerate(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Array(Arc::new(enumerated)))
 }
 
+fn builtin_iter_eager_enumerate(args: &[Value]) -> RuntimeResult<Value> {
+    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
+    let enumerated = xs
+        .into_iter()
+        .enumerate()
+        .map(|(i, x)| Value::Tuple(Arc::from(vec![Value::Int(i as i64), x])))
+        .collect();
+    Ok(Value::Array(Arc::new(enumerated)))
+}
+
 pub(crate) fn builtin_iter_chain(args: &[Value]) -> RuntimeResult<Value> {
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::Chain {
+            first: lazy_source(args.first().unwrap_or(&Value::Unit)),
+            second: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
+            in_second: false,
+        }));
+    }
+    let mut result = collect_array(args.first().unwrap_or(&Value::Unit));
+    result.extend(collect_array(args.get(1).unwrap_or(&Value::Unit)));
+    Ok(Value::Array(Arc::new(result)))
+}
+
+fn builtin_iter_eager_chain(args: &[Value]) -> RuntimeResult<Value> {
     let mut result = collect_array(args.first().unwrap_or(&Value::Unit));
     result.extend(collect_array(args.get(1).unwrap_or(&Value::Unit)));
     Ok(Value::Array(Arc::new(result)))
@@ -416,6 +1124,14 @@ pub(crate) fn builtin_iter_flatten(args: &[Value]) -> RuntimeResult<Value> {
 pub(crate) fn builtin_iter_reversed(args: &[Value]) -> RuntimeResult<Value> {
     let mut xs = collect_array(args.first().unwrap_or(&Value::Unit));
     xs.reverse();
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::Array {
+            items: Arc::new(xs),
+            source_id: 0,
+            generation: 0,
+            index: 0,
+        }));
+    }
     Ok(Value::Array(Arc::new(xs)))
 }
 
@@ -479,6 +1195,63 @@ pub(crate) fn builtin_iter_sum(args: &[Value]) -> RuntimeResult<Value> {
 // from `args.last()`. This matches SPEC §4.6 so the pipe form
 // `xs |> iter::f(g)` desugars to `iter::f(g, xs)` and threads.
 
+pub(crate) fn native_iter_collect(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    if let Some(Value::LazyIter(_)) = args.first() {
+        return Ok(Value::Array(Arc::new(drain_iter_with_dispatch(
+            args.first().unwrap_or(&Value::Unit),
+            dispatch,
+        )?)));
+    }
+    builtin_iter_collect(args)
+}
+
+pub(crate) fn native_iter_count(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    if let Some(Value::LazyIter(_)) = args.first() {
+        let n = drain_iter_with_dispatch(args.first().unwrap_or(&Value::Unit), dispatch)?.len();
+        return Ok(Value::Int(n as i64));
+    }
+    builtin_iter_count(args)
+}
+
+pub(crate) fn native_iter_sum(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    if let Some(Value::LazyIter(_)) = args.first() {
+        let xs = drain_iter_with_dispatch(args.first().unwrap_or(&Value::Unit), dispatch)?;
+        return builtin_iter_sum(&[Value::Array(Arc::new(xs))]);
+    }
+    builtin_iter_sum(args)
+}
+
+pub(crate) fn native_iter_min(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    if let Some(Value::LazyIter(_)) = args.first() {
+        let xs = drain_iter_with_dispatch(args.first().unwrap_or(&Value::Unit), dispatch)?;
+        return builtin_iter_min(&[Value::Array(Arc::new(xs))]);
+    }
+    builtin_iter_min(args)
+}
+
+pub(crate) fn native_iter_max(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    if let Some(Value::LazyIter(_)) = args.first() {
+        let xs = drain_iter_with_dispatch(args.first().unwrap_or(&Value::Unit), dispatch)?;
+        return builtin_iter_max(&[Value::Array(Arc::new(xs))]);
+    }
+    builtin_iter_max(args)
+}
+
 pub(crate) fn native_iter_for_each(
     dispatch: &mut dyn NativeDispatch,
     args: &[Value],
@@ -496,6 +1269,20 @@ pub(crate) fn native_iter_map(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let f = args.first().cloned().unwrap_or(Value::Unit);
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::Map {
+            f,
+            upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
+        }));
+    }
+    native_iter_eager_map(dispatch, args)
+}
+
+fn native_iter_eager_map(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     let mut out = Vec::with_capacity(xs.len());
     for x in xs {
@@ -505,6 +1292,20 @@ pub(crate) fn native_iter_map(
 }
 
 pub(crate) fn native_iter_filter(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let p = args.first().cloned().unwrap_or(Value::Unit);
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::Filter {
+            p,
+            upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
+        }));
+    }
+    native_iter_eager_filter(dispatch, args)
+}
+
+fn native_iter_eager_filter(
     dispatch: &mut dyn NativeDispatch,
     args: &[Value],
 ) -> RuntimeResult<Value> {
@@ -524,6 +1325,12 @@ pub(crate) fn native_iter_filter_map(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let f = args.first().cloned().unwrap_or(Value::Unit);
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::FilterMap {
+            f,
+            upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
+        }));
+    }
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     let mut out = Vec::new();
     for x in xs {
@@ -572,6 +1379,13 @@ pub(crate) fn native_iter_scan(
     // Signature: scan(init, f, xs).
     let mut acc = args.first().cloned().unwrap_or(Value::Unit);
     let f = args.get(1).cloned().unwrap_or(Value::Unit);
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::Scan {
+            acc,
+            f,
+            upstream: lazy_source(args.get(2).unwrap_or(&Value::Unit)),
+        }));
+    }
     let xs = collect_array(args.get(2).unwrap_or(&Value::Unit));
     let mut out = Vec::with_capacity(xs.len());
     for x in xs {
@@ -715,6 +1529,13 @@ pub(crate) fn native_iter_take_while(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let p = args.first().cloned().unwrap_or(Value::Unit);
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::TakeWhile {
+            p,
+            upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
+            done: false,
+        }));
+    }
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     let mut out = Vec::new();
     for x in xs {
@@ -732,6 +1553,13 @@ pub(crate) fn native_iter_skip_while(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let p = args.first().cloned().unwrap_or(Value::Unit);
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::SkipWhile {
+            p,
+            upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
+            skipping: true,
+        }));
+    }
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     let mut out = Vec::new();
     let mut dropping = true;
@@ -954,6 +1782,13 @@ pub(crate) fn native_iter_flat_map(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let f = args.first().cloned().unwrap_or(Value::Unit);
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::FlatMap {
+            f,
+            upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
+            current: None,
+        }));
+    }
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     let mut out = Vec::new();
     for x in xs {
@@ -1040,10 +1875,38 @@ pub(crate) fn builtin_iter_max(args: &[Value]) -> RuntimeResult<Value> {
 pub(crate) fn builtin_iter_range(args: &[Value]) -> RuntimeResult<Value> {
     let start = args.first().and_then(value_to_int).unwrap_or(0);
     let end = args.get(1).and_then(value_to_int).unwrap_or(0);
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::Range {
+            current: start,
+            end,
+            inclusive: false,
+        }));
+    }
+    Ok(Value::IntArray(Arc::new(iter_std::range(start, end))))
+}
+
+fn builtin_iter_eager_range(args: &[Value]) -> RuntimeResult<Value> {
+    let start = args.first().and_then(value_to_int).unwrap_or(0);
+    let end = args.get(1).and_then(value_to_int).unwrap_or(0);
     Ok(Value::IntArray(Arc::new(iter_std::range(start, end))))
 }
 
 pub(crate) fn builtin_iter_range_inclusive(args: &[Value]) -> RuntimeResult<Value> {
+    let start = args.first().and_then(value_to_int).unwrap_or(0);
+    let end = args.get(1).and_then(value_to_int).unwrap_or(0);
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::Range {
+            current: start,
+            end,
+            inclusive: true,
+        }));
+    }
+    Ok(Value::IntArray(Arc::new(iter_std::range_inclusive(
+        start, end,
+    ))))
+}
+
+fn builtin_iter_eager_range_inclusive(args: &[Value]) -> RuntimeResult<Value> {
     let start = args.first().and_then(value_to_int).unwrap_or(0);
     let end = args.get(1).and_then(value_to_int).unwrap_or(0);
     Ok(Value::IntArray(Arc::new(iter_std::range_inclusive(
@@ -1055,6 +1918,12 @@ pub(crate) fn builtin_iter_repeat(args: &[Value]) -> RuntimeResult<Value> {
     let v = args.first().cloned().unwrap_or(Value::Unit);
     let n = args.get(1).and_then(value_to_int).unwrap_or(0);
     let n = usize::try_from(n.max(0)).unwrap_or(0);
+    if lazy_iterators_enabled() {
+        return Ok(new_lazy_iter(LazyIterState::Repeat {
+            item: v,
+            remaining: n,
+        }));
+    }
     let out: Vec<Value> = (0..n).map(|_| v.clone()).collect();
     Ok(Value::Array(Arc::new(out)))
 }
@@ -1132,6 +2001,65 @@ pub(crate) fn some_payload(v: &Value) -> Option<Value> {
 pub(crate) fn compare_values_total(a: &Value, b: &Value) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     crate::vm::value_ordering(a, b).unwrap_or(Ordering::Equal)
+}
+
+#[cfg(test)]
+mod lazy_cleanup_tests {
+    use super::*;
+
+    #[test]
+    fn dropping_unconsumed_vec_iterator_releases_its_source_once() {
+        let items = Arc::new(vec![1i64, 2, 3]);
+        let weak = Arc::downgrade(&items);
+        let source = Value::IntArray(items);
+        let iter = lazy_source(&source);
+
+        drop(source);
+        assert!(weak.upgrade().is_some());
+        discard_lazy_value(&iter);
+        drop(iter);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn ordinary_vec_mutation_does_not_allocate_lazy_tracking_state() {
+        set_lazy_iterators_enabled(true);
+        let source = Value::IntArray(Arc::new(vec![1i64, 2, 3]));
+
+        note_vec_element_replacement(&source, 1, &Value::Int(9));
+        note_vec_structural_mutation(&source);
+
+        assert!(!has_lazy_vec_borrowers());
+        assert!(LAZY_VEC_BORROWERS.with(|borrowers| borrowers.borrow().is_empty()));
+        assert!(LAZY_VEC_GENERATIONS.with(|generations| generations.borrow().is_empty()));
+        assert!(LAZY_VEC_REPLACEMENTS.with(|replacements| replacements.borrow().is_empty()));
+        set_lazy_iterators_enabled(false);
+    }
+
+    #[test]
+    fn last_vec_iterator_reclaims_mutation_tracking_state() {
+        set_lazy_iterators_enabled(true);
+        let source = Value::IntArray(Arc::new(vec![1i64, 2, 3]));
+        let iter = lazy_source(&source);
+
+        note_vec_element_replacement(&source, 1, &Value::Int(9));
+        assert!(matches!(
+            lazy_vec_replacement(source_id(&source), 1),
+            Some(Value::Int(9))
+        ));
+
+        discard_lazy_value(&iter);
+        assert!(!has_lazy_vec_borrowers());
+        assert!(LAZY_VEC_REPLACEMENTS.with(|replacements| replacements.borrow().is_empty()));
+        set_lazy_iterators_enabled(false);
+    }
+
+    fn source_id(value: &Value) -> usize {
+        match value {
+            Value::IntArray(items) => Arc::as_ptr(items) as usize,
+            _ => unreachable!(),
+        }
+    }
 }
 
 // ----------------------------------------------------------------------

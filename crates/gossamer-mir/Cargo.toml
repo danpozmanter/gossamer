@@ -21,3 +21,4 @@ gossamer-abi = { workspace = true }
 
 [dev-dependencies]
 gossamer-parse = { workspace = true }
+gossamer-pkg = { workspace = true }

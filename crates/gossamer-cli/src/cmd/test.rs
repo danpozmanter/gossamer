@@ -428,9 +428,13 @@ fn collect_test_names(file: &Path) -> Result<Vec<String>> {
     // "refusing to execute" trailer rather than swallowed.
     let entry = read_entry_source(&file.to_path_buf())?;
     let augmented = gossamer_parse::autoderive::augment_source(&entry);
-    let augmented = match crate::comptime_fold::fold_comptime(&augmented, &file.to_string_lossy()) {
-        Ok(folded) => folded,
-        Err(_) => augmented,
+    let augmented = if augmented.contains("comptime") {
+        match crate::comptime_fold::fold_comptime(augmented.clone(), &file.to_string_lossy()) {
+            Ok(folded) => folded,
+            Err(_) => augmented,
+        }
+    } else {
+        augmented
     };
     let mut check_map = gossamer_lex::SourceMap::new();
     let check_id = check_map.add_file(file.to_string_lossy().into_owned(), augmented.clone());
@@ -473,9 +477,13 @@ fn run_tests_filtered_inner(
     // run / build tiers do. On a comptime failure, fall back to the
     // unfolded source - the VM still evaluates the region at runtime,
     // and `gos check` / `gos build` surface the error authoritatively.
-    let augmented = match crate::comptime_fold::fold_comptime(&augmented, &file.to_string_lossy()) {
-        Ok(folded) => folded,
-        Err(_) => augmented,
+    let augmented = if augmented.contains("comptime") {
+        match crate::comptime_fold::fold_comptime(augmented.clone(), &file.to_string_lossy()) {
+            Ok(folded) => folded,
+            Err(_) => augmented,
+        }
+    } else {
+        augmented
     };
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), augmented.clone());

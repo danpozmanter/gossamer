@@ -141,7 +141,10 @@ pub(super) fn stride_slots_from_ty(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
     loop {
         match tcx.kind_of(cur).clone() {
             TyKind::Ref { inner, .. } => cur = inner,
-            TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
+            TyKind::Array { elem, .. }
+            | TyKind::Slice(elem)
+            | TyKind::Vec(elem)
+            | TyKind::Iterator(elem) => {
                 return Some(type_slot_count(tcx, elem));
             }
             _ => return None,
@@ -200,7 +203,7 @@ pub(super) fn type_slot_count(tcx: &TyCtxt, ty: Ty) -> u32 {
 /// and frees via `local.Field(..)`.
 pub(super) fn single_slot_managed_leaf(tcx: &TyCtxt, ty: Ty) -> bool {
     match tcx.kind_of(ty) {
-        TyKind::Vec(_) | TyKind::Slice(_) | TyKind::String => true,
+        TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Iterator(_) | TyKind::String => true,
         TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. } => {
             tcx.is_rc_managed(ty) || {
                 let fields: Vec<Ty> = match tcx.kind_of(ty).clone() {
@@ -341,7 +344,7 @@ pub(super) fn mir_ty_to_cabi(
         TyKind::Float(_) => Some(types::F64),
         TyKind::Int(_) => Some(types::I64),
         TyKind::String => Some(ptr_ty),
-        TyKind::Vec(_) => Some(ptr_ty),
+        TyKind::Vec(_) | TyKind::Iterator(_) => Some(ptr_ty),
         // Option / Result / Adt / Tuple / FnDef / handles all flow
         // through as pointer-sized values at the C-ABI boundary.
         _ => Some(ptr_ty),

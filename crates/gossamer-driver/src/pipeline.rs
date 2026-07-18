@@ -8,11 +8,11 @@ use gossamer_ast::SourceFile;
 use gossamer_codegen_cranelift::{
     CompileOptions, NativeObject, compile_to_object, compile_to_object_with_options, emit_module,
 };
-use gossamer_hir::{lift_closures, lower_source_file};
+use gossamer_hir::{lift_closures, lower_source_file_with_edition};
 use gossamer_lex::SourceMap;
 use gossamer_mir::{
     Body, check_generic_layouts, inline_general, inline_small_callees, inline_trivial_wrappers,
-    lower_program, optimise,
+    lower_program, optimise, optimise_debug,
 };
 use gossamer_resolve::Resolutions;
 use gossamer_types::{TyCtxt, TypeTable};
@@ -35,6 +35,8 @@ pub fn compile_source(source: &str, unit_name: &str, options: &LinkerOptions) ->
 /// Created once by `gos build`'s validation pass and consumed by
 /// the codegen path, avoiding a redundant frontend round-trip.
 pub struct CheckedFrontend {
+    /// Source edition selected by the project manifest.
+    pub edition: gossamer_pkg::Edition,
     /// Parsed AST.
     pub sf: SourceFile,
     /// Name-resolution map.
@@ -51,7 +53,7 @@ pub struct CheckedFrontend {
 /// covers every HIR shape, so user-visible compiler gaps no longer
 /// short-circuit through this path.
 pub fn compile_source_native(source: &str, unit_name: &str) -> anyhow::Result<NativeObject> {
-    let (bodies, tcx) = lower_to_mir_with_tcx(source, unit_name);
+    let (bodies, tcx) = lower_to_mir_with_tcx(source, unit_name, MirProfile::Debug);
     enforce_generic_abi(&bodies, &tcx)?;
     compile_to_object(&bodies, &tcx)
 }
@@ -61,7 +63,7 @@ pub fn compile_source_native(source: &str, unit_name: &str) -> anyhow::Result<Na
 pub fn compile_source_native_from_frontend(
     checked: CheckedFrontend,
 ) -> anyhow::Result<NativeObject> {
-    let (bodies, tcx) = lower_to_mir_from_frontend(checked);
+    let (bodies, tcx) = lower_to_mir_from_frontend(checked, MirProfile::Debug);
     enforce_generic_abi(&bodies, &tcx)?;
     compile_to_object(&bodies, &tcx)
 }
@@ -74,7 +76,7 @@ pub fn compile_source_native_from_frontend_at_path(
     checked: CheckedFrontend,
     obj_out: &std::path::Path,
 ) -> anyhow::Result<String> {
-    let (bodies, tcx) = lower_to_mir_from_frontend(checked);
+    let (bodies, tcx) = lower_to_mir_from_frontend(checked, MirProfile::Debug);
     enforce_generic_abi(&bodies, &tcx)?;
     gossamer_codegen_cranelift::compile_to_object_at_path(&bodies, &tcx, obj_out)
 }
@@ -89,7 +91,7 @@ pub fn compile_source_native_release(
     source: &str,
     unit_name: &str,
 ) -> anyhow::Result<NativeObject> {
-    let (bodies, tcx) = lower_to_mir_with_tcx(source, unit_name);
+    let (bodies, tcx) = lower_to_mir_with_tcx(source, unit_name, MirProfile::Release);
     enforce_generic_abi(&bodies, &tcx)?;
     let llvm_obj = gossamer_codegen_llvm::compile_to_object(&bodies, &tcx)?;
     Ok(NativeObject {
@@ -120,7 +122,7 @@ pub struct ReleaseBuild {
 pub fn compile_source_native_release_with_fallback_from_frontend(
     checked: CheckedFrontend,
 ) -> anyhow::Result<ReleaseBuild> {
-    let (bodies, tcx) = lower_to_mir_from_frontend(checked);
+    let (bodies, tcx) = lower_to_mir_from_frontend(checked, MirProfile::Release);
     enforce_generic_abi(&bodies, &tcx)?;
     let outcome = gossamer_codegen_llvm::compile_with_fallback(&bodies, &tcx)?;
     let cranelift = if outcome.fallback_bodies.is_empty() {
@@ -158,6 +160,10 @@ pub struct ReleaseBuildPaths {
     /// (i.e. there was at least one fallback body). When false the
     /// caller should skip the companion in the link step.
     pub has_cranelift_companion: bool,
+    /// Number of MIR bodies presented to native code generation.
+    pub body_count: usize,
+    /// Number of LLVM object files emitted or restored for this build.
+    pub llvm_object_count: usize,
     /// Paths to the LLVM-emitted per-body object files. One entry per
     /// non-fallback body; pass all of them to the linker alongside
     /// the optional Cranelift companion.
@@ -177,7 +183,25 @@ pub fn compile_release_at_paths_from_frontend(
     llvm_obj_dir: &std::path::Path,
     cl_obj_out: &std::path::Path,
 ) -> anyhow::Result<ReleaseBuildPaths> {
-    let (bodies, tcx) = lower_to_mir_from_frontend(checked);
+    compile_at_paths_from_frontend(checked, llvm_obj_dir, cl_obj_out, true)
+}
+
+/// Profile-aware path-oriented native build used by the CLI. Release builds
+/// run the full MIR optimisation pipeline; debug builds retain only the
+/// canonicalisation passes required by native code generation.
+pub fn compile_at_paths_from_frontend(
+    checked: CheckedFrontend,
+    llvm_obj_dir: &std::path::Path,
+    cl_obj_out: &std::path::Path,
+    release: bool,
+) -> anyhow::Result<ReleaseBuildPaths> {
+    let profile = if release {
+        MirProfile::Release
+    } else {
+        MirProfile::Debug
+    };
+    let (bodies, tcx) = lower_to_mir_from_frontend(checked, profile);
+    let body_count = bodies.len();
     enforce_generic_abi(&bodies, &tcx)?;
     let (llvm_objects, triple, fallback_bodies) =
         gossamer_codegen_llvm::compile_with_fallback_at_path(&bodies, &tcx, llvm_obj_dir)?;
@@ -196,6 +220,8 @@ pub fn compile_release_at_paths_from_frontend(
         triple,
         fallback_bodies,
         has_cranelift_companion,
+        body_count,
+        llvm_object_count: llvm_objects.len(),
         llvm_objects,
     })
 }
@@ -207,7 +233,7 @@ pub fn compile_source_native_release_with_fallback(
     source: &str,
     unit_name: &str,
 ) -> anyhow::Result<ReleaseBuild> {
-    let (bodies, tcx) = lower_to_mir_with_tcx(source, unit_name);
+    let (bodies, tcx) = lower_to_mir_with_tcx(source, unit_name, MirProfile::Release);
     enforce_generic_abi(&bodies, &tcx)?;
     let outcome = gossamer_codegen_llvm::compile_with_fallback(&bodies, &tcx)?;
     let cranelift = if outcome.fallback_bodies.is_empty() {
@@ -245,26 +271,41 @@ pub fn compile_source_native_release_with_fallback(
 }
 
 fn lower_to_mir(source: &str, unit_name: &str) -> Vec<Body> {
-    lower_to_mir_with_tcx(source, unit_name).0
+    lower_to_mir_with_tcx(source, unit_name, MirProfile::Debug).0
+}
+
+#[derive(Clone, Copy)]
+enum MirProfile {
+    Debug,
+    Release,
 }
 
 /// HIR + MIR lowering from pre-computed frontend artifacts.
-fn lower_to_mir_from_frontend(checked: CheckedFrontend) -> (Vec<Body>, TyCtxt) {
+fn lower_to_mir_from_frontend(
+    checked: CheckedFrontend,
+    profile: MirProfile,
+) -> (Vec<Body>, TyCtxt) {
     let CheckedFrontend {
+        edition,
         sf,
         resolutions,
         table,
         mut tcx,
     } = checked;
-    let hir = lower_source_file(&sf, &resolutions, &table, &mut tcx);
+    let hir = lower_source_file_with_edition(&sf, &resolutions, &table, &mut tcx, edition);
     let hir = lift_closures(hir, &mut tcx);
     let mut bodies = lower_program(&hir, &mut tcx);
     gossamer_mir::monomorphise(&mut bodies, &mut tcx);
     inline_trivial_wrappers(&mut bodies);
-    inline_small_callees(&mut bodies);
-    inline_general(&mut bodies);
+    if matches!(profile, MirProfile::Release) {
+        inline_small_callees(&mut bodies);
+        inline_general(&mut bodies);
+    }
     for body in &mut bodies {
-        optimise(body, &tcx);
+        match profile {
+            MirProfile::Debug => optimise_debug(body, &tcx),
+            MirProfile::Release => optimise(body, &tcx),
+        }
     }
     (bodies, tcx)
 }
@@ -295,10 +336,14 @@ fn enforce_generic_abi(bodies: &[Body], tcx: &TyCtxt) -> anyhow::Result<()> {
 /// `compile_source` artifact path and the package builder, both of
 /// which validate the program through the gate before reaching codegen;
 /// any residual diagnostics here would have been surfaced there.
-fn lower_to_mir_with_tcx(source: &str, unit_name: &str) -> (Vec<Body>, TyCtxt) {
+fn lower_to_mir_with_tcx(
+    source: &str,
+    unit_name: &str,
+    profile: MirProfile,
+) -> (Vec<Body>, TyCtxt) {
     let augmented = gossamer_parse::autoderive::augment_source(source);
     let mut map = SourceMap::new();
     let file = map.add_file(unit_name, augmented.clone());
     let outcome = crate::frontend::check_frontend(&augmented, file);
-    lower_to_mir_from_frontend(outcome.checked)
+    lower_to_mir_from_frontend(outcome.checked, profile)
 }

@@ -23,6 +23,7 @@ impl<'tcx> FnBuilder<'tcx> {
     pub(crate) fn alloc_reg(&mut self) -> Reg {
         let r = self.next_reg;
         self.next_reg = self.next_reg.checked_add(1).expect("register overflow");
+        self.max_reg = self.max_reg.max(self.next_reg);
         r
     }
 
@@ -32,6 +33,7 @@ impl<'tcx> FnBuilder<'tcx> {
             .next_float_reg
             .checked_add(1)
             .expect("float register overflow");
+        self.max_float_reg = self.max_float_reg.max(self.next_float_reg);
         r
     }
 
@@ -41,7 +43,23 @@ impl<'tcx> FnBuilder<'tcx> {
             .next_int_reg
             .checked_add(1)
             .expect("int register overflow");
+        self.max_int_reg = self.max_int_reg.max(self.next_int_reg);
         r
+    }
+
+    /// Captures the three physical register cursors before compiling a region
+    /// whose results cannot escape. Restoring the mark lets the next disjoint
+    /// region reuse the same slots. High-water counts remain monotonic, so a
+    /// chunk is always sized for every register referenced by its bytecode.
+    pub(crate) fn register_mark(&self) -> (Reg, Reg, Reg) {
+        (self.next_reg, self.next_float_reg, self.next_int_reg)
+    }
+
+    pub(crate) fn restore_register_mark(&mut self, mark: (Reg, Reg, Reg)) {
+        self.max_reg = self.max_reg.max(self.next_reg);
+        self.max_float_reg = self.max_float_reg.max(self.next_float_reg);
+        self.max_int_reg = self.max_int_reg.max(self.next_int_reg);
+        (self.next_reg, self.next_float_reg, self.next_int_reg) = mark;
     }
 
     pub(crate) fn push_scope(&mut self) {

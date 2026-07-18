@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 gossamer-ast = { workspace = true }
 gossamer-lex = { workspace = true }
+gossamer-pkg = { workspace = true }
 gossamer-resolve = { workspace = true }
 gossamer-types = { workspace = true }
 

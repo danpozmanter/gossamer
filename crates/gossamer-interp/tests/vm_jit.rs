@@ -219,12 +219,76 @@ fn jit_falls_back_when_signature_unsupported() {
     );
 }
 
+#[test]
+fn slice_pattern_body_does_not_block_an_unrelated_hot_loop() {
+    let _g = GosJitGuard::new();
+    let source = r"
+fn slice_head(xs: [i64; 3]) -> i64 {
+    match xs { [first, ..] => first }
+}
+fn hot_loop(n: i64) -> i64 {
+    let mut out = 0i64
+    let mut i = 0i64
+    while i < n { out += i
+        i += 1i64 }
+    out
+}
+fn main() -> i64 { hot_loop(10i64) }
+";
+    let (vm, _) = build_vm(source);
+    // Cross the production work floor without relying on a process-global
+    // environment override, which is initialized only once per test binary.
+    warm_up_n(&vm, "hot_loop", &[Value::Int(100)], 1_000);
+    let result = vm.call("hot_loop", vec![Value::Int(10)]).expect("hot_loop");
+    assert!(matches!(result, Value::Int(45)), "result: {result:?}");
+    let metrics = vm.jit_metrics();
+    assert!(
+        metrics.successful_compiles >= 1 && metrics.resident_functions >= 1,
+        "an unrelated slice-pattern body must not reject the hot loop: {metrics:?}"
+    );
+}
+
+#[test]
+fn option_local_loop_is_promotable_by_default() {
+    let _g = GosJitGuard::new();
+    let source = r"
+fn option_sum(n: i64) -> i64 {
+    let mut out = 0i64
+    let mut i = 0i64
+    while i < n {
+        let value = Some(i)
+        match value { Some(x) => out += x, None => {} }
+        i += 1i64
+    }
+    out
+}
+fn main() -> i64 { option_sum(10i64) }
+";
+    let (vm, _) = build_vm(source);
+    // Use the real admission policy here too. This proves Option locals do
+    // not need a special opt-in once the function has repaid JIT setup cost.
+    warm_up_n(&vm, "option_sum", &[Value::Int(100)], 1_000);
+    let result = vm
+        .call("option_sum", vec![Value::Int(10)])
+        .expect("option_sum");
+    assert!(matches!(result, Value::Int(45)), "result: {result:?}");
+    let metrics = vm.jit_metrics();
+    assert!(
+        metrics.successful_compiles >= 1 && metrics.resident_functions >= 1,
+        "Option locals should not require an opt-in environment switch: {metrics:?}"
+    );
+}
+
 /// Calls `name` enough times to drive its per-function tier-up
 /// counter to zero (the floor is 16, the ceiling 100), which forces
 /// the deferred cranelift compile and installs the native override.
 /// Deterministic: the count is fixed, not time-based.
 fn warm_up(vm: &Vm, name: &str, args: &[Value]) {
-    for _ in 0..300 {
+    warm_up_n(vm, name, args, 300);
+}
+
+fn warm_up_n(vm: &Vm, name: &str, args: &[Value], calls: usize) {
+    for _ in 0..calls {
         let _ = vm.call(name, args.to_vec());
     }
 }

@@ -251,6 +251,18 @@ pub enum TypeError {
         /// Qualified std path as written, e.g. `strings::repeat`.
         path: String,
     },
+    /// A lazy iterator state was formatted or printed directly instead of
+    /// being consumed by a terminal.
+    #[error("iterator state cannot be formatted directly")]
+    IteratorStateFormatted,
+    /// A lazy iterator state was used after an adapter or terminal consumed it.
+    #[error("iterator `{name}` was already consumed by `{operation}`")]
+    IteratorStateConsumed {
+        /// Local binding name.
+        name: String,
+        /// Operation that consumed it.
+        operation: String,
+    },
     /// `json::render` / `json::encode` was handed an enum value - most
     /// often a `Result` from `json::parse(..)` that is missing its `?`,
     /// or an `Option`. Enums have no JSON serialization; the VM
@@ -426,6 +438,8 @@ impl TypeError {
             Self::ClosureParamUninferred { .. } => "closure-param-uninferred",
             Self::Int128Unsupported { .. } => "int128-unsupported",
             Self::StdFnValueUnsupported { .. } => "std-fn-value-unsupported",
+            Self::IteratorStateFormatted => "iterator-state-formatted",
+            Self::IteratorStateConsumed { .. } => "iterator-state-consumed",
             Self::JsonNotSerializable { .. } => "json-not-serializable",
             Self::CallArityMismatch { .. } => "call-arity-mismatch",
             Self::UnknownVariant { .. } => "unknown-variant",
@@ -466,6 +480,8 @@ impl TypeError {
             Self::ClosureParamUninferred { .. } => "GT0013",
             Self::Int128Unsupported { .. } => "GT0014",
             Self::StdFnValueUnsupported { .. } => "GT0015",
+            Self::IteratorStateFormatted => "GT0041",
+            Self::IteratorStateConsumed { .. } => "GT0042",
             Self::JsonNotSerializable { .. } => "GT0016",
             Self::TraitBoundNotSatisfied { .. } => "GT0017",
             Self::CallArityMismatch { .. } => "GT0018",
@@ -502,6 +518,18 @@ fn int128_diagnostic(
 }
 
 fn mismatch_suggestion(expected: &str, found: &str) -> Option<String> {
+    if expected.starts_with("Vec<") && found.starts_with("Iterator<") {
+        return Some(
+            "consume the iterator with `iter::collect(<expr>)` at this materialization boundary"
+                .to_string(),
+        );
+    }
+    if expected.starts_with("Iterator<") && found.starts_with("Vec<") {
+        return Some(
+            "start a lazy pipeline with an iterator constructor or pass the Vec to a lazy adapter"
+                .to_string(),
+        );
+    }
     // String / &str
     if expected == "String" && found.ends_with("&str") {
         return Some("did you mean to call `.to_string()` on the value?".to_string());
@@ -702,6 +730,17 @@ impl TypeDiagnostic {
             TypeError::Int128Unsupported { ty } => out = int128_diagnostic(out, ty),
             TypeError::StdFnValueUnsupported { path } => {
                 out = std_fn_value_diagnostic(out, path);
+            }
+            TypeError::IteratorStateFormatted => {
+                out = out.with_help(
+                    "consume the iterator with `iter::collect(...)` before formatting it"
+                        .to_string(),
+                );
+            }
+            TypeError::IteratorStateConsumed { name, operation } => {
+                out = out
+                    .with_note(format!("`{operation}` takes ownership of `{name}`"))
+                    .with_help("create a new iterator pipeline for another traversal".to_string());
             }
             TypeError::JsonNotSerializable { op, ty } => {
                 out = json_not_serializable_diagnostic(out, op, ty);
@@ -938,4 +977,21 @@ fn std_fn_value_diagnostic(
          (errors::new, strings::to_uppercase/.../trim, strconv::parse_i64/...) can be \
          passed directly",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mismatch_suggestion;
+
+    #[test]
+    fn iterator_vec_mismatches_offer_migration_hints() {
+        assert!(
+            mismatch_suggestion("Vec<i64>", "Iterator<i64>")
+                .is_some_and(|help| help.contains("iter::collect"))
+        );
+        assert!(
+            mismatch_suggestion("Iterator<i64>", "Vec<i64>")
+                .is_some_and(|help| help.contains("lazy adapter"))
+        );
+    }
 }

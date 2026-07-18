@@ -14,15 +14,15 @@
 //!
 //! Two opt levels are exposed:
 //!
-//! - `gos build` (no `--release`): LLVM emit with the `opt -O3`
-//!   pre-pass skipped and `llc -O0` for codegen. Faster compile,
-//!   debug-friendly IR shapes preserved.
-//! - `gos build --release`: full `opt -O3 | llc -O3` pipeline
-//!   with `mcpu=native` and the audited mid-level flags.
+//! - `gos build` (no `--release`): the lightweight correctness MIR
+//!   pipeline followed by minimal `opt` and `llc -O0` codegen.
+//! - `gos build --release`: the release MIR pipeline followed by
+//!   integrated Clang `-O3` codegen with the audited target flags.
+//!   PGO and `GOS_LLVM_SPLIT_TOOLS=1` retain the explicit `opt` plus
+//!   `llc` pipeline when separate pass control is required.
 //!
-//! The driver crate's `compile_release_at_paths_from_frontend`
-//! is the single dispatch point; `GOS_LLVM_PROFILE=debug|release`
-//! routes the LLVM emit's opt-level decision.
+//! The driver crate's profile-aware frontend entry is the single dispatch
+//! point; the selected build profile controls MIR and LLVM optimization.
 //!
 //! Native builds run the linked artifact through `cc` (POSIX) or
 //! `rust-lld -flavor link` (Windows MSVC). A non-host `--target`
@@ -35,6 +35,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 
@@ -42,29 +43,25 @@ use crate::loaders::profile_rss_stage;
 use crate::paths::{
     default_unit_name, platform_exe_name, read_entry_source, resolve_entry_arg, resolve_output_path,
 };
+use gossamer_pkg::Edition;
+
+/// User-selected native-build options collected at the CLI boundary.
+pub(crate) struct BuildRequest<'a> {
+    pub(crate) path: Option<PathBuf>,
+    pub(crate) target: Option<&'a str>,
+    pub(crate) link: LinkOptions,
+    pub(crate) out_dir: Option<PathBuf>,
+    pub(crate) timings: bool,
+}
 
 /// `gos build` dispatcher: walks the project root for a default
 /// entry point when no path is supplied.
-pub(crate) fn dispatch(
-    path: Option<PathBuf>,
-    target: Option<&str>,
-    release: bool,
-    debug_info: bool,
-    dynamic: bool,
-    out_dir: Option<PathBuf>,
-) -> Result<()> {
+pub(crate) fn dispatch(mut request: BuildRequest<'_>) -> Result<()> {
     if let Err(err) = crate::binding_dispatch::ensure_external_signatures() {
         eprintln!("warning: failed to load rust-binding signatures: {err}");
     }
-    let resolved = resolve_entry_arg(path)?;
-    run(
-        &resolved,
-        target,
-        release,
-        debug_info,
-        dynamic,
-        out_dir.as_deref(),
-    )
+    let resolved = resolve_entry_arg(request.path.take())?;
+    run(&resolved, &request)
 }
 
 /// Per-build link options assembled at the dispatch boundary and
@@ -72,16 +69,16 @@ pub(crate) fn dispatch(
 /// `link_windows_msvc`. Centralising these here keeps the
 /// link-strategy decision in one place.
 #[derive(Debug, Clone, Copy)]
-struct LinkOptions {
+pub(crate) struct LinkOptions {
     /// True for `gos build --release` (LLVM `-O3`); drives static
     /// linking, strip, gc-sections.
-    release: bool,
+    pub(crate) release: bool,
     /// True when the user passed `-g`. Suppresses strip; everything
     /// else stays the same.
-    debug_info: bool,
+    pub(crate) debug_info: bool,
     /// True when the user passed `--dynamic`. Forces the legacy
     /// dynamic-glibc link path even on Linux release builds.
-    dynamic: bool,
+    pub(crate) dynamic: bool,
 }
 
 impl LinkOptions {
@@ -177,19 +174,16 @@ fn output_path(
     resolve_output_path(file, unit_name, release, target_is_windows)
 }
 
-fn run(
-    file: &PathBuf,
-    target: Option<&str>,
-    release: bool,
-    debug_info: bool,
-    dynamic: bool,
-    out_dir: Option<&Path>,
-) -> Result<()> {
+fn run(file: &PathBuf, request: &BuildRequest<'_>) -> Result<()> {
+    let target = request.target;
+    let opts = request.link;
+    let release = opts.release;
+    let out_dir = request.out_dir.as_deref();
+    let timings = request.timings;
+    let started = Instant::now();
+    let mut build_timings = BuildTimings::default();
     warn_if_pgo_profile_is_stale(file);
-    let source = read_entry_source(file)?;
-    let (sf, resolutions, table, tcx) = validate_source(file, source)?;
-    profile_rss_stage("build_frontend_released");
-
+    let edition = crate::paths::project_edition_for_entry(file);
     // Resolve `--target`. `None` or the host triple takes the host
     // build path. A registered, Linux-target triple cross-builds
     // through the same `try_native_build` pipeline; the codegen target
@@ -225,26 +219,287 @@ fn run(
     // the host compiling it is.
     let target_is_windows = cross_target.is_none() && cfg!(windows);
     let out_path = output_path(file, &unit_name, release, out_dir, target_is_windows)?;
+    let phase_started = Instant::now();
+    let source = read_entry_source(file)?;
+    build_timings.bundle = phase_started.elapsed();
+    let phase_started = Instant::now();
+    let build_key = build_artifact_key(file, &source, edition, cross_target, opts, &out_path);
+    let stamp_path = build_stamp_path(file, &out_path);
+    if let Some(outcome) = load_unchanged_build(&stamp_path, &out_path, &build_key) {
+        build_timings.stamp = phase_started.elapsed();
+        build_timings.total = started.elapsed();
+        println!(
+            "build: {bytes}B native executable at {path} ({note})",
+            bytes = outcome.size,
+            path = out_path.display(),
+            note = outcome.note,
+        );
+        if timings {
+            build_timings.print(true);
+        }
+        return Ok(());
+    }
+    build_timings.stamp = phase_started.elapsed();
+    let _ = fs::remove_file(&stamp_path);
+
+    let phase_started = Instant::now();
+    let (sf, resolutions, table, tcx) = validate_source(file, source, edition, &mut build_timings)?;
+    build_timings.frontend = phase_started.elapsed();
+    profile_rss_stage("build_frontend_released");
     let checked = gossamer_driver::CheckedFrontend {
+        edition,
         sf,
         resolutions,
         table,
         tcx,
     };
-    let opts = LinkOptions {
-        release,
-        debug_info,
-        dynamic,
-    };
-    let outcome = try_native_build(&unit_name, file, &out_path, opts, cross_target, checked)
-        .map_err(|err| anyhow!("build: {}", err.user_message()))?;
+    let outcome = try_native_build(
+        &unit_name,
+        file,
+        &out_path,
+        opts,
+        cross_target,
+        checked,
+        &mut build_timings,
+    )
+    .map_err(|err| anyhow!("build: {}", err.user_message()))?;
+    store_successful_build(&stamp_path, &out_path, &build_key, &outcome);
     println!(
         "build: {bytes}B native executable at {path} ({note})",
         bytes = outcome.size,
         path = out_path.display(),
         note = outcome.note,
     );
+    if timings {
+        build_timings.total = started.elapsed();
+        build_timings.print(false);
+    }
     Ok(())
+}
+
+/// Wall-clock accounting for the native build critical path. The values are
+/// deliberately emitted by the CLI rather than the driver so library callers
+/// do not inherit a reporting policy.
+#[derive(Default)]
+struct BuildTimings {
+    bundle: Duration,
+    stamp: Duration,
+    autoderive: Duration,
+    comptime: Duration,
+    frontend: Duration,
+    parse: Duration,
+    resolve: Duration,
+    typecheck: Duration,
+    exhaustiveness: Duration,
+    arena_escape: Duration,
+    parse_cache_hit: bool,
+    body_count: usize,
+    llvm_object_count: usize,
+    cranelift_companion: bool,
+    codegen: Duration,
+    link: Duration,
+    total: Duration,
+}
+
+impl BuildTimings {
+    fn print(&self, cache_hit: bool) {
+        println!(
+            "build-timings: {{\"bundle_us\":{},\"stamp_us\":{},\"autoderive_us\":{},\"comptime_us\":{},\"frontend_us\":{},\"parse_us\":{},\"resolve_us\":{},\"typecheck_us\":{},\"exhaustiveness_us\":{},\"arena_escape_us\":{},\"parse_cache_hit\":{},\"body_count\":{},\"llvm_object_count\":{},\"cranelift_companion\":{},\"codegen_us\":{},\"link_us\":{},\"total_us\":{},\"final_artifact_cache_hit\":{cache_hit}}}",
+            self.bundle.as_micros(),
+            self.stamp.as_micros(),
+            self.autoderive.as_micros(),
+            self.comptime.as_micros(),
+            self.frontend.as_micros(),
+            self.parse.as_micros(),
+            self.resolve.as_micros(),
+            self.typecheck.as_micros(),
+            self.exhaustiveness.as_micros(),
+            self.arena_escape.as_micros(),
+            self.parse_cache_hit,
+            self.body_count,
+            self.llvm_object_count,
+            self.cranelift_companion,
+            self.codegen.as_micros(),
+            self.link.as_micros(),
+            self.total.as_micros(),
+        );
+    }
+}
+
+const BUILD_STAMP_VERSION: &str = "gossamer-linked-artifact-v1";
+
+/// Fingerprints everything available before the frontend that can affect the
+/// linked artifact. The bundled source covers sibling modules, while project
+/// metadata, tool/runtime identity, target flags, PGO inputs, and linker
+/// environment prevent a successful artifact from surviving a relevant
+/// configuration change.
+fn build_artifact_key(
+    file: &Path,
+    source: &str,
+    edition: Edition,
+    target: Option<&str>,
+    opts: LinkOptions,
+    out_path: &Path,
+) -> String {
+    let mut hash = gossamer_pkg::sha256::Hasher::new();
+    let mut add = |label: &str, bytes: &[u8]| {
+        hash.update(label.as_bytes());
+        hash.update(&[0]);
+        hash.update(&(bytes.len() as u64).to_le_bytes());
+        hash.update(bytes);
+    };
+    add("version", BUILD_STAMP_VERSION.as_bytes());
+    add("source", source.as_bytes());
+    add("entry", file.to_string_lossy().as_bytes());
+    add("output", out_path.to_string_lossy().as_bytes());
+    add(
+        "options",
+        format!(
+            "edition={edition:?}|target={}|release={}|debug={}|dynamic={}|reproducible={}",
+            target.unwrap_or("host"),
+            opts.release,
+            opts.debug_info,
+            opts.dynamic,
+            gossamer_codegen_llvm::reproducible_enabled(),
+        )
+        .as_bytes(),
+    );
+    if let Ok(exe) = std::env::current_exe() {
+        add("compiler", file_stamp_identity(&exe).as_bytes());
+    }
+    for name in ["project.toml", "gos.lock"] {
+        if let Some(path) = find_ancestor_file(file, name)
+            && let Ok(contents) = fs::read(&path)
+        {
+            add(name, &contents);
+        }
+    }
+    for path in [
+        option_env!("GOSSAMER_RUNTIME_LIB_PATH").map(PathBuf::from),
+        MUSL_RUNTIME_LIB.map(PathBuf::from),
+        std::env::var_os("GOS_RUNTIME_LIB").map(PathBuf::from),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        add("runtime", file_stamp_identity(&path).as_bytes());
+    }
+    // These variables cover LLVM selection and tuning, link-driver changes,
+    // PGO, deployment targeting, and externally supplied runtime/bindings.
+    for name in [
+        "CC",
+        "CFLAGS",
+        "GOS_BUILD_CACHE",
+        "GOS_LLC",
+        "GOS_LLVM_CLANG",
+        "GOS_LLVM_JOBS",
+        "GOS_LLVM_MCPU",
+        "GOS_LLVM_OPT",
+        "GOS_LLVM_SPLIT_TOOLS",
+        "GOS_PGO_COLLECT",
+        "GOS_PGO_PROFILE",
+        "GOS_RUNTIME_LIB",
+        "MACOSX_DEPLOYMENT_TARGET",
+        "RUSTFLAGS",
+        "RUSTUP_TOOLCHAIN",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            add(name, value.to_string_lossy().as_bytes());
+            if matches!(name, "GOS_PGO_PROFILE" | "GOS_RUNTIME_LIB") {
+                add(
+                    "env-file",
+                    file_stamp_identity(Path::new(&value)).as_bytes(),
+                );
+            }
+        }
+    }
+    match gossamer_codegen_llvm::pgo_mode() {
+        Some(gossamer_codegen_llvm::PgoMode::Collect(path)) => {
+            add("pgo-collect", path.to_string_lossy().as_bytes());
+        }
+        Some(gossamer_codegen_llvm::PgoMode::Profile(path)) => {
+            add("pgo-profile", file_stamp_identity(&path).as_bytes());
+        }
+        None => {}
+    }
+    hash.finalize_hex()
+}
+
+fn find_ancestor_file(entry: &Path, name: &str) -> Option<PathBuf> {
+    entry
+        .parent()?
+        .ancestors()
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
+}
+
+fn file_stamp_identity(path: &Path) -> String {
+    let mut text = path.to_string_lossy().into_owned();
+    if let Ok(meta) = fs::metadata(path) {
+        text.push_str(&format!("|len={}", meta.len()));
+        if let Ok(modified) = meta.modified()
+            && let Ok(since_epoch) = modified.duration_since(std::time::UNIX_EPOCH)
+        {
+            text.push_str(&format!("|mtime={}", since_epoch.as_nanos()));
+        }
+    }
+    text
+}
+
+fn build_stamp_path(entry: &Path, out_path: &Path) -> PathBuf {
+    let root = find_ancestor_file(entry, "project.toml")
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .or_else(|| entry.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let output_key = gossamer_pkg::sha256::hex(out_path.to_string_lossy().as_bytes());
+    root.join(".gos-cache")
+        .join("link-stamps")
+        .join(format!("{output_key}.stamp"))
+}
+
+fn load_unchanged_build(
+    stamp_path: &Path,
+    out_path: &Path,
+    expected_key: &str,
+) -> Option<NativeBuildOutcome> {
+    let stamp = fs::read_to_string(stamp_path).ok()?;
+    let mut lines = stamp.lines();
+    if lines.next()? != BUILD_STAMP_VERSION || lines.next()? != expected_key {
+        return None;
+    }
+    let expected_output_identity = lines.next()?;
+    if file_stamp_identity(out_path) != expected_output_identity {
+        return None;
+    }
+    let note = lines.next()?.to_string();
+    let size = fs::metadata(out_path).ok()?.len();
+    Some(NativeBuildOutcome {
+        size,
+        note: format!("{note}, unchanged"),
+    })
+}
+
+fn store_successful_build(
+    stamp_path: &Path,
+    out_path: &Path,
+    key: &str,
+    outcome: &NativeBuildOutcome,
+) {
+    let Some(parent) = stamp_path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let contents = format!(
+        "{BUILD_STAMP_VERSION}\n{key}\n{}\n{}\n",
+        file_stamp_identity(out_path),
+        outcome.note,
+    );
+    let tmp = stamp_path.with_extension(format!("tmp-{}", std::process::id()));
+    if fs::write(&tmp, contents).is_ok() {
+        let _ = fs::rename(&tmp, stamp_path);
+    }
 }
 
 /// Parses, resolves, and typechecks `source`. Renders diagnostics
@@ -256,6 +511,8 @@ fn run(
 fn validate_source(
     file: &Path,
     source: String,
+    edition: Edition,
+    timings: &mut BuildTimings,
 ) -> Result<(
     gossamer_ast::SourceFile,
     gossamer_resolve::Resolutions,
@@ -263,14 +520,18 @@ fn validate_source(
     gossamer_types::TyCtxt,
 )> {
     // Compile-time codegen pass for from_json/to_json (and friends).
+    let phase_started = Instant::now();
     let augmented = gossamer_parse::autoderive::augment_source(&source);
+    timings.autoderive = phase_started.elapsed();
     // The augmented source supersedes the file contents for every subsequent
     // frontend stage. Release the original before parsing so large generated
     // files do not overlap the resolver, type table, and backend artifacts.
     drop(source);
     // Comptime fold: evaluate `comptime` regions and splice in their
     // result literals so the native backend compiles a constant.
-    let augmented = crate::comptime_fold::fold_comptime(&augmented, &file.to_string_lossy())?;
+    let phase_started = Instant::now();
+    let augmented = crate::comptime_fold::fold_comptime(augmented, &file.to_string_lossy())?;
+    timings.comptime = phase_started.elapsed();
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), augmented);
     let render_opts = gossamer_diagnostics::RenderOptions {
@@ -281,11 +542,14 @@ fn validate_source(
     // otherwise compile to a binary that segfaults on the unmatched arm)
     // and the canonical-`std`-path check (GR0005). Anything the gate
     // rejects must never reach codegen.
-    let outcome = gossamer_driver::check_frontend_with_edition(
-        map.source(file_id),
-        file_id,
-        crate::paths::project_edition(),
-    );
+    let outcome =
+        gossamer_driver::check_frontend_with_edition(map.source(file_id), file_id, edition);
+    timings.parse = outcome.timings.parse;
+    timings.resolve = outcome.timings.resolve;
+    timings.typecheck = outcome.timings.typecheck;
+    timings.exhaustiveness = outcome.timings.exhaustiveness;
+    timings.arena_escape = outcome.timings.arena_escape;
+    timings.parse_cache_hit = outcome.timings.parse_cache_hit;
     if !outcome.diagnostics.is_empty() {
         for diag in &outcome.diagnostics {
             eprintln!("{}", gossamer_diagnostics::render(diag, &map, render_opts));
@@ -300,6 +564,7 @@ fn validate_source(
     // only the live frontend artifacts.
     drop(map);
     let gossamer_driver::CheckedFrontend {
+        edition: _,
         sf,
         resolutions,
         table,
@@ -592,14 +857,17 @@ fn try_native_build(
     opts: LinkOptions,
     target: Option<&str>,
     checked: gossamer_driver::CheckedFrontend,
+    timings: &mut BuildTimings,
 ) -> std::result::Result<NativeBuildOutcome, NativeBuildError> {
     let lt = resolve_link_target(target);
     let tmp_dir =
         std::env::temp_dir().join(format!("gos-build-{}-{}", std::process::id(), unit_name));
     fs::create_dir_all(&tmp_dir)
         .map_err(|err| NativeBuildError::Io(anyhow!("creating {}: {err}", tmp_dir.display())))?;
+    let phase_started = Instant::now();
     let (object_paths, object_triple) =
-        emit_native_objects(unit_name, &tmp_dir, opts.release, checked)?;
+        emit_native_objects(unit_name, &tmp_dir, opts.release, checked, timings)?;
+    timings.codegen = phase_started.elapsed();
     profile_rss_stage("build_backend_emitted");
     // Static-musl is chosen for a cross musl target (musl links
     // statically by construction) or for a host release that opted in.
@@ -656,6 +924,7 @@ fn try_native_build(
     // refuse non-Linux cross targets earlier). Key it off the host
     // build env so a Windows-GNU `gos` keeps the mingw `link_posix`
     // path it uses today.
+    let phase_started = Instant::now();
     let link_result = if !lt.is_cross && cfg!(all(windows, target_env = "msvc")) {
         link_windows_msvc(&object_paths, &runtime_lib, &extra_archives, out_path)
     } else if static_musl {
@@ -677,6 +946,7 @@ fn try_native_build(
             opts,
         )
     };
+    timings.link = phase_started.elapsed();
     // Keep the per-build temp dir (objects + IR) when dumping IR or when
     // explicitly preserving artifacts for post-mortem inspection on a
     // platform the developer can't reproduce locally.
@@ -1241,20 +1511,24 @@ fn link_posix_static_musl(
 
 /// Resolves `rustc --print sysroot` once per process, as a `PathBuf`.
 fn rustc_sysroot() -> std::result::Result<PathBuf, NativeBuildError> {
-    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
-    let out = std::process::Command::new(&rustc)
-        .args(["--print", "sysroot"])
-        .output()
-        .map_err(|err| NativeBuildError::LinkerMissing(format!("rustc --print sysroot: {err}")))?;
-    if !out.status.success() {
-        return Err(NativeBuildError::LinkerMissing(format!(
-            "rustc --print sysroot exited with {}",
-            out.status
-        )));
-    }
-    Ok(PathBuf::from(
-        String::from_utf8_lossy(&out.stdout).trim().to_string(),
-    ))
+    static SYSROOT: std::sync::OnceLock<std::result::Result<PathBuf, String>> =
+        std::sync::OnceLock::new();
+    SYSROOT
+        .get_or_init(|| {
+            let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+            let out = std::process::Command::new(&rustc)
+                .args(["--print", "sysroot"])
+                .output()
+                .map_err(|err| format!("rustc --print sysroot: {err}"))?;
+            if !out.status.success() {
+                return Err(format!("rustc --print sysroot exited with {}", out.status));
+            }
+            Ok(PathBuf::from(
+                String::from_utf8_lossy(&out.stdout).trim().to_string(),
+            ))
+        })
+        .clone()
+        .map_err(NativeBuildError::LinkerMissing)
 }
 
 /// Windows MSVC link path - invokes `rust-lld -flavor link` with
@@ -1340,23 +1614,7 @@ fn link_windows_msvc(
 /// `rustc --print sysroot` rather than guessing the toolchain path.
 #[cfg(windows)]
 fn locate_rust_lld() -> std::result::Result<PathBuf, NativeBuildError> {
-    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
-    let out = std::process::Command::new(&rustc)
-        .args(["--print", "sysroot"])
-        .output()
-        .map_err(|err| {
-            NativeBuildError::LinkerMissing(format!(
-                "could not invoke `{rustc} --print sysroot`: {err}"
-            ))
-        })?;
-    if !out.status.success() {
-        return Err(NativeBuildError::LinkerMissing(format!(
-            "`{rustc} --print sysroot` exited with {}",
-            out.status
-        )));
-    }
-    let sysroot = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let candidate = PathBuf::from(&sysroot)
+    let candidate = rustc_sysroot()?
         .join("lib")
         .join("rustlib")
         .join("x86_64-pc-windows-msvc")
@@ -1376,6 +1634,7 @@ fn emit_native_objects(
     tmp_dir: &Path,
     release: bool,
     checked: gossamer_driver::CheckedFrontend,
+    timings: &mut BuildTimings,
 ) -> std::result::Result<(Vec<PathBuf>, Option<String>), NativeBuildError> {
     // LLVM is the canonical native backend. Strict-lowering is
     // default-on (`STRICT_LOWERING = true`) so any
@@ -1405,8 +1664,11 @@ fn emit_native_objects(
         .map_err(|e| NativeBuildError::Io(anyhow!("creating {}: {e}", llvm_obj_dir.display())))?;
     let cl_path = tmp_dir.join(format!("{unit_name}.cl.o"));
     let build =
-        gossamer_driver::compile_release_at_paths_from_frontend(checked, &llvm_obj_dir, &cl_path)
+        gossamer_driver::compile_at_paths_from_frontend(checked, &llvm_obj_dir, &cl_path, release)
             .map_err(|err| NativeBuildError::LowerFailed(err.to_string()))?;
+    timings.body_count = build.body_count;
+    timings.llvm_object_count = build.llvm_object_count;
+    timings.cranelift_companion = build.has_cranelift_companion;
     let mut object_paths: Vec<PathBuf> = build.llvm_objects;
     if build.has_cranelift_companion {
         object_paths.push(cl_path);
@@ -1446,6 +1708,15 @@ fn set_executable(path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    fn scratch(name: &str) -> std::path::PathBuf {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "gossamer-build-test-{}-{id}-{name}",
+            std::process::id()
+        ))
+    }
+
     #[test]
     fn pgo_profile_staleness_uses_strict_timestamp_ordering() {
         let older = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1);
@@ -1532,5 +1803,76 @@ mod tests {
         // return the host (x86) archive for a foreign-arch link.
         let r = super::find_runtime_lib_for_target("aarch64-unknown-linux-gnu-bogus-nonexistent");
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn linked_artifact_stamp_hits_and_invalidates_with_output() {
+        let root = scratch("stamp");
+        std::fs::create_dir_all(&root).expect("create scratch");
+        let output = root.join("app");
+        let stamp = root.join("app.stamp");
+        std::fs::write(&output, b"binary").expect("write output");
+        let outcome = super::NativeBuildOutcome {
+            size: 6,
+            note: "test link".to_string(),
+        };
+        super::store_successful_build(&stamp, &output, "key-a", &outcome);
+        let hit = super::load_unchanged_build(&stamp, &output, "key-a").expect("stamp hit");
+        assert_eq!(hit.size, 6);
+        assert!(hit.note.contains("unchanged"));
+        assert!(super::load_unchanged_build(&stamp, &output, "key-b").is_none());
+
+        std::fs::write(&output, b"changed binary").expect("replace output");
+        assert!(
+            super::load_unchanged_build(&stamp, &output, "key-a").is_none(),
+            "an externally replaced artifact must not be accepted"
+        );
+        std::fs::remove_dir_all(root).expect("remove scratch");
+    }
+
+    #[test]
+    fn linked_artifact_key_changes_with_source_and_profile() {
+        let root = scratch("key");
+        std::fs::create_dir_all(&root).expect("create scratch");
+        let entry = root.join("main.gos");
+        let output = root.join("app");
+        std::fs::write(&entry, b"fn main() {}\n").expect("write entry");
+        let debug = super::LinkOptions {
+            release: false,
+            debug_info: false,
+            dynamic: true,
+        };
+        let release = super::LinkOptions {
+            release: true,
+            debug_info: false,
+            dynamic: true,
+        };
+        let first = super::build_artifact_key(
+            &entry,
+            "fn main() {}\n",
+            gossamer_pkg::Edition::E2026,
+            None,
+            debug,
+            &output,
+        );
+        let source_changed = super::build_artifact_key(
+            &entry,
+            "fn main() { println(\"changed\") }\n",
+            gossamer_pkg::Edition::E2026,
+            None,
+            debug,
+            &output,
+        );
+        let profile_changed = super::build_artifact_key(
+            &entry,
+            "fn main() {}\n",
+            gossamer_pkg::Edition::E2026,
+            None,
+            release,
+            &output,
+        );
+        assert_ne!(first, source_changed);
+        assert_ne!(first, profile_changed);
+        std::fs::remove_dir_all(root).expect("remove scratch");
     }
 }

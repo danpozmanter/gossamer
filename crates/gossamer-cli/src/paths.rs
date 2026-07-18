@@ -467,6 +467,22 @@ pub(crate) fn project_edition() -> gossamer_pkg::Edition {
         })
 }
 
+/// The source edition for the project containing `entry`, falling back to the
+/// compatibility edition for loose-file invocations and malformed manifests.
+#[must_use]
+pub(crate) fn project_edition_for_entry(entry: &Path) -> gossamer_pkg::Edition {
+    let Some(root) = project_root_for_entry(entry) else {
+        return gossamer_pkg::Edition::E2026;
+    };
+    let path = root.join("project.toml");
+    fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| Manifest::parse(&text).ok())
+        .map_or(gossamer_pkg::Edition::E2026, |manifest| {
+            manifest.project.edition
+        })
+}
+
 /// Walks up from the cwd looking for the nearest `project.toml`.
 /// Returns the directory that contains it (the project root).
 pub(crate) fn find_project_root() -> Option<PathBuf> {
@@ -497,6 +513,32 @@ pub(crate) fn resolve_entry_arg(path: Option<PathBuf>) -> Result<PathBuf> {
         Some(p) if p.is_dir() => resolve_project_entry(&p),
         Some(p) => Ok(p),
     }
+}
+
+/// Returns the manifest root containing `entry`, when it belongs to a project.
+/// Used by the development supervisor to watch the complete local source tree.
+pub(crate) fn project_root_for_entry(entry: &Path) -> Option<PathBuf> {
+    entry.parent().and_then(|dir| {
+        dir.ancestors()
+            .find(|candidate| candidate.join("project.toml").is_file())
+            .map(Path::to_path_buf)
+    })
+}
+
+/// Discovers every transitive local `path` dependency of `entry`'s project.
+/// This shares the traversal used by [`read_entry_source`] so the development
+/// watcher observes exactly the source trees included in a bundled revision.
+pub(crate) fn local_path_dependency_roots(entry: &Path) -> Vec<PathBuf> {
+    let mut visited = Vec::new();
+    let mut worklist = Vec::new();
+    collect_path_deps(entry, &mut visited, &mut worklist);
+    while let Some((root, dep_entry)) = worklist.pop() {
+        collect_path_deps(&dep_entry, &mut visited, &mut worklist);
+        if !visited.contains(&root) {
+            visited.push(root);
+        }
+    }
+    visited
 }
 
 /// Default entry point for whole-project run/build commands.
@@ -795,6 +837,20 @@ mod tests {
             &["tool.gos", "_scratch.gos", "x_test.gos"],
         );
         assert_eq!(resolve_project_entry(&root).unwrap(), root.join("tool.gos"));
+    }
+
+    #[test]
+    fn entry_edition_comes_from_entry_project_not_cwd() {
+        let root = scratch_project(
+            "entryedition",
+            "[project]\nid = \"example.com/lazy\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
+            &["main.gos"],
+        );
+        assert_eq!(
+            project_edition_for_entry(&root.join("main.gos")),
+            gossamer_pkg::Edition::E2027
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

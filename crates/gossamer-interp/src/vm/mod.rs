@@ -1019,16 +1019,13 @@ const MAX_TAIL_CALL_DEPTH: usize = 65_536;
 /// Native stack reserved for every OS thread that executes the
 /// bytecode VM - the main `gos-vm` thread and each goroutine worker.
 ///
-/// A Gossamer call costs one `apply()` + `run()` pair on the real
-/// machine stack, and `run()` is a single ~2 000-line match whose
-/// debug-build frame holds every arm's locals at once (~160 KB).
-/// `MAX_CALL_DEPTH` bounds Gossamer recursion to a clean
-/// `RuntimeError::StackOverflow`, but those frames must fit on the
-/// native stack for the cap to be reached before the OS guard page.
-/// A fixed, generous reserve makes recursion depth uniform across
-/// hosts and between the main thread and goroutine workers; the pages
-/// stay virtual until touched.
-pub const VM_THREAD_STACK_BYTES: usize = 64 * 1024 * 1024;
+/// Named bytecode calls now suspend heap-owned VM frames rather than nesting
+/// one interpreter dispatch frame per language call. Native/JIT recursion can
+/// still consume this stack, and the byte-budget guard turns exhaustion into
+/// `GX0008`, but a 64 MiB reservation per main VM and worker thread was no
+/// longer justified. Sixteen MiB preserves ample backend headroom while
+/// cutting reserved address space by 75 percent per VM thread.
+pub const VM_THREAD_STACK_BYTES: usize = 16 * 1024 * 1024;
 
 mod call_dispatch;
 pub(crate) mod goroutine;
@@ -1583,32 +1580,56 @@ fn compare(
 /// MIR lowering on programs where the JIT cannot improve the current
 /// invocation.
 fn has_jit_eligible_fn(program: &HirProgram) -> bool {
-    // Slice-pattern lowering is correct in the bytecode VM, but the native
-    // JIT still loses a failed rest-pattern branch. Do not prepare a partial
-    // native snapshot for a program containing one: a promoted helper can
-    // otherwise change an ordinary non-match call's observable result. This
-    // is deliberately a program-level admission guard until Cranelift has a
-    // faithful lowering for every slice-pattern shape.
-    if hir_program_has_slice_pattern(program) {
-        return false;
-    }
     program.items.iter().any(|item| match &item.kind {
         HirItemKind::Fn(decl) => decl.body.as_ref().is_some_and(|body| {
-            hir_block_has_loop(&body.block)
-                || hir_block_calls_name(&body.block, decl.name.name.as_str())
+            !hir_block_has_slice_pattern(&body.block)
+                && (hir_block_has_loop(&body.block)
+                    || hir_block_calls_name(&body.block, decl.name.name.as_str()))
         }),
         _ => false,
     })
 }
 
-fn hir_program_has_slice_pattern(program: &HirProgram) -> bool {
-    program.items.iter().any(|item| match &item.kind {
-        HirItemKind::Fn(decl) => decl
-            .body
-            .as_ref()
-            .is_some_and(|body| hir_block_has_slice_pattern(&body.block)),
-        _ => false,
+/// Inlining a `static mut` accessor into another body leaves the original MIR
+/// body as a second accessor. The JIT and VM currently use separate backing
+/// cells, so preserving the original call graph lets the admission pass keep
+/// every accessor on the same tier.
+fn jit_bodies_access_mut_static(bodies: &[gossamer_mir::Body]) -> bool {
+    use gossamer_mir::{Rvalue, StatementKind};
+    bodies.iter().any(|body| {
+        body.blocks.iter().any(|block| {
+            block.stmts.iter().any(|stmt| {
+                matches!(
+                    stmt.kind,
+                    StatementKind::Assign {
+                        rvalue: Rvalue::StaticLoad(_),
+                        ..
+                    } | StatementKind::StaticStore { .. }
+                )
+            })
+        })
     })
+}
+
+/// Names of bodies that must remain on bytecode because their slice-pattern
+/// failure path is not yet faithfully represented by native lowering. Native
+/// admission removes only these bodies; unrelated loops can still promote.
+fn jit_slice_pattern_body_names(program: &HirProgram) -> std::collections::HashSet<String> {
+    program
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            HirItemKind::Fn(decl)
+                if decl
+                    .body
+                    .as_ref()
+                    .is_some_and(|body| hir_block_has_slice_pattern(&body.block)) =>
+            {
+                Some(decl.name.name.clone())
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn hir_block_has_slice_pattern(block: &gossamer_hir::HirBlock) -> bool {

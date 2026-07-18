@@ -92,6 +92,30 @@ enum Command {
         #[arg(long)]
         locked: bool,
     },
+    /// Restart a development program whenever local project inputs change.
+    #[command(alias = "dev")]
+    Watch {
+        /// Path to a `.gos` source file. Defaults to the project's entry point.
+        file: Option<PathBuf>,
+        /// Quiet period after the final edit event before checking and restarting.
+        #[arg(long, default_value_t = 150, value_name = "MS")]
+        debounce: u64,
+        /// Maximum graceful-shutdown time for the replaced child.
+        #[arg(long, default_value_t = 5_000, value_name = "MS")]
+        grace: u64,
+        /// Skip validation and restart immediately after an edit.
+        #[arg(long)]
+        no_check: bool,
+        /// Clear the terminal before each successful restart.
+        #[arg(long)]
+        clear: bool,
+        /// Require a matching project.lock before check and run.
+        #[arg(long)]
+        locked: bool,
+        /// Arguments forwarded to the interpreted program (after `--`).
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
     /// Compile the program to a native executable.
     ///
     /// Output path: `project.output` from the manifest if set,
@@ -104,10 +128,10 @@ enum Command {
         /// Cross-compilation target triple (e.g. `aarch64-apple-darwin`).
         #[arg(long)]
         target: Option<String>,
-        /// Run the full LLVM `opt -O3 | llc -O3` optimisation
-        /// pipeline. Without this flag, `gos build` skips the
-        /// `opt` pre-pass and runs `llc -O0` (faster compile,
-        /// unoptimised native code). Both modes use the LLVM
+        /// Run the full LLVM `-O3` optimisation pipeline. Without
+        /// this flag, `gos build` uses the lightweight debug MIR
+        /// pipeline and minimal register promotion plus `llc -O0`
+        /// (faster compile, lightly canonicalised native code). Both modes use the LLVM
         /// backend; the Cranelift code path is reserved for the
         /// in-process JIT and is no longer reachable from `gos
         /// build`. Any MIR shape the LLVM lowerer cannot handle is
@@ -143,6 +167,9 @@ enum Command {
         /// musl binary on Linux when the target is installed.
         #[arg(long)]
         dynamic: bool,
+        /// Emit one machine-readable line with build-phase timings.
+        #[arg(long)]
+        timings: bool,
         /// Produce a bit-identical artifact across two clean builds
         /// of the same source on the same target. Pins the build
         /// timestamp via `SOURCE_DATE_EPOCH`, strips embedded
@@ -465,18 +492,6 @@ enum Command {
     /// (e.g. `gos skill-prompt | claude --append-system-prompt`)
     /// to teach the model idiomatic Gossamer in one step.
     SkillPrompt,
-    /// Re-run `gos <inner>` whenever a `.gos` file under `path`
-    /// changes.
-    Watch {
-        /// Subcommand to invoke on every change.
-        #[arg(long, default_value = "check")]
-        command: String,
-        /// Directory to watch, or a single file.
-        path: PathBuf,
-        /// Extra arguments forwarded to the inner command.
-        #[arg(last = true)]
-        forward: Vec<String>,
-    },
     /// Interactive read-eval-print loop. Bare `gos` with no args
     /// also drops into this.
     Repl,
@@ -589,6 +604,23 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
             crate::cmd::pkg::enforce_lockfile_if_requested(locked)?;
             dispatch_run(file, no_jit, main_thread, &args)
         }
+        Some(Command::Watch {
+            file,
+            debounce,
+            grace,
+            no_check,
+            clear,
+            locked,
+            args,
+        }) => cmd::watch::run(cmd::watch::Options {
+            file,
+            debounce: std::time::Duration::from_millis(debounce),
+            grace: std::time::Duration::from_millis(grace),
+            check: !no_check,
+            clear,
+            locked,
+            args,
+        }),
         Some(Command::Build {
             file,
             target,
@@ -597,6 +629,7 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
             pgo_profile,
             debug_info,
             dynamic,
+            timings,
             reproducible,
             out_dir,
             locked,
@@ -629,6 +662,7 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
                     reproducible,
                 },
                 out_dir,
+                timings,
             )
         }
         Some(Command::Init { id }) => cmd::scaffold::init(&id),
@@ -732,11 +766,6 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
             cmd::skill_prompt::run();
             Ok(())
         }
-        Some(Command::Watch {
-            command,
-            path,
-            forward,
-        }) => cmd::watch::run(&command, &path, &forward),
         Some(Command::Lsp) => cmd::lsp_cmd::run(),
         Some(Command::Mcp) => cmd::mcp_cmd::run(),
         Some(Command::Env) => {
@@ -840,9 +869,9 @@ fn dispatch_run(
 }
 
 /// Codegen optimisation level. Both modes go through the LLVM
-/// backend; the difference is whether the `opt -O3` pre-pass
-/// runs. `Debug` skips it (`llc -O0`, faster compile); `Release`
-/// runs the full mid-level pipeline plus `llc -O3`. The Cranelift
+/// backend; the difference is the MIR and LLVM optimization profile.
+/// `Debug` uses the lightweight pipeline plus minimal `opt` and `llc -O0`;
+/// `Release` runs the full mid-level pipeline plus Clang `-O3`. The Cranelift
 /// backend is reserved for the in-process JIT and is not a `gos
 /// build` target in 0.5.0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -888,6 +917,7 @@ fn dispatch_build(
     target: Option<&str>,
     flags: BuildFlags,
     out_dir: Option<PathBuf>,
+    timings: bool,
 ) -> anyhow::Result<()> {
     if flags.debug_info {
         gossamer_codegen_llvm::set_debug_info(true);
@@ -895,14 +925,17 @@ fn dispatch_build(
     if flags.reproducible {
         gossamer_codegen_llvm::set_reproducible(true);
     }
-    cmd::build::dispatch(
-        file,
+    cmd::build::dispatch(cmd::build::BuildRequest {
+        path: file,
         target,
-        flags.mode == BuildMode::Release,
-        flags.debug_info,
-        flags.link == LinkMode::Dynamic,
+        link: cmd::build::LinkOptions {
+            release: flags.mode == BuildMode::Release,
+            debug_info: flags.debug_info,
+            dynamic: flags.link == LinkMode::Dynamic,
+        },
         out_dir,
-    )
+        timings,
+    })
 }
 
 #[cfg(test)]
@@ -925,6 +958,26 @@ mod tests {
     fn run_subcommand_parses_without_extra_flags() {
         let ok = Cli::try_parse_from(["gos", "run", "hello.gos"]);
         assert!(ok.is_ok());
+    }
+
+    #[test]
+    fn watch_subcommand_parses_control_and_program_args() {
+        let ok = Cli::try_parse_from([
+            "gos",
+            "watch",
+            "--debounce",
+            "20",
+            "--grace",
+            "50",
+            "--locked",
+            "src/main.gos",
+            "--",
+            "--port",
+            "8080",
+        ]);
+        assert!(ok.is_ok());
+        assert!(Cli::try_parse_from(["gos", "watch", "--debounce", "nope"]).is_err());
+        assert!(Cli::try_parse_from(["gos", "dev", "src/main.gos"]).is_ok());
     }
 
     #[test]
@@ -957,6 +1010,11 @@ mod tests {
             "x86_64-unknown-linux-gnu",
         ]);
         assert!(ok.is_ok());
+    }
+
+    #[test]
+    fn build_subcommand_parses_timings() {
+        assert!(Cli::try_parse_from(["gos", "build", "hello.gos", "--timings"]).is_ok());
     }
 
     #[test]

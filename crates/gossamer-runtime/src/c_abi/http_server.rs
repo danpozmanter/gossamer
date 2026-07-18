@@ -16,8 +16,9 @@
 #![allow(clippy::wildcard_imports)]
 
 use std::ffi::CStr;
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::os::raw::c_char;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
@@ -278,6 +279,11 @@ pub(crate) fn accept_serve<F>(listener: TcpListener, serve_conn: F)
 where
     F: Fn(TcpStream) + Send + Sync + Clone + 'static,
 {
+    install_http_shutdown_signal_handler();
+    let _wake_guard = listener
+        .local_addr()
+        .ok()
+        .map(register_http_shutdown_wake_addr);
     loop {
         if crate::sched_global::is_shutdown_requested() {
             break;
@@ -287,6 +293,10 @@ where
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         };
+        if crate::sched_global::is_shutdown_requested() {
+            let _ = stream.shutdown(Shutdown::Both);
+            break;
+        }
         let _ = stream.set_nodelay(true);
         configure_socket_timeouts(&stream);
         let cap = http_max_conn();
@@ -326,6 +336,54 @@ where
         }
     }
 }
+
+struct HttpWakeAddrGuard(SocketAddr);
+
+impl Drop for HttpWakeAddrGuard {
+    fn drop(&mut self) {
+        http_wake_addrs().lock().retain(|addr| *addr != self.0);
+    }
+}
+
+fn register_http_shutdown_wake_addr(addr: SocketAddr) -> HttpWakeAddrGuard {
+    http_wake_addrs().lock().push(addr);
+    HttpWakeAddrGuard(addr)
+}
+
+fn http_wake_addrs() -> &'static parking_lot::Mutex<Vec<SocketAddr>> {
+    static ADDRS: OnceLock<parking_lot::Mutex<Vec<SocketAddr>>> = OnceLock::new();
+    ADDRS.get_or_init(|| parking_lot::Mutex::new(Vec::new()))
+}
+
+fn wake_http_acceptors() {
+    let addrs = http_wake_addrs().lock().clone();
+    for addr in addrs {
+        let _ = TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(200));
+    }
+}
+
+#[cfg(unix)]
+fn install_http_shutdown_signal_handler() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        let Ok(mut signals) = signal_hook::iterator::Signals::new([libc::SIGINT, libc::SIGTERM])
+        else {
+            return;
+        };
+        std::thread::Builder::new()
+            .name("gos-http-shutdown".to_string())
+            .spawn(move || {
+                for _ in signals.forever() {
+                    crate::sched_global::request_shutdown();
+                    wake_http_acceptors();
+                }
+            })
+            .ok();
+    });
+}
+
+#[cfg(not(unix))]
+fn install_http_shutdown_signal_handler() {}
 
 /// TLS-terminating HTTP/1.1 server:
 /// `serve_tls(addr, cert_pem, key_pem, handler)`. Mirror of

@@ -507,6 +507,12 @@ pub(crate) struct FnBuilder<'tcx> {
     pub(crate) next_reg: u16,
     pub(crate) next_float_reg: u16,
     pub(crate) next_int_reg: u16,
+    /// Largest register-file cursors reached before dead temporary spans were
+    /// recycled. `finish` sizes frames from these high-water marks while the
+    /// `next_*` cursors remain free to reuse physical slots.
+    pub(crate) max_reg: u16,
+    pub(crate) max_float_reg: u16,
+    pub(crate) max_int_reg: u16,
     pub(crate) scopes: Vec<Scope>,
     pub(crate) loop_stack: Vec<LoopCtx>,
     /// The label of the loop currently being compiled, set by the

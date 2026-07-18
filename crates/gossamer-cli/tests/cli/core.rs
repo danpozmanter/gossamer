@@ -123,6 +123,563 @@ fn run_subcommand_executes_via_vm() {
     let _ = std::fs::remove_file(&fixture);
 }
 
+const LAZY_ITERATOR_TIER_SOURCE: &str = r#"use std::iter
+
+fn main() {
+    let xs = iter::range(1, 100)
+        |> iter::map(|x| {
+            if x > 3 { panic("map was eager") }
+            x
+        })
+        |> iter::take(3)
+        |> iter::collect
+    println!("{}", iter::eager_sum(xs))
+
+    let skipped = iter::range(1, 8) |> iter::skip(3) |> iter::take(2) |> iter::sum
+    println!("{skipped}")
+
+    let chained = iter::chain(iter::range(1, 3), iter::range(5, 7)) |> iter::sum
+    println!("{chained}")
+
+    let folded = iter::range(1, 5) |> iter::fold(10i64, |acc: i64, x: i64| acc + x)
+    println!("{folded}")
+
+    let any_hit = iter::range(1, 100)
+        |> iter::any(|x| {
+            if x > 4 { panic("any was eager") }
+            x == 3
+        })
+    println!("{any_hit}")
+
+    let all_hit = iter::range(1, 100)
+        |> iter::all(|x| {
+            if x > 4 { panic("all was eager") }
+            x < 3
+        })
+    println!("{all_hit}")
+
+    let found = iter::range(1, 100)
+        |> iter::find(|x| {
+            if x > 5 { panic("find was eager") }
+            x == 4
+        })
+        |> option::unwrap_or(-1)
+    println!("{found}")
+
+    let once_sum = iter::once(41) |> iter::sum
+    println!("{once_sum}")
+
+    let product = iter::range(2, 5) |> iter::product
+    println!("{product}")
+
+    let min_value = iter::range(4, 7) |> iter::min |> option::unwrap_or(-1)
+    println!("{min_value}")
+
+    let max_value = iter::range(4, 7) |> iter::max |> option::unwrap_or(-1)
+    println!("{max_value}")
+
+    let enumerated = iter::range(3, 6) |> iter::enumerate |> iter::collect
+    println!("{}", iter::eager_count(enumerated))
+
+    let zipped = iter::zip(iter::range(1, 4), iter::range(10, 20)) |> iter::collect
+    println!("{}", iter::eager_count(zipped))
+
+    let pair_count = iter::range(1, 4) |> iter::enumerate |> iter::count
+    println!("{pair_count}")
+
+    let borrowed = [1, 2, 3, 4]
+    let borrowed_total = borrowed
+        |> iter::map(|x| x * 2)
+        |> iter::filter(|x| x > 4)
+        |> iter::take(2)
+        |> iter::sum
+    println!("{borrowed_total}")
+
+    let mut replaced: Vec<i64> = [1, 2, 3]
+    let pending_replacement = replaced |> iter::map(|x| x)
+    replaced[1] = 9
+    println!("{}", pending_replacement |> iter::sum)
+}
+"#;
+
+const LAZY_ITERATOR_TIER_OUTPUT: &str =
+    "6\n9\n14\n20\ntrue\nfalse\n4\n41\n24\n4\n6\n3\n3\n3\n14\n13\n";
+
+const EAGER_ITERATOR_ALIAS_SOURCE: &str = r#"use std::iter
+
+fn main() {
+    let exclusive = iter::eager_range(1, 5)
+    let inclusive = iter::eager_range_inclusive(5, 7)
+    let mapped = iter::eager_map(|x| x * 2, exclusive)
+    let filtered = iter::eager_filter(|x| x > 3, mapped)
+    let taken = iter::eager_take(2, filtered)
+    let skipped = iter::eager_skip(1, taken)
+    let enumerated = iter::eager_enumerate(skipped)
+    let chained = iter::eager_chain(inclusive, [8, 9])
+    let zipped = iter::eager_zip(chained, [1, 2, 3, 4, 5])
+    let folded = iter::eager_fold(10i64, |acc: i64, x: i64| acc + x, [1, 2, 3])
+    let any = iter::eager_any(|x| x == 2, [1, 2, 3])
+    let all = iter::eager_all(|x| x > 0, [1, 2, 3])
+    let found = iter::eager_find(|x| x == 2, [1, 2, 3]) |> option::unwrap_or(-1)
+    let counted = iter::eager_count(enumerated)
+    let collected = iter::eager_collect([4, 5, 6])
+    let summed = iter::eager_sum(collected)
+    println!("{folded} {any} {all} {found} {counted} {} {summed}", iter::eager_count(zipped))
+}
+"#;
+
+const EAGER_ITERATOR_ALIAS_OUTPUT: &str = "16 true true 2 1 5 15\n";
+
+const EAGER_2026_COMPAT_SOURCE: &str = r#"use std::iter
+
+fn main() {
+    let range = iter::range(2, 6)
+    let mapped = range |> iter::map(|x| x * 2)
+    let filtered = mapped |> iter::filter(|x| x > 5)
+    let taken = filtered |> iter::take(2)
+    println!("{} {} {} {}", range[0], mapped[1], taken[0], iter::sum(taken))
+}
+"#;
+
+const EAGER_2026_COMPAT_OUTPUT: &str = "2 6 6 14\n";
+
+const LAZY_ITERATOR_ALLOCATION_SOURCE: &str = r#"use std::iter
+
+fn main() {
+    let out = iter::range(0, 100)
+        |> iter::map(|x| x + 1)
+        |> iter::filter(|x| x % 2 == 0)
+        |> iter::take(3)
+        |> iter::collect
+    println!("{}", iter::eager_sum(out))
+}
+"#;
+
+const LAZY_ITERATOR_INVALIDATION_SOURCE: &str = r#"use std::iter
+
+fn main() {
+    let xs: Vec<i64> = [1, 2, 3]
+    let pending = xs |> iter::map(|x| x)
+    xs.push(4)
+    println!("{}", pending |> iter::sum)
+}
+"#;
+
+const LAZY_ITERATOR_PANIC_SOURCE: &str = r#"use std::iter
+
+fn main() {
+    let _ = iter::range(0, 8)
+        |> iter::map(|x| {
+            if x == 3 { panic("lazy adapter panic sentinel") }
+            x
+        })
+        |> iter::count
+}
+"#;
+
+#[test]
+fn run_absolute_project_uses_entry_edition_for_lazy_iterators() {
+    let dir = env::temp_dir().join(format!("gos-lazy-edition-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create project dir");
+    std::fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/lazy-edition\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
+    )
+    .expect("write manifest");
+    std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_TIER_SOURCE).expect("write source");
+    let out = Command::new(gos_bin())
+        .args(["run"])
+        .arg(&dir)
+        .output()
+        .expect("spawn run");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), LAZY_ITERATOR_TIER_OUTPUT);
+    let jit_out = Command::new(gos_bin())
+        .args(["run"])
+        .arg(&dir)
+        .env("GOSSAMER_JIT_THRESHOLD", "1")
+        .output()
+        .expect("spawn forced-jit run");
+    assert!(
+        jit_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&jit_out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&jit_out.stdout),
+        LAZY_ITERATOR_TIER_OUTPUT
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn build_absolute_project_uses_entry_edition_for_lazy_iterators() {
+    let dir = env::temp_dir().join(format!("gos-lazy-build-edition-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create project dir");
+    std::fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/native-lazy-edition\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
+    )
+    .expect("write manifest");
+    std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_TIER_SOURCE).expect("write source");
+    let build = Command::new(gos_bin())
+        .args(["build"])
+        .arg(&dir)
+        .env("GOSSAMER_FAIL_ON_LLVM_FALLBACK", "1")
+        .output()
+        .expect("spawn build");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let bin = dir.join("target").join("debug").join(if cfg!(windows) {
+        "native-lazy-edition.exe"
+    } else {
+        "native-lazy-edition"
+    });
+    let out = Command::new(&bin).output().expect("run built binary");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), LAZY_ITERATOR_TIER_OUTPUT);
+
+    let release_build = Command::new(gos_bin())
+        .args(["build", "--release"])
+        .arg(&dir)
+        .env("GOSSAMER_FAIL_ON_LLVM_FALLBACK", "1")
+        .output()
+        .expect("spawn release build");
+    assert!(
+        release_build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&release_build.stderr)
+    );
+    let release_bin = dir.join("target").join("release").join(if cfg!(windows) {
+        "native-lazy-edition.exe"
+    } else {
+        "native-lazy-edition"
+    });
+    let release_out = Command::new(release_bin)
+        .output()
+        .expect("run release binary");
+    assert!(
+        release_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&release_out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&release_out.stdout),
+        LAZY_ITERATOR_TIER_OUTPUT
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn eager_iterator_migration_aliases_run_on_vm_jit_and_llvm() {
+    let dir = env::temp_dir().join(format!("gos-eager-iter-aliases-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create project dir");
+    std::fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/eager-iter-aliases\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
+    )
+    .expect("write manifest");
+    std::fs::write(dir.join("main.gos"), EAGER_ITERATOR_ALIAS_SOURCE).expect("write source");
+
+    let vm = Command::new(gos_bin())
+        .args(["run"])
+        .arg(&dir)
+        .output()
+        .expect("spawn VM run");
+    assert!(vm.status.success(), "{}", String::from_utf8_lossy(&vm.stderr));
+    assert_eq!(String::from_utf8_lossy(&vm.stdout), EAGER_ITERATOR_ALIAS_OUTPUT);
+
+    let jit = Command::new(gos_bin())
+        .args(["run"])
+        .arg(&dir)
+        .env("GOSSAMER_JIT_THRESHOLD", "1")
+        .output()
+        .expect("spawn forced-JIT run");
+    assert!(
+        jit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&jit.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&jit.stdout),
+        EAGER_ITERATOR_ALIAS_OUTPUT
+    );
+
+    let build = Command::new(gos_bin())
+        .args(["build"])
+        .arg(&dir)
+        .env("GOSSAMER_FAIL_ON_LLVM_FALLBACK", "1")
+        .output()
+        .expect("build LLVM fixture");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let bin = dir.join("target").join("debug").join(if cfg!(windows) {
+        "eager-iter-aliases.exe"
+    } else {
+        "eager-iter-aliases"
+    });
+    let llvm = Command::new(bin).output().expect("run LLVM fixture");
+    assert!(
+        llvm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&llvm.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&llvm.stdout),
+        EAGER_ITERATOR_ALIAS_OUTPUT
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn edition_2026_iterator_surface_remains_eager_on_all_tiers() {
+    let dir = env::temp_dir().join(format!("gos-eager-iter-2026-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create project dir");
+    std::fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/eager-iter-2026\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .expect("write manifest");
+    std::fs::write(dir.join("main.gos"), EAGER_2026_COMPAT_SOURCE).expect("write source");
+
+    for mut command in [
+        {
+            let mut command = Command::new(gos_bin());
+            command.args(["run"]).arg(&dir);
+            command
+        },
+        {
+            let mut command = Command::new(gos_bin());
+            command
+                .args(["run"])
+                .arg(&dir)
+                .env("GOSSAMER_JIT_THRESHOLD", "1");
+            command
+        },
+    ] {
+        let out = command.output().expect("run eager compatibility fixture");
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), EAGER_2026_COMPAT_OUTPUT);
+    }
+
+    let build = Command::new(gos_bin())
+        .args(["build"])
+        .arg(&dir)
+        .env("GOSSAMER_FAIL_ON_LLVM_FALLBACK", "1")
+        .output()
+        .expect("build eager compatibility fixture");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let bin = dir.join("target").join("debug").join(if cfg!(windows) {
+        "eager-iter-2026.exe"
+    } else {
+        "eager-iter-2026"
+    });
+    let llvm = Command::new(bin).output().expect("run LLVM fixture");
+    assert!(
+        llvm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&llvm.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&llvm.stdout),
+        EAGER_2026_COMPAT_OUTPUT
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn lazy_pipeline_allocates_only_its_collected_vec_on_llvm() {
+    let dir = env::temp_dir().join(format!("gos-lazy-iter-allocs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create project dir");
+    std::fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/lazy-iter-allocs\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
+    )
+    .expect("write manifest");
+    std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_ALLOCATION_SOURCE)
+        .expect("write source");
+
+    let build = Command::new(gos_bin())
+        .args(["build"])
+        .arg(&dir)
+        .env("GOSSAMER_FAIL_ON_LLVM_FALLBACK", "1")
+        .output()
+        .expect("build allocation fixture");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let bin = dir.join("target").join("debug").join(if cfg!(windows) {
+        "lazy-iter-allocs.exe"
+    } else {
+        "lazy-iter-allocs"
+    });
+    let out = Command::new(bin)
+        .env("GOS_VEC_ALLOC_STATS", "1")
+        .output()
+        .expect("run allocation fixture");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "12\n");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("VEC ALLOC STATS: inline=2 split=0 owner=0 region=0"),
+        "expected one process bootstrap Vec plus the final collected Vec, got:\n{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn borrowed_lazy_vec_structural_mutation_fails_on_all_tiers() {
+    let dir = env::temp_dir().join(format!("gos-lazy-iter-invalidation-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create project dir");
+    std::fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/lazy-iter-invalidation\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
+    )
+    .expect("write manifest");
+    std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_INVALIDATION_SOURCE)
+        .expect("write source");
+
+    for mut command in [
+        {
+            let mut command = Command::new(gos_bin());
+            command.args(["run"]).arg(&dir);
+            command
+        },
+        {
+            let mut command = Command::new(gos_bin());
+            command
+                .args(["run"])
+                .arg(&dir)
+                .env("GOSSAMER_JIT_THRESHOLD", "1");
+            command
+        },
+    ] {
+        let out = command.output().expect("run invalidation fixture");
+        assert!(!out.status.success(), "unexpected stdout: {}", String::from_utf8_lossy(&out.stdout));
+        assert!(
+            String::from_utf8_lossy(&out.stderr)
+                .contains("borrowed Vec source was structurally mutated during iteration"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    let build = Command::new(gos_bin())
+        .args(["build"])
+        .arg(&dir)
+        .env("GOSSAMER_FAIL_ON_LLVM_FALLBACK", "1")
+        .output()
+        .expect("build invalidation fixture");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let bin = dir.join("target").join("debug").join(if cfg!(windows) {
+        "lazy-iter-invalidation.exe"
+    } else {
+        "lazy-iter-invalidation"
+    });
+    let llvm = Command::new(bin).output().expect("run LLVM fixture");
+    assert!(!llvm.status.success());
+    assert!(
+        String::from_utf8_lossy(&llvm.stderr)
+            .contains("borrowed Vec source was structurally mutated during iteration"),
+        "{}",
+        String::from_utf8_lossy(&llvm.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn lazy_adapter_panic_propagates_on_all_tiers() {
+    let dir = env::temp_dir().join(format!("gos-lazy-iter-panic-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create project dir");
+    std::fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/lazy-iter-panic\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
+    )
+    .expect("write manifest");
+    std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_PANIC_SOURCE).expect("write source");
+
+    for mut command in [
+        {
+            let mut command = Command::new(gos_bin());
+            command.args(["run", "--no-jit"]).arg(&dir);
+            command
+        },
+        {
+            let mut command = Command::new(gos_bin());
+            command
+                .args(["run"])
+                .arg(&dir)
+                .env("GOSSAMER_JIT_THRESHOLD", "1")
+                .env("GOSSAMER_JIT_MIN_WORK", "1");
+            command
+        },
+    ] {
+        let out = command.output().expect("run adapter panic fixture");
+        assert!(!out.status.success(), "unexpected stdout: {}", String::from_utf8_lossy(&out.stdout));
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("lazy adapter panic sentinel"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    let build = Command::new(gos_bin())
+        .args(["build"])
+        .arg(&dir)
+        .env("GOSSAMER_FAIL_ON_LLVM_FALLBACK", "1")
+        .output()
+        .expect("build adapter panic fixture");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let bin = dir.join("target").join("debug").join(if cfg!(windows) {
+        "lazy-iter-panic.exe"
+    } else {
+        "lazy-iter-panic"
+    });
+    let llvm = Command::new(bin).output().expect("run LLVM fixture");
+    assert!(!llvm.status.success());
+    assert!(
+        String::from_utf8_lossy(&llvm.stderr).contains("lazy adapter panic sentinel"),
+        "{}",
+        String::from_utf8_lossy(&llvm.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn stdin_read_line_appends_to_mut_string() {
     let fixture = write_fixture(

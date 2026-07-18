@@ -32,6 +32,25 @@ pub fn lower_source_file(
     table: &TypeTable,
     tcx: &mut TyCtxt,
 ) -> HirProgram {
+    lower_source_file_with_edition(
+        source,
+        resolutions,
+        table,
+        tcx,
+        gossamer_pkg::Edition::E2026,
+    )
+}
+
+/// Lowers a resolved AST source file while retaining its selected edition in
+/// HIR for MIR lowering and cache/debug consumers.
+#[must_use]
+pub fn lower_source_file_with_edition(
+    source: &SourceFile,
+    resolutions: &Resolutions,
+    table: &TypeTable,
+    tcx: &mut TyCtxt,
+    edition: gossamer_pkg::Edition,
+) -> HirProgram {
     let mut module_fn_paths = std::collections::HashMap::new();
     collect_module_fn_paths(
         resolutions,
@@ -53,7 +72,7 @@ pub fn lower_source_file(
     let mut items = Vec::new();
     let mut module_path: Vec<String> = Vec::new();
     lower_items(&mut lowerer, &source.items, &mut items, &mut module_path);
-    let mut program = HirProgram { items };
+    let mut program = HirProgram { edition, items };
     // Fuse `iter::` range pipelines into loops before returning, so every
     // consumer (the bytecode VM, and the native path that lifts closures
     // next) sees the same fused HIR. Runs before closure lifting, so

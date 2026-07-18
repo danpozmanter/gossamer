@@ -75,7 +75,8 @@ fn vec_prefix_is_pinned_and_primitive_vec_needs_no_owner_carrier() {
     assert_eq!(std::mem::offset_of!(GosVec, generation), 32);
     assert_eq!(std::mem::offset_of!(GosVec, elem_meta), 40);
     assert_eq!(std::mem::offset_of!(GosVec, owner), 48);
-    assert_eq!(std::mem::size_of::<GosVec>(), 56);
+    assert_eq!(std::mem::offset_of!(GosVec, mutation_generation), 56);
+    assert_eq!(std::mem::size_of::<GosVec>(), 64);
 
     unsafe {
         let v = gos_rt_vec_new(8);

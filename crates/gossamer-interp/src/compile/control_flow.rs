@@ -53,23 +53,28 @@ impl<'tcx> FnBuilder<'tcx> {
         then_branch: &HirExpr,
         else_branch: Option<&HirExpr>,
     ) -> RuntimeResult<()> {
+        let outer_register_mark = self.register_mark();
         let cond_reg = self.compile_expr(condition)?;
         let branch_idx = self.emit(Op::BranchIfNot {
             cond: cond_reg,
             target: 0,
         });
+        let branch_register_mark = self.register_mark();
         self.compile_expr_discarded(then_branch)?;
+        self.restore_register_mark(branch_register_mark);
         if let Some(else_branch) = else_branch {
             let jump_end = self.emit(Op::Jump { target: 0 });
             let else_start = self.cur_idx();
             self.patch_jump(branch_idx, else_start);
             self.compile_expr_discarded(else_branch)?;
+            self.restore_register_mark(branch_register_mark);
             let after = self.cur_idx();
             self.patch_jump(jump_end, after);
         } else {
             let after = self.cur_idx();
             self.patch_jump(branch_idx, after);
         }
+        self.restore_register_mark(outer_register_mark);
         Ok(())
     }
 

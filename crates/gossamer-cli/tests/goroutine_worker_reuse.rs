@@ -68,6 +68,7 @@ fn run_in_process(source: &str, label: &str) -> Result<(), String> {
     let outcome = gossamer_driver::check_frontend(source, file_id);
     assert!(outcome.is_ok(), "{label}: front-end rejected the program");
     let gossamer_driver::CheckedFrontend {
+        edition: _,
         sf,
         resolutions,
         table,

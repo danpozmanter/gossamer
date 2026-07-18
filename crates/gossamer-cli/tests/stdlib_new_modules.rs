@@ -921,6 +921,179 @@ fn main() {
     );
 }
 
+struct X509CrlFixtures {
+    roots: String,
+    valid_chain: String,
+    revoked_chain: String,
+    current_crls: String,
+    expired_crls: String,
+    root_only_crl: String,
+}
+
+/// Generates a private PKI that deliberately covers the public verifier's
+/// contract: a root, intermediate, valid server leaf, revoked server leaf,
+/// current CRLs for both issuers, and an expired intermediate CRL.
+fn generated_x509_crl_fixtures() -> X509CrlFixtures {
+    use rcgen::{
+        BasicConstraints, CertificateParams, CertificateRevocationListParams, DnType,
+        ExtendedKeyUsagePurpose, IsCa, Issuer, KeyIdMethod, KeyPair, KeyUsagePurpose,
+        RevocationReason, RevokedCertParams, SerialNumber, date_time_ymd,
+    };
+
+    let mut root_params = CertificateParams::new(vec!["crypto-root.invalid".to_owned()]).unwrap();
+    root_params
+        .distinguished_name
+        .push(DnType::CommonName, "crypto test root");
+    root_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    root_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+    let root_key = KeyPair::generate().unwrap();
+    let root_cert = root_params.self_signed(&root_key).unwrap();
+    let root = Issuer::new(root_params, root_key);
+
+    let mut intermediate_params =
+        CertificateParams::new(vec!["crypto-intermediate.invalid".to_owned()]).unwrap();
+    intermediate_params
+        .distinguished_name
+        .push(DnType::CommonName, "crypto test intermediate");
+    intermediate_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    intermediate_params.use_authority_key_identifier_extension = true;
+    intermediate_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+    let intermediate_key = KeyPair::generate().unwrap();
+    let intermediate_cert = intermediate_params
+        .signed_by(&intermediate_key, &root)
+        .unwrap();
+    let intermediate = Issuer::new(intermediate_params, intermediate_key);
+
+    let mut valid_params = CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
+    valid_params.serial_number = Some(SerialNumber::from(100_u64));
+    valid_params.use_authority_key_identifier_extension = true;
+    valid_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    let valid_key = KeyPair::generate().unwrap();
+    let valid_leaf = valid_params.signed_by(&valid_key, &intermediate).unwrap();
+
+    let mut revoked_params = CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
+    revoked_params.serial_number = Some(SerialNumber::from(200_u64));
+    revoked_params.use_authority_key_identifier_extension = true;
+    revoked_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    let revoked_key = KeyPair::generate().unwrap();
+    let revoked_leaf = revoked_params
+        .signed_by(&revoked_key, &intermediate)
+        .unwrap();
+
+    let root_crl = CertificateRevocationListParams {
+        this_update: date_time_ymd(2025, 1, 1),
+        next_update: date_time_ymd(2030, 1, 1),
+        crl_number: SerialNumber::from(1_u64),
+        issuing_distribution_point: None,
+        revoked_certs: Vec::new(),
+        key_identifier_method: KeyIdMethod::Sha256,
+    }
+    .signed_by(&root)
+    .unwrap();
+    let current_intermediate_crl = CertificateRevocationListParams {
+        this_update: date_time_ymd(2025, 1, 1),
+        next_update: date_time_ymd(2030, 1, 1),
+        crl_number: SerialNumber::from(2_u64),
+        issuing_distribution_point: None,
+        revoked_certs: vec![RevokedCertParams {
+            serial_number: SerialNumber::from(200_u64),
+            revocation_time: date_time_ymd(2025, 1, 1),
+            reason_code: Some(RevocationReason::KeyCompromise),
+            invalidity_date: None,
+        }],
+        key_identifier_method: KeyIdMethod::Sha256,
+    }
+    .signed_by(&intermediate)
+    .unwrap();
+    let expired_intermediate_crl = CertificateRevocationListParams {
+        this_update: date_time_ymd(2020, 1, 1),
+        next_update: date_time_ymd(2021, 1, 1),
+        crl_number: SerialNumber::from(3_u64),
+        issuing_distribution_point: None,
+        revoked_certs: Vec::new(),
+        key_identifier_method: KeyIdMethod::Sha256,
+    }
+    .signed_by(&intermediate)
+    .unwrap();
+
+    X509CrlFixtures {
+        roots: root_cert.pem(),
+        valid_chain: format!("{}{}", valid_leaf.pem(), intermediate_cert.pem()),
+        revoked_chain: format!("{}{}", revoked_leaf.pem(), intermediate_cert.pem()),
+        current_crls: format!(
+            "{}{}",
+            root_crl.pem().unwrap(),
+            current_intermediate_crl.pem().unwrap()
+        ),
+        expired_crls: format!(
+            "{}{}",
+            root_crl.pem().unwrap(),
+            expired_intermediate_crl.pem().unwrap()
+        ),
+        root_only_crl: root_crl.pem().unwrap(),
+    }
+}
+
+#[test]
+fn crypto_x509_crl_contract_matches_vm_forced_jit_and_llvm() {
+    let fixtures = generated_x509_crl_fixtures();
+    let host_good = gossamer_std::crypto::x509::verify_server_certificate_with_crls(
+        fixtures.valid_chain.as_bytes(),
+        fixtures.roots.as_bytes(),
+        "localhost",
+        fixtures.current_crls.as_bytes(),
+    );
+    assert!(host_good.is_ok(), "generated valid chain: {host_good:?}");
+    let source = format!(
+        r#"
+use std::crypto
+fn accepted(chain: String, roots: String, host: String, crls: String) -> bool {{
+    match crypto::x509::verify_server_certificate_with_crls(chain, roots, host, crls) {{
+        Ok(_) => true,
+        Err(_) => false,
+    }}
+}}
+fn main() {{
+    let good = accepted({valid_chain:?}, {roots:?}, "localhost", {current_crls:?})
+    let revoked = accepted({revoked_chain:?}, {roots:?}, "localhost", {current_crls:?})
+    let wrong_host = accepted({valid_chain:?}, {roots:?}, "wrong.invalid", {current_crls:?})
+    let expired_crl = accepted({valid_chain:?}, {roots:?}, "localhost", {expired_crls:?})
+    let unknown_status = accepted({valid_chain:?}, {roots:?}, "localhost", {root_only_crl:?})
+    let malformed = accepted("not pem", {roots:?}, "localhost", {current_crls:?})
+    println!("{{}} {{}} {{}} {{}} {{}} {{}}", good, revoked, wrong_host, expired_crl, unknown_status, malformed)
+}}
+"#,
+        valid_chain = fixtures.valid_chain,
+        revoked_chain = fixtures.revoked_chain,
+        roots = fixtures.roots,
+        current_crls = fixtures.current_crls,
+        expired_crls = fixtures.expired_crls,
+        root_only_crl = fixtures.root_only_crl,
+    );
+    let expected = "true false false false false false";
+    assert_vm_output("crypto_x509_crl_contract", &source, expected);
+
+    let dir = scratch("crypto_x509_crl_contract_jit");
+    let path = dir.join("main.gos");
+    fs::File::create(&path)
+        .unwrap()
+        .write_all(source.as_bytes())
+        .unwrap();
+    let output = Command::new(gos_bin())
+        .args(["run"])
+        .arg(&path)
+        .env("GOSSAMER_JIT_THRESHOLD", "1")
+        .env("GOSSAMER_JIT_MIN_WORK", "1")
+        .output()
+        .expect("run forced JIT X.509 fixture");
+    assert!(
+        output.status.success(),
+        "forced JIT X.509 fixture failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected);
+}
+
 // -----------------------------------------------------------------------
 // P1: hash crc32 and adler32
 

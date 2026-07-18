@@ -1538,9 +1538,10 @@ impl<'a> Builder<'a> {
             other => other,
         };
         match kind {
-            TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
-                Some(self.tcx.kind_of(elem).clone())
-            }
+            TyKind::Array { elem, .. }
+            | TyKind::Slice(elem)
+            | TyKind::Vec(elem)
+            | TyKind::Iterator(elem) => Some(self.tcx.kind_of(elem).clone()),
             _ => None,
         }
     }

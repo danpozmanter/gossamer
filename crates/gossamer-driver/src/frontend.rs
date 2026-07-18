@@ -19,8 +19,10 @@ use gossamer_lex::FileId;
 use gossamer_pkg::Edition;
 use gossamer_resolve::{ResolveError, resolve_source_file};
 use gossamer_types::{
-    ExhaustivenessError, TyCtxt, check_arena_escapes, check_exhaustiveness, typecheck_source_file,
+    ExhaustivenessError, TyCtxt, check_arena_escapes, check_exhaustiveness,
+    typecheck_source_file_with_edition,
 };
+use std::time::{Duration, Instant};
 
 use crate::frontend_cache::{FrontendCacheKey, load_blob, store_blob};
 use crate::pipeline::CheckedFrontend;
@@ -37,6 +39,25 @@ pub struct FrontendOutcome {
     pub checked: CheckedFrontend,
     /// Fatal diagnostics under the unified policy; empty == accepted.
     pub diagnostics: Vec<Diagnostic>,
+    /// Wall-clock timings for the frontend stages that produced this outcome.
+    pub timings: FrontendTimings,
+}
+
+/// Timings from one authoritative frontend pass.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FrontendTimings {
+    /// Parse and parse-cache lookup time.
+    pub parse: Duration,
+    /// Name-resolution time.
+    pub resolve: Duration,
+    /// Typechecking time.
+    pub typecheck: Duration,
+    /// Match-exhaustiveness analysis time.
+    pub exhaustiveness: Duration,
+    /// Arena-escape analysis time.
+    pub arena_escape: Duration,
+    /// Whether the parsed source file was restored from the frontend cache.
+    pub parse_cache_hit: bool,
 }
 
 impl FrontendOutcome {
@@ -76,6 +97,7 @@ pub fn check_frontend_with_edition(
     file_id: FileId,
     edition: Edition,
 ) -> FrontendOutcome {
+    let phase_started = Instant::now();
     let cache_key = FrontendCacheKey::new_with_context(
         source,
         env!("CARGO_PKG_VERSION"),
@@ -95,13 +117,16 @@ pub fn check_frontend_with_edition(
                 gossamer_parse::autoderive::parse_with_autoderive(source, file_id);
             (parsed, diagnostics, true)
         };
+    let parse = phase_started.elapsed();
 
     let mut diagnostics: Vec<Diagnostic> = parse_diags
         .iter()
         .map(gossamer_parse::ParseDiagnostic::to_diagnostic)
         .collect();
 
+    let phase_started = Instant::now();
     let (resolutions, resolve_diags) = resolve_source_file(&sf);
+    let resolve = phase_started.elapsed();
     let in_scope = collect_top_level_names(&sf);
     for diag in &resolve_diags {
         if matches!(
@@ -114,15 +139,20 @@ pub fn check_frontend_with_edition(
         }
     }
 
+    let phase_started = Instant::now();
     let mut tcx = TyCtxt::new();
-    let (table, type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
+    let (table, type_diags) =
+        typecheck_source_file_with_edition(&sf, &resolutions, &mut tcx, edition);
+    let typecheck = phase_started.elapsed();
     diagnostics.extend(
         type_diags
             .iter()
             .map(gossamer_types::TypeDiagnostic::to_diagnostic),
     );
 
+    let phase_started = Instant::now();
     let exhaustive_diags = check_exhaustiveness(&sf, &resolutions, &table, &tcx);
+    let exhaustiveness = phase_started.elapsed();
     for diag in &exhaustive_diags {
         if matches!(diag.error, ExhaustivenessError::NonExhaustive { .. }) {
             diagnostics.push(diag.to_diagnostic());
@@ -132,9 +162,11 @@ pub fn check_frontend_with_edition(
     // Every arena-escape diagnostic is fatal: a value allocated in an
     // `arena { }` block that outlives it is a use-after-free, so it must
     // be rejected on every tier, exactly like a type error.
+    let phase_started = Instant::now();
     for diag in check_arena_escapes(&sf, &resolutions, &table, &tcx) {
         diagnostics.push(diag.to_diagnostic());
     }
+    let arena_escape = phase_started.elapsed();
 
     // The blob is the sole cache-validity marker. Rewriting it after a hit
     // used to add two atomic, fsync-backed writes (a redundant `.ok` marker
@@ -146,12 +178,21 @@ pub fn check_frontend_with_edition(
 
     FrontendOutcome {
         checked: CheckedFrontend {
+            edition,
             sf,
             resolutions,
             table,
             tcx,
         },
         diagnostics,
+        timings: FrontendTimings {
+            parse,
+            resolve,
+            typecheck,
+            exhaustiveness,
+            arena_escape,
+            parse_cache_hit: !parsed_from_source,
+        },
     }
 }
 

@@ -51,6 +51,7 @@ fn describe(v: &Value) -> &'static str {
         Value::Closure(_) | Value::Builtin(_) | Value::Native(_) => "callable",
         Value::Channel(_) => "channel",
         Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_) => "map",
+        Value::LazyIter(_) => "iterator",
         Value::Weak(_) => "weak",
         Value::Void => "void",
         Value::Uint(_) => "u64",
@@ -768,7 +769,8 @@ fn value_to_dyn(value: &Value) -> DynValue {
         | Value::Closure(_)
         | Value::Builtin(_)
         | Value::Native(_)
-        | Value::Channel(_) => DynValue::Nil,
+        | Value::Channel(_)
+        | Value::LazyIter(_) => DynValue::Nil,
     }
 }
 

@@ -281,24 +281,110 @@ pub unsafe extern "C" fn gos_rt_json_free(j: *mut GosJson) {
     drop(unsafe { Box::from_raw(j) });
 }
 
-/// Escapes `<`, `>`, `&`, U+2028, and U+2029 in serialized JSON as
-/// `\uXXXX`. These bytes never appear in JSON structural syntax - only
-/// inside string values - so a whole-document replace is safe. Mirrors
-/// the interpreter's `gossamer_std::json` encoder, keeping `json::encode`
-/// byte-identical across tiers and safe to embed inside an HTML
-/// `<script>` block.
-fn escape_json_for_html(s: String) -> String {
-    if !s.bytes().any(|b| matches!(b, b'<' | b'>' | b'&'))
-        && !s.contains('\u{2028}')
-        && !s.contains('\u{2029}')
-    {
-        return s;
+/// `serde_json::to_writer` sink backed directly by the compiled String ABI.
+/// Each write consumes the current unique builder and returns its possibly
+/// reallocated pointer. HTML-sensitive characters are escaped inline, so no
+/// whole-document replacement buffer is needed afterwards.
+struct RuntimeJsonWriter {
+    string: *mut c_char,
+    len: usize,
+    capacity: usize,
+}
+
+impl RuntimeJsonWriter {
+    fn new(capacity: usize) -> Self {
+        let capacity = capacity.min(u32::MAX as usize);
+        Self {
+            string: gos_rt_str_with_capacity(i64::try_from(capacity).unwrap_or(i64::MAX)),
+            len: 0,
+            capacity,
+        }
     }
-    s.replace('<', "\\u003c")
-        .replace('>', "\\u003e")
-        .replace('&', "\\u0026")
-        .replace('\u{2028}', "\\u2028")
-        .replace('\u{2029}', "\\u2029")
+
+    fn append(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        let new_len = self.len.saturating_add(bytes.len());
+        if new_len <= self.capacity {
+            unsafe { str_builder_write_reserved(self.string, self.len, bytes) };
+        } else {
+            self.string = unsafe {
+                gos_rt_str_append_bytes(
+                    self.string,
+                    bytes.as_ptr(),
+                    i64::try_from(bytes.len()).unwrap_or(i64::MAX),
+                )
+            };
+            self.capacity = new_len.saturating_mul(2).max(64).min(u32::MAX as usize);
+        }
+        self.len = new_len;
+    }
+
+    fn finish(mut self) -> *mut c_char {
+        let string = self.string;
+        self.string = std::ptr::null_mut();
+        string
+    }
+}
+
+impl std::io::Write for RuntimeJsonWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let mut start = 0;
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let (source_len, replacement): (usize, Option<&[u8]>) = match bytes[offset] {
+                b'<' => (1, Some(b"\\u003c")),
+                b'>' => (1, Some(b"\\u003e")),
+                b'&' => (1, Some(b"\\u0026")),
+                0xe2 if bytes.get(offset + 1) == Some(&0x80) => match bytes.get(offset + 2) {
+                    Some(0xa8) => (3, Some(b"\\u2028")),
+                    Some(0xa9) => (3, Some(b"\\u2029")),
+                    _ => (1, None),
+                },
+                _ => (1, None),
+            };
+            let Some(replacement) = replacement else {
+                offset += source_len;
+                continue;
+            };
+            self.append(&bytes[start..offset]);
+            self.append(replacement);
+            offset += source_len;
+            start = offset;
+        }
+        self.append(&bytes[start..]);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Drop for RuntimeJsonWriter {
+    fn drop(&mut self) {
+        if !self.string.is_null() {
+            unsafe { gos_rt_str_free(self.string) };
+        }
+    }
+}
+
+fn render_json_direct(value: &serde_json::Value, pretty: bool) -> *mut c_char {
+    // A recursive exact-size pass formats every number and walks the complete
+    // tree before serde immediately repeats the work. Start large enough to
+    // avoid churn for ordinary documents and let the builder double for large
+    // payloads. Peak growth stays bounded while serialization remains one pass.
+    let mut writer = RuntimeJsonWriter::new(64 * 1024);
+    let result = if pretty {
+        serde_json::to_writer_pretty(&mut writer, value)
+    } else {
+        serde_json::to_writer(&mut writer, value)
+    };
+    if result.is_err() {
+        return alloc_cstring(b"");
+    }
+    writer.finish()
 }
 
 /// `json::render(value) -> String`. Always returns a non-null
@@ -309,8 +395,7 @@ pub unsafe extern "C" fn gos_rt_json_render(j: *const GosJson) -> *mut c_char {
         let Some(v) = (unsafe { json_borrow(j) }) else {
             return alloc_cstring(b"");
         };
-        let s = escape_json_for_html(serde_json::to_string(v).unwrap_or_default());
-        alloc_cstring(s.as_bytes())
+        render_json_direct(v, false)
     })
 }
 
@@ -323,8 +408,7 @@ pub unsafe extern "C" fn gos_rt_json_render_pretty(j: *const GosJson) -> *mut c_
         let Some(v) = (unsafe { json_borrow(j) }) else {
             return alloc_cstring(b"");
         };
-        let s = escape_json_for_html(serde_json::to_string_pretty(v).unwrap_or_default());
-        alloc_cstring(s.as_bytes())
+        render_json_direct(v, true)
     })
 }
 
@@ -339,10 +423,7 @@ pub unsafe extern "C" fn gos_rt_json_display(j: *const GosJson) -> *mut c_char {
         };
         match v {
             serde_json::Value::String(s) => alloc_cstring(s.as_bytes()),
-            other => {
-                let s = serde_json::to_string(other).unwrap_or_default();
-                alloc_cstring(s.as_bytes())
-            }
+            other => render_json_direct(other, false),
         }
     })
 }
@@ -1012,6 +1093,18 @@ mod tests {
             "rendered JSON must retain the original numeric spelling: {rendered}"
         );
         assert!(rendered.contains("\"short\":20.9"));
+        unsafe { crate::c_abi::string::gos_rt_str_free(rendered_ptr) };
+        unsafe { gos_rt_json_free(json) };
+    }
+
+    #[test]
+    fn direct_json_render_keeps_html_safe_escaping() {
+        let text = std::ffi::CString::new(r#"{"x":"<>&\u2028\u2029"}"#).unwrap();
+        let parsed = unsafe { gos_rt_json_parse(text.as_ptr()) };
+        let json = crate::c_abi::vec::gos_rt_result_payload(parsed) as *mut GosJson;
+        let rendered_ptr = unsafe { gos_rt_json_render(json) };
+        let rendered = unsafe { CStr::from_ptr(rendered_ptr) }.to_str().unwrap();
+        assert_eq!(rendered, r#"{"x":"\u003c\u003e\u0026\u2028\u2029"}"#);
         unsafe { crate::c_abi::string::gos_rt_str_free(rendered_ptr) };
         unsafe { gos_rt_json_free(json) };
     }

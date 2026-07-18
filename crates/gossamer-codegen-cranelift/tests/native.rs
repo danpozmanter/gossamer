@@ -14,8 +14,111 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
+use gossamer_codegen_cranelift::compile_to_object;
+use gossamer_lex::{SourceMap, Span};
+use gossamer_mir::{
+    BasicBlock, BlockId, Body, ConstValue, IteratorAdapterKind, IteratorOwnership,
+    IteratorSourceKind, Local, LocalDecl, Operand, Place, Rvalue, Statement, StatementKind,
+    Terminator,
+};
+use gossamer_resolve::DefId;
+use gossamer_types::{IntTy, Substs, TyCtxt, TyKind};
+use object::read::{File, Object, ObjectSection, ObjectSymbol, RelocationTarget};
+
 const BUILD_TIMEOUT: Duration = Duration::from_mins(2);
 const RUN_TIMEOUT: Duration = Duration::from_secs(20);
+
+fn dummy_span() -> Span {
+    let mut map = SourceMap::new();
+    let file = map.add_file("typed_iter.gos", "");
+    Span::new(file, 0, 0)
+}
+
+fn typed_iterator_main() -> (Body, TyCtxt) {
+    let mut tcx = TyCtxt::new();
+    let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+    let iter_i64 = tcx.iterator_ty(i64_ty);
+    let option_i64 = tcx.intern(TyKind::Adt {
+        def: DefId::local(u32::MAX - 1),
+        substs: Substs::from_types([i64_ty]),
+    });
+    let span = dummy_span();
+    let body = Body {
+        name: "main".to_string(),
+        def: None,
+        arity: 0,
+        locals: vec![
+            LocalDecl {
+                ty: i64_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+            LocalDecl {
+                ty: iter_i64,
+                debug_name: None,
+                mutable: true,
+                region: false,
+            },
+            LocalDecl {
+                ty: iter_i64,
+                debug_name: None,
+                mutable: true,
+                region: false,
+            },
+            LocalDecl {
+                ty: option_i64,
+                debug_name: None,
+                mutable: true,
+                region: false,
+            },
+        ],
+        blocks: vec![BasicBlock {
+            id: BlockId(0),
+            stmts: vec![
+                Statement {
+                    span,
+                    kind: StatementKind::IterSource {
+                        dst: Place::local(Local(1)),
+                        source_kind: IteratorSourceKind::Range,
+                        source: Operand::Const(ConstValue::Int(5)),
+                        item_ty: i64_ty,
+                        ownership: IteratorOwnership::Owning,
+                    },
+                },
+                Statement {
+                    span,
+                    kind: StatementKind::IterAdapter {
+                        dst: Place::local(Local(2)),
+                        adapter_kind: IteratorAdapterKind::Take,
+                        upstream: Place::local(Local(1)),
+                        closure_or_arg: Some(Operand::Const(ConstValue::Int(2))),
+                        item_ty: i64_ty,
+                    },
+                },
+                Statement {
+                    span,
+                    kind: StatementKind::IterNext {
+                        dst_option: Place::local(Local(3)),
+                        iter_place: Place::local(Local(2)),
+                        item_ty: i64_ty,
+                    },
+                },
+                Statement {
+                    span,
+                    kind: StatementKind::Assign {
+                        place: Place::local(Local(0)),
+                        rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    },
+                },
+            ],
+            terminator: Terminator::Return,
+            span,
+        }],
+        span,
+    };
+    (body, tcx)
+}
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -164,6 +267,37 @@ fn assert_stdout_contains(name: &str, source: &str, needle: &str) {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains(needle), "{name}: stdout={stdout}");
+}
+
+#[test]
+fn cranelift_lowers_typed_iterator_mir_to_object_bytes() {
+    let (body, tcx) = typed_iterator_main();
+    let object = compile_to_object(&[body], &tcx).expect("typed iterator MIR must compile");
+    assert!(!object.bytes.is_empty(), "object bytes must not be empty");
+    let file = File::parse(&*object.bytes).expect("parse native object");
+    let mut referenced = Vec::new();
+    for section in file.sections() {
+        for (_, relocation) in section.relocations() {
+            let RelocationTarget::Symbol(index) = relocation.target() else {
+                continue;
+            };
+            if let Ok(symbol) = file.symbol_by_index(index)
+                && let Ok(name) = symbol.name()
+            {
+                referenced.push(name.to_string());
+            }
+        }
+    }
+    for symbol in [
+        "gos_rt_lazy_iter_range_i64",
+        "gos_rt_lazy_iter_take_i64",
+        "gos_rt_lazy_iter_next_i64",
+    ] {
+        assert!(
+            !referenced.iter().any(|name| name == symbol),
+            "nonescaping typed iterator unexpectedly references {symbol}: {referenced:?}"
+        );
+    }
 }
 
 #[test]

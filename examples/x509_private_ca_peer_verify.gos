@@ -1,0 +1,33 @@
+/*
+ * Private-CA HTTPS peer verification.
+ *
+ * A host TLS adapter obtains the peer's leaf-first certificate chain. This
+ * source-level check applies the same private roots, DNS/IP hostname, and
+ * CRL policy before accepting that peer. Keep CRLs current: an absent,
+ * malformed, expired, or incomplete CRL set is rejected.
+ */
+
+use std::{crypto, fs}
+
+fn verify_private_https_peer(
+    chain_path: String,
+    roots_path: String,
+    crls_path: String,
+    hostname: String,
+) -> Result<(), errors::Error> {
+    let chain_pem = fs::read_to_string(chain_path)?
+    let roots_pem = fs::read_to_string(roots_path)?
+    let crls_pem = fs::read_to_string(crls_path)?
+    crypto::x509::verify_server_certificate_with_crls(chain_pem, roots_pem, hostname, crls_pem)
+}
+
+fn main() -> Result<(), errors::Error> {
+    verify_private_https_peer(
+        "peer-chain.pem",
+        "private-roots.pem",
+        "private-ca.crl.pem",
+        "api.internal.example",
+    )?
+    println!("private HTTPS peer verified")
+    Ok(())
+}

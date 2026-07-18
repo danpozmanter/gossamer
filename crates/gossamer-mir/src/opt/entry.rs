@@ -79,6 +79,29 @@ pub fn optimise(body: &mut Body, tcx: &TyCtxt) {
     crate::verify::debug_verify_body(body);
 }
 
+/// Fast canonicalisation for unoptimised native builds.
+///
+/// Monomorphisation and ownership lowering happen outside this function and
+/// remain identical across profiles. Debug builds skip whole-program inlining,
+/// but retain inexpensive local canonicalisation. Aggregate scalar replacement
+/// and bounds analyses stay release-only so debug compilation remains the
+/// shortest possible pipeline.
+pub fn optimise_debug(body: &mut Body, tcx: &TyCtxt) {
+    crate::verify::debug_verify_body(body);
+    copy_propagate(body, tcx);
+    crate::verify::debug_verify_body(body);
+    const_fold(body);
+    crate::verify::debug_verify_body(body);
+    copy_propagate(body, tcx);
+    crate::verify::debug_verify_body(body);
+    const_branch_elim(body);
+    crate::verify::debug_verify_body(body);
+    dead_block_sweep(body);
+    crate::verify::debug_verify_body(body);
+    dead_store_elim(body, tcx);
+    crate::verify::debug_verify_body(body);
+}
+
 /// Eliminates a short-lived aggregate when every use is a direct scalar field
 /// read in the same block.  This is deliberately narrower than a general SSA
 /// conversion: it accepts only a single aggregate construction, no escaping

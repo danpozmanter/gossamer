@@ -31,7 +31,10 @@ mod ty;
 pub use arena_escape::{
     ArenaEscapeDiagnostic, ArenaEscapeError, ArenaEscapeKind, check_arena_escapes,
 };
-pub use checker::typecheck_source_file;
+pub use checker::{
+    typecheck_source_file, typecheck_source_file_with_edition,
+    typecheck_source_file_with_lazy_iterators,
+};
 pub use context::TyCtxt;
 pub use error::{TypeDiagnostic, TypeError};
 pub use exhaustiveness::{ExhaustivenessDiagnostic, ExhaustivenessError, check_exhaustiveness};

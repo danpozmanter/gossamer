@@ -190,6 +190,17 @@ pub struct JitArtifact {
     pub code_bytes: u64,
 }
 
+/// Deterministic static admission result for one MIR body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JitBodyDecision {
+    /// Source-level or mangled body name.
+    pub name: String,
+    /// Whether the body belongs to the transitive native compile set.
+    pub admitted: bool,
+    /// Stable machine-readable rejection categories.
+    pub reasons: Vec<&'static str>,
+}
+
 impl std::fmt::Debug for JitArtifact {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // The `module` field is intentionally omitted - its
@@ -446,6 +457,75 @@ pub fn has_worthy_jit_body(
     !compile_set.is_empty()
 }
 
+/// Returns the exact transitive body set retained for deferred promotion.
+/// The interpreter uses this before storing its compiler snapshot so bodies
+/// that are guaranteed to stay on bytecode do not remain resident until the
+/// tier-up threshold fires.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "single interp caller passes the same HashMap shape compile_to_jit uses"
+)]
+#[must_use]
+pub fn jit_compile_body_names(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+    enum_shapes: &HashMap<u32, u32>,
+    struct_shapes: &HashMap<u32, u32>,
+) -> std::collections::HashSet<String> {
+    let mut compile_set = jit_compile_set(bodies, tcx, enum_shapes, struct_shapes);
+    restrict_static_leaky_bodies(&mut compile_set, bodies);
+    compile_set.into_iter().map(str::to_string).collect()
+}
+
+/// Explains static JIT admission for every body in stable name order without
+/// constructing a Cranelift module.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "single interp caller passes the same HashMap shape compile_to_jit uses"
+)]
+#[must_use]
+pub fn jit_promotion_report(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+    enum_shapes: &HashMap<u32, u32>,
+    struct_shapes: &HashMap<u32, u32>,
+) -> Vec<JitBodyDecision> {
+    let admitted = jit_compile_body_names(bodies, tcx, enum_shapes, struct_shapes);
+    let mut report: Vec<_> = bodies
+        .iter()
+        .map(|body| {
+            let is_admitted = admitted.contains(body.name.as_str());
+            let mut reasons = Vec::new();
+            if !is_admitted {
+                if body_kinds(body, tcx, enum_shapes, struct_shapes).is_none() {
+                    reasons.push("unsupported-boundary");
+                }
+                if body_uses_unlowerable_local_repr(body, tcx, enum_shapes, struct_shapes) {
+                    reasons.push("unsupported-local-representation");
+                }
+                if body_has_cross_goroutine_ops(body) {
+                    reasons.push("cross-goroutine-state");
+                }
+                if body_jit_unsupported(body, tcx) {
+                    reasons.push("unsupported-operation");
+                }
+                if reasons.is_empty() {
+                    reasons.push("not-hot-or-not-in-promotable-closure");
+                }
+            }
+            reasons.sort_unstable();
+            reasons.dedup();
+            JitBodyDecision {
+                name: body.name.clone(),
+                admitted: is_admitted,
+                reasons,
+            }
+        })
+        .collect();
+    report.sort_by(|left, right| left.name.cmp(&right.name));
+    report
+}
+
 /// Names of bodies worth JIT-compiling on first call.
 ///
 /// A loop-bearing body may only be called once, so it would never trip a
@@ -636,14 +716,29 @@ pub fn compile_to_jit_for_promotion(
     enum_shapes: &HashMap<u32, u32>,
     struct_shapes: &HashMap<u32, u32>,
 ) -> Result<JitArtifact> {
+    compile_to_jit_for_promotion_owned(bodies.to_vec(), tcx, enum_shapes, struct_shapes)
+}
+
+/// Ownership-taking promotion path. This avoids cloning the retained MIR
+/// snapshot when the compiling VM is its sole owner.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "single interp caller passes the same HashMap shape compile_to_jit uses"
+)]
+pub fn compile_to_jit_for_promotion_owned(
+    mut bodies: Vec<Body>,
+    tcx: &TyCtxt,
+    enum_shapes: &HashMap<u32, u32>,
+    struct_shapes: &HashMap<u32, u32>,
+) -> Result<JitArtifact> {
     // Decide the compile set BEFORE touching Cranelift. When no body is
     // worth promoting, return an empty artifact without instantiating the JIT
     // module. That avoids preparing the native compiler for programs that
     // would stay on bytecode either way.
-    let mut compile_set = jit_compile_set(bodies, tcx, enum_shapes, struct_shapes);
+    let mut compile_set = jit_compile_set(&bodies, tcx, enum_shapes, struct_shapes);
     // Keep every accessor of a `static mut` on the same tier: a compiled body
     // uses the static's native cell, a VM body its `Global::MutStatic` cell.
-    restrict_static_leaky_bodies(&mut compile_set, bodies);
+    restrict_static_leaky_bodies(&mut compile_set, &bodies);
     if compile_set.is_empty() {
         return Ok(JitArtifact {
             module: None,
@@ -659,11 +754,10 @@ pub fn compile_to_jit_for_promotion(
     // `jit_compile_set` already found the transitive closure of user-function
     // calls from the promotable roots so inter-body calls resolve. Clone only
     // the bodies we'll actually compile.
-    let filtered: Vec<Body> = bodies
-        .iter()
-        .filter(|b| compile_set.contains(b.name.as_str()))
-        .cloned()
-        .collect();
+    let compile_names: std::collections::HashSet<String> =
+        compile_set.into_iter().map(str::to_string).collect();
+    bodies.retain(|body| compile_names.contains(body.name.as_str()));
+    let filtered = bodies;
 
     match compile_bodies(&filtered, tcx, enum_shapes, struct_shapes) {
         Ok(artifact) => Ok(artifact),
@@ -682,11 +776,17 @@ pub fn compile_to_jit_for_promotion(
             // connectivity check so no compiled body is left sharing a static
             // with the now-interpreted `main`. `compile_set` still borrows
             // `bodies` (not `filtered`), so it survives moving `filtered`.
-            compile_set.retain(|n| *n != "main");
-            restrict_static_leaky_bodies(&mut compile_set, bodies);
+            let mut retry_set: std::collections::HashSet<&str> = filtered
+                .iter()
+                .map(|body| body.name.as_str())
+                .filter(|name| *name != "main")
+                .collect();
+            restrict_static_leaky_bodies(&mut retry_set, &filtered);
+            let retry_names: std::collections::HashSet<String> =
+                retry_set.into_iter().map(str::to_string).collect();
             let without_main: Vec<Body> = filtered
                 .into_iter()
-                .filter(|b| compile_set.contains(b.name.as_str()))
+                .filter(|b| retry_names.contains(b.name.as_str()))
                 .collect();
             if without_main.is_empty() {
                 return Ok(JitArtifact {
@@ -838,11 +938,11 @@ fn compile_bodies(
     })
 }
 
-/// Diagnostic escape hatch while the Option-projection lowering is
-/// hardened: `GOS_JIT_OPTION=1` admits bodies holding `Option` sentinel
-/// locals into the compile set.
-fn jit_option_locals_ok() -> bool {
-    std::env::var("GOS_JIT_OPTION").is_ok()
+/// Option uses the same two-word discriminant/payload carrier already handled
+/// for inline variants. Keeping it admitted avoids rejecting an otherwise
+/// scalar loop merely because one local represents `Some` or `None`.
+const fn jit_option_locals_ok() -> bool {
+    true
 }
 
 /// Splits a comma-separated `GOS_JIT_ONLY` / `GOS_JIT_SKIP` value into a
@@ -1437,6 +1537,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_arr_len"             => rt::gos_rt_arr_len,
         "gos_rt_len"                 => rt::gos_rt_len,
         "gos_rt_str_len"             => rt::gos_rt_str_len,
+        "gos_rt_str_with_capacity"   => rt::gos_rt_str_with_capacity,
         "gos_rt_str_byte_at"         => rt::gos_rt_str_byte_at,
         "gos_rt_str_substring"       => rt::gos_rt_str_substring,
         "gos_rt_os_read_dir"         => rt::gos_rt_os_read_dir,
@@ -1925,6 +2026,32 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_vec_sort_by_aggr"    => rt::gos_rt_vec_sort_by_aggr,
         "gos_rt_callback_invoke"     => rt::gos_rt_callback_invoke,
         "gos_rt_iter_map_i64"        => rt::gos_rt_iter_map_i64,
+        "gos_rt_lazy_iter_range_i64" => rt::gos_rt_lazy_iter_range_i64,
+        "gos_rt_lazy_iter_range_inclusive_i64" => rt::gos_rt_lazy_iter_range_inclusive_i64,
+        "gos_rt_lazy_iter_from_vec_i64" => rt::gos_rt_lazy_iter_from_vec_i64,
+        "gos_rt_lazy_iter_repeat_i64" => rt::gos_rt_lazy_iter_repeat_i64,
+        "gos_rt_lazy_iter_once_i64" => rt::gos_rt_lazy_iter_once_i64,
+        "gos_rt_lazy_iter_take_i64" => rt::gos_rt_lazy_iter_take_i64,
+        "gos_rt_lazy_iter_skip_i64" => rt::gos_rt_lazy_iter_skip_i64,
+        "gos_rt_lazy_iter_chain_i64" => rt::gos_rt_lazy_iter_chain_i64,
+        "gos_rt_lazy_iter_enumerate_i64" => rt::gos_rt_lazy_iter_enumerate_i64,
+        "gos_rt_lazy_iter_zip_i64" => rt::gos_rt_lazy_iter_zip_i64,
+        "gos_rt_lazy_iter_map_i64" => rt::gos_rt_lazy_iter_map_i64,
+        "gos_rt_lazy_iter_filter_i64" => rt::gos_rt_lazy_iter_filter_i64,
+        "gos_rt_lazy_iter_collect_i64" => rt::gos_rt_lazy_iter_collect_i64,
+        "gos_rt_lazy_iter_collect_pair_i64" => rt::gos_rt_lazy_iter_collect_pair_i64,
+        "gos_rt_lazy_iter_count_i64" => rt::gos_rt_lazy_iter_count_i64,
+        "gos_rt_lazy_iter_count_pair_i64" => rt::gos_rt_lazy_iter_count_pair_i64,
+        "gos_rt_lazy_iter_drop_i64" => rt::gos_rt_lazy_iter_drop_i64,
+        "gos_rt_lazy_iter_drop_pair_i64" => rt::gos_rt_lazy_iter_drop_pair_i64,
+        "gos_rt_lazy_iter_sum_i64" => rt::gos_rt_lazy_iter_sum_i64,
+        "gos_rt_lazy_iter_product_i64" => rt::gos_rt_lazy_iter_product_i64,
+        "gos_rt_lazy_iter_min_i64" => rt::gos_rt_lazy_iter_min_i64,
+        "gos_rt_lazy_iter_max_i64" => rt::gos_rt_lazy_iter_max_i64,
+        "gos_rt_lazy_iter_fold_i64" => rt::gos_rt_lazy_iter_fold_i64,
+        "gos_rt_lazy_iter_any_i64" => rt::gos_rt_lazy_iter_any_i64,
+        "gos_rt_lazy_iter_all_i64" => rt::gos_rt_lazy_iter_all_i64,
+        "gos_rt_lazy_iter_find_i64" => rt::gos_rt_lazy_iter_find_i64,
         "gos_rt_testing_check"       => rt::gos_rt_testing_check,
         "gos_rt_testing_check_eq_i64" => rt::gos_rt_testing_check_eq_i64,
         "gos_rt_testing_wait_for_scheduler_idle" => rt::gos_rt_testing_wait_for_scheduler_idle,
@@ -2373,4 +2500,69 @@ fn register_binding_symbols(builder: &mut JITBuilder) -> Vec<&'static str> {
         }
     }
     names
+}
+
+#[cfg(test)]
+mod promotion_report_tests {
+    use super::jit_promotion_report;
+    use gossamer_lex::{SourceMap, Span};
+    use gossamer_mir::{BasicBlock, BlockId, Body, LocalDecl, Terminator};
+    use gossamer_types::{IntTy, TyCtxt, TyKind};
+    use std::collections::HashMap;
+
+    fn span() -> Span {
+        let mut map = SourceMap::new();
+        let file = map.add_file("jit-report.gos", "");
+        Span::new(file, 0, 0)
+    }
+
+    fn body(name: &str, ty: gossamer_types::Ty, loop_back: bool) -> Body {
+        let span = span();
+        Body {
+            name: name.to_string(),
+            def: None,
+            arity: 0,
+            locals: vec![LocalDecl {
+                ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            }],
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                stmts: Vec::new(),
+                terminator: if loop_back {
+                    Terminator::Goto { target: BlockId(0) }
+                } else {
+                    Terminator::Return
+                },
+                span,
+            }],
+            span,
+        }
+    }
+
+    #[test]
+    fn report_is_stable_sorted_and_machine_categorized() {
+        let mut tcx = TyCtxt::new();
+        let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+        let map_ty = tcx.intern(TyKind::HashMap {
+            key: i64_ty,
+            value: i64_ty,
+        });
+        let bodies = vec![
+            body("z_hot", i64_ty, true),
+            body("a_map_boundary", map_ty, false),
+        ];
+        let enums = HashMap::new();
+        let structs = HashMap::new();
+        let first = jit_promotion_report(&bodies, &tcx, &enums, &structs);
+        let second = jit_promotion_report(&bodies, &tcx, &enums, &structs);
+        assert_eq!(first, second, "report must be deterministic");
+        assert_eq!(first[0].name, "a_map_boundary");
+        assert!(!first[0].admitted);
+        assert!(first[0].reasons.contains(&"unsupported-boundary"));
+        assert_eq!(first[1].name, "z_hot");
+        assert!(first[1].admitted, "report: {first:?}");
+    }
 }

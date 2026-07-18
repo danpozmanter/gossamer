@@ -29,11 +29,19 @@ impl<'tcx> FnBuilder<'tcx> {
         let clear_after_stmt = crate::compile::consume::block_last_use_clears(block);
         let mut diverges = false;
         for (idx, stmt) in block.stmts.iter().enumerate() {
+            let register_mark = self.register_mark();
             if self.compile_stmt(stmt)? {
                 diverges = true;
             }
             if !diverges && let Some(names) = clear_after_stmt.get(idx) {
                 self.emit_last_use_clears(names);
+            }
+            // Expression and goroutine statements cannot introduce a local
+            // visible to a later statement. Spawn/call/container operations
+            // clone or transfer every escaping value before the instruction
+            // completes, so their compiler temporaries are dead here.
+            if !diverges && matches!(&stmt.kind, HirStmtKind::Expr { .. } | HirStmtKind::Go(_)) {
+                self.restore_register_mark(register_mark);
             }
         }
         let result = if diverges {
@@ -265,6 +273,30 @@ fn f() {
                 .any(|op| matches!(op, Op::ClearRegs { count: 1, .. })),
             "expected a statement-level last-use clear; chunk: {:?}",
             chunk.instrs
+        );
+    }
+
+    #[test]
+    fn effect_statement_temporaries_reuse_physical_registers() {
+        let one = r#"
+fn f() {
+    println("{}", (1, 2))
+}
+"#;
+        let mut many = String::from("fn f() {\n");
+        for _ in 0..24 {
+            many.push_str("    println(\"{}\", (1, 2))\n");
+        }
+        many.push_str("}\n");
+
+        let (one_chunk, _) = compile_named(one, "f");
+        let (many_chunk, _) = compile_named(&many, "f");
+        assert!(
+            many_chunk.register_count <= one_chunk.register_count.saturating_add(2),
+            "effect-only statements should share one temporary register span: one={}, many={}, instrs={:?}",
+            one_chunk.register_count,
+            many_chunk.register_count,
+            many_chunk.instrs
         );
     }
 

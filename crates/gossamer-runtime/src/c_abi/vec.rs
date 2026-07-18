@@ -126,6 +126,10 @@ pub struct GosVec {
     /// Lazily allocated metadata only for aggregate-owned element layouts.
     /// This remains an owned carrier rather than an address-keyed registry.
     pub owner: SyncRawPtr<VecOwner>,
+    /// Incremented by every structural mutation. Appended after the existing
+    /// ABI fields so their offsets remain stable. Lazy borrowed iterators
+    /// snapshot it independently from allocation identity.
+    pub mutation_generation: u64,
 }
 
 /// ABI-versioned optional ownership state for aggregate-owned Vec elements.
@@ -201,6 +205,12 @@ fn vec_owner(v: &GosVec) -> Option<&VecOwner> {
 #[must_use]
 pub fn vec_owner_generation(v: &GosVec) -> u64 {
     v.generation
+}
+
+/// Mark a structural mutation of a live Vec header.
+#[inline]
+pub(crate) fn bump_vec_mutation_generation(v: &mut GosVec) {
+    v.mutation_generation = v.mutation_generation.wrapping_add(1);
 }
 
 #[inline]
@@ -349,6 +359,7 @@ pub(crate) unsafe fn alloc_box_vec(
             rc: std::sync::atomic::AtomicU16::new(1),
             ptr: init_ptr,
             generation: NEXT_VEC_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            mutation_generation: 0,
             elem_meta: SyncRawPtr::NULL,
             owner: SyncRawPtr::NULL,
         },
@@ -476,6 +487,7 @@ pub(crate) unsafe fn try_pack_primitive_rows(outer: *mut GosVec) -> bool {
             rc: std::sync::atomic::AtomicU16::new(1),
             ptr: SyncRawPtr::new(data_ptr),
             generation: 0,
+            mutation_generation: 0,
             elem_meta: SyncRawPtr::NULL,
             owner: SyncRawPtr::NULL,
         });
@@ -565,6 +577,7 @@ unsafe fn alloc_vec_with_capacity(elem_bytes: u32, elem_kind: u8, cap: i64) -> *
             rc: std::sync::atomic::AtomicU16::new(0),
             ptr: SyncRawPtr::NULL,
             generation: 0,
+            mutation_generation: 0,
             elem_meta: SyncRawPtr::NULL,
             owner: SyncRawPtr::NULL,
         })
@@ -1024,6 +1037,7 @@ pub unsafe extern "C" fn gos_rt_vec_new(elem_bytes: u32) -> *mut GosVec {
                 rc: std::sync::atomic::AtomicU16::new(0),
                 ptr: SyncRawPtr::NULL,
                 generation: 0,
+                mutation_generation: 0,
                 elem_meta: SyncRawPtr::NULL,
                 owner: SyncRawPtr::NULL,
             })
@@ -1057,6 +1071,7 @@ pub unsafe extern "C" fn gos_rt_vec_new_typed(elem_bytes: u32, elem_kind: u8) ->
                 rc: std::sync::atomic::AtomicU16::new(0),
                 ptr: SyncRawPtr::NULL,
                 generation: 0,
+                mutation_generation: 0,
                 elem_meta: SyncRawPtr::NULL,
                 owner: SyncRawPtr::NULL,
             })
@@ -1370,6 +1385,7 @@ pub unsafe extern "C" fn gos_rt_vec_reserve_at_least(v: *mut GosVec, min_cap: i6
             return;
         }
         let vec = unsafe { &mut *v };
+        bump_vec_mutation_generation(vec);
         unsafe { vec_reserve_to(vec, min_cap, false) };
     });
 }
@@ -1383,6 +1399,7 @@ pub unsafe extern "C" fn gos_rt_vec_reserve_exact(v: *mut GosVec, cap: i64) {
             return;
         }
         let vec = unsafe { &mut *v };
+        bump_vec_mutation_generation(vec);
         unsafe { vec_reserve_to(vec, cap, true) };
     });
 }
@@ -1394,6 +1411,7 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
             return;
         }
         let vec = unsafe { &mut *v };
+        bump_vec_mutation_generation(vec);
         if vec.len == vec.cap {
             // Grow geometrically (cap -> max(4, cap*2)).
             unsafe { vec_reserve_to(vec, vec.len.saturating_add(1), false) };
@@ -1530,6 +1548,7 @@ pub unsafe extern "C" fn gos_rt_vec_clear(v: *mut GosVec) {
             return;
         }
         let len = unsafe { (*v).len.max(0) };
+        unsafe { bump_vec_mutation_generation(&mut *v) };
         for idx in 0..len {
             unsafe { vec_release_elem_at(v, idx) };
         }
@@ -1551,6 +1570,7 @@ pub unsafe extern "C" fn gos_rt_vec_truncate(v: *mut GosVec, len: i64) {
         if new_len >= old_len {
             return;
         }
+        unsafe { bump_vec_mutation_generation(&mut *v) };
         for idx in new_len..old_len {
             unsafe { vec_release_elem_at(v, idx) };
         }

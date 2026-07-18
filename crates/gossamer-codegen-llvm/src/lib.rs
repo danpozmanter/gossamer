@@ -1,17 +1,16 @@
 //! LLVM-backed release codegen.
 //!
-//! The Cranelift backend in `gossamer-codegen-cranelift` is the
-//! default for `gos build`. This crate mirrors its
-//! `compile_to_object` signature but emits LLVM IR text and
-//! shells out to `llc -O3` for aggressive optimisation
-//! (auto-vectorisation, loop unrolling, instcombine, SLP) -
-//! the scalar-only scenarios where Cranelift leaves perf on
-//! the table.
+//! `gos build` uses this backend for both debug and release native
+//! artifacts. This crate mirrors the Cranelift object-emission API,
+//! emits LLVM IR text, and invokes minimal `opt` plus `llc -O0` for debug or
+//! integrated Clang `-O3` for release code generation. The Cranelift backend remains
+//! available for the in-process JIT and explicit companion paths.
 //!
-//! Requires `llc` on `PATH` or via the `GOS_LLC` env var. We
-//! shell out to it so this crate stays FFI-free: no
-//! `inkwell`/`llvm-sys` dependency, no unsafe Rust, no
-//! build-time LLVM header requirements. The runtime `.a`
+//! Requires Clang on `PATH` or via `GOS_LLVM_CLANG`; installations
+//! without it can use `opt` and `llc` through their environment
+//! overrides. The backend shells out so this crate stays FFI-free:
+//! no `inkwell`/`llvm-sys` dependency, no unsafe Rust, no build-time
+//! LLVM header requirements. The runtime `.a`
 //! staticlib is unchanged - the linker stage (`cc`) wires
 //! the LLVM-produced object against it the same way as
 //! Cranelift's.
@@ -52,9 +51,9 @@ mod ty;
 pub use emit::{
     BuildError, CompileOutcome, NativeObject, OptProfile, PgoMode, compile_to_object,
     compile_to_object_at_path, compile_with_fallback, compile_with_fallback_at_path, pgo_mode,
-    render_ir_to_string, set_cache_dir, set_debug_info, set_opt_profile, set_pgo_mode,
-    set_race_instrumentation, set_reproducible, set_strict_lowering, set_target_triple,
-    want_race_instrumentation,
+    render_ir_to_string, reproducible_enabled, set_cache_dir, set_debug_info, set_opt_profile,
+    set_pgo_mode, set_race_instrumentation, set_reproducible, set_strict_lowering,
+    set_target_triple, want_race_instrumentation,
 };
 
 /// Read-only view of the LLVM backend's runtime-symbol declaration

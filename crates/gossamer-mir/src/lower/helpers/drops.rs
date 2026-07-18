@@ -2042,7 +2042,8 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
 fn mints_owned_string(name: &str) -> bool {
     matches!(
         name,
-        "gos_rt_str_repeat"
+        "gos_rt_str_with_capacity"
+            | "gos_rt_str_repeat"
             | "gos_rt_str_to_upper"
             | "gos_rt_str_to_lower"
             | "gos_rt_str_to_title"
@@ -3558,6 +3559,17 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
     // - closing the loop-body aggregate-leak case.
     let mut drop_before_sites: Vec<(usize, usize, Local, i64)> = Vec::new();
 
+    let iterator_free = |ty: Ty| -> Option<&'static str> {
+        let TyKind::Iterator(item) = tcx.kind_of(ty) else {
+            return None;
+        };
+        if matches!(tcx.kind_of(*item), TyKind::Tuple(items) if items.len() == 2) {
+            Some("gos_rt_lazy_iter_drop_pair_i64")
+        } else {
+            Some("gos_rt_lazy_iter_drop_i64")
+        }
+    };
+
     let ctor_to_free = |name: &str| -> Option<&'static str> {
         match name {
             // Runtime-symbol form (used by some peephole sites).
@@ -3685,7 +3697,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 match tcx.kind_of(dest_ty) {
                     TyKind::HashMap { .. } => Some("gos_rt_map_free"),
                     TyKind::Vec(_) => Some("gos_rt_vec_free"),
-                    _ => None,
+                    _ => iterator_free(dest_ty),
                 }
             };
             if let Operand::Const(ConstValue::Str(name)) = callee {
@@ -3840,7 +3852,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                         match tcx.kind_of(body.locals[destination.local.0 as usize].ty) {
                             TyKind::HashMap { .. } => Some("gos_rt_map_free"),
                             TyKind::Vec(_) | TyKind::Slice(_) => Some("gos_rt_vec_free"),
-                            _ => None,
+                            _ => iterator_free(body.locals[destination.local.0 as usize].ty),
                         };
                 }
             }
@@ -3913,7 +3925,12 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             s < owner_ctor.len()
                 && matches!(
                     owner_ctor[s].or(fresh_container_free[s]),
-                    Some("gos_rt_vec_free" | "gos_rt_map_free")
+                    Some(
+                        "gos_rt_vec_free"
+                            | "gos_rt_map_free"
+                            | "gos_rt_lazy_iter_drop_i64"
+                            | "gos_rt_lazy_iter_drop_pair_i64"
+                    )
                 )
                 && consume_reads[s] == 1
         };
@@ -3972,7 +3989,13 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 let Some(free) = owner_ctor[s].or(fresh_container_free[s]) else {
                     continue;
                 };
-                if !matches!(free, "gos_rt_vec_free" | "gos_rt_map_free") {
+                if !matches!(
+                    free,
+                    "gos_rt_vec_free"
+                        | "gos_rt_map_free"
+                        | "gos_rt_lazy_iter_drop_i64"
+                        | "gos_rt_lazy_iter_drop_pair_i64"
+                ) {
                     continue;
                 }
                 // `src` must be consumed exactly once (this copy) and `dst`
@@ -3990,6 +4013,36 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 owner_ctor[d] = Some(free);
                 owner_ctor[s] = None;
                 move_copy_sites.push((bi, si, place.local));
+            }
+        }
+    }
+
+    // Every native lazy adapter and terminal takes ownership of its Iterator
+    // arguments. Once a handle is passed to one of these helpers, the runtime
+    // either embeds it in the returned adapter or consumes and drops it. Clear
+    // the frame's owner record so the return cleanup cannot free it twice.
+    for block in &body.blocks {
+        let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            args,
+            ..
+        } = &block.terminator
+        else {
+            continue;
+        };
+        if !name.starts_with("gos_rt_lazy_iter_") {
+            continue;
+        }
+        for arg in args {
+            let Operand::Copy(place) = arg else {
+                continue;
+            };
+            let idx = place.local.0 as usize;
+            if place.projection.is_empty()
+                && idx < owner_ctor.len()
+                && matches!(tcx.kind_of(body.locals[idx].ty), TyKind::Iterator(_))
+            {
+                owner_ctor[idx] = None;
             }
         }
     }

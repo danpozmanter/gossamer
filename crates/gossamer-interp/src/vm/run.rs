@@ -10,7 +10,11 @@ const VM_PREEMPT_INTERVAL: u16 = 1024;
 fn poll_vm_backedge(countdown: &mut u16) {
     *countdown -= 1;
     if *countdown == 0 {
-        std::thread::yield_now();
+        // The scheduler phase/pressure poll is cheap and only yields when a
+        // watchdog or peer requested preemption. The old unconditional
+        // `yield_now` handed every tight VM loop to the kernel once per 1024
+        // backedges even when this was the only runnable work.
+        gossamer_runtime::preempt::gos_rt_preempt_check_and_yield();
         *countdown = VM_PREEMPT_INTERVAL;
     }
 }
@@ -1394,6 +1398,11 @@ impl Vm {
                             return Err(RuntimeError::Type("index must be integer".to_string()));
                         }
                     };
+                    crate::stdlib_builtins::iter::note_vec_element_replacement(
+                        &registers[base as usize],
+                        raw,
+                        &new_value,
+                    );
                     let b = &mut registers[base as usize];
                     // An `[f64]` vec whose elements so far were all
                     // integer-valued sits in `IntArray` storage (an `[i64]`
@@ -1543,6 +1552,9 @@ impl Vm {
                 }
                 Op::VecPush { receiver, value } => {
                     let new_value = registers[value as usize].clone();
+                    crate::stdlib_builtins::iter::note_vec_structural_mutation(
+                        &registers[receiver as usize],
+                    );
                     let recv = &mut registers[receiver as usize];
                     if let Some(promoted) = promote_scalar_push(recv, &new_value) {
                         *recv = promoted;
@@ -1579,6 +1591,17 @@ impl Vm {
                     }
                 }
                 Op::VecPop { dst, receiver } => {
+                    let has_item = match &registers[receiver as usize] {
+                        Value::Array(items) => !items.is_empty(),
+                        Value::IntArray(data) => !data.is_empty(),
+                        Value::FloatVec(data) => !data.is_empty(),
+                        _ => false,
+                    };
+                    if has_item {
+                        crate::stdlib_builtins::iter::note_vec_structural_mutation(
+                            &registers[receiver as usize],
+                        );
+                    }
                     let popped = match &mut registers[receiver as usize] {
                         Value::Array(items) => Arc::make_mut(items).pop(),
                         Value::IntArray(data) => Arc::make_mut(data).pop().map(Value::Int),
@@ -1610,6 +1633,9 @@ impl Vm {
                             "insert: index {idx} out of bounds for length {len}"
                         )));
                     }
+                    crate::stdlib_builtins::iter::note_vec_structural_mutation(
+                        &registers[receiver as usize],
+                    );
                     let new_value = registers[value as usize].clone();
                     let recv = &mut registers[receiver as usize];
                     // Same typed-storage routing as `Op::VecPush`: a scalar
@@ -1670,6 +1696,9 @@ impl Vm {
                             "remove: index {idx} out of bounds for length {len}"
                         )));
                     }
+                    crate::stdlib_builtins::iter::note_vec_structural_mutation(
+                        &registers[receiver as usize],
+                    );
                     let idx = idx as usize;
                     match &mut registers[receiver as usize] {
                         Value::Array(items) => {
@@ -1696,6 +1725,17 @@ impl Vm {
                         Value::Int(n) => *n,
                         _ => -1,
                     };
+                    let valid = match &registers[receiver as usize] {
+                        Value::Array(items) => idx >= 0 && (idx as usize) < items.len(),
+                        Value::IntArray(data) => idx >= 0 && (idx as usize) < data.len(),
+                        Value::FloatVec(data) => idx >= 0 && (idx as usize) < data.len(),
+                        _ => false,
+                    };
+                    if valid {
+                        crate::stdlib_builtins::iter::note_vec_structural_mutation(
+                            &registers[receiver as usize],
+                        );
+                    }
                     let removed = match &mut registers[receiver as usize] {
                         Value::Array(items) => {
                             let v = Arc::make_mut(items);
@@ -3275,6 +3315,11 @@ impl Vm {
                 } => unsafe {
                     let idx = *ints.get_unchecked(index_i as usize);
                     let new_val = *ints.get_unchecked(value_i as usize);
+                    crate::stdlib_builtins::iter::note_vec_element_replacement(
+                        registers.get_unchecked(base as usize),
+                        idx,
+                        &Value::Int(new_val),
+                    );
                     let b = registers.get_unchecked_mut(base as usize);
                     let i = usize::try_from(idx)
                         .map_err(|_| RuntimeError::Panic("index out of bounds".to_string()))?;
@@ -3382,6 +3427,11 @@ impl Vm {
                 } => unsafe {
                     let idx = *ints.get_unchecked(index_i as usize);
                     let new_f = *floats.get_unchecked(value_f as usize);
+                    crate::stdlib_builtins::iter::note_vec_element_replacement(
+                        registers.get_unchecked(base as usize),
+                        idx,
+                        &Value::Float(new_f),
+                    );
                     let b = registers.get_unchecked_mut(base as usize);
                     let Value::FloatVec(data_arc) = b else {
                         return Err(RuntimeError::Type(

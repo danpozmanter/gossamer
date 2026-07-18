@@ -1795,6 +1795,114 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_iter_repeat_i64 as *const u8,
         ),
         (
+            "gos_rt_lazy_iter_range_i64",
+            crate::c_abi::gos_rt_lazy_iter_range_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_range_inclusive_i64",
+            crate::c_abi::gos_rt_lazy_iter_range_inclusive_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_repeat_i64",
+            crate::c_abi::gos_rt_lazy_iter_repeat_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_once_i64",
+            crate::c_abi::gos_rt_lazy_iter_once_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_take_i64",
+            crate::c_abi::gos_rt_lazy_iter_take_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_skip_i64",
+            crate::c_abi::gos_rt_lazy_iter_skip_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_chain_i64",
+            crate::c_abi::gos_rt_lazy_iter_chain_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_enumerate_i64",
+            crate::c_abi::gos_rt_lazy_iter_enumerate_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_zip_i64",
+            crate::c_abi::gos_rt_lazy_iter_zip_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_map_i64",
+            crate::c_abi::gos_rt_lazy_iter_map_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_filter_i64",
+            crate::c_abi::gos_rt_lazy_iter_filter_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_collect_i64",
+            crate::c_abi::gos_rt_lazy_iter_collect_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_collect_pair_i64",
+            crate::c_abi::gos_rt_lazy_iter_collect_pair_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_count_i64",
+            crate::c_abi::gos_rt_lazy_iter_count_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_count_pair_i64",
+            crate::c_abi::gos_rt_lazy_iter_count_pair_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_drop_i64",
+            crate::c_abi::gos_rt_lazy_iter_drop_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_drop_pair_i64",
+            crate::c_abi::gos_rt_lazy_iter_drop_pair_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_sum_i64",
+            crate::c_abi::gos_rt_lazy_iter_sum_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_product_i64",
+            crate::c_abi::gos_rt_lazy_iter_product_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_min_i64",
+            crate::c_abi::gos_rt_lazy_iter_min_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_max_i64",
+            crate::c_abi::gos_rt_lazy_iter_max_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_next_i64",
+            crate::c_abi::gos_rt_lazy_iter_next_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_fold_i64",
+            crate::c_abi::gos_rt_lazy_iter_fold_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_from_vec_i64",
+            crate::c_abi::gos_rt_lazy_iter_from_vec_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_any_i64",
+            crate::c_abi::gos_rt_lazy_iter_any_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_all_i64",
+            crate::c_abi::gos_rt_lazy_iter_all_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_find_i64",
+            crate::c_abi::gos_rt_lazy_iter_find_i64 as *const u8,
+        ),
+        (
             "gos_rt_iter_reversed_i64",
             crate::c_abi::gos_rt_iter_reversed_i64 as *const u8,
         ),
@@ -4068,6 +4176,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_str_clear",
             crate::c_abi::gos_rt_str_clear as *const u8,
+        ),
+        (
+            "gos_rt_str_with_capacity",
+            crate::c_abi::gos_rt_str_with_capacity as *const u8,
         ),
         (
             "gos_rt_str_byte_at",

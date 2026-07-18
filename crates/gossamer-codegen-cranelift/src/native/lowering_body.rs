@@ -223,6 +223,55 @@ pub(super) fn lower_body(
 ) -> Result<()> {
     let mut builder = FunctionBuilder::new(func, fb_ctx);
 
+    intrinsics.nonescaping_iter_locals.clear();
+    intrinsics.nonescaping_iter_state.clear();
+    let mut iter_defs = HashMap::new();
+    for block in &body.blocks {
+        for statement in &block.stmts {
+            match &statement.kind {
+                StatementKind::IterSource {
+                    dst,
+                    source_kind: gossamer_mir::IteratorSourceKind::Range,
+                    ..
+                } if dst.projection.is_empty() => {
+                    iter_defs.insert(dst.local, None);
+                }
+                StatementKind::IterAdapter {
+                    dst,
+                    adapter_kind: gossamer_mir::IteratorAdapterKind::Take,
+                    upstream,
+                    ..
+                } if dst.projection.is_empty() && upstream.projection.is_empty() => {
+                    iter_defs.insert(dst.local, Some(upstream.local));
+                }
+                _ => {}
+            }
+        }
+    }
+    for block in &body.blocks {
+        for statement in &block.stmts {
+            let StatementKind::IterNext { iter_place, .. } = &statement.kind else {
+                continue;
+            };
+            if !iter_place.projection.is_empty() {
+                continue;
+            }
+            let mut chain = Vec::new();
+            let mut cursor = iter_place.local;
+            loop {
+                chain.push(cursor);
+                match iter_defs.get(&cursor) {
+                    Some(Some(upstream)) => cursor = *upstream,
+                    Some(None) => {
+                        intrinsics.nonescaping_iter_locals.extend(chain);
+                        break;
+                    }
+                    None => break,
+                }
+            }
+        }
+    }
+
     let mut locals: HashMap<Local, Variable> = HashMap::new();
     let mut blocks: HashMap<u32, ir::Block> = HashMap::new();
 

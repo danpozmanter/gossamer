@@ -38,6 +38,17 @@ const MAX_MONOMORPHISE_ITERATIONS: u32 = 32;
 /// `MAX_MONOMORPHISE_ITERATIONS` as a runaway guard.
 pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
     let mut emitted: HashSet<String> = HashSet::new();
+    let sources: HashMap<u32, usize> = bodies
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| b.def.map(|d| (d.local, i)))
+        .collect();
+    let method_bases: HashMap<String, usize> = bodies
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| b.def.is_none() && b.name.contains("::") && body_has_param(b, tcx))
+        .map(|(i, b)| (b.name.clone(), i))
+        .collect();
     // Source defs whose specialisation rewrote a trait-method call on a
     // type-parameter receiver. Only these need their call sites routed to
     // the mangled copy (and their now-dead template dropped): a scalar
@@ -45,87 +56,28 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
     // through the uniform pointer-width ABI. Routing a scalar generic to a
     // copy instead would mis-pass an `i64` argument as a pointer.
     let mut trait_specialised_defs: HashSet<u32> = HashSet::new();
+    let mut function_scan_start = 0;
+    let mut method_scan_start = 0;
     for iteration in 0..MAX_MONOMORPHISE_ITERATIONS {
-        let mut needs: HashMap<DefId, Vec<Substs>> = HashMap::new();
-        for body in bodies.iter() {
-            for block in &body.blocks {
-                for stmt in &block.stmts {
-                    if let StatementKind::Assign { rvalue, .. } = &stmt.kind {
-                        collect_from_rvalue(rvalue, &mut needs);
-                    }
-                }
-                collect_from_terminator(&block.terminator, &mut needs);
-            }
-        }
-        let sources: HashMap<u32, usize> = bodies
-            .iter()
-            .enumerate()
-            .filter_map(|(i, b)| b.def.map(|d| (d.local, i)))
-            .collect();
-        let mut specialised: Vec<Body> = Vec::new();
-        for (def, subst_list) in &needs {
-            let Some(src_idx) = sources.get(&def.local) else {
-                continue;
-            };
-            for substs in subst_list {
-                if substs.is_empty() {
-                    continue;
-                }
-                // A substitution made up only of const arguments needs no
-                // specialised copy: a const generic array parameter is lowered
-                // to a runtime-length sequence, so one body serves every value
-                // of the const. The recorded const still keys this call's
-                // `Substs` for typing; only the code copy is unnecessary.
-                if substs
-                    .as_slice()
-                    .iter()
-                    .all(|a| matches!(a, GenericArg::Const(_)))
-                {
-                    continue;
-                }
-                let name = mangled_name(*def, substs);
-                if !emitted.insert(name.clone()) {
-                    continue;
-                }
-                let mut copy = bodies[*src_idx].clone();
-                copy.name = name;
-                copy.def = None;
-                let subst_tys: Vec<Option<Ty>> = substs
-                    .as_slice()
-                    .iter()
-                    .map(|a| match a {
-                        GenericArg::Type(t) => Some(*t),
-                        GenericArg::Const(_) => None,
-                    })
-                    .collect();
-                // Rewrite trait-method calls first, while the receiver locals
-                // still carry the template's `Param` types: the rewrite keys on
-                // a `Param` receiver to recognise a static-dispatch call and map
-                // it to the concrete impl symbol. Substituting the locals first
-                // would erase the `Param` and the call would stay an unresolved
-                // bare method name.
-                if rewrite_trait_method_calls(&mut copy, substs, tcx) {
-                    trait_specialised_defs.insert(def.local);
-                }
-                // Then substitute the instantiation's concrete types for the
-                // template's type parameters throughout the copy - local types
-                // (so codegen sees the real struct/string/tuple/float layout
-                // instead of a `Param` opaque slot) and internal call-site
-                // generic args (so a recursive self-call resolves to this copy).
-                for local in &mut copy.locals {
-                    local.ty = subst_param_ty(tcx, local.ty, &subst_tys);
-                }
-                specialise_call_substs(&mut copy, &subst_tys, tcx);
-                specialised.push(copy);
-            }
-        }
+        let function_scan_end = bodies.len();
+        let specialised = specialise_functions_step(
+            bodies,
+            &sources,
+            &mut emitted,
+            &mut trait_specialised_defs,
+            tcx,
+            function_scan_start,
+        );
         let fn_progress = !specialised.is_empty();
         bodies.extend(specialised);
-        let method_progress = specialise_methods_step(bodies, &mut emitted, tcx);
+        let (method_progress, method_scan_end) =
+            specialise_methods_step(bodies, &method_bases, &mut emitted, tcx, method_scan_start);
         if !fn_progress && !method_progress {
             // No new copies - fixed point reached.
             break;
         }
+        function_scan_start = function_scan_end;
+        method_scan_start = method_scan_end;
         assert!(
             iteration + 1 != MAX_MONOMORPHISE_ITERATIONS,
             "monomorphise: did not reach a fixed point in {MAX_MONOMORPHISE_ITERATIONS} iterations \
@@ -176,6 +128,79 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
     register_struct_instantiations(bodies, tcx);
 }
 
+/// Materialises free-function specialisations requested by newly discovered
+/// bodies. Method calls use a separate name-keyed path below.
+fn specialise_functions_step(
+    bodies: &[Body],
+    sources: &HashMap<u32, usize>,
+    emitted: &mut HashSet<String>,
+    trait_specialised_defs: &mut HashSet<u32>,
+    tcx: &mut TyCtxt,
+    scan_start: usize,
+) -> Vec<Body> {
+    let mut needs: HashMap<DefId, Vec<Substs>> = HashMap::new();
+    for body in &bodies[scan_start..] {
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let StatementKind::Assign { rvalue, .. } = &stmt.kind {
+                    collect_from_rvalue(rvalue, &mut needs);
+                }
+            }
+            collect_from_terminator(&block.terminator, &mut needs);
+        }
+    }
+    let mut specialised = Vec::new();
+    for (def, subst_list) in &needs {
+        let Some(src_idx) = sources.get(&def.local) else {
+            continue;
+        };
+        for substs in subst_list {
+            if substs.is_empty() || substs_are_const_only(substs) {
+                continue;
+            }
+            let name = mangled_name(*def, substs);
+            if !emitted.insert(name.clone()) {
+                continue;
+            }
+            let mut copy = bodies[*src_idx].clone();
+            copy.name = name;
+            copy.def = None;
+            let subst_tys = subst_type_arguments(substs);
+            // Do this while locals retain template parameters. The rewrite
+            // recognises a parameter receiver and selects the concrete impl.
+            if rewrite_trait_method_calls(&mut copy, substs, tcx) {
+                trait_specialised_defs.insert(def.local);
+            }
+            for local in &mut copy.locals {
+                local.ty = subst_param_ty(tcx, local.ty, &subst_tys);
+            }
+            specialise_call_substs(&mut copy, &subst_tys, tcx);
+            specialised.push(copy);
+        }
+    }
+    specialised
+}
+
+fn substs_are_const_only(substs: &Substs) -> bool {
+    // A const-generic array parameter is lowered to a runtime-length sequence,
+    // so one body serves every const value and a specialised copy is wasted.
+    substs
+        .as_slice()
+        .iter()
+        .all(|arg| matches!(arg, GenericArg::Const(_)))
+}
+
+fn subst_type_arguments(substs: &Substs) -> Vec<Option<Ty>> {
+    substs
+        .as_slice()
+        .iter()
+        .map(|arg| match arg {
+            GenericArg::Type(ty) => Some(*ty),
+            GenericArg::Const(_) => None,
+        })
+        .collect()
+}
+
 /// One fixed-point round of generic-method specialisation. Methods are
 /// dispatched by name (`Const(Str("Wrapper::get"))`, no `DefId`), so they
 /// never enter the `FnRef`-keyed function path and their `self: &Wrapper<T>`
@@ -188,21 +213,18 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
 /// when at least one new copy was created.
 fn specialise_methods_step(
     bodies: &mut Vec<Body>,
+    method_bases: &HashMap<String, usize>,
     emitted: &mut HashSet<String>,
     tcx: &mut TyCtxt,
-) -> bool {
-    let method_bases: HashMap<String, usize> = bodies
-        .iter()
-        .enumerate()
-        .filter(|(_, b)| b.def.is_none() && b.name.contains("::") && body_has_param(b, tcx))
-        .map(|(i, b)| (b.name.clone(), i))
-        .collect();
+    scan_start: usize,
+) -> (bool, usize) {
     if method_bases.is_empty() {
-        return false;
+        return (false, bodies.len());
     }
     let mut rewrites: Vec<(usize, usize, String)> = Vec::new();
     let mut to_create: Vec<(usize, Substs, String)> = Vec::new();
-    for (bi, body) in bodies.iter().enumerate() {
+    let scan_end = bodies.len();
+    for (bi, body) in bodies.iter().enumerate().take(scan_end).skip(scan_start) {
         for (blk, block) in body.blocks.iter().enumerate() {
             let Terminator::Call {
                 callee: Operand::Const(ConstValue::Str(name)),
@@ -259,7 +281,7 @@ fn specialise_methods_step(
             *callee = Operand::Const(ConstValue::Str(spec_name));
         }
     }
-    made
+    (made, scan_end)
 }
 
 /// Walks every body's local types and registers a per-instantiation field
@@ -715,6 +737,7 @@ fn fits_flat_i64_abi(tcx: &TyCtxt, ty: Ty) -> bool {
         | TyKind::Never
         | TyKind::String
         | TyKind::Vec(_)
+        | TyKind::Iterator(_)
         | TyKind::HashMap { .. }
         | TyKind::Sender(_)
         | TyKind::Receiver(_)

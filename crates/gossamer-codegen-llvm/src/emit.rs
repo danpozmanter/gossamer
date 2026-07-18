@@ -63,6 +63,49 @@ impl std::fmt::Display for BuildError {
 
 impl std::error::Error for BuildError {}
 
+/// Tarjan state for condensing the body call graph before codegen partitioning.
+struct Tarjan<'a> {
+    edges: &'a [Vec<usize>],
+    next_index: usize,
+    indices: Vec<Option<usize>>,
+    low: Vec<usize>,
+    stack: Vec<usize>,
+    on_stack: Vec<bool>,
+    components: Vec<Vec<usize>>,
+}
+
+impl Tarjan<'_> {
+    fn visit(&mut self, node: usize) {
+        let index = self.next_index;
+        self.next_index += 1;
+        self.indices[node] = Some(index);
+        self.low[node] = index;
+        self.stack.push(node);
+        self.on_stack[node] = true;
+        for &next in &self.edges[node] {
+            if self.indices[next].is_none() {
+                self.visit(next);
+                self.low[node] = self.low[node].min(self.low[next]);
+            } else if self.on_stack[next] {
+                self.low[node] = self.low[node].min(self.indices[next].unwrap_or(index));
+            }
+        }
+        if self.low[node] == index {
+            let mut component = Vec::new();
+            loop {
+                let member = self.stack.pop().expect("Tarjan stack is non-empty");
+                self.on_stack[member] = false;
+                component.push(member);
+                if member == node {
+                    break;
+                }
+            }
+            component.sort_unstable();
+            self.components.push(component);
+        }
+    }
+}
+
 /// Module-level TBAA metadata tree emitted once per LLVM module (both render
 /// paths), right after the empty `!0` node.
 ///
@@ -183,6 +226,23 @@ const PARALLEL_MAX_THREADS: usize = 8;
 /// benefit from parallel codegen.
 const MIN_BODIES_PER_CHUNK: usize = 10;
 
+/// Default LLVM process fan-out is deliberately lower than CPU parallelism.
+/// Each integrated Clang child commonly touches 45 to 65 MiB, so eight small
+/// chunks can multiply a nominal 75 MiB compiler into a 450+ MiB process tree.
+/// Repeated module parsing and declarations also make one process competitive
+/// on small builds. The default is therefore one child regardless of source
+/// size. `GOS_LLVM_JOBS` is the explicit throughput-first override, keeping
+/// peak RAM a deliberate user choice rather than a surprise from host cores.
+fn codegen_job_limit(_body_count: usize) -> usize {
+    if let Ok(value) = std::env::var("GOS_LLVM_JOBS")
+        && let Ok(jobs) = value.parse::<usize>()
+        && jobs > 0
+    {
+        return jobs.min(PARALLEL_MAX_THREADS);
+    }
+    1
+}
+
 /// FNV-1a 64-bit hash - deterministic, no `std` hasher randomisation,
 /// so cache keys are stable across process restarts.
 fn fnv1a_64(data: &[u8]) -> u64 {
@@ -224,22 +284,125 @@ fn compiler_fingerprint() -> u64 {
     })
 }
 
-/// Stable cache key for one body: mixes the body name, its complete
-/// MIR debug representation, the target triple, the opt profile, and
-/// the compiler fingerprint. Any change to the MIR (new statement,
-/// reordered block, type fix) or to the compiler itself rotates the key
-/// and forces a recompile.
+/// `fmt::Write` adapter that feeds structured formatter output directly into
+/// SHA-256. MIR does not yet have a stable serde schema, so its complete Debug
+/// representation remains the cache identity for compatibility, but it never
+/// materialises as a second full-size `String`.
+struct DigestWriter(sha2::Sha256);
+
+impl std::fmt::Write for DigestWriter {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        use sha2::Digest as _;
+        self.0.update(text.as_bytes());
+        Ok(())
+    }
+}
+
+impl DigestWriter {
+    fn new(domain: &[u8]) -> Self {
+        use sha2::Digest as _;
+        let mut digest = sha2::Sha256::new();
+        digest.update(domain);
+        Self(digest)
+    }
+
+    fn update(&mut self, bytes: &[u8]) {
+        use sha2::Digest as _;
+        self.0.update(bytes);
+    }
+
+    fn finish(self) -> String {
+        use sha2::Digest as _;
+        format!("{:x}", self.0.finalize())
+    }
+}
+
+/// Stable cache key for one body: mixes the body name, its complete MIR
+/// representation, target triple, profile, and compiler fingerprint. The
+/// result is computed once per body per build and reused for cache lookup and
+/// publication.
 fn body_cache_key(body: &Body, triple: &str, profile: OptProfile) -> String {
-    let h_name = fnv1a_64(body.name.as_bytes());
-    let h_mir = fnv1a_64(format!("{body:?}").as_bytes());
-    let h_triple = fnv1a_64(triple.as_bytes());
-    let profile_bit: u64 = u64::from(!matches!(profile, OptProfile::Debug));
-    let combined = h_name
-        ^ h_mir.wrapping_mul(0x9e37_79b9_7f4a_7c15)
-        ^ h_triple.wrapping_mul(0x6c62_272e_07bb_0142)
-        ^ compiler_fingerprint().wrapping_mul(0xff51_afd7_ed55_8ccd)
-        ^ profile_bit;
-    format!("{combined:016x}")
+    use std::fmt::Write as _;
+
+    let mut digest = DigestWriter::new(b"gossamer-llvm-body-cache-v2\0");
+    digest.update(body.name.as_bytes());
+    digest.update(b"\0");
+    digest.update(triple.as_bytes());
+    digest.update(b"\0");
+    digest.update(if matches!(profile, OptProfile::Debug) {
+        b"debug"
+    } else {
+        b"release"
+    });
+    digest.update(b"\0");
+    digest.update(&compiler_fingerprint().to_le_bytes());
+    digest.update(b"\0");
+    digest.update(codegen_configuration_fingerprint(triple, profile).as_bytes());
+    digest.update(b"\0");
+    write!(&mut digest, "{body:?}").expect("hashing MIR through fmt cannot fail");
+    digest.finish()
+}
+
+/// Every setting outside MIR that can change emitted machine code. Keeping
+/// this in the object-cache identity prevents a debug, PGO, cross-target, or
+/// different-LLVM build from reusing an incompatible object produced for the
+/// same body.
+fn codegen_configuration_fingerprint(triple: &str, profile: OptProfile) -> String {
+    let mut text = format!(
+        "triple={triple}|profile={profile:?}|mcpu={}|dwarf={}|repro={}|race={}",
+        mcpu_target(triple),
+        want_dwarf(),
+        want_reproducible(),
+        want_race_instrumentation(),
+    );
+    let selected_pgo = pgo_mode();
+    match selected_pgo {
+        Some(PgoMode::Collect(path)) => {
+            text.push_str("|pgo-collect=");
+            text.push_str(&path.to_string_lossy());
+        }
+        Some(PgoMode::Profile(path)) => {
+            text.push_str("|pgo-profile=");
+            text.push_str(&file_identity(&path));
+        }
+        None => {
+            if let Ok(path) = std::env::var("GOS_PGO_COLLECT") {
+                text.push_str("|pgo-collect-env=");
+                text.push_str(&path);
+            }
+            if let Ok(path) = std::env::var("GOS_PGO_PROFILE") {
+                text.push_str("|pgo-profile-env=");
+                text.push_str(&file_identity(std::path::Path::new(&path)));
+            }
+        }
+    }
+    if let Some(clang) = integrated_clang_path() {
+        text.push_str("|pipeline=clang|");
+        text.push_str(&file_identity(&clang));
+    } else {
+        text.push_str("|pipeline=opt-llc|");
+        if let Ok(opt) = find_opt() {
+            text.push_str(&file_identity(&opt));
+        }
+        text.push('|');
+        if let Ok(llc) = find_llc() {
+            text.push_str(&file_identity(&llc));
+        }
+    }
+    text
+}
+
+fn file_identity(path: &std::path::Path) -> String {
+    let mut text = path.to_string_lossy().into_owned();
+    if let Ok(meta) = std::fs::metadata(path) {
+        text.push_str(&format!("@{}", meta.len()));
+        if let Ok(modified) = meta.modified()
+            && let Ok(age) = modified.duration_since(std::time::UNIX_EPOCH)
+        {
+            text.push_str(&format!("+{}", age.as_nanos()));
+        }
+    }
+    text
 }
 
 /// Process-level override for the incremental cache directory.
@@ -370,8 +533,7 @@ struct ModuleCtx<'a> {
     allow_fallback: bool,
 }
 
-/// Mixes per-body cache keys for all bodies in a chunk into a single
-/// chunk-level cache key. Stable across process restarts (FNV-1a).
+/// Mixes precomputed per-body cache keys into one versioned chunk digest.
 /// Module data layout for x86-64 targets: the LLVM defaults with one
 /// deviation - `i128` ABI alignment is 8, not 16. The runtime stores
 /// every value in flat 8-byte slots, so a by-value `{disc, payload}`
@@ -397,19 +559,89 @@ fn module_datalayout(triple: &str) -> Option<String> {
     ))
 }
 
-fn chunk_cache_key(
-    chunk_indices: &[usize],
-    bodies: &[Body],
-    triple: &str,
-    profile: OptProfile,
-) -> String {
-    const PRIME: u64 = 0x9e37_79b9_7f4a_7c15;
-    let mut h = fnv1a_64(b"chunk-v1");
-    for (pos, &idx) in chunk_indices.iter().enumerate() {
-        let body_key = body_cache_key(&bodies[idx], triple, profile);
-        h ^= fnv1a_64(body_key.as_bytes()).wrapping_mul(PRIME.wrapping_add(pos as u64));
+fn chunk_cache_key(chunk_indices: &[usize], body_cache_keys: &[String]) -> String {
+    let mut digest = DigestWriter::new(b"gossamer-llvm-chunk-cache-v2\0");
+    for &idx in chunk_indices {
+        digest.update(body_cache_keys[idx].as_bytes());
+        digest.update(b"\0");
     }
-    format!("{h:016x}")
+    digest.finish()
+}
+
+/// Partitions bodies by call-graph strongly connected component, then balances
+/// whole components across the requested worker count. Recursive cycles stay
+/// in one LLVM module, preserving native inlining and avoiding duplicate
+/// declarations inside the hottest mutually recursive paths.
+fn codegen_chunks(bodies: &[Body], requested_chunks: usize) -> Vec<Vec<usize>> {
+    if requested_chunks <= 1 || bodies.len() <= 1 {
+        return vec![(0..bodies.len()).collect()];
+    }
+    let by_name: std::collections::HashMap<&str, usize> = bodies
+        .iter()
+        .enumerate()
+        .map(|(idx, body)| (body.name.as_str(), idx))
+        .collect();
+    let by_def: std::collections::HashMap<u32, usize> = bodies
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, body)| body.def.map(|def| (def.local, idx)))
+        .collect();
+    let mut edges = vec![Vec::new(); bodies.len()];
+    for (idx, body) in bodies.iter().enumerate() {
+        for block in &body.blocks {
+            let gossamer_mir::Terminator::Call { callee, .. } = &block.terminator else {
+                continue;
+            };
+            let target = match callee {
+                gossamer_mir::Operand::Const(gossamer_mir::ConstValue::Str(name)) => {
+                    by_name.get(name.as_str()).copied()
+                }
+                gossamer_mir::Operand::FnRef { def, .. } => by_def.get(&def.local).copied(),
+                _ => None,
+            };
+            if let Some(target) = target
+                && !edges[idx].contains(&target)
+            {
+                edges[idx].push(target);
+            }
+        }
+        edges[idx].sort_unstable();
+    }
+
+    let mut tarjan = Tarjan {
+        edges: &edges,
+        next_index: 0,
+        indices: vec![None; bodies.len()],
+        low: vec![0; bodies.len()],
+        stack: Vec::new(),
+        on_stack: vec![false; bodies.len()],
+        components: Vec::new(),
+    };
+    for node in 0..bodies.len() {
+        if tarjan.indices[node].is_none() {
+            tarjan.visit(node);
+        }
+    }
+    tarjan.components.sort_by(|left, right| {
+        right
+            .len()
+            .cmp(&left.len())
+            .then_with(|| left[0].cmp(&right[0]))
+    });
+    let n_chunks = requested_chunks.min(tarjan.components.len()).max(1);
+    let mut chunks = vec![Vec::new(); n_chunks];
+    for component in tarjan.components {
+        let target = chunks
+            .iter()
+            .enumerate()
+            .min_by_key(|(idx, chunk)| (chunk.len(), *idx))
+            .map_or(0, |(idx, _)| idx);
+        chunks[target].extend(component);
+    }
+    for chunk in &mut chunks {
+        chunk.sort_unstable();
+    }
+    chunks
 }
 
 /// Renders all bodies in `chunk_indices` as a single LLVM IR module.
@@ -677,6 +909,10 @@ fn compile_bodies_parallel_incremental(
     let triple = host_triple();
     let profile = opt_profile();
     let dump = std::env::var("GOS_LLVM_DUMP").is_ok();
+    let body_cache_keys: Vec<String> = bodies
+        .iter()
+        .map(|body| body_cache_key(body, &triple, profile))
+        .collect();
 
     // Precompute program-wide lookup tables shared across all lowerers.
     let mut fn_name_by_def: std::collections::HashMap<u32, String> =
@@ -712,33 +948,30 @@ fn compile_bodies_parallel_incremental(
     // Partition all bodies into N chunks. Chunk assignment is deterministic
     // so the cache key is stable across builds with identical bodies.
     //
-    // Scale the parallel-codegen fan-out to the host's core count (falling
-    // back to PARALLEL_MAX_THREADS) so a large program uses every core. The
-    // div_ceil(MIN_BODIES_PER_CHUNK) cap below still keeps >= 10 bodies per
-    // chunk, so more cores never shrink chunks past the inlining floor.
-    let max_threads =
+    // Bound fan-out by both available CPUs and the memory-aware LLVM job
+    // policy. The bodies-per-chunk cap still preserves the inlining floor.
+    let available_threads =
         std::thread::available_parallelism().map_or(PARALLEL_MAX_THREADS, std::num::NonZero::get);
+    let max_threads = available_threads.min(codegen_job_limit(bodies.len()));
     let ideal_n_chunks = max_threads.min(bodies.len());
     let n_chunks = ideal_n_chunks
         .min(bodies.len().div_ceil(MIN_BODIES_PER_CHUNK))
         .max(1);
-    let chunk_size = bodies.len().div_ceil(n_chunks);
+    let body_chunks = codegen_chunks(bodies, n_chunks);
 
     // ---------------------------------------------------------------
     // Phase 1 - chunk-level incremental cache check
     // ---------------------------------------------------------------
     let mut result_objects: Vec<(usize, PathBuf)> = Vec::new(); // (chunk_idx, path)
-    // (chunk_idx, body_indices, ll_path, obj_path)
-    let mut chunks_to_compile: Vec<(usize, Vec<usize>, PathBuf, PathBuf)> = Vec::new();
+    // (chunk_idx, body_indices, cache_key, ll_path, obj_path)
+    let mut chunks_to_compile: Vec<(usize, Vec<usize>, String, PathBuf, PathBuf)> = Vec::new();
     let mut fallback_bodies: Vec<String> = Vec::new();
 
-    for (chunk_idx, chunk_start) in (0..bodies.len()).step_by(chunk_size).enumerate() {
-        let chunk_end = bodies.len().min(chunk_start + chunk_size);
-        let body_indices: Vec<usize> = (chunk_start..chunk_end).collect();
+    for (chunk_idx, body_indices) in body_chunks.into_iter().enumerate() {
         let obj_path = obj_dir.join(format!("chunk{chunk_idx}.o"));
         let ll_path = obj_dir.join(format!("chunk{chunk_idx}.ll"));
 
-        let key = chunk_cache_key(&body_indices, bodies, &triple, profile);
+        let key = chunk_cache_key(&body_indices, &body_cache_keys);
         if let Some(hit) = cache_dir
             .as_ref()
             .map(|cd| cd.join(format!("{key}.o")))
@@ -749,7 +982,7 @@ fn compile_bodies_parallel_incremental(
                 continue;
             }
         }
-        chunks_to_compile.push((chunk_idx, body_indices, ll_path, obj_path));
+        chunks_to_compile.push((chunk_idx, body_indices, key, ll_path, obj_path));
     }
 
     if chunks_to_compile.is_empty() {
@@ -764,7 +997,7 @@ fn compile_bodies_parallel_incremental(
     // ---------------------------------------------------------------
     // Phase 2 - render chunk .ll files (serial)
     // ---------------------------------------------------------------
-    for (_, body_indices, ll_path, _) in &chunks_to_compile {
+    for (_, body_indices, _, ll_path, _) in &chunks_to_compile {
         let ir =
             render_chunk_module(body_indices, &ctx, &mut fallback_bodies).map_err(|e| match e {
                 BuildError::Unsupported(msg) => anyhow!("llvm backend: unsupported: {msg}"),
@@ -781,7 +1014,7 @@ fn compile_bodies_parallel_incremental(
         let dump_path = obj_dir.join("unit.ll");
         if let Ok(mut f) = std::fs::File::create(&dump_path) {
             use std::io::Write as _;
-            for (chunk_idx, _, ll_path, _) in &chunks_to_compile {
+            for (chunk_idx, _, _, ll_path, _) in &chunks_to_compile {
                 if let Ok(text) = std::fs::read_to_string(ll_path) {
                     let _ = write!(f, "; === chunk{chunk_idx} ===\n{text}\n");
                 }
@@ -800,12 +1033,11 @@ fn compile_bodies_parallel_incremental(
     let compiled_ref = &compiled;
     let triple_ref: &str = &triple;
     let cache_ref = &cache_dir;
-    let bodies_ref: &[Body] = bodies;
 
     std::thread::scope(|scope| {
-        for (chunk_idx, body_indices, ll_path, obj_path) in &chunks_to_compile {
+        for (chunk_idx, _, cache_key, ll_path, obj_path) in &chunks_to_compile {
             let chunk_idx = *chunk_idx;
-            let body_indices = body_indices.clone();
+            let cache_key = cache_key.clone();
             let ll_path = ll_path.clone();
             let obj_path = obj_path.clone();
             scope.spawn(move || {
@@ -817,9 +1049,8 @@ fn compile_bodies_parallel_incremental(
                         if !dump {
                             let _ = std::fs::remove_file(&ll_path);
                         }
-                        let key = chunk_cache_key(&body_indices, bodies_ref, triple_ref, profile);
                         if let Some(cd) = cache_ref {
-                            let _ = std::fs::copy(&obj_path, cd.join(format!("{key}.o")));
+                            let _ = std::fs::copy(&obj_path, cd.join(format!("{cache_key}.o")));
                         }
                         compiled_ref.lock().push((chunk_idx, obj_path));
                     }
@@ -1294,6 +1525,13 @@ pub fn set_reproducible(enabled: bool) {
 /// `true` when reproducible-build mode is on.
 fn want_reproducible() -> bool {
     REPRODUCIBLE.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Reports whether reproducible native output was requested. The CLI uses
+/// this process-level setting in its final-artifact cache identity.
+#[must_use]
+pub fn reproducible_enabled() -> bool {
+    want_reproducible()
 }
 
 /// Enables (or disables) strict-lowering mode. When on, the LLVM
@@ -1887,13 +2125,17 @@ fn invoke_llc_pipeline(
     triple: &str,
     announce: bool,
 ) -> Result<()> {
-    let opt_path = ll_path.with_extension("opt.bc");
     let keep_artifacts = std::env::var("GOS_LLVM_DUMP").is_ok();
     if keep_artifacts && announce {
         eprintln!("llvm backend: IR at {}", ll_path.display());
     }
     let profile = opt_profile();
     let mcpu = mcpu_target(triple);
+    if let Some(clang) = integrated_clang_path() {
+        return invoke_clang_pipeline(&clang, ll_path, obj_out, triple, profile, &mcpu);
+    }
+
+    let opt_path = ll_path.with_extension("opt.bc");
     // Both profiles run `opt` because the lowerer emits some
     // non-canonical shapes (e.g. integer-typed constants in
     // floating-point store positions) that `opt`'s
@@ -1938,24 +2180,9 @@ fn invoke_llc_pipeline(
         // benchmarks (the §5 release-perf investigation
         // found this on fannkuch).
         .arg(format!("-mcpu={mcpu}"))
-        // Cap vectoriser width at 256 bits. Without this,
-        // LLVM-O3 + `-mcpu=native` on AVX-512 hosts (Zen 5,
-        // Sapphire Rapids, etc.) eagerly widens hot inner loops
-        // to ZMM, then has to save/restore them around runtime
-        // calls (`gos_rt_*`) - costing more than it saves on
-        // small-trip-count loops like fannkuch's `perm.swap`.
-        // YMM (256-bit) is the sweet spot: AVX2 and FMA still
-        // fire on workloads that genuinely benefit (nbody,
-        // spectral-norm), but the ZMM dirty-state churn around
-        // runtime calls disappears. Matches the upstream
-        // recommendation for AVX-512 codegen on cores where
-        // 512-bit ops down-clock or share execution-port budget
-        // with scalar work.
-        // `+prefer-256-bit` is an x86 AVX-512 feature flag - only
-        // meaningful for an x86_64 *target*. Keyed off the resolved
-        // target arch (not the host) so a cross build to aarch64 never
-        // emits it - on a non-x86 target it warns "unknown subtarget
-        // feature" at best and perturbs codegen at worst.
+        // `+prefer-256-bit` is an x86 AVX-512 feature flag, so only pass it
+        // for x86_64 targets. Keeping the width capped avoids ZMM transition
+        // costs around runtime calls.
         .args(if target_arch_from_triple(triple) == "x86_64" {
             &["-mattr=+prefer-256-bit"][..]
         } else {
@@ -2048,14 +2275,7 @@ fn invoke_llc_pipeline(
             &["-relocation-model=pic"][..]
         })
         .arg(format!("-mcpu={mcpu}"))
-        // See the matching note on the `opt` invocation: cap
-        // the late-stage vectoriser at 256-bit too so any
-        // remaining post-`opt` codegen (slow-path lowering,
-        // memcpy/memset expansion) doesn't reach for ZMM.
-        // `+prefer-256-bit` is an x86 AVX-512 feature flag - only
-        // meaningful for an x86_64 *target*. Keyed off the resolved
-        // target arch (not the host) so a cross build to aarch64
-        // never emits it.
+        // Match the mid-end vector-width policy during late code generation.
         .args(if target_arch_from_triple(triple) == "x86_64" {
             &["-mattr=+prefer-256-bit"][..]
         } else {
@@ -2087,6 +2307,56 @@ fn invoke_llc_pipeline(
     Ok(())
 }
 
+/// Runs LLVM's mid-end and object backend through one Clang driver process.
+/// Clang consumes LLVM IR directly, so this is equivalent to the normal
+/// `opt` then `llc` sequence for non-PGO builds while avoiding a second child
+/// launch and the intermediate bitcode file. The split-tool path remains the
+/// compatibility route for PGO and installations without Clang.
+fn invoke_clang_pipeline(
+    clang: &std::path::Path,
+    ll_path: &std::path::Path,
+    obj_out: &std::path::Path,
+    triple: &str,
+    profile: OptProfile,
+    mcpu: &str,
+) -> Result<()> {
+    let mut cmd = std::process::Command::new(clang);
+    cmd.arg("-x")
+        .arg("ir")
+        .arg("-c")
+        .arg(match profile {
+            OptProfile::Debug => "-O0",
+            OptProfile::Release => "-O3",
+        })
+        .arg(format!("--target={triple}"));
+    if target_arch_from_triple(triple) == "x86_64" {
+        cmd.arg(format!("-march={mcpu}"));
+        cmd.arg("-mprefer-vector-width=256");
+    } else {
+        cmd.arg(format!("-mcpu={mcpu}"));
+    }
+    if !triple.contains("windows") {
+        cmd.arg("-fPIC");
+    }
+    if matches!(profile, OptProfile::Release) {
+        cmd.arg("-mllvm").arg("-disable-loop-idiom-all");
+    }
+    if want_dwarf() {
+        cmd.arg("-gdwarf-4");
+    }
+    cmd.arg(ll_path).arg("-o").arg(obj_out);
+    let output = run_with_timeout(cmd, opt_timeout(), "clang")
+        .with_context(|| format!("spawn {}", clang.display()))?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "clang IR-to-object pipeline failed ({status}): {stderr}",
+            status = output.status,
+            stderr = String::from_utf8_lossy(&output.stderr),
+        ));
+    }
+    Ok(())
+}
+
 /// Returns the wall-clock cap for the `opt` and `llc` subprocesses.
 /// `GOS_LLVM_OPT_TIMEOUT_SECS=N` overrides; defaults to 10 minutes,
 /// generous enough for huge monomorph fan-outs but tight enough
@@ -2100,14 +2370,9 @@ fn invoke_llc_pipeline(
 /// investigation, fannkuch).
 /// Default LLVM `-mcpu` target used when `GOS_LLVM_MCPU` is unset.
 ///
-/// **0.6.0 changed the default from `native` to a stable ISA
-/// baseline so release artifacts are bit-reproducible across
-/// hosts** `x86-64-v3` (AVX2 + BMI2 + FMA, ~2013+
-/// hardware) is a reasonable floor for modern targets; users who
-/// want host-targeted codegen can still opt in with
-/// `GOS_LLVM_MCPU=native`. On non-x86_64 targets we fall back to
-/// `native` because there's no portable ISA-version tag in the
-/// same shape (`apple-m1`, `neoverse-n1`, etc. vary too much).
+/// x86-64 native builds use a stable `x86-64-v3` ISA baseline. Other native
+/// architectures use their host CPU, while cross builds use a portable target
+/// baseline.
 fn mcpu_target(triple: &str) -> String {
     if let Ok(s) = std::env::var("GOS_LLVM_MCPU") {
         return s;
@@ -2126,13 +2391,9 @@ fn target_arch_from_triple(triple: &str) -> &'static str {
     }
 }
 
-/// `-mcpu` for `triple`. `is_cross` is true when an explicit
-/// `--target` override is active. A cross build must never use
-/// `native` (which names the *host* CPU); it picks a portable
-/// baseline per target arch so the artifact runs across that family
-/// (e.g. Raspberry Pi 3/4/5). A native build preserves the prior
-/// behaviour: a reproducible `x86-64-v3` floor on x86-64, host-tuned
-/// `native` elsewhere (e.g. Apple Silicon).
+/// `-mcpu` for `triple`. `is_cross` is true when an explicit `--target`
+/// override is active. A cross build must never use `native`, which names the
+/// host CPU.
 fn mcpu_for(triple: &str, is_cross: bool) -> String {
     if !is_cross {
         return if cfg!(target_arch = "x86_64") {
@@ -2172,6 +2433,7 @@ fn run_with_timeout(
     tool: &str,
 ) -> Result<std::process::Output> {
     use std::io::Read;
+    use wait_timeout::ChildExt as _;
 
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -2192,26 +2454,20 @@ fn run_with_timeout(
             cap_diagnostic_stream(buf)
         })
     });
-    let start = std::time::Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break s,
-            Ok(None) => {
-                if start.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(anyhow!(
-                        "{tool} exceeded {secs}s timeout (set GOS_LLVM_OPT_TIMEOUT_SECS to raise it)",
-                        secs = timeout.as_secs(),
-                    ));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(anyhow!("{tool} wait failed: {e}"));
-            }
+    let status = match child.wait_timeout(timeout) {
+        Ok(Some(status)) => status,
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(anyhow!(
+                "{tool} exceeded {secs}s timeout (set GOS_LLVM_OPT_TIMEOUT_SECS to raise it)",
+                secs = timeout.as_secs(),
+            ));
+        }
+        Err(err) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(anyhow!("{tool} wait failed: {err}"));
         }
     };
     let stdout = stdout_thread
@@ -2248,30 +2504,80 @@ fn cap_diagnostic_stream(buf: Vec<u8>) -> Vec<u8> {
 }
 
 fn find_opt() -> Result<PathBuf> {
-    if let Ok(path) = std::env::var("GOS_LLVM_OPT") {
-        return Ok(PathBuf::from(path));
-    }
-    for candidate in OPT_CANDIDATES {
-        if is_executable(candidate) {
-            return Ok(PathBuf::from(candidate));
-        }
-    }
-    Err(anyhow!(
-        "{}",
-        missing_llvm_tool_message("opt", "GOS_LLVM_OPT")
-    ))
+    static OPT_PATH: std::sync::OnceLock<Result<PathBuf, String>> = std::sync::OnceLock::new();
+    OPT_PATH
+        .get_or_init(|| find_llvm_tool("opt", "GOS_LLVM_OPT", OPT_CANDIDATES))
+        .clone()
+        .map_err(anyhow::Error::msg)
 }
 
 fn find_llc() -> Result<PathBuf> {
-    if let Ok(path) = std::env::var("GOS_LLC") {
+    static LLC_PATH: std::sync::OnceLock<Result<PathBuf, String>> = std::sync::OnceLock::new();
+    LLC_PATH
+        .get_or_init(|| find_llvm_tool("llc", "GOS_LLC", LLC_CANDIDATES))
+        .clone()
+        .map_err(anyhow::Error::msg)
+}
+
+fn find_clang() -> Result<PathBuf> {
+    static CLANG_PATH: std::sync::OnceLock<Result<PathBuf, String>> = std::sync::OnceLock::new();
+    CLANG_PATH
+        .get_or_init(|| {
+            if let Ok(path) = std::env::var("GOS_LLVM_CLANG") {
+                return Ok(PathBuf::from(path));
+            }
+            // Prefer the Clang beside the selected `opt`; this avoids mixing
+            // LLVM major versions when several installations are present.
+            if let Ok(opt) = find_opt()
+                && let Some(dir) = opt.parent()
+            {
+                for name in if cfg!(windows) {
+                    &["clang.exe"][..]
+                } else {
+                    &["clang", "clang-18", "clang-19", "clang-20", "clang-17"][..]
+                } {
+                    let candidate = dir.join(name);
+                    if candidate.is_file() {
+                        return Ok(candidate);
+                    }
+                }
+            }
+            find_llvm_tool("clang", "GOS_LLVM_CLANG", CLANG_CANDIDATES)
+        })
+        .clone()
+        .map_err(anyhow::Error::msg)
+}
+
+/// Selects the single-process IR-to-object route. Debug keeps the split path
+/// because its minimal `mem2reg` pass is essential for usable loop code, while
+/// Clang `-O0` leaves the emitted alloca-heavy IR in memory. PGO also keeps
+/// explicit `opt` because its pipeline flags and profile-file semantics are not
+/// interchangeable with the Clang driver's source-oriented PGO switches.
+fn integrated_clang_path() -> Option<PathBuf> {
+    if matches!(opt_profile(), OptProfile::Debug)
+        || std::env::var("GOS_LLVM_SPLIT_TOOLS").is_ok()
+        || pgo_mode().is_some()
+        || std::env::var("GOS_PGO_COLLECT").is_ok()
+        || std::env::var("GOS_PGO_PROFILE").is_ok()
+    {
+        return None;
+    }
+    find_clang().ok()
+}
+
+fn find_llvm_tool(
+    tool: &str,
+    env_var: &str,
+    candidates: &[&str],
+) -> std::result::Result<PathBuf, String> {
+    if let Ok(path) = std::env::var(env_var) {
         return Ok(PathBuf::from(path));
     }
-    for candidate in LLC_CANDIDATES {
-        if is_executable(candidate) {
-            return Ok(PathBuf::from(candidate));
-        }
-    }
-    Err(anyhow!("{}", missing_llvm_tool_message("llc", "GOS_LLC")))
+    candidates
+        .iter()
+        .find(|candidate| is_executable(candidate))
+        .map(PathBuf::from)
+        .ok_or_else(|| missing_llvm_tool_message(tool, env_var))
 }
 
 /// Cross-platform candidate list for the LLVM `opt` driver. Order
@@ -2350,6 +2656,34 @@ const LLC_CANDIDATES: &[&str] = &[
     "C:\\msys64\\ucrt64\\bin\\llc.exe",
     "C:\\Program Files\\LLVM\\bin\\llc.exe",
     "C:\\Program Files (x86)\\LLVM\\bin\\llc.exe",
+];
+
+/// Clang candidates used for the integrated LLVM IR-to-object pipeline.
+const CLANG_CANDIDATES: &[&str] = &[
+    "clang-18",
+    "clang-19",
+    "clang-20",
+    "clang-17",
+    "clang",
+    "/usr/lib/llvm-18/bin/clang",
+    "/usr/lib/llvm-19/bin/clang",
+    "/usr/lib/llvm-20/bin/clang",
+    "/usr/lib/llvm-17/bin/clang",
+    "/opt/homebrew/opt/llvm@18/bin/clang",
+    "/opt/homebrew/opt/llvm@19/bin/clang",
+    "/opt/homebrew/opt/llvm@20/bin/clang",
+    "/opt/homebrew/opt/llvm@17/bin/clang",
+    "/opt/homebrew/opt/llvm/bin/clang",
+    "/usr/local/opt/llvm@18/bin/clang",
+    "/usr/local/opt/llvm@19/bin/clang",
+    "/usr/local/opt/llvm@20/bin/clang",
+    "/usr/local/opt/llvm@17/bin/clang",
+    "/usr/local/opt/llvm/bin/clang",
+    "C:\\msys64\\mingw64\\bin\\clang.exe",
+    "C:\\msys64\\clang64\\bin\\clang.exe",
+    "C:\\msys64\\ucrt64\\bin\\clang.exe",
+    "C:\\Program Files\\LLVM\\bin\\clang.exe",
+    "C:\\Program Files (x86)\\LLVM\\bin\\clang.exe",
 ];
 
 fn missing_llvm_tool_message(tool: &str, env_var: &str) -> String {
@@ -2600,5 +2934,78 @@ mod cabi_thunk_tests {
             "must bitcast i128 to <16 x i8>"
         );
         assert!(ir.contains("ret <16 x i8>"), "must return <16 x i8>");
+    }
+}
+
+#[cfg(test)]
+mod codegen_partition_tests {
+    use super::{codegen_chunks, codegen_job_limit};
+    use gossamer_lex::{SourceMap, Span};
+    use gossamer_mir::{BasicBlock, BlockId, Body, ConstValue, Local, Operand, Place, Terminator};
+
+    fn span() -> Span {
+        let mut map = SourceMap::new();
+        let file = map.add_file("partition.gos", "");
+        Span::new(file, 0, 0)
+    }
+
+    fn body(name: &str, callee: Option<&str>) -> Body {
+        let span = span();
+        Body {
+            name: name.to_string(),
+            def: None,
+            arity: 0,
+            locals: Vec::new(),
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                stmts: Vec::new(),
+                terminator: callee.map_or(Terminator::Return, |callee| Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(callee.to_string())),
+                    args: Vec::new(),
+                    destination: Place::local(Local(0)),
+                    target: None,
+                }),
+                span,
+            }],
+            span,
+        }
+    }
+
+    #[test]
+    fn recursive_scc_stays_in_one_codegen_chunk() {
+        let bodies = vec![
+            body("left", Some("right")),
+            body("right", Some("left")),
+            body("leaf_a", None),
+            body("leaf_b", None),
+        ];
+        let chunks = codegen_chunks(&bodies, 3);
+        let left_chunk = chunks
+            .iter()
+            .position(|chunk| chunk.contains(&0))
+            .expect("left body assigned");
+        let right_chunk = chunks
+            .iter()
+            .position(|chunk| chunk.contains(&1))
+            .expect("right body assigned");
+        assert_eq!(
+            left_chunk, right_chunk,
+            "recursive bodies split: {chunks:?}"
+        );
+        assert_eq!(
+            chunks,
+            codegen_chunks(&bodies, 3),
+            "partition must be stable"
+        );
+    }
+
+    #[test]
+    fn default_codegen_jobs_bound_small_program_memory() {
+        if std::env::var_os("GOS_LLVM_JOBS").is_some() {
+            return;
+        }
+        assert_eq!(codegen_job_limit(80), 1);
+        assert_eq!(codegen_job_limit(500), 1);
+        assert_eq!(codegen_job_limit(3_000), 1);
     }
 }

@@ -1264,14 +1264,11 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    /// Inline fast path for `gos_rt_str_len(s) -> i64`. Strings
-    /// are null-terminated, so the length is `strlen(s)` -
-    /// LLVM has a builtin `@strlen` that constant-folds against
-    /// rodata literals. Folding is critical because user code
-    /// like `let alu_len = alu.len()` becomes a compile-time
-    /// constant, which collapses every `idx % alu_len` modulus
-    /// in the hot loop from a real `idiv` (~20-40 cycles) to a
-    /// multiply-by-magic.
+    /// Inline fast path for `gos_rt_str_len(s) -> i64`. Every compiler-typed
+    /// Gossamer string stores its `u32` byte length at `ptr[-5..-1]`, including
+    /// heap builders, region strings, and static literals. Reading that header
+    /// keeps length O(1); calling `strlen` here made repeated `.len()` on a
+    /// dynamic string quadratic.
     pub(crate) fn lower_str_len_inline(
         &mut self,
         arg: &Operand,
@@ -1279,13 +1276,41 @@ impl<'a> Lowerer<'a> {
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
         let s_v = self.lower_operand(arg)?;
-        // `strlen` returns `size_t` (assumed 64-bit on the
-        // targets we care about). Declare it once at the
-        // module level via the runtime-refs set.
-        self.runtime_refs
-            .insert("declare i64 @strlen(ptr)".to_string());
+        let load_label = self.fresh_label("str_len_load");
+        let null_label = self.fresh_label("str_len_null");
+        let cont_label = self.fresh_label("str_len_cont");
+        let is_null = self.fresh();
+        writeln!(self.out, "  {is_null} = icmp eq ptr {s_v}, null").unwrap();
+        writeln!(
+            self.out,
+            "  br i1 {is_null}, label %{null_label}, label %{load_label}"
+        )
+        .unwrap();
+        writeln!(self.out, "{load_label}:").unwrap();
+        let len_ptr = self.fresh();
+        writeln!(
+            self.out,
+            "  {len_ptr} = getelementptr i8, ptr {s_v}, i64 -5"
+        )
+        .unwrap();
+        let len32 = self.fresh();
+        writeln!(
+            self.out,
+            "  {len32} = load i32, ptr {len_ptr}, align 1{TBAA_HEADER}"
+        )
+        .unwrap();
+        let len64 = self.fresh();
+        writeln!(self.out, "  {len64} = zext i32 {len32} to i64").unwrap();
+        writeln!(self.out, "  br label %{cont_label}").unwrap();
+        writeln!(self.out, "{null_label}:").unwrap();
+        writeln!(self.out, "  br label %{cont_label}").unwrap();
+        writeln!(self.out, "{cont_label}:").unwrap();
         let tmp = self.fresh();
-        writeln!(self.out, "  {tmp} = call i64 @strlen(ptr {s_v})").unwrap();
+        writeln!(
+            self.out,
+            "  {tmp} = phi i64 [ {len64}, %{load_label} ], [ 0, %{null_label} ]"
+        )
+        .unwrap();
         if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
             let slot = local_slot(destination.local);
             writeln!(self.out, "  store i64 {tmp}, ptr {slot}").unwrap();

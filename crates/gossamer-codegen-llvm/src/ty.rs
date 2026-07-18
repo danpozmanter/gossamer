@@ -73,6 +73,7 @@ pub(crate) fn render_ty(tcx: &TyCtxt, ty: Ty) -> String {
             TyKind::Array { .. }
             | TyKind::Slice(_)
             | TyKind::Vec(_)
+            | TyKind::Iterator(_)
             | TyKind::Adt { .. }
             | TyKind::Tuple(_)
             | TyKind::Dyn(_)
@@ -165,6 +166,7 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
         | TyKind::FnDef { .. }
         | TyKind::Slice(_)
         | TyKind::Vec(_)
+        | TyKind::Iterator(_)
         | TyKind::HashMap { .. }
         | TyKind::Sender(_)
         | TyKind::Receiver(_)

@@ -539,9 +539,11 @@ fn gossamer_to_json_value(value: &Value) -> json_std::Value {
                 json_std::Value::Array(fields.iter().map(gossamer_to_json_value).collect())
             }
         }
-        Value::Closure(_) | Value::Builtin(_) | Value::Native(_) | Value::Channel(_) => {
-            json_std::Value::Null
-        }
+        Value::Closure(_)
+        | Value::Builtin(_)
+        | Value::Native(_)
+        | Value::Channel(_)
+        | Value::LazyIter(_) => json_std::Value::Null,
         Value::Map(map) => {
             let mut out = std::collections::BTreeMap::new();
             for (k, v) in map.lock().iter() {
@@ -587,4 +589,3 @@ fn gossamer_to_json_value(value: &Value) -> json_std::Value {
         Value::Uint(n) => json_std::Value::Number(*n as f64),
     }
 }
-

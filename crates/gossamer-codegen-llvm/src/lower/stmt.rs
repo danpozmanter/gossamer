@@ -69,27 +69,144 @@ use crate::BuildError;
 use anyhow::Result;
 use gossamer_abi as abi;
 use gossamer_mir::{
-    BasicBlock, BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, Statement,
-    StatementKind, Terminator, UnOp,
+    BasicBlock, BinOp, Body, ConstValue, IteratorAdapterKind, IteratorSourceKind, Local, Operand,
+    Place, Projection, Rvalue, Statement, StatementKind, Terminator, UnOp,
 };
 use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 
 impl<'a> Lowerer<'a> {
+    fn store_typed_iter_value(&mut self, place: &Place, llvm_ty: &str, value: &str) {
+        let addr = if place.projection.is_empty() {
+            local_slot(place.local)
+        } else {
+            self.lower_place_address(place)
+        };
+        writeln!(self.out, "  store {llvm_ty} {value}, ptr {addr}").unwrap();
+    }
+
+    fn emit_typed_iter_call(
+        &mut self,
+        name: &str,
+        ret_ty: &str,
+        args: &[(&str, String)],
+    ) -> String {
+        declare_rt(&mut self.runtime_refs, name);
+        let rendered = args
+            .iter()
+            .map(|(ty, value)| format!("{ty} {value}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let tmp = self.fresh();
+        writeln!(self.out, "  {tmp} = call {ret_ty} @\"{name}\"({rendered})").unwrap();
+        tmp
+    }
+
+    fn lower_typed_iterator_stmt(&mut self, stmt: &Statement) -> Result<bool, BuildError> {
+        match &stmt.kind {
+            StatementKind::IterSource {
+                dst,
+                source_kind,
+                source,
+                ..
+            } => {
+                let value = match source_kind {
+                    IteratorSourceKind::Range => {
+                        let end = self.lower_operand(source)?;
+                        self.emit_typed_iter_call(
+                            "gos_rt_lazy_iter_range_i64",
+                            "ptr",
+                            &[("i64", "0".to_string()), ("i64", end)],
+                        )
+                    }
+                    IteratorSourceKind::Slice | IteratorSourceKind::VecInto => {
+                        let source = self.lower_operand(source)?;
+                        self.emit_typed_iter_call(
+                            "gos_rt_lazy_iter_from_vec_i64",
+                            "ptr",
+                            &[("ptr", source)],
+                        )
+                    }
+                };
+                self.store_typed_iter_value(dst, "ptr", &value);
+                Ok(true)
+            }
+            StatementKind::IterAdapter {
+                dst,
+                adapter_kind,
+                upstream,
+                closure_or_arg,
+                ..
+            } => {
+                let upstream = self.lower_place_read(upstream);
+                let (name, args): (&str, Vec<(&str, String)>) = match adapter_kind {
+                    IteratorAdapterKind::Take | IteratorAdapterKind::Skip => {
+                        let n = match closure_or_arg {
+                            Some(arg) => self.lower_operand(arg)?,
+                            None => "0".to_string(),
+                        };
+                        let name = if matches!(adapter_kind, IteratorAdapterKind::Take) {
+                            "gos_rt_lazy_iter_take_i64"
+                        } else {
+                            "gos_rt_lazy_iter_skip_i64"
+                        };
+                        (name, vec![("i64", n), ("ptr", upstream)])
+                    }
+                    IteratorAdapterKind::Map | IteratorAdapterKind::Filter => {
+                        let env = match closure_or_arg {
+                            Some(arg) => self.lower_operand(arg)?,
+                            None => "null".to_string(),
+                        };
+                        let name = if matches!(adapter_kind, IteratorAdapterKind::Map) {
+                            "gos_rt_lazy_iter_map_i64"
+                        } else {
+                            "gos_rt_lazy_iter_filter_i64"
+                        };
+                        (name, vec![("ptr", env), ("ptr", upstream)])
+                    }
+                    IteratorAdapterKind::Enumerate => {
+                        ("gos_rt_lazy_iter_enumerate_i64", vec![("ptr", upstream)])
+                    }
+                    IteratorAdapterKind::Chain | IteratorAdapterKind::Zip => {
+                        let rhs = match closure_or_arg {
+                            Some(arg) => self.lower_operand(arg)?,
+                            None => "null".to_string(),
+                        };
+                        let name = if matches!(adapter_kind, IteratorAdapterKind::Chain) {
+                            "gos_rt_lazy_iter_chain_i64"
+                        } else {
+                            "gos_rt_lazy_iter_zip_i64"
+                        };
+                        (name, vec![("ptr", upstream), ("ptr", rhs)])
+                    }
+                };
+                let value = self.emit_typed_iter_call(name, "ptr", &args);
+                self.store_typed_iter_value(dst, "ptr", &value);
+                Ok(true)
+            }
+            StatementKind::IterNext {
+                dst_option,
+                iter_place,
+                ..
+            } => {
+                let iter = self.lower_place_read(iter_place);
+                let value = self.emit_typed_iter_call(
+                    "gos_rt_lazy_iter_next_i64",
+                    "i128",
+                    &[("ptr", iter)],
+                );
+                self.store_typed_iter_value(dst_option, "i128", &value);
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
     pub(crate) fn lower_block(
         &mut self,
         block: &gossamer_mir::BasicBlock,
     ) -> Result<(), BuildError> {
         writeln!(self.out, "bb{}:", block.id.as_u32()).unwrap();
         // No loop-back-edge safepoint. A runtime call on every
-        // iteration is opaque to `opt -O3` and blocks vectorisation
-        // of tight numeric loops - the difference between sub-1-second
-        // and 50-second runs on spectral-norm and n-body. Allocation-
-        // driven safepoint dispatch (`gos_rt_aggr_alloc` updates the
-        // byte-pressure counter; the next function-prologue safepoint
-        // collects when the threshold trips) is sufficient for any
-        // loop that allocates; pure-arithmetic loops have nothing to
-        // collect.
-        let _ = block.id;
         let cleanup = gossamer_mir::plan_cleanup_with_summary(self.body, &self.capture_summary);
         for entry in cleanup.at_block_entry(block.id) {
             self.emit_cleanup_call(entry);
@@ -107,6 +224,9 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(crate) fn lower_stmt(&mut self, stmt: &Statement) -> Result<(), BuildError> {
+        if self.lower_typed_iterator_stmt(stmt)? {
+            return Ok(());
+        }
         match &stmt.kind {
             StatementKind::Assign { place, rvalue } => {
                 self.lower_assign(place, rvalue)?;
@@ -156,9 +276,7 @@ impl<'a> Lowerer<'a> {
             StatementKind::IterSource { .. }
             | StatementKind::IterAdapter { .. }
             | StatementKind::IterNext { .. } => {
-                return Err(BuildError::Unsupported(
-                    "typed iterator MIR reached LLVM before iterator lowering",
-                ));
+                unreachable!("typed iterator statements handled above")
             }
             StatementKind::Nop => {}
             StatementKind::SetDiscriminant { place, variant } => {
@@ -492,8 +610,8 @@ impl<'a> Lowerer<'a> {
                 default,
             } => {
                 let src = self.current_block.unwrap_or(u32::MAX);
-                let has_back_edge =
-                    arms.iter().any(|(_, t)| t.as_u32() <= src) || default.as_u32() <= src;
+                let has_back_edge = arms.iter().any(|(_, target)| target.as_u32() <= src)
+                    || default.as_u32() <= src;
                 if has_back_edge {
                     self.emit_preempt_check();
                 }

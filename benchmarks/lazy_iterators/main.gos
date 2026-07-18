@@ -1,0 +1,17 @@
+use std::iter
+
+fn main() {
+    let lazy = iter::range(0, 100000)
+        |> iter::map(|x| x + 1)
+        |> iter::filter(|x| x % 2 == 0)
+        |> iter::take(1000)
+        |> iter::sum
+
+    let eager = iter::eager_range(0, 100000)
+        |> iter::eager_map(|x| x + 1)
+        |> iter::eager_filter(|x| x % 2 == 0)
+        |> iter::eager_take(1000)
+        |> iter::eager_sum
+
+    println!("{lazy} {eager}")
+}

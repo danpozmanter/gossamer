@@ -35,6 +35,7 @@ use crate::tree::{
 /// register.
 #[must_use]
 pub fn lift_closures(mut program: HirProgram, tcx: &mut gossamer_types::TyCtxt) -> HirProgram {
+    let edition = program.edition;
     let env_ty = tcx.int_ty(gossamer_types::IntTy::I64);
     let scalar_tys = ScalarTys {
         unit: tcx.unit(),
@@ -142,7 +143,7 @@ pub fn lift_closures(mut program: HirProgram, tcx: &mut gossamer_types::TyCtxt) 
     }
     let mut items = program.items;
     items.extend(lifter.lifted);
-    HirProgram { items }
+    HirProgram { edition, items }
 }
 
 /// Walks `block` recursively and records every identifier that

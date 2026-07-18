@@ -21,6 +21,7 @@ use gossamer_ast::{
     TypeKind as AstTypeKind, TypePath, UnaryOp,
 };
 use gossamer_lex::Span;
+use gossamer_pkg::Edition;
 use gossamer_resolve::{FloatWidth, IntWidth, PrimitiveTy, Resolution, Resolutions};
 
 use crate::context::TyCtxt;
@@ -38,21 +39,46 @@ pub fn typecheck_source_file(
     resolutions: &Resolutions,
     tcx: &mut TyCtxt,
 ) -> (TypeTable, Vec<TypeDiagnostic>) {
-    let mut checker = TypeChecker::new(tcx, resolutions);
+    typecheck_source_file_with_edition(source, resolutions, tcx, Edition::E2026)
+}
+
+/// Runs type inference using the stdlib signatures selected by `edition`.
+#[must_use]
+pub fn typecheck_source_file_with_edition(
+    source: &SourceFile,
+    resolutions: &Resolutions,
+    tcx: &mut TyCtxt,
+    edition: Edition,
+) -> (TypeTable, Vec<TypeDiagnostic>) {
+    let mut checker = TypeChecker::new(tcx, resolutions, edition);
     checker.collect_signatures(&source.items);
     for item in &source.items {
         checker.check_item(item);
     }
-    // Default any integer-constrained inference variables that
-    // remain unresolved to `i64`. This gives unsuffixed literals
-    // (`let x = 42`) a concrete type when no use-site forced the
-    // width.
     checker.infer.default_unresolved_int_vars(checker.tcx);
     checker.infer.default_unresolved_float_vars(checker.tcx);
     checker.check_deferred_type_mismatches();
     checker.check_deferred_structural();
     checker.resolve_table();
     (checker.table, checker.diagnostics)
+}
+
+/// Runs type inference with the lazy iterator surface enabled when
+/// `lazy_iterators` is true. The default public entry point keeps the 2026
+/// eager `iter::*` compatibility behavior.
+#[must_use]
+pub fn typecheck_source_file_with_lazy_iterators(
+    source: &SourceFile,
+    resolutions: &Resolutions,
+    tcx: &mut TyCtxt,
+    lazy_iterators: bool,
+) -> (TypeTable, Vec<TypeDiagnostic>) {
+    let edition = if lazy_iterators {
+        Edition::E2027
+    } else {
+        Edition::E2026
+    };
+    typecheck_source_file_with_edition(source, resolutions, tcx, edition)
 }
 
 /// Hard limit on type-checker recursion depth. Mirrors the parser's
@@ -136,6 +162,7 @@ struct TypeChecker<'a> {
     table: TypeTable,
     diagnostics: Vec<TypeDiagnostic>,
     resolutions: &'a Resolutions,
+    edition: Edition,
     scopes: Vec<HashMap<Box<str>, Ty>>,
     /// Declared mutability of each in-scope value binding, kept in
     /// lockstep with `scopes`. A place rooted at an immutable binding
@@ -165,6 +192,9 @@ struct TypeChecker<'a> {
     /// the current source file. Prevents flooding the diagnostic
     /// stream with duplicates.
     recursion_limit_reported: bool,
+    /// Iterator locals consumed by a lazy adapter or terminal. This is a
+    /// conservative source-level linearity check for simple named locals.
+    consumed_iterators: HashMap<String, String>,
     /// Ordered field name + type for every named struct, keyed by
     /// the struct's `DefId`. Built during `collect_signatures` so
     /// field-access and struct-literal expressions can resolve leaf
@@ -365,7 +395,7 @@ struct GenericScope {
 }
 
 impl<'a> TypeChecker<'a> {
-    fn new(tcx: &'a mut TyCtxt, resolutions: &'a Resolutions) -> Self {
+    fn new(tcx: &'a mut TyCtxt, resolutions: &'a Resolutions, edition: Edition) -> Self {
         register_stdlib_struct_fields(tcx);
         let mut checker_struct_fields = HashMap::new();
         seed_checker_stdlib_struct_fields(tcx, &mut checker_struct_fields);
@@ -375,6 +405,7 @@ impl<'a> TypeChecker<'a> {
             table: TypeTable::new(),
             diagnostics: Vec::new(),
             resolutions,
+            edition,
             scopes: vec![HashMap::new()],
             mut_scopes: vec![HashMap::new()],
             binding_types: HashMap::new(),
@@ -382,6 +413,7 @@ impl<'a> TypeChecker<'a> {
             current_impl_generics: None,
             recursion_depth: 0,
             recursion_limit_reported: false,
+            consumed_iterators: HashMap::new(),
             struct_fields: checker_struct_fields,
             fn_sigs: HashMap::new(),
             method_arg_sigs: HashMap::new(),
@@ -924,6 +956,7 @@ impl<'a> TypeChecker<'a> {
             }
             TyKind::Slice(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::Slice),
             TyKind::Vec(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::Vec),
+            TyKind::Iterator(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::Iterator),
             TyKind::Sender(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::Sender),
             TyKind::Receiver(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::Receiver),
             TyKind::JoinHandle(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::JoinHandle),
@@ -1763,10 +1796,8 @@ impl<'a> TypeChecker<'a> {
         for param in &decl.params {
             self.bind_fn_param(param);
         }
-        let ret = match decl.ret.as_ref() {
-            Some(ty) => self.type_from_ast(ty),
-            None => self.tcx.unit(),
-        };
+        let declared_ret = decl.ret.as_ref().map(|ty| self.type_from_ast(ty));
+        let ret = declared_ret.unwrap_or_else(|| self.tcx.unit());
         if let Some(body) = &decl.body {
             self.collect_write_arg_bindings(body);
             let prev_ret = self.current_fn_ret.replace(ret);
@@ -1775,9 +1806,22 @@ impl<'a> TypeChecker<'a> {
             // tail / branch / arm) adopts the declared shape -
             // `fn f() -> Vec<T> { [..] }` yields a growable Vec,
             // not `[T; N]`.
-            let body_ty = self.check_expr_expecting(body, Expectation::HasType(ret));
+            let body_ty = if let Some(ret) = declared_ret {
+                self.check_expr_expecting(body, Expectation::HasType(ret))
+            } else {
+                let body_ty = self.check_expr(body);
+                let resolved = self.infer.resolve(self.tcx, body_ty);
+                if let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved)
+                    && self.tcx.def_name(*def) == Some("Result")
+                {
+                    self.emit(TypeError::DiscardedResult, body.span);
+                }
+                body_ty
+            };
             self.current_fn_ret = prev_ret;
-            self.unify(ret, body_ty, body.span);
+            if declared_ret.is_some() {
+                self.unify(ret, body_ty, body.span);
+            }
         }
         self.pop_scope();
         self.current_param_bounds = prior_bounds;
@@ -2143,7 +2187,9 @@ impl<'a> TypeChecker<'a> {
                 base,
                 syntax,
             } => {
-                if matches!(syntax, gossamer_ast::expr::StructExprSyntax::Braced) {
+                if path.segments.len() == 1
+                    && matches!(syntax, gossamer_ast::expr::StructExprSyntax::Braced)
+                {
                     let name = path.segments.last().map_or_else(
                         || "<struct>".to_string(),
                         |segment| segment.name.name.clone(),
@@ -2799,7 +2845,7 @@ impl<'a> TypeChecker<'a> {
             // names the parser injects and no user code can
             // shadow them.
             if module.is_empty()
-                && let Some(ty) = self.check_bare_intrinsic_call(last, arg_tys)
+                && let Some(ty) = self.check_bare_intrinsic_call(last, arg_tys, callee.span)
             {
                 return ty;
             }
@@ -3483,9 +3529,16 @@ impl<'a> TypeChecker<'a> {
     /// `Result<?, e>`, `None` → `Option<?>`. Pinning `__concat` /
     /// `__fmt_prec` to `String` is safe: they're synthetic names the
     /// parser injects and no user code can shadow them.
-    fn check_bare_intrinsic_call(&mut self, name: &str, arg_tys: &[Ty]) -> Option<Ty> {
+    fn check_bare_intrinsic_call(&mut self, name: &str, arg_tys: &[Ty], span: Span) -> Option<Ty> {
         let ty = match name {
             "__concat" | "__fmt_prec" | "__fmt_pad" | "__fmt_radix" | "__fmt_upper" => {
+                for ty in arg_tys {
+                    let resolved = self.infer.resolve(self.tcx, *ty);
+                    if matches!(self.tcx.kind(resolved), Some(TyKind::Iterator(_))) {
+                        self.emit(TypeError::IteratorStateFormatted, span);
+                        return Some(self.tcx.error_ty());
+                    }
+                }
                 self.tcx.string_ty()
             }
             // `channel()` / `channel(n)` / `channel::unbounded()` ->
@@ -4852,7 +4905,20 @@ impl<'a> TypeChecker<'a> {
                 | "zip" | "ok_or" | "ok_or_else",
             ) => 2,
             ("option", "flatten" | "is_some" | "is_none" | "iter") => 1,
+            (
+                "iter",
+                "collect" | "count" | "sum" | "product" | "min" | "max" | "once" | "range"
+                | "range_inclusive" | "repeat",
+            ) => {
+                if matches!(name, "range" | "range_inclusive" | "repeat") {
+                    2
+                } else {
+                    1
+                }
+            }
             ("iter", "fold" | "scan") => 3,
+            ("iter", "take" | "skip" | "step_by" | "chain" | "zip") => 2,
+            ("iter", "enumerate" | "rev") => 1,
             (
                 "iter",
                 "for_each" | "map" | "filter" | "filter_map" | "flat_map" | "reduce" | "sum_by"
@@ -4863,6 +4929,14 @@ impl<'a> TypeChecker<'a> {
             _ => return None,
         };
         Some(arity)
+    }
+
+    fn iter_adapter_result_ty(&mut self, item: Ty, lazy_result: bool) -> Ty {
+        if lazy_result {
+            self.tcx.iterator_ty(item)
+        } else {
+            self.tcx.intern(TyKind::Vec(item))
+        }
     }
 
     /// `(ok, err)` payload types of a Result-shaped `ty`. A still-free
@@ -5170,22 +5244,135 @@ impl<'a> TypeChecker<'a> {
                 Some(ty)
             }
             "iter" => {
+                let eager_alias = name.starts_with("eager_");
                 let name = name.strip_prefix("eager_").unwrap_or(name);
+                let all_tier_lazy = matches!(
+                    name,
+                    "range"
+                        | "range_inclusive"
+                        | "once"
+                        | "repeat"
+                        | "take"
+                        | "skip"
+                        | "enumerate"
+                        | "chain"
+                        | "zip"
+                        | "map"
+                        | "filter"
+                );
+                let lazy_result = self.edition == Edition::E2027 && !eager_alias && all_tier_lazy;
+                let i64_ty = self.tcx.int_ty(IntTy::I64);
+                if matches!(name, "range" | "range_inclusive") {
+                    self.unify(i64_ty, lead_tys[0], span);
+                    self.unify(i64_ty, data_ty, span);
+                    return Some(self.iter_adapter_result_ty(i64_ty, lazy_result));
+                }
+                if name == "once" {
+                    return Some(self.iter_adapter_result_ty(data_ty, lazy_result));
+                }
+                if name == "repeat" {
+                    self.unify(i64_ty, data_ty, span);
+                    return Some(self.iter_adapter_result_ty(lead_tys[0], lazy_result));
+                }
+                let all_tier_iterator_input = matches!(
+                    name,
+                    "take"
+                        | "skip"
+                        | "enumerate"
+                        | "chain"
+                        | "zip"
+                        | "map"
+                        | "filter"
+                        | "collect"
+                        | "count"
+                        | "sum"
+                        | "product"
+                        | "min"
+                        | "max"
+                        | "fold"
+                        | "any"
+                        | "all"
+                        | "find"
+                );
+                let data_is_iterator = matches!(
+                    self.tcx.kind_of(self.infer.resolve(self.tcx, data_ty)),
+                    TyKind::Iterator(_)
+                );
+                let iterator_terminal = matches!(
+                    name,
+                    "fold" | "any" | "all" | "find" | "count" | "sum" | "collect"
+                );
+                if self.edition == Edition::E2027
+                    && !eager_alias
+                    && iterator_terminal
+                    && !data_is_iterator
+                {
+                    self.emit(
+                        TypeError::TypeMismatch {
+                            expected: "Iterator<T>".to_string(),
+                            found: render_ty(self.tcx, data_ty),
+                        },
+                        span,
+                    );
+                    return Some(self.tcx.error_ty());
+                }
+                if self.edition == Edition::E2027
+                    && !eager_alias
+                    && data_is_iterator
+                    && !all_tier_iterator_input
+                {
+                    self.emit(
+                        TypeError::TypeMismatch {
+                            expected: "Vec<T>".to_string(),
+                            found: render_ty(self.tcx, data_ty),
+                        },
+                        span,
+                    );
+                    return Some(self.tcx.error_ty());
+                }
                 let elem = self.sequence_elem_ty(data_ty, span)?;
                 let bool_ty = self.tcx.bool_ty();
                 let ty = match name {
+                    "collect" => self.tcx.intern(TyKind::Vec(elem)),
+                    "count" => i64_ty,
+                    "sum" | "product" => match self.tcx.kind(elem) {
+                        Some(TyKind::Float(float)) => self.tcx.float_ty(*float),
+                        _ => i64_ty,
+                    },
+                    "min" | "max" => self.option_adt_ty(elem),
+                    "take" | "skip" | "step_by" => {
+                        self.unify(i64_ty, lead_tys[0], span);
+                        self.iter_adapter_result_ty(elem, lazy_result)
+                    }
+                    "enumerate" => {
+                        let pair = self.tcx.intern(TyKind::Tuple(vec![i64_ty, elem]));
+                        self.iter_adapter_result_ty(pair, lazy_result)
+                    }
+                    "rev" => self.iter_adapter_result_ty(elem, lazy_result),
+                    "chain" => {
+                        let other = self.sequence_elem_ty(lead_tys[0], span).unwrap_or(elem);
+                        self.unify(elem, other, span);
+                        self.iter_adapter_result_ty(elem, lazy_result)
+                    }
+                    "zip" => {
+                        let other = self
+                            .sequence_elem_ty(lead_tys[0], span)
+                            .unwrap_or_else(|| self.fresh());
+                        let pair = self.tcx.intern(TyKind::Tuple(vec![elem, other]));
+                        self.iter_adapter_result_ty(pair, lazy_result)
+                    }
                     "for_each" => {
                         let _ = self.callable_output(lead_tys[0], &[elem], span);
                         self.tcx.unit()
                     }
                     "map" => {
                         let mapped = self.callable_output(lead_tys[0], &[elem], span);
-                        self.tcx.intern(TyKind::Vec(mapped))
+                        self.iter_adapter_result_ty(mapped, lazy_result)
                     }
                     "filter" | "take_while" | "skip_while" => {
                         let out = self.callable_output(lead_tys[0], &[elem], span);
                         self.unify(bool_ty, out, span);
-                        self.tcx.intern(TyKind::Vec(elem))
+                        self.iter_adapter_result_ty(elem, lazy_result)
                     }
                     "filter_map" => {
                         let out = self.callable_output(lead_tys[0], &[elem], span);
@@ -5193,7 +5380,7 @@ impl<'a> TypeChecker<'a> {
                             Some(payload) => payload,
                             None => self.fresh(),
                         };
-                        self.tcx.intern(TyKind::Vec(mapped))
+                        self.iter_adapter_result_ty(mapped, lazy_result)
                     }
                     "flat_map" => {
                         let out = self.callable_output(lead_tys[0], &[elem], span);
@@ -5203,7 +5390,7 @@ impl<'a> TypeChecker<'a> {
                             // degrade to fresh instead of erroring.
                             self.fresh()
                         });
-                        self.tcx.intern(TyKind::Vec(mapped))
+                        self.iter_adapter_result_ty(mapped, lazy_result)
                     }
                     "fold" | "scan" => {
                         let acc = lead_tys[0];
@@ -5212,7 +5399,7 @@ impl<'a> TypeChecker<'a> {
                         if name == "fold" {
                             acc
                         } else {
-                            self.tcx.intern(TyKind::Vec(acc))
+                            self.iter_adapter_result_ty(acc, lazy_result)
                         }
                     }
                     "reduce" => {
@@ -5308,6 +5495,9 @@ impl<'a> TypeChecker<'a> {
                 let lead = lead.to_vec();
                 let span = args.last().map_or(callee.span, |arg| arg.span);
                 let ty = self.std_combinator_ty(module, name, &lead, data[0], span);
+                if module == "iter" && self.edition == Edition::E2027 && ty.is_some() {
+                    self.mark_consumed_iterator_args(name, args, arg_tys);
+                }
                 // A rowed option/result combinator at full arity whose
                 // data argument is concretely non-payload-shaped (the
                 // classic mistake is the swapped order, data first and
@@ -5356,6 +5546,28 @@ impl<'a> TypeChecker<'a> {
                 None
             }
         }
+    }
+
+    fn mark_consumed_iterator_args(&mut self, name: &str, args: &[Expr], arg_tys: &[Ty]) {
+        for (arg, ty) in args.iter().zip(arg_tys.iter()) {
+            self.mark_consumed_iterator_expr(name, arg, *ty);
+        }
+    }
+
+    fn mark_consumed_iterator_expr(&mut self, name: &str, expr: &Expr, ty: Ty) {
+        let resolved = self.infer.resolve(self.tcx, ty);
+        if !matches!(self.tcx.kind(resolved), Some(TyKind::Iterator(_))) {
+            return;
+        }
+        let ExprKind::Path(path) = &expr.kind else {
+            return;
+        };
+        if path.segments.len() != 1 {
+            return;
+        }
+        let binding = path.segments[0].name.name.clone();
+        self.consumed_iterators
+            .insert(binding, format!("iter::{name}"));
     }
 
     /// Types Result/Option combinator *method* calls
@@ -5587,7 +5799,7 @@ impl<'a> TypeChecker<'a> {
                 self.unify(bool_ty, rhs_ty, rhs.span);
                 bool_ty
             }
-            BinaryOp::PipeGt => self.pipe_result_ty(lhs_ty, lhs.span, rhs, rhs_ty),
+            BinaryOp::PipeGt => self.pipe_result_ty(lhs, lhs_ty, rhs, rhs_ty),
             _ => {
                 // String concatenation accepts a borrowed RHS:
                 // `"hello, " + &name` (the documented spelling). Peel
@@ -5690,20 +5902,20 @@ impl<'a> TypeChecker<'a> {
     /// return type, not the callee's function type. Unifies `lhs_ty`
     /// with the callee's last parameter so that un-annotated closure
     /// params (`|x| x + 1`) are pinned from the piped value's type.
-    fn pipe_result_ty(&mut self, lhs_ty: Ty, lhs_span: Span, rhs: &Expr, rhs_ty: Ty) -> Ty {
+    fn pipe_result_ty(&mut self, lhs: &Expr, lhs_ty: Ty, rhs: &Expr, rhs_ty: Ty) -> Ty {
         // Try to extract the callee's return type from rhs_ty first.
         let resolved = self.infer.resolve(self.tcx, rhs_ty);
         match self.tcx.kind_of(resolved).clone() {
             TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
                 if let Some(&last) = sig.inputs.last() {
-                    self.unify(lhs_ty, last, lhs_span);
+                    self.unify(lhs_ty, last, lhs.span);
                 }
                 return self.infer.resolve(self.tcx, sig.output);
             }
             TyKind::FnDef { def, .. } => {
                 if let Some(sig) = self.fn_sigs.get(&def).cloned() {
                     if let Some(&last) = sig.inputs.last() {
-                        self.unify(lhs_ty, last, lhs_span);
+                        self.unify(lhs_ty, last, lhs.span);
                     }
                     return sig.output;
                 }
@@ -5748,8 +5960,12 @@ impl<'a> TypeChecker<'a> {
                         })
                         .collect();
                     if let Some(ret) =
-                        self.std_combinator_ty(comb, last, &lead_tys, lhs_ty, lhs_span)
+                        self.std_combinator_ty(comb, last, &lead_tys, lhs_ty, lhs.span)
                     {
+                        if comb == "iter" && self.edition == Edition::E2027 {
+                            self.mark_consumed_iterator_args(last, lead_args, &lead_tys);
+                            self.mark_consumed_iterator_expr(last, lhs, lhs_ty);
+                        }
                         return ret;
                     }
                 }
@@ -6526,6 +6742,18 @@ impl<'a> TypeChecker<'a> {
         };
         match resolution {
             Resolution::Local(binding_id) => {
+                if path.segments.len() == 1
+                    && let Some(name) = path.segments.first().map(|seg| seg.name.name.as_str())
+                    && let Some(operation) = self.consumed_iterators.get(name).cloned()
+                {
+                    self.emit(
+                        TypeError::IteratorStateConsumed {
+                            name: name.to_string(),
+                            operation,
+                        },
+                        span,
+                    );
+                }
                 if let Some(ty) = self.binding_types.get(&binding_id).copied() {
                     return ty;
                 }

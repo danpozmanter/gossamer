@@ -478,7 +478,7 @@ impl http::Handler for App {
 }
 
 fn main() {
-    let _ = http::serve("127.0.0.1:8080", App { })
+    let _ = http::serve("127.0.0.1:8080", App())
 }
 "#;
 
@@ -553,7 +553,7 @@ impl http::Handler for App {
 }
 
 fn main() {
-    let _ = http::serve("127.0.0.1:8080", App { })
+    let _ = http::serve("127.0.0.1:8080", App())
 }
 "#;
     let (bodies, _) = build(source);
@@ -601,7 +601,7 @@ impl http::Handler for App {
 }
 
 fn main() {
-    let _ = http::serve("127.0.0.1:8080", App { })
+    let _ = http::serve("127.0.0.1:8080", App())
 }
 "#;
     let (bodies, _) = build(source);
@@ -1184,7 +1184,7 @@ fn http_response_literal_byte_body_routes_through_set_body_bytes() {
 #[test]
 fn user_defined_response_struct_still_lowers_as_aggregate() {
     let source = "struct Response { status: i64 }\n\
-                  fn h() -> Response { Response { status: 7 } }\n";
+                  fn h() -> Response { Response(7) }\n";
     let (bodies, _) = build(source);
     let h = bodies.iter().find(|b| b.name == "h").expect("h body");
     let names = call_names(h);

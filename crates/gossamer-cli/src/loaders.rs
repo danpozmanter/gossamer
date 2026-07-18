@@ -84,6 +84,16 @@ pub(crate) fn load_and_check(
     load_and_check_with_sf(source, file_id, map).map(|(program, _, tcx)| (program, tcx))
 }
 
+pub(crate) fn load_and_check_with_edition(
+    source: &str,
+    file_id: gossamer_lex::FileId,
+    map: &gossamer_lex::SourceMap,
+    edition: gossamer_pkg::Edition,
+) -> Result<(gossamer_hir::HirProgram, gossamer_types::TyCtxt)> {
+    load_and_check_with_sf_and_edition(source, file_id, map, edition)
+        .map(|(program, _, tcx)| (program, tcx))
+}
+
 /// Same as [`load_and_check`] but also returns the parsed
 /// [`gossamer_ast::SourceFile`] for callers (`gos bench`, `gos test`)
 /// that need AST-level item walks on top of the lowered program.
@@ -91,6 +101,19 @@ pub(crate) fn load_and_check_with_sf(
     source: &str,
     file_id: gossamer_lex::FileId,
     map: &gossamer_lex::SourceMap,
+) -> Result<(
+    gossamer_hir::HirProgram,
+    gossamer_ast::SourceFile,
+    gossamer_types::TyCtxt,
+)> {
+    load_and_check_with_sf_and_edition(source, file_id, map, crate::paths::project_edition())
+}
+
+pub(crate) fn load_and_check_with_sf_and_edition(
+    source: &str,
+    file_id: gossamer_lex::FileId,
+    map: &gossamer_lex::SourceMap,
+    edition: gossamer_pkg::Edition,
 ) -> Result<(
     gossamer_hir::HirProgram,
     gossamer_ast::SourceFile,
@@ -104,11 +127,7 @@ pub(crate) fn load_and_check_with_sf(
     // `gos check` / `gos build` so a program rejected by any one is
     // rejected by all. `check_frontend` synthesizes the implicit `fn
     // main` for an entry file's top-level statements, so `sf` carries it.
-    let outcome = gossamer_driver::check_frontend_with_edition(
-        source,
-        file_id,
-        crate::paths::project_edition(),
-    );
+    let outcome = gossamer_driver::check_frontend_with_edition(source, file_id, edition);
     profile_rss_stage("frontend_checked");
     if !outcome.diagnostics.is_empty() {
         for diag in &outcome.diagnostics {
@@ -120,12 +139,14 @@ pub(crate) fn load_and_check_with_sf(
         ));
     }
     let gossamer_driver::CheckedFrontend {
+        edition,
         sf,
         resolutions,
         table,
         mut tcx,
     } = outcome.checked;
-    let program = gossamer_hir::lower_source_file(&sf, &resolutions, &table, &mut tcx);
+    let program =
+        gossamer_hir::lower_source_file_with_edition(&sf, &resolutions, &table, &mut tcx, edition);
     profile_rss_stage("hir_lowered");
     Ok((program, sf, tcx))
 }

@@ -34,5 +34,5 @@ pub use monomorph::{check_generic_layouts, mangled_name, monomorphise};
 pub use opt::{
     const_branch_elim, const_fold, const_value_of, copy_propagate, dead_block_sweep,
     dead_store_elim, inline_general, inline_small_callees, inline_trivial_wrappers, optimise,
-    statement_count,
+    optimise_debug, statement_count,
 };

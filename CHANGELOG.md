@@ -1,5 +1,92 @@
 # Changelog
 
+## 0.30.0 - Lazy iterators, PKI, optimizations, and gos watch
+
+### Language and editions
+
+- Added manifest `edition = "2027"` while preserving 2026's eager iterator
+  surface. Entry-file commands now read the edition from the project that owns
+  the entry, not from the caller's current directory.
+- Added edition-2027 lazy `std::iter` pipelines with `Iterator<T>` typing,
+  range and Vec-backed sources, `map`/`filter`/`take`/`skip`/`enumerate`/
+  `chain`/`zip` adapters, and consuming terminals including `collect`,
+  `count`, `sum`, `product`, `min`, `max`, `fold`, `any`, `all`, and `find`.
+- Added linear iterator diagnostics and runtime invalidation for borrowed Vec
+  sources, preventing reused or formatted iterator state and detecting
+  structural mutation during lazy iteration.
+- Kept migration aliases permanently eager through `iter::eager_*`, and added
+  all-tier fixtures proving 2026 eager behavior and 2027 lazy behavior across
+  `gos run`, forced Cranelift JIT, debug build, and release build.
+
+### Native tiers and runtime
+
+- Lowered typed iterator MIR through the VM, LLVM AOT, and Cranelift paths,
+  including short-circuiting terminals, adapter panic propagation, cleanup of
+  unconsumed iterator state, and nonescaping Cranelift range/take lowering.
+- Wired the runtime ABI for lazy iterators, `String::with_capacity`, UUID v4/v7
+  generation and UUID normalization, plus complete checked runtime symbol-table
+  coverage for Cranelift JIT resolution.
+- Improved compiled JSON rendering with direct reserved String writes and
+  inline HTML-safe escaping, avoiding per-token ABI calls and the extra
+  whole-document replacement buffer while preserving tier parity.
+- Landed the structural-efficiency runtime pass: compiled `String.len()` is an
+  O(1) header load, `String::with_capacity` is preserved through MIR and both
+  native backends, packed primitive-row coverage is verified, VM backedge
+  preemption is conditional, VM register spans are reused more aggressively,
+  and VM thread stack reserve drops.
+- Reduced JIT retained and transient state with SHA-256 artifact keys,
+  move/filter of unique MIR/type snapshots into compilation, body-local
+  slice-pattern rejection, default Option-local admission, and stable per-body
+  promotion and rejection reports.
+- Scoped lazy-Vec mutation overlays to live borrowed sources and reclaim them
+  with the last iterator, preventing indexed workloads from accumulating
+  per-element hash state; preserved `static mut` accessor call graphs so hot
+  loops remain JIT-promotable.
+
+### Security and standard library
+
+- Promoted `std::crypto::x509` to Shipped with all-tier private-root server
+  verification, mandatory CRLs, fail-closed handling for revoked, unknown,
+  expired, malformed, wrong-host, and bad-chain inputs, and generated parity
+  fixtures for VM, Cranelift JIT, and LLVM AOT.
+- Added source-level private-CA peer-checking examples, a checked
+  `gos bench` X.509 CRL workload, and security/docs updates that distinguish
+  portable source verification from host TLS configuration constructors.
+- Updated generated stdlib API and LLM reference metadata for 0.30.0.
+
+### Tooling and build time
+
+- Added `gos watch`, a restart-based development supervisor with direct
+  frontend validation, highlighted status output, debouncing, port handoff,
+  graceful HTTP shutdown, terminal clearing, lockfile enforcement, forwarded
+  program args, and local path-dependency watching. `gos dev` remains a
+  compatibility alias.
+- Reworked `gos build` around a profile-aware native pipeline: debug uses the
+  lightweight MIR path with minimal register promotion and `llc -O0`, while
+  release uses the release MIR path and integrated Clang `-O3`.
+- Amortized native loop-backedge preemption checks to one poll per 1,024
+  iterations, retaining scheduler fairness without a runtime call per loop
+  iteration.
+- Added per-body and per-chunk LLVM object caching keyed by MIR, compiler,
+  target, profile, PGO, debug-info, reproducibility, and LLVM tool identity,
+  plus a final linked-artifact stamp cache for unchanged builds.
+- Landed the structural-efficiency build pass: event-driven child waiting,
+  cached Rust sysroot and LLVM tool discovery, one integrated Clang process per
+  release codegen chunk, once-per-body MIR digests, lightweight debug MIR,
+  removed no-comptime source cloning, worklist monomorphization, call-graph SCC
+  codegen partitioning, no-op pipeline/link skips, and RAM-first LLVM job
+  selection with `GOS_LLVM_JOBS` as the throughput override.
+- Tightened native link selection and diagnostics across host, static-musl,
+  Linux cross-target, and Windows MSVC builds, including target-specific
+  runtime archive selection and verbose link-command tracing.
+- Added `gos build --timings` JSON phase accounting for bundle, stamp,
+  autoderive, comptime, frontend subphases, codegen, link, object counts,
+  fallback use, parse-cache hits, and final-artifact cache hits.
+- Corrected the build benchmark harness to isolate cold frontend caches, report
+  dynamic and static release rows separately, repeat samples with median and
+  spread, sample aggregate process-tree RSS, include cold/no-op/leaf-edit rows,
+  and update the report parser, docs, and chart labels.
+
 ## 0.29.0 - Contracts, all-tier runtime, optimization, and standard-library depth
 
 ### Release contracts and packages

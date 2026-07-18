@@ -43,7 +43,10 @@ know:
   are deliberately conservative.
 - `std::tls` is wired through `http::serve_tls` and
   `net::TcpStream` TLS upgrades. TLS configuration constructors
-  are host-runtime internals, not Gossamer callables.
+  are host-runtime internals, not Gossamer callables. The all-tier
+  `crypto::x509::verify_server_certificate_with_crls` API verifies
+  supplied private roots and mandatory CRLs, but does not use system
+  roots or retrieve revocation data.
 - `crypto::rand::fill` uses `getrandom` and returns an explicit
   error if the OS RNG is unavailable. Callers must not
   silently discard that error in security-sensitive code.
@@ -65,6 +68,28 @@ Open caveats:
   granularity.
 - Postgres / MySQL drivers belong to the package ecosystem
   with their own maintainers and CVE response cadence.
+
+## Crypto and PKI tier audit
+
+The promoted cryptographic source APIs execute on the VM, forced Cranelift
+JIT, and LLVM AOT tiers. `stdlib_compiled_coverage` rejects any advertised
+free function without compiled dispatch. Cross-tier fixtures cover known hash
+vectors, authenticated-encryption round trips and authentication failures,
+signature verification failures, password/KDF wrong-secret failures, and
+constant-time unequal inputs.
+
+| Surface | Success and failure evidence |
+|---|---|
+| Secure random, SHA-256, SHA-512, BLAKE3, HMAC-SHA-256, constant-time equality | `stdlib_new_modules`, `llvm_aot_coverage`, `crypto_rand_failure`, `stdlib_encoding_crypto.gos` |
+| AES-256-GCM and ChaCha20-Poly1305 | `crypto_aead.gos`, including AES authentication rejection with a wrong key |
+| Ed25519 and P-256 ECDSA | `crypto_aead.gos` and `crypto_ecdsa.gos`, including altered-message or malformed-signature rejection |
+| PBKDF2, scrypt, and Argon2id | `crypto_extra.gos` and `crypto_password.gos`, including wrong-password verification |
+| X.509 parse and private-root CRL verifier | Generated CA/intermediate/leaf/revoked/expired-CRL parity fixture, plus `bench_crypto_x509_crl_verify_observed` |
+
+No promoted cryptographic source API is intentionally host-only. Secure random
+bytes necessarily use the host operating-system CSPRNG on each native tier.
+Rust TLS configuration constructors are host APIs by design; they are not a
+missing source-level crypto primitive.
 
 ## Reporting a vulnerability
 

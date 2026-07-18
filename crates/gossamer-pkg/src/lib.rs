@@ -18,7 +18,10 @@
 // tarball I/O, manifest/lockfile editing - is inert in a browser and
 // pulls native-only crypto/network crates (rustls, ed25519-dalek), so
 // it is gated out of the wasm build. Native is unaffected.
+mod edition;
 pub mod sha256;
+
+pub use edition::Edition;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cache;
@@ -63,7 +66,7 @@ pub use id::{ProjectId, ProjectIdError};
 pub use lockfile::{LOCKFILE_FILENAME, LOCKFILE_HEADER, LockedEntry, Lockfile, LockfileError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use manifest::{
-    DependencySpec, Edition, GitRef, InlineDependency, Manifest, ManifestError, ProjectTable,
+    DependencySpec, GitRef, InlineDependency, Manifest, ManifestError, ProjectTable,
     RustBindingSpec, find_manifest,
 };
 #[cfg(not(target_arch = "wasm32"))]

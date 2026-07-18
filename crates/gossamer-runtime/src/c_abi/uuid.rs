@@ -263,6 +263,490 @@ pub unsafe extern "C" fn gos_rt_iter_repeat_i64(value: i64, n: i64) -> *mut GosV
     })
 }
 
+/// Opaque lazy `Iterator<i64>` state used by 2027 native iterator lowering.
+pub struct GosLazyIterI64 {
+    inner: Box<dyn Iterator<Item = i64>>,
+}
+
+/// Opaque lazy `Iterator<(i64, i64)>` state used by enumerate and zip.
+pub struct GosLazyIterPairI64 {
+    inner: Box<dyn Iterator<Item = (i64, i64)>>,
+}
+
+struct BorrowedGosVecI64 {
+    source: *mut GosVec,
+    generation: u64,
+    mutation_generation: u64,
+    len: i64,
+    cap: i64,
+    index: i64,
+}
+
+impl Iterator for BorrowedGosVecI64 {
+    type Item = i64;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.source.is_null() || self.index >= self.len {
+            return None;
+        }
+        // SAFETY: construction retains the source header until this state is
+        // dropped. Element replacement keeps the header shape unchanged and
+        // is intentionally observed by loading the slot on each pull.
+        let source = unsafe { &*self.source };
+        if source.generation != self.generation
+            || source.mutation_generation != self.mutation_generation
+            || source.len != self.len
+            || source.cap != self.cap
+        {
+            const MESSAGE: &[u8] =
+                b"borrowed Vec source was structurally mutated during iteration\0";
+            // SAFETY: MESSAGE is a static, nul-terminated C string. A source
+            // invalidation is a language-level runtime panic, not exhaustion.
+            unsafe { crate::c_abi::panic::gos_rt_panic(MESSAGE.as_ptr().cast()) };
+            return None;
+        }
+        let value = unsafe { gos_rt_vec_get_i64(self.source, self.index) };
+        self.index += 1;
+        Some(value)
+    }
+}
+
+impl Drop for BorrowedGosVecI64 {
+    fn drop(&mut self) {
+        // SAFETY: construction retained exactly one source share.
+        unsafe { crate::c_abi::map::gos_rt_vec_free(self.source) };
+    }
+}
+
+fn lazy_i64<I>(iter: I) -> *mut GosLazyIterI64
+where
+    I: Iterator<Item = i64> + 'static,
+{
+    Box::into_raw(Box::new(GosLazyIterI64 {
+        inner: Box::new(iter),
+    }))
+}
+
+fn lazy_pair_i64<I>(iter: I) -> *mut GosLazyIterPairI64
+where
+    I: Iterator<Item = (i64, i64)> + 'static,
+{
+    Box::into_raw(Box::new(GosLazyIterPairI64 {
+        inner: Box::new(iter),
+    }))
+}
+
+unsafe fn take_lazy_i64(iter: *mut GosLazyIterI64) -> Box<dyn Iterator<Item = i64>> {
+    if iter.is_null() {
+        Box::new(std::iter::empty())
+    } else {
+        // SAFETY: lazy iterator helpers are linear; consuming a helper
+        // argument transfers ownership of the opaque state to this function.
+        unsafe { Box::from_raw(iter).inner }
+    }
+}
+
+unsafe fn take_lazy_pair_i64(
+    iter: *mut GosLazyIterPairI64,
+) -> Box<dyn Iterator<Item = (i64, i64)>> {
+    if iter.is_null() {
+        Box::new(std::iter::empty())
+    } else {
+        // SAFETY: lazy iterator helpers are linear; consuming a helper
+        // argument transfers ownership of the opaque state to this function.
+        unsafe { Box::from_raw(iter).inner }
+    }
+}
+
+/// Release an unconsumed lazy i64 iterator and its complete adapter chain.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_drop_i64(iter: *mut GosLazyIterI64) {
+    ffi_entry!((), {
+        if !iter.is_null() {
+            // SAFETY: an unconsumed iterator handle has exactly one owner.
+            // Dropping the outer box recursively drops every upstream adapter.
+            drop(unsafe { Box::from_raw(iter) });
+        }
+    });
+}
+
+/// Release an unconsumed lazy pair iterator and its complete adapter chain.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_drop_pair_i64(iter: *mut GosLazyIterPairI64) {
+    ffi_entry!((), {
+        if !iter.is_null() {
+            // SAFETY: an unconsumed iterator handle has exactly one owner.
+            drop(unsafe { Box::from_raw(iter) });
+        }
+    });
+}
+
+/// Advance a lazy i64 iterator without consuming the iterator handle.
+///
+/// Returns `Option<i64>` in the runtime's packed i128 carrier: discriminant 0
+/// for `Some(value)`, discriminant 1 for `None`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_next_i64(iter: *mut GosLazyIterI64) -> i128 {
+    ffi_entry!(gos_rt_result_new(1, 0), {
+        if iter.is_null() {
+            return gos_rt_result_new(1, 0);
+        }
+        // SAFETY: the handle remains owned by the caller. This helper only
+        // advances the state in place, so repeated calls after exhaustion keep
+        // returning None through the underlying iterator contract.
+        match unsafe { &mut *iter }.inner.next() {
+            Some(value) => gos_rt_result_new(0, value),
+            None => gos_rt_result_new(1, 0),
+        }
+    })
+}
+
+/// Lazy `[start, end)` i64 range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_range_i64(start: i64, end: i64) -> *mut GosLazyIterI64 {
+    ffi_entry!(std::ptr::null_mut(), { lazy_i64(start..end) })
+}
+
+/// Lazy `[start, end]` i64 range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_range_inclusive_i64(
+    start: i64,
+    end: i64,
+) -> *mut GosLazyIterI64 {
+    ffi_entry!(std::ptr::null_mut(), { lazy_i64(start..=end) })
+}
+
+/// Lazy borrowed source over a `Vec<i64>`. The source header is retained so
+/// unpulled elements stay live. Element replacement is visible, while a
+/// length, capacity, or allocation-identity change fails on the next pull.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_from_vec_i64(source: *mut GosVec) -> *mut GosLazyIterI64 {
+    ffi_entry!(std::ptr::null_mut(), {
+        if source.is_null() {
+            return lazy_i64(std::iter::empty());
+        }
+        // SAFETY: the caller supplies a live GosVec header. Retaining it gives
+        // the iterator state its own share until `BorrowedGosVecI64::drop`.
+        unsafe { gos_rt_vec_retain(source) };
+        let header = unsafe { &*source };
+        lazy_i64(BorrowedGosVecI64 {
+            source,
+            generation: header.generation,
+            mutation_generation: header.mutation_generation,
+            len: header.len,
+            cap: header.cap,
+            index: 0,
+        })
+    })
+}
+
+/// Lazy repeat of an i64 value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_repeat_i64(value: i64, n: i64) -> *mut GosLazyIterI64 {
+    ffi_entry!(std::ptr::null_mut(), {
+        let n = usize::try_from(n.max(0)).unwrap_or(0);
+        lazy_i64(std::iter::repeat_n(value, n))
+    })
+}
+
+/// Lazy single-item i64 iterator.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_once_i64(value: i64) -> *mut GosLazyIterI64 {
+    ffi_entry!(std::ptr::null_mut(), { lazy_i64(std::iter::once(value)) })
+}
+
+/// Lazy `take(n)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_take_i64(
+    n: i64,
+    iter: *mut GosLazyIterI64,
+) -> *mut GosLazyIterI64 {
+    ffi_entry!(std::ptr::null_mut(), {
+        let n = usize::try_from(n.max(0)).unwrap_or(0);
+        let upstream = unsafe { take_lazy_i64(iter) };
+        lazy_i64(upstream.take(n))
+    })
+}
+
+/// Lazy `skip(n)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_skip_i64(
+    n: i64,
+    iter: *mut GosLazyIterI64,
+) -> *mut GosLazyIterI64 {
+    ffi_entry!(std::ptr::null_mut(), {
+        let n = usize::try_from(n.max(0)).unwrap_or(0);
+        let upstream = unsafe { take_lazy_i64(iter) };
+        lazy_i64(upstream.skip(n))
+    })
+}
+
+/// Lazy `chain(other)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_chain_i64(
+    first: *mut GosLazyIterI64,
+    second: *mut GosLazyIterI64,
+) -> *mut GosLazyIterI64 {
+    ffi_entry!(std::ptr::null_mut(), {
+        let first = unsafe { take_lazy_i64(first) };
+        let second = unsafe { take_lazy_i64(second) };
+        lazy_i64(first.chain(second))
+    })
+}
+
+/// Lazy `enumerate`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_enumerate_i64(
+    iter: *mut GosLazyIterI64,
+) -> *mut GosLazyIterPairI64 {
+    ffi_entry!(std::ptr::null_mut(), {
+        let upstream = unsafe { take_lazy_i64(iter) };
+        lazy_pair_i64(
+            upstream
+                .enumerate()
+                .map(|(idx, value)| (i64::try_from(idx).unwrap_or(i64::MAX), value)),
+        )
+    })
+}
+
+/// Lazy `zip`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_zip_i64(
+    left: *mut GosLazyIterI64,
+    right: *mut GosLazyIterI64,
+) -> *mut GosLazyIterPairI64 {
+    ffi_entry!(std::ptr::null_mut(), {
+        let left = unsafe { take_lazy_i64(left) };
+        let right = unsafe { take_lazy_i64(right) };
+        lazy_pair_i64(left.zip(right))
+    })
+}
+
+/// Lazy `map(f)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_map_i64(
+    env: *const u8,
+    iter: *mut GosLazyIterI64,
+) -> *mut GosLazyIterI64 {
+    ffi_entry!(std::ptr::null_mut(), {
+        let upstream = unsafe { take_lazy_i64(iter) };
+        if env.is_null() {
+            return lazy_i64(std::iter::empty());
+        }
+        type CallFn = unsafe extern "C" fn(env: *const u8, x: i64) -> i64;
+        let fn_addr_raw = unsafe { (env as *const usize).read() };
+        if fn_addr_raw == 0 {
+            return lazy_i64(std::iter::empty());
+        }
+        let f: CallFn = unsafe { std::mem::transmute(fn_addr_raw) };
+        lazy_i64(upstream.map(move |x| unsafe { f(env, x) }))
+    })
+}
+
+/// Lazy `filter(p)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_filter_i64(
+    env: *const u8,
+    iter: *mut GosLazyIterI64,
+) -> *mut GosLazyIterI64 {
+    ffi_entry!(std::ptr::null_mut(), {
+        let upstream = unsafe { take_lazy_i64(iter) };
+        if env.is_null() {
+            return lazy_i64(std::iter::empty());
+        }
+        type PredFn = unsafe extern "C" fn(env: *const u8, x: i64) -> bool;
+        let fn_addr_raw = unsafe { (env as *const usize).read() };
+        if fn_addr_raw == 0 {
+            return lazy_i64(std::iter::empty());
+        }
+        let p: PredFn = unsafe { std::mem::transmute(fn_addr_raw) };
+        lazy_i64(upstream.filter(move |x| unsafe { p(env, *x) }))
+    })
+}
+
+/// Consume a lazy i64 iterator into a `GosVec`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_collect_i64(iter: *mut GosLazyIterI64) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { gos_rt_vec_new(8) };
+        for x in unsafe { take_lazy_i64(iter) } {
+            unsafe { gos_rt_vec_push_i64(out, x) };
+        }
+        out
+    })
+}
+
+/// Consume a lazy pair iterator into a `Vec<(i64, i64)>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_collect_pair_i64(
+    iter: *mut GosLazyIterPairI64,
+) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { gos_rt_vec_new(16) };
+        for (a, b) in unsafe { take_lazy_pair_i64(iter) } {
+            let slot: [i64; 2] = [a, b];
+            unsafe { gos_rt_vec_push(out, slot.as_ptr().cast::<u8>()) };
+        }
+        out
+    })
+}
+
+/// Count a lazy i64 iterator.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_count_i64(iter: *mut GosLazyIterI64) -> i64 {
+    ffi_entry!(0, {
+        i64::try_from(unsafe { take_lazy_i64(iter) }.count()).unwrap_or(i64::MAX)
+    })
+}
+
+/// Count a lazy pair iterator.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_count_pair_i64(iter: *mut GosLazyIterPairI64) -> i64 {
+    ffi_entry!(0, {
+        i64::try_from(unsafe { take_lazy_pair_i64(iter) }.count()).unwrap_or(i64::MAX)
+    })
+}
+
+/// Sum a lazy i64 iterator.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_sum_i64(iter: *mut GosLazyIterI64) -> i64 {
+    ffi_entry!(0, {
+        unsafe { take_lazy_i64(iter) }.fold(0i64, i64::wrapping_add)
+    })
+}
+
+/// Product of a lazy i64 iterator.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_product_i64(iter: *mut GosLazyIterI64) -> i64 {
+    ffi_entry!(1, {
+        unsafe { take_lazy_i64(iter) }.fold(1i64, i64::wrapping_mul)
+    })
+}
+
+/// Minimum of a lazy i64 iterator as `Option<i64>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_min_i64(iter: *mut GosLazyIterI64) -> i128 {
+    ffi_entry!(gos_rt_result_new(1, 0), {
+        match unsafe { take_lazy_i64(iter) }.min() {
+            Some(value) => gos_rt_result_new(0, value),
+            None => gos_rt_result_new(1, 0),
+        }
+    })
+}
+
+/// Maximum of a lazy i64 iterator as `Option<i64>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_max_i64(iter: *mut GosLazyIterI64) -> i128 {
+    ffi_entry!(gos_rt_result_new(1, 0), {
+        match unsafe { take_lazy_i64(iter) }.max() {
+            Some(value) => gos_rt_result_new(0, value),
+            None => gos_rt_result_new(1, 0),
+        }
+    })
+}
+
+/// Fold a lazy i64 iterator with an i64 accumulator.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_fold_i64(
+    init: i64,
+    env: *const u8,
+    iter: *mut GosLazyIterI64,
+) -> i64 {
+    ffi_entry!(init, {
+        if env.is_null() {
+            return init;
+        }
+        type FoldFn = unsafe extern "C" fn(env: *const u8, acc: i64, x: i64) -> i64;
+        let fn_addr_raw = unsafe { (env as *const usize).read() };
+        if fn_addr_raw == 0 {
+            return init;
+        }
+        let f: FoldFn = unsafe { std::mem::transmute(fn_addr_raw) };
+        let mut acc = init;
+        for x in unsafe { take_lazy_i64(iter) } {
+            acc = unsafe { f(env, acc, x) };
+        }
+        acc
+    })
+}
+
+/// Short-circuiting `any` over a lazy i64 iterator.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_any_i64(
+    env: *const u8,
+    iter: *mut GosLazyIterI64,
+) -> i64 {
+    ffi_entry!(0, {
+        if env.is_null() {
+            return 0;
+        }
+        type PredFn = unsafe extern "C" fn(env: *const u8, x: i64) -> bool;
+        let fn_addr_raw = unsafe { (env as *const usize).read() };
+        if fn_addr_raw == 0 {
+            return 0;
+        }
+        let p: PredFn = unsafe { std::mem::transmute(fn_addr_raw) };
+        for x in unsafe { take_lazy_i64(iter) } {
+            if unsafe { p(env, x) } {
+                return 1;
+            }
+        }
+        0
+    })
+}
+
+/// Short-circuiting `all` over a lazy i64 iterator.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_all_i64(
+    env: *const u8,
+    iter: *mut GosLazyIterI64,
+) -> i64 {
+    ffi_entry!(1, {
+        if env.is_null() {
+            return 1;
+        }
+        type PredFn = unsafe extern "C" fn(env: *const u8, x: i64) -> bool;
+        let fn_addr_raw = unsafe { (env as *const usize).read() };
+        if fn_addr_raw == 0 {
+            return 1;
+        }
+        let p: PredFn = unsafe { std::mem::transmute(fn_addr_raw) };
+        for x in unsafe { take_lazy_i64(iter) } {
+            if !unsafe { p(env, x) } {
+                return 0;
+            }
+        }
+        1
+    })
+}
+
+/// Short-circuiting `find` over a lazy i64 iterator. Returns `Option<i64>`
+/// using the runtime Result/Option i128 carrier, with disc 0 for Some and
+/// disc 1 for None.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_find_i64(
+    env: *const u8,
+    iter: *mut GosLazyIterI64,
+) -> i128 {
+    ffi_entry!(gos_rt_result_new(1, 0), {
+        if env.is_null() {
+            return gos_rt_result_new(1, 0);
+        }
+        type PredFn = unsafe extern "C" fn(env: *const u8, x: i64) -> bool;
+        let fn_addr_raw = unsafe { (env as *const usize).read() };
+        if fn_addr_raw == 0 {
+            return gos_rt_result_new(1, 0);
+        }
+        let p: PredFn = unsafe { std::mem::transmute(fn_addr_raw) };
+        for x in unsafe { take_lazy_i64(iter) } {
+            if unsafe { p(env, x) } {
+                return gos_rt_result_new(0, x);
+            }
+        }
+        gos_rt_result_new(1, 0)
+    })
+}
+
 /// Build `Vec<i64>` from the first `n` elements of `v`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_take_i64(n: i64, v: *const GosVec) -> *mut GosVec {
@@ -994,4 +1478,72 @@ pub unsafe extern "C" fn gos_rt_result_map_i64(env: *const u8, res: i128) -> i12
         let mapped = unsafe { f(env, payload) };
         unsafe { gos_rt_result_new(0, mapped) }
     })
+}
+
+#[cfg(test)]
+mod lazy_iterator_tests {
+    use super::*;
+
+    #[test]
+    fn borrowed_vec_observes_element_replacement() {
+        unsafe {
+            let source = gos_rt_vec_new(8);
+            gos_rt_vec_push_i64(source, 1);
+            gos_rt_vec_push_i64(source, 2);
+            let iter = gos_rt_lazy_iter_from_vec_i64(source);
+            crate::c_abi::signal::gos_rt_vec_set_i64(source, 0, 9);
+            assert_eq!(gos_rt_lazy_iter_sum_i64(iter), 11);
+            crate::c_abi::map::gos_rt_vec_free(source);
+        }
+    }
+
+    #[test]
+    fn borrowed_vec_rejects_shape_restored_after_mutation() {
+        unsafe {
+            let source = gos_rt_vec_new(8);
+            gos_rt_vec_push_i64(source, 1);
+            gos_rt_vec_push_i64(source, 2);
+            let iter = gos_rt_lazy_iter_from_vec_i64(source);
+            gos_rt_vec_push_i64(source, 3);
+            let mut popped = 0i64;
+            assert_eq!(
+                crate::c_abi::signal::gos_rt_vec_pop(
+                    source,
+                    std::ptr::addr_of_mut!(popped).cast::<u8>()
+                ),
+                1
+            );
+            assert_eq!(popped, 3);
+            assert_ne!((*source).mutation_generation, 2);
+            gos_rt_lazy_iter_drop_i64(iter);
+            crate::c_abi::map::gos_rt_vec_free(source);
+        }
+    }
+
+    #[test]
+    fn next_is_idempotent_after_exhaustion() {
+        unsafe {
+            let iter = gos_rt_lazy_iter_range_i64(0, 2);
+            assert_eq!(gos_rt_result_disc(gos_rt_lazy_iter_next_i64(iter)), 0);
+            assert_eq!(gos_rt_result_payload(gos_rt_lazy_iter_next_i64(iter)), 1);
+            assert_eq!(gos_rt_result_disc(gos_rt_lazy_iter_next_i64(iter)), 1);
+            assert_eq!(gos_rt_result_disc(gos_rt_lazy_iter_next_i64(iter)), 1);
+            gos_rt_lazy_iter_drop_i64(iter);
+        }
+    }
+
+    #[test]
+    fn dropping_unconsumed_vec_iterator_releases_its_source_once() {
+        unsafe {
+            let source = gos_rt_vec_new(8);
+            gos_rt_vec_push_i64(source, 1);
+            gos_rt_vec_push_i64(source, 2);
+            let iter = gos_rt_lazy_iter_from_vec_i64(source);
+            assert_eq!(crate::c_abi::vec::vec_rc(&*source), 2);
+
+            crate::c_abi::map::gos_rt_vec_free(source);
+            assert_eq!(crate::c_abi::vec::vec_rc(&*source), 1);
+            gos_rt_lazy_iter_drop_i64(iter);
+        }
+    }
 }
