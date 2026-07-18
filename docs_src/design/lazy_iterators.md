@@ -1,9 +1,11 @@
 # Lazy iterator protocol
 
-Status: implemented for the 0.30 edition-2027 public surface. Projects using
-edition 2026 keep the historical eager `std::iter` behavior, and
-`iter::eager_*` aliases remain available as explicit eager compatibility
-helpers.
+Status: live. Integer range expressions produce lazy iterators in every
+edition, and adapters applied to those iterator values remain lazy. The lazy
+`std::iter` constructor and Vec adapter surface is enabled in edition 2027;
+projects using edition 2026 otherwise keep the historical eager `std::iter`
+behavior. The `iter::eager_*` aliases remain available as explicit eager
+compatibility helpers.
 
 ## Goals
 
@@ -12,16 +14,20 @@ The public protocol supports lazy `map`, `filter`, `take`, `skip`,
 Terminal operations stop the source as soon as their result is known and
 preserve the same closure call order in the VM, Cranelift JIT, and LLVM.
 
-The protocol is internal in this release. User implementations, extra adapters
-such as `filter_map` and `flat_map`, and dynamic iterator trait objects are
-deferred until representation and optimization data are available.
+The built-in protocol and supported adapters are public in this release.
+User-defined iterator implementations, extra adapters such as `filter_map` and
+`flat_map`, and dynamic iterator trait objects are deferred until
+representation and optimization data are available.
 
 ## Source ownership
 
 An iterator is a linear state value. Calling `next(&mut self)` mutates its
 cursor and returns `Option<Item>`.
 
-- `RangeIter` owns integer bounds and the next index.
+- `RangeIter` owns its integer cursor and optional bounds. An open upper bound
+  follows Rust overflow behavior: debug builds panic before yielding
+  `i64::MAX`; release builds yield `i64::MAX`, wrap to `i64::MIN`, and
+  continue.
 - `SliceIter<'a, T>` borrows an immutable slice. Structural mutation of the
   source `Vec` is rejected while this iterator is live.
 - `VecIntoIter<T>` owns the source allocation and moves each element out once.

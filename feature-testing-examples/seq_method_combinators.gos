@@ -2,6 +2,8 @@
 // `xs.sum()`, …): the same typing and lowering as the data-last
 // `iter::` free forms, composing with ranges, chaining, and join.
 // `n as char` reads the int's low byte like `u8 as char` always did.
+use std::iter
+
 fn main() {
     let xs = [3, 1, 4, 1, 5, 9, 2, 6]
     println!("{:?}", xs.map(|x| x * 2))
@@ -15,11 +17,11 @@ fn main() {
     println!("{:?} {:?}", xs.find(|x| x > 4), xs.position(|x| x == 9))
     let fs = [1.5, 2.5, 3.0]
     println!("{} {:?}", fs.sum(), fs.map(|f| f * 2.0))
-    println!("{:?}", (2..10).filter(|k| k % 3 == 0))
+    println!("{:?}", (2..10).filter(|k| k % 3 == 0) |> iter::collect)
     println!("{}", (1..5).map(|i| i * i).sum())
     println!("{}", xs.filter(|x| x > 2).map(|x| x * 10).join(","))
     let sieve = [true; 10]
-    println!("{:?}", (2..10).filter(|k| sieve[k]).take(3))
+    println!("{:?}", (2..10).filter(|k| sieve[k]).take(3) |> iter::collect)
 
     let s = "hello"
     println!("{}", s[1] as char)

@@ -624,6 +624,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_lazy_iter_next_i64", (Ptr) -> I128, Both, "Advance a lazy Iterator<i64> in place and return Option<i64>."),
     rt!("gos_rt_lazy_iter_once_i64", (I64) -> Ptr, Both, "Lazy single-item Iterator<i64>."),
     rt!("gos_rt_lazy_iter_product_i64", (Ptr) -> I64, Both, "Consume and multiply a lazy Iterator<i64>."),
+    rt!("gos_rt_lazy_iter_range_from_i64", (I64) -> Ptr, Both, "Lazy Rust-compatible unbounded Iterator<i64> starting at start."),
     rt!("gos_rt_lazy_iter_range_i64", (I64, I64) -> Ptr, Both, "Lazy Iterator<i64> range over [start, end)."),
     rt!("gos_rt_lazy_iter_range_inclusive_i64", (I64, I64) -> Ptr, Both, "Lazy Iterator<i64> inclusive range over [start, end]."),
     rt!("gos_rt_lazy_iter_repeat_i64", (I64, I64) -> Ptr, Both, "Lazy Iterator<i64> repeating a value n times."),

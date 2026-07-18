@@ -662,6 +662,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_parse_i64_result" => Some("gos_rt_parse_i64_result"),
         "gos_rt_iter_count_by_i64" => Some("gos_rt_iter_count_by_i64"),
         "gos_rt_lazy_iter_range_i64" => Some("gos_rt_lazy_iter_range_i64"),
+        "gos_rt_lazy_iter_range_from_i64" => Some("gos_rt_lazy_iter_range_from_i64"),
         "gos_rt_lazy_iter_range_inclusive_i64" => Some("gos_rt_lazy_iter_range_inclusive_i64"),
         "gos_rt_lazy_iter_from_vec_i64" => Some("gos_rt_lazy_iter_from_vec_i64"),
         "gos_rt_lazy_iter_repeat_i64" => Some("gos_rt_lazy_iter_repeat_i64"),

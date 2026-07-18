@@ -234,6 +234,7 @@ jobs:
   test-workspace:
     name: Test workspace (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     # Fast, parallel-safe crate tests. Split into its own job so it runs
     # concurrently with `test-native` (which is serial and slow) instead of
     # queueing behind it - frontend/IR/runtime/stdlib feedback no longer

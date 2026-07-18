@@ -380,6 +380,62 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      within the limit.",
     ),
     (
+        "GP0018",
+        "The lexer rejected a token before parsing could continue. The diagnostic identifies the malformed string, comment, escape, or token spelling.",
+    ),
+    (
+        "GP0019",
+        "Executable statements are allowed only in the entry file. Module bodies contain declarations; move the statement into a function.",
+    ),
+    (
+        "GP0020",
+        "An entry file cannot contain both bare top-level statements and an explicit fn main. Move the statements into main, or use the implicit entry form.",
+    ),
+    (
+        "GP0021",
+        "A format placeholder must be a binding name, a format specification, or an explicit positional placeholder. Bind complex expressions first.",
+    ),
+    (
+        "GP0022",
+        "Automatic serialization cannot be generated because a named field has an unsupported type. Change that field to a serializable type or provide a supported representation.",
+    ),
+    (
+        "GP0023",
+        "The number of positional format arguments differs from the number of positional placeholders. Add or remove placeholders to make them match.",
+    ),
+    (
+        "GP0024",
+        "Format macros require a literal template so placeholders can be checked at compile time. Replace the computed template with a string literal.",
+    ),
+    (
+        "GP0025",
+        "A value piped into a format macro needs an explicit positional placeholder. Add a positional placeholder and place the pipe placeholder in the corresponding argument position.",
+    ),
+    (
+        "GP0026",
+        "The inclusive range operator always needs an upper bound. Supply the bound, or use an exclusive open range.",
+    ),
+    (
+        "GP0027",
+        "A pipe placeholder must occur exactly once as a direct call argument. Move it into the argument list and remove any duplicate placeholder.",
+    ),
+    (
+        "GP0028",
+        "Two dots start a range, not a pipe placeholder. Use the underscore placeholder, or omit it when the piped value belongs in the final argument slot.",
+    ),
+    (
+        "GP0029",
+        "Every match arm needs an arrow after the pattern and optional guard.",
+    ),
+    (
+        "GP0030",
+        "A match arm has an arrow but no result expression. Add the value or block that the arm should produce.",
+    ),
+    (
+        "GP0031",
+        "Expression-bodied match arms on the same line require a comma boundary. Add a comma, or begin the next arm on a new line.",
+    ),
+    (
         "GR0001",
         "A name used in source could not be resolved to a declaration.\n\
                      Check the spelling, whether a `use` brings the name into scope,\n\

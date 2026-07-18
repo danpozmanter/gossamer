@@ -126,7 +126,7 @@ fn run_subcommand_executes_via_vm() {
 const LAZY_ITERATOR_TIER_SOURCE: &str = r#"use std::iter
 
 fn main() {
-    let xs = iter::range(1, 100)
+    let xs = 1..100
         |> iter::map(|x| {
             if x > 3 { panic("map was eager") }
             x
@@ -199,11 +199,16 @@ fn main() {
     let pending_replacement = replaced |> iter::map(|x| x)
     replaced[1] = 9
     println!("{}", pending_replacement |> iter::sum)
+
+    let open_end = 10..
+        |> iter::take(4)
+        |> iter::collect
+    println!("{}", iter::eager_count(open_end))
 }
 "#;
 
 const LAZY_ITERATOR_TIER_OUTPUT: &str =
-    "6\n9\n14\n20\ntrue\nfalse\n4\n41\n24\n4\n6\n3\n3\n3\n14\n13\n";
+    "6\n9\n14\n20\ntrue\nfalse\n4\n41\n24\n4\n6\n3\n3\n3\n14\n13\n4\n";
 
 const EAGER_ITERATOR_ALIAS_SOURCE: &str = r#"use std::iter
 

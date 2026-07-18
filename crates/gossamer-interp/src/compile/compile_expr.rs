@@ -690,9 +690,8 @@ impl<'tcx> FnBuilder<'tcx> {
         Ok(dst)
     }
 
-    /// Lowers a standalone range value (`a..b` / `a..=b`) to
-    /// `Op::BuildRange`. Open bounds default to `0`; the op materialises
-    /// an eager `Value::Array` of `Value::Int`.
+    /// Lowers a standalone range value to a lazy integer iterator. An omitted
+    /// upper bound uses Rust's profile-dependent `RangeFrom` overflow behavior.
     pub(crate) fn compile_range_value(
         &mut self,
         start: Option<&HirExpr>,
@@ -702,24 +701,29 @@ impl<'tcx> FnBuilder<'tcx> {
         let start_reg = match start {
             Some(e) => self.compile_expr(e)?,
             None => {
-                let idx = self.const_idx(ConstKey::Int(0), Value::Int(0));
+                let idx = self.const_idx(ConstKey::Int(i64::MIN), Value::Int(i64::MIN));
                 let r = self.alloc_reg();
                 self.emit(Op::LoadConst { dst: r, idx });
                 r
             }
         };
-        // A missing upper bound mirrors `eval_range`'s degenerate empty
-        // range (`end_val == start_val`), so reuse the start register.
         let end_reg = match end {
             Some(e) => self.compile_expr(e)?,
-            None => start_reg,
+            None => {
+                let idx = self.const_idx(ConstKey::Int(i64::MAX), Value::Int(i64::MAX));
+                let r = self.alloc_reg();
+                self.emit(Op::LoadConst { dst: r, idx });
+                r
+            }
         };
         let dst = self.alloc_reg();
         self.emit(Op::BuildRange {
             dst,
             start: start_reg,
             end: end_reg,
-            inclusive,
+            inclusive: inclusive || end.is_none(),
+            start_open: start.is_none(),
+            end_open: end.is_none(),
         });
         Ok(dst)
     }

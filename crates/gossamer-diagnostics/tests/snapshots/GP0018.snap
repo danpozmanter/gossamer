@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0018]: The lexer rejected a token before parsing could continue. The diagnostic identifies the malformed string, comment, escape, or token spelling. - here
+--- framed ---
+error[GP0018]: The lexer rejected a token before parsing could continue. The diagnostic identifies the malformed string, comment, escape, or token spelling.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

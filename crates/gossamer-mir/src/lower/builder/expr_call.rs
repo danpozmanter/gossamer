@@ -788,38 +788,66 @@ impl<'a> Builder<'a> {
                 if let TyKind::Array { elem, len } = self.tcx.kind_of(local_inner).clone() {
                     if let Some(expected) = expected_opt {
                         let expected_inner = deref(self, expected);
-                        // A const generic array parameter (`[T; N]`) is carried
-                        // by the callee as a runtime-length sequence, so a
-                        // concrete-length array argument is coerced to a GosVec
-                        // just like a `Vec<T>` / `[T]` parameter.
-                        let expected_is_const_array = matches!(
-                            self.tcx.kind_of(expected_inner),
-                            TyKind::Array {
-                                len: gossamer_types::ArrayLen::Param(_),
+                        // A concrete fixed array passed to an exact
+                        // `&mut [T; N]` parameter has value semantics at the
+                        // call boundary. Materialise the copy in the caller so
+                        // the callee receives a stable reference to that copy,
+                        // matching the VM and keeping a returned reference
+                        // valid for the rest of the caller's frame.
+                        if matches!(
+                            self.tcx.kind_of(expected),
+                            TyKind::Ref {
+                                mutability: gossamer_types::Mutbl::Mut,
                                 ..
                             }
-                        );
-                        if matches!(
+                        ) && matches!(
                             self.tcx.kind_of(expected_inner),
-                            TyKind::Vec(_) | TyKind::Slice(_)
-                        ) || expected_is_const_array
-                        {
-                            // A `&[T]` parameter borrows: the caller's array
-                            // outlives the call and reclaims its element
-                            // children at its own drop. Build a non-owning
-                            // view so the coerced slice never deep-frees
-                            // those children. A by-value `Vec<T>` / `[T]`
-                            // parameter takes ownership, so keep the owning
-                            // copy.
-                            let param_is_borrow =
-                                matches!(self.tcx.kind_of(expected), TyKind::Ref { .. });
-                            if param_is_borrow {
-                                self.coerce_borrow_array_to_vec(local, elem, len, span)
-                            } else {
-                                self.coerce_array_to_vec(local, elem, len, span)
+                            TyKind::Array {
+                                len: gossamer_types::ArrayLen::Concrete(_),
+                                ..
                             }
+                        ) {
+                            let copy = self.fresh(local_ty);
+                            self.emit_assign(
+                                Place::local(copy),
+                                Rvalue::Use(Operand::Copy(Place::local(local))),
+                                span,
+                            );
+                            copy
                         } else {
-                            local
+                            // A const generic array parameter (`[T; N]`) is carried
+                            // by the callee as a runtime-length sequence, so a
+                            // concrete-length array argument is coerced to a GosVec
+                            // just like a `Vec<T>` / `[T]` parameter.
+                            let expected_is_const_array = matches!(
+                                self.tcx.kind_of(expected_inner),
+                                TyKind::Array {
+                                    len: gossamer_types::ArrayLen::Param(_),
+                                    ..
+                                }
+                            );
+                            if matches!(
+                                self.tcx.kind_of(expected_inner),
+                                TyKind::Vec(_) | TyKind::Slice(_)
+                            ) || expected_is_const_array
+                            {
+                                // A `&[T]` parameter borrows: the caller's array
+                                // outlives the call and reclaims its element
+                                // children at its own drop. Build a non-owning
+                                // view so the coerced slice never deep-frees
+                                // those children. A by-value `Vec<T>` / `[T]`
+                                // parameter takes ownership, so keep the owning
+                                // copy.
+                                let param_is_borrow =
+                                    matches!(self.tcx.kind_of(expected), TyKind::Ref { .. });
+                                if param_is_borrow {
+                                    self.coerce_borrow_array_to_vec(local, elem, len, span)
+                                } else {
+                                    self.coerce_array_to_vec(local, elem, len, span)
+                                }
+                            } else {
+                                local
+                            }
                         }
                     } else {
                         local

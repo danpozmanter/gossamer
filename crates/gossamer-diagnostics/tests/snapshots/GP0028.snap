@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0028]: Two dots start a range, not a pipe placeholder. Use the underscore placeholder, or omit it when the piped value belongs in the final argument slot. - here
+--- framed ---
+error[GP0028]: Two dots start a range, not a pipe placeholder. Use the underscore placeholder, or omit it when the piped value belongs in the final argument slot.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0029]: Every match arm needs an arrow after the pattern and optional guard. - here
+--- framed ---
+error[GP0029]: Every match arm needs an arrow after the pattern and optional guard.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

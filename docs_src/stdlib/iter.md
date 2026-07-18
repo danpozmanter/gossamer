@@ -13,6 +13,8 @@ Edition 2026 keeps these canonical eager signatures. In edition 2027,
 `chain`, and `zip` form linear lazy `Iterator<T>` pipelines. Terminals consume
 that state once. Use `collect` to materialize it, or spell the matching
 `iter::eager_*` name to retain Vec behavior in either edition.
+See the [lazy iterator protocol](../design/lazy_iterators.md) for ownership,
+short-circuiting, overflow, and backend behavior.
 
 ## API details and source
 

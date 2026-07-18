@@ -12,11 +12,14 @@ genuinely means the same thing.
 
 ```gossamer
 let label = match shape {
-    Shape::Circle(r) => "round",
-    Shape::Rect { w, h } if w == h => "square",
-    Shape::Rect { .. } => "boxy",
+    Shape::Circle(r) => "round"
+    Shape::Rect { w, h } if w == h => "square"
+    Shape::Rect { .. } => "boxy"
 }
 ```
+
+Commas between arms are optional when the next arm begins on a new line.
+Same-line expression arms use a comma. Block-bodied arms need no comma.
 
 ## Patterns
 

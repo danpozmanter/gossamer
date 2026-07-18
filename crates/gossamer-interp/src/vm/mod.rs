@@ -1203,6 +1203,7 @@ impl Vm {
             Value::Array(_) | Value::IntArray(_) | Value::FloatVec(_) | Value::FloatArray(_) => {
                 Some(self.intern_qualified("Vec", method))
             }
+            Value::LazyIter(_) => Some(self.intern_qualified("Iterator", method)),
             _ => None,
         }
     }
@@ -1247,6 +1248,7 @@ pub(crate) fn type_token(v: &Value) -> u64 {
     const TAG_ARRAY: u64 = 4 << 56;
     const TAG_TUPLE: u64 = 5 << 56;
     const TAG_VARIANT: u64 = 6 << 56;
+    const TAG_LAZY_ITER: u64 = 7 << 56;
     match v {
         Value::Struct(inner) => {
             // `inner.name` is already a globally-interned `&'static str`
@@ -1263,6 +1265,7 @@ pub(crate) fn type_token(v: &Value) -> u64 {
             TAG_ARRAY
         }
         Value::Tuple(_) => TAG_TUPLE,
+        Value::LazyIter(_) => TAG_LAZY_ITER,
         Value::Variant(inner) => {
             // Globally-interned canonical pointer (see the `Struct` arm).
             TAG_VARIANT | (u64::from(inner.name.id()) & 0x00FF_FFFF_FFFF_FFFF)

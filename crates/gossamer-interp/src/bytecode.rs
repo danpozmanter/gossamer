@@ -393,9 +393,7 @@ pub enum Op {
         /// Register holding the repeat count (`Value::Int`).
         count: Reg,
     },
-    /// Materialises a standalone range expression (`a..b` / `a..=b`)
-    /// into an eager `Value::Array` of `Value::Int`. `start` / `end`
-    /// are value registers; an inclusive range includes `end`.
+    /// Builds a lazy standalone integer range.
     BuildRange {
         /// Destination value register.
         dst: Reg,
@@ -405,6 +403,10 @@ pub enum Op {
         end: Reg,
         /// `true` when the upper bound is inclusive (`a..=b`).
         inclusive: bool,
+        /// Whether the source omitted the lower bound.
+        start_open: bool,
+        /// Whether the source omitted the upper bound.
+        end_open: bool,
     },
     /// Typed numeric cast: `i64 as f64`. Reads from the `i64`
     /// register file and writes to the `f64` register file with

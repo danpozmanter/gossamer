@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0019]: Executable statements are allowed only in the entry file. Module bodies contain declarations; move the statement into a function. - here
+--- framed ---
+error[GP0019]: Executable statements are allowed only in the entry file. Module bodies contain declarations; move the statement into a function.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0030]: A match arm has an arrow but no result expression. Add the value or block that the arm should produce. - here
+--- framed ---
+error[GP0030]: A match arm has an arrow but no result expression. Add the value or block that the arm should produce.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

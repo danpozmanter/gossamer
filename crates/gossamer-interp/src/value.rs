@@ -2245,7 +2245,10 @@ impl fmt::Display for Value {
                 let elems: Vec<Value> = data.iter().copied().map(Value::Float).collect();
                 write_array(out, &elems)
             }
-            Self::LazyIter(_) => out.write_str("<iterator>"),
+            Self::LazyIter(id) => match crate::stdlib_builtins::iter::lazy_iter_repr(*id) {
+                Some(range) => out.write_str(&range),
+                None => out.write_str("<iterator>"),
+            },
             Self::Variant(inner) => write_variant(out, inner.name.as_str(), &inner.fields),
             Self::Struct(inner) => {
                 // Placeholder expressions evaluate to this sentinel in the VM;
@@ -2330,7 +2333,8 @@ fn repr_value(value: &Value) -> String {
         Value::FloatArray(_) => repr_value(&Value::Array(Arc::new(value.float_array_elems()))),
         Value::IntArray(data) => format!("{:?}", data.as_slice()),
         Value::FloatVec(data) => format!("{:?}", data.as_slice()),
-        Value::LazyIter(_) => "<iterator>".to_string(),
+        Value::LazyIter(id) => crate::stdlib_builtins::iter::lazy_iter_repr(*id)
+            .unwrap_or_else(|| "<iterator>".to_string()),
         Value::Variant(inner) => {
             let fields = inner.fields.iter().map(repr_value).collect::<Vec<_>>();
             if fields.is_empty() {

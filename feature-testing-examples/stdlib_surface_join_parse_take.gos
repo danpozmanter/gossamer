@@ -29,5 +29,5 @@ fn main() {
     let names = ["ada", "grace", "edsger", "barbara"]
     println!("{:?}", names.take(2))
     println!("{}", names.step_by(2).join(" & "))
-    println!("{:?}", (0..10 |> iter::filter(|k| k > 2)).take(4))
+    println!("{:?}", (0..10 |> iter::filter(|k| k > 2)).take(4) |> iter::collect)
 }

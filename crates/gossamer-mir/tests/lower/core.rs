@@ -146,6 +146,7 @@ fn main() {
     let zipped = iter::zip(iter::range(0, 2), iter::range(2, 4)) |> iter::collect
     let enumerated = iter::range(3, 5) |> iter::enumerate |> iter::collect
     let found = iter::range(0, 4) |> iter::find(|x| x == 2) |> option::unwrap_or(-1)
+    let folded = (2..=4).fold(1, |acc, x| acc * x)
     let borrowed = [1, 2, 3]
     let borrowed_out = borrowed |> iter::take(1) |> iter::collect
     let _ = collected
@@ -153,6 +154,7 @@ fn main() {
     let _ = zipped
     let _ = enumerated
     let _ = found
+    let _ = folded
     let _ = borrowed_out
 }
 ";
@@ -171,6 +173,7 @@ fn main() {
         "gos_rt_lazy_iter_collect_pair_i64",
         "gos_rt_lazy_iter_enumerate_i64",
         "gos_rt_lazy_iter_find_i64",
+        "gos_rt_lazy_iter_fold_i64",
         "gos_rt_lazy_iter_from_vec_i64",
     ] {
         assert!(

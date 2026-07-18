@@ -390,8 +390,10 @@ fn jit_compile_set<'a>(
         let (calls, _) = body_user_calls(body, &all_names, &def_to_name);
         for callee in calls {
             let ok = body_map.get(callee).is_some_and(|b| {
-                !(body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes)
-                    || body_has_cross_goroutine_ops(b))
+                body_kinds(b, tcx, enum_shapes, struct_shapes).is_some()
+                    && !body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes)
+                    && !body_has_cross_goroutine_ops(b)
+                    && !body_jit_unsupported(b, tcx)
             });
             if ok && included.insert(callee) {
                 worklist.push(callee);
@@ -2027,6 +2029,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_callback_invoke"     => rt::gos_rt_callback_invoke,
         "gos_rt_iter_map_i64"        => rt::gos_rt_iter_map_i64,
         "gos_rt_lazy_iter_range_i64" => rt::gos_rt_lazy_iter_range_i64,
+        "gos_rt_lazy_iter_range_from_i64" => rt::gos_rt_lazy_iter_range_from_i64,
         "gos_rt_lazy_iter_range_inclusive_i64" => rt::gos_rt_lazy_iter_range_inclusive_i64,
         "gos_rt_lazy_iter_from_vec_i64" => rt::gos_rt_lazy_iter_from_vec_i64,
         "gos_rt_lazy_iter_repeat_i64" => rt::gos_rt_lazy_iter_repeat_i64,
@@ -2504,9 +2507,11 @@ fn register_binding_symbols(builder: &mut JITBuilder) -> Vec<&'static str> {
 
 #[cfg(test)]
 mod promotion_report_tests {
-    use super::jit_promotion_report;
+    use super::{jit_compile_body_names, jit_promotion_report};
     use gossamer_lex::{SourceMap, Span};
-    use gossamer_mir::{BasicBlock, BlockId, Body, LocalDecl, Terminator};
+    use gossamer_mir::{
+        BasicBlock, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Terminator,
+    };
     use gossamer_types::{IntTy, TyCtxt, TyKind};
     use std::collections::HashMap;
 
@@ -2564,5 +2569,32 @@ mod promotion_report_tests {
         assert!(first[0].reasons.contains(&"unsupported-boundary"));
         assert_eq!(first[1].name, "z_hot");
         assert!(first[1].admitted, "report: {first:?}");
+    }
+
+    #[test]
+    fn caller_of_unsupported_boundary_is_not_promoted() {
+        let mut tcx = TyCtxt::new();
+        let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+        let map_ty = tcx.intern(TyKind::HashMap {
+            key: i64_ty,
+            value: i64_ty,
+        });
+        let mut caller = body("caller", i64_ty, true);
+        let span = caller.span;
+        caller.blocks[0].terminator = Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("unsupported".to_string())),
+            args: Vec::new(),
+            destination: Place::local(Local(0)),
+            target: Some(BlockId(1)),
+        };
+        caller.blocks.push(BasicBlock {
+            id: BlockId(1),
+            stmts: Vec::new(),
+            terminator: Terminator::Goto { target: BlockId(1) },
+            span,
+        });
+        let bodies = vec![caller, body("unsupported", map_ty, false)];
+        let admitted = jit_compile_body_names(&bodies, &tcx, &HashMap::new(), &HashMap::new());
+        assert!(admitted.is_empty(), "admitted bodies: {admitted:?}");
     }
 }

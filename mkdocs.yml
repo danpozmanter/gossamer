@@ -96,6 +96,7 @@ nav:
       - From Kotlin: migration/kotlin.md
   - Design notes:
       - Diagnostics style: design/diagnostics.md
+      - Lazy iterators: design/lazy_iterators.md
       - Runtime internals: design/runtime.md
       - Memory model: design/memory_model.md
       - Goroutine stack model: design/goroutine_stacks.md

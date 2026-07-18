@@ -469,14 +469,8 @@ impl<'a> Builder<'a> {
                 end,
                 inclusive,
             } => {
-                // Standalone Range value: an i64 sequence matching the
-                // VM's eager materialisation, produced through the same
-                // `gos_rt_iter_range` the `iter::range` intrinsic uses,
-                // so `0..n |> iter::map(f)` receives a real GosVec.
-                // Index and for-loop positions pick range bounds out
-                // syntactically and never reach this value lowering.
-                // Open-ended bounds default to 0 for `lo` and
-                // `i64::MAX` for `hi`.
+                // Standalone ranges are lazy iterator state on every tier.
+                // An open upper bound uses Rust RangeFrom overflow semantics.
                 let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let lo_local = if let Some(s) = start {
                     self.lower_expr(s)?
@@ -484,7 +478,7 @@ impl<'a> Builder<'a> {
                     let l = self.fresh(i64_ty);
                     self.emit_assign(
                         Place::local(l),
-                        Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(i64::MIN)))),
                         expr.span,
                     );
                     l
@@ -500,39 +494,33 @@ impl<'a> Builder<'a> {
                     );
                     l
                 };
-                // Bump `hi` for inclusive ranges so the half-
-                // open `[lo, hi)` interpretation downstream
-                // doesn't drop the last element.
-                let hi_local = if *inclusive {
-                    let one = self.fresh(i64_ty);
-                    self.emit_assign(
-                        Place::local(one),
-                        Rvalue::Use(Operand::Const(ConstValue::Int(1))),
-                        expr.span,
-                    );
-                    let bumped = self.fresh(i64_ty);
-                    self.emit_assign(
-                        Place::local(bumped),
-                        Rvalue::BinaryOp {
-                            op: BinOp::Add,
-                            lhs: Operand::Copy(Place::local(hi_local)),
-                            rhs: Operand::Copy(Place::local(one)),
-                        },
-                        expr.span,
-                    );
-                    bumped
-                } else {
-                    hi_local
-                };
-                let vec_i64 = self.tcx.intern(gossamer_types::TyKind::Vec(i64_ty));
-                let dest = self.fresh(vec_i64);
+                let dest = self.fresh(expr.ty);
                 let next = self.new_block(expr.span);
+                let (callee, args) = if end.is_none() {
+                    (
+                        "gos_rt_lazy_iter_range_from_i64",
+                        vec![Operand::Copy(Place::local(lo_local))],
+                    )
+                } else if *inclusive {
+                    (
+                        "gos_rt_lazy_iter_range_inclusive_i64",
+                        vec![
+                            Operand::Copy(Place::local(lo_local)),
+                            Operand::Copy(Place::local(hi_local)),
+                        ],
+                    )
+                } else {
+                    (
+                        "gos_rt_lazy_iter_range_i64",
+                        vec![
+                            Operand::Copy(Place::local(lo_local)),
+                            Operand::Copy(Place::local(hi_local)),
+                        ],
+                    )
+                };
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_range".to_string())),
-                    args: vec![
-                        Operand::Copy(Place::local(lo_local)),
-                        Operand::Copy(Place::local(hi_local)),
-                    ],
+                    callee: Operand::Const(ConstValue::Str(callee.to_string())),
+                    args,
                     destination: Place::local(dest),
                     target: Some(next),
                 });

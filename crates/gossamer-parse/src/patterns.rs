@@ -118,13 +118,7 @@ impl Parser<'_> {
             };
         }
         if inclusive {
-            self.record(
-                ParseError::Unexpected {
-                    expected: "upper bound after `..=`".to_string(),
-                    found: self.peek_text(),
-                },
-                self.peek_span(),
-            );
+            self.record(ParseError::InclusiveRangeMissingEnd, self.last_span());
             return PatternKind::Error;
         }
         PatternKind::Rest
@@ -294,13 +288,7 @@ impl Parser<'_> {
             // inclusive marker without an upper bound and is invalid.
             let hi = self.try_parse_literal_pattern();
             if hi.is_none() && kind == RangeKind::Inclusive {
-                self.record(
-                    ParseError::Unexpected {
-                        expected: "upper bound after `..=`".to_string(),
-                        found: self.peek_text(),
-                    },
-                    self.peek_span(),
-                );
+                self.record(ParseError::InclusiveRangeMissingEnd, self.last_span());
                 return PatternKind::Error;
             }
             return PatternKind::Range {

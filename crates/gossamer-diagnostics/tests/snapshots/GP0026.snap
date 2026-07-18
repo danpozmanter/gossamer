@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0026]: The inclusive range operator always needs an upper bound. Supply the bound, or use an exclusive open range. - here
+--- framed ---
+error[GP0026]: The inclusive range operator always needs an upper bound. Supply the bound, or use an exclusive open range.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

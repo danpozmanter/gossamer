@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0027]: A pipe placeholder must occur exactly once as a direct call argument. Move it into the argument list and remove any duplicate placeholder. - here
+--- framed ---
+error[GP0027]: A pipe placeholder must occur exactly once as a direct call argument. Move it into the argument list and remove any duplicate placeholder.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

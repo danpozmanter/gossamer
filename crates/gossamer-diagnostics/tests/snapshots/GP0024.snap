@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0024]: Format macros require a literal template so placeholders can be checked at compile time. Replace the computed template with a string literal. - here
+--- framed ---
+error[GP0024]: Format macros require a literal template so placeholders can be checked at compile time. Replace the computed template with a string literal.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

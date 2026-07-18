@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0025]: A value piped into a format macro needs an explicit positional placeholder. Add a positional placeholder and place the pipe placeholder in the corresponding argument position. - here
+--- framed ---
+error[GP0025]: A value piped into a format macro needs an explicit positional placeholder. Add a positional placeholder and place the pipe placeholder in the corresponding argument position.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

@@ -1,17 +1,17 @@
 // A value-position range is an i64 sequence on every tier: it pipes
-// into the iter combinators, binds as a Vec, and prints like one.
+// into the iter combinators and materializes only at explicit collect points.
 use std::iter
 
 fn main() {
-    let squares = 0..4 |> iter::map(|i| i * i)
+    let squares = 0..4 |> iter::map(|i| i * i) |> iter::collect
     println!("{:?}", squares)
     println!("{}", 0..5 |> iter::sum)
-    let evens = 2..11 |> iter::filter(|k| k % 2 == 0)
+    let evens = 2..11 |> iter::filter(|k| k % 2 == 0) |> iter::collect
     println!("{:?} {}", evens, evens.last().unwrap())
-    let r = 1..=3
+    let r = 1..=3 |> iter::collect
     println!("{:?} {}", r, r.len())
     let n = 6
     let sieve = [true; n]
-    let live = 2..n |> iter::filter(|k| sieve[k] && k != 4)
+    let live = 2..n |> iter::filter(|k| sieve[k] && k != 4) |> iter::collect
     println!("{:?}", live)
 }

@@ -2310,22 +2310,21 @@ impl<'a> TypeChecker<'a> {
             }
             ExprKind::Array(arr) => self.check_array(arr, expected),
             ExprKind::Range { start, end, .. } => {
-                // A value-position range is an integer sequence on every
-                // tier (the VM materialises it eagerly; MIR routes it
-                // through the range materialiser), so it types as
-                // `Vec<elem>` with both bounds unified into `elem`. Index
-                // and for-loop positions consume ranges syntactically and
-                // never read this node type.
-                let elem = self.infer.fresh_int_var(self.tcx);
-                if let Some(start) = start {
-                    let t = self.check_expr(start);
-                    self.unify(elem, t, start.span);
+                // Rust-style ranges are lazy values. Index and for-loop
+                // positions still consume their bounds syntactically.
+                let start_ty = start.as_ref().map(|bound| self.check_expr(bound));
+                let end_ty = end.as_ref().map(|bound| self.check_expr(bound));
+                let elem = start_ty
+                    .filter(|ty| self.is_integer(*ty))
+                    .or_else(|| end_ty.filter(|ty| self.is_integer(*ty)))
+                    .unwrap_or_else(|| self.tcx.int_ty(IntTy::I64));
+                if let (Some(bound), Some(ty)) = (start, start_ty) {
+                    self.unify(elem, ty, bound.span);
                 }
-                if let Some(end) = end {
-                    let t = self.check_expr(end);
-                    self.unify(elem, t, end.span);
+                if let (Some(bound), Some(ty)) = (end, end_ty) {
+                    self.unify(elem, ty, bound.span);
                 }
-                self.tcx.intern(TyKind::Vec(elem))
+                self.tcx.iterator_ty(elem)
             }
             ExprKind::Try(inner) => {
                 let inner_ty = self.check_expr(inner);
@@ -4390,11 +4389,16 @@ impl<'a> TypeChecker<'a> {
         resolved: Ty,
         span: Span,
     ) -> Option<Ty> {
-        if !matches!(
-            self.tcx.kind(resolved),
-            Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. })
-        ) {
-            return None;
+        match self.tcx.kind(resolved) {
+            Some(TyKind::Iterator(_)) => {
+                let arity = Self::std_combinator_arity("iter", method)?;
+                if arity != arg_tys.len() + 1 {
+                    return None;
+                }
+                return self.std_combinator_ty("iter", method, arg_tys, resolved, span);
+            }
+            Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. }) => {}
+            _ => return None,
         }
         match (method, arg_tys.len()) {
             ("sum", 0) => self.sequence_elem_ty(resolved, span),
@@ -5260,19 +5264,20 @@ impl<'a> TypeChecker<'a> {
                         | "map"
                         | "filter"
                 );
-                let lazy_result = self.edition == Edition::E2027 && !eager_alias && all_tier_lazy;
+                let edition_lazy_result =
+                    self.edition == Edition::E2027 && !eager_alias && all_tier_lazy;
                 let i64_ty = self.tcx.int_ty(IntTy::I64);
                 if matches!(name, "range" | "range_inclusive") {
                     self.unify(i64_ty, lead_tys[0], span);
                     self.unify(i64_ty, data_ty, span);
-                    return Some(self.iter_adapter_result_ty(i64_ty, lazy_result));
+                    return Some(self.iter_adapter_result_ty(i64_ty, edition_lazy_result));
                 }
                 if name == "once" {
-                    return Some(self.iter_adapter_result_ty(data_ty, lazy_result));
+                    return Some(self.iter_adapter_result_ty(data_ty, edition_lazy_result));
                 }
                 if name == "repeat" {
                     self.unify(i64_ty, data_ty, span);
-                    return Some(self.iter_adapter_result_ty(lead_tys[0], lazy_result));
+                    return Some(self.iter_adapter_result_ty(lead_tys[0], edition_lazy_result));
                 }
                 let all_tier_iterator_input = matches!(
                     name,
@@ -5298,6 +5303,7 @@ impl<'a> TypeChecker<'a> {
                     self.tcx.kind_of(self.infer.resolve(self.tcx, data_ty)),
                     TyKind::Iterator(_)
                 );
+                let lazy_result = edition_lazy_result || data_is_iterator;
                 let iterator_terminal = matches!(
                     name,
                     "fold" | "any" | "all" | "find" | "count" | "sum" | "collect"
@@ -5316,11 +5322,7 @@ impl<'a> TypeChecker<'a> {
                     );
                     return Some(self.tcx.error_ty());
                 }
-                if self.edition == Edition::E2027
-                    && !eager_alias
-                    && data_is_iterator
-                    && !all_tier_iterator_input
-                {
+                if data_is_iterator && (eager_alias || !all_tier_iterator_input) {
                     self.emit(
                         TypeError::TypeMismatch {
                             expected: "Vec<T>".to_string(),

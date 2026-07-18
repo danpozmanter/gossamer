@@ -327,6 +327,34 @@ where
     }))
 }
 
+struct GosRangeFromI64 {
+    current: i64,
+}
+
+fn advance_range_from_i64(current: i64) -> Option<(i64, i64)> {
+    if cfg!(debug_assertions) && current == i64::MAX {
+        None
+    } else {
+        Some((current, current.wrapping_add(1)))
+    }
+}
+
+impl Iterator for GosRangeFromI64 {
+    type Item = i64;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let Some((out, next)) = advance_range_from_i64(self.current) else {
+            const MESSAGE: &[u8] = b"attempt to add with overflow in open integer range\0";
+            // SAFETY: MESSAGE is static and nul-terminated. Rust's debug
+            // RangeFrom overflows before yielding the maximum value.
+            unsafe { crate::c_abi::panic::gos_rt_panic(MESSAGE.as_ptr().cast()) };
+            unreachable!("gos_rt_panic does not return on the main thread");
+        };
+        self.current = next;
+        Some(out)
+    }
+}
+
 fn lazy_pair_i64<I>(iter: I) -> *mut GosLazyIterPairI64
 where
     I: Iterator<Item = (i64, i64)> + 'static,
@@ -405,6 +433,15 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_next_i64(iter: *mut GosLazyIterI64) ->
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_lazy_iter_range_i64(start: i64, end: i64) -> *mut GosLazyIterI64 {
     ffi_entry!(std::ptr::null_mut(), { lazy_i64(start..end) })
+}
+
+/// Lazy Rust-compatible `start..` i64 range. Debug builds panic before
+/// yielding `i64::MAX`; release builds yield it, wrap, and continue.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_range_from_i64(start: i64) -> *mut GosLazyIterI64 {
+    ffi_entry!(std::ptr::null_mut(), {
+        lazy_i64(GosRangeFromI64 { current: start })
+    })
 }
 
 /// Lazy `[start, end]` i64 range.
@@ -1529,6 +1566,19 @@ mod lazy_iterator_tests {
             assert_eq!(gos_rt_result_disc(gos_rt_lazy_iter_next_i64(iter)), 1);
             assert_eq!(gos_rt_result_disc(gos_rt_lazy_iter_next_i64(iter)), 1);
             gos_rt_lazy_iter_drop_i64(iter);
+        }
+    }
+
+    #[test]
+    fn open_range_boundary_matches_rust_overflow_profile() {
+        assert_eq!(
+            advance_range_from_i64(i64::MAX - 1),
+            Some((i64::MAX - 1, i64::MAX))
+        );
+        if cfg!(debug_assertions) {
+            assert_eq!(advance_range_from_i64(i64::MAX), None);
+        } else {
+            assert_eq!(advance_range_from_i64(i64::MAX), Some((i64::MAX, i64::MIN)));
         }
     }
 

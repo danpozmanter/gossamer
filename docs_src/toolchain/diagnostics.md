@@ -28,6 +28,21 @@ version. This page is auto-generated from the catalogue in
 | [`GP0014`](#gp0014) | Parser | malformed `use` declaration |
 | [`GP0015`](#gp0015) | Parser | unexpected construct |
 | [`GP0016`](#gp0016) | Parser | reserved `extern` keyword |
+| [`GP0017`](#gp0017) | Parser | parser recursion limit |
+| [`GP0018`](#gp0018) | Lexer | malformed token |
+| [`GP0019`](#gp0019) | Parser | statement outside entry file |
+| [`GP0020`](#gp0020) | Parser | mixed entry forms |
+| [`GP0021`](#gp0021) | Parser | malformed format placeholder |
+| [`GP0022`](#gp0022) | Parser | unserializable derived field |
+| [`GP0023`](#gp0023) | Parser | format argument count mismatch |
+| [`GP0024`](#gp0024) | Parser | non-literal format template |
+| [`GP0025`](#gp0025) | Parser | piped format value has no placeholder |
+| [`GP0026`](#gp0026) | Parser | inclusive range missing upper bound |
+| [`GP0027`](#gp0027) | Parser | invalid pipe placeholder |
+| [`GP0028`](#gp0028) | Parser | range used as pipe placeholder |
+| [`GP0029`](#gp0029) | Parser | match arm missing arrow |
+| [`GP0030`](#gp0030) | Parser | match arm missing body |
+| [`GP0031`](#gp0031) | Parser | match arm missing separator |
 | [`GR0001`](#gr0001) | Resolve | unresolved name |
 | [`GR0002`](#gr0002) | Resolve | wrong namespace |
 | [`GR0003`](#gr0003) | Resolve | duplicate item |
@@ -134,6 +149,96 @@ Two consecutive tokens formed something the parser does not recognise.
 **Parser** - reserved `extern` keyword
 
 The `extern` keyword is reserved but has no source-level item form. Gossamer's FFI surface is the `[rust-bindings]` section of `project.toml` plus the `gossamer-binding` crate.
+
+## `GP0017` <a id="gp0017"></a>
+
+**Parser** - parser recursion limit
+
+An expression exceeded the parser's nesting limit. Split it into smaller helpers.
+
+## `GP0018` <a id="gp0018"></a>
+
+**Lexer** - malformed token
+
+The lexer rejected a malformed string, comment, escape, or token spelling.
+
+## `GP0019` <a id="gp0019"></a>
+
+**Parser** - statement outside entry file
+
+Executable statements belong in the entry file or inside a function, not in a module body.
+
+## `GP0020` <a id="gp0020"></a>
+
+**Parser** - mixed entry forms
+
+An entry file cannot combine bare top-level statements with an explicit `fn main`.
+
+## `GP0021` <a id="gp0021"></a>
+
+**Parser** - malformed format placeholder
+
+A format placeholder must be a binding name, format specification, or positional placeholder.
+
+## `GP0022` <a id="gp0022"></a>
+
+**Parser** - unserializable derived field
+
+Automatic serialization cannot be generated for a field with an unsupported type.
+
+## `GP0023` <a id="gp0023"></a>
+
+**Parser** - format argument count mismatch
+
+The number of positional arguments must equal the number of positional placeholders.
+
+## `GP0024` <a id="gp0024"></a>
+
+**Parser** - non-literal format template
+
+Format macros require a literal template so placeholders can be checked at compile time.
+
+## `GP0025` <a id="gp0025"></a>
+
+**Parser** - piped format value has no placeholder
+
+A value piped into a format macro needs an explicit positional placeholder.
+
+## `GP0026` <a id="gp0026"></a>
+
+**Parser** - inclusive range missing upper bound
+
+The inclusive range operator `..=` requires an upper bound. Use `..` for an open upper end.
+
+## `GP0027` <a id="gp0027"></a>
+
+**Parser** - invalid pipe placeholder
+
+A pipe placeholder must occur exactly once as a direct call argument.
+
+## `GP0028` <a id="gp0028"></a>
+
+**Parser** - range used as pipe placeholder
+
+The token `..` starts a range. Use `_` as the pipe placeholder.
+
+## `GP0029` <a id="gp0029"></a>
+
+**Parser** - match arm missing arrow
+
+Add `=>` after the match arm pattern and optional guard.
+
+## `GP0030` <a id="gp0030"></a>
+
+**Parser** - match arm missing body
+
+Add the expression or block produced by the match arm.
+
+## `GP0031` <a id="gp0031"></a>
+
+**Parser** - match arm missing separator
+
+Separate same-line expression arms with a comma, or start the next arm on a new line.
 
 ## `GR0001` <a id="gr0001"></a>
 

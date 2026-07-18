@@ -3134,36 +3134,28 @@ impl Vm {
                     start,
                     end,
                     inclusive,
+                    start_open,
+                    end_open,
                 } => {
-                    // A non-`Int` bound degrades to `0` / `start` so a
-                    // partially-typed program keeps running rather than
-                    // trapping.
                     let start_val = match &registers[start as usize] {
                         Value::Int(n) => *n,
-                        _ => 0,
+                        other => {
+                            return Err(RuntimeError::Type(format!(
+                                "range lower bound must be i64, found `{other}`"
+                            )));
+                        }
                     };
                     let end_val = match &registers[end as usize] {
                         Value::Int(n) => *n,
-                        _ => start_val,
-                    };
-                    // A materialised range is integer by construction, so
-                    // it lands in flat `Value::IntArray` storage (8 bytes
-                    // per element) rather than boxed `Value::Array` (16).
-                    // Every consumer (indexing, `len`, iteration, the
-                    // read-only collection helpers) handles `IntArray`
-                    // identically to a boxed array of `Value::Int`.
-                    let elems: Vec<i64> = if inclusive {
-                        if end_val >= start_val {
-                            (start_val..=end_val).collect()
-                        } else {
-                            Vec::new()
+                        other => {
+                            return Err(RuntimeError::Type(format!(
+                                "range upper bound must be i64, found `{other}`"
+                            )));
                         }
-                    } else if end_val > start_val {
-                        (start_val..end_val).collect()
-                    } else {
-                        Vec::new()
                     };
-                    registers[dst as usize] = Value::IntArray(Arc::new(elems));
+                    registers[dst as usize] = crate::stdlib_builtins::iter::new_range_iter(
+                        start_val, end_val, inclusive, start_open, end_open,
+                    );
                 }
                 Op::VariantIs {
                     dst,

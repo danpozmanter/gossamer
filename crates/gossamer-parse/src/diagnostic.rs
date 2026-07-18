@@ -47,6 +47,21 @@ pub enum ParseError {
         /// Operator spelling.
         op: String,
     },
+    /// An inclusive range operator appeared without its required upper bound.
+    #[error("inclusive range operator `..=` requires an upper bound")]
+    InclusiveRangeMissingEnd,
+    /// A match arm pattern was not followed by its arrow.
+    #[error("expected `=>` after match arm pattern, found {found}")]
+    MatchArmMissingArrow {
+        /// Token encountered where `=>` was required.
+        found: String,
+    },
+    /// A match arm arrow was not followed by a result expression.
+    #[error("expected an expression after `=>` in match arm")]
+    MatchArmMissingBody,
+    /// Adjacent expression-bodied match arms lacked a clear boundary.
+    #[error("match arms on the same line must be separated by a comma")]
+    MatchArmMissingSeparator,
     /// A braced struct literal appeared directly in the scrutinee of an
     /// `if`, `while`, or `match`, where it is ambiguous with the block start.
     #[error("struct literal must be parenthesised in `if`/`while`/`match` scrutinee")]
@@ -252,20 +267,6 @@ impl ParseError {
                 "right-hand side of `|>` must be a callable".to_string(),
                 None,
             ),
-            ParseError::PipePlaceholderInvalid => (
-                "GP0023",
-                "pipe placeholder `_` must occur exactly once in a direct call argument"
-                    .to_string(),
-                Some("place one `_` directly in the call argument list".to_string()),
-            ),
-            ParseError::PipeDotDotPlaceholder => (
-                "GP0024",
-                "`..` is a range expression, not a pipe placeholder".to_string(),
-                Some(
-                    "use `_`, or omit the placeholder for the default trailing position"
-                        .to_string(),
-                ),
-            ),
             ParseError::AssignmentNotAllowed => (
                 "GP0008",
                 "assignment is only valid at statement position".to_string(),
@@ -303,6 +304,50 @@ impl ParseError {
                 Some("split the expression into smaller helpers".to_string()),
             ),
             ParseError::Lex { message } => ("GP0018", message.clone(), None),
+            other => other.code_title_help_syntax(),
+        }
+    }
+
+    /// Code/title/help for range, match-arm, and pipe syntax errors.
+    fn code_title_help_syntax(&self) -> (&'static str, String, Option<String>) {
+        match self {
+            ParseError::InclusiveRangeMissingEnd => (
+                "GP0026",
+                "inclusive range operator `..=` requires an upper bound".to_string(),
+                Some(
+                    "provide an upper bound, or use `..` for a range open at the upper end"
+                        .to_string(),
+                ),
+            ),
+            ParseError::PipePlaceholderInvalid => (
+                "GP0027",
+                "pipe placeholder `_` must occur exactly once in a direct call argument"
+                    .to_string(),
+                Some("place one `_` directly in the call argument list".to_string()),
+            ),
+            ParseError::PipeDotDotPlaceholder => (
+                "GP0028",
+                "`..` is a range expression, not a pipe placeholder".to_string(),
+                Some(
+                    "use `_`, or omit the placeholder for the default trailing position"
+                        .to_string(),
+                ),
+            ),
+            ParseError::MatchArmMissingArrow { found } => (
+                "GP0029",
+                format!("expected `=>` after match arm pattern, found {found}"),
+                Some("write `pattern => expression` for each match arm".to_string()),
+            ),
+            ParseError::MatchArmMissingBody => (
+                "GP0030",
+                "expected an expression after `=>` in match arm".to_string(),
+                Some("provide the value or block produced by this match arm".to_string()),
+            ),
+            ParseError::MatchArmMissingSeparator => (
+                "GP0031",
+                "match arms on the same line must be separated by a comma".to_string(),
+                Some("add a comma, or put the next match arm on a new line".to_string()),
+            ),
             other => other.code_title_help_entry(),
         }
     }

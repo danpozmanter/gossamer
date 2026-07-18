@@ -233,6 +233,9 @@ impl Parser<'_> {
         } else {
             None
         };
+        if kind == RangeKind::Inclusive && end.is_none() {
+            self.record(ParseError::InclusiveRangeMissingEnd, self.last_span());
+        }
         let end_span = end.as_ref().map_or(self.last_span(), |expr| expr.span);
         let span = self.join(lhs.span, end_span);
         let id = self.alloc_id();
@@ -443,6 +446,9 @@ impl Parser<'_> {
         } else {
             None
         };
+        if kind == RangeKind::Inclusive && end.is_none() {
+            self.record(ParseError::InclusiveRangeMissingEnd, self.last_span());
+        }
         let end_span = end.as_ref().map_or(self.last_span(), |expr| expr.span);
         let id = self.alloc_id();
         Expr::new(
@@ -1120,17 +1126,35 @@ impl Parser<'_> {
             } else {
                 None
             };
-            self.expect_punct(Punct::FatArrow, "after match pattern");
-            let body = self.parse_expr();
+            if !self.eat_punct(Punct::FatArrow) {
+                self.record(
+                    ParseError::MatchArmMissingArrow {
+                        found: self.peek_text(),
+                    },
+                    self.peek_span(),
+                );
+            }
+            let body = if self.at_punct(Punct::Comma) || self.at_punct(Punct::RBrace) {
+                self.record(ParseError::MatchArmMissingBody, self.peek_span());
+                Expr::new(self.alloc_id(), self.peek_span(), ExprKind::Error)
+            } else {
+                self.parse_expr()
+            };
             let body_is_block = matches!(body.kind, ExprKind::Block(_));
             arms.push(gossamer_ast::MatchArm {
                 pattern,
                 guard,
                 body,
             });
+            // F#-style line boundaries can separate expression arms. Rust's
+            // block-arm rule also applies, and commas remain accepted.
             let ate_comma = self.eat_punct(Punct::Comma);
-            if !ate_comma && !body_is_block {
-                break;
+            if !ate_comma
+                && !body_is_block
+                && !self.at_punct(Punct::RBrace)
+                && !self.newline_before_peek()
+            {
+                self.record(ParseError::MatchArmMissingSeparator, self.peek_span());
             }
         }
         self.expect_punct(Punct::RBrace, "to close `match` body");

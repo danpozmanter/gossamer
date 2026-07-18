@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0022]: Automatic serialization cannot be generated because a named field has an unsupported type. Change that field to a serializable type or provide a supported representation. - here
+--- framed ---
+error[GP0022]: Automatic serialization cannot be generated because a named field has an unsupported type. Change that field to a serializable type or provide a supported representation.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

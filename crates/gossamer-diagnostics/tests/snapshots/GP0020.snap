@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0020]: An entry file cannot contain both bare top-level statements and an explicit fn main. Move the statements into main, or use the implicit entry form. - here
+--- framed ---
+error[GP0020]: An entry file cannot contain both bare top-level statements and an explicit fn main. Move the statements into main, or use the implicit entry form.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

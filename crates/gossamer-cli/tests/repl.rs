@@ -288,14 +288,14 @@ fn repl_named_struct_constructor_is_consistent_and_legacy_declarations_fail() {
 }
 
 #[test]
-fn repl_open_ranges_take_a_bounded_prefix() {
-    let out = run_repl("(10..).take(5)\n(10..=).take(5)\n(..10).take(5)\n(..=10).take(5)\n");
+fn repl_open_ranges_are_lazy_and_printable() {
+    let out = run_repl("10..\n..10\n..=10\n(10..).take(5) |> iter::collect()\n10..=\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
-        "Out[1]: [10, 11, 12, 13, 14]",
-        "Out[2]: [10, 11, 12, 13, 14]",
-        "Out[3]: [0, 1, 2, 3, 4]",
-        "Out[4]: [0, 1, 2, 3, 4]",
+        "Out[1]: 10..",
+        "Out[2]: ..10",
+        "Out[3]: ..=10",
+        "Out[4]: [10, 11, 12, 13, 14]",
     ] {
         assert!(
             out.stdout.contains(expected),
@@ -303,6 +303,12 @@ fn repl_open_ranges_take_a_bounded_prefix() {
             out.stdout
         );
     }
+    assert!(
+        out.stderr
+            .contains("inclusive range operator `..=` requires an upper bound"),
+        "missing precise inclusive-range diagnostic; stderr: {}",
+        out.stderr
+    );
 }
 
 #[test]

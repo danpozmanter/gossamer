@@ -1,7 +1,4 @@
-//! VM-native standalone range value + generic array literal tests
-//! (destroy-tree-walker Phase 7). A `a..b` / `a..=b` used as a value
-//! materialises the eager `Value::Array` of `Value::Int` the walker's
-//! `eval_range` produced; generic array literals build natively.
+//! VM-native standalone range value and generic array literal tests.
 
 use std::cell::RefCell;
 
@@ -21,6 +18,10 @@ fn capture_writer(text: &str) {
 }
 
 fn run_main(source: &str) -> String {
+    try_run_main(source).expect("main failed")
+}
+
+fn try_run_main(source: &str) -> Result<String, String> {
     let mut map = SourceMap::new();
     let file = map.add_file("range_value.gos", source.to_string());
     let (sf, parse_diags) = parse_source_file(source, file);
@@ -35,8 +36,8 @@ fn run_main(source: &str) -> String {
     let prev = set_stdout_writer(capture_writer);
     let result = vm.call("main", Vec::new());
     set_stdout_writer(prev);
-    result.expect("main failed");
-    CAPTURED.with(|cell| cell.borrow().clone())
+    result.map_err(|error| error.to_string())?;
+    Ok(CAPTURED.with(|cell| cell.borrow().clone()))
 }
 
 #[test]
@@ -47,7 +48,7 @@ fn main() {
     println!("{:?}", r)
 }
 "#;
-    assert_eq!(run_main(src), "[0, 1, 2]\n");
+    assert_eq!(run_main(src), "0..3\n");
 }
 
 #[test]
@@ -58,7 +59,47 @@ fn main() {
     println!("{:?}", r)
 }
 "#;
-    assert_eq!(run_main(src), "[1, 2, 3, 4]\n");
+    assert_eq!(run_main(src), "1..=4\n");
+}
+
+#[test]
+fn open_ranges_preserve_their_source_shape_without_realising() {
+    let src = r#"
+fn main() {
+    println!("{} {} {}", ..10, 10.., ..)
+}
+"#;
+    assert_eq!(run_main(src), "..10 10.. ..\n");
+}
+
+#[test]
+fn open_range_can_be_bounded_before_collection() {
+    let src = r#"
+fn main() {
+    let first = 10.. |> iter::take(3) |> iter::collect()
+    println!("{:?}", first)
+}
+"#;
+    assert_eq!(run_main(src), "[10, 11, 12]\n");
+}
+
+#[test]
+fn open_range_matches_rust_overflow_profile() {
+    let src = r#"
+fn main() {
+    let edge = 9223372036854775805.. |> iter::take(4) |> iter::collect()
+    println!("{:?}", edge)
+}
+"#;
+    if cfg!(debug_assertions) {
+        let error = try_run_main(src).expect_err("debug open range must overflow");
+        assert!(error.contains("attempt to add with overflow"), "{error}");
+    } else {
+        assert_eq!(
+            try_run_main(src).expect("release open range wraps"),
+            "[9223372036854775805, 9223372036854775806, 9223372036854775807, -9223372036854775808]\n"
+        );
+    }
 }
 
 #[test]

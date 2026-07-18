@@ -3761,6 +3761,8 @@ impl<'a> Builder<'a> {
         let joined: Option<&str> = match (method.name.as_str(), args.len()) {
             ("map", 1) => Some("iter::map"),
             ("filter", 1) => Some("iter::filter"),
+            ("take", 1) => Some("iter::take"),
+            ("skip", 1) => Some("iter::skip"),
             ("for_each", 1) => Some("iter::for_each"),
             ("any", 1) => Some("iter::any"),
             ("all", 1) => Some("iter::all"),
@@ -3770,6 +3772,8 @@ impl<'a> Builder<'a> {
             ("min_by_key", 1) => Some("iter::min_by_key"),
             ("fold", 2) => Some("iter::fold"),
             ("sum", 0) => Some("iter::sum"),
+            ("product", 0) => Some("iter::product"),
+            ("collect", 0) => Some("iter::collect"),
             ("min", 0) => Some("iter::min"),
             ("max", 0) => Some("iter::max"),
             ("count", 0) => Some("iter::count"),
@@ -3791,8 +3795,15 @@ impl<'a> Builder<'a> {
         }
         if !matches!(
             recv_kind,
-            TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. }
+            TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } | TyKind::Iterator(_)
         ) {
+            return MethodLowering::Pass;
+        }
+        if matches!(
+            method.name.as_str(),
+            "take" | "skip" | "collect" | "product"
+        ) && !matches!(recv_kind, TyKind::Iterator(_))
+        {
             return MethodLowering::Pass;
         }
         let mut reordered: Vec<HirExpr> = args.to_vec();
@@ -3803,7 +3814,7 @@ impl<'a> Builder<'a> {
         // not the count's i64.
         if is_pred_count {
             let elem = match recv_kind {
-                TyKind::Vec(e) | TyKind::Slice(e) => e,
+                TyKind::Vec(e) | TyKind::Slice(e) | TyKind::Iterator(e) => e,
                 TyKind::Array { elem, .. } => elem,
                 _ => return MethodLowering::Pass,
             };

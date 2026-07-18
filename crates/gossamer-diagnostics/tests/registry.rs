@@ -11,8 +11,9 @@ use gossamer_diagnostics::{REGISTRY, codes, explain};
 const EMITTED_CODES: &[&str] = &[
     // Parser (gossamer-parse/src/diagnostic.rs).
     "GP0001", "GP0002", "GP0003", "GP0004", "GP0005", "GP0006", "GP0007", "GP0008", "GP0009",
-    "GP0010", "GP0011", "GP0012", "GP0013", "GP0014", "GP0015", "GP0016", "GP0017",
-    // Resolver (gossamer-resolve/src/diagnostic.rs).
+    "GP0010", "GP0011", "GP0012", "GP0013", "GP0014", "GP0015", "GP0016", "GP0017", "GP0018",
+    "GP0019", "GP0020", "GP0021", "GP0022", "GP0023", "GP0024", "GP0025", "GP0026", "GP0027",
+    "GP0028", "GP0029", "GP0030", "GP0031", // Resolver (gossamer-resolve/src/diagnostic.rs).
     "GR0001", "GR0002", "GR0003", "GR0004",
     // Type checker (gossamer-types/src/error.rs).
     "GT0001", "GT0002", "GT0003", "GT0004", "GT0005", "GT0006", "GT0007", "GT0008", "GT0009",

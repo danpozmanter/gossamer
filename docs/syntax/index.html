@@ -1715,6 +1715,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1766,6 +1768,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/lazy_iterators/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Lazy iterators
 
 
 
@@ -2318,11 +2348,23 @@ instantiation. Field access and methods run on all three tiers.</p>
 <p>Everything is an expression. Blocks evaluate to their tail:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">max</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="n">y</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">y</span><span class="w"> </span><span class="p">}</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">label</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">match</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="mi">200</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;ok&quot;</span><span class="p">,</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="mi">404</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;missing&quot;</span><span class="p">,</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="n">_</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;other&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="mi">200</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;ok&quot;</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="mi">404</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;missing&quot;</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="n">_</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;other&quot;</span>
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">}</span>
 </code></pre></div>
+<p>Match arms on separate lines do not require commas. Commas remain accepted,
+and are required between expression-bodied arms written on the same line.</p>
+<p>Integer range expressions are lazy <code>Iterator&lt;T&gt;</code> values, where explicitly
+typed bounds preserve their integer type and otherwise default to <code>i64</code>. See
+the <a href="../design/lazy_iterators/">lazy iterator protocol</a> for ownership, adapters,
+and terminal behavior. <code>lo..hi</code> excludes <code>hi</code>, while <code>lo..=hi</code> includes it. An
+omitted lower bound starts at <code>i64::MIN</code>. An omitted upper bound is unbounded:
+like Rust's <code>RangeFrom</code>, it
+panics on overflow in debug builds, while release builds yield <code>i64::MAX</code>,
+wrap to <code>i64::MIN</code>, and continue. The REPL prints open ranges without
+realising them, such as <code>10..</code> or <code>..10</code>. Because <code>..=</code> is inclusive, it
+always requires an upper bound; <code>10..=</code> is a parse error.</p>
 <h2 id="forward-pipe">Forward pipe (<code>|&gt;</code>)<a class="headerlink" href="#forward-pipe" title="Permanent link">&para;</a></h2>
 <p>The forward-pipe operator threads a value through a chain of
 calls. <code>x |&gt; f</code> desugars to <code>f(x)</code>; <code>x |&gt; f(a, b)</code> to

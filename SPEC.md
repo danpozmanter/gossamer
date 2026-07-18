@@ -844,11 +844,14 @@ tiers.
 #### `match`
 
 ```
-MatchExpr = "match" Expr "{" MatchArm { "," MatchArm } [ "," ] "}"
+MatchExpr = "match" Expr "{" MatchArm { MatchSep MatchArm } [ "," ] "}"
 MatchArm  = Pattern [ "if" Expr ] "=>" ( Expr | Block )
+MatchSep  = "," | LineBreak
 ```
 
 `match` is exhaustive. Non-exhaustive `match` is a compile error.
+Arms on separate lines do not need commas. Same-line expression arms require
+a comma; a block body also forms an unambiguous arm boundary.
 Patterns support literals, wildcards (`_`), ranges, bindings,
 struct/enum destructuring, and or-patterns (`A | B`). Ranges may be
 closed (`1..=10`), exclusive (`1..10`), or open-ended: `..=hi` and

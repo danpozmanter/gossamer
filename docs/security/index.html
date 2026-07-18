@@ -1459,6 +1459,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1510,6 +1512,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/lazy_iterators/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Lazy iterators
 
 
 
@@ -1758,6 +1788,17 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#crypto-and-pki-tier-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Crypto and PKI tier audit
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#reporting-a-vulnerability" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -1863,6 +1904,17 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#crypto-and-pki-tier-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Crypto and PKI tier audit
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#reporting-a-vulnerability" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -1943,7 +1995,10 @@ know:</p>
   are deliberately conservative.</li>
 <li><code>std::tls</code> is wired through <code>http::serve_tls</code> and
   <code>net::TcpStream</code> TLS upgrades. TLS configuration constructors
-  are host-runtime internals, not Gossamer callables.</li>
+  are host-runtime internals, not Gossamer callables. The all-tier
+  <code>crypto::x509::verify_server_certificate_with_crls</code> API verifies
+  supplied private roots and mandatory CRLs, but does not use system
+  roots or retrieve revocation data.</li>
 <li><code>crypto::rand::fill</code> uses <code>getrandom</code> and returns an explicit
   error if the OS RNG is unavailable. Callers must not
   silently discard that error in security-sensitive code.</li>
@@ -1966,6 +2021,47 @@ know:</p>
 <li>Postgres / MySQL drivers belong to the package ecosystem
   with their own maintainers and CVE response cadence.</li>
 </ul>
+<h2 id="crypto-and-pki-tier-audit">Crypto and PKI tier audit<a class="headerlink" href="#crypto-and-pki-tier-audit" title="Permanent link">&para;</a></h2>
+<p>The promoted cryptographic source APIs execute on the VM, forced Cranelift
+JIT, and LLVM AOT tiers. <code>stdlib_compiled_coverage</code> rejects any advertised
+free function without compiled dispatch. Cross-tier fixtures cover known hash
+vectors, authenticated-encryption round trips and authentication failures,
+signature verification failures, password/KDF wrong-secret failures, and
+constant-time unequal inputs.</p>
+<table>
+<thead>
+<tr>
+<th>Surface</th>
+<th>Success and failure evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Secure random, SHA-256, SHA-512, BLAKE3, HMAC-SHA-256, constant-time equality</td>
+<td><code>stdlib_new_modules</code>, <code>llvm_aot_coverage</code>, <code>crypto_rand_failure</code>, <code>stdlib_encoding_crypto.gos</code></td>
+</tr>
+<tr>
+<td>AES-256-GCM and ChaCha20-Poly1305</td>
+<td><code>crypto_aead.gos</code>, including AES authentication rejection with a wrong key</td>
+</tr>
+<tr>
+<td>Ed25519 and P-256 ECDSA</td>
+<td><code>crypto_aead.gos</code> and <code>crypto_ecdsa.gos</code>, including altered-message or malformed-signature rejection</td>
+</tr>
+<tr>
+<td>PBKDF2, scrypt, and Argon2id</td>
+<td><code>crypto_extra.gos</code> and <code>crypto_password.gos</code>, including wrong-password verification</td>
+</tr>
+<tr>
+<td>X.509 parse and private-root CRL verifier</td>
+<td>Generated CA/intermediate/leaf/revoked/expired-CRL parity fixture, plus <code>bench_crypto_x509_crl_verify_observed</code></td>
+</tr>
+</tbody>
+</table>
+<p>No promoted cryptographic source API is intentionally host-only. Secure random
+bytes necessarily use the host operating-system CSPRNG on each native tier.
+Rust TLS configuration constructors are host APIs by design; they are not a
+missing source-level crypto primitive.</p>
 <h2 id="reporting-a-vulnerability">Reporting a vulnerability<a class="headerlink" href="#reporting-a-vulnerability" title="Permanent link">&para;</a></h2>
 <p>Email security@gossamer-lang.org with a PoC and a suggested
 severity. A <code>SECURITY.md</code> lands in the repository root alongside

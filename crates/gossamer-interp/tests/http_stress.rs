@@ -8,10 +8,9 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gossamer_hir::lower_source_file;
 use gossamer_interp::Vm;
@@ -64,33 +63,48 @@ fn sequential_multi_connection_server_serves_every_request() {
          }}\n",
     );
 
-    let ready = Arc::new(AtomicBool::new(false));
-    let ready_clone = Arc::clone(&ready);
+    let (server_done_tx, server_done_rx) = mpsc::channel();
     let server_thread = thread::spawn(move || {
-        ready_clone.store(true, Ordering::Relaxed);
-        run_server(&source)
+        let result = run_server(&source);
+        let _ = server_done_tx.send(result);
     });
 
-    // Wait for the bind to take effect. Rustyline would use a
-    // barrier but we are running without one to keep the test dead
-    // simple - the short sleep covers the window where the server
-    // thread has been scheduled but the TcpListener is not yet
-    // accepting.
-    while !ready.load(Ordering::Relaxed) {
-        thread::sleep(Duration::from_millis(5));
+    // The server thread starts before its listener is bound. Poll the
+    // socket instead of relying on a fixed sleep, which can expire before
+    // a loaded CI runner schedules and initializes the interpreter.
+    let ready_deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        match TcpStream::connect(addr) {
+            Ok(stream) => {
+                drop(stream);
+                break;
+            }
+            Err(_) if Instant::now() < ready_deadline => {
+                match server_done_rx.try_recv() {
+                    Ok(result) => panic!("server exited before accepting connections: {result:?}"),
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        panic!("server completion channel disconnected")
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {}
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => panic!("server did not accept connections before deadline: {error}"),
+        }
     }
-    thread::sleep(Duration::from_millis(100));
 
+    let request_deadline = Instant::now() + Duration::from_secs(20);
     let mut handles = Vec::new();
     for _ in 0..WORKERS {
         let client_addr = addr;
         handles.push(thread::spawn(move || {
             let mut successes = 0u64;
-            for _ in 0..REQUESTS_PER_WORKER {
+            while successes < REQUESTS_PER_WORKER && Instant::now() < request_deadline {
                 let Ok(mut stream) = TcpStream::connect(client_addr) else {
+                    thread::sleep(Duration::from_millis(10));
                     continue;
                 };
-                stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
+                stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
                 if stream
                     .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
                     .is_err()
@@ -118,16 +132,11 @@ fn sequential_multi_connection_server_serves_every_request() {
         .map(|h| h.join().expect("client thread panicked"))
         .sum();
 
-    let _ = server_thread.join().expect("server thread panicked");
+    let server_result = server_done_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("server did not stop after the configured request count");
+    server_result.expect("server failed");
+    server_thread.join().expect("server thread panicked");
 
-    // Connections can occasionally race the GOSSAMER_HTTP_MAX_REQUESTS
-    // counter - a client may successfully send a request the server
-    // accepted but then exit before fully draining the response. We
-    // assert on the lower bound (roughly 80% of attempts) to stay
-    // signal-catching without turning the test flaky.
-    let lower_bound = total_requests * 4 / 5;
-    assert!(
-        total_ok >= lower_bound,
-        "served {total_ok} / {total_requests}; expected at least {lower_bound}",
-    );
+    assert_eq!(total_ok, total_requests, "not every request was served");
 }

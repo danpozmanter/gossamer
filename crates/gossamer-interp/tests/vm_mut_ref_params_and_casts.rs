@@ -235,3 +235,66 @@ fn main() {
     );
     assert_eq!(output, "1\n");
 }
+
+#[test]
+fn mut_reference_argument_does_not_consume_its_aliased_source() {
+    let output = run_vm_main(
+        r#"
+fn mutate_copy(a: &mut [i64; 2]) -> &mut [i64; 2] {
+    a[0] = 0
+    a
+}
+
+fn main() {
+    let mut a = [1, 2]
+    let b = &mut a
+    let result = mutate_copy(b)
+    println!("{a}")
+    println!("{result}")
+}
+"#,
+    );
+    assert_eq!(output, "[1, 2]\n[0, 2]\n");
+}
+
+#[test]
+fn mut_reference_alias_and_source_remain_live_after_argument_use() {
+    let output = run_vm_main(
+        r#"
+fn mutate_copy(a: &mut [i64; 2]) -> &mut [i64; 2] {
+    a[0] = 0
+    a
+}
+
+fn main() {
+    let mut a = [1, 2]
+    let b = &mut a
+    let result = mutate_copy(b)
+    println!("{a}")
+    println!("{b}")
+    println!("{result}")
+}
+"#,
+    );
+    assert_eq!(output, "[1, 2]\n[1, 2]\n[0, 2]\n");
+}
+
+#[test]
+fn shared_reference_argument_does_not_consume_its_aliased_source() {
+    let output = run_vm_main(
+        r#"
+fn identity(a: &[i64; 2]) -> &[i64; 2] {
+    a
+}
+
+fn main() {
+    let a = [1, 2]
+    let b = &a
+    let result = identity(b)
+    println!("{a}")
+    println!("{result}")
+}
+"#,
+    );
+    assert_eq!(output, "[1, 2]\n[1, 2]\n");
+}

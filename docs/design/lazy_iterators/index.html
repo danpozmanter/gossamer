@@ -15,6 +15,10 @@
         <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/design/lazy_iterators/">
 
 
+        <link rel="prev" href="../diagnostics/">
+
+
+        <link rel="next" href="../runtime/">
 
 
 
@@ -25,7 +29,7 @@
 
 
 
-        <title>Lazy iterator protocol - Gossamer</title>
+        <title>Lazy iterators - Gossamer</title>
 
 
 
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
 
-              Lazy iterator protocol
+              Lazy iterators
 
           </span>
         </div>
@@ -1455,11 +1459,15 @@
 
 
 
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
 
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_15" >
+
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+
+
+
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_15" checked>
 
 
           <label class="md-nav__link" for="__nav_15" id="__nav_15_label" tabindex="">
@@ -1480,7 +1488,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
 
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_15_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_15_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_15">
             <span class="md-nav__icon md-icon"></span>
 
@@ -1514,6 +1522,158 @@
 
 
       </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item md-nav__item--active">
+
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+
+
+
+
+
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Lazy iterators
+
+
+
+  </span>
+
+
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+
+      <a href="./" class="md-nav__link md-nav__link--active">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Lazy iterators
+
+
+
+  </span>
+
+
+
+      </a>
+
+
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+
+
+
+
+
+
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Goals
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#source-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Source ownership
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#invalidation-and-mutation" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Invalidation and mutation
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#terminal-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Terminal operations
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#typed-mir-representation" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Typed MIR representation
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#backend-lowering" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Backend lowering
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#migration" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Migration
+
+    </span>
+  </a>
+
+</li>
+
+    </ul>
+
+</nav>
+
     </li>
 
 
@@ -1822,17 +1982,6 @@
 
 </li>
 
-        <li class="md-nav__item">
-  <a href="#work-split" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        Work split
-
-    </span>
-  </a>
-
-</li>
-
     </ul>
 
 </nav>
@@ -1851,21 +2000,29 @@
 
 
 <h1 id="lazy-iterator-protocol">Lazy iterator protocol<a class="headerlink" href="#lazy-iterator-protocol" title="Permanent link">&para;</a></h1>
-<p>Status: design accepted for staged implementation; public eager <code>std::iter</code>
-helpers remain Experimental in 0.29.0.</p>
+<p>Status: live. Integer range expressions produce lazy iterators in every
+edition, and adapters applied to those iterator values remain lazy. The lazy
+<code>std::iter</code> constructor and Vec adapter surface is enabled in edition 2027;
+projects using edition 2026 otherwise keep the historical eager <code>std::iter</code>
+behavior. The <code>iter::eager_*</code> aliases remain available as explicit eager
+compatibility helpers.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
-<p>The public protocol must support lazy <code>map</code>, <code>filter</code>, <code>take</code>, <code>skip</code>,
+<p>The public protocol supports lazy <code>map</code>, <code>filter</code>, <code>take</code>, <code>skip</code>,
 <code>enumerate</code>, <code>chain</code>, and <code>zip</code> without allocating an intermediate <code>Vec</code>.
-Terminal operations must stop the source as soon as their result is known and
-must preserve the same closure call order in the VM, Cranelift JIT, and LLVM.</p>
-<p>The protocol is internal in its first release. User implementations and dynamic
-iterator trait objects are deferred until representation and optimization data
-are available.</p>
+Terminal operations stop the source as soon as their result is known and
+preserve the same closure call order in the VM, Cranelift JIT, and LLVM.</p>
+<p>The built-in protocol and supported adapters are public in this release.
+User-defined iterator implementations, extra adapters such as <code>filter_map</code> and
+<code>flat_map</code>, and dynamic iterator trait objects are deferred until
+representation and optimization data are available.</p>
 <h2 id="source-ownership">Source ownership<a class="headerlink" href="#source-ownership" title="Permanent link">&para;</a></h2>
 <p>An iterator is a linear state value. Calling <code>next(&amp;mut self)</code> mutates its
 cursor and returns <code>Option&lt;Item&gt;</code>.</p>
 <ul>
-<li><code>RangeIter</code> owns integer bounds and the next index.</li>
+<li><code>RangeIter</code> owns its integer cursor and optional bounds. An open upper bound
+  follows Rust overflow behavior: debug builds panic before yielding
+  <code>i64::MAX</code>; release builds yield <code>i64::MAX</code>, wrap to <code>i64::MIN</code>, and
+  continue.</li>
 <li><code>SliceIter&lt;'a, T&gt;</code> borrows an immutable slice. Structural mutation of the
   source <code>Vec</code> is rejected while this iterator is live.</li>
 <li><code>VecIntoIter&lt;T&gt;</code> owns the source allocation and moves each element out once.</li>
@@ -1913,38 +2070,30 @@ owns cleanup for source and adapter state. The representation carries concrete
 item and state types, so no boxed <code>dyn Iterator</code> or per-item heap allocation is
 required.</p>
 <h2 id="backend-lowering">Backend lowering<a class="headerlink" href="#backend-lowering" title="Permanent link">&para;</a></h2>
-<p>The VM stores iterator state in typed native handles and adds source-specific
-<code>next</code> bytecodes for range, slice, and owning Vec. Adapter bytecodes call the
-existing closure dispatcher only when an item reaches that adapter.</p>
-<p>Cranelift and LLVM lower the same MIR states to stack or coroutine-frame
-aggregates when they do not escape. <code>IterNext</code> becomes a small state-machine
-branch. A runtime handle is permitted only when an iterator crosses an unknown
-FFI boundary or is stored in an erased aggregate.</p>
-<p>The cross-tier conformance fixture records result, closure side-effect order,
-panic text, and allocation count. Promotion requires identical output and zero
-intermediate Vec allocations for <code>range.map.filter.take.collect</code>.</p>
+<p>The VM stores iterator state in native handles and pulls from sources and
+adapters only when a terminal requests an item. Adapter closures are called only
+for items that reach the adapter.</p>
+<p>Cranelift JIT and LLVM AOT use the same public contract through opaque runtime
+handles for the supported 0.30 surface. Scalar <code>Iterator&lt;i64&gt;</code> pipelines cover
+sources, <code>map</code>, <code>filter</code>, <code>take</code>, <code>skip</code>, <code>chain</code>, and scalar terminals. Pair
+iterator handles cover <code>enumerate</code>, <code>zip</code>, <code>collect</code>, and <code>count</code> for
+<code>(i64, i64)</code> items. The internal <code>IterSource</code>, <code>IterAdapter</code>, and <code>IterNext</code>
+MIR statements are verified and preserved by optimization passes, but strict
+lowering rejects them if a future lowering path emits them before executable
+backend lowering is added.</p>
+<p>The cross-tier conformance fixture records result and closure side-effect
+order. Promotion requires identical output and no intermediate Vec allocation
+for <code>range.map.filter.take.collect</code>.</p>
+<p>The runnable <code>examples/projects/lazy_iterators</code> project shows the normal
+materialization boundary. <code>benchmarks/lazy_iterators</code> compares it with the
+permanently eager compatibility surface and pins equal output.</p>
 <h2 id="migration">Migration<a class="headerlink" href="#migration" title="Permanent link">&para;</a></h2>
-<p>The existing eager signatures stay available under their current names for the
-0.29 line and retain Experimental status. The lazy protocol first lands behind
-the <code>edition = "2027"</code> project setting with iterator-returning signatures.
-Projects on the prior edition keep eager behavior. The formatter and migration
-tool can then rewrite explicitly eager code to <code>iter::eager_*</code> names before the
-old signatures are deprecated.</p>
-<h2 id="work-split">Work split<a class="headerlink" href="#work-split" title="Permanent link">&para;</a></h2>
-<ol>
-<li>Type and MIR owner: add linear iterator types, the three MIR operations,
-   validation, and drop elaboration.</li>
-<li>VM owner: implement range, slice, and owning Vec sources plus <code>IterNext</code>.</li>
-<li>Backend owners: lower the agreed MIR independently in Cranelift and LLVM.</li>
-<li>Stdlib owner: add adapters and terminals only after all three source kinds
-   pass parity tests.</li>
-<li>Test owner: add early termination, infinite source, mutation invalidation,
-   panic, captured state, and allocation-count fixtures.</li>
-<li>Migration owner: edition gate, eager aliases, diagnostics, and automated
-   rewrites.</li>
-</ol>
-<p>Tracks 2, 3, and 5 can proceed in parallel after track 1 freezes the MIR data
-layout. Tracks 4 and 6 depend on the first all-tier <code>next</code> fixture.</p>
+<p>The existing eager signatures remain the edition-2026 default. Projects that
+select <code>edition = "2027"</code> receive iterator-returning signatures. Code that
+depends on eager materialization can either insert <code>iter::collect</code> at the
+materialization boundary or rename the operation to its <code>iter::eager_*</code>
+compatibility spelling. Those aliases are permanently eager in both editions
+and share the canonical eager lowering paths on every execution tier.</p>
 
 
 

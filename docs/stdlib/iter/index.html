@@ -1455,6 +1455,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1506,6 +1508,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../design/lazy_iterators/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Lazy iterators
 
 
 
@@ -1746,6 +1776,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
 
         <li class="md-nav__item">
+  <a href="#edition-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Edition behavior
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#api-details-and-source" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -1778,6 +1819,14 @@
 <p>Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.</p>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
+<h2 id="edition-behavior">Edition behavior<a class="headerlink" href="#edition-behavior" title="Permanent link">&para;</a></h2>
+<p>Edition 2026 keeps these canonical eager signatures. In edition 2027,
+<code>range</code>, <code>range_inclusive</code>, <code>map</code>, <code>filter</code>, <code>take</code>, <code>skip</code>, <code>enumerate</code>,
+<code>chain</code>, and <code>zip</code> form linear lazy <code>Iterator&lt;T&gt;</code> pipelines. Terminals consume
+that state once. Use <code>collect</code> to materialize it, or spell the matching
+<code>iter::eager_*</code> name to retain Vec behavior in either edition.
+See the <a href="../../design/lazy_iterators/">lazy iterator protocol</a> for ownership,
+short-circuiting, overflow, and backend behavior.</p>
 <h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
 <p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs">implementation source</a> contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
 <table>

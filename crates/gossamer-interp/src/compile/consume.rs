@@ -455,11 +455,15 @@ fn strip_iter_chain(expr: &HirExpr) -> &HirExpr {
 impl super::FnBuilder<'_> {
     /// Returns the local name when `expr` is a single-segment path to a
     /// consumable local (one the analysis proved is read exactly once
-    /// here, so its value may be moved instead of cloned).
+    /// here, so its value may be moved instead of cloned). A direct
+    /// reference binding and its source share one register, so neither name
+    /// may consume that register while the other name remains accessible.
     pub(crate) fn consumable_path<'a>(&self, expr: &'a HirExpr) -> Option<&'a str> {
         if let HirExprKind::Path { segments, .. } = &expr.kind
             && let [seg] = segments.as_slice()
             && self.consumable.contains(seg.name.as_str())
+            && let Some(home) = self.lookup_local(&seg.name)
+            && !self.reference_alias_regs.contains(&home.reg)
         {
             Some(seg.name.as_str())
         } else {

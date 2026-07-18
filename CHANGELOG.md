@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.30.1 - Correctness and CI reliability
+
+- Prevented HTTP stress-test hangs with readiness polling, bounded retries,
+  bounded shutdown, and a 120-minute workspace job limit.
+- Fixed reference-alias liveness and exact fixed-array parameter
+  copying across the VM, JIT, and native tiers.
+- Made integer ranges lazy in every edition while preserving explicit integer
+  bound types and Rust-compatible debug/release overflow for open upper bounds.
+- Fixed lazy iterator method typing and dispatch across the VM, JIT, and native
+  tiers without intercepting type-specific Vec methods.
+- Allowed comma-free multiline match arms and made range, match-arm, pipe,
+  alias, and type diagnostics more precise, with complete generated coverage.
+
 ## 0.30.0 - Lazy iterators, PKI, optimizations, and gos watch
 
 ### Language and editions

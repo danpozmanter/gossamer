@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0031]: Expression-bodied match arms on the same line require a comma boundary. Add a comma, or begin the next arm on a new line. - here
+--- framed ---
+error[GP0031]: Expression-bodied match arms on the same line require a comma boundary. Add a comma, or begin the next arm on a new line.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

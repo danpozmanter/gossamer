@@ -1455,6 +1455,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1506,6 +1508,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../design/lazy_iterators/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Lazy iterators
 
 
 
@@ -1756,6 +1786,28 @@
 
 </li>
 
+        <li class="md-nav__item">
+  <a href="#private-root-verification-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Private-root verification contract
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#tls-host-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        TLS host configuration
+
+    </span>
+  </a>
+
+</li>
+
     </ul>
 
 </nav>
@@ -1774,7 +1826,7 @@
 
 
 <h1 id="stdcryptox509"><code>std::crypto::x509</code><a class="headerlink" href="#stdcryptox509" title="Permanent link">&para;</a></h1>
-<p>Status: experimental</p>
+<p>Status: shipped</p>
 <p>X.509 certificate parsing.</p>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
@@ -1806,6 +1858,35 @@
 </tr>
 </tbody>
 </table>
+<h2 id="private-root-verification-contract">Private-root verification contract<a class="headerlink" href="#private-root-verification-contract" title="Permanent link">&para;</a></h2>
+<p><code>verify_server_certificate_with_crls</code> is the portable PKI verification API on
+the VM, Cranelift JIT, and LLVM AOT tiers. <code>chain_pem</code> contains one or more
+PEM <code>CERTIFICATE</code> blocks with the server leaf first and each intermediate after
+it. <code>roots_pem</code> contains one or more private trust anchors. The root is not
+included in <code>chain_pem</code> unless a deployment deliberately supplies it as an
+intermediate.</p>
+<p><code>hostname</code> must be a valid DNS name or IP address accepted by Rustls. The
+verifier checks the peer name, server-auth extended-key usage, the complete
+chain, and the current wall-clock validity period. The time source is the host
+clock at verification time.</p>
+<p><code>crl_pem</code> must contain PEM <code>X509 CRL</code> blocks for every non-root issuer whose
+revocation status is needed. The verifier rejects empty or malformed CRL input,
+an unknown revocation status, an expired CRL, a revoked certificate, a bad CRL
+signature, an invalid chain, a hostname mismatch, and every parsing error. An
+<code>Err(errors::Error)</code> is therefore a denial, never a soft warning.</p>
+<p>System roots are not part of this contract. The API does not retrieve AIA
+intermediates, CRLs, or OCSP responses; applications own transport, refresh,
+caching, and any broader policy. It does not issue certificates, create CSRs,
+or integrate key stores or HSMs.</p>
+<h2 id="tls-host-configuration">TLS host configuration<a class="headerlink" href="#tls-host-configuration" title="Permanent link">&para;</a></h2>
+<p>Rust-hosted TLS constructors remain host APIs rather than Gossamer source
+items. <code>tls::client_config_with_crls</code> accepts optional private roots plus
+server CRLs. <code>tls::server_config_with_client_auth</code> configures mTLS with client
+roots, and <code>tls::server_config_with_client_auth_and_crls</code> adds fail-closed
+client-certificate revocation checking. Use those constructors when wiring a
+real Rust TLS connection, and use the public source API above when a
+Gossamer program receives peer PEM material. See
+<code>examples/x509_private_ca_peer_verify.gos</code> for the source-level flow.</p>
 
 
 

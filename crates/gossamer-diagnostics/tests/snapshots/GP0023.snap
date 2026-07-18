@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0023]: The number of positional format arguments differs from the number of positional placeholders. Add or remove placeholders to make them match. - here
+--- framed ---
+error[GP0023]: The number of positional format arguments differs from the number of positional placeholders. Add or remove placeholders to make them match.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

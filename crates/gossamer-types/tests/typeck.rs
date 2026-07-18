@@ -94,6 +94,46 @@ fn string_literal_has_string_type() {
 }
 
 #[test]
+fn range_values_are_lazy_iterators_in_every_edition() {
+    for lazy_iterators in [false, true] {
+        let checked = run_with_lazy_iterators("fn main() { let r = 10.. }\n", lazy_iterators);
+        assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+        let ItemKind::Fn(decl) = &checked.source.items[0].kind else {
+            panic!("expected fn");
+        };
+        let ExprKind::Block(block) = &decl.body.as_ref().expect("body").kind else {
+            panic!("expected block");
+        };
+        let StmtKind::Let {
+            init: Some(init), ..
+        } = &block.stmts[0].kind
+        else {
+            panic!("expected initialized let");
+        };
+        let ty = checked.table.get(init.id).expect("range typed");
+        assert!(matches!(checked.tcx.kind(ty), Some(TyKind::Iterator(_))));
+    }
+}
+
+#[test]
+fn formatting_a_range_reports_the_iterator_remedy() {
+    let checked = run("fn main() { println!(\"{}\", 10..) }\n");
+    let diagnostic = checked
+        .diagnostics
+        .iter()
+        .find(|diagnostic| matches!(diagnostic.error, TypeError::IteratorStateFormatted))
+        .expect("iterator formatting diagnostic")
+        .to_diagnostic();
+    assert_eq!(diagnostic.code.as_str(), "GT0041");
+    assert!(
+        diagnostic
+            .helps
+            .iter()
+            .any(|help| help.contains("iter::collect"))
+    );
+}
+
+#[test]
 fn let_annotation_forces_concrete_type() {
     let checked = run("fn main() { let x: i32 = 1i32 }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);

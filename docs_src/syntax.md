@@ -106,11 +106,25 @@ Everything is an expression. Blocks evaluate to their tail:
 ```gossamer
 let max = if x > y { x } else { y }
 let label = match status {
-    200 => "ok",
-    404 => "missing",
-    _ => "other",
+    200 => "ok"
+    404 => "missing"
+    _ => "other"
 }
 ```
+
+Match arms on separate lines do not require commas. Commas remain accepted,
+and are required between expression-bodied arms written on the same line.
+
+Integer range expressions are lazy `Iterator<T>` values, where explicitly
+typed bounds preserve their integer type and otherwise default to `i64`. See
+the [lazy iterator protocol](design/lazy_iterators.md) for ownership, adapters,
+and terminal behavior. `lo..hi` excludes `hi`, while `lo..=hi` includes it. An
+omitted lower bound starts at `i64::MIN`. An omitted upper bound is unbounded:
+like Rust's `RangeFrom`, it
+panics on overflow in debug builds, while release builds yield `i64::MAX`,
+wrap to `i64::MIN`, and continue. The REPL prints open ranges without
+realising them, such as `10..` or `..10`. Because `..=` is inclusive, it
+always requires an upper bound; `10..=` is a parse error.
 
 ## Forward pipe (`|>`)
 

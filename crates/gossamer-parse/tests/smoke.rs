@@ -403,10 +403,94 @@ fn open_end_range_pattern_must_not_use_the_inclusive_marker() {
     let file = map.add_file("invalid_open_end_range.gos", invalid.to_string());
     let (_sf, diags) = parse_source_file(invalid, file);
     assert!(
-        diags.iter().any(|diag| matches!(
-            &diag.error,
-            ParseError::Unexpected { expected, .. } if expected == "upper bound after `..=`"
-        )),
+        diags
+            .iter()
+            .any(|diag| matches!(&diag.error, ParseError::InclusiveRangeMissingEnd)),
         "`lo..=` should require an upper bound: {diags:?}"
     );
+}
+
+#[test]
+fn inclusive_value_range_requires_an_upper_bound() {
+    for source in ["fn main() { 10..= }", "fn main() { ..= }"] {
+        let mut map = SourceMap::new();
+        let file = map.add_file("missing_range_end.gos", source.to_string());
+        let (_sf, diags) = parse_source_file(source, file);
+        assert_eq!(
+            diags
+                .iter()
+                .filter(|diag| matches!(diag.error, ParseError::InclusiveRangeMissingEnd))
+                .count(),
+            1,
+            "expected one precise inclusive-range diagnostic: {diags:?}"
+        );
+        let rendered = diags
+            .iter()
+            .find(|diag| matches!(diag.error, ParseError::InclusiveRangeMissingEnd))
+            .expect("inclusive range diagnostic")
+            .to_diagnostic();
+        assert_eq!(rendered.code.as_str(), "GP0026");
+        assert!(rendered.title.contains("requires an upper bound"));
+        assert!(rendered.helps.iter().any(|help| help.contains("use `..`")));
+    }
+}
+
+#[test]
+fn match_arm_commas_are_optional_at_line_boundaries() {
+    let source = concat!(
+        "fn classify(n: i64) -> String {\n",
+        "    match n {\n",
+        "        ..0 => \"negative\"\n",
+        "        0 => \"zero\",\n",
+        "        _ => { \"positive\" }\n",
+        "    }\n",
+        "}\n",
+    );
+    let mut map = SourceMap::new();
+    let file = map.add_file("comma_optional_match.gos", source.to_string());
+    let (_sf, diags) = parse_source_file(source, file);
+    assert!(
+        diags.is_empty(),
+        "comma-free match arms must parse: {diags:?}"
+    );
+}
+
+#[test]
+fn malformed_match_arms_report_one_local_error_each() {
+    let cases = [
+        ("fn main() { match 1 { 1 10 } }", 0),
+        ("fn main() { match 1 { 1 => } }", 1),
+        ("fn main() { match 1 { 1 => 10 2 => 20 } }", 2),
+    ];
+    for (source, expected) in cases {
+        let mut map = SourceMap::new();
+        let file = map.add_file("malformed_match.gos", source.to_string());
+        let (_sf, diags) = parse_source_file(source, file);
+        assert_eq!(diags.len(), 1, "unexpected diagnostic cascade: {diags:?}");
+        let expected = match expected {
+            0 => matches!(diags[0].error, ParseError::MatchArmMissingArrow { .. }),
+            1 => matches!(diags[0].error, ParseError::MatchArmMissingBody),
+            _ => matches!(diags[0].error, ParseError::MatchArmMissingSeparator),
+        };
+        assert!(expected, "wrong diagnostic: {diags:?}");
+        let structured = diags[0].to_diagnostic();
+        assert_eq!(
+            structured.code.as_str(),
+            match expected {
+                true if matches!(diags[0].error, ParseError::MatchArmMissingArrow { .. }) => {
+                    "GP0029"
+                }
+                true if matches!(diags[0].error, ParseError::MatchArmMissingBody) => "GP0030",
+                _ => "GP0031",
+            }
+        );
+        assert!(
+            !structured.helps.is_empty(),
+            "diagnostic needs actionable help"
+        );
+        assert!(
+            !matches!(diags[0].error, ParseError::MixedEntryForms),
+            "a match-arm error must not be misreported as an entry-form error"
+        );
+    }
 }

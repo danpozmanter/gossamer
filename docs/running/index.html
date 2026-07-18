@@ -1550,6 +1550,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1601,6 +1603,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/lazy_iterators/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Lazy iterators
 
 
 
@@ -1979,8 +2009,8 @@
 <td>Long-form rationale for a diagnostic code</td>
 </tr>
 <tr>
-<td><code>gos watch --command check .</code></td>
-<td>Re-run <code>gos check</code> on every change</td>
+<td><code>gos watch [PATH] [--] [ARGS...]</code></td>
+<td>Restart a development service after validating local source changes</td>
 </tr>
 <tr>
 <td><code>gos add example.org/lib@1.2.3</code></td>
@@ -2024,6 +2054,16 @@ World")</code> file runs as-is. See
 <a href="../language/top_level_statements/">Top-level statements</a>. A project's
 entry file is <code>src/main.gos</code> by convention, or whatever
 <code>[project] entry</code> names in <code>project.toml</code>.</p>
+<p><code>gos watch</code> is a restart-based development supervisor for HTTP services. It
+watches the project, its transitive local path dependencies, and manifests;
+after an edit it validates the revision in-process, gracefully terminates the
+old <code>gos run</code> child, waits for the port to be released, and starts a
+replacement. An invalid edit leaves the last known-good service running. It
+intentionally does not preserve in-memory state, WebSocket connections, or
+streaming responses, and is not a production zero-downtime deployment
+mechanism. Use <code>--debounce MS</code>, <code>--grace MS</code>, <code>--no-check</code>, <code>--clear</code>, and
+<code>--locked</code> to tune the loop. <code>gos dev</code> remains accepted as a compatibility
+alias.</p>
 <h2 id="environment-variables">Environment variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>GOSSAMER_HTTP_MAX_REQUESTS=N</code> - ask the HTTP server to exit
