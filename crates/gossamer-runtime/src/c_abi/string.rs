@@ -583,7 +583,10 @@ pub extern "C" fn gos_rt_str_clear() -> *mut c_char {
 /// exhausted.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_str_with_capacity(capacity: i64) -> *mut c_char {
-    let capacity = usize::try_from(capacity.max(0)).unwrap_or(u32::MAX as usize);
+    if capacity < 0 {
+        unsafe { gos_rt_panic(c"String::with_capacity: capacity must be non-negative".as_ptr()) };
+    }
+    let capacity = usize::try_from(capacity).unwrap_or(u32::MAX as usize);
     alloc_growable(&[], capacity.min(u32::MAX as usize))
 }
 
@@ -1611,7 +1614,10 @@ pub unsafe extern "C" fn gos_rt_str_zfill(s: *const c_char, width: i64) -> *mut 
         } else {
             unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
         };
-        if width <= 0 {
+        if width < 0 {
+            unsafe { gos_rt_panic(c"strings::center: width must be non-negative".as_ptr()) };
+        }
+        if width == 0 {
             return alloc_cstring(s.as_bytes());
         }
         let cur = s.chars().count();
@@ -1985,7 +1991,10 @@ pub unsafe extern "C" fn gos_rt_str_repeat(s: *const c_char, n: i64) -> *mut c_c
         } else {
             unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
         };
-        let n = if n < 0 { 0 } else { n as usize };
+        if n < 0 {
+            unsafe { gos_rt_panic(c"strings::repeat: count must be non-negative".as_ptr()) };
+        }
+        let n = n as usize;
         if s.len().checked_mul(n).is_none() {
             unsafe { gos_rt_panic(c"string repeat capacity overflow".as_ptr()) };
         }
@@ -2710,13 +2719,15 @@ pub unsafe extern "C" fn gos_rt_f64_to_str(x: f64) -> *mut c_char {
 /// Stringifies an `f64` with `prec` fractional digits - the runtime
 /// side of `format!("{:.N}", x)`. Routes through the Rust standard
 /// library's float formatter so rounding matches the interpreter's
-/// `{:.N}` Display output bit-for-bit. Negative `prec` is clamped to
-/// zero; very large `prec` is clamped to a sane upper bound to keep
-/// the allocation bounded.
+/// `{:.N}` Display output bit-for-bit. Very large `prec` is clamped
+/// to a sane upper bound to keep the allocation bounded.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_f64_prec_to_str(x: f64, prec: i64) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let prec = prec.clamp(0, 64) as usize;
+        if prec < 0 {
+            unsafe { gos_rt_panic(c"__fmt_prec: precision must be non-negative".as_ptr()) };
+        }
+        let prec = prec.min(64) as usize;
         alloc_cstring(format!("{x:.prec$}").as_bytes())
     })
 }
@@ -2780,7 +2791,10 @@ pub unsafe extern "C" fn gos_rt_str_splitn(
     sep: *const c_char,
 ) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
-        let n = usize::try_from(n.max(0)).unwrap_or(0);
+        if n < 0 {
+            unsafe { gos_rt_panic(c"strings::splitn: count must be non-negative".as_ptr()) };
+        }
+        let n = usize::try_from(n).unwrap_or(0);
         let parts: Vec<String> = unsafe { cstr(s) }
             .splitn(n, unsafe { cstr(sep) })
             .map(str::to_string)
@@ -2823,7 +2837,10 @@ pub unsafe extern "C" fn gos_rt_str_replacen(
     n: i64,
 ) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let n = usize::try_from(n.max(0)).unwrap_or(0);
+        if n < 0 {
+            unsafe { gos_rt_panic(c"strings::replacen: count must be non-negative".as_ptr()) };
+        }
+        let n = usize::try_from(n).unwrap_or(0);
         let out = unsafe { cstr(s) }.replacen(unsafe { cstr(from) }, unsafe { cstr(to) }, n);
         alloc_cstring(out.as_bytes())
     })
@@ -2886,7 +2903,10 @@ pub unsafe extern "C" fn gos_rt_str_pad_left(
 ) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         let text = unsafe { cstr(s) };
-        let width = usize::try_from(width.max(0)).unwrap_or(0);
+        if width < 0 {
+            unsafe { gos_rt_panic(c"strings::pad_left: width must be non-negative".as_ptr()) };
+        }
+        let width = usize::try_from(width).unwrap_or(0);
         let pc = u32::try_from(pad_char)
             .ok()
             .and_then(char::from_u32)
@@ -2915,7 +2935,10 @@ pub unsafe extern "C" fn gos_rt_str_pad_right(
 ) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         let text = unsafe { cstr(s) };
-        let width = usize::try_from(width.max(0)).unwrap_or(0);
+        if width < 0 {
+            unsafe { gos_rt_panic(c"strings::pad_right: width must be non-negative".as_ptr()) };
+        }
+        let width = usize::try_from(width).unwrap_or(0);
         let pc = u32::try_from(pad_char)
             .ok()
             .and_then(char::from_u32)
@@ -2952,7 +2975,10 @@ pub unsafe extern "C" fn gos_rt_fmt_pad(
         } else {
             unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
         };
-        let width = usize::try_from(width.max(0)).unwrap_or(0);
+        if width < 0 {
+            unsafe { gos_rt_panic(c"__fmt_pad: width must be non-negative".as_ptr()) };
+        }
+        let width = usize::try_from(width).unwrap_or(0);
         let pad_char = u32::try_from(fill)
             .ok()
             .and_then(char::from_u32)

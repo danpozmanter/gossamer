@@ -360,9 +360,6 @@ impl Parser<'_> {
                 }
             }
         }
-        if has_pipe_dotdot_placeholder(&rhs) {
-            self.record(ParseError::PipeDotDotPlaceholder, rhs.span);
-        }
         let lhs_span = lhs.span;
         let mut piped = Some(lhs);
         if substitute_pipe_placeholder(&mut rhs, &mut piped) {
@@ -2537,25 +2534,6 @@ fn contains_pipe_placeholder(expr: &Expr) -> bool {
         ExprKind::Break { value, .. } => value.as_deref().is_some_and(contains_pipe_placeholder),
         _ => false,
     }
-}
-
-/// `..` is range syntax. A bare open range supplied directly to a pipe call is
-/// not a valid pipe placeholder, and format-macro expansion must not silently
-/// combine it with the implicit trailing pipe argument.
-fn has_pipe_dotdot_placeholder(expr: &Expr) -> bool {
-    let (ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. }) = &expr.kind else {
-        return false;
-    };
-    args.iter().any(|arg| {
-        matches!(
-            &arg.kind,
-            ExprKind::Range {
-                start: None,
-                end: None,
-                kind: RangeKind::Exclusive,
-            }
-        )
-    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

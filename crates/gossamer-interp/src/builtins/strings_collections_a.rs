@@ -116,15 +116,19 @@ fn builtin_str_new(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(SmolStr::from(String::new())))
 }
 
-/// `String::with_capacity(n)` reserves mutable VM string storage. Negative
-/// and non-integer inputs retain the harmless empty-string behavior of the
-/// constructor rather than attempting an unbounded conversion.
+/// `String::with_capacity(n)` reserves mutable VM string storage.
 fn builtin_str_with_capacity(args: &[Value]) -> RuntimeResult<Value> {
-    let capacity = args
-        .first()
-        .and_then(value_to_int)
-        .and_then(|n| usize::try_from(n).ok())
-        .unwrap_or(0);
+    let capacity = match args.first().and_then(value_to_int) {
+        Some(n) if n < 0 => {
+            return Err(RuntimeError::Type(
+                "String::with_capacity: capacity must be non-negative".to_string(),
+            ))
+        }
+        Some(n) => usize::try_from(n).map_err(|_| {
+            RuntimeError::Type("String::with_capacity: capacity is too large".to_string())
+        })?,
+        None => 0,
+    };
     Ok(Value::String(SmolStr::with_capacity(capacity)))
 }
 
@@ -520,8 +524,10 @@ fn slice_bounds(args: &[Value], label: &str) -> Result<(usize, usize), Value> {
 /// non-panicking element-range slice; same bounds policy as
 /// [`builtin_str_slice`]. Handles each flat-storage Vec variant.
 fn builtin_vec_slice(args: &[Value]) -> RuntimeResult<Value> {
-    let start = args.get(1).and_then(value_to_int).unwrap_or(0);
-    let end = args.get(2).and_then(value_to_int).unwrap_or(0);
+    let (lo, hi) = match slice_bounds(args, "Vec::slice") {
+        Ok(bounds) => bounds,
+        Err(err) => return Ok(err),
+    };
     // Length of the receiver, for the bounds message.
     let len = match args.first() {
         Some(Value::Array(arr)) => arr.len() as i64,
@@ -534,12 +540,11 @@ fn builtin_vec_slice(args: &[Value]) -> RuntimeResult<Value> {
         _ => return Ok(slice_err("Vec::slice expects a Vec receiver".to_string())),
     };
     // Mirror the compiled `gos_rt_vec_slice` bounds policy + message.
-    if start < 0 || end < 0 || start > end || end > len {
+    if hi > len as usize {
         return Ok(slice_err(format!(
-            "slice: range [{start}, {end}) out of bounds for length {len}"
+            "slice: range [{lo}, {hi}) out of bounds for length {len}"
         )));
     }
-    let (lo, hi) = (start as usize, end as usize);
     match args.first() {
         Some(Value::Array(arr)) => Ok(ok_variant(Value::Array(Arc::new(arr[lo..hi].to_vec())))),
         Some(Value::IntArray(arr)) => {
@@ -727,7 +732,17 @@ fn builtin_map_new(_args: &[Value]) -> RuntimeResult<Value> {
 /// the same general `Map` representation as `HashMap::new`; returning an
 /// `IntMap` here silently made every `HashMap<String, i64>` lookup miss.
 fn builtin_map_with_capacity(args: &[Value]) -> RuntimeResult<Value> {
-    let cap = arg_int(args, 0).unwrap_or(0).max(0) as usize;
+    let cap = match arg_int(args, 0) {
+        Some(n) if n < 0 => {
+            return Err(RuntimeError::Type(
+                "HashMap::with_capacity: capacity must be non-negative".to_string(),
+            ))
+        }
+        Some(n) => usize::try_from(n).map_err(|_| {
+            RuntimeError::Type("HashMap::with_capacity: capacity is too large".to_string())
+        })?,
+        None => 0,
+    };
     Ok(Value::Map(Arc::new(parking_lot::Mutex::new(
         dense_map_with_capacity(cap),
     ))))
@@ -910,10 +925,20 @@ fn builtin_map_inc_at(args: &[Value]) -> RuntimeResult<Value> {
         _ => 1,
     };
     let start = match args.get(2) {
+        Some(Value::Int(n)) if *n < 0 => {
+            return Err(RuntimeError::Type(
+                "HashMap::inc_at: start must be non-negative".to_string(),
+            ))
+        }
         Some(Value::Int(n)) => usize::try_from(*n).unwrap_or(0),
         _ => 0,
     };
     let len = match args.get(3) {
+        Some(Value::Int(n)) if *n < 0 => {
+            return Err(RuntimeError::Type(
+                "HashMap::inc_at: length must be non-negative".to_string(),
+            ))
+        }
         Some(Value::Int(n)) => usize::try_from(*n).unwrap_or(0),
         _ => 0,
     };
@@ -1350,4 +1375,3 @@ fn builtin_insert(args: &[Value]) -> RuntimeResult<Value> {
         _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
     }
 }
-

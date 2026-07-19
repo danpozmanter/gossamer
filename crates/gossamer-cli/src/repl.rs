@@ -545,7 +545,7 @@ fn repl_find(arg: &str) -> std::result::Result<String, String> {
             kind: "module",
             doc: module.summary,
         };
-        if let Some(score) = fuzzy_score(query, &candidate.path, candidate.doc) {
+        if let Some(score) = fuzzy_score(query, &candidate.path) {
             matches.push((score, candidate));
         }
         for item in module.items {
@@ -554,7 +554,7 @@ fn repl_find(arg: &str) -> std::result::Result<String, String> {
                 kind: item_kind_label(item.kind),
                 doc: item.doc,
             };
-            if let Some(score) = fuzzy_score(query, &candidate.path, candidate.doc) {
+            if let Some(score) = fuzzy_score(query, &candidate.path) {
                 matches.push((score, candidate));
             }
         }
@@ -565,7 +565,7 @@ fn repl_find(arg: &str) -> std::result::Result<String, String> {
             kind: "macro",
             doc: builtin.doc,
         };
-        if let Some(score) = fuzzy_score(query, &candidate.path, candidate.doc) {
+        if let Some(score) = fuzzy_score(query, &candidate.path) {
             matches.push((score, candidate));
         }
     }
@@ -575,7 +575,7 @@ fn repl_find(arg: &str) -> std::result::Result<String, String> {
             kind: "builtin",
             doc: builtin.doc,
         };
-        if let Some(score) = fuzzy_score(query, &candidate.path, candidate.doc) {
+        if let Some(score) = fuzzy_score(query, &candidate.path) {
             matches.push((score, candidate));
         }
     }
@@ -607,10 +607,9 @@ struct FindCandidate<'a> {
 }
 
 /// Returns a subsequence-match score for every whitespace-separated query
-/// token. Exact and boundary matches rank ahead of broad documentation-only
-/// matches, while still keeping the command useful for partial spellings.
-fn fuzzy_score(query: &str, path: &str, doc: &str) -> Option<i32> {
-    let haystack = format!("{} {}", path.to_ascii_lowercase(), doc.to_ascii_lowercase());
+/// token. Matching is intentionally limited to the displayed path/name so
+/// result descriptions do not make unrelated symbols look relevant.
+fn fuzzy_score(query: &str, path: &str) -> Option<i32> {
     let path_lower = path.to_ascii_lowercase();
     let mut score = 0;
     for token in query.to_ascii_lowercase().split_whitespace() {
@@ -632,7 +631,7 @@ fn fuzzy_score(query: &str, path: &str, doc: &str) -> Option<i32> {
         let mut gaps = 0i32;
         for needle in token.bytes() {
             let start = previous.map_or(0, |index: usize| index + 1);
-            let relative = haystack[start..].find(char::from(needle))?;
+            let relative = path_lower[start..].find(char::from(needle))?;
             let index = start + relative;
             if let Some(last) = previous {
                 gaps += i32::try_from(index - last - 1).unwrap_or(i32::MAX);

@@ -102,7 +102,7 @@ use crate::builtins::{
     BuiltinFnPub, as_str, err_variant, install_module_pub, none_variant, ok_variant, some_variant,
     value_to_int,
 };
-use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
+use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeError, RuntimeResult, Value};
 
 /// Entry point invoked from `builtins::install`.
 use super::*;
@@ -368,11 +368,15 @@ pub(crate) fn builtin_fs_file_read(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(handle_id) else {
         return Ok(err_variant("File::read: missing handle"));
     };
-    let max = args
-        .get(1)
-        .and_then(value_to_int)
-        .unwrap_or(4096)
-        .clamp(1, 1 << 24);
+    let max = match args.get(1).and_then(value_to_int) {
+        Some(n) if n <= 0 => {
+            return Err(RuntimeError::Type(
+                "File::read: size must be positive".to_string(),
+            ));
+        }
+        Some(n) => n.min(1 << 24),
+        None => 4096,
+    };
     let mut file = match clone_file_handle(id) {
         Ok(file) => file,
         Err(_) => return Ok(err_variant("File::read: stale handle")),

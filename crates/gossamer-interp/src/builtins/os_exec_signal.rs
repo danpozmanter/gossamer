@@ -344,7 +344,12 @@ fn builtin_time_now_ms(_args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_time_sleep(args: &[Value]) -> RuntimeResult<Value> {
-    let ms = args.first().and_then(value_to_int).unwrap_or(0).max(0);
+    let ms = args.first().and_then(value_to_int).unwrap_or(0);
+    if ms < 0 {
+        return Err(RuntimeError::Type(
+            "time::sleep: duration_ms must be non-negative".to_string(),
+        ));
+    }
     let duration = time_std::Duration::from_millis(u64::try_from(ms).unwrap_or(0));
     time_std::sleep(duration);
     Ok(Value::Unit)
@@ -688,6 +693,9 @@ fn builtin_exec_wait_timeout(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::Int(ms)) = args.get(1) else {
         return Ok(Value::Int(-2));
     };
+    if *ms < 0 {
+        return Ok(Value::Int(-2));
+    }
     Ok(Value::Int(exec_std::wait_pid_timeout(*pid, *ms)))
 }
 

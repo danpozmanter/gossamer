@@ -188,6 +188,59 @@ fn repl_rejects_rebinding_a_reference_with_its_referent() {
 }
 
 #[test]
+fn repl_reference_rebind_to_temporary_does_not_mutate_old_referent() {
+    let out = run_repl(
+        "let a = [1, 2]\n\
+         let b = [3, 4]\n\
+         let mut c = &a\n\
+         c = &b\n\
+         c = &[5, 6]\n\
+         let mut x = [10, 20]\n\
+         let mut y = [30, 40]\n\
+         let mut r = &mut x\n\
+         r = &mut y\n\
+         r = &mut [50, 60]\n\
+         %bindings\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("a = [1, 2]"),
+        "immutable original binding changed or disappeared: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("b = [3, 4]"),
+        "immutable referent binding was overwritten by reference rebind: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("mut c = [5, 6]"),
+        "reference binding did not move to the new temporary referent: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("b = [5, 6]"),
+        "reference rebind leaked through and mutated immutable `b`: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("mut x = [10, 20]") && out.stdout.contains("mut y = [30, 40]"),
+        "mutable reference rebind changed an old named referent: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("mut r = [50, 60]"),
+        "mutable reference binding did not move to the new temporary referent: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("mut y = [50, 60]"),
+        "mutable reference rebind leaked through and mutated old `y`: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_compound_assignment_accumulates_across_lines() {
     // `+=` on a persisted binding must fold across inputs, in order.
     let out = run_repl("let mut c = 0\nc += 5\nc += 3\nc\n");
@@ -432,6 +485,27 @@ fn repl_meta_find_fuzzy_searches_modules_functions_and_types() {
 }
 
 #[test]
+fn repl_meta_find_fuzzy_matches_names_not_descriptions() {
+    let out = run_repl("%find chunk\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("std::http::chunked"),
+        "name lookup should still find chunked HTTP items: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("std::env::current_dir"),
+        "documentation-only subsequence matches should not be returned: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("std::hash::crc32::checksum_string"),
+        "description text should not participate in fuzzy find: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_meta_find_requires_a_query() {
     let out = run_repl("%find\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -439,6 +513,151 @@ fn repl_meta_find_requires_a_query() {
         out.stderr.contains("usage: %find"),
         "empty find should show usage: {}",
         out.stderr
+    );
+}
+
+#[test]
+fn repl_iter_receiver_methods_pipe_dotdot_and_range_index_work() {
+    let out = run_repl(
+        "let a = [1, 2, 3, 4, 5]\n\
+         a.skip(2)\n\
+         a.enumerate()\n\
+         a.zip(0..).collect()\n\
+         a |> iter::zip(..) |> _.collect()\n\
+         a[..2]\n\
+         [1, 1, 2, 2].dedup()\n\
+         a.windows(2)\n\
+         a.chunks(2)\n\
+         a.pairwise()\n\
+         [[1, 2], [3]].flatten()\n\
+         a.rev()\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for expected in [
+        "Out[2]: [3, 4, 5]",
+        "Out[3]: [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]",
+        "Out[4]: [(1, 0), (2, 1), (3, 2), (4, 3), (5, 4)]",
+        "Out[5]: [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]",
+        "Out[6]: [1, 2]",
+        "Out[7]: [1, 2]",
+        "Out[8]: [[1, 2], [2, 3], [3, 4], [4, 5]]",
+        "Out[9]: [[1, 2], [3, 4], [5]]",
+        "Out[10]: [(1, 2), (2, 3), (3, 4), (4, 5)]",
+        "Out[11]: [1, 2, 3]",
+        "Out[12]: [5, 4, 3, 2, 1]",
+    ] {
+        assert!(
+            out.stdout.contains(expected),
+            "missing `{expected}` from issue 44 regression output: {}",
+            out.stdout
+        );
+    }
+}
+
+#[test]
+fn repl_iter_take_rejects_negative_counts() {
+    let out = run_repl("let a = [1, 2, 3]\na.take(-2)\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("count must be non-negative"),
+        "negative take should be rejected instead of clamped: {}",
+        out.stderr
+    );
+    assert!(
+        !out.stdout.contains("Out[2]: []"),
+        "negative take must not silently return an empty Vec: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_rejects_negative_size_arguments_across_stdlib() {
+    let out = run_repl(
+        "strings::repeat(\"x\", -1)\n\
+         strings::splitn(\"a,b\", -1, \",\")\n\
+         strings::pad_left(\"x\", -1, ' ')\n\
+         strings::replacen(\"aaa\", \"a\", \"b\", -1)\n\
+         let xs = [1, 2, 3]\n\
+         xs.take(-1)\n\
+         xs.step_by(-1)\n\
+         xs.windows(-1)\n\
+         iter::repeat(1, -1)\n\
+         let v: Vec<i64> = Vec::with_capacity(-1)\n\
+         String::with_capacity(-1)\n\
+         let m: HashMap<String, i64> = HashMap::with_capacity(-1)\n\
+         image::new(-1, 1)\n\
+         time::sleep(-1)\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for expected in [
+        "strings::repeat: count must be non-negative",
+        "strings::splitn: count must be non-negative",
+        "strings::pad_left: width must be non-negative",
+        "strings::replacen: count must be non-negative",
+        "Vec::take: count must be non-negative",
+        "Vec::step_by: count must be non-negative",
+        "iter::windows: count must be non-negative",
+        "iter::repeat: count must be non-negative",
+        "Vec::with_capacity: capacity must be non-negative",
+        "String::with_capacity: capacity must be non-negative",
+        "HashMap::with_capacity: capacity must be non-negative",
+        "image::new: width must be non-negative",
+        "time::sleep: duration_ms must be non-negative",
+    ] {
+        assert!(
+            out.stderr.contains(expected),
+            "missing `{expected}` from negative-size regression stderr: {}",
+            out.stderr
+        );
+    }
+    for forbidden in [
+        "Out[1]: \"\"",
+        "Out[2]: []",
+        "Out[6]: []",
+        "Out[9]: []",
+        "Out[10]: []",
+        "Out[11]: \"\"",
+    ] {
+        assert!(
+            !out.stdout.contains(forbidden),
+            "negative size argument was silently accepted: {}",
+            out.stdout
+        );
+    }
+}
+
+#[test]
+fn repl_vec_slice_rejects_bad_arity_and_argument_types() {
+    let out = run_repl(
+        "let a = [1, 2, 3, 4, 5]\n\
+         a.slice(1, 3)\n\
+         a.slice(1..3)\n\
+         a.slice(..3)\n\
+         a.slice(..)\n\
+         a.slice(2)\n\
+         a.slice(\"two\")\n\
+         a.slice(\"two\", 3)\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Out[2]: Ok([2, 3])"),
+        "valid Vec::slice call should still work: {}",
+        out.stdout
+    );
+    assert!(
+        out.stderr.contains("type mismatch"),
+        "non-integer slice bounds should be rejected by typing: {}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("Vec::slice") && out.stderr.contains("takes 2 argument"),
+        "wrong Vec::slice arity should be diagnosed: {}",
+        out.stderr
+    );
+    assert!(
+        !out.stdout.contains("Ok([])"),
+        "invalid Vec::slice calls must not silently return Ok([]): {}",
+        out.stdout
     );
 }
 

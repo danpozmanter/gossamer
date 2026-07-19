@@ -102,7 +102,8 @@ use crate::builtins::{
     value_to_int,
 };
 use crate::value::{
-    MapKey, NativeCall, NativeDispatch, RuntimeResult, Value, dense_map, dense_map_with_capacity,
+    MapKey, NativeCall, NativeDispatch, RuntimeError, RuntimeResult, Value, dense_map,
+    dense_map_with_capacity,
 };
 
 /// Entry point invoked from `builtins::install`.
@@ -295,6 +296,25 @@ pub(crate) fn lazy_iter_repr(id: i64) -> Option<String> {
             }
             _ => None,
         }
+    })
+}
+
+/// Returns open/closed range metadata without consuming the lazy range.
+pub(crate) fn lazy_range_bounds(id: i64) -> Option<(i64, i64, bool, bool, bool)> {
+    LAZY_ITER_STATES.with(|states| {
+        let states = states.borrow();
+        let LazyIterState::Range {
+            current,
+            end,
+            inclusive,
+            start_open,
+            end_open,
+            ..
+        } = states.get(&id)?
+        else {
+            return None;
+        };
+        Some((*current, *end, *inclusive, *start_open, *end_open))
     })
 }
 
@@ -925,6 +945,16 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
     // (`min(3, 7)` / `max(a, b)`) with the sequence reducers.
     let vec_builtin_entries: &[(&str, BuiltinFnPub)] = &[
         ("take", builtin_vec_take_method),
+        ("skip", builtin_vec_skip_method),
+        ("enumerate", builtin_vec_enumerate_method),
+        ("chain", builtin_vec_chain_method),
+        ("zip", builtin_vec_zip_method),
+        ("flatten", builtin_vec_flatten_method),
+        ("rev", builtin_vec_rev_method),
+        ("dedup", builtin_vec_dedup_method),
+        ("windows", builtin_vec_windows_method),
+        ("pairwise", builtin_vec_pairwise_method),
+        ("chunks", builtin_vec_chunks_method),
         ("step_by", builtin_vec_step_by_method),
         ("collect", builtin_iter_collect),
         // Data-first single-argument reducers: the method call's
@@ -987,6 +1017,18 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
     for (short, call) in [
         ("take", builtin_iterator_take_method as BuiltinFnPub),
         ("skip", builtin_iterator_skip_method as BuiltinFnPub),
+        (
+            "enumerate",
+            builtin_iterator_enumerate_method as BuiltinFnPub,
+        ),
+        ("chain", builtin_iterator_chain_method as BuiltinFnPub),
+        ("zip", builtin_iterator_zip_method as BuiltinFnPub),
+        ("flatten", builtin_iterator_flatten_method as BuiltinFnPub),
+        ("rev", builtin_iterator_rev_method as BuiltinFnPub),
+        ("dedup", builtin_iterator_dedup_method as BuiltinFnPub),
+        ("windows", builtin_iterator_windows_method as BuiltinFnPub),
+        ("pairwise", builtin_iterator_pairwise_method as BuiltinFnPub),
+        ("chunks", builtin_iterator_chunks_method as BuiltinFnPub),
     ] {
         let qualified: &'static str = Box::leak(format!("Iterator::{short}").into_boxed_str());
         globals.push((qualified, crate::builtins::builtin_pub(qualified, call)));
@@ -999,6 +1041,28 @@ fn rotate_receiver_last(args: &[Value]) -> Vec<Value> {
     let mut v: Vec<Value> = args.get(1..).unwrap_or(&[]).to_vec();
     v.push(args.first().cloned().unwrap_or(Value::Unit));
     v
+}
+
+fn non_negative_count(args: &[Value], index: usize, name: &str) -> RuntimeResult<usize> {
+    let Some(raw) = args.get(index).and_then(value_to_int) else {
+        return Err(RuntimeError::Type(format!("{name}: count must be i64")));
+    };
+    if raw < 0 {
+        return Err(RuntimeError::Type(format!(
+            "{name}: count must be non-negative"
+        )));
+    }
+    usize::try_from(raw).map_err(|_| RuntimeError::Arithmetic(format!("{name}: count too large")))
+}
+
+fn positive_count(args: &[Value], index: usize, name: &str) -> RuntimeResult<usize> {
+    let raw = non_negative_count(args, index, name)?;
+    if raw == 0 {
+        return Err(RuntimeError::Type(format!(
+            "{name}: count must be positive"
+        )));
+    }
+    Ok(raw)
 }
 
 macro_rules! vec_method_form {
@@ -1051,9 +1115,58 @@ pub(crate) fn native_vec_count_method(
 /// `xs.take(n)` - method form of `iter::take` (receiver-first).
 pub(crate) fn builtin_vec_take_method(args: &[Value]) -> RuntimeResult<Value> {
     let xs = collect_array(args.first().unwrap_or(&Value::Unit));
-    let n = args.get(1).and_then(value_to_int).unwrap_or(0);
-    let n = usize::try_from(n.max(0)).unwrap_or(0);
+    let n = non_negative_count(args, 1, "Vec::take")?;
     Ok(Value::Array(Arc::new(iter_std::take(n, &xs))))
+}
+
+/// `xs.skip(n)` - method form of `iter::skip` (receiver-first).
+pub(crate) fn builtin_vec_skip_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_skip(&rotate_receiver_last(args))
+}
+
+/// `xs.enumerate()` - method form of `iter::enumerate`.
+pub(crate) fn builtin_vec_enumerate_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_enumerate(args)
+}
+
+/// `xs.chain(other)` - method form of `iter::chain`.
+pub(crate) fn builtin_vec_chain_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_chain(args)
+}
+
+/// `xs.zip(other)` - method form of `iter::zip`.
+pub(crate) fn builtin_vec_zip_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_zip(args)
+}
+
+/// `xs.flatten()` - method form of `iter::flatten`.
+pub(crate) fn builtin_vec_flatten_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_flatten(args)
+}
+
+/// `xs.rev()` - method form of `iter::rev`.
+pub(crate) fn builtin_vec_rev_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_reversed(args)
+}
+
+/// `xs.dedup()` - method form of `iter::dedup`.
+pub(crate) fn builtin_vec_dedup_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_dedup(args)
+}
+
+/// `xs.windows(n)` - method form of `iter::windows`.
+pub(crate) fn builtin_vec_windows_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_windows(&rotate_receiver_last(args))
+}
+
+/// `xs.pairwise()` - method form of `iter::pairwise`.
+pub(crate) fn builtin_vec_pairwise_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_pairwise(args)
+}
+
+/// `xs.chunks(n)` - method form of `iter::chunks`.
+pub(crate) fn builtin_vec_chunks_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_chunks(&rotate_receiver_last(args))
 }
 
 /// `iter.take(n)` with the receiver rotated into the data-last free form.
@@ -1066,12 +1179,56 @@ pub(crate) fn builtin_iterator_skip_method(args: &[Value]) -> RuntimeResult<Valu
     builtin_iter_skip(&rotate_receiver_last(args))
 }
 
+/// `iter.enumerate()` with the receiver in the data-first free form.
+pub(crate) fn builtin_iterator_enumerate_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_enumerate(args)
+}
+
+/// `iter.chain(other)` with the receiver in the data-first free form.
+pub(crate) fn builtin_iterator_chain_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_chain(args)
+}
+
+/// `iter.zip(other)` with the receiver in the data-first free form.
+pub(crate) fn builtin_iterator_zip_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_zip(args)
+}
+
+/// `iter.flatten()` with the receiver in the data-first free form.
+pub(crate) fn builtin_iterator_flatten_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_flatten(args)
+}
+
+/// `iter.rev()` with the receiver in the data-first free form.
+pub(crate) fn builtin_iterator_rev_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_reversed(args)
+}
+
+/// `iter.dedup()` with the receiver in the data-first free form.
+pub(crate) fn builtin_iterator_dedup_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_dedup(args)
+}
+
+/// `iter.windows(n)` with the receiver rotated into the data-last free form.
+pub(crate) fn builtin_iterator_windows_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_windows(&rotate_receiver_last(args))
+}
+
+/// `iter.pairwise()` with the receiver in the data-first free form.
+pub(crate) fn builtin_iterator_pairwise_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_pairwise(args)
+}
+
+/// `iter.chunks(n)` with the receiver rotated into the data-last free form.
+pub(crate) fn builtin_iterator_chunks_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_chunks(&rotate_receiver_last(args))
+}
+
 /// `xs.step_by(step)` - every `step`-th element starting at index 0;
 /// a step below 1 is treated as 1 (total, tier-identical).
 pub(crate) fn builtin_vec_step_by_method(args: &[Value]) -> RuntimeResult<Value> {
     let xs = collect_array(args.first().unwrap_or(&Value::Unit));
-    let step = args.get(1).and_then(value_to_int).unwrap_or(1).max(1);
-    let step = usize::try_from(step).unwrap_or(1);
+    let step = positive_count(args, 1, "Vec::step_by")?;
     let out: Vec<Value> = xs.iter().step_by(step).cloned().collect();
     Ok(Value::Array(Arc::new(out)))
 }
@@ -1110,8 +1267,7 @@ pub(crate) fn builtin_iter_empty(_args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_iter_step_by(args: &[Value]) -> RuntimeResult<Value> {
-    let step = args.first().and_then(value_to_int).unwrap_or(1).max(1);
-    let step = usize::try_from(step).unwrap_or(1);
+    let step = positive_count(args, 0, "iter::step_by")?;
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     let out: Vec<Value> = xs.iter().step_by(step).cloned().collect();
     Ok(Value::Array(Arc::new(out)))
@@ -1131,8 +1287,7 @@ pub(crate) fn builtin_iter_count(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_iter_take(args: &[Value]) -> RuntimeResult<Value> {
-    let n = args.first().and_then(value_to_int).unwrap_or(0);
-    let n = usize::try_from(n.max(0)).unwrap_or(0);
+    let n = non_negative_count(args, 0, "iter::take")?;
     if lazy_iterators_enabled() || matches!(args.get(1), Some(Value::LazyIter(_))) {
         return Ok(new_lazy_iter(LazyIterState::Take {
             upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
@@ -1145,15 +1300,13 @@ pub(crate) fn builtin_iter_take(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_iter_eager_take(args: &[Value]) -> RuntimeResult<Value> {
-    let n = args.first().and_then(value_to_int).unwrap_or(0);
-    let n = usize::try_from(n.max(0)).unwrap_or(0);
+    let n = non_negative_count(args, 0, "iter::eager_take")?;
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     Ok(Value::Array(Arc::new(iter_std::take(n, &xs))))
 }
 
 pub(crate) fn builtin_iter_skip(args: &[Value]) -> RuntimeResult<Value> {
-    let n = args.first().and_then(value_to_int).unwrap_or(0);
-    let n = usize::try_from(n.max(0)).unwrap_or(0);
+    let n = non_negative_count(args, 0, "iter::skip")?;
     if lazy_iterators_enabled() || matches!(args.get(1), Some(Value::LazyIter(_))) {
         return Ok(new_lazy_iter(LazyIterState::Skip {
             upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
@@ -1166,8 +1319,7 @@ pub(crate) fn builtin_iter_skip(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_iter_eager_skip(args: &[Value]) -> RuntimeResult<Value> {
-    let n = args.first().and_then(value_to_int).unwrap_or(0);
-    let n = usize::try_from(n.max(0)).unwrap_or(0);
+    let n = non_negative_count(args, 0, "iter::eager_skip")?;
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     Ok(Value::Array(Arc::new(iter_std::skip(n, &xs))))
 }
@@ -2060,8 +2212,7 @@ fn builtin_iter_eager_range_inclusive(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_iter_repeat(args: &[Value]) -> RuntimeResult<Value> {
     let v = args.first().cloned().unwrap_or(Value::Unit);
-    let n = args.get(1).and_then(value_to_int).unwrap_or(0);
-    let n = usize::try_from(n.max(0)).unwrap_or(0);
+    let n = non_negative_count(args, 1, "iter::repeat")?;
     if lazy_iterators_enabled() {
         return Ok(new_lazy_iter(LazyIterState::Repeat {
             item: v,
@@ -2091,8 +2242,7 @@ pub(crate) fn builtin_iter_unzip(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_iter_windows(args: &[Value]) -> RuntimeResult<Value> {
-    let n = args.first().and_then(value_to_int).unwrap_or(0);
-    let n = usize::try_from(n.max(0)).unwrap_or(0);
+    let n = positive_count(args, 0, "iter::windows")?;
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     if n == 0 || xs.len() < n {
         return Ok(Value::Array(Arc::new(Vec::new())));
@@ -2114,8 +2264,7 @@ pub(crate) fn builtin_iter_pairwise(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_iter_chunks(args: &[Value]) -> RuntimeResult<Value> {
-    let n = args.first().and_then(value_to_int).unwrap_or(0);
-    let n = usize::try_from(n.max(0)).unwrap_or(0);
+    let n = positive_count(args, 0, "iter::chunks")?;
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     if n == 0 {
         return Ok(Value::Array(Arc::new(Vec::new())));

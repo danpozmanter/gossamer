@@ -254,6 +254,9 @@ pub unsafe extern "C" fn gos_rt_iter_range_inclusive(start: i64, end: i64) -> *m
 pub unsafe extern "C" fn gos_rt_iter_repeat_i64(value: i64, n: i64) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         let out = unsafe { gos_rt_vec_new(8) };
+        if n < 0 {
+            unsafe { gos_rt_panic(c"iter::repeat: count must be non-negative".as_ptr()) };
+        }
         if n > 0 {
             for _ in 0..n {
                 unsafe { gos_rt_vec_push_i64(out, value) };
@@ -481,7 +484,10 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_from_vec_i64(source: *mut GosVec) -> *
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_lazy_iter_repeat_i64(value: i64, n: i64) -> *mut GosLazyIterI64 {
     ffi_entry!(std::ptr::null_mut(), {
-        let n = usize::try_from(n.max(0)).unwrap_or(0);
+        if n < 0 {
+            unsafe { gos_rt_panic(c"iter::repeat: count must be non-negative".as_ptr()) };
+        }
+        let n = usize::try_from(n).unwrap_or(0);
         lazy_i64(std::iter::repeat_n(value, n))
     })
 }
@@ -499,7 +505,10 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_take_i64(
     iter: *mut GosLazyIterI64,
 ) -> *mut GosLazyIterI64 {
     ffi_entry!(std::ptr::null_mut(), {
-        let n = usize::try_from(n.max(0)).unwrap_or(0);
+        if n < 0 {
+            unsafe { gos_rt_panic(c"iter::take: count must be non-negative".as_ptr()) };
+        }
+        let n = usize::try_from(n).unwrap_or(0);
         let upstream = unsafe { take_lazy_i64(iter) };
         lazy_i64(upstream.take(n))
     })
@@ -512,7 +521,10 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_skip_i64(
     iter: *mut GosLazyIterI64,
 ) -> *mut GosLazyIterI64 {
     ffi_entry!(std::ptr::null_mut(), {
-        let n = usize::try_from(n.max(0)).unwrap_or(0);
+        if n < 0 {
+            unsafe { gos_rt_panic(c"iter::skip: count must be non-negative".as_ptr()) };
+        }
+        let n = usize::try_from(n).unwrap_or(0);
         let upstream = unsafe { take_lazy_i64(iter) };
         lazy_i64(upstream.skip(n))
     })
@@ -789,11 +801,14 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_find_i64(
 pub unsafe extern "C" fn gos_rt_iter_take_i64(n: i64, v: *const GosVec) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         let out = unsafe { gos_rt_vec_new(8) };
+        if n < 0 {
+            unsafe { gos_rt_panic(c"iter::take: count must be non-negative".as_ptr()) };
+        }
         if v.is_null() {
             return out;
         }
         let vec = unsafe { &*v };
-        let take_n = n.max(0).min(vec.len);
+        let take_n = n.min(vec.len);
         for i in 0..take_n {
             let x = unsafe { gos_rt_vec_get_i64(v, i) };
             unsafe { gos_rt_vec_push_i64(out, x) };
@@ -807,11 +822,14 @@ pub unsafe extern "C" fn gos_rt_iter_take_i64(n: i64, v: *const GosVec) -> *mut 
 pub unsafe extern "C" fn gos_rt_iter_skip_i64(n: i64, v: *const GosVec) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         let out = unsafe { gos_rt_vec_new(8) };
+        if n < 0 {
+            unsafe { gos_rt_panic(c"iter::skip: count must be non-negative".as_ptr()) };
+        }
         if v.is_null() {
             return out;
         }
         let vec = unsafe { &*v };
-        let start = n.max(0).min(vec.len);
+        let start = n.min(vec.len);
         for i in start..vec.len {
             let x = unsafe { gos_rt_vec_get_i64(v, i) };
             unsafe { gos_rt_vec_push_i64(out, x) };
@@ -965,8 +983,8 @@ pub unsafe extern "C" fn gos_rt_iter_pairwise_i64(v: *const GosVec) -> *mut GosV
 }
 
 /// `iter::windows(n, xs)` - `Vec<Vec<i64>>` of every contiguous
-/// width-`n` window. Empty when `n <= 0` or `xs` is shorter than
-/// `n`. Outer is a VEC-typed vec of inner `*mut GosVec` pointers
+/// width-`n` window. Empty when `xs` is shorter than `n`. Outer is a
+/// VEC-typed vec of inner `*mut GosVec` pointers
 /// (recursively freed).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_windowed_i64(n: i64, v: *const GosVec) -> *mut GosVec {
@@ -974,7 +992,10 @@ pub unsafe extern "C" fn gos_rt_iter_windowed_i64(n: i64, v: *const GosVec) -> *
         let out = unsafe {
             crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::VEC)
         };
-        if v.is_null() || n <= 0 {
+        if n <= 0 {
+            unsafe { gos_rt_panic(c"iter::windows: count must be positive".as_ptr()) };
+        }
+        if v.is_null() {
             return out;
         }
         let vec = unsafe { &*v };
@@ -995,15 +1016,17 @@ pub unsafe extern "C" fn gos_rt_iter_windowed_i64(n: i64, v: *const GosVec) -> *
 }
 
 /// `iter::chunks(n, xs)` - `Vec<Vec<i64>>` of consecutive
-/// width-`n` chunks; the final chunk may be short. Empty when
-/// `n <= 0`.
+/// width-`n` chunks; the final chunk may be short.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_chunk_by_size_i64(n: i64, v: *const GosVec) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         let out = unsafe {
             crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::VEC)
         };
-        if v.is_null() || n <= 0 {
+        if n <= 0 {
+            unsafe { gos_rt_panic(c"iter::chunks: count must be positive".as_ptr()) };
+        }
+        if v.is_null() {
             return out;
         }
         let vec = unsafe { &*v };

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.31.1 - REPL %find and correctness fixes
+
+- Restrict REPL `%find` fuzzy matching to symbol names so item descriptions
+  do not make unrelated results rank as matches.
+- Rebind REPL reference aliases to new temporary referents without mutating the
+  previous immutable or mutable named referent.
+- Fix reported REPL iterator and slicing issues: receiver-form `skip`,
+  `enumerate`, and `zip`, pipe `..` range arguments, Vec range indexing,
+  negative size/count arguments across collection, string, iterator, image, and
+  runtime helpers, and bad `Vec::slice` arguments.
+
 ## 0.31.0 - Service hardening, REPL discovery, cache management
 
 - Add configurable maximum request-header and chunked-trailer counts and

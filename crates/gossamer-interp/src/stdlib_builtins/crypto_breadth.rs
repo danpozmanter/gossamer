@@ -101,7 +101,7 @@ use crate::builtins::{
     BuiltinFnPub, as_str, err_variant, install_module_pub, none_variant, ok_variant, some_variant,
     value_to_int,
 };
-use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
+use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeError, RuntimeResult, Value};
 
 /// Entry point invoked from `builtins::install`.
 use super::*;
@@ -384,8 +384,24 @@ pub(crate) fn builtin_crypto_ecdsa_verify_pem(args: &[Value]) -> RuntimeResult<V
 pub(crate) fn builtin_crypto_kdf_pbkdf2(args: &[Value]) -> RuntimeResult<Value> {
     let password = value_to_bytes(args.first().unwrap_or(&Value::Unit));
     let salt = value_to_bytes(args.get(1).unwrap_or(&Value::Unit));
-    let iterations = args.get(2).and_then(value_to_int).unwrap_or(100_000) as u32;
-    let output = args.get(3).and_then(value_to_int).unwrap_or(32) as usize;
+    let iterations_raw = args.get(2).and_then(value_to_int).unwrap_or(100_000);
+    if iterations_raw <= 0 {
+        return Err(RuntimeError::Type(
+            "crypto::kdf::pbkdf2_sha256: iterations must be positive".to_string(),
+        ));
+    }
+    let iterations = u32::try_from(iterations_raw).map_err(|_| {
+        RuntimeError::Type("crypto::kdf::pbkdf2_sha256: iterations is too large".to_string())
+    })?;
+    let output_raw = args.get(3).and_then(value_to_int).unwrap_or(32);
+    if output_raw < 0 {
+        return Err(RuntimeError::Type(
+            "crypto::kdf::pbkdf2_sha256: output length must be non-negative".to_string(),
+        ));
+    }
+    let output = usize::try_from(output_raw).map_err(|_| {
+        RuntimeError::Type("crypto::kdf::pbkdf2_sha256: output length is too large".to_string())
+    })?;
     let key = gossamer_std::crypto::kdf::pbkdf2_sha256(&password, &salt, iterations, output);
     Ok(bytes_to_value_array(&key))
 }
@@ -434,7 +450,20 @@ pub(crate) fn builtin_crypto_password_needs_rehash(args: &[Value]) -> RuntimeRes
 pub(crate) fn builtin_crypto_kdf_scrypt(args: &[Value]) -> RuntimeResult<Value> {
     let password = value_to_bytes(args.first().unwrap_or(&Value::Unit));
     let salt = value_to_bytes(args.get(1).unwrap_or(&Value::Unit));
-    let output = args.get(2).and_then(value_to_int).unwrap_or(32) as usize;
+    let output_raw = args.get(2).and_then(value_to_int).unwrap_or(32);
+    if output_raw < 0 {
+        return Ok(err_variant(
+            "crypto::kdf::scrypt_interactive: output length must be non-negative",
+        ));
+    }
+    let output = match usize::try_from(output_raw) {
+        Ok(n) => n,
+        Err(_) => {
+            return Ok(err_variant(
+                "crypto::kdf::scrypt_interactive: output length is too large",
+            ));
+        }
+    };
     match gossamer_std::crypto::kdf::scrypt_interactive(&password, &salt, output) {
         Ok(key) => Ok(ok_variant(bytes_to_value_array(&key))),
         Err(e) => Ok(err_variant(format!("{e}"))),

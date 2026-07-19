@@ -1108,6 +1108,12 @@ fn index_get_checked(base: &Value, idx: &Value) -> RuntimeResult<Value> {
 }
 
 fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
+    if let Value::LazyIter(id) = idx
+        && let Some((start, end, inclusive, start_open, end_open)) =
+            crate::stdlib_builtins::iter::lazy_range_bounds(*id)
+    {
+        return index_range_get(base, start, end, inclusive, start_open, end_open);
+    }
     let raw = match idx {
         Value::Int(n) => *n,
         _ => return Err(RuntimeError::Type("index must be integer".to_string())),
@@ -1155,6 +1161,54 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
         Value::String(s) => Ok(Value::Int(i64::from(s.as_bytes()[i]))),
         Value::IntArray(data) => Ok(Value::Int(data[i])),
         Value::FloatVec(data) => Ok(Value::Float(data[i])),
+        _ => unreachable!("len computed above for this variant"),
+    }
+}
+
+fn index_range_get(
+    base: &Value,
+    start: i64,
+    end: i64,
+    inclusive: bool,
+    start_open: bool,
+    end_open: bool,
+) -> RuntimeResult<Value> {
+    let len = match base {
+        Value::Array(items) => items.len(),
+        Value::Tuple(items) => items.len(),
+        Value::IntArray(d) => d.len(),
+        Value::FloatVec(d) => d.len(),
+        Value::FloatArray(fa) if fa.stride > 0 => fa.data.len() / fa.stride as usize,
+        Value::FloatArray(_) => 0,
+        _ => {
+            return Err(RuntimeError::Type(format!(
+                "value of kind `{base}` does not support range indexing"
+            )));
+        }
+    };
+    let len_i64 = i64::try_from(len).unwrap_or(i64::MAX);
+    let lo_raw = if start_open { 0 } else { start };
+    let hi_raw = if end_open {
+        len_i64
+    } else if inclusive {
+        end.saturating_add(1)
+    } else {
+        end
+    };
+    let lo = lo_raw.max(0).min(len_i64) as usize;
+    let hi = hi_raw.max(lo as i64).min(len_i64) as usize;
+    match base {
+        Value::Array(items) => Ok(Value::Array(Arc::new(items[lo..hi].to_vec()))),
+        Value::Tuple(items) => Ok(Value::Array(Arc::new(items[lo..hi].to_vec()))),
+        Value::IntArray(data) => Ok(Value::IntArray(Arc::new(data[lo..hi].to_vec()))),
+        Value::FloatVec(data) => Ok(Value::FloatVec(Arc::new(data[lo..hi].to_vec()))),
+        Value::FloatArray(rx) => {
+            let Value::Array(view) = Value::FloatArray(rx.clone()).float_array_to_value_array()
+            else {
+                return Ok(Value::Array(Arc::new(Vec::new())));
+            };
+            Ok(Value::Array(Arc::new(view[lo..hi].to_vec())))
+        }
         _ => unreachable!("len computed above for this variant"),
     }
 }

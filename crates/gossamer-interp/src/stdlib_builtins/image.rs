@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use gossamer_std::{encoding::base64, image as image_std};
 
 use crate::builtins::{BuiltinFnPub, value_to_int};
-use crate::value::{RuntimeResult, Value};
+use crate::value::{RuntimeError, RuntimeResult, Value};
 
 use super::as_str;
 
@@ -27,6 +27,22 @@ fn id(value: &Value) -> Option<i64> {
 
 fn int(args: &[Value], n: usize) -> i64 {
     args.get(n).and_then(value_to_int).unwrap_or(0)
+}
+fn non_negative_u32(args: &[Value], n: usize, label: &str) -> RuntimeResult<u32> {
+    let value = int(args, n);
+    if value < 0 {
+        return Err(RuntimeError::Type(format!("{label} must be non-negative")));
+    }
+    u32::try_from(value).map_err(|_| RuntimeError::Type(format!("{label} is too large")))
+}
+fn bounded_u8(args: &[Value], n: usize, min: i64, max: i64, label: &str) -> RuntimeResult<u8> {
+    let value = int(args, n);
+    if value < min || value > max {
+        return Err(RuntimeError::Type(format!(
+            "{label} must be between {min} and {max}"
+        )));
+    }
+    u8::try_from(value).map_err(|_| RuntimeError::Type(format!("{label} is too large")))
 }
 fn channel(value: i64, shift: u32) -> u8 {
     ((value >> shift) & 0xff) as u8
@@ -72,18 +88,14 @@ fn insert(image: image_std::Image) -> Value {
     Value::Int(id)
 }
 fn image_new(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(
-        image_std::Image::new(int(args, 0).max(0) as u32, int(args, 1).max(0) as u32)
-            .map_or(Value::Int(0), insert),
-    )
+    let width = non_negative_u32(args, 0, "image::new: width")?;
+    let height = non_negative_u32(args, 1, "image::new: height")?;
+    Ok(image_std::Image::new(width, height).map_or(Value::Int(0), insert))
 }
 fn image_filled(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(image_std::Image::filled(
-        int(args, 0).max(0) as u32,
-        int(args, 1).max(0) as u32,
-        rgba(int(args, 2)),
-    )
-    .map_or(Value::Int(0), insert))
+    let width = non_negative_u32(args, 0, "image::filled: width")?;
+    let height = non_negative_u32(args, 1, "image::filled: height")?;
+    Ok(image_std::Image::filled(width, height, rgba(int(args, 2))).map_or(Value::Int(0), insert))
 }
 fn image_decode_base64(args: &[Value]) -> RuntimeResult<Value> {
     let decoded = args
@@ -123,6 +135,8 @@ fn image_height(args: &[Value]) -> RuntimeResult<Value> {
     ))
 }
 fn image_pixel(args: &[Value]) -> RuntimeResult<Value> {
+    let x = non_negative_u32(args, 1, "image::pixel: x")?;
+    let y = non_negative_u32(args, 2, "image::pixel: y")?;
     Ok(Value::Int(
         id(args.first().unwrap_or(&Value::Unit))
             .and_then(|id| {
@@ -130,9 +144,7 @@ fn image_pixel(args: &[Value]) -> RuntimeResult<Value> {
                     images
                         .borrow()
                         .get(&id)
-                        .and_then(|image| {
-                            image.pixel(int(args, 1).max(0) as u32, int(args, 2).max(0) as u32)
-                        })
+                        .and_then(|image| image.pixel(x, y))
                         .map(pack)
                 })
             })
@@ -140,15 +152,14 @@ fn image_pixel(args: &[Value]) -> RuntimeResult<Value> {
     ))
 }
 fn image_set_pixel(args: &[Value]) -> RuntimeResult<Value> {
+    let x = non_negative_u32(args, 1, "image::set_pixel: x")?;
+    let y = non_negative_u32(args, 2, "image::set_pixel: y")?;
     let changed = id(args.first().unwrap_or(&Value::Unit)).is_some_and(|id| {
         with_images(|images| {
-            images.borrow_mut().get_mut(&id).is_some_and(|image| {
-                image.set_pixel(
-                    int(args, 1).max(0) as u32,
-                    int(args, 2).max(0) as u32,
-                    rgba(int(args, 3)),
-                )
-            })
+            images
+                .borrow_mut()
+                .get_mut(&id)
+                .is_some_and(|image| image.set_pixel(x, y, rgba(int(args, 3))))
         })
     });
     Ok(Value::Bool(changed))
@@ -170,6 +181,7 @@ fn image_encode_png(args: &[Value]) -> RuntimeResult<Value> {
     ))
 }
 fn image_encode_jpeg(args: &[Value]) -> RuntimeResult<Value> {
+    let quality = bounded_u8(args, 1, 1, 100, "image::encode_jpeg: quality")?;
     Ok(Value::String(
         id(args.first().unwrap_or(&Value::Unit))
             .and_then(|id| {
@@ -177,9 +189,7 @@ fn image_encode_jpeg(args: &[Value]) -> RuntimeResult<Value> {
                     images
                         .borrow()
                         .get(&id)
-                        .and_then(|image| {
-                            image_std::encode_jpeg(image, int(args, 1).clamp(1, 100) as u8).ok()
-                        })
+                        .and_then(|image| image_std::encode_jpeg(image, quality).ok())
                         .map(|bytes| base64::encode(&bytes))
                 })
             })

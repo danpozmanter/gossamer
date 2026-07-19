@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 use gossamer_ast::Ident;
 
 use crate::builtins::{BuiltinFnPub, value_to_int};
-use crate::value::{Channel, RuntimeResult, Value};
+use crate::value::{Channel, RuntimeError, RuntimeResult, Value};
 
 struct CtxNode {
     cancelled: AtomicBool,
@@ -137,7 +137,15 @@ pub(crate) fn builtin_ctx_with_cancel(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_ctx_with_timeout(args: &[Value]) -> RuntimeResult<Value> {
     let parent = args.first().and_then(ctx_id_of);
-    let millis = args.get(1).and_then(value_to_int).unwrap_or(0).max(0) as u64;
+    let millis = args.get(1).and_then(value_to_int).unwrap_or(0);
+    if millis < 0 {
+        return Err(RuntimeError::Type(
+            "Context::with_timeout: timeout_ms must be non-negative".to_string(),
+        ));
+    }
+    let millis = u64::try_from(millis).map_err(|_| {
+        RuntimeError::Type("Context::with_timeout: timeout_ms is too large".to_string())
+    })?;
     let deadline = Instant::now() + Duration::from_millis(millis);
     Ok(alloc_node(Some(deadline), parent))
 }

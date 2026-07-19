@@ -101,7 +101,7 @@ use crate::builtins::{
     BuiltinFnPub, as_str, err_variant, install_module_pub, none_variant, ok_variant, some_variant,
     value_to_int,
 };
-use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
+use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeError, RuntimeResult, Value};
 
 /// Entry point invoked from `builtins::install`.
 use super::*;
@@ -147,7 +147,14 @@ pub(crate) fn with_barrier<R>(
 }
 
 pub(crate) fn builtin_barrier_new(args: &[Value]) -> RuntimeResult<Value> {
-    let n = args.first().and_then(value_to_int).unwrap_or(1) as usize;
+    let n = args.first().and_then(value_to_int).unwrap_or(1);
+    if n <= 0 {
+        return Err(RuntimeError::Type(
+            "Barrier::new: count must be positive".to_string(),
+        ));
+    }
+    let n = usize::try_from(n)
+        .map_err(|_| RuntimeError::Type("Barrier::new: count is too large".to_string()))?;
     let id = next_atomic_id();
     BARRIER_REGISTRY.with(|r| {
         r.borrow_mut()

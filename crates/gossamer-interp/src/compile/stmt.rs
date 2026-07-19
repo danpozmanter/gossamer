@@ -278,11 +278,10 @@ impl<'tcx> FnBuilder<'tcx> {
         place: &HirExpr,
         value: &HirExpr,
     ) -> RuntimeResult<()> {
-        // Rebinding a `let mut r = &mut source` changes the reference's
-        // source place, not the old source value. Direct local references
-        // share a register with their current source, so update that binding
-        // during lowering before any ordinary assignment can write the old
-        // source.
+        // Rebinding a reference local changes its referent, not the old
+        // referent value. Direct local references share a register with their
+        // current source, so update that binding during lowering before any
+        // ordinary assignment can write the old source.
         if let HirExprKind::Path { segments, .. } = &place.kind
             && let [name] = segments.as_slice()
             && self.is_reference_binding(&name.name)
@@ -290,15 +289,32 @@ impl<'tcx> FnBuilder<'tcx> {
                 op: HirUnaryOp::RefShared | HirUnaryOp::RefMut,
                 operand,
             } = &value.kind
-            && let HirExprKind::Path { segments, .. } = &operand.kind
-            && let [source_name] = segments.as_slice()
-            && let Some(source) = self.lookup_local(&source_name.name)
-            && self.rebind_reference_local(&name.name, source)
         {
-            self.flat_int_locals.remove(&source.reg);
-            self.flat_float_locals.remove(&source.reg);
-            self.reference_alias_regs.insert(source.reg);
-            return Ok(());
+            let source = self.compile_expr_ex(operand)?;
+            let source_is_named_local =
+                reference_operand_local_name(operand).and_then(|source_name| {
+                    self.lookup_local(source_name)
+                        .filter(|local| local.reg == source.reg && local.kind == source.kind)
+                });
+            let copied_temporary = source_is_named_local.is_none();
+            let target = if copied_temporary {
+                self.bind_to_fresh(source)
+            } else {
+                source
+            };
+            if self.rebind_reference_local(&name.name, target) {
+                self.flat_int_locals.remove(&source.reg);
+                self.flat_float_locals.remove(&source.reg);
+                self.flat_int_locals.remove(&target.reg);
+                self.flat_float_locals.remove(&target.reg);
+                self.reference_alias_regs.insert(target.reg);
+                if copied_temporary {
+                    self.escaped_reference_reg_floor = self
+                        .escaped_reference_reg_floor
+                        .max(target.reg.saturating_add(1));
+                }
+                return Ok(());
+            }
         }
         if self.try_compile_inplace_str_append(place, value)? {
             return Ok(());

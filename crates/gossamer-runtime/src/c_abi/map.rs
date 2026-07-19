@@ -185,11 +185,12 @@ pub unsafe extern "C" fn gos_rt_map_new_with_capacity(
         // Keep preallocation an optimisation rather than an allocation-DoS;
         // subsequent inserts retain ordinary map growth semantics.
         const MAX_PREALLOCATED_CAPACITY: usize = 1 << 24;
-        let cap = if cap < 0 {
-            0
-        } else {
-            (cap as usize).min(MAX_PREALLOCATED_CAPACITY)
-        };
+        if cap < 0 {
+            unsafe {
+                gos_rt_panic(c"HashMap::with_capacity: capacity must be non-negative".as_ptr());
+            };
+        }
+        let cap = (cap as usize).min(MAX_PREALLOCATED_CAPACITY);
         let storage = if key_bytes == 8 && val_bytes == 8 {
             MapStorage::I64I64(FxHashMap::with_capacity_and_hasher(
                 cap,
@@ -220,11 +221,12 @@ pub unsafe extern "C" fn gos_rt_map_new_with_capacity_typed(
 ) -> *mut GosMap {
     ffi_entry!(std::ptr::null_mut(), {
         const MAX_PREALLOCATED_CAPACITY: usize = 1 << 24;
-        let cap = if cap < 0 {
-            0
-        } else {
-            (cap as usize).min(MAX_PREALLOCATED_CAPACITY)
-        };
+        if cap < 0 {
+            unsafe {
+                gos_rt_panic(c"HashMap::with_capacity: capacity must be non-negative".as_ptr());
+            };
+        }
+        let cap = (cap as usize).min(MAX_PREALLOCATED_CAPACITY);
         let storage = match (key_kind, val_kind) {
             (0, 0) => MapStorage::I64I64(FxHashMap::with_capacity_and_hasher(
                 cap,
@@ -921,7 +923,13 @@ pub unsafe extern "C" fn gos_rt_map_inc_at_str_i64(
     by: i64,
 ) -> i64 {
     ffi_entry!(-1, {
-        if m.is_null() || seq.is_null() || len <= 0 || start < 0 {
+        if start < 0 {
+            unsafe { gos_rt_panic(c"HashMap::inc_at: start must be non-negative".as_ptr()) };
+        }
+        if len < 0 {
+            unsafe { gos_rt_panic(c"HashMap::inc_at: length must be non-negative".as_ptr()) };
+        }
+        if m.is_null() || seq.is_null() || len == 0 {
             return 0;
         }
         // The true sequence length is read O(1) from the string's length

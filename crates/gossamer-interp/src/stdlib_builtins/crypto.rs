@@ -101,7 +101,7 @@ use crate::builtins::{
     BuiltinFnPub, as_str, err_variant, install_module_pub, none_variant, ok_variant, some_variant,
     value_to_int,
 };
-use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
+use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeError, RuntimeResult, Value};
 
 /// Entry point invoked from `builtins::install`.
 use super::*;
@@ -253,7 +253,15 @@ pub(crate) fn builtin_crypto_subtle_ct_eq(args: &[Value]) -> RuntimeResult<Value
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn builtin_crypto_rand_bytes(args: &[Value]) -> RuntimeResult<Value> {
     let n = args.first().and_then(value_to_int).unwrap_or(0);
-    let n = usize::try_from(n.max(0)).unwrap_or(0);
+    if n < 0 {
+        return Ok(err_variant(
+            "crypto::rand::bytes: count must be non-negative",
+        ));
+    }
+    let n = match usize::try_from(n) {
+        Ok(n) => n,
+        Err(_) => return Ok(err_variant("crypto::rand::bytes: count is too large")),
+    };
     match gossamer_std::crypto::rand::bytes(n) {
         Ok(b) => Ok(ok_variant(bytes_to_value_array(&b))),
         Err(e) => Ok(err_variant(format!("{e}"))),

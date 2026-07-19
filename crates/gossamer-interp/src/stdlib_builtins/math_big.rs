@@ -101,7 +101,7 @@ use crate::builtins::{
     BuiltinFnPub, as_str, err_variant, install_module_pub, none_variant, ok_variant, some_variant,
     value_to_int,
 };
-use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
+use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeError, RuntimeResult, Value};
 
 /// Entry point invoked from `builtins::install`.
 use super::*;
@@ -253,7 +253,15 @@ pub(crate) fn builtin_big_int_rem(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_big_int_pow(args: &[Value]) -> RuntimeResult<Value> {
     let a = big_int_from_value(args.first().unwrap_or(&Value::Unit));
-    let exp = args.get(1).and_then(value_to_int).unwrap_or(0).max(0) as u32;
+    let exp_raw = args.get(1).and_then(value_to_int).unwrap_or(0);
+    if exp_raw < 0 {
+        return Err(RuntimeError::Type(
+            "math::big::Int::pow: exponent must be non-negative".to_string(),
+        ));
+    }
+    let exp = u32::try_from(exp_raw).map_err(|_| {
+        RuntimeError::Type("math::big::Int::pow: exponent is too large".to_string())
+    })?;
     Ok(Value::String(a.pow(exp).to_string().into()))
 }
 
@@ -298,7 +306,15 @@ pub(crate) fn builtin_big_uint_from_str(args: &[Value]) -> RuntimeResult<Value> 
 }
 
 pub(crate) fn builtin_big_uint_from_u64(args: &[Value]) -> RuntimeResult<Value> {
-    let n = args.first().and_then(value_to_int).unwrap_or(0).max(0) as u64;
+    let n_raw = args.first().and_then(value_to_int).unwrap_or(0);
+    if n_raw < 0 {
+        return Err(RuntimeError::Type(
+            "math::big::Uint::from_u64: value must be non-negative".to_string(),
+        ));
+    }
+    let n = u64::try_from(n_raw).map_err(|_| {
+        RuntimeError::Type("math::big::Uint::from_u64: value is too large".to_string())
+    })?;
     let big = gossamer_std::math::big::Uint::from_u64(n);
     Ok(Value::String(big.to_string().into()))
 }
@@ -340,7 +356,15 @@ pub(crate) fn builtin_big_uint_mul(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_big_uint_pow(args: &[Value]) -> RuntimeResult<Value> {
     let a = big_uint_from_value(args.first().unwrap_or(&Value::Unit));
-    let exp = args.get(1).and_then(value_to_int).unwrap_or(0).max(0) as u32;
+    let exp_raw = args.get(1).and_then(value_to_int).unwrap_or(0);
+    if exp_raw < 0 {
+        return Err(RuntimeError::Type(
+            "math::big::Uint::pow: exponent must be non-negative".to_string(),
+        ));
+    }
+    let exp = u32::try_from(exp_raw).map_err(|_| {
+        RuntimeError::Type("math::big::Uint::pow: exponent is too large".to_string())
+    })?;
     Ok(Value::String(a.pow(exp).to_string().into()))
 }
 
@@ -359,7 +383,14 @@ pub(crate) fn builtin_big_uint_bit_len(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_big_factorial(args: &[Value]) -> RuntimeResult<Value> {
-    let n = args.first().and_then(value_to_int).unwrap_or(0).max(0) as u64;
+    let n_raw = args.first().and_then(value_to_int).unwrap_or(0);
+    if n_raw < 0 {
+        return Err(RuntimeError::Type(
+            "math::big::factorial: n must be non-negative".to_string(),
+        ));
+    }
+    let n = u64::try_from(n_raw)
+        .map_err(|_| RuntimeError::Type("math::big::factorial: n is too large".to_string()))?;
     Ok(Value::String(
         gossamer_std::math::big::factorial(n).to_string().into(),
     ))

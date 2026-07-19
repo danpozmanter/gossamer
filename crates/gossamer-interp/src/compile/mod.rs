@@ -473,6 +473,10 @@ pub(crate) struct FnBuilder<'tcx> {
     /// consume analysis tracks names, while either name may still access the
     /// same storage.
     pub(crate) reference_alias_regs: std::collections::HashSet<Reg>,
+    /// Lowest `next_reg` value that must survive discarded-statement
+    /// register restores because a temporary value register became the
+    /// referent of a local reference binding.
+    pub(crate) escaped_reference_reg_floor: Reg,
     /// Registers bound by a pattern to an array / vec / slice value
     /// (`Some(arr)`, `(head, tail)`, …). A pattern binding's `Path`
     /// reference carries the binding's *declared* type only when the
@@ -643,6 +647,16 @@ fn expr_diverges(expr: &HirExpr) -> bool {
 /// directly.
 fn is_path_expr(expr: &HirExpr) -> bool {
     matches!(&expr.kind, HirExprKind::Path { .. })
+}
+
+fn reference_operand_local_name(expr: &HirExpr) -> Option<&str> {
+    let HirExprKind::Path { segments, .. } = &expr.kind else {
+        return None;
+    };
+    let [segment] = segments.as_slice() else {
+        return None;
+    };
+    Some(segment.name.as_str())
 }
 
 /// Strips leading module-relative prefix segments (`super`, `crate`,

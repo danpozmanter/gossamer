@@ -59,7 +59,9 @@ impl<'tcx> FnBuilder<'tcx> {
         self.max_reg = self.max_reg.max(self.next_reg);
         self.max_float_reg = self.max_float_reg.max(self.next_float_reg);
         self.max_int_reg = self.max_int_reg.max(self.next_int_reg);
-        (self.next_reg, self.next_float_reg, self.next_int_reg) = mark;
+        self.next_reg = mark.0.max(self.escaped_reference_reg_floor);
+        self.next_float_reg = mark.1;
+        self.next_int_reg = mark.2;
     }
 
     pub(crate) fn push_scope(&mut self) {

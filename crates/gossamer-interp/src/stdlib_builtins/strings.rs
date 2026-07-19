@@ -101,7 +101,7 @@ use crate::builtins::{
     BuiltinFnPub, as_str, err_variant, install_module_pub, none_variant, ok_variant, some_variant,
     value_to_int,
 };
-use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
+use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeError, RuntimeResult, Value};
 
 /// Entry point invoked from `builtins::install`.
 use super::*;
@@ -178,6 +178,24 @@ fn pattern_arg(value: Option<&Value>) -> std::borrow::Cow<'_, str> {
     }
 }
 
+fn non_negative_usize_arg(
+    args: &[Value],
+    idx: usize,
+    builtin: &str,
+    name: &str,
+) -> RuntimeResult<usize> {
+    let raw = args
+        .get(idx)
+        .and_then(value_to_int)
+        .ok_or_else(|| RuntimeError::Type(format!("{builtin}: {name} must be i64")))?;
+    if raw < 0 {
+        return Err(RuntimeError::Type(format!(
+            "{builtin}: {name} must be non-negative"
+        )));
+    }
+    usize::try_from(raw).map_err(|_| RuntimeError::Type(format!("{builtin}: {name} is too large")))
+}
+
 pub(crate) fn builtin_strings_split(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
     let sep = pattern_arg(args.get(1));
@@ -186,10 +204,7 @@ pub(crate) fn builtin_strings_split(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_strings_splitn(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let n = args
-        .get(1)
-        .and_then(value_to_int)
-        .map_or(0, |x| usize::try_from(x.max(0)).unwrap_or(0));
+    let n = non_negative_usize_arg(args, 1, "strings::splitn", "count")?;
     let sep = pattern_arg(args.get(2));
     Ok(string_array(strings_std::splitn(text, n, &sep)))
 }
@@ -328,6 +343,11 @@ pub(crate) fn builtin_strings_rstrip_chars(args: &[Value]) -> RuntimeResult<Valu
 pub(crate) fn builtin_strings_center(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
     let width = args.get(1).and_then(value_to_int).unwrap_or(0);
+    if width < 0 {
+        return Err(RuntimeError::Type(
+            "strings::center: width must be non-negative".to_string(),
+        ));
+    }
     let pad = match args.get(2) {
         Some(Value::Char(c)) if *c != '\0' => *c,
         Some(other) => char::from_u32(value_to_int(other).unwrap_or(32) as u32).unwrap_or(' '),
@@ -370,10 +390,7 @@ pub(crate) fn builtin_strings_replacen(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
     let from = pattern_arg(args.get(1));
     let to = pattern_arg(args.get(2));
-    let n = args
-        .get(3)
-        .and_then(value_to_int)
-        .map_or(0, |v| usize::try_from(v.max(0)).unwrap_or(0));
+    let n = non_negative_usize_arg(args, 3, "strings::replacen", "count")?;
     Ok(Value::String(
         strings_std::replacen(text, &from, &to, n).into(),
     ))
@@ -419,10 +436,7 @@ pub(crate) fn builtin_strings_ends_with(args: &[Value]) -> RuntimeResult<Value> 
 
 pub(crate) fn builtin_strings_repeat(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let count = args
-        .get(1)
-        .and_then(value_to_int)
-        .map_or(0, |v| usize::try_from(v.max(0)).unwrap_or(0));
+    let count = non_negative_usize_arg(args, 1, "strings::repeat", "count")?;
     Ok(Value::String(strings_std::repeat(text, count).into()))
 }
 
@@ -478,10 +492,7 @@ pub(crate) fn builtin_strings_strip_suffix(args: &[Value]) -> RuntimeResult<Valu
 
 pub(crate) fn builtin_strings_pad_left(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let width = args
-        .get(1)
-        .and_then(value_to_int)
-        .map_or(0, |v| usize::try_from(v.max(0)).unwrap_or(0));
+    let width = non_negative_usize_arg(args, 1, "strings::pad_left", "width")?;
     let pad_char = args
         .get(2)
         .and_then(|v| match v {
@@ -497,10 +508,7 @@ pub(crate) fn builtin_strings_pad_left(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_strings_pad_right(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let width = args
-        .get(1)
-        .and_then(value_to_int)
-        .map_or(0, |v| usize::try_from(v.max(0)).unwrap_or(0));
+    let width = non_negative_usize_arg(args, 1, "strings::pad_right", "width")?;
     let pad_char = args
         .get(2)
         .and_then(|v| match v {

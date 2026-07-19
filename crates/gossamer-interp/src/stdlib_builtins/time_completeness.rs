@@ -101,7 +101,7 @@ use crate::builtins::{
     BuiltinFnPub, as_str, err_variant, install_module_pub, none_variant, ok_variant, some_variant,
     value_to_int,
 };
-use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
+use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeError, RuntimeResult, Value};
 
 /// Entry point invoked from `builtins::install`.
 use super::*;
@@ -121,7 +121,14 @@ pub(crate) fn install_time_completeness(globals: &mut Vec<(&'static str, Value)>
 }
 
 pub(crate) fn builtin_time_sleep(args: &[Value]) -> RuntimeResult<Value> {
-    let ms = args.first().and_then(value_to_int).unwrap_or(0).max(0) as u64;
+    let ms = args.first().and_then(value_to_int).unwrap_or(0);
+    if ms < 0 {
+        return Err(RuntimeError::Type(
+            "time::sleep: duration_ms must be non-negative".to_string(),
+        ));
+    }
+    let ms = u64::try_from(ms)
+        .map_err(|_| RuntimeError::Type("time::sleep: duration_ms is too large".to_string()))?;
     std::thread::sleep(std::time::Duration::from_millis(ms));
     Ok(Value::Unit)
 }

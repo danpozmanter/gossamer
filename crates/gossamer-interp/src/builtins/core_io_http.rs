@@ -269,7 +269,12 @@ fn builtin_concat(args: &[Value]) -> RuntimeResult<Value> {
 fn builtin_fmt_prec(args: &[Value]) -> RuntimeResult<Value> {
     let value = args.first().cloned().unwrap_or(Value::Int(0));
     let prec = args.get(1).and_then(value_to_int).unwrap_or(0);
-    let prec = prec.clamp(0, 64) as usize;
+    if prec < 0 {
+        return Err(RuntimeError::Type(
+            "__fmt_prec: precision must be non-negative".to_string(),
+        ));
+    }
+    let prec = prec.min(64) as usize;
     let f = match value {
         Value::Float(f) => f,
         Value::Int(n) => n as f64,
@@ -317,7 +322,14 @@ fn builtin_fmt_upper(args: &[Value]) -> RuntimeResult<Value> {
 /// `align`: 0 = right (pad left), 1 = left (pad right), 2 = center.
 fn builtin_fmt_pad(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let width = args.get(1).and_then(value_to_int).unwrap_or(0).max(0) as usize;
+    let width = args.get(1).and_then(value_to_int).unwrap_or(0);
+    if width < 0 {
+        return Err(RuntimeError::Type(
+            "__fmt_pad: width must be non-negative".to_string(),
+        ));
+    }
+    let width = usize::try_from(width)
+        .map_err(|_| RuntimeError::Type("__fmt_pad: width is too large".to_string()))?;
     let fill = args
         .get(2)
         .and_then(value_to_int)

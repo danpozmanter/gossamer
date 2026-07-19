@@ -302,16 +302,14 @@ fn pipe_rejects_multiple_direct_argument_placeholders() {
 }
 
 #[test]
-fn pipe_rejects_dotdot_as_a_placeholder() {
-    let source = "fn main() { let _ = \"world\" |> format!(\"hello, {}\", ..) }\n";
+fn pipe_accepts_dotdot_as_range_argument() {
+    let source = "fn main() { let _ = [1, 2] |> iter::zip(..) |> _.collect() }\n";
     let mut map = SourceMap::new();
     let file = map.add_file("pipe_dotdot.gos", source.to_string());
     let (_sf, diags) = parse_source_file(source, file);
     assert!(
-        diags
-            .iter()
-            .any(|diag| matches!(diag.error, ParseError::PipeDotDotPlaceholder)),
-        "`..` must not be interpreted as a pipe placeholder: {diags:?}"
+        diags.is_empty(),
+        "`..` should remain a range argument in pipe calls: {diags:?}"
     );
 }
 

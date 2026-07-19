@@ -814,16 +814,17 @@ pub unsafe extern "C" fn gos_rt_vec_reversed(v: *const GosVec) -> *mut GosVec {
 }
 
 /// `xs.step_by(step) -> [T]`: every `step`-th element starting at
-/// index 0, as a fresh Vec. A step below 1 is treated as 1 so the
-/// result is total and identical on every tier.
+/// index 0, as a fresh Vec.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_step_by(v: *const GosVec, step: i64) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
+        if step <= 0 {
+            unsafe { gos_rt_panic(c"Vec::step_by: count must be positive".as_ptr()) };
+        }
         if v.is_null() {
             return unsafe { gos_rt_vec_new(8) };
         }
         let src = unsafe { &*v };
-        let step = step.max(1);
         let out = unsafe { gos_rt_vec_with_capacity(src.elem_bytes, src.len / step + 1) };
         if !out.is_null() {
             let mut i = 0;
@@ -841,15 +842,18 @@ pub unsafe extern "C" fn gos_rt_vec_step_by(v: *const GosVec, step: i64) -> *mut
 }
 
 /// `xs.take(n) -> [T]`: the first `n` elements (clamped to the source
-/// length; a negative `n` yields an empty Vec) as a fresh Vec.
+/// length) as a fresh Vec.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_take(v: *const GosVec, n: i64) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
+        if n < 0 {
+            unsafe { gos_rt_panic(c"Vec::take: count must be non-negative".as_ptr()) };
+        }
         if v.is_null() {
             return unsafe { gos_rt_vec_new(8) };
         }
         let src = unsafe { &*v };
-        let count = n.clamp(0, src.len);
+        let count = n.min(src.len);
         let out = unsafe { gos_rt_vec_with_capacity(src.elem_bytes, count.max(1)) };
         if !out.is_null() {
             for i in 0..count {

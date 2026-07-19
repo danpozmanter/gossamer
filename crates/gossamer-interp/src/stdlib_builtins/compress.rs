@@ -134,7 +134,13 @@ pub(crate) fn install_compress(globals: &mut Vec<(&'static str, Value)>) {
 
 pub(crate) fn builtin_compress_gzip_encode(args: &[Value]) -> RuntimeResult<Value> {
     let input = bytes_from_value(args.first().unwrap_or(&Value::Unit));
-    let level = args.get(1).and_then(value_to_int).unwrap_or(6) as u32;
+    let level = args.get(1).and_then(value_to_int).unwrap_or(6);
+    if !(0..=9).contains(&level) {
+        return Ok(err_variant(
+            "compress::gzip::encode: level must be between 0 and 9",
+        ));
+    }
+    let level = u32::try_from(level).unwrap_or(6);
     let lvl = gossamer_std::compress::gzip::Level::new(level.clamp(0, 9))
         .unwrap_or(gossamer_std::compress::gzip::Level::DEFAULT);
     match gossamer_std::compress::gzip::encode(&input, lvl) {
@@ -181,7 +187,13 @@ pub(crate) fn builtin_compress_zstd_decode(args: &[Value]) -> RuntimeResult<Valu
 
 pub(crate) fn builtin_compress_flate_compress(args: &[Value]) -> RuntimeResult<Value> {
     let input = bytes_from_value(args.first().unwrap_or(&Value::Unit));
-    let level = args.get(1).and_then(value_to_int).unwrap_or(6) as u32;
+    let level = args.get(1).and_then(value_to_int).unwrap_or(6);
+    if !(0..=9).contains(&level) {
+        return Ok(err_variant(
+            "compress::flate::compress: level must be between 0 and 9",
+        ));
+    }
+    let level = u32::try_from(level).unwrap_or(6);
     match gossamer_std::compress::flate::compress(&input, level) {
         Ok(out) => Ok(ok_variant(bytes_to_array(out))),
         Err(e) => Ok(err_variant(format!("{e}"))),
@@ -198,7 +210,13 @@ pub(crate) fn builtin_compress_flate_decompress(args: &[Value]) -> RuntimeResult
 
 pub(crate) fn builtin_compress_zlib_compress(args: &[Value]) -> RuntimeResult<Value> {
     let input = bytes_from_value(args.first().unwrap_or(&Value::Unit));
-    let level = args.get(1).and_then(value_to_int).unwrap_or(6) as u32;
+    let level = args.get(1).and_then(value_to_int).unwrap_or(6);
+    if !(0..=9).contains(&level) {
+        return Ok(err_variant(
+            "compress::zlib::compress: level must be between 0 and 9",
+        ));
+    }
+    let level = u32::try_from(level).unwrap_or(6);
     match gossamer_std::compress::zlib::compress(&input, level) {
         Ok(out) => Ok(ok_variant(bytes_to_array(out))),
         Err(e) => Ok(err_variant(format!("{e}"))),

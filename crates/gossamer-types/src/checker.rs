@@ -2490,11 +2490,15 @@ impl<'a> TypeChecker<'a> {
     fn check_index_expr(&mut self, base: &Expr, index: &Expr, span: Span) -> Ty {
         let base_ty = self.check_expr(base);
         self.check_expr(index);
+        let range_index = matches!(index.kind, ExprKind::Range { .. });
         let mut cur = self.infer.resolve(self.tcx, base_ty);
         loop {
             match self.tcx.kind_of(cur).clone() {
                 TyKind::Ref { inner, .. } => cur = inner,
                 TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
+                    if range_index {
+                        return self.tcx.intern(TyKind::Vec(elem));
+                    }
                     return elem;
                 }
                 TyKind::String => return self.tcx.int_ty(IntTy::I64),
@@ -4494,9 +4498,11 @@ impl<'a> TypeChecker<'a> {
             }
             (
                 m @ ("map" | "filter" | "for_each" | "any" | "all" | "find" | "position"
-                | "max_by_key" | "min_by_key"),
+                | "max_by_key" | "min_by_key" | "skip" | "chain" | "zip" | "windows"
+                | "chunks"),
                 1,
             )
+            | (m @ ("enumerate" | "rev" | "dedup" | "flatten" | "pairwise"), 0)
             | (m @ "fold", 2) => self.std_combinator_ty("iter", m, arg_tys, resolved, span),
             _ => None,
         }
@@ -4611,6 +4617,10 @@ impl<'a> TypeChecker<'a> {
     /// argument against the element type (a `[i64]` accepting a `String`
     /// pointer word is a silent memory hazard on the native backend).
     /// Returns `None` for a non-sequence receiver so dispatch continues.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "method dispatch table stays readable as one row set"
+    )]
     fn vec_method_ret(
         &mut self,
         method: &str,
@@ -4638,17 +4648,52 @@ impl<'a> TypeChecker<'a> {
         }
         match (method, args.len()) {
             ("first" | "last", 0) => Some(self.option_adt_ty(elem)),
-            ("collect" | "rev" | "to_vec", 0) => Some(self.tcx.intern(TyKind::Vec(elem))),
+            ("collect" | "rev" | "dedup" | "to_vec", 0) => Some(self.tcx.intern(TyKind::Vec(elem))),
             ("index_of", 1) => {
                 let i = self.tcx.int_ty(IntTy::I64);
                 Some(self.option_adt_ty(i))
             }
             ("count_of", 1) => Some(self.tcx.int_ty(IntTy::I64)),
             ("contains", 1) => Some(self.tcx.bool_ty()),
-            ("slice", 2) => {
+            ("slice", _) => {
+                if args.len() != 2 {
+                    self.emit(
+                        TypeError::CallArityMismatch {
+                            callee: "Vec::slice".to_string(),
+                            expected: 2,
+                            found: args.len(),
+                        },
+                        span,
+                    );
+                    return Some(self.tcx.error_ty());
+                }
+                let i = self.tcx.int_ty(IntTy::I64);
+                for arg_ty in arg_tys {
+                    let arg_peeled = self.peel_refs(*arg_ty);
+                    self.unify(i, arg_peeled, span);
+                }
                 let vec = self.tcx.intern(TyKind::Vec(elem));
                 let err = self.tcx.dyn_error_ty();
                 Some(self.result_adt_ty(vec, err))
+            }
+            ("windows" | "chunks", 1) => {
+                if let Some(arg_ty) = arg_tys.first() {
+                    let i = self.tcx.int_ty(IntTy::I64);
+                    let arg_peeled = self.peel_refs(*arg_ty);
+                    self.unify(i, arg_peeled, span);
+                }
+                let window = self.tcx.intern(TyKind::Vec(elem));
+                Some(self.tcx.intern(TyKind::Vec(window)))
+            }
+            ("pairwise", 0) => {
+                let pair = self.tcx.intern(TyKind::Tuple(vec![elem, elem]));
+                Some(self.tcx.intern(TyKind::Vec(pair)))
+            }
+            ("flatten", 0) => {
+                let inner = self
+                    .sequence_elem_ty(elem, span)
+                    .unwrap_or_else(|| self.fresh());
+                Some(self.tcx.intern(TyKind::Vec(inner)))
             }
             // `xs.join(sep)`: Display-renders scalar / String elements,
             // separator unifies with String. An aggregate element has no
@@ -4997,8 +5042,8 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             ("iter", "fold" | "scan") => 3,
-            ("iter", "take" | "skip" | "step_by" | "chain" | "zip") => 2,
-            ("iter", "enumerate" | "rev") => 1,
+            ("iter", "take" | "skip" | "step_by" | "chain" | "zip" | "windows" | "chunks") => 2,
+            ("iter", "enumerate" | "rev" | "dedup" | "flatten" | "pairwise") => 1,
             (
                 "iter",
                 "for_each" | "map" | "filter" | "filter_map" | "flat_map" | "reduce" | "sum_by"
@@ -5339,6 +5384,7 @@ impl<'a> TypeChecker<'a> {
                         | "zip"
                         | "map"
                         | "filter"
+                        | "rev"
                 );
                 let edition_lazy_result =
                     self.edition == Edition::E2027 && !eager_alias && all_tier_lazy;
@@ -5364,6 +5410,12 @@ impl<'a> TypeChecker<'a> {
                         | "zip"
                         | "map"
                         | "filter"
+                        | "rev"
+                        | "dedup"
+                        | "flatten"
+                        | "pairwise"
+                        | "windows"
+                        | "chunks"
                         | "collect"
                         | "count"
                         | "sum"
@@ -5427,6 +5479,7 @@ impl<'a> TypeChecker<'a> {
                         self.iter_adapter_result_ty(pair, lazy_result)
                     }
                     "rev" => self.iter_adapter_result_ty(elem, lazy_result),
+                    "dedup" => self.tcx.intern(TyKind::Vec(elem)),
                     "chain" => {
                         let other = self.sequence_elem_ty(lead_tys[0], span).unwrap_or(elem);
                         self.unify(elem, other, span);
@@ -5438,6 +5491,21 @@ impl<'a> TypeChecker<'a> {
                             .unwrap_or_else(|| self.fresh());
                         let pair = self.tcx.intern(TyKind::Tuple(vec![elem, other]));
                         self.iter_adapter_result_ty(pair, lazy_result)
+                    }
+                    "flatten" => {
+                        let inner = self
+                            .sequence_elem_ty(elem, span)
+                            .unwrap_or_else(|| self.fresh());
+                        self.tcx.intern(TyKind::Vec(inner))
+                    }
+                    "pairwise" => {
+                        let pair = self.tcx.intern(TyKind::Tuple(vec![elem, elem]));
+                        self.tcx.intern(TyKind::Vec(pair))
+                    }
+                    "windows" | "chunks" => {
+                        self.unify(i64_ty, lead_tys[0], span);
+                        let window = self.tcx.intern(TyKind::Vec(elem));
+                        self.tcx.intern(TyKind::Vec(window))
                     }
                     "for_each" => {
                         let _ = self.callable_output(lead_tys[0], &[elem], span);

@@ -100,7 +100,7 @@ use crate::builtins::{
     BuiltinFnPub, as_str, err_variant, install_module_pub, none_variant, ok_variant, some_variant,
     value_to_int,
 };
-use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
+use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeError, RuntimeResult, Value};
 
 /// Entry point invoked from `builtins::install`.
 use super::*;
@@ -289,11 +289,15 @@ pub(crate) fn builtin_tcp_stream_read(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(handle_id) else {
         return Ok(err_variant("TcpStream::read: missing handle"));
     };
-    let max = args
-        .get(1)
-        .and_then(value_to_int)
-        .unwrap_or(4096)
-        .clamp(1, 1 << 24);
+    let max = match args.get(1).and_then(value_to_int) {
+        Some(n) if n <= 0 => {
+            return Err(RuntimeError::Type(
+                "TcpStream::read: size must be positive".to_string(),
+            ));
+        }
+        Some(n) => n.min(1 << 24),
+        None => 4096,
+    };
     let res = if tls_has(id) {
         match fetch_socket(&TLS_STREAM_REGISTRY, id) {
             Some(arc) => {
@@ -504,7 +508,13 @@ fn tcp_stream_timeout_builtin(args: &[Value], read: bool, clear: bool) -> Runtim
     let ms = if clear {
         0
     } else {
-        args.get(1).and_then(value_to_int).unwrap_or(0)
+        let ms = args.get(1).and_then(value_to_int).unwrap_or(0);
+        if ms < 0 {
+            return Err(RuntimeError::Type(
+                "TcpStream::timeout: timeout_ms must be non-negative".to_string(),
+            ));
+        }
+        ms
     };
     match set_tcp_stream_timeout(id, ms, read) {
         Ok(()) => Ok(ok_variant(Value::Unit)),
@@ -674,11 +684,15 @@ pub(crate) fn builtin_unix_stream_read(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(handle_id) else {
         return Ok(err_variant("UnixStream::read: missing handle"));
     };
-    let max = args
-        .get(1)
-        .and_then(value_to_int)
-        .unwrap_or(4096)
-        .clamp(1, 1 << 24);
+    let max = match args.get(1).and_then(value_to_int) {
+        Some(n) if n <= 0 => {
+            return Err(RuntimeError::Type(
+                "UnixStream::read: size must be positive".to_string(),
+            ));
+        }
+        Some(n) => n.min(1 << 24),
+        None => 4096,
+    };
     let res = match clone_unix_stream(id) {
         Ok(mut stream) => {
             match gossamer_runtime::sched_global::run_blocking("unix-stream-read", move || {
@@ -982,11 +996,15 @@ pub(crate) fn builtin_udp_recv_from(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(handle_id) else {
         return Ok(err_variant("UdpSocket::recv_from: missing handle"));
     };
-    let max = args
-        .get(1)
-        .and_then(value_to_int)
-        .unwrap_or(1500)
-        .clamp(1, 1 << 16);
+    let max = match args.get(1).and_then(value_to_int) {
+        Some(n) if n <= 0 => {
+            return Err(RuntimeError::Type(
+                "UdpSocket::recv_from: size must be positive".to_string(),
+            ));
+        }
+        Some(n) => n.min(1 << 16),
+        None => 1500,
+    };
     let res = match fetch_socket(&UDP_REGISTRY, id) {
         Some(arc) => {
             let mut buf = vec![0u8; max as usize];

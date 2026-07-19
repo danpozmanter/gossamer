@@ -186,7 +186,13 @@ fn insert(image: Image) -> i64 {
 }
 
 fn dimension(value: i64) -> u32 {
-    u32::try_from(value).unwrap_or(0)
+    if value < 0 {
+        unsafe { super::gos_rt_panic(c"image dimension must be non-negative".as_ptr()) };
+    }
+    u32::try_from(value).unwrap_or_else(|_| {
+        unsafe { super::gos_rt_panic(c"image dimension is too large".as_ptr()) };
+        0
+    })
 }
 
 fn rgba(value: i64) -> Rgba {
@@ -301,9 +307,16 @@ pub unsafe extern "C" fn gos_rt_image_encode_png_base64(handle: i64) -> *mut c_c
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_image_encode_jpeg_base64(handle: i64, quality: i64) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
+        if !(1..=100).contains(&quality) {
+            unsafe {
+                super::gos_rt_panic(
+                    c"image::encode_jpeg: quality must be between 1 and 100".as_ptr(),
+                );
+            };
+        }
         let text = lock_images()
             .get(&handle)
-            .and_then(|image| encode_jpeg(image, quality.clamp(1, 100) as u8))
+            .and_then(|image| encode_jpeg(image, quality as u8))
             .map_or_else(String::new, |bytes| super::encoding::base64_encode(&bytes));
         alloc_cstring(text.as_bytes())
     })

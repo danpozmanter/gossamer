@@ -151,14 +151,13 @@ fn expect_builder<'a>(
     }
 }
 
-/// Normalises a `max_redirects` setting: negatives clamp to 0
-/// (never follow), values past `u32::MAX` clamp to `u32::MAX`.
+/// Normalises a `max_redirects` setting: values past `u32::MAX`
+/// clamp to `u32::MAX`.
 fn clamp_max_redirects(n: i64) -> i64 {
     n.clamp(0, i64::from(u32::MAX))
 }
 
-/// Normalises a `timeout_ms` setting: zero or negative values fall
-/// back to the 30 s default.
+/// Normalises a `timeout_ms` setting: zero falls back to the 30 s default.
 fn clamp_timeout_ms(t: i64) -> i64 {
     if t <= 0 { DEFAULT_TIMEOUT_MS } else { t }
 }
@@ -180,6 +179,11 @@ pub(crate) fn builtin_http_client_builder_max_redirects(args: &[Value]) -> Runti
     let inner = expect_builder(args, "ClientBuilder::max_redirects")?;
     let (_, timeout_ms, cookie_jar, proxy) = builder_settings(inner);
     let n = match args.get(1) {
+        Some(Value::Int(n)) if *n < 0 => {
+            return Err(RuntimeError::Type(
+                "ClientBuilder::max_redirects: count must be non-negative".to_string(),
+            ));
+        }
         Some(Value::Int(n)) => clamp_max_redirects(*n),
         _ => DEFAULT_MAX_REDIRECTS,
     };
@@ -190,11 +194,16 @@ pub(crate) fn builtin_http_client_builder_max_redirects(args: &[Value]) -> Runti
 }
 
 /// `ClientBuilder::timeout_ms(t) -> ClientBuilder` - rebuilt
-/// immutably; non-positive values fall back to the 30 s default.
+/// immutably; zero falls back to the 30 s default.
 pub(crate) fn builtin_http_client_builder_timeout_ms(args: &[Value]) -> RuntimeResult<Value> {
     let inner = expect_builder(args, "ClientBuilder::timeout_ms")?;
     let (max_redirects, _, cookie_jar, proxy) = builder_settings(inner);
     let t = match args.get(1) {
+        Some(Value::Int(t)) if *t < 0 => {
+            return Err(RuntimeError::Type(
+                "ClientBuilder::timeout_ms: timeout_ms must be non-negative".to_string(),
+            ));
+        }
         Some(Value::Int(t)) => clamp_timeout_ms(*t),
         _ => DEFAULT_TIMEOUT_MS,
     };
@@ -833,6 +842,11 @@ pub(crate) fn builtin_response_stream_next_chunk(args: &[Value]) -> RuntimeResul
         ));
     };
     let max_bytes = match args.get(1) {
+        Some(Value::Int(n)) if *n <= 0 => {
+            return Err(RuntimeError::Type(
+                "ResponseStream::next_chunk: size must be positive".to_string(),
+            ));
+        }
         Some(Value::Int(n)) => usize::try_from(*n).unwrap_or(0),
         _ => 0,
     };

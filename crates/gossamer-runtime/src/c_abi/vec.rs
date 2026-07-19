@@ -574,6 +574,9 @@ unsafe fn alloc_vec_header(mut v: GosVec) -> *mut GosVec {
 /// regioned.  Start from the ordinary region-aware empty constructor, then
 /// reserve the requested capacity through the shared growth path.
 unsafe fn alloc_vec_with_capacity(elem_bytes: u32, elem_kind: u8, cap: i64) -> *mut GosVec {
+    if cap < 0 {
+        unsafe { gos_rt_panic(c"Vec::with_capacity: capacity must be non-negative".as_ptr()) };
+    }
     let v = unsafe {
         alloc_vec_header(GosVec {
             len: 0,
@@ -1188,7 +1191,9 @@ pub unsafe extern "C" fn gos_rt_vec_from_arr(
     len: i64,
 ) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
-        let len = len.max(0);
+        if len < 0 {
+            unsafe { gos_rt_panic(c"Vec length must be non-negative".as_ptr()) };
+        }
         let n = checked_buffer_bytes(len as usize, elem_bytes as usize);
         // Header + element buffer in one `Box<InlineVec>` (inline for a
         // small array, else a separate buffer); `ptr` lands at the data
@@ -1572,7 +1577,10 @@ pub unsafe extern "C" fn gos_rt_vec_truncate(v: *mut GosVec, len: i64) {
         if v.is_null() {
             return;
         }
-        let new_len = len.max(0);
+        if len < 0 {
+            unsafe { gos_rt_panic(c"truncate: length must be non-negative".as_ptr()) };
+        }
+        let new_len = len;
         let old_len = unsafe { (*v).len.max(0) };
         if new_len >= old_len {
             return;

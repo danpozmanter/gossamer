@@ -100,6 +100,11 @@ fn builtin_extend(args: &[Value]) -> RuntimeResult<Value> {
 fn builtin_truncate(args: &[Value]) -> RuntimeResult<Value> {
     let cap = match args.get(1) {
         Some(Value::Int(n)) if *n >= 0 => *n as usize,
+        Some(Value::Int(_)) => {
+            return Err(RuntimeError::Type(
+                "truncate: length must be non-negative".to_string(),
+            ))
+        }
         _ => return Ok(args.first().cloned().unwrap_or(Value::Unit)),
     };
     match args.first() {
@@ -770,7 +775,15 @@ fn builtin_testing_check_ok(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_testing_wait_for_scheduler_idle(args: &[Value]) -> RuntimeResult<Value> {
-    let timeout_ms = args.first().and_then(value_to_int).unwrap_or(1000).max(0);
+    let timeout_ms = match args.first().and_then(value_to_int) {
+        Some(n) if n < 0 => {
+            return Err(RuntimeError::Type(
+                "testing::wait_for_scheduler_idle: timeout_ms must be non-negative".to_string(),
+            ))
+        }
+        Some(n) => n,
+        None => 1000,
+    };
     let deadline = std::time::Instant::now()
         + std::time::Duration::from_millis(u64::try_from(timeout_ms).unwrap_or(0));
     let scheduler = gossamer_runtime::sched_global::scheduler();
@@ -918,6 +931,11 @@ fn builtin_channel_new(args: &[Value]) -> RuntimeResult<Value> {
     // matching Go's zero-capacity channel. `channel(N)` for positive N
     // is bounded. Use `channel::unbounded()` for the old queue form.
     let capacity = match args.first() {
+        Some(Value::Int(n)) if *n < 0 => {
+            return Err(RuntimeError::Type(
+                "channel: capacity must be non-negative".to_string(),
+            ))
+        }
         Some(Value::Int(n)) if *n > 0 => *n as usize,
         _ => 0,
     };
@@ -944,4 +962,3 @@ fn builtin_channel_send(args: &[Value]) -> RuntimeResult<Value> {
     channel.send(value);
     Ok(Value::Unit)
 }
-

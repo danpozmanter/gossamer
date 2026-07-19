@@ -357,8 +357,31 @@ fn arg_int(args: &[Value], idx: usize) -> Option<i64> {
     }
 }
 
+fn non_negative_arg(
+    args: &[Value],
+    idx: usize,
+    default: i64,
+    label: &str,
+) -> RuntimeResult<usize> {
+    let n = arg_int(args, idx).unwrap_or(default);
+    if n < 0 {
+        return Err(RuntimeError::Type(format!(
+            "{label} must be non-negative"
+        )));
+    }
+    usize::try_from(n).map_err(|_| RuntimeError::Type(format!("{label} is too large")))
+}
+
+fn positive_arg(args: &[Value], idx: usize, default: i64, label: &str) -> RuntimeResult<usize> {
+    let n = arg_int(args, idx).unwrap_or(default);
+    if n <= 0 {
+        return Err(RuntimeError::Type(format!("{label} must be positive")));
+    }
+    usize::try_from(n).map_err(|_| RuntimeError::Type(format!("{label} is too large")))
+}
+
 fn builtin_i64vec_new(args: &[Value]) -> RuntimeResult<Value> {
-    let len = arg_int(args, 0).unwrap_or(0).max(0) as usize;
+    let len = non_negative_arg(args, 0, 0, "I64Vec::new: length")?;
     let mut data: Vec<AtomicI64> = Vec::with_capacity(len);
     for _ in 0..len {
         data.push(AtomicI64::new(0));
@@ -425,8 +448,8 @@ fn builtin_i64vec_write_range_to_stdout(args: &[Value]) -> RuntimeResult<Value> 
     let vec_arc = i64vec_lookup(handle).ok_or_else(|| {
         RuntimeError::Type("write_range_to_stdout: stale I64Vec handle".to_string())
     })?;
-    let off = arg_int(args, 1).unwrap_or(0).max(0) as usize;
-    let count = arg_int(args, 2).unwrap_or(0).max(0) as usize;
+    let off = non_negative_arg(args, 1, 0, "write_range_to_stdout: offset")?;
+    let count = non_negative_arg(args, 2, 0, "write_range_to_stdout: count")?;
     let end = off.saturating_add(count).min(vec_arc.len());
     let mut buf = Vec::with_capacity(end.saturating_sub(off));
     for i in off..end {
@@ -446,9 +469,9 @@ fn builtin_i64vec_write_lines_to_stdout(args: &[Value]) -> RuntimeResult<Value> 
     let vec_arc = i64vec_lookup(handle).ok_or_else(|| {
         RuntimeError::Type("write_lines_to_stdout: stale I64Vec handle".to_string())
     })?;
-    let off = arg_int(args, 1).unwrap_or(0).max(0) as usize;
-    let count = arg_int(args, 2).unwrap_or(0).max(0) as usize;
-    let line_len = arg_int(args, 3).unwrap_or(60).max(1) as usize;
+    let off = non_negative_arg(args, 1, 0, "write_lines_to_stdout: offset")?;
+    let count = non_negative_arg(args, 2, 0, "write_lines_to_stdout: count")?;
+    let line_len = positive_arg(args, 3, 60, "write_lines_to_stdout: line length")?;
     let end = off.saturating_add(count).min(vec_arc.len());
     let mut buf = Vec::with_capacity(end.saturating_sub(off) + count / line_len + 1);
     let mut i = off;
@@ -556,7 +579,7 @@ pub(crate) fn u8vec_get_byte_inline(handle: i64, idx: i64) -> Option<i64> {
 }
 
 fn builtin_u8vec_new(args: &[Value]) -> RuntimeResult<Value> {
-    let len = arg_int(args, 0).unwrap_or(0).max(0) as usize;
+    let len = non_negative_arg(args, 0, 0, "U8Vec::new: length")?;
     let mut data: Vec<std::sync::atomic::AtomicU8> = Vec::with_capacity(len);
     for _ in 0..len {
         data.push(std::sync::atomic::AtomicU8::new(0));
@@ -610,7 +633,7 @@ fn builtin_u8vec_count_singles(args: &[Value]) -> RuntimeResult<Value> {
         .ok_or_else(|| RuntimeError::Type("count_singles: receiver must be U8Vec".to_string()))?;
     let vec_arc = u8vec_lookup(handle)
         .ok_or_else(|| RuntimeError::Type("count_singles: stale U8Vec handle".to_string()))?;
-    let buf_len = arg_int(args, 1).unwrap_or(0).max(0) as usize;
+    let buf_len = non_negative_arg(args, 1, 0, "to_string_left: length")?;
     let len = vec_arc.len().min(buf_len);
     let mut counts = [0i64; 4];
     for slot in &vec_arc[..len] {
@@ -629,7 +652,7 @@ fn builtin_u8vec_count_pairs(args: &[Value]) -> RuntimeResult<Value> {
         .ok_or_else(|| RuntimeError::Type("count_pairs: receiver must be U8Vec".to_string()))?;
     let vec_arc = u8vec_lookup(handle)
         .ok_or_else(|| RuntimeError::Type("count_pairs: stale U8Vec handle".to_string()))?;
-    let buf_len = arg_int(args, 1).unwrap_or(0).max(0) as usize;
+    let buf_len = non_negative_arg(args, 1, 0, "to_string_center: length")?;
     let len = vec_arc.len().min(buf_len);
     let mut counts = [0i64; 16];
     if len < 2 {
@@ -654,8 +677,8 @@ fn builtin_u8vec_count_kmers(args: &[Value]) -> RuntimeResult<Value> {
         .ok_or_else(|| RuntimeError::Type("count_kmers: receiver must be U8Vec".to_string()))?;
     let vec_arc = u8vec_lookup(handle)
         .ok_or_else(|| RuntimeError::Type("count_kmers: stale U8Vec handle".to_string()))?;
-    let buf_len = arg_int(args, 1).unwrap_or(0).max(0) as usize;
-    let k = arg_int(args, 2).unwrap_or(0).max(0) as usize;
+    let buf_len = non_negative_arg(args, 1, 0, "to_string_right: length")?;
+    let k = non_negative_arg(args, 2, 0, "to_string_right: count")?;
     let len = vec_arc.len().min(buf_len);
     let counts = kmer_count(&vec_arc[..len], k);
     Ok(Value::IntMap(Arc::new(parking_lot::Mutex::new(counts))))
@@ -713,8 +736,8 @@ fn builtin_u8vec_window_key(args: &[Value]) -> RuntimeResult<Value> {
         .ok_or_else(|| RuntimeError::Type("window_key: receiver must be U8Vec".to_string()))?;
     let vec_arc = u8vec_lookup(handle)
         .ok_or_else(|| RuntimeError::Type("window_key: stale U8Vec handle".to_string()))?;
-    let i = arg_int(args, 1).unwrap_or(0).max(0) as usize;
-    let k = arg_int(args, 2).unwrap_or(0).max(0) as usize;
+    let i = non_negative_arg(args, 1, 0, "increment_sorted: index")?;
+    let k = non_negative_arg(args, 2, 0, "increment_sorted: count")?;
     let len = vec_arc.len();
     let mut key: i64 = 0;
     let stop = i.saturating_add(k).min(len);
@@ -753,7 +776,8 @@ fn builtin_vec_new(_args: &[Value]) -> RuntimeResult<Value> {
 /// preallocation hint; the VM's array grows on demand, so it maps to the
 /// same empty value as `Vec::new()` (len 0), leaving the compiled tiers to
 /// honour the reservation via `gos_rt_vec_with_capacity`.
-fn builtin_vec_with_capacity(_args: &[Value]) -> RuntimeResult<Value> {
+fn builtin_vec_with_capacity(args: &[Value]) -> RuntimeResult<Value> {
+    let _ = non_negative_arg(args, 0, 0, "Vec::with_capacity: capacity")?;
     Ok(Value::empty_array())
 }
 
@@ -769,7 +793,16 @@ fn builtin_u8vec_to_string(args: &[Value]) -> RuntimeResult<Value> {
         .ok_or_else(|| RuntimeError::Type("to_string: receiver must be U8Vec".to_string()))?;
     let vec_arc = u8vec_lookup(handle)
         .ok_or_else(|| RuntimeError::Type("to_string: stale U8Vec handle".to_string()))?;
-    let len = arg_int(args, 1).map_or_else(|| vec_arc.len(), |n| n.max(0) as usize);
+    let len = match arg_int(args, 1) {
+        Some(n) if n < 0 => {
+            return Err(RuntimeError::Type(
+                "to_string: length must be non-negative".to_string(),
+            ))
+        }
+        Some(n) => usize::try_from(n)
+            .map_err(|_| RuntimeError::Type("to_string: length is too large".to_string()))?,
+        None => vec_arc.len(),
+    };
     let take = len.min(vec_arc.len());
     let mut bytes = Vec::with_capacity(take);
     for slot in vec_arc.iter().take(take) {
@@ -790,8 +823,8 @@ fn builtin_u8vec_write_byte_range_to_stdout(args: &[Value]) -> RuntimeResult<Val
     let vec_arc = u8vec_lookup(handle).ok_or_else(|| {
         RuntimeError::Type("write_byte_range_to_stdout: stale U8Vec handle".to_string())
     })?;
-    let off = arg_int(args, 1).unwrap_or(0).max(0) as usize;
-    let count = arg_int(args, 2).unwrap_or(0).max(0) as usize;
+    let off = non_negative_arg(args, 1, 0, "write_byte_range_to_stdout: offset")?;
+    let count = non_negative_arg(args, 2, 0, "write_byte_range_to_stdout: count")?;
     let end = off.saturating_add(count).min(vec_arc.len());
     let mut buf = Vec::with_capacity(end.saturating_sub(off));
     for i in off..end {
@@ -811,9 +844,9 @@ fn builtin_u8vec_write_byte_lines_to_stdout(args: &[Value]) -> RuntimeResult<Val
     let vec_arc = u8vec_lookup(handle).ok_or_else(|| {
         RuntimeError::Type("write_byte_lines_to_stdout: stale U8Vec handle".to_string())
     })?;
-    let off = arg_int(args, 1).unwrap_or(0).max(0) as usize;
-    let count = arg_int(args, 2).unwrap_or(0).max(0) as usize;
-    let line_len = arg_int(args, 3).unwrap_or(60).max(1) as usize;
+    let off = non_negative_arg(args, 1, 0, "write_byte_lines_to_stdout: offset")?;
+    let count = non_negative_arg(args, 2, 0, "write_byte_lines_to_stdout: count")?;
+    let line_len = positive_arg(args, 3, 60, "write_byte_lines_to_stdout: line length")?;
     let end = off.saturating_add(count).min(vec_arc.len());
     let mut buf = Vec::with_capacity(end.saturating_sub(off) + (end - off) / line_len + 1);
     let mut i = off;
@@ -926,7 +959,7 @@ fn lcg_jump_compute(state: i64, ia: i64, ic: i64, im: i64, n: i64) -> i64 {
 
 fn builtin_stream_write_byte_array(args: &[Value]) -> RuntimeResult<Value> {
     let fd = args.first().map_or(1, stream_fd);
-    let count = arg_int(args, 2).unwrap_or(0).max(0) as usize;
+    let count = non_negative_arg(args, 2, 0, "sha256_blocks: count")?;
     let mut buf = Vec::with_capacity(count);
     match args.get(1) {
         Some(Value::IntArray(data)) => {
