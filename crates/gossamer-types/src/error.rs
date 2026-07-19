@@ -102,11 +102,43 @@ pub enum TypeError {
         /// The nominal type being destructured.
         ty: String,
     },
-    /// A named struct was constructed with the removed field-literal form.
-    #[error("struct `{name}` must be constructed with parentheses")]
-    StructConstructorParenthesesRequired {
+    /// A named struct was constructed with tuple-struct call syntax.
+    #[error("struct `{name}` must be constructed with braces")]
+    StructConstructorBracesRequired {
         /// The nominal struct name.
         name: String,
+    },
+    /// A tuple struct was constructed with named-field literal syntax.
+    #[error("tuple struct `{name}` must be constructed with parentheses")]
+    TupleStructConstructorParenthesesRequired {
+        /// The nominal struct name.
+        name: String,
+    },
+    /// A struct literal omitted a required field.
+    #[error("missing field `{field}` in initializer of `{name}`")]
+    MissingStructField {
+        /// Struct name.
+        name: String,
+        /// Missing field name.
+        field: String,
+    },
+    /// A struct literal initialized the same field more than once.
+    #[error("field `{field}` specified more than once in initializer of `{name}`")]
+    DuplicateStructField {
+        /// Struct name.
+        name: String,
+        /// Duplicate field name.
+        field: String,
+    },
+    /// A positional named-struct literal supplied more values than fields.
+    #[error("too many positional fields in initializer of `{name}`")]
+    TooManyStructFields {
+        /// Struct name.
+        name: String,
+        /// Declared field count.
+        expected: usize,
+        /// Supplied positional-plus-keyed field count.
+        found: usize,
     },
     /// `value as T` was requested between two types that are not in
     /// the `as`-cast whitelist (non-primitive source, struct source,
@@ -429,9 +461,13 @@ impl TypeError {
             Self::UnresolvedOpImpl { .. } => "unresolved-op-impl",
             Self::NonExhaustiveMatch { .. } => "non-exhaustive-match",
             Self::StructPatternNameRequired { .. } => "struct-pattern-name-required",
-            Self::StructConstructorParenthesesRequired { .. } => {
-                "struct-constructor-parentheses-required"
+            Self::StructConstructorBracesRequired { .. } => "struct-constructor-braces-required",
+            Self::TupleStructConstructorParenthesesRequired { .. } => {
+                "tuple-struct-constructor-parentheses-required"
             }
+            Self::MissingStructField { .. } => "missing-struct-field",
+            Self::DuplicateStructField { .. } => "duplicate-struct-field",
+            Self::TooManyStructFields { .. } => "too-many-struct-fields",
             Self::InvalidCast { .. } => "invalid-cast",
             Self::UnknownField { .. } => "unknown-field",
             Self::DiscardedResult => "discarded-result",
@@ -475,7 +511,11 @@ impl TypeError {
             Self::UnresolvedOp { .. } | Self::UnresolvedOpImpl { .. } => "GT0003",
             Self::NonExhaustiveMatch { .. } => "GT0004",
             Self::StructPatternNameRequired { .. } => "GT0033",
-            Self::StructConstructorParenthesesRequired { .. } => "GT0034",
+            Self::StructConstructorBracesRequired { .. }
+            | Self::TupleStructConstructorParenthesesRequired { .. } => "GT0034",
+            Self::MissingStructField { .. } => "GT0035",
+            Self::DuplicateStructField { .. } => "GT0036",
+            Self::TooManyStructFields { .. } => "GT0037",
             Self::InvalidCast { .. } => "GT0005",
             Self::UnknownField { .. } => "GT0006",
             Self::DiscardedResult => "GT0007",
@@ -676,11 +716,41 @@ impl TypeDiagnostic {
                         "parenthesized patterns destructure tuples only; structs are nominal and use named-field patterns",
                     );
             }
-            TypeError::StructConstructorParenthesesRequired { name } => {
+            TypeError::StructConstructorBracesRequired { name } => {
+                out = out
+                    .with_help(format!(
+                        "write `{name} {{ field: value, ... }}` or `{name} {{ value, ... }}`"
+                    ))
+                    .with_note(
+                        "named structs use braced construction; tuple structs use parentheses",
+                    );
+            }
+            TypeError::TupleStructConstructorParenthesesRequired { name } => {
                 out = out
                     .with_help(format!("write `{name}(...)` in declared field order"))
                     .with_note(
-                        "struct declarations use braces; struct construction uses parentheses",
+                        "tuple structs use parenthesized construction; named structs use braces",
+                    );
+            }
+            TypeError::MissingStructField { name, field } => {
+                out = out.with_help(format!("add `{field}: ...` to the `{name}` initializer"));
+            }
+            TypeError::DuplicateStructField { name, field } => {
+                out = out.with_help(format!(
+                    "remove the duplicate `{field}` initializer for `{name}`"
+                ));
+            }
+            TypeError::TooManyStructFields {
+                name,
+                expected,
+                found,
+            } => {
+                out = out
+                    .with_help(format!(
+                        "`{name}` declares {expected} fields, but this initializer supplies {found}"
+                    ))
+                    .with_note(
+                        "positional entries in a named-struct literal fill the next unfilled declared field",
                     );
             }
             TypeError::InvalidCast { from, to } => {

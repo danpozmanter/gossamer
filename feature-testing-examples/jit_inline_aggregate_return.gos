@@ -1,6 +1,6 @@
 struct Pt { x: i64, y: i64 }
 
-fn make(a: i64, b: i64) -> Pt { Pt(a * 2, b + 3) }
+fn make(a: i64, b: i64) -> Pt { Pt { x: a * 2, y: b + 3 } }
 
 fn dist2(n: i64) -> i64 {
     let p = make(n, n)

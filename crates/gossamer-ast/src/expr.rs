@@ -224,9 +224,9 @@ pub enum ExprKind {
 /// Source spelling of a struct construction before lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StructExprSyntax {
-    /// Canonical constructor syntax: `Name(args...)`.
+    /// Tuple-struct constructor syntax: `Name(args...)`.
     Parenthesized,
-    /// Legacy field-literal syntax: `Name { field: value }`.
+    /// Braced struct-literal syntax: `Name { field: value }` or `Name { value }`.
     Braced,
 }
 

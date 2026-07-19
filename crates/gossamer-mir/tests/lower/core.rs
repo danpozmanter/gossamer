@@ -606,7 +606,7 @@ struct Item { name: String, tags: [String], n: i64 }
 
 fn insert_item() {
     let mut m: HashMap<i64, Item> = HashMap::new()
-    m.insert(1i64, Item("item", [], 1i64))
+    m.insert(1i64, Item { name: "item", tags: [], n: 1i64 })
 }
 "#;
     let (bodies, tcx) = build(source);
@@ -1135,7 +1135,7 @@ fn struct_literal_lowers_to_aggregate_and_field_access_to_projection() {
 struct Point { x: i64, y: i64 }
 
 fn main() -> i64 {
-    let p = Point(10i64, 32i64)
+    let p = Point { x: 10i64, y: 32i64 }
     p.x + p.y
 }
 ";
@@ -1179,7 +1179,7 @@ fn struct_literal_respects_declaration_order_under_reordered_initialisers() {
 struct Pair { a: i64, b: i64 }
 
 fn main() -> i64 {
-    let p = Pair(3i64, 7i64)
+    let p = Pair { a: 3i64, b: 7i64 }
     p.a
 }
 ";

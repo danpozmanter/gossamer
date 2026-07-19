@@ -12,7 +12,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use gossamer_ast::{
     ArrayExpr, BinaryOp, Block, ClosureParam, Expr, ExprKind, FieldPattern, FnDecl, FnParam,
@@ -2263,18 +2263,6 @@ impl<'a> TypeChecker<'a> {
                 base,
                 syntax,
             } => {
-                if path.segments.len() == 1
-                    && matches!(syntax, gossamer_ast::expr::StructExprSyntax::Braced)
-                {
-                    let name = path.segments.last().map_or_else(
-                        || "<struct>".to_string(),
-                        |segment| segment.name.name.clone(),
-                    );
-                    self.emit(
-                        TypeError::StructConstructorParenthesesRequired { name },
-                        expr.span,
-                    );
-                }
                 // Resolve the header path to an Adt type. Unifying
                 // named field values with the declared field
                 // types lets downstream field-access nodes see
@@ -2352,7 +2340,37 @@ impl<'a> TypeChecker<'a> {
                     }
                     _ => None,
                 };
-                for field in fields {
+                let tuple_struct_literal = if let TyKind::Adt { def, .. } =
+                    self.tcx.kind_of(resolved).clone()
+                {
+                    let is_tuple = self.tcx.is_tuple_struct(def.local);
+                    if matches!(syntax, gossamer_ast::expr::StructExprSyntax::Braced) && is_tuple {
+                        let name = self
+                            .tcx
+                            .def_name(def)
+                            .map_or_else(|| "<struct>".to_string(), ToString::to_string);
+                        self.emit(
+                            TypeError::TupleStructConstructorParenthesesRequired { name },
+                            expr.span,
+                        );
+                    }
+                    is_tuple
+                } else {
+                    false
+                };
+                let resolved_literal_fields =
+                    if !tuple_struct_literal && let Some(declared_fields) = declared.as_ref() {
+                        Some(self.resolve_struct_literal_fields(
+                            path,
+                            fields,
+                            base.is_some(),
+                            declared_fields,
+                            expr.span,
+                        ))
+                    } else {
+                        None
+                    };
+                for (field_idx, field) in fields.iter().enumerate() {
                     if let Some(value) = &field.value {
                         // Substitute `Param { idx }` slots with the
                         // fresh inference vars allocated above so
@@ -2362,9 +2380,13 @@ impl<'a> TypeChecker<'a> {
                         // `S { xs: ["a", "b"] }` lay a heap Vec, not
                         // a fixed `[T; N]`, into a Vec-typed field.
                         let dty_sub = declared.as_ref().and_then(|declared_fields| {
-                            declared_fields
-                                .iter()
-                                .find(|(n, _)| n == &field.name.name)
+                            resolved_literal_fields
+                                .as_ref()
+                                .and_then(|resolved| resolved.get(&field_idx).copied())
+                                .and_then(|decl_idx| declared_fields.get(decl_idx))
+                                .or_else(|| {
+                                    declared_fields.iter().find(|(n, _)| n == &field.name.name)
+                                })
                                 .map(|(_, dty)| *dty)
                         });
                         let dty_sub =
@@ -2435,6 +2457,93 @@ impl<'a> TypeChecker<'a> {
         self.tcx
             .adt_field_tys(def, &substs)
             .and_then(|tys| tys.get(idx as usize).copied())
+    }
+
+    fn resolve_struct_literal_fields(
+        &mut self,
+        path: &gossamer_ast::PathExpr,
+        fields: &[gossamer_ast::StructExprField],
+        has_base: bool,
+        declared_fields: &[(String, Ty)],
+        span: Span,
+    ) -> HashMap<usize, usize> {
+        let name = path.segments.last().map_or_else(
+            || "<struct>".to_string(),
+            |segment| segment.name.name.clone(),
+        );
+        let declared_by_name: HashMap<&str, usize> = declared_fields
+            .iter()
+            .enumerate()
+            .map(|(idx, (field_name, _))| (field_name.as_str(), idx))
+            .collect();
+        let mut resolved = HashMap::new();
+        let mut filled = HashSet::new();
+        let mut keyed_seen = HashSet::new();
+        for (field_idx, field) in fields.iter().enumerate() {
+            if struct_literal_positional_index(&field.name.name).is_some() {
+                continue;
+            }
+            let Some(&decl_idx) = declared_by_name.get(field.name.name.as_str()) else {
+                self.emit(
+                    TypeError::UnknownField {
+                        ty: name.clone(),
+                        field: field.name.name.clone(),
+                        opaque: false,
+                    },
+                    span,
+                );
+                continue;
+            };
+            if !keyed_seen.insert(field.name.name.as_str()) {
+                self.emit(
+                    TypeError::DuplicateStructField {
+                        name: name.clone(),
+                        field: field.name.name.clone(),
+                    },
+                    span,
+                );
+            }
+            filled.insert(decl_idx);
+            resolved.insert(field_idx, decl_idx);
+        }
+
+        let mut next_pos = 0usize;
+        for (field_idx, field) in fields.iter().enumerate() {
+            if struct_literal_positional_index(&field.name.name).is_none() {
+                continue;
+            }
+            while next_pos < declared_fields.len() && filled.contains(&next_pos) {
+                next_pos += 1;
+            }
+            if next_pos >= declared_fields.len() {
+                self.emit(
+                    TypeError::TooManyStructFields {
+                        name: name.clone(),
+                        expected: declared_fields.len(),
+                        found: fields.len(),
+                    },
+                    span,
+                );
+                continue;
+            }
+            filled.insert(next_pos);
+            resolved.insert(field_idx, next_pos);
+        }
+
+        if !has_base {
+            for (idx, (field_name, _)) in declared_fields.iter().enumerate() {
+                if !filled.contains(&idx) {
+                    self.emit(
+                        TypeError::MissingStructField {
+                            name: name.clone(),
+                            field: field_name.clone(),
+                        },
+                        span,
+                    );
+                }
+            }
+        }
+        resolved
     }
 
     /// Type of `value.N` positional access. Rejects access on a concrete
@@ -2831,6 +2940,9 @@ impl<'a> TypeChecker<'a> {
         if let Some(ty) = self.check_tuple_struct_ctor_call(callee, args, arg_tys) {
             return ty;
         }
+        if let Some(ty) = self.check_named_struct_ctor_call(callee, args) {
+            return ty;
+        }
         // Fallback: known stdlib free functions whose signatures are
         // not present in `fn_sigs` (because they live outside user
         // source). Returning a real type instead of a fresh variable
@@ -2973,6 +3085,43 @@ impl<'a> TypeChecker<'a> {
                 },
                 callee.span,
             );
+        }
+        Some(self.tcx.intern(TyKind::Adt {
+            def,
+            substs: crate::Substs::from_types(substs.iter().copied()),
+        }))
+    }
+
+    fn check_named_struct_ctor_call(&mut self, callee: &Expr, args: &[Expr]) -> Option<Ty> {
+        let ExprKind::Path(path) = &callee.kind else {
+            return None;
+        };
+        let Some(Resolution::Def {
+            def,
+            kind: gossamer_resolve::DefKind::Struct,
+        }) = self.resolutions.get(callee.id)
+        else {
+            return None;
+        };
+        if self.tcx.is_tuple_struct(def.local) {
+            return None;
+        }
+        let called_name = path.segments.last()?.name.name.as_str();
+        if self.tcx.def_name(def) != Some(called_name) {
+            return None;
+        }
+        let arity = self.struct_generic_arity.get(&def).copied().unwrap_or(0);
+        let substs: Vec<Ty> = (0..arity).map(|_| self.fresh()).collect();
+        let name = self
+            .tcx
+            .def_name(def)
+            .map_or_else(|| called_name.to_string(), ToString::to_string);
+        self.emit(
+            TypeError::StructConstructorBracesRequired { name },
+            callee.span,
+        );
+        for arg in args {
+            self.check_expr(arg);
         }
         Some(self.tcx.intern(TyKind::Adt {
             def,
@@ -8876,6 +9025,15 @@ impl gossamer_ast::visitor::Visitor for WriteArgPathCollector {
             }
         }
         gossamer_ast::visitor::walk_expr(self, expr);
+    }
+}
+
+fn struct_literal_positional_index(name: &str) -> Option<usize> {
+    let idx = name.parse::<usize>().ok()?;
+    if idx.to_string() == name {
+        Some(idx)
+    } else {
+        None
     }
 }
 

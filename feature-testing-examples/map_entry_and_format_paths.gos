@@ -21,16 +21,16 @@ fn main() {
     let txs = [("alice", 100), ("bob", 50), ("alice", -30), ("carol", 200), ("bob", -20), ("alice", 40)]
     let mut accounts = BTreeMap::new()
     for (name, amount) in txs {
-        accounts.or_insert(name, Account(0, 0)).apply(amount)
+        accounts.or_insert(name, Account { balance: 0, txns: 0 }).apply(amount)
     }
     for (name, a) in accounts.iter() {
         println!("{name}: {a.balance} ({a.txns} transactions)")
     }
 
     let mut m = HashMap::new()
-    let a = m.or_insert("x", Rec(1, "first"))
+    let a = m.or_insert("x", Rec { hits: 1, label: "first" })
     println!("{a.hits} {a.label} len={}", m.len())
-    let b = m.or_insert("x", Rec(99, "other"))
+    let b = m.or_insert("x", Rec { hits: 99, label: "other" })
     println!("{b.hits} {b.label} len={}", m.len())
 
     let mut counts = HashMap::new()
@@ -38,7 +38,7 @@ fn main() {
     counts.inc("w", 5)
     println!("{}", counts.get_or("w", 0))
 
-    let o = Outer(Rec(7, "deep"))
+    let o = Outer { inner: Rec { hits: 7, label: "deep" } }
     println!("{o.inner.hits} {o.inner.label}")
     println!("[{o.inner.hits:>4}]")
     let t = (3.14159, "pi")

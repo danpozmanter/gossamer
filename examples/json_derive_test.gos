@@ -1,7 +1,7 @@
 struct Config { port: i64, host: String, active: bool }
 
 fn main() {
-    let c = Config(8080, "localhost", true)
+    let c = Config { port: 8080, host: "localhost", active: true }
     let s = to_json::<Config>(c)?
     println!("encoded: {}", s)
 

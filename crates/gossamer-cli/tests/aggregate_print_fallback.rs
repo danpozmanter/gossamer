@@ -44,11 +44,11 @@ struct Point {
 }
 
 fn show(p: Point) {
-    println!("Point({}, {})", p.x, p.y)
+    println!("Point {{ x: {}, y: {} }}", p.x, p.y)
 }
 
 fn main() {
-    let p = Point(7, 11)
+    let p = Point { x: 7, y: 11 }
     show(p)
 }
 "#,
@@ -83,8 +83,8 @@ fn main() {
         );
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
-            stdout.contains("Point(7, 11)"),
-            "expected 'Point(7, 11)' in stdout (release={release}), got: {stdout:?}"
+            stdout.contains("Point { x: 7, y: 11 }"),
+            "expected 'Point {{ x: 7, y: 11 }}' in stdout (release={release}), got: {stdout:?}"
         );
     }
 

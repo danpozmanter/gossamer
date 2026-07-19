@@ -1,7 +1,12 @@
 # Changelog
 
-## 0.31.1 - REPL %find and correctness fixes
+## 0.32.0 - Struct construction overhaul and correctness fixes
 
+- Breaking: named structs now require braced construction. Named struct
+  literals accept keyed fields, positional declaration-order values, or a mix of
+  both, while tuple structs use tuple declarations and parenthesized
+  construction. Displayed struct values render as round-trippable source
+  syntax.
 - Restrict REPL `%find` fuzzy matching to symbol names so item descriptions
   do not make unrelated results rank as matches.
 - Rebind REPL reference aliases to new temporary referents without mutating the

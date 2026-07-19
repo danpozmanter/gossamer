@@ -362,16 +362,7 @@ impl Parser<'_> {
             self.expect_punct(Punct::RBrace, "to close struct body");
             return StructBody::Named(fields);
         }
-        if self.at_punct(Punct::LParen) {
-            let span = self.peek_span();
-            self.record(
-                ParseError::Unexpected {
-                    expected: "`{ field: Type }` after a struct name".to_string(),
-                    found: self.peek_text(),
-                },
-                span,
-            );
-            self.bump();
+        if self.eat_punct(Punct::LParen) {
             let mut fields = Vec::new();
             while !self.at_punct(Punct::RParen) && !self.at_eof() {
                 let attrs = self.parse_attrs();
@@ -393,10 +384,14 @@ impl Parser<'_> {
             self.expect_punct(Punct::RParen, "to close tuple struct body");
             return StructBody::Tuple(fields);
         }
+        if self.eat_punct(Punct::Semi) {
+            return StructBody::Unit;
+        }
         let span = self.peek_span();
         self.record(
             ParseError::Unexpected {
-                expected: "`{ field: Type }` after a struct name".to_string(),
+                expected: "`{ field: Type }`, `(Type, ...)`, or `;` after a struct name"
+                    .to_string(),
                 found: self.peek_text(),
             },
             span,

@@ -46,7 +46,7 @@ fn main() {
         let d: String = disp
         let name = attr(&d, &"name")
         let filename = attr(&d, &"filename")
-        fields.push(Field(name, filename))
+        fields.push(Field { name: name, filename: filename })
     }
     for f in fields {
         println!("name=[{}] filename=[{}]", f.name, f.filename)

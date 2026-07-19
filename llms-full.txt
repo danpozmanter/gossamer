@@ -1,6 +1,6 @@
 # Gossamer LLM Reference
 
-Generated from `SKILL.md` and `docs/api/stdlib.json` for Gossamer 0.31.1. This is deliberately scoped: only catalog entries with a standalone executable example and explicit verified status may appear as API recommendations.
+Generated from `SKILL.md` and `docs/api/stdlib.json` for Gossamer 0.32.0. This is deliberately scoped: only catalog entries with a standalone executable example and explicit verified status may appear as API recommendations.
 
 ## Language primer
 

@@ -20,7 +20,7 @@ fn main() {
     let mut caps: HashMap<String, i64> = HashMap::new()
     caps.insert(&"a", 1)
     caps.insert(&"b", 2)
-    let r = Rec(7, Some("neo"), None, (3, "x"), ["a", "b"], Inner(5), caps)
+    let r = Rec { id: 7, nick: Some("neo"), absent: None, pair: (3, "x"), tags: ["a", "b"], inner: Inner { n: 5 }, caps: caps }
     let js = to_json::<Rec>(&r) |> _.unwrap_or("ERR")
     println!("{}", js)
     match from_json::<Rec>(&js) {

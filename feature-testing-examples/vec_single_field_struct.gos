@@ -6,8 +6,8 @@ struct Bucket { items: Vec<i64> }
 
 fn main() {
     let mut buckets: Vec<Bucket> = []
-    buckets.push(Bucket([]))
-    buckets.push(Bucket([]))
+    buckets.push(Bucket { items: [] })
+    buckets.push(Bucket { items: [] })
     buckets[0].items.push(10)
     buckets[0].items.push(20)
     buckets[1].items.push(99)

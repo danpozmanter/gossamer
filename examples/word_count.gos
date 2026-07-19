@@ -31,7 +31,7 @@ fn analyse(text: &String) -> Stats {
             in_token = true
         }
     }
-    Stats(chars, words)
+    Stats { chars: chars, words: words }
 }
 
 fn main() {

@@ -87,12 +87,12 @@ fn main() {
 
     // Struct keys: equal-by-value keys collide; lookup hits.
     let mut pm: HashMap<Pos, i64> = HashMap::new()
-    pm.insert(Pos(1, 2), 10)
-    pm.insert(Pos(3, 4), 20)
-    pm.insert(Pos(1, 2), 88)
+    pm.insert(Pos { x: 1, y: 2 }, 10)
+    pm.insert(Pos { x: 3, y: 4 }, 20)
+    pm.insert(Pos { x: 1, y: 2 }, 88)
     println!("struct-key len {}", pm.len())
-    show_opt_i64("struct-key get", pm.get(&Pos(1, 2)))
-    show_opt_i64("struct-key miss", pm.get(&Pos(9, 9)))
+    show_opt_i64("struct-key get", pm.get(&Pos { x: 1, y: 2 }))
+    show_opt_i64("struct-key miss", pm.get(&Pos { x: 9, y: 9 }))
 
     // Tuple keys.
     let mut tm: HashMap<(i64, i64), i64> = HashMap::new()
@@ -102,8 +102,8 @@ fn main() {
 
     // Struct values: get returns the struct, fields readable.
     let mut sm: HashMap<String, Score> = HashMap::new()
-    sm.insert("ada", Score(7, "ada"))
-    sm.insert("bob", Score(3, "bob"))
+    sm.insert("ada", Score { wins: 7, name: "ada" })
+    sm.insert("bob", Score { wins: 3, name: "bob" })
     match sm.get("ada") {
         Some(s) => println!("score ada wins {} name {}", s.wins, s.name),
         None => println!("no ada"),

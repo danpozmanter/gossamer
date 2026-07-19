@@ -27,16 +27,16 @@ fn get_or(m: &HashMap<Point, i64>, k: &Point) -> i64 {
 // which can't name `super::Point` inside a generic argument.
 fn equal_keys_len() -> i64 {
     let mut m: HashMap<Point, i64> = HashMap::new()
-    m.insert(Point(1, 2), 1)
-    m.insert(Point(1, 2), 2)
+    m.insert(Point { x: 1, y: 2 }, 1)
+    m.insert(Point { x: 1, y: 2 }, 2)
     m.len()
 }
 
 // Length after inserting two distinct keys (two slots).
 fn distinct_keys_len() -> i64 {
     let mut m: HashMap<Point, i64> = HashMap::new()
-    m.insert(Point(1, 2), 1)
-    m.insert(Point(2, 1), 2)
+    m.insert(Point { x: 1, y: 2 }, 1)
+    m.insert(Point { x: 2, y: 1 }, 2)
     m.len()
 }
 
@@ -44,25 +44,25 @@ fn main() {
     // Flat struct keys: distinct allocations of an equal value collide; a
     // re-inserted key overwrites; a distinct key is a distinct slot.
     let mut m: HashMap<Point, i64> = HashMap::new()
-    m.insert(Point(1, 2), 10)
-    m.insert(Point(3, 4), 20)
-    m.insert(Point(1, 2), 99)
-    println!("{}", get_or(&m, &Point(1, 2)))
-    println!("{}", get_or(&m, &Point(9, 9)))
+    m.insert(Point { x: 1, y: 2 }, 10)
+    m.insert(Point { x: 3, y: 4 }, 20)
+    m.insert(Point { x: 1, y: 2 }, 99)
+    println!("{}", get_or(&m, &Point { x: 1, y: 2 }))
+    println!("{}", get_or(&m, &Point { x: 9, y: 9 }))
     println!("len {}", m.len())
 
     // String-field struct key.
     let mut um: HashMap<User, i64> = HashMap::new()
-    um.insert(User("ada", 1), 100)
-    um.insert(User("bob", 2), 200)
-    let ada = User("ada", 1)
+    um.insert(User { name: "ada", id: 1 }, 100)
+    um.insert(User { name: "bob", id: 2 }, 200)
+    let ada = User { name: "ada", id: 1 }
     println!("{}", match um.get(&ada) { Some(v) => v, None => -1 })
     println!("ulen {}", um.len())
 
     // Nested-struct + String key.
     let mut cm: HashMap<Cell, i64> = HashMap::new()
-    cm.insert(Cell(Point(5, 6), "home"), 7)
-    let c = Cell(Point(5, 6), "home")
+    cm.insert(Cell { at: Point { x: 5, y: 6 }, label: "home" }, 7)
+    let c = Cell { at: Point { x: 5, y: 6 }, label: "home" }
     println!("{}", match cm.get(&c) { Some(v) => v, None => -1 })
 
     // Tuple key.
@@ -73,10 +73,10 @@ fn main() {
 
     // HashSet of structs.
     let mut seen: HashSet<Point> = HashSet::new()
-    seen.insert(Point(0, 0))
-    seen.insert(Point(0, 0))
-    println!("has {}", seen.contains(&Point(0, 0)))
-    println!("hasnt {}", seen.contains(&Point(1, 1)))
+    seen.insert(Point { x: 0, y: 0 })
+    seen.insert(Point { x: 0, y: 0 })
+    println!("has {}", seen.contains(&Point { x: 0, y: 0 }))
+    println!("hasnt {}", seen.contains(&Point { x: 1, y: 1 }))
     println!("slen {}", seen.len())
 }
 

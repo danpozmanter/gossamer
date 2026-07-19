@@ -11,7 +11,7 @@ A struct literal may spread a base value with `..base` and override
 individual fields:
 
 ```gossamer
-let p2 = Point(10, p1.y)
+let p2 = Point { x: 10, y: p1.y }
 ```
 
 - Explicit fields win over the base for the same name.
@@ -22,20 +22,27 @@ let p2 = Point(10, p1.y)
 
 ## Declaration and construction
 
-Struct declarations always use named fields in braces. Construction uses
-parentheses, with arguments assigned in declaration order:
+Named structs use braced declarations and braced construction. Tuple
+structs use tuple declarations and parenthesized construction:
 
 ```gossamer
 struct Pt { x: i64, y: i64 }
+struct Pair(String, i64)
 
-let p = Pt(3, 4)
+let p = Pt { x: 3, y: 4 }     // keyed fields, any order
+let q = Pt { 3, 4 }           // positional values, declaration order
+let r = Pt { y: 4, 3 }        // mixed; positional fills the next unfilled field
+let pair = Pair("row", 4)
 println!("{} {}", p.x, p.y)
+println!("{} {}", pair.0, pair.1)
 let Pt { x, y } = p
 ```
 
-Use `struct Marker {}` and `Marker()` for an empty struct. Tuple declarations
-such as `struct Pt(i64, i64)` and bare unit declarations such as `struct
-Marker` are rejected.
+Named structs must be constructed with `Name { ... }`; `Name(...)` is
+rejected for named structs. Inside the braces, keyed fields may appear in any
+order and positional values fill declaration-order fields that were not already
+filled by keyed entries. Tuple structs must be constructed with `Name(...)`;
+`Name { ... }` is rejected for tuple structs.
 
 ## Value semantics: copy and compare with no derive
 
@@ -48,10 +55,10 @@ lexicographic by field declaration order:
 ```gossamer
 struct Point { x: i64, y: i64 }
 
-let a = Point(1, 2)
+let a = Point { x: 1, y: 2 }
 let b = a.clone()                          // `clone` is a universal builtin
 println!("{}", a == b)                     // true, no derive
-println!("{}", a < Point(1, 3))   // true (lexicographic by field)
+println!("{}", a < Point { x: 1, y: 3 })   // true (lexicographic by field)
 ```
 
 A user `impl` of `eq` / `cmp` overrides the synthesized comparison.

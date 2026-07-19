@@ -1521,12 +1521,31 @@ impl Parser<'_> {
                     if matches!(
                         after.kind,
                         TokenKind::Punct(Punct::Colon | Punct::Comma | Punct::RBrace)
-                    ) {
+                    ) || !matches!(after.kind, TokenKind::Punct(Punct::LBrace))
+                    {
                         return true;
                     }
                     return false;
                 }
                 TokenKind::Punct(Punct::DotDot) if depth == 1 => return true,
+                TokenKind::IntLit
+                | TokenKind::FloatLit
+                | TokenKind::StringLit
+                | TokenKind::RawStringLit { .. }
+                | TokenKind::CharLit
+                | TokenKind::ByteLit
+                | TokenKind::ByteStringLit
+                | TokenKind::RawByteStringLit { .. }
+                | TokenKind::Keyword(_)
+                    if depth == 1 =>
+                {
+                    return true;
+                }
+                TokenKind::Punct(Punct::LParen | Punct::LBracket | Punct::Minus | Punct::Bang)
+                    if depth == 1 =>
+                {
+                    return true;
+                }
                 _ => {}
             }
             offset += 1;
@@ -1544,6 +1563,7 @@ impl Parser<'_> {
     fn parse_struct_literal_fields(&mut self, path: PathExpr) -> ExprKind {
         let mut fields = Vec::new();
         let mut base = None;
+        let mut positional_index = 0usize;
         while !self.at_punct(Punct::RBrace) && !self.at_eof() {
             // `..base` functional update may appear anywhere in the field
             // list (`{ ..base, x: 1 }` or `{ x: 1, ..base }`); explicit
@@ -1568,24 +1588,28 @@ impl Parser<'_> {
                 }
                 continue;
             }
-            let name_span = self.peek_span();
-            if !matches!(self.peek().kind, TokenKind::Ident) {
-                self.record(
-                    ParseError::Unexpected {
-                        expected: "struct field name".to_string(),
-                        found: self.peek_text(),
-                    },
-                    name_span,
-                );
-                break;
-            }
-            let name = Ident::new(self.slice(name_span));
-            self.bump();
-            let value = if self.eat_punct(Punct::Colon) {
-                Some(self.parse_expr_no_assign())
+            let name = if matches!(self.peek().kind, TokenKind::Ident)
+                && matches!(self.peek_nth(1).kind, TokenKind::Punct(Punct::Colon))
+            {
+                let name_span = self.peek_span();
+                let name = Ident::new(self.slice(name_span));
+                self.bump();
+                self.expect_punct(Punct::Colon, "after field name");
+                name
             } else {
-                None
+                let name = Ident::new(positional_index.to_string());
+                positional_index += 1;
+                let value = self.parse_expr_no_assign();
+                fields.push(StructExprField {
+                    name,
+                    value: Some(value),
+                });
+                if !self.eat_punct(Punct::Comma) {
+                    break;
+                }
+                continue;
             };
+            let value = Some(self.parse_expr_no_assign());
             fields.push(StructExprField { name, value });
             if !self.eat_punct(Punct::Comma) {
                 break;

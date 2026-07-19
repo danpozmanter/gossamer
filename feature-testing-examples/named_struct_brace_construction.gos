@@ -1,0 +1,17 @@
+struct Account { owner: String, balance: i64 }
+struct Point { x: i64, y: i64 }
+struct Pair(String, i64)
+
+fn main() {
+    let keyed = Account { balance: 1200, owner: "jane" }
+    let positional = Account { "kim", 500 }
+    let mixed = Account { balance: 9, "lee" }
+    let point = Point { y: 4, 3 }
+    let pair = Pair("row", 7)
+
+    println!("{}:{} {}", keyed.owner, keyed.balance, keyed)
+    println!("{}:{} {}", positional.owner, positional.balance, positional)
+    println!("{}:{} {}", mixed.owner, mixed.balance, mixed)
+    println!("{} {} {}", point.x, point.y, point)
+    println!("{} {} {}", pair.0, pair.1, pair)
+}

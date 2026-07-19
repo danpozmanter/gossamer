@@ -25,7 +25,7 @@ impl Sel {
     fn where_eq(&self, v: V) -> Sel {
         let mut b = copy_vals(&self.binds)
         b.push(v)
-        Sel(b)
+        Sel { binds: b }
     }
     fn params(&self) -> [V] {
         copy_vals(&self.binds)
@@ -42,7 +42,7 @@ fn churn() -> i64 {
 }
 
 fn main() {
-    let sel = Sel([]).where_eq(V::I(95)).where_eq(V::T("alice"))
+    let sel = Sel { binds: [] }.where_eq(V::I(95)).where_eq(V::T("alice"))
     let binds = sel.params()
     let _ = churn()
     for v in &binds {

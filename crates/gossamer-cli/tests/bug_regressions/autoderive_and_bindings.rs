@@ -253,7 +253,7 @@ impl Counter {
     fn bump(&mut self) { self.n += 1 }
 }
 fn main() {
-    let mut c = Counter(0)
+    let mut c = Counter { n: 0 }
     c.bump()
     c.bump()
     c.bump()
@@ -280,7 +280,7 @@ fn multi_dim_fixed_array_index_walks_inner_strides() {
     let src = r#"
 struct Z { pieces: [[[i64; 64]; 6]; 2] }
 fn main() {
-    let mut z = Z([[[0; 64]; 6], [[0; 64]; 6]])
+    let mut z = Z { pieces: [[[0; 64]; 6], [[0; 64]; 6]] }
     let mut s: i64 = 0
     while s < 2 {
         let mut p: i64 = 0
@@ -529,8 +529,8 @@ fn vec_of_struct_index_field_reads_and_writes_through_data_buffer() {
 struct Body { x: f64, y: f64, mass: f64 }
 fn main() {
     let mut bs: [Body] = []
-    bs.push(Body(1.0, 2.0, 10.0))
-    bs.push(Body(4.0, 5.0, 20.0))
+    bs.push(Body { x: 1.0, vx: 2.0, mass: 10.0 })
+    bs.push(Body { x: 4.0, vx: 5.0, mass: 20.0 })
     bs[1].x = 9.0
     println!("{} {} {}", bs[0].x, bs[1].x, bs[1].mass)
 }
@@ -570,8 +570,8 @@ fn total_momentum(b: &[Body; 2]) -> f64 {
 }
 fn main() {
     let mut bodies: [Body; 2] = [
-        Body(1.0, 0.1, 10.0),
-        Body(2.0, 0.4, 20.0),
+        Body { x: 1.0, vx: 0.1, mass: 10.0 },
+        Body { x: 2.0, vx: 0.4, mass: 20.0 },
     ]
     bodies[0].vx = 0.5
     println!("{:.4}", total_momentum(&bodies))
@@ -739,8 +739,8 @@ struct Projection {
 }
 fn main() {
     let mut xs: [Projection] = []
-    xs.push(Projection(1, 2))
-    xs.push(Projection(3, 4))
+    xs.push(Projection { a: 1, b: 2 })
+    xs.push(Projection { a: 3, b: 4 })
     for p in &xs {
         println!("a={} b={}", p.a, p.b)
     }

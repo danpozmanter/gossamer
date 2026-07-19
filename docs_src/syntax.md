@@ -79,14 +79,18 @@ struct Cell<T>    { value: T }
 
 fn main() {
     // Parameters inferred: Pair<i64, String>
-    let p = Pair(42, "answer")
+    let p = Pair { fst: 42, snd: "answer" }
     println!("{} = {}", p.fst, p.snd)   // 42 = answer
 
     // Same struct, different instantiation: Pair<i64, i64>
-    let nums = Pair(10, 32)
+    let nums = Pair { fst: 10, snd: 32 }
     println!("{}", nums.fst + nums.snd)  // 42
 
-    let c = Cell(99)
+    let nums_pos = Pair { 10, 32 }
+    let nums_mixed = Pair { snd: 32, 10 }
+    println!("{}", nums_pos.fst + nums_mixed.snd)
+
+    let c = Cell { value: 99 }
     println!("{}", c.value)              // 99
 }
 ```
@@ -94,6 +98,9 @@ fn main() {
 Field reads carry the per-instance concrete type. When two fields
 share the same parameter (`Pair<i64, i64>`), arithmetic across
 them typechecks directly - no extra annotation required.
+Named struct literals use braces and may be keyed, positional in
+declaration order, or mixed. Tuple structs use parenthesized
+construction.
 
 Generic structs take multiple type parameters, and generic methods
 work too: an `impl<T> Cell<T> { ... }` block specializes per

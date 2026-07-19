@@ -12,9 +12,9 @@ struct Key {
 
 fn main() {
     let mut counts: HashMap<Key, i64> = HashMap::new()
-    counts.insert(Key(1), 100)
-    counts.insert(Key(2), 200)
-    counts.insert(Key(3), 300)
+    counts.insert(Key { a: 1 }, 100)
+    counts.insert(Key { a: 2 }, 200)
+    counts.insert(Key { a: 3 }, 300)
     let mut total = 0
     for (_, v) in counts.iter() {
         total += v

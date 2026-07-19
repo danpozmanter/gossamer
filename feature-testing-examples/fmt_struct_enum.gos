@@ -8,10 +8,10 @@ struct Named { tag: String, p: Point }
 enum Shape { Circle(f64), Rect(i64, i64), Dot }
 
 fn main() {
-    let p = Point(1, 2)
+    let p = Point { x: 1, y: 2 }
     println!("{}", p)
     println!("{:?}", p)
-    let n = Named("origin", Point(0, 0))
+    let n = Named { tag: "origin", p: Point { x: 0, y: 0 } }
     println!("{:?}", n)
     println!("{:?}", Shape::Circle(2.5))
     println!("{:?}", Shape::Rect(3, 4))

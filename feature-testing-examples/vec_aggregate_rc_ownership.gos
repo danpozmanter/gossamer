@@ -29,7 +29,7 @@ struct Projection {
 }
 
 fn mk_proj(e: Expr) -> Projection {
-    Projection(e, "")
+    Projection { expr: e, alias: "" }
 }
 
 // Built here and returned by value: the vec escapes this frame.

@@ -11,17 +11,17 @@ struct Item { weight: i64, label: String }
 
 fn main() {
     let mut tags: Vec<Tag> = []
-    tags.push(Tag(3))
-    tags.push(Tag(1))
-    tags.push(Tag(2))
+    tags.push(Tag { id: 3 })
+    tags.push(Tag { id: 1 })
+    tags.push(Tag { id: 2 })
     tags.sort_by(|a, b| a.id - b.id)
     for t in tags { print!("{} ", t.id) }
     println!("")
 
     let mut items: Vec<Item> = []
-    items.push(Item(5, "e"))
-    items.push(Item(1, "a"))
-    items.push(Item(3, "c"))
+    items.push(Item { weight: 5, label: "e" })
+    items.push(Item { weight: 1, label: "a" })
+    items.push(Item { weight: 3, label: "c" })
     items.sort_by(|a, b| b.weight - a.weight)
     for it in items { print!("{}:{} ", it.weight, it.label) }
     println!("")

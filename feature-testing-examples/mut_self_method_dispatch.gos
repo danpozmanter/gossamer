@@ -27,7 +27,7 @@ impl Bag {
 
 fn main() {
     // Value semantics: `snapshot` is an independent copy.
-    let mut c = Counter(10, 0)
+    let mut c = Counter { value: 10, hits: 0 }
     let snapshot = c
     c.bump(5)
     c.bump(c.value) // argument reads the live receiver (15), not 0
@@ -38,7 +38,7 @@ fn main() {
     )
 
     // Mutation across many iterations on a heap-field struct.
-    let mut bag = Bag([], 0)
+    let mut bag = Bag { items: [], total: 0 }
     let mut i = 1
     while i <= 6 {
         bag.add(i * i)

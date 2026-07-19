@@ -11,15 +11,15 @@ struct Bag { tags: [String], label: String, n: i64 }
 struct Team { lead: User, members: [String], size: i64 }
 
 fn main() {
-    let base = User(format!("ada"), format!("admin"), 30)
+    let base = User { name: format!("ada"), role: format!("admin"), age: 30 }
 
     // Override one scalar field. `base` is read again after,
     // so its strings must still be live.
-    let older = User(base.name, base.role, 31)
+    let older = User { name: base.name, role: base.role, age: 31 }
     println!("{} {} {}", older.name, older.role, older.age)
 
     // Override a String field with a fresh value.
-    let renamed = User(format!("ada2"), base.role, base.age)
+    let renamed = User { name: format!("ada2"), role: base.role, age: base.age }
     println!("{} {} {}", renamed.name, renamed.role, renamed.age)
 
     println!("base intact: {} {} {}", base.name, base.role, base.age)
@@ -29,20 +29,20 @@ fn main() {
     let mut tags: [String] = []
     tags.push(format!("x"))
     tags.push(format!("y"))
-    let bag = Bag(tags, format!("first"), 1)
-    let bag2 = Bag(bag.tags, bag.label, 2)
+    let bag = Bag { tags: tags, label: format!("first"), n: 1 }
+    let bag2 = Bag { tags: bag.tags, label: bag.label, n: 2 }
     println!("{} {} {} {}", bag2.tags[0], bag2.tags[1], bag2.label, bag2.n)
     println!("bag intact: {} {}", bag.tags[0], bag.label)
 
     // A struct with a String field stored as another struct's field: the
     // nested heap children are shared into the new aggregate's slot and must
     // be retained there, so the source and the new owner each free once.
-    let lead = User(format!("lin"), format!("eng"), 40)
+    let lead = User { name: format!("lin"), role: format!("eng"), age: 40 }
     let mut roster: [String] = []
     roster.push(format!("ben"))
     roster.push(format!("cleo"))
-    let team = Team(lead, roster, 3)
-    let grown = Team(team.lead, team.members, 4)
+    let team = Team { lead: lead, members: roster, size: 3 }
+    let grown = Team { lead: team.lead, members: team.members, size: 4 }
     println!("{} {} {} {}", grown.lead.name, grown.members[0], grown.members[1], grown.size)
     println!("lead intact: {} {}", lead.name, lead.role)
 }

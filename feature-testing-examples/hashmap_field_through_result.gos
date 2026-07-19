@@ -15,7 +15,7 @@ fn build() -> Result<Tags, i64> {
     let mut m: HashMap<String, i64> = HashMap::new()
     m.insert(&"a", 1)
     m.insert(&"b", 2)
-    Ok(Tags(m))
+    Ok(Tags { tags: m })
 }
 
 fn main() {

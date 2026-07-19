@@ -6,16 +6,16 @@
 struct Vec3 { x: f64, y: f64, z: f64 }
 
 impl Add for Vec3 {
-    fn add(self, o: Vec3) -> Vec3 { Vec3(self.x + o.x, self.y + o.y, self.z + o.z) }
+    fn add(self, o: Vec3) -> Vec3 { Vec3 { x: self.x + o.x, y: self.y + o.y, z: self.z + o.z } }
 }
 impl Sub for Vec3 {
-    fn sub(self, o: Vec3) -> Vec3 { Vec3(self.x - o.x, self.y - o.y, self.z - o.z) }
+    fn sub(self, o: Vec3) -> Vec3 { Vec3 { x: self.x - o.x, y: self.y - o.y, z: self.z - o.z } }
 }
 impl Mul for Vec3 {
-    fn mul(self, s: f64) -> Vec3 { Vec3(self.x * s, self.y * s, self.z * s) }
+    fn mul(self, s: f64) -> Vec3 { Vec3 { x: self.x * s, y: self.y * s, z: self.z * s } }
 }
 impl Neg for Vec3 {
-    fn neg(self) -> Vec3 { Vec3(-self.x, -self.y, -self.z) }
+    fn neg(self) -> Vec3 { Vec3 { x: -self.x, y: -self.y, z: -self.z } }
 }
 impl Index for Vec3 {
     fn index(self, i: i64) -> f64 {
@@ -24,8 +24,8 @@ impl Index for Vec3 {
 }
 
 fn orbit(steps: i64) -> Vec3 {
-    let mut pos = Vec3(1.0, 2.0, 3.0)
-    let mut vel = Vec3(0.5, -0.25, 0.125)
+    let mut pos = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
+    let mut vel = Vec3 { x: 0.5, y: -0.25, z: 0.125 }
     let mut i = 0
     while i < steps {
         let pull = -pos * 0.001
@@ -40,9 +40,9 @@ fn main() {
     let p = orbit(1000)
     println!("orbit: {} {} {}", p.x, p.y, p.z)
     println!("index: {} {} {}", p[0], p[1], p[2])
-    let mut acc = Vec3(0.0, 0.0, 0.0)
-    acc += Vec3(1.5, 2.0, -0.5)
-    acc += Vec3(0.25, -1.0, 4.0)
+    let mut acc = Vec3 { x: 0.0, y: 0.0, z: 0.0 }
+    acc += Vec3 { x: 1.5, y: 2.0, z: -0.5 }
+    acc += Vec3 { x: 0.25, y: -1.0, z: 4.0 }
     acc *= 2.0
     println!("acc: {} {} {}", acc.x, acc.y, acc.z)
 }

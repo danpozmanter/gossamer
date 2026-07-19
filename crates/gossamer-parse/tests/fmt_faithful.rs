@@ -156,6 +156,12 @@ fn println_and_format_macros_never_rewritten() {
 }
 
 #[test]
+fn struct_literals_keep_keyed_positional_and_mixed_forms() {
+    let source = "struct Account { owner: String, balance: i64 }\n\nfn main() {\n    let keyed = Account { owner: \"jane\", balance: 1200 }\n    let positional = Account { \"jane\", 1200 }\n    let mixed = Account { balance: 1200, \"jane\" }\n}\n";
+    assert_eq!(fmt(source), source);
+}
+
+#[test]
 fn pipe_chains_keep_authored_breaks_and_indent() {
     let source = "fn main() {\n    let words = \"  Hello  World  \"\n        |> split_words\n        |> filter(|w: String| w.len() > 0)\n        |> count\n    println!(\"words: {words}\")\n}\n";
     assert_eq!(fmt(source), source);

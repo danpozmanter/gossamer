@@ -18,7 +18,7 @@ fn make_adder(p: Point) -> Fn(i64) -> i64 {
 }
 
 fn main() {
-    let p = Point(10, 20, 30)
+    let p = Point { x: 10, y: 20, z: 30 }
     println!("{}", apply(|n: i64| p.x + n, 1))
     println!("{}", apply(|n: i64| p.y + n, 2))
     println!("{}", apply(|n: i64| p.z + n, 3))
@@ -26,6 +26,6 @@ fn main() {
     let t = (100, 200, 300)
     println!("{}", apply(|n: i64| t.1 + n, 0))
 
-    let escaping = make_adder(Point(1, 2, 3))
+    let escaping = make_adder(Point { x: 1, y: 2, z: 3 })
     println!("{}", escaping(100))
 }

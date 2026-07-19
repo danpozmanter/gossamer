@@ -48,7 +48,7 @@ fn bump(v: &mut Vec<i64>, i: i64) { v.push(i) }
 fn setfield(p: &mut i64) { *p = 999 }
 struct Holder { vals: Vec<i64>, n: i64 }
 fn main() {
-    let mut h = Holder([10, 20], 5)
+    let mut h = Holder { vals: [10, 20], n: 5 }
     bump(&mut h.vals, 30)
     setfield(&mut h.n)
     let mut arr = [1, 2, 3]

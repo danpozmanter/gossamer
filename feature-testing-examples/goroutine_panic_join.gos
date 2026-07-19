@@ -19,7 +19,7 @@ impl Worker {
 
 fn main() {
     let good = spawn(|| {
-        let mut w = Worker(4)
+        let mut w = Worker { id: 4 }
         w.run()
     })
     match good.join() {
@@ -28,7 +28,7 @@ fn main() {
     }
 
     let bad = spawn(|| {
-        let mut w = Worker(-1)
+        let mut w = Worker { id: -1 }
         w.run()
     })
     match bad.join() {

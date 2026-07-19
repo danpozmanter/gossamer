@@ -1,5 +1,5 @@
-/// Returns declaration-order field names when `e` is `Name(args)` and `Name`
-/// is a declared struct whose arity matches `args.len()`.
+/// Returns positional field names when `e` is `Name(args)` and `Name`
+/// is a declared tuple struct whose arity matches `args.len()`.
 fn struct_ctor_fields(
     e: &gossamer_ast::expr::Expr,
     fields: &HashMap<String, Vec<String>>,
@@ -18,26 +18,21 @@ fn struct_ctor_fields(
     (names.len() == args.len()).then(|| names.clone())
 }
 
-/// Rewrites a declared struct constructor call `Pt(a, b)` into the equivalent
-/// struct literal. Named fields are initialized in declaration order, while
-/// legacy tuple fields use their existing `"0".."N-1"` internal names. This
-/// gives every struct a consistent parenthesized constructor spelling without
-/// changing the all-tier aggregate lowering machinery.
+/// Rewrites a declared tuple struct constructor call `Pt(a, b)` into the
+/// equivalent internal struct literal using `"0".."N-1"` field names.
 pub fn rewrite_tuple_struct_ctors(sf: &mut SourceFile) {
     use gossamer_ast::VisitorMut;
     let mut arity: HashMap<String, usize> = HashMap::new();
     let mut constructors: HashMap<String, Vec<String>> = HashMap::new();
     for item in flatten_items(&sf.items) {
         if let ItemKind::Struct(decl) = &item.kind {
-            let names = match &decl.body {
-                StructBody::Named(fields) => fields.iter().map(|field| field.name.name.clone()).collect(),
-                StructBody::Tuple(fields) => {
-                    arity.insert(decl.name.name.clone(), fields.len());
-                    (0..fields.len()).map(|index| index.to_string()).collect()
-                }
-                StructBody::Unit => Vec::new(),
-            };
-            constructors.insert(decl.name.name.clone(), names);
+            if let StructBody::Tuple(fields) = &decl.body {
+                arity.insert(decl.name.name.clone(), fields.len());
+                constructors.insert(
+                    decl.name.name.clone(),
+                    (0..fields.len()).map(|index| index.to_string()).collect(),
+                );
+            }
         }
     }
     if constructors.is_empty() {
@@ -50,108 +45,18 @@ pub fn rewrite_tuple_struct_ctors(sf: &mut SourceFile) {
     .visit_source_file(sf);
 }
 
-/// Migrates braced construction of locally declared named structs to the
-/// canonical declaration-order parenthesized form. This is intentionally a
-/// source migration helper, not a compile-path rewrite: normal compilation
-/// retains the braced syntax marker so the checker can reject it with GT0034.
+/// Compatibility hook retained for older tooling that invoked the constructor
+/// migration pass. Named structs now use braced construction, so no source
+/// rewrite is needed.
 pub fn migrate_braced_struct_constructors(
     source: &str,
     file: FileId,
 ) -> Result<String, Vec<ParseDiagnostic>> {
-    use gossamer_ast::Visitor;
-
-    let mut current = source.to_string();
-    loop {
-        let (sf, diags) = crate::parse_source_file(&current, file);
-        if !diags.is_empty() {
-            return Err(diags);
-        }
-        let constructors = struct_constructor_fields(&sf);
-        let mut rewriter = BracedConstructorMigration {
-            source: &current,
-            constructors: &constructors,
-            replacements: Vec::new(),
-        };
-        rewriter.visit_source_file(&sf);
-        if rewriter.replacements.is_empty() {
-            return Ok(current);
-        }
-        // Apply one innermost replacement per pass. Its source slice remains
-        // valid, then the next parse observes the rewritten child expression.
-        let (span, replacement) = rewriter
-            .replacements
-            .into_iter()
-            .min_by_key(|(span, _)| span.end.saturating_sub(span.start))
-            .expect("non-empty replacements");
-        let start = span.start as usize;
-        let end = span.end as usize;
-        current.replace_range(start..end, &replacement);
+    let (_, diags) = crate::parse_source_file(source, file);
+    if !diags.is_empty() {
+        return Err(diags);
     }
-}
-
-fn struct_constructor_fields(sf: &SourceFile) -> HashMap<String, Vec<String>> {
-    flatten_items(&sf.items)
-        .into_iter()
-        .filter_map(|item| match &item.kind {
-            ItemKind::Struct(decl) => match &decl.body {
-                StructBody::Named(fields) => Some((
-                    decl.name.name.clone(),
-                    fields.iter().map(|field| field.name.name.clone()).collect(),
-                )),
-                StructBody::Tuple(_) | StructBody::Unit => None,
-            },
-            _ => None,
-        })
-        .collect()
-}
-
-struct BracedConstructorMigration<'a> {
-    source: &'a str,
-    constructors: &'a HashMap<String, Vec<String>>,
-    replacements: Vec<(gossamer_lex::Span, String)>,
-}
-
-impl gossamer_ast::Visitor for BracedConstructorMigration<'_> {
-    fn visit_expr(&mut self, expr: &gossamer_ast::expr::Expr) {
-        use gossamer_ast::expr::{ExprKind, StructExprSyntax};
-        gossamer_ast::visitor::walk_expr(self, expr);
-        let ExprKind::Struct {
-            path,
-            fields,
-            base: None,
-            syntax: StructExprSyntax::Braced,
-        } = &expr.kind
-        else {
-            return;
-        };
-        if path.segments.len() != 1 {
-            return;
-        }
-        let name = &path.segments[0].name.name;
-        let Some(order) = self.constructors.get(name.as_str()) else {
-            return;
-        };
-        if fields.len() != order.len() {
-            return;
-        }
-        let mut values = HashMap::new();
-        for field in fields {
-            let value = field.value.as_ref().map_or_else(
-                || field.name.name.clone(),
-                |value| self.source[value.span.start as usize..value.span.end as usize].to_string(),
-            );
-            values.insert(field.name.name.as_str(), value);
-        }
-        let Some(args) = order
-            .iter()
-            .map(|field| values.get(field.as_str()).cloned())
-            .collect::<Option<Vec<_>>>()
-        else {
-            return;
-        };
-        self.replacements
-            .push((expr.span, format!("{}({})", name, args.join(", "))));
-    }
+    Ok(source.to_string())
 }
 
 /// Rewrites `open_range.take(n)` into an equivalent finite range. The runtime

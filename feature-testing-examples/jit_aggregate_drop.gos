@@ -11,7 +11,7 @@ struct Rec {
 }
 
 fn build(i: i64) -> Rec {
-    Rec(format!("item-{}", i), i)
+    Rec { name: format!("item-{}", i), count: i }
 }
 
 fn run(rounds: i64) -> i64 {

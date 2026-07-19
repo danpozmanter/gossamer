@@ -555,7 +555,7 @@ fn show(item: Info, as_json: bool) {
 }
 
 fn main() {
-    let it = Info(42, "hello".to_string())
+    let it = Info { num: 42, label: "hello".to_string() }
     show(it, false)
 }
 "#;
@@ -682,7 +682,7 @@ fn aggregate_alloc_loop_reclaims_deterministically() {
     //     double-free in the drop pass);
     //   - all three tiers agree.
     let src = "struct Pair { a: i64, b: i64 }\n\
-               fn make(i: i64) -> Pair { Pair(i, i * 2) }\n\
+               fn make(i: i64) -> Pair { Pair { left: i, right: i * 2 } }\n\
                fn main() {\n\
                    let mut total: i64 = 0\n\
                    let mut i: i64 = 0\n\
@@ -780,7 +780,7 @@ fn sum(p: Pair) -> i64 {
 }
 
 fn main() {
-    let p = Pair(20i64, 22i64)
+    let p = Pair { left: 20i64, right: 22i64 }
     println!("{}", sum(p))
 }
 "#;

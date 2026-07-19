@@ -59,7 +59,7 @@ impl Iterator for Counter {
     }
 }
 fn main() {
-    let mut c = Counter(0, 5)
+    let mut c = Counter { next_value: 0, end: 5 }
     let mut total = 0
     for x in c { total = total + x }
     println!("total={}", total)
@@ -83,7 +83,7 @@ impl Iterator for Counter {
     }
 }
 fn main() {
-    let mut c = Counter(3, 3)
+    let mut c = Counter { next_value: 3, end: 3 }
     let mut count = 0
     for _x in c { count = count + 1 }
     println!("count={}", count)
@@ -145,9 +145,9 @@ impl Iterator for Range2 {
 }
 fn main() {
     let mut acc = 0
-    let mut outer = Range2(0, 3)
+    let mut outer = Range2 { cur: 0, end: 3 }
     for i in outer {
-        let mut inner = Range2(0, 3)
+        let mut inner = Range2 { cur: 0, end: 3 }
         for j in inner { acc = acc + i * j }
     }
     println!("acc={}", acc)

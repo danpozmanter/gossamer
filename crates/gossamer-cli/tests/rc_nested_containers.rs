@@ -316,7 +316,7 @@ fn cnt(j: &J) -> i64 {
 fn main() -> Result<(), errors::Error> {
     let mut total = 0
     let mut i = 0
-    while i < 50 { let mut p = P(0); let r = p.top()?; total += cnt(&r); i += 1 }
+    while i < 50 { let mut p = P { step: 0 }; let r = p.top()?; total += cnt(&r); i += 1 }
     println!("{}", total)
     Ok(())
 }

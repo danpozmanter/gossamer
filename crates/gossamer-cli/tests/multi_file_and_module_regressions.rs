@@ -930,7 +930,7 @@ fn show(client: User) -> String {
 }
 
 fn main() {
-    let u = User("alice".to_string(), 30)
+    let u = User { name: "alice".to_string(), age: 30 }
     println!("{}", show(u))
 }
 "#;
@@ -1370,7 +1370,7 @@ fn cross_module_struct_field_access_resolves_on_all_tiers() {
         src.join("util.gos"),
         concat!(
             "pub struct Rec { pub name: String, pub age: i64 }\n",
-            "pub fn make(name: String, age: i64) -> Rec { Rec(name, age) }\n",
+            "pub fn make(name: String, age: i64) -> Rec { Rec { id: name, name: age } }\n",
             "pub fn birthday(r: &mut util::Rec) { r.age += 1 }\n",
         ),
     )
@@ -1487,7 +1487,7 @@ fn cross_file_to_json_derive_and_typeinfo_on_sibling_struct() {
                 "src/model.gos",
                 "#[derive(Debug)]\n\
                  pub struct Rec {\n    id: i64,\n    name: String,\n}\n\
-                 pub fn new(id: i64, name: String) -> Rec { Rec(id, name) }\n\
+                 pub fn new(id: i64, name: String) -> Rec { Rec { id: id, name: name } }\n\
                  pub fn roundtrip(r: Rec) -> String {\n\
                  \x20   match to_json::<Rec>(r) {\n\
                  \x20       Ok(s) => s,\n\
@@ -1495,8 +1495,8 @@ fn cross_file_to_json_derive_and_typeinfo_on_sibling_struct() {
                  \x20   }\n\
                  }\n\
                  pub fn describe() -> String {\n\
-                 \x20   let a = Rec(1, \"x\")\n\
-                 \x20   let b = Rec(1, \"x\")\n\
+                 \x20   let a = Rec { id: 1, name: \"x\" }\n\
+                 \x20   let b = Rec { id: 1, name: \"x\" }\n\
                  \x20   let mut fields = \"\"\n\
                  \x20   for (n, t) in typeInfo::<Rec>() { fields += n; fields += \":\"; fields += t; fields += \";\" }\n\
                  \x20   format!(\"{:?} eq={} fields={}\", a, a == b, fields)\n\

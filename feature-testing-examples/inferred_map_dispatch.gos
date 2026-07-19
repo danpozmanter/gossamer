@@ -12,7 +12,7 @@ fn main() {
     if let Some(v) = m.get(&"x") { println!("get={}", v) }
 
     let mut accounts = HashMap::new()
-    accounts.insert("ada", Account(100, 2))
+    accounts.insert("ada", Account { balance: 100, txns: 2 })
     if let Some(a) = accounts.get(&"ada") { println!("ada={} {}", a.balance, a.txns) }
 
     let mut counts = HashMap::new()

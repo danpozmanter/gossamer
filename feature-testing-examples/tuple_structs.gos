@@ -1,11 +1,11 @@
-// Named structs use braced declarations and declaration-order constructors.
-// Field access and destructuring use the declared field names on every tier.
+// Tuple structs use tuple declarations and parenthesized construction.
+// Field access and destructuring use positional fields on every tier.
 
 #[derive(PartialEq, Default, Debug)]
-struct Pt { x: i64, y: i64 }
+struct Pt(i64, i64)
 
-struct Rec { id: i64, name: String, enabled: bool }
-struct UserId { id: i64 }
+struct Rec(i64, String, bool)
+struct UserId(i64)
 
 impl Pt {
     fn origin() -> Pt {
@@ -13,30 +13,30 @@ impl Pt {
     }
 }
 
-fn sum(Pt { x, y }: Pt) -> i64 {
+fn sum(Pt(x, y): Pt) -> i64 {
     x + y
 }
 
 fn classify(p: Pt) -> i64 {
     match p {
-        Pt { x: 0, y } => y,
-        Pt { x, .. } => x,
+        Pt(0, y) => y,
+        Pt(x, _) => x,
     }
 }
 
 fn main() {
     let p = Pt(3, 4)
-    println!("{} {} {}", p.x, p.y, sum(Pt(10, 20)))
+    println!("{} {} {}", p.0, p.1, sum(Pt(10, 20)))
 
     let r = Rec(7, "hi", true)
-    println!("{} {} {}", r.id, r.name, r.enabled)
+    println!("{} {} {}", r.0, r.1, r.2)
 
-    let UserId { id } = UserId(99)
+    let UserId(id) = UserId(99)
     println!("{} {}", id, classify(Pt(0, 5)))
 
     let o = Pt::origin()
     let c = o.clone()
-    println!("{} {} {:?}", o.x, o == c, c)
+    println!("{} {} {:?}", o.0, o == c, c)
 
     let d = Pt::default()
     println!("{} {:?}", d == Pt(0, 0), d)

@@ -108,7 +108,7 @@ fn main() -> i64 {
 const STRUCT_FIELD_SRC: &str = r"
 struct P { x: i64, y: i64 }
 fn main() -> i64 {
-    let mut p = P(0, 0)
+    let mut p = P { x: 0, y: 0 }
     let mut i: i64 = 0
     while i < 500_000 {
         p.x = p.x + i

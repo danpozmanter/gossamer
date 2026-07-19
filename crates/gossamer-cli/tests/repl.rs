@@ -305,23 +305,38 @@ fn repl_bindings_show_immutable_values_without_let_prefix() {
 }
 
 #[test]
-fn repl_named_struct_constructor_is_consistent_and_legacy_declarations_fail() {
+fn repl_struct_construction_and_display_match_source_shapes() {
     let out = run_repl(
         "struct Pair { x: i64, y: i64 }\n\
-         let p = Pair(0, 0)\n\
+         struct Tup(String, i64)\n\
+         let p = Pair { x: 0, y: 0 }\n\
          p\n\
+         let q = Pair { y: 4, 3 }\n\
+         q\n\
+         let t = Tup(\"row\", 7)\n\
+         t\n\
          %declarations\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("binding added (1 total)"),
-        "named struct constructor should be callable; stdout: {}; stderr: {}",
+        "named struct literal should bind; stdout: {}; stderr: {}",
         out.stdout,
         out.stderr
     );
     assert!(
-        out.stdout.contains("Out[3]: Pair { x: 0, y: 0 }"),
+        out.stdout.contains("Out[4]: Pair { x: 0, y: 0 }"),
         "named struct value should render with fields; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("Out[6]: Pair { x: 3, y: 4 }"),
+        "mixed named struct literal should render in declaration order; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("Out[8]: Tup(\"row\", 7)"),
+        "tuple struct value should render with parentheses; stdout: {}",
         out.stdout
     );
     assert!(
@@ -329,13 +344,18 @@ fn repl_named_struct_constructor_is_consistent_and_legacy_declarations_fail() {
         "%declarations should list accumulated declarations; stdout: {}",
         out.stdout
     );
+    assert!(
+        out.stdout.contains("  2: struct Tup(String, i64)"),
+        "%declarations should list tuple struct declarations; stdout: {}",
+        out.stdout
+    );
 
-    let legacy = run_repl("struct Legacy(i64)\nstruct Marker\n");
+    let legacy = run_repl("struct Marker\n");
     assert!(
         legacy
             .stderr
-            .contains("`{ field: Type }` after a struct name"),
-        "legacy tuple and unit declarations must be rejected; stderr: {}",
+            .contains("`{ field: Type }`, `(Type, ...)`, or `;` after a struct name"),
+        "bare unit declarations must be rejected; stderr: {}",
         legacy.stderr
     );
 }

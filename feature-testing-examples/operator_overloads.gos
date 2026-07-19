@@ -9,13 +9,13 @@ use std::errors
 struct N { v: i64 }
 
 impl N {
-    fn rem(self, o: N) -> N { N(self.v % o.v) }
-    fn neg(self) -> N { N(0 - self.v) }
-    fn bitor(self, o: N) -> N { N(self.v | o.v) }
-    fn bitand(self, o: N) -> N { N(self.v & o.v) }
-    fn bitxor(self, o: N) -> N { N(self.v ^ o.v) }
-    fn shl(self, o: N) -> N { N(self.v << o.v) }
-    fn shr(self, o: N) -> N { N(self.v >> o.v) }
+    fn rem(self, o: N) -> N { N { v: self.v % o.v } }
+    fn neg(self) -> N { N { v: 0 - self.v } }
+    fn bitor(self, o: N) -> N { N { v: self.v | o.v } }
+    fn bitand(self, o: N) -> N { N { v: self.v & o.v } }
+    fn bitxor(self, o: N) -> N { N { v: self.v ^ o.v } }
+    fn shl(self, o: N) -> N { N { v: self.v << o.v } }
+    fn shr(self, o: N) -> N { N { v: self.v >> o.v } }
 }
 
 struct Row { data: Vec<i64> }
@@ -28,10 +28,10 @@ struct Inches { n: i64 }
 struct Centimetres { n: i64 }
 
 impl Centimetres {
-    fn from(i: Inches) -> Centimetres { Centimetres(i.n * 254 / 100) }
+    fn from(i: Inches) -> Centimetres { Centimetres { n: i.n * 254 / 100 } }
     fn try_from(i: Inches) -> Result<Centimetres, errors::Error> {
         if i.n < 0 { return Err(errors::new("negative")) }
-        Ok(Centimetres(i.n * 254 / 100))
+        Ok(Centimetres { n: i.n * 254 / 100 })
     }
 }
 
@@ -46,16 +46,16 @@ fn classify(x: i64) -> i64 {
 }
 
 fn main() {
-    println!("{}", (N(17) % N(5)).v)
-    let a = N(6)
+    println!("{}", (N { v: 17 } % N { v: 5 }).v)
+    let a = N { v: 6 }
     println!("{}", (-a).v)
-    println!("{}", (N(5) | N(2)).v)
-    println!("{}", (N(6) & N(3)).v)
-    println!("{}", (N(5) ^ N(1)).v)
-    println!("{}", (N(1) << N(4)).v)
-    println!("{}", (N(32) >> N(2)).v)
+    println!("{}", (N { v: 5 } | N { v: 2 }).v)
+    println!("{}", (N { v: 6 } & N { v: 3 }).v)
+    println!("{}", (N { v: 5 } ^ N { v: 1 }).v)
+    println!("{}", (N { v: 1 } << N { v: 4 }).v)
+    println!("{}", (N { v: 32 } >> N { v: 2 }).v)
 
-    let r = Row([7, 8, 9])
+    let r = Row { data: [7, 8, 9] }
     println!("{}", r[1])
 
     println!("{} {} {}", classify(0), classify(5), classify(50))
@@ -63,10 +63,10 @@ fn main() {
     let y = dbg!(20 + 22)
     println!("dbg yielded {}", y)
 
-    let cm: Centimetres = Inches(10).into()
+    let cm: Centimetres = Inches { n: 10 }.into()
     println!("{}", cm.n)
 
-    let tc: Result<Centimetres, errors::Error> = Inches(20).try_into()
+    let tc: Result<Centimetres, errors::Error> = Inches { n: 20 }.try_into()
     match tc {
         Ok(c) => println!("try {}", c.n),
         Err(e) => println!("err {}", e),

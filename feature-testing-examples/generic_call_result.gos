@@ -35,9 +35,9 @@ fn main() {
     println!("{}", first("p", 9))
 
     // Struct result, inline field access and via a binding.
-    let p = id(Point(1, 2))
+    let p = id(Point { x: 1, y: 2 })
     println!("{} {}", p.x, p.y)
-    println!("{}", id(Point(3, 4)).x)
+    println!("{}", id(Point { x: 3, y: 4 }).x)
 
     // Recursion through a generic helper, every instantiation.
     println!("{}", twice(5))

@@ -67,6 +67,7 @@ pub fn lower_source_file_with_edition(
         current_fn_ret_ty: None,
         import_targets: collect_import_targets(&source.uses),
         ctor_arity: collect_ctor_arities(&source.items),
+        struct_fields: collect_struct_fields(&source.items),
         module_fn_paths,
     };
     let mut items = Vec::new();
@@ -184,6 +185,51 @@ fn collect_ctor_arities_into(
     }
 }
 
+/// Collects source-order field names for every struct by bare name. Tuple
+/// structs use their synthetic positional field names, `"0".."N-1"`.
+fn collect_struct_fields(items: &[AstItem]) -> std::collections::HashMap<String, Vec<String>> {
+    let mut map = std::collections::HashMap::new();
+    collect_struct_fields_into(items, &mut map);
+    map
+}
+
+fn collect_struct_fields_into(
+    items: &[AstItem],
+    map: &mut std::collections::HashMap<String, Vec<String>>,
+) {
+    for item in items {
+        match &item.kind {
+            AstItemKind::Struct(decl) => {
+                let fields = match &decl.body {
+                    gossamer_ast::StructBody::Named(fields) => {
+                        fields.iter().map(|field| field.name.name.clone()).collect()
+                    }
+                    gossamer_ast::StructBody::Tuple(fields) => {
+                        (0..fields.len()).map(|idx| idx.to_string()).collect()
+                    }
+                    gossamer_ast::StructBody::Unit => Vec::new(),
+                };
+                map.insert(decl.name.name.clone(), fields);
+            }
+            AstItemKind::Mod(decl) => {
+                if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                    collect_struct_fields_into(inner, map);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn struct_literal_positional_index(name: &str) -> Option<usize> {
+    let idx = name.parse::<usize>().ok()?;
+    if idx.to_string() == name {
+        Some(idx)
+    } else {
+        None
+    }
+}
+
 /// Builds the per-`use` map of bound name → full target path consumed
 /// by `lower_path_expr`'s imported-binding expansion. One declaration
 /// can bind several names (`use m::{a, b as c}`), so entries carry the
@@ -263,6 +309,10 @@ struct Lowerer<'a> {
     /// (`E::C(..)`) expand to the right number of wildcards, so it matches a
     /// multi-field variant rather than only a single-field one.
     ctor_arity: std::collections::HashMap<String, usize>,
+    /// Source-order field names for struct literals. Named structs can be
+    /// initialized positionally inside braces, and those temporary positions
+    /// are rewritten to real field names before MIR lowering.
+    struct_fields: std::collections::HashMap<String, Vec<String>>,
     /// Canonical `mod::name` segments of every inline-module function,
     /// keyed by `DefId`. Path references rewrite to this spelling so a
     /// bare in-module call names the module's own item, not whichever
@@ -1643,12 +1693,33 @@ impl Lowerer<'_> {
             ty: string_ty,
             kind: HirExprKind::Literal(HirLiteral::String(name)),
         });
-        for field in fields {
+        let field_names = self.resolve_struct_literal_field_names(
+            path.segments
+                .last()
+                .map(|seg| seg.name.name.as_str())
+                .unwrap_or_default(),
+            fields,
+        );
+        let field_order = self.struct_literal_field_order(
+            path.segments
+                .last()
+                .map(|seg| seg.name.name.as_str())
+                .unwrap_or_default(),
+            fields,
+            &field_names,
+        );
+        for idx in field_order {
+            let field = &fields[idx];
             args.push(HirExpr {
                 id: self.fresh(),
                 span,
                 ty: string_ty,
-                kind: HirExprKind::Literal(HirLiteral::String(field.name.name.clone())),
+                kind: HirExprKind::Literal(HirLiteral::String(
+                    field_names
+                        .get(&idx)
+                        .cloned()
+                        .unwrap_or_else(|| field.name.name.clone()),
+                )),
             });
             let value = match &field.value {
                 Some(expr) => self.lower_expr(expr),
@@ -1685,6 +1756,78 @@ impl Lowerer<'_> {
             }),
             args,
         }
+    }
+
+    fn struct_literal_field_order(
+        &self,
+        struct_name: &str,
+        fields: &[gossamer_ast::StructExprField],
+        resolved_names: &std::collections::HashMap<usize, String>,
+    ) -> Vec<usize> {
+        let Some(declared) = self.struct_fields.get(struct_name) else {
+            return (0..fields.len()).collect();
+        };
+        let mut order = Vec::with_capacity(fields.len());
+        let mut used = std::collections::HashSet::new();
+        for declared_name in declared {
+            for (field_idx, _) in fields.iter().enumerate() {
+                if resolved_names
+                    .get(&field_idx)
+                    .is_some_and(|name| name == declared_name)
+                {
+                    order.push(field_idx);
+                    used.insert(field_idx);
+                }
+            }
+        }
+        for field_idx in 0..fields.len() {
+            if !used.contains(&field_idx) {
+                order.push(field_idx);
+            }
+        }
+        order
+    }
+
+    fn resolve_struct_literal_field_names(
+        &self,
+        struct_name: &str,
+        fields: &[gossamer_ast::StructExprField],
+    ) -> std::collections::HashMap<usize, String> {
+        let Some(declared) = self.struct_fields.get(struct_name) else {
+            return std::collections::HashMap::new();
+        };
+        let declared_by_name: std::collections::HashMap<&str, usize> = declared
+            .iter()
+            .enumerate()
+            .map(|(idx, name)| (name.as_str(), idx))
+            .collect();
+        let mut resolved = std::collections::HashMap::new();
+        let mut filled = std::collections::HashSet::new();
+        for (field_idx, field) in fields.iter().enumerate() {
+            if struct_literal_positional_index(&field.name.name).is_some() {
+                continue;
+            }
+            if let Some(&decl_idx) = declared_by_name.get(field.name.name.as_str()) {
+                filled.insert(decl_idx);
+                resolved.insert(field_idx, declared[decl_idx].clone());
+            }
+        }
+
+        let mut next_pos = 0usize;
+        for (field_idx, field) in fields.iter().enumerate() {
+            if struct_literal_positional_index(&field.name.name).is_none() {
+                continue;
+            }
+            while next_pos < declared.len() && filled.contains(&next_pos) {
+                next_pos += 1;
+            }
+            if next_pos >= declared.len() {
+                continue;
+            }
+            filled.insert(next_pos);
+            resolved.insert(field_idx, declared[next_pos].clone());
+        }
+        resolved
     }
 
     fn lower_array(&mut self, arr: &AstArrayExpr) -> HirArrayExpr {

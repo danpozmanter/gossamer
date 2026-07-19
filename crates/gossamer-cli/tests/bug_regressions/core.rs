@@ -151,7 +151,7 @@ fn generic_struct_f64_field_prints_as_float() {
     let src = r#"
 struct Triple<A, B, C> { first: A, second: B, third: C }
 fn main() {
-    let r = Triple(1, "two", 3.0)
+    let r = Triple { 1, "two", 3.0 }
     println!("{} {} {}", r.first, r.second, r.third)
 }
 "#;
@@ -185,7 +185,7 @@ fn main() {
     let mut t: [String] = []
     t.push("a")
     t.push("b")
-    let u = U(t)
+    let u = U { tags: t }
     U::dump(u)
 }
 "#;
@@ -241,7 +241,7 @@ fn main() {
     println!("{}", area(&Shape::Circle(2)))
     println!("{}", area(&Shape::Rect(3, 4)))
     println!("{}", area(&Shape::Unit))
-    let p = Point(5, 9)
+    let p = Point { x: 5, y: 9 }
     match p { Point { x, y } => println!("pt {} {}", x, y) }
     let pair = (11, 22)
     match pair { (a, b) => println!("pair {} {}", a, b) }
@@ -500,7 +500,7 @@ struct User {
 fn main() -> Result<(), errors::Error> {
     let mut tags: [String] = []
     tags.push("admin")
-    let original = User("alice", 30, true, tags, Address("denver", "80205"))
+    let original = User { name: "alice", age: 30, active: true, tags: tags, address: Address { city: "denver", zip: "80205" } }
     let text = to_json::<User>(&original)?
     let back: User = from_json::<User>(&text)?
     println!("name={}", back.name)

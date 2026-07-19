@@ -16,7 +16,7 @@
 struct Tag { name: String, count: i64 }
 
 fn make_tag(prefix: &String, n: i64) -> Tag {
-    Tag(format!("{}-{}", prefix, n), n)
+    Tag { name: format!("{}-{}", prefix, n), count: n }
 }
 
 fn total(xs: &[i64]) -> i64 {

@@ -180,7 +180,7 @@ fn array_index_produces_projection_index_with_local_offset() {
 #[test]
 fn positional_struct_constructor_preserves_declaration_order() {
     let bodies = build(
-        "struct Pair { a: i64, b: i64 }\nfn main() -> i64 { let p = Pair(3i64, 7i64); p.a }\n",
+        "struct Pair { a: i64, b: i64 }\nfn main() -> i64 { let p = Pair { a: 3i64, b: 7i64 }; p.a }\n",
     );
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
     let args = main

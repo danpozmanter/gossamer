@@ -46,7 +46,7 @@ impl Cursor {
 }
 
 fn main() {
-    let mut c = Cursor(0, 0, 1.0, false, 'q')
+    let mut c = Cursor { pos: 0, acc: 0, scale: 1.0, flip: false, mark: 'q' }
     let mut round = 0
     while round < 200000 {
         c.advance(5)

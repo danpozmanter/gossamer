@@ -2511,7 +2511,7 @@ fn write_struct(
             if i > 0 {
                 out.write_str(", ")?;
             }
-            write!(out, "{value}")?;
+            out.write_str(&repr_value(value))?;
         }
         return out.write_str(")");
     }
@@ -2520,7 +2520,7 @@ fn write_struct(
         if i > 0 {
             out.write_str(", ")?;
         }
-        write!(out, "{}: {value}", (*ident))?;
+        write!(out, "{}: {}", (*ident), repr_value(value))?;
     }
     out.write_str(" }")
 }

@@ -62,7 +62,7 @@ fn main() {
 
     // Aggregate element type: stays on the runtime get_ptr path.
     let mut pts: Vec<Point> = []
-    pts.push(Point(1.5, 2.5))
-    pts.push(Point(3.5, 4.5))
+    pts.push(Point { x: 1.5, y: 2.5 })
+    pts.push(Point { x: 3.5, y: 4.5 })
     println!("pt={:.1},{:.1}", pts[1].x, pts[1].y)
 }

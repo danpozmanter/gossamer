@@ -431,7 +431,7 @@ fn gos_build_handles_for_loop_over_range() {
 fn gos_build_handles_struct_literal_and_field_access() {
     assert_exit(
         "struct_field",
-        "struct Point { x: i64, y: i64 }\nfn main() -> i64 {\n    let p = Point(10i64, 32i64)\n    p.x + p.y\n}\n",
+        "struct Point { x: i64, y: i64 }\nfn main() -> i64 {\n    let p = Point { x: 10i64, y: 32i64 }\n    p.x + p.y\n}\n",
         42,
     );
 }

@@ -211,9 +211,21 @@ fn emit_from_json(out: &mut String, name: &str, fields: &[(String, FieldKind)]) 
             "    let {fname} = match json::get(v, \"{fname}\") {{\n        Some(__child) => {extract},\n        None => {missing},\n    }}\n"
         ));
     }
-    let names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
-    out.push_str(&format!("    Ok({name}({}))\n", names.join(", ")));
+    let fields = fields
+        .iter()
+        .map(|(field, _)| (field.as_str(), field.as_str()))
+        .collect::<Vec<_>>();
+    out.push_str(&format!("    Ok({})\n", named_struct_literal(name, &fields)));
     out.push_str("}\n\n");
+}
+
+fn named_struct_literal(name: &str, fields: &[(&str, &str)]) -> String {
+    let parts = fields
+        .iter()
+        .map(|(field, value)| format!("{field}: {value}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{name} {{ {parts} }}")
 }
 
 /// Extracts the trait names listed in an item's `#[derive(...)]`
@@ -755,13 +767,17 @@ fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, derives: &[String]) 
             let arm = match &v.body {
                 StructBody::Unit => format!("\"{vn}\""),
                 StructBody::Tuple(_) => {
-                    let holes = binds.iter().map(|_| "{}").collect::<Vec<_>>().join(", ");
+                    let holes = binds
+                        .iter()
+                        .map(|_| "{:?}")
+                        .collect::<Vec<_>>()
+                        .join(", ");
                     format!("format!(\"{vn}({holes})\", {})", binds.join(", "))
                 }
                 StructBody::Named(fields) => {
                     let parts: Vec<String> = fields
                         .iter()
-                        .map(|f| format!("{}: {{}}", f.name.name))
+                        .map(|f| format!("{}: {{:?}}", f.name.name))
                         .collect();
                     format!(
                         "format!(\"{vn} {{{{ {} }}}}\", {})",
@@ -792,6 +808,45 @@ fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, derives: &[String]) 
         }
     }
     out.push_str("}\n\n");
+}
+
+fn emit_named_struct_fmt_impl(
+    out: &mut String,
+    name: &str,
+    field_names: &[&str],
+    fields: &[gossamer_ast::StructField],
+) {
+    let mut tmpl = String::new();
+    tmpl.push_str(name);
+    tmpl.push_str(" {{ ");
+    for (i, f) in field_names.iter().enumerate() {
+        if i > 0 {
+            tmpl.push_str(", ");
+        }
+        tmpl.push_str(f);
+        tmpl.push_str(": {}");
+    }
+    tmpl.push_str(" }}");
+    let argvals: Vec<String> = fields
+        .iter()
+        .map(|f| {
+            if type_head_name(&f.ty) == Some("String") {
+                format!("strconv::quote(self.{})", f.name.name)
+            } else {
+                format!("self.{}", f.name.name)
+            }
+        })
+        .collect();
+    if field_names.is_empty() {
+        out.push_str(&format!(
+            "    fn fmt(&self) -> String {{ format!(\"{tmpl}\") }}\n"
+        ));
+    } else {
+        out.push_str(&format!(
+            "    fn fmt(&self) -> String {{ format!(\"{tmpl}\", {}) }}\n",
+            argvals.join(", ")
+        ));
+    }
 }
 
 /// `("<T, U>", "Name<T, U>")` for a generic struct, or `("", "Name")` for a
@@ -888,7 +943,17 @@ fn emit_tuple_struct_derive_impl(
     }
     if want_debug {
         let placeholders: Vec<&str> = (0..n).map(|_| "{}").collect();
-        let argvals: Vec<String> = (0..n).map(|i| format!("self.{i}")).collect();
+        let argvals: Vec<String> = fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                if type_head_name(&f.ty) == Some("String") {
+                    format!("strconv::quote(self.{i})")
+                } else {
+                    format!("self.{i}")
+                }
+            })
+            .collect();
         out.push_str(&format!(
             "    fn fmt(&self) -> String {{ format!(\"{name}({})\", {}) }}\n",
             placeholders.join(", "),
@@ -916,7 +981,7 @@ fn emit_struct_derive_impl(
         return;
     }
     // `(gen_decl, self_ty)` = ("<T>", "Pair<T>") for a generic struct, else
-    // ("", "Pair"). Constructors use declaration-order arguments.
+    // ("", "Pair"). Named structs reconstruct with braced literals.
     let (gen_decl, self_ty) = struct_generics(decl);
     let field_names: Vec<&str> = fields.iter().map(|f| f.name.name.as_str()).collect();
     out.push_str(&format!(
@@ -927,10 +992,17 @@ fn emit_struct_derive_impl(
         // struct's fields are shared by copy; this avoids a per-field
         // `.clone()` call (which the VM's name-global method dispatch would
         // misroute back to `Type::clone`).
-        let init: Vec<String> = field_names.iter().map(|f| format!("self.{f}")).collect();
+        let init = field_names
+            .iter()
+            .map(|field| (*field, format!("self.{field}")))
+            .collect::<Vec<_>>();
+        let init_refs = init
+            .iter()
+            .map(|(field, value)| (*field, value.as_str()))
+            .collect::<Vec<_>>();
         out.push_str(&format!(
-            "    fn clone(&self) -> {self_ty} {{ {name}({}) }}\n",
-            init.join(", ")
+            "    fn clone(&self) -> {self_ty} {{ {} }}\n",
+            named_struct_literal(name, &init_refs)
         ));
     }
     if want_eq {
@@ -971,43 +1043,22 @@ fn emit_struct_derive_impl(
             .map(|f| FieldKind::from_type(&f.ty, structs).map(|k| (f.name.name.clone(), k)))
             .collect();
         if let Some(typed) = typed {
-            let init: Vec<String> = typed
+            let init: Vec<(String, String)> = typed
                 .iter()
-                .map(|(_, k)| k.default_literal())
+                .map(|(field, k)| (field.clone(), k.default_literal()))
                 .collect();
+            let init_refs = init
+                .iter()
+                .map(|(field, value)| (field.as_str(), value.as_str()))
+                .collect::<Vec<_>>();
             out.push_str(&format!(
-                "    fn default() -> {self_ty} {{ {name}({}) }}\n",
-                init.join(", ")
+                "    fn default() -> {self_ty} {{ {} }}\n",
+                named_struct_literal(name, &init_refs)
             ));
         }
     }
     if want_debug {
-        // `fmt(&self) -> String` rendering `Name { f0: v0, f1: v1 }`, matching
-        // the VM's `value.rs::write_struct` byte-for-byte so all tiers agree.
-        // `{}` on each field recurses (primitives print directly; a nested
-        // struct field routes to its own `fmt`). `{{` / `}}` are literal braces.
-        let mut tmpl = String::new();
-        tmpl.push_str(name);
-        tmpl.push_str(" {{ ");
-        for (i, f) in field_names.iter().enumerate() {
-            if i > 0 {
-                tmpl.push_str(", ");
-            }
-            tmpl.push_str(f);
-            tmpl.push_str(": {}");
-        }
-        tmpl.push_str(" }}");
-        let argvals: Vec<String> = field_names.iter().map(|f| format!("self.{f}")).collect();
-        if field_names.is_empty() {
-            out.push_str(&format!(
-                "    fn fmt(&self) -> String {{ format!(\"{tmpl}\") }}\n"
-            ));
-        } else {
-            out.push_str(&format!(
-                "    fn fmt(&self) -> String {{ format!(\"{tmpl}\", {}) }}\n",
-                argvals.join(", ")
-            ));
-        }
+        emit_named_struct_fmt_impl(out, name, &field_names, fields);
     }
     out.push_str("}\n\n");
 }

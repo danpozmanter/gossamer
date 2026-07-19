@@ -148,19 +148,19 @@ fn enum_constructors_work_directly_and_as_values() {
     let source = r"
 enum Node {
     Leaf(i64),
-    Pair(Node, Node),
+    Pair { left: Node, right: Node },
 }
 
 fn weight(n: Node) -> i64 {
     match n {
         Leaf(v) => v,
-        Pair(l, r) => weight(l) + weight(r),
+        Pair { left: l, right: r } => weight(l) + weight(r),
     }
 }
 
 fn main() {
     let leaf = Leaf
-    let tree = Pair(Leaf(2i64), leaf(5i64))
+    let tree = Pair { left: Leaf(2i64), right: leaf(5i64) }
     println(weight(tree))
 }
 ";
@@ -173,7 +173,7 @@ fn named_struct_values_work_directly_and_as_values() {
 struct Pair { left: i64, right: i64 }
 
 fn main() {
-    let direct = Pair(1i64, 2i64)
+    let direct = Pair { left: 1i64, right: 2i64 }
     println(direct.left + direct.right)
 }
 ";
@@ -524,7 +524,7 @@ fn struct_literal_fields_project_correctly() {
 struct Point { x: i64, y: i64 }
 
 fn main() {
-    let p = Point(3i64, 4i64)
+    let p = Point { x: 3i64, y: 4i64 }
     println(p.x + p.y)
 }
 "#;
@@ -619,7 +619,7 @@ impl Mailbox {
 }
 
 fn main() {
-    let m = Mailbox("main".to_string())
+    let m = Mailbox { tag: "main".to_string() }
     println(m.send(41i64))
 }
 "#;

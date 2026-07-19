@@ -14,17 +14,17 @@ struct Key { a: i64, b: i64 }
 fn main() {
     // struct key: method insert, qualified get / contains / pop
     let mut m: HashMap<Key, i64> = HashMap::new()
-    m.insert(Key(1, 2), 10)
-    m.insert(Key(3, 4), 20)
-    m.insert(Key(1, 2), 11) // overwrites the first slot
+    m.insert(Key { a: 1, b: 2 }, 10)
+    m.insert(Key { a: 3, b: 4 }, 20)
+    m.insert(Key { a: 1, b: 2 }, 11) // overwrites the first slot
 
-    let g = match HashMap::get(m, Key(1, 2)) {
+    let g = match HashMap::get(m, Key { a: 1, b: 2 }) {
         Some(v) => v,
         None => -1,
     }
-    let has = HashMap::contains_key(m, Key(3, 4))
-    let missing = HashMap::contains_key(m, Key(9, 9))
-    let popped = match HashMap::pop(m, Key(3, 4)) {
+    let has = HashMap::contains_key(m, Key { a: 3, b: 4 })
+    let missing = HashMap::contains_key(m, Key { a: 9, b: 9 })
+    let popped = match HashMap::pop(m, Key { a: 3, b: 4 }) {
         Some(v) => v,
         None => -1,
     }

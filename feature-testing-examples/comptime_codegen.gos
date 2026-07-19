@@ -34,6 +34,6 @@ fn user_record(u: User) -> String {
 }
 
 fn main() {
-    println!("{}", point_record(Point(1, 2)))
-    println!("{}", user_record(User(7, "jane", true)))
+    println!("{}", point_record(Point { x: 1, y: 2 }))
+    println!("{}", user_record(User { id: 7, name: "jane", active: true }))
 }

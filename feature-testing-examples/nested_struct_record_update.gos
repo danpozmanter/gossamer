@@ -8,14 +8,14 @@ struct User { name: String, role: String }
 struct Team { lead: User, members: [String], size: i64 }
 
 fn main() {
-    let lead = User(format!("lin"), format!("eng"))
+    let lead = User { name: format!("lin"), role: format!("eng") }
     let mut roster: [String] = []
     roster.push(format!("ben"))
     roster.push(format!("cleo"))
-    let team = Team(lead, roster, 3)
+    let team = Team { lead: lead, members: roster, size: 3 }
 
     // A copied nested `User` sub-struct and `Vec` with a new sibling scalar.
-    let grown = Team(team.lead, team.members, 4)
+    let grown = Team { lead: team.lead, members: team.members, size: 4 }
 
     // Extract the nested sub-struct, then its fields.
     let who = grown.lead

@@ -64,7 +64,7 @@ fn main() {
     println!("call opt={} res={} err={}", read_opt(&opt), read_res(&res), read_res(&err))
 
     // struct field of Option matched + returned by reference.
-    let h = Holder(Some(99), Some("ada"))
+    let h = Holder { o: Some(99), label: Some("ada") }
     let field_inline = match &h.o {
         Some(x) => *x,
         None => -1,

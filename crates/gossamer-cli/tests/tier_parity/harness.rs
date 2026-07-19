@@ -361,6 +361,9 @@ const SPECS: &[Spec] = &[
     // Tuple structs: construction, positional `.N` access, and destructuring
     // (let / match / fn params), modelled as named fields "0".."N-1".
     spec("feature-testing-examples/tuple_structs.gos"),
+    // Named struct construction: keyed, positional, and mixed brace literals
+    // all lower to declaration-order fields on every tier.
+    spec("feature-testing-examples/named_struct_brace_construction.gos"),
     // Structs / enums compare and order by value with no `#[derive(...)]`:
     // auto-synthesized `eq` / `cmp`, plus `..` rest in multi-field variants.
     spec("feature-testing-examples/structural_comparison.gos"),

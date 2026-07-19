@@ -43,11 +43,11 @@ fn main() {
 
     // Struct elements: equal-by-value collide, lookup hits.
     let mut tags: HashSet<Tag> = HashSet::new()
-    tags.insert(Tag(1))
-    tags.insert(Tag(1))
-    tags.insert(Tag(2))
+    tags.insert(Tag { id: 1 })
+    tags.insert(Tag { id: 1 })
+    tags.insert(Tag { id: 2 })
     println!("tag len {} has1 {} has3 {}", tags.len(),
-        tags.contains(&Tag(1)), tags.contains(&Tag(3)))
+        tags.contains(&Tag { id: 1 }), tags.contains(&Tag { id: 3 }))
 
     // Algebra over String sets (cardinality + membership only).
     let mut a: HashSet<String> = HashSet::new()

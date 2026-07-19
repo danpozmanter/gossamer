@@ -59,7 +59,7 @@ fn main() {
     println!("{} {}", classify(0)[0], classify(9)[1])
 
     // Struct field and call arguments.
-    let bag = Bag(["one", "two"])
+    let bag = Bag { items: ["one", "two"] }
     println!("{} {}", bag.items[1], bag.items.len())
     println!("{}", sum([10, 20, 30]))
     println!("{}", slice_len(["m", "n", "o", "p"]))

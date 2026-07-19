@@ -11,9 +11,9 @@ struct Rec { label: String, weight: i64 }
 
 fn main() {
     let mut m: HashMap<i64, Rec> = HashMap::new()
-    m.insert(1, Rec(format!("a"), 10))
-    m.insert(2, Rec(format!("b"), 20))
-    m.insert(3, Rec(format!("c"), 30))
+    m.insert(1, Rec { label: format!("a"), weight: 10 })
+    m.insert(2, Rec { label: format!("b"), weight: 20 })
+    m.insert(3, Rec { label: format!("c"), weight: 30 })
 
     // `(_, v)` over struct values: value binds as a box ref, `v.weight` derefs.
     let mut value_sum = 0

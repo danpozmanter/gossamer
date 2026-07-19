@@ -37,7 +37,7 @@ fn point_xy(p: Point) -> String {
 }
 
 fn main() {
-    println!("{}", rec::<Point>(Point(1, 2)))
-    println!("{}", rec::<User>(User(7, "jane", true)))
-    println!("{}", point_xy(Point(3, 4)))
+    println!("{}", rec::<Point>(Point { x: 1, y: 2 }))
+    println!("{}", rec::<User>(User { id: 7, name: "jane", active: true }))
+    println!("{}", point_xy(Point { x: 3, y: 4 }))
 }

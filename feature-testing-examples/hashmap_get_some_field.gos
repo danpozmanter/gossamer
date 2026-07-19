@@ -4,8 +4,8 @@ pub struct Point { pub x: f64, pub y: f64 }
 
 fn main() {
     let mut m: HashMap<u32, Point> = HashMap::new()
-    m.insert(0, Point(1.5, 2.0))
-    m.insert(1, Point(4.5, 5.0))
+    m.insert(0, Point { x: 1.5, y: 2.0 })
+    m.insert(1, Point { x: 4.5, y: 5.0 })
 
     let mut sum: f64 = 0.0
     let mut id: u32 = 0

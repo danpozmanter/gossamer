@@ -17,10 +17,10 @@ fn main() {
     println!("{:?}", v)
 
     let mut rows: Vec<Row> = []
-    rows.push(Row(2, "b"))
-    rows.push(Row(1, "z"))
-    rows.push(Row(2, "a"))
-    rows.push(Row(1, "y"))
+    rows.push(Row { count: 2, name: "b" })
+    rows.push(Row { count: 1, name: "z" })
+    rows.push(Row { count: 2, name: "a" })
+    rows.push(Row { count: 1, name: "y" })
     rows.sort_by_key(|r| (Reverse(r.count), r.name))
     for r in rows {
         println!("{} {}", r.count, r.name)

@@ -50,7 +50,7 @@ fn mut_self_mutation_persists_on_local_receiver() {
 struct Counter { n: i64 }
 impl Counter { fn bump(&mut self) { self.n = self.n + 1 } }
 fn main() {
-    let mut c = Counter(0)
+    let mut c = Counter { base: 0 }
     c.bump()
     c.bump()
     c.bump()
@@ -69,7 +69,7 @@ impl Acc {
     fn get(&self) -> i64 { self.total }
 }
 fn main() {
-    let mut a = Acc(0)
+    let mut a = Acc { total: 0 }
     let r1 = a.add(5)
     let r2 = a.add(10)
     println!("r1={} r2={} get={}", r1, r2, a.get())
@@ -87,7 +87,7 @@ impl Point {
     fn shift(&mut self, d: i64) { self.x = self.x + d; self.y = self.y + d }
 }
 fn main() {
-    let mut p = Point(1, 2)
+    let mut p = Point { x: 1, y: 2 }
     println!("before={}", p.sum())
     p.shift(10)
     println!("after={}", p.sum())
@@ -111,7 +111,7 @@ impl Counter {
     }
 }
 fn main() {
-    let c = Counter(0i64)
+    let c = Counter { base: 0i64 }
     println!("{}", c.count(1000i64))
 }
 "#;
@@ -126,7 +126,7 @@ fn mut_self_with_string_field_rc_is_sound() {
 struct Named { count: i64, label: String }
 impl Named { fn tick(&mut self) { self.count = self.count + 1 } }
 fn main() {
-    let mut it = Named(0, "widget")
+    let mut it = Named { count: 0, label: "widget" }
     let mut i = 0
     while i < 100 {
         it.tick()

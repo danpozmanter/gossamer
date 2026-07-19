@@ -48,9 +48,9 @@ fn struct_equality_routes_to_derived_eq() {
 #[derive(PartialEq)]
 struct Point { x: i64, y: i64 }
 fn main() {
-    let a = Point(1, 2)
-    let b = Point(1, 2)
-    let c = Point(3, 4)
+    let a = Point { x: 1, y: 2 }
+    let b = Point { x: 1, y: 2 }
+    let c = Point { x: 3, y: 4 }
     println!("{} {} {}", a == b, a == c, a != c)
 }
 "#;

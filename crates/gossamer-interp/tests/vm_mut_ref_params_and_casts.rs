@@ -141,7 +141,7 @@ fn set_first(v: &mut Vec<i64>) {
 }
 
 fn main() {
-    let mut h = Holder([0, 0])
+    let mut h = Holder { data: [0, 0] }
     set_first(&mut h.data)
     println!("{}", h.data[0])
 }

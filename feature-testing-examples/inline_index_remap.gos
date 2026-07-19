@@ -10,7 +10,7 @@ fn at1(q: &Board, us: i64) -> i64 { q.cells[us][3] }
 fn at_arr(a: &[i64; 4], i: i64) -> i64 { a[i] }
 
 fn main() {
-    let mut b = Board([[0; 6], [0; 6]], 1)
+    let mut b = Board { cells: [[0; 6], [0; 6]], side: 1 }
     b.cells[1][3] = 42
     b.cells[0][3] = 99
     // `at1(&b, b.side)` is small and inlines; `us` must not collide.

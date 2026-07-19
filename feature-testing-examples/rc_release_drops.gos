@@ -27,7 +27,7 @@ fn aliased(depth: i64) -> i64 {
 
 // Stores a freshly-built tree into a struct field.
 fn via_struct(depth: i64) -> i64 {
-    let h = Holder(build(depth), 5)
+    let h = Holder { t: build(depth), tag: 5 }
     checksum(&h.t) + h.tag
 }
 

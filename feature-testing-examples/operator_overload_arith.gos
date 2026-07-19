@@ -2,22 +2,22 @@
 // its `add`/`sub`/`mul`/`div` impl method on every tier. The result type is
 // the method's return type, so a dot product (`Mul -> f64`) types correctly.
 struct V2 { x: f64, y: f64 }
-impl Add for V2 { fn add(self, o: V2) -> V2 { V2(self.x + o.x, self.y + o.y) } }
-impl Sub for V2 { fn sub(self, o: V2) -> V2 { V2(self.x - o.x, self.y - o.y) } }
+impl Add for V2 { fn add(self, o: V2) -> V2 { V2 { x: self.x + o.x, y: self.y + o.y } } }
+impl Sub for V2 { fn sub(self, o: V2) -> V2 { V2 { x: self.x - o.x, y: self.y - o.y } } }
 impl Mul for V2 { fn mul(self, o: V2) -> f64 { self.x * o.x + self.y * o.y } }
 
 struct Money { cents: i64 }
-impl Add for Money { fn add(self, o: Money) -> Money { Money(self.cents + o.cents) } }
-impl Div for Money { fn div(self, o: Money) -> Money { Money(self.cents / o.cents) } }
+impl Add for Money { fn add(self, o: Money) -> Money { Money { cents: self.cents + o.cents } } }
+impl Div for Money { fn div(self, o: Money) -> Money { Money { cents: self.cents / o.cents } } }
 
 fn main() {
-    let a = V2(1.0, 2.0)
-    let b = V2(3.0, 4.0)
+    let a = V2 { x: 1.0, y: 2.0 }
+    let b = V2 { x: 3.0, y: 4.0 }
     let s = a + b
     let d = b - a
     let dot = a * b
     println!("{} {} {} {} {}", s.x, s.y, d.x, d.y, dot)
-    let m = Money(150) + Money(75)
-    let q = Money(200) / Money(4)
+    let m = Money { cents: 150 } + Money { cents: 75 }
+    let q = Money { cents: 200 } / Money { cents: 4 }
     println!("{} {}", m.cents, q.cents)
 }

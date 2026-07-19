@@ -1263,7 +1263,7 @@ fn constructor_calls_are_not_flagged_as_non_callable() {
 #[test]
 fn named_struct_associated_function_is_not_checked_as_constructor() {
     let checked = run(
-        "struct Pt { x: i64, y: i64 }\nimpl Pt { fn origin() -> Pt { Pt(0, 0) } }\nfn main() { let p = Pt::origin() }\n",
+        "struct Pt { x: i64, y: i64 }\nimpl Pt { fn origin() -> Pt { Pt { x: 0, y: 0 } } }\nfn main() { let p = Pt::origin() }\n",
     );
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
@@ -1280,14 +1280,65 @@ fn struct_destructuring_requires_the_nominal_name() {
 }
 
 #[test]
-fn struct_construction_requires_parentheses() {
+fn named_struct_construction_requires_braces() {
+    let d = diagnostics_for("struct Point { x: i64, y: i64 }\nfn main() { let _ = Point(1, 2) }\n");
+    assert!(has_code(&d, "GT0034"), "{d:?}");
+
     let d = diagnostics_for(
         "struct Point { x: i64, y: i64 }\nfn main() { let _ = Point { x: 1, y: 2 } }\n",
     );
+    assert!(!has_code(&d, "GT0034"), "{d:?}");
+
+    let d =
+        diagnostics_for("struct Point { x: i64, y: i64 }\nfn main() { let _ = Point { 1, 2 } }\n");
+    assert!(!has_code(&d, "GT0034"), "{d:?}");
+
+    let d = diagnostics_for(
+        "struct Point { x: i64, y: i64 }\nfn main() { let _ = Point { y: 2, 1 } }\n",
+    );
+    assert!(
+        !has_code(&d, "GT0034") && !has_code(&d, "GT0035") && !has_code(&d, "GT0037"),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn tuple_struct_construction_requires_parentheses() {
+    let d = diagnostics_for("struct Point(i64, i64)\nfn main() { let _ = Point { x: 1, y: 2 } }\n");
     assert!(has_code(&d, "GT0034"), "{d:?}");
 
-    let d = diagnostics_for("struct Point { x: i64, y: i64 }\nfn main() { let _ = Point(1, 2) }\n");
+    let d = diagnostics_for("struct Point(i64, i64)\nfn main() { let _ = Point(1, 2) }\n");
     assert!(!has_code(&d, "GT0034"), "{d:?}");
+}
+
+#[test]
+fn named_struct_literal_fields_are_checked() {
+    let d =
+        diagnostics_for("struct Point { x: i64, y: i64 }\nfn main() { let _ = Point { x: 1 } }\n");
+    assert!(has_code(&d, "GT0035"), "{d:?}");
+
+    let d = diagnostics_for(
+        "struct Point { x: i64, y: i64 }\nfn main() { let _ = Point { x: 1, x: 2, y: 3 } }\n",
+    );
+    assert!(has_code(&d, "GT0036"), "{d:?}");
+
+    let d = diagnostics_for(
+        "struct Point { x: i64, y: i64 }\nfn main() { let _ = Point { x: 1, y: 2, z: 3 } }\n",
+    );
+    assert!(has_code(&d, "GT0006"), "{d:?}");
+
+    let d = diagnostics_for("struct Point { x: i64, y: i64 }\nfn main() { let _ = Point { 1 } }\n");
+    assert!(has_code(&d, "GT0035"), "{d:?}");
+
+    let d = diagnostics_for(
+        "struct Point { x: i64, y: i64 }\nfn main() { let _ = Point { 1, 2, 3 } }\n",
+    );
+    assert!(has_code(&d, "GT0037"), "{d:?}");
+
+    let d = diagnostics_for(
+        "struct Point { x: i64, y: i64 }\nfn main() { let _ = Point { x: 1, y: 2, 3 } }\n",
+    );
+    assert!(has_code(&d, "GT0037"), "{d:?}");
 }
 
 #[test]

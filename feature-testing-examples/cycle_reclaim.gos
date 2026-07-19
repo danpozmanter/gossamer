@@ -20,8 +20,8 @@ fn main() {
     while round < 300 {
         // a <-> b: each node owns a strong reference to the other, so the
         // pair survives the loop body's last use and leaks under plain RC.
-        let mut a = Node(round, None)
-        let mut b = Node(round * 3, None)
+        let mut a = Node { id: round, next: None }
+        let mut b = Node { id: round * 3, next: None }
         b.next = Some(Box::new(a))
         a.next = Some(Box::new(b))
         total += a.id

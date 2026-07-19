@@ -12,7 +12,7 @@ fn nested((Point { x, y }, k): (Point, i64)) -> i64 { x + y + k }
 
 fn main() {
     println!("{}", tup((6, 7)))
-    println!("{}", named(Point(3, 4)))
-    println!("{}", pair(Pair(20, 5)))
-    println!("{}", nested((Point(1, 2), 10)))
+    println!("{}", named(Point { x: 3, y: 4 }))
+    println!("{}", pair(Pair { left: 20, right: 5 }))
+    println!("{}", nested((Point { x: 1, y: 2 }, 10)))
 }

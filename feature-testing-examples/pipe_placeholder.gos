@@ -64,7 +64,7 @@ fn main() {
 
     // placeholder threads a struct receiver into a free function's last slot
     // is still available the old way; `_.field`-style access uses a closure:
-    let lab = Point(7, 9) |> |p: Point| label(p)
+    let lab = Point { x: 7, y: 9 } |> |p: Point| label(p)
     println!("{}", lab)
 }
 

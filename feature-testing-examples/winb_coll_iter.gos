@@ -71,7 +71,7 @@ fn main() {
     println!("")
 
     // struct-bearing collection: iterate and read fields.
-    let recs = [Rec(1, 10), Rec(2, 20), Rec(3, 30)]
+    let recs = [Rec { k: 1, v: 10 }, Rec { k: 2, v: 20 }, Rec { k: 3, v: 30 }]
     let mut vsum = 0
     for r in recs { vsum += r.v }
     println!("rec vsum {}", vsum)

@@ -8,17 +8,17 @@ struct Config {
 }
 
 fn default_config() -> Config {
-    Config("localhost", 8080, false, 3)
+    Config { host: "localhost", port: 8080, verbose: false, retries: 3 }
 }
 
 fn main() {
     let base = default_config()
-    let custom = Config(base.host, 9090, true, base.retries)
+    let custom = Config { host: base.host, port: 9090, verbose: true, retries: base.retries }
     println!("host = {}", custom.host)
     println!("port = {}", custom.port)
     println!("verbose = {}", custom.verbose)
     println!("retries = {}", custom.retries)
-    let extra = Config("example.com", custom.port, custom.verbose, custom.retries)
+    let extra = Config { host: "example.com", port: custom.port, verbose: custom.verbose, retries: custom.retries }
     println!("host2 = {}", extra.host)
     println!("port2 = {}", extra.port)
     println!("verbose2 = {}", extra.verbose)

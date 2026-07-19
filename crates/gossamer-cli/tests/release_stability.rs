@@ -547,8 +547,8 @@ impl Shape for Rect {
 }
 
 fn main() {
-    let c = Circle(2.0)
-    let r = Rect(3.0, 4.0)
+    let c = Circle { radius: 2.0 }
+    let r = Rect { w: 3.0, h: 4.0 }
     println!("{} area={:.4}", c.name(), c.area())
     println!("{} area={:.4}", r.name(), r.area())
 }
@@ -569,9 +569,9 @@ fn release_struct_methods_chain_returning_value() {
 struct Counter { value: i64 }
 
 impl Counter {
-    fn new() -> Counter { Counter(0) }
-    fn inc(self, by: i64) -> Counter { Counter(self.value + by) }
-    fn double(self) -> Counter { Counter(self.value * 2) }
+    fn new() -> Counter { Counter { value: 0 } }
+    fn inc(self, by: i64) -> Counter { Counter { value: self.value + by } }
+    fn double(self) -> Counter { Counter { value: self.value * 2 } }
     fn get(self) -> i64 { self.value }
 }
 

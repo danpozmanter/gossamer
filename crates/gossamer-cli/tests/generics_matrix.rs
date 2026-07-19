@@ -327,7 +327,7 @@ fn main() {
     // inside a closure body without crossing the indirect-call
     // ABI with an aggregate-by-value parameter or return.
     let pair_sum = |seed: i64| {
-        let p = Pair(seed * 10, seed * 100)
+        let p = Pair { a: seed * 10, b: seed * 100 }
         p.a + p.b
     }
     let s1 = apply(pair_sum, 1)

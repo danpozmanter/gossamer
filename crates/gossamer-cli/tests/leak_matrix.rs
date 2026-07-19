@@ -96,7 +96,7 @@ fn main() {
     let mut total: i64 = 0
     let mut i: i64 = 0
     while i < 4000000 {
-        let h = Holder(format!("value-{}", i))
+        let h = Holder { s: format!("value-{}", i) }
         total += h.s.len()
         i += 1
     }
@@ -182,7 +182,7 @@ fn main() {
 struct Inner { name: String, tag: String }
 struct Outer { inner: Inner, id: i64 }
 fn make(i: i64) -> i64 {
-    let o = Outer(Inner(format!("n-{}", i), format!("t-{}", i)), i)
+    let o = Outer { inner: Inner { name: format!("n-{}", i), tag: format!("t-{}", i) }, id: i }
     o.id
 }
 fn main() {
