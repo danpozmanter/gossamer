@@ -456,6 +456,26 @@ fn match_arm_commas_are_optional_at_line_boundaries() {
 }
 
 #[test]
+fn comma_free_match_arm_before_open_start_range_pattern_parses() {
+    let source = concat!(
+        "fn classify(n: i64) -> String {\n",
+        "    match n {\n",
+        "        0.. => \"non-negative\"\n",
+        "        ..0 => \"negative\"\n",
+        "        _ => \"other\"\n",
+        "    }\n",
+        "}\n",
+    );
+    let mut map = SourceMap::new();
+    let file = map.add_file("open_range_comma_optional_match.gos", source.to_string());
+    let (_sf, diags) = parse_source_file(source, file);
+    assert!(
+        diags.is_empty(),
+        "comma-free open range match arms must parse: {diags:?}"
+    );
+}
+
+#[test]
 fn malformed_match_arms_report_one_local_error_each() {
     let cases = [
         ("fn main() { match 1 { 1 10 } }", 0),

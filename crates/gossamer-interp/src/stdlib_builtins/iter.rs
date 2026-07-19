@@ -833,7 +833,6 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("flatten", builtin_iter_flatten),
         ("rev", builtin_iter_reversed),
         ("dedup", builtin_iter_dedup),
-        ("product", builtin_iter_product),
         ("range", builtin_iter_range),
         ("range_inclusive", builtin_iter_range_inclusive),
         ("repeat", builtin_iter_repeat),
@@ -872,6 +871,7 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("collect", native_iter_collect),
         ("count", native_iter_count),
         ("sum", native_iter_sum),
+        ("product", native_iter_product),
         ("min", native_iter_min),
         ("max", native_iter_max),
         ("for_each", native_iter_for_each),
@@ -974,17 +974,17 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("position", native_vec_position_method as NativeCall),
         ("max_by_key", native_vec_max_by_key_method as NativeCall),
         ("min_by_key", native_vec_min_by_key_method as NativeCall),
+        ("collect", native_vec_collect_method as NativeCall),
+        ("count", native_vec_count_method as NativeCall),
+        ("sum", native_vec_sum_method as NativeCall),
+        ("product", native_vec_product_method as NativeCall),
+        ("min", native_vec_min_method as NativeCall),
+        ("max", native_vec_max_method as NativeCall),
     ] {
         let qualified: &'static str = Box::leak(format!("Iterator::{short}").into_boxed_str());
         globals.push((qualified, Value::native(qualified, call)));
     }
     for (short, call) in [
-        ("collect", builtin_iter_collect as BuiltinFnPub),
-        ("count", builtin_iter_count as BuiltinFnPub),
-        ("sum", builtin_iter_sum as BuiltinFnPub),
-        ("product", builtin_iter_product as BuiltinFnPub),
-        ("min", builtin_iter_min as BuiltinFnPub),
-        ("max", builtin_iter_max as BuiltinFnPub),
         ("take", builtin_iterator_take_method as BuiltinFnPub),
         ("skip", builtin_iterator_skip_method as BuiltinFnPub),
     ] {
@@ -1022,6 +1022,11 @@ vec_method_form!(native_vec_position_method, native_iter_position);
 vec_method_form!(native_vec_max_by_key_method, native_iter_max_by_key);
 vec_method_form!(native_vec_min_by_key_method, native_iter_min_by_key);
 vec_method_form!(native_vec_fold_method, native_iter_fold);
+vec_method_form!(native_vec_collect_method, native_iter_collect);
+vec_method_form!(native_vec_sum_method, native_iter_sum);
+vec_method_form!(native_vec_product_method, native_iter_product);
+vec_method_form!(native_vec_min_method, native_iter_min);
+vec_method_form!(native_vec_max_method, native_iter_max);
 
 /// `xs.count()` is the element count; `xs.count(f)` counts the
 /// elements the predicate accepts.
@@ -1030,7 +1035,7 @@ pub(crate) fn native_vec_count_method(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     if args.len() <= 1 {
-        return builtin_iter_count(args);
+        return native_iter_count(dispatch, args);
     }
     let xs = collect_array(args.first().unwrap_or(&Value::Unit));
     let f = args.get(1).cloned().unwrap_or(Value::Unit);
@@ -1359,6 +1364,17 @@ pub(crate) fn native_iter_sum(
         return builtin_iter_sum(&[Value::Array(Arc::new(xs))]);
     }
     builtin_iter_sum(args)
+}
+
+pub(crate) fn native_iter_product(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    if let Some(Value::LazyIter(_)) = args.first() {
+        let xs = drain_iter_with_dispatch(args.first().unwrap_or(&Value::Unit), dispatch)?;
+        return builtin_iter_product(&[Value::Array(Arc::new(xs))]);
+    }
+    builtin_iter_product(args)
 }
 
 pub(crate) fn native_iter_min(

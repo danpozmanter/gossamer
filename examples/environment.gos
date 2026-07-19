@@ -10,8 +10,8 @@ use std::{env, iter}
 
 fn report_env(name: &String) {
     match env::var(name) {
-        Some(v) => println!("  {name} = {v}"),
-        None => println!("  {name} (unset)"),
+        Some(v) => println!("  {name} = {v}")
+        None => println!("  {name} (unset)")
     }
 }
 
@@ -27,7 +27,7 @@ fn main() {
     env_vars |> iter::for_each(|name| report_env(&name))
 
     match env::current_dir() {
-        Ok(dir) => println!("\ncwd: {dir}"),
-        Err(e) => println!("\ncwd error: {e}"),
+        Ok(dir) => println!("\ncwd: {dir}")
+        Err(e) => println!("\ncwd error: {e}")
     }
 }

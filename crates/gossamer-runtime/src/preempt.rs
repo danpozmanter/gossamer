@@ -42,6 +42,7 @@ static YIELD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static SLOW_POLL_COUNT: AtomicU64 = AtomicU64::new(0);
 static PREEMPT_STATS_ENABLED: AtomicBool = AtomicBool::new(false);
 
+#[cfg(unix)]
 extern "C" fn report_preempt_stats() {
     eprintln!(
         "gos-preempt-stats: slow_polls={} yields={}",
@@ -50,6 +51,7 @@ extern "C" fn report_preempt_stats() {
     );
 }
 
+#[cfg(unix)]
 fn init_preempt_stats() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
@@ -62,6 +64,9 @@ fn init_preempt_stats() {
         }
     });
 }
+
+#[cfg(not(unix))]
+fn init_preempt_stats() {}
 
 /// Initialises the SIGURG handler. Idempotent.
 pub fn init() {

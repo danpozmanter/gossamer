@@ -19,7 +19,7 @@ fn show_roundtrip(name: &str, compressed: Result<[u8], compress::Error>, origina
             let ratio = bytes.len() * 100 / original_len
             println!("{}: {} -> {} bytes ({}%)", name, original_len, bytes.len(), ratio)
         }
-        Err(e) => println!("{}: error: {}", name, e),
+        Err(e) => println!("{}: error: {}", name, e)
     }
 }
 
@@ -32,17 +32,17 @@ fn main() {
 
     let n = data.len()
 
-    let gz = compress::gzip::encode(data, 6)
+    let gz = compress::gzip::encode(data.to_string().as_bytes(), 6)
     show_roundtrip("gzip", gz, n)
 
-    let fl = compress::flate::compress(data, 6)
+    let fl = compress::flate::compress(data.to_string().as_bytes(), 6)
     show_roundtrip("flate", fl, n)
 
-    let zl = compress::zlib::compress(data, 6)
+    let zl = compress::zlib::compress(data.to_string().as_bytes(), 6)
     show_roundtrip("zlib", zl, n)
 
     // Verify roundtrip for gzip.
-    let gz2 = compress::gzip::encode(data, 6)
+    let gz2 = compress::gzip::encode(data.to_string().as_bytes(), 6)
     match gz2 {
         Ok(compressed) => {
             let restored = compress::gzip::decode(compressed)
@@ -54,9 +54,9 @@ fn main() {
                         println!("gzip roundtrip: size mismatch")
                     }
                 }
-                Err(e) => println!("gzip decode err: {}", e),
+                Err(e) => println!("gzip decode err: {}", e)
             }
         }
-        Err(e) => println!("gzip encode err: {}", e),
+        Err(e) => println!("gzip encode err: {}", e)
     }
 }

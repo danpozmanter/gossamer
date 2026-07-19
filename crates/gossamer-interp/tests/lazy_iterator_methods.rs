@@ -52,3 +52,14 @@ fn main() {
 "#;
     assert_eq!(run_lazy_program(source), "0 1 2 0\n");
 }
+
+#[test]
+fn lazy_range_terminal_methods_consume_closure_adapters() {
+    let source = r#"
+fn main() {
+    let mapped = (1..5).map(|n| n * n)
+    println!("{} {} {:?} {:?}", mapped.sum(), (1..5).product(), (1..5).min(), (1..5).max())
+}
+"#;
+    assert_eq!(run_lazy_program(source), "30 24 Some(1) Some(4)\n");
+}

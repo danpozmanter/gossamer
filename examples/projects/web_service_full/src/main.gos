@@ -106,10 +106,10 @@ fn escape_json(text: &String) -> String {
     let mut out = String::new()
     for ch in text.chars() {
         match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            _ => out.push(ch),
+            '"' => out.push_str("\\\"")
+            '\\' => out.push_str("\\\\")
+            '\n' => out.push_str("\\n")
+            _ => out.push(ch)
         }
     }
     out
@@ -119,11 +119,11 @@ fn escape_html(text: &String) -> String {
     let mut out = String::new()
     for ch in text.chars() {
         match ch {
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '&' => out.push_str("&amp;"),
-            '"' => out.push_str("&quot;"),
-            _ => out.push(ch),
+            '<' => out.push_str("&lt;")
+            '>' => out.push_str("&gt;")
+            '&' => out.push_str("&amp;")
+            '"' => out.push_str("&quot;")
+            _ => out.push(ch)
         }
     }
     out
@@ -136,8 +136,8 @@ fn escape_html(text: &String) -> String {
 fn extract_body(body: &String) -> String {
     let needle = "\"body\":\""
     let start = match body.find(needle) {
-        Some(s) => s,
-        None => return String::new(),
+        Some(s) => s
+        None => return String::new()
     }
     let after = start + needle.len()
     let bytes = body.as_bytes()
@@ -176,10 +176,10 @@ fn create_note(r: http::Request) -> Result<http::Response, http::Error> {
 fn show_note(r: http::Request) -> Result<http::Response, http::Error> {
     match r.path_int("id") {
         Some(id) => match find_note_json(id) {
-            Some(json) => Ok(http::Response::json(200, json)),
-            None => Ok(http::Response::text(404, "not found")),
+            Some(json) => Ok(http::Response::json(200, json))
+            None => Ok(http::Response::text(404, "not found"))
         },
-        None => Ok(http::Response::text(400, "bad id")),
+        None => Ok(http::Response::text(400, "bad id"))
     }
 }
 
@@ -189,7 +189,7 @@ fn delete_note(r: http::Request) -> Result<http::Response, http::Error> {
             slog::warn("DELETE /notes/{id}")
             Ok(http::Response::text(204, ""))
         }
-        None => Ok(http::Response::text(400, "bad id")),
+        None => Ok(http::Response::text(400, "bad id"))
     }
 }
 
@@ -241,12 +241,12 @@ mod web_service_tests {
     #[test]
     fn find_note_hits_and_misses() {
         match super::find_note_json(2) {
-            Some(j) => { let _ = testing::check(j.contains("second note"), "found id 2") },
-            None => { let _ = testing::check(false, "id 2 should exist") },
+            Some(j) => { let _ = testing::check(j.contains("second note"), "found id 2") }
+            None => { let _ = testing::check(false, "id 2 should exist") }
         }
         match super::find_note_json(99) {
-            Some(_) => { let _ = testing::check(false, "id 99 should not exist") },
-            None => { let _ = testing::check(true, "id 99 absent") },
+            Some(_) => { let _ = testing::check(false, "id 99 should not exist") }
+            None => { let _ = testing::check(true, "id 99 absent") }
         }
     }
 

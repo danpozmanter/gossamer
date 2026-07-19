@@ -79,7 +79,7 @@ mod tests {
     fn parse_sequence_reports_bad_input() {
         let result = super::parse_sequence(&"1, nope, 3")
         match result {
-            Ok(_) => panic!("expected failure"),
+            Ok(_) => panic!("expected failure")
             Err(e) => {
                 let _ = testing::check(
                     e.message().contains("bad number"),

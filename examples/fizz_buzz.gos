@@ -11,10 +11,10 @@
 
 fn label(n: i64) -> String {
     match (n % 3, n % 5) {
-        (0, 0) => "FizzBuzz",
-        (0, _) => "Fizz",
-        (_, 0) => "Buzz",
-        (_, _) => format!("{}", n),
+        (0, 0) => "FizzBuzz"
+        (0, _) => "Fizz"
+        (_, 0) => "Buzz"
+        (_, _) => format!("{}", n)
     }
 }
 

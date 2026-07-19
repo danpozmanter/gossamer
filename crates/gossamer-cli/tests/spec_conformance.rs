@@ -400,10 +400,9 @@ fn main() {
 }
 
 #[test]
-fn spec_7_5_aliased_mut_borrow_does_not_error() {
-    // §7.5: `&mut` is an aliasing-intent marker only; there is no
-    // exclusivity-enforcement pass. A program that would violate a
-    // Rust-style exclusivity rule must compile and run.
+fn spec_7_5_aliased_mut_borrow_is_rejected() {
+    // Named mutable-reference bindings are lexically exclusive, matching
+    // Rust's core aliasing rule and preventing conflicting writes.
     let src = r#"
 fn main() {
     let mut x = 1
@@ -414,9 +413,7 @@ fn main() {
     println!("{}", x)
 }
 "#;
-    let (ok, _stdout, _stderr) = run_check("spec_7_5_borrow", src);
-    assert!(
-        ok,
-        "§7.5 is not enforced; the aliasing violation must `gos check` clean",
-    );
+    let (ok, _stdout, stderr) = run_check("spec_7_5_borrow", src);
+    assert!(!ok, "overlapping named mutable borrows must be rejected");
+    assert!(stderr.contains("GT0043"), "expected GT0043, got: {stderr}");
 }

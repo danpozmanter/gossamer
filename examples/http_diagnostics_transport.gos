@@ -13,7 +13,7 @@ fn readiness_message(url: String) -> String {
                 format!("unhealthy status={} body={}", response.status, response.body)
             }
         },
-        Err(error) => format!("transport diagnostic: {}", error),
+        Err(error) => format!("transport diagnostic: {}", error)
     }
 }
 

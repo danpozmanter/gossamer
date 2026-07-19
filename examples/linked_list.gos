@@ -18,15 +18,15 @@ fn cons(v: i64, rest: List) -> List { List::Cons(v, rest) }
 
 fn length(list: &List) -> i64 {
     match list {
-        List::Nil => 0,
-        List::Cons(_, rest) => 1 + length(rest),
+        List::Nil => 0
+        List::Cons(_, rest) => 1 + length(rest)
     }
 }
 
 fn sum(list: &List) -> i64 {
     match list {
-        List::Nil => 0,
-        List::Cons(v, rest) => *v + sum(rest),
+        List::Nil => 0
+        List::Cons(v, rest) => *v + sum(rest)
     }
 }
 

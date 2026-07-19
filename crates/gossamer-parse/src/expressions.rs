@@ -151,6 +151,9 @@ impl Parser<'_> {
                 if RANGE_PREC >= max_prec {
                     break;
                 }
+                if self.at_match_arm_open_start_range_boundary() {
+                    break;
+                }
                 let range = self.parse_range_infix(lhs);
                 lhs = range;
                 continue;
@@ -219,6 +222,43 @@ impl Parser<'_> {
             return Some(RangeKind::Exclusive);
         }
         None
+    }
+
+    fn at_match_arm_open_start_range_boundary(&self) -> bool {
+        if !self.in_match_arm_body() || !self.newline_before_peek() {
+            return false;
+        }
+        let inclusive = match self.peek().kind {
+            TokenKind::Punct(Punct::DotDot) => false,
+            TokenKind::Punct(Punct::DotDotEq) => true,
+            _ => return false,
+        };
+        let mut after_pattern = 1;
+        match self.peek_nth(after_pattern).kind {
+            TokenKind::IntLit
+            | TokenKind::FloatLit
+            | TokenKind::StringLit
+            | TokenKind::RawStringLit { .. }
+            | TokenKind::CharLit
+            | TokenKind::ByteLit
+            | TokenKind::Keyword(Keyword::True | Keyword::False) => {
+                after_pattern += 1;
+            }
+            TokenKind::Punct(Punct::Minus)
+                if matches!(
+                    self.peek_nth(after_pattern + 1).kind,
+                    TokenKind::IntLit | TokenKind::FloatLit
+                ) =>
+            {
+                after_pattern += 2;
+            }
+            _ if !inclusive => {}
+            _ => return false,
+        }
+        matches!(
+            self.peek_nth(after_pattern).kind,
+            TokenKind::Punct(Punct::FatArrow) | TokenKind::Keyword(Keyword::If)
+        )
     }
 
     fn parse_range_infix(&mut self, lhs: Expr) -> Expr {
@@ -1138,7 +1178,10 @@ impl Parser<'_> {
                 self.record(ParseError::MatchArmMissingBody, self.peek_span());
                 Expr::new(self.alloc_id(), self.peek_span(), ExprKind::Error)
             } else {
-                self.parse_expr()
+                self.enter_match_arm_body();
+                let body = self.parse_expr();
+                self.leave_match_arm_body();
+                body
             };
             let body_is_block = matches!(body.kind, ExprKind::Block(_));
             arms.push(gossamer_ast::MatchArm {

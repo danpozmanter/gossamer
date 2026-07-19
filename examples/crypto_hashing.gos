@@ -24,7 +24,7 @@ fn main() {
     println!("BLAKE3:  {}", hb3)
 
     let key = "secret-key"
-    let mac = crypto::hmac::sha256_mac(key, msg)
+    let mac = crypto::hmac::sha256_mac(key.to_string().as_bytes(), msg.to_string().as_bytes())
     let mac_hex = encoding::hex::encode(mac)
     println!("HMAC:    {}", mac_hex)
 

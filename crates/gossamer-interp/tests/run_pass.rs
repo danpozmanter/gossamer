@@ -136,6 +136,25 @@ fn describe(b: bool) -> String {
 }
 
 #[test]
+fn comma_free_match_open_ranges_classify_like_rust_patterns() {
+    let source = r#"
+fn classify(n: i64) -> String {
+    match n {
+        0.. => "non-negative"
+        ..0 => "negative"
+        _ => "other"
+    }
+}
+"#;
+    let negative = call_and_return(source, "classify", vec![Value::Int(-2)]);
+    let zero = call_and_return(source, "classify", vec![Value::Int(0)]);
+    let positive = call_and_return(source, "classify", vec![Value::Int(7)]);
+    assert!(matches!(negative, Value::String(ref s) if s.as_str() == "negative"));
+    assert!(matches!(zero, Value::String(ref s) if s.as_str() == "non-negative"));
+    assert!(matches!(positive, Value::String(ref s) if s.as_str() == "non-negative"));
+}
+
+#[test]
 fn tuple_destructuring_in_let_binds_components() {
     let source = r#"
 fn main() {

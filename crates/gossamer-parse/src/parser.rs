@@ -30,6 +30,9 @@ pub struct Parser<'src> {
     /// Depth of contexts where `|` denotes a pattern alternative and
     /// must not be consumed as bitwise-or by the Pratt loop.
     pub(crate) pattern_pipe_depth: u32,
+    /// Depth of match-arm body parses where a newline may introduce the
+    /// next arm's pattern.
+    pub(crate) match_arm_body_depth: u32,
     /// Running depth of recursive entries into expression, type, and
     /// pattern parsers. Compared against [`RECURSION_LIMIT`] by
     /// [`Parser::enter_recursion`].
@@ -81,6 +84,7 @@ impl<'src> Parser<'src> {
             diagnostics,
             no_struct_literal_depth: 0,
             pattern_pipe_depth: 0,
+            match_arm_body_depth: 0,
             recursion_depth: 0,
             recursion_limit_reported: false,
             hoisted_uses: Vec::new(),
@@ -295,6 +299,22 @@ impl<'src> Parser<'src> {
     #[must_use]
     pub(crate) const fn in_pattern_pipe(&self) -> bool {
         self.pattern_pipe_depth > 0
+    }
+
+    /// Enters a match-arm body expression.
+    pub(crate) fn enter_match_arm_body(&mut self) {
+        self.match_arm_body_depth = self.match_arm_body_depth.saturating_add(1);
+    }
+
+    /// Leaves a match-arm body expression.
+    pub(crate) fn leave_match_arm_body(&mut self) {
+        self.match_arm_body_depth = self.match_arm_body_depth.saturating_sub(1);
+    }
+
+    /// `true` while parsing a match-arm body expression.
+    #[must_use]
+    pub(crate) const fn in_match_arm_body(&self) -> bool {
+        self.match_arm_body_depth > 0
     }
 
     /// Returns the raw source slice covered by `span`, or `""` if the

@@ -25,9 +25,9 @@ enum Shape {
 
 fn area(shape: &Shape) -> f64 {
     match shape {
-        Shape::Circle(r) => 3.14159 * r * r,
-        Shape::Rect(w, h) => w * h,
-        Shape::Line => 0.0,
+        Shape::Circle(r) => 3.14159 * r * r
+        Shape::Rect(w, h) => w * h
+        Shape::Line => 0.0
     }
 }
 
@@ -64,10 +64,10 @@ fn main() {
     // match with guards (binds the value directly - no `*n` deref)
     for n in [-3, 0, 3, 42] {
         let label = match n {
-            x if x < 0 => "negative",
-            0 => "zero",
-            1..=9 => "single-digit",
-            _ => "many",
+            x if x < 0 => "negative"
+            0 => "zero"
+            1..=9 => "single-digit"
+            _ => "many"
         }
         println!("{} -> {}", n, label)
     }

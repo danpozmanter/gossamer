@@ -37,7 +37,7 @@ fn main() -> Result<(), errors::Error> {
     // Failure path - propagate with `?` or inspect directly.
     let attempt = load_setting(&"port", &"oops")
     match attempt {
-        Ok(v) => println!("parsed {v}"),
+        Ok(v) => println!("parsed {v}")
         Err(e) => {
             println!("top-level: {}", e.message())
             // Walk the cause chain - the natural `while let` shape.
@@ -54,7 +54,7 @@ fn main() -> Result<(), errors::Error> {
     // `errors::is` checks whether any link in the chain matches.
     let broken = load_setting(&"workers", &"-3")
     match broken {
-        Ok(_) => println!("unexpected success"),
+        Ok(_) => println!("unexpected success")
         Err(e) => {
             if e.is("must be positive: -3") {
                 println!("caught the specific error we expected")
