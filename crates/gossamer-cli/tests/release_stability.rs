@@ -150,7 +150,7 @@ impl http::Handler for App {
 }
 
 fn run_server() {
-    if let Err(e) = http::serve("127.0.0.1:23924", App()) {
+    if let Err(e) = http::serve("127.0.0.1:23924", App { }) {
         eprintln!("serve failed: {}", e)
     }
 }
@@ -206,7 +206,7 @@ impl http::Handler for App {
 }
 
 fn run_server() {
-    if let Err(e) = http::serve("127.0.0.1:23921", App()) {
+    if let Err(e) = http::serve("127.0.0.1:23921", App { }) {
         eprintln!("serve failed: {e}")
     }
 }
@@ -273,13 +273,13 @@ impl http::Handler for Proxy {
 }
 
 fn run_upstream() {
-    if let Err(e) = http::serve("127.0.0.1:23922", Upstream()) {
+    if let Err(e) = http::serve("127.0.0.1:23922", Upstream { }) {
         eprintln!("serve failed: {e}")
     }
 }
 
 fn run_proxy() {
-    if let Err(e) = http::serve("127.0.0.1:23923", Proxy()) {
+    if let Err(e) = http::serve("127.0.0.1:23923", Proxy { }) {
         eprintln!("serve failed: {e}")
     }
 }

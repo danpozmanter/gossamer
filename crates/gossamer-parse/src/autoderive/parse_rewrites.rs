@@ -147,10 +147,11 @@ impl gossamer_ast::VisitorMut for TupleCtorRewriter<'_> {
     fn visit_expr(&mut self, e: &mut gossamer_ast::expr::Expr) {
         use gossamer_ast::expr::{ExprKind, StructExprField};
         gossamer_ast::visitor::walk_expr_mut(self, e);
-        // `http::Response(status, body_bytes, content_type)` is the
-        // parenthesized spelling of the runtime response aggregate. Keep its
-        // fields named internally so MIR can retain the byte-array body
-        // instead of routing it through the C-string text constructor.
+        // Legacy injected wrappers used `http::Response(status, body,
+        // content_type)`. User source now spells the runtime response
+        // aggregate as `http::Response { status, body, content_type }`, but
+        // keeping this rewrite lets older generated wrappers lower with named
+        // fields.
         if let ExprKind::Call { callee, args } = &e.kind
             && let ExprKind::Path(path) = &callee.kind
             && path.segments.len() == 2

@@ -1,73 +1,142 @@
 # Migrating from Rust to Gossamer
 
-Gossamer looks a lot like Rust - the lexical grammar, keyword list,
-and item shape are deliberate references. The differences compress
-into a handful of rules.
+Gossamer deliberately feels Rust-shaped: `fn`, `struct`, `enum`,
+`impl`, `trait`, `match`, modules, attributes, and `Result<T, E>` all
+look familiar. The important differences are ownership, borrowing,
+concurrency, and which Rust features are intentionally absent.
 
-## Differences that matter
+## Quick Map
 
 | Rust | Gossamer |
-|------|----------|
-| Manual lifetimes (`'a`, `'static`) on references. | No explicit lifetimes. The runtime owns every heap aggregate (reference-counted); `&T` is a plain shared reference whose validity the runtime guarantees, not a tracked borrow. |
-| One `&mut` or many `&` references, enforced by the borrow checker. | `&` and `&mut` are real aliases and writes through `&mut` update the original place, including scalar and fixed-array places. Gossamer does not enforce exclusive borrowing, so overlapping mutable aliases remain the programmer's responsibility. |
-| Ownership-by-move, `Copy` marker trait. | No move semantics. Non-trivial values are heap-allocated, reference-counted, and shared by reference; primitives are copied the same as Rust. |
-| `#[derive(Clone, PartialEq, Hash, Serialize, ...)]` on most types. | A small derivable set - `Debug, Default, PartialEq, Eq, PartialOrd, Ord` only. Values copy by value (`let b = a`), so `a.clone()`, `==` / ordering, hashing, and serde all work with **no derive**; structs and enums compare by value lexicographically (a user `impl eq` / `cmp` overrides). Deriving `Clone` / `Hash` / `Copy` / `Serialize` is rejected (`GT0025`). |
-| Procedural and declarative macros. | **No user macros at all.** A fixed set expands at parse time: the `format!` / `println!` family, the desugar macros `matches!` / `todo!` / `unimplemented!` / `unreachable!` / `dbg!`, and the build-time `regex!` / `sql!` / `codegen!`. |
-| `async fn`, `Future`, `await`. | `go expr` spawns a goroutine. No futures, no awaits - blocking IO is fine. |
-| Multiple separate compilation units, workspace member graph. | Same workspace idea (`gos new --template workspace`). Individual crates are called *packages* and resolve through `project.toml`. |
-| `unsafe` blocks. | **Forbidden at the language level.** No `unsafe` keyword in Gossamer source. `std` is safe-Rust too. |
-| `panic!` unwinds by default. | `panic` aborts the current goroutine; handlers observe a 500 but the process keeps running. |
-| `Result<T, E>` + `?` + `thiserror`. | `Result<T, E>` + `?` + `std::errors::Error` (single concrete error type). |
-| `fn main` is required in a binary crate. | The entry file may omit `fn main`: bare statements at file scope become the body of an implicit `fn main()` (items are hoisted out). A top-level `?` makes it return `Result<(), errors::Error>`; set an exit code with `std::process::exit(n)`. See [Top-level statements](../language/top_level_statements.md). |
+| --- | --- |
+| `fn f(x: i64) -> i64 { x + 1 }` | Same. |
+| `struct Point { x: i64, y: i64 }` | Same declaration. |
+| `Point { x: 1, y: 2 }` | Same named literal. |
+| tuple structs and enum variants use `Name(...)` | Same. |
+| named struct positional shorthand is unavailable | `Point { 1, 2 }` is allowed. |
+| `Option<T>` and `Result<T, E>` | Same core shape. |
+| `?` | Same propagation model. |
+| `async fn` and `.await` | Use `go expr` plus channels or blocking calls. |
+| `std::thread::spawn` | `go fn() { ... }()` |
+| `Box<dyn Trait>` | Prefer generics or an enum. |
+| `cargo build` | `gos build` |
+| `cargo test` | `gos test` |
+| `cargo fmt` | `gos fmt` |
 
-## What stays the same
+Entry files may omit `fn main`. Bare statements at file scope become an
+implicit `fn main()`.
 
-- `struct`, `enum`, `impl`, `trait` syntax.
-- `match` with exhaustiveness checking, guards, or-patterns.
-- `if let` / `while let`.
-- Iterators (`for n in 0..10`).
-- Module tree (`mod`, `use`, `pub`).
-- `cargo`-shaped CLI: `gos build`, `gos test`, `gos fmt`, `gos check`.
+## Ownership And References
 
-## Translation examples
+Gossamer does not expose Rust's ownership-by-move model or lifetime
+syntax. Heap aggregates are runtime-managed, primitives copy by value,
+and references are ordinary aliases.
+
+```gos
+let a = [1, 2, 3]
+let b = a
+println!("{} {}", a.len(), b.len())
+```
+
+`&mut` still means the callee may write through the reference, but the
+compiler does not enforce Rust's exclusive-borrow rule. Treat
+overlapping mutable aliases as a correctness hazard in the same way you
+would in a language with shared mutable objects.
+
+## Traits
+
+Traits are nominal and implemented explicitly:
+
+```gos
+trait Area {
+    fn area(&self) -> f64;
+}
+
+struct Circle { r: f64 }
+
+impl Area for Circle {
+    fn area(&self) -> f64 { 3.14159 * self.r * self.r }
+}
+
+fn total<T: Area>(xs: [T]) -> f64 {
+    let mut out = 0.0
+    for x in xs {
+        out += x.area()
+    }
+    out
+}
+```
+
+There is no `unsafe` in Gossamer source.
+
+## Derives And Value Operations
+
+The supported user derives are intentionally small. Use derives for
+compiler-provided formatting, defaults, and ordering or equality when
+the type needs those generated implementations.
+
+```gos
+#[derive(Debug, PartialEq, Eq)]
+struct User {
+    name: String,
+    age: i64,
+}
+```
+
+Do not port Rust derives mechanically. `Clone`, `Copy`, `Hash`,
+`Serialize`, and `Deserialize` are not Rust-compatible derive surfaces in
+Gossamer source. For JSON, use `std::encoding::json` APIs and the shapes
+that module supports.
+
+Aggregate values can be used directly in vectors and ordinary structs.
+HashMap and HashSet support is strongest for scalar and string keys;
+aggregate map keys have tier-specific limits, so prefer stable scalar
+keys when code must run across all tiers.
+
+## Async Code
 
 Rust:
 
 ```rust
-pub fn fetch(url: &str) -> Result<Vec<u8>, reqwest::Error> {
-    let response = reqwest::blocking::get(url)?;
-    Ok(response.bytes()?.to_vec())
-}
+let response = reqwest::get(url).await?;
 ```
 
 Gossamer:
 
 ```gos
-pub fn fetch(url: &str) -> Result<[u8], errors::Error> {
-    let response = http::get(url)?
-    Ok(response.body())
+use std::{errors, http}
+
+fn fetch(url: &String) -> Result<String, errors::Error> {
+    let response = http::get(url, [])?
+    Ok(response.body)
 }
 ```
 
-Rust:
-
-```rust
-struct Server { handler: Box<dyn Fn(Request) -> Response + Send + Sync> }
-```
-
-Gossamer:
+For fan-out, spawn goroutines and collect through channels:
 
 ```gos
-struct Server { handler: fn(http::Request) -> http::Response }
+let (tx, rx) = channel()
+
+for url in urls {
+    let tx = tx.clone()
+    go fn() {
+        tx.send(http::get(&url, []))
+    }()
+}
+
+let mut responses = []
+for _ in urls {
+    responses.push(rx.recv().unwrap())
+}
 ```
 
-(Gossamer has no `dyn Trait` / trait objects - a concrete closure
-type is the idiom, and the runtime keeps its captures alive. For
-dynamic dispatch over a closed set of user types, match on an `enum`.)
+Blocking IO is acceptable. The runtime parks goroutines around blocking
+operations where the standard library provides integration.
 
-## Collection combinators (one obvious way)
+## Collections And Pipelines
 
-Rust:
+Rust iterator method chains become `std::iter` pipelines. Gossamer's
+pipe operator sends the left-hand value to the last argument.
 
 ```rust
 let total: i64 = xs.iter()
@@ -76,58 +145,30 @@ let total: i64 = xs.iter()
     .sum();
 ```
 
-Gossamer:
-
 ```gos
+use std::iter
+
 let total = xs
     |> iter::filter(|n: i64| n % 2 == 0)
     |> iter::sum_by(|n: i64| n * n)
 ```
 
-`Vec<T>`, `HashMap<K, V>`, and `HashSet<T>` deliberately **do not**
-carry `.map` / `.filter` / `.fold` methods in Gossamer. The
-free-function form in `std::iter` is the one obvious way to chain
-transformations, and the `|>` operator (SPEC §4.6) threads each
-value through with the data-last convention. Mutating helpers like
-`xs.push`, `xs.sort`, `m.inc`, `m.or_insert` stay as methods -
-they operate by side-effect on the receiver and don't compose
-through `|>`.
+Mutating collection helpers such as `push`, `sort`, `insert`, and
+`remove` stay as methods.
 
-The same pattern applies to `Option<T>` / `Result<T, E>` chaining:
-Rust-style methods (`opt.map`, `opt.unwrap_or`, `result.map_err`)
-remain available, but the free-function siblings in `std::option`
-and `std::result` are the pipe-friendly form. `?` stays the right
-tool for short-circuit propagation; the combinators are for
-in-pipeline transformation.
-
-## Standard library mapping (Rust → Gossamer)
-
-The Gossamer stdlib follows Rust's `fs`/`env`/`process` split for
-process-level primitives, and Go's flat `strings`/`strconv`/`bytes`
-shape for text and numeric formatting. Filesystem entry points are
-all in `fs::*`, environment and CLI in `env::*`, child processes
-and exit in `process::*`.
+## Standard Library Map
 
 | Rust | Gossamer |
 | --- | --- |
-| `std::fs::read_to_string` | `fs::read_to_string` |
-| `std::fs::read` | `fs::read` |
-| `std::fs::write` | `fs::write` |
-| `std::fs::remove_file` | `fs::remove_file` |
-| `std::fs::create_dir_all` | `fs::create_dir_all` |
-| `std::fs::read_dir` | `fs::read_dir` (returns `Vec<DirInfo>`) |
-| `std::fs::copy` | `fs::copy` |
-| `std::env::args` | `env::args` |
+| `std::fs::read_to_string(path)` | `fs::read_to_string(path)` |
+| `std::fs::read(path)` | `fs::read(path)` |
+| `std::fs::write(path, data)` | `fs::write(path, data)` |
+| `std::env::args()` | `env::args()` |
 | `std::env::var(name).ok()` | `env::var(name)` |
-| `std::env::current_dir` | `env::current_dir` |
-| `std::env::temp_dir` | `env::temp_dir` |
-| `std::process::Command::new(...)` | `process::run(prog, &args)` |
-| `std::process::exit` | `process::exit` |
-| `std::path::Path::new(p).join(...)` | `path::join(p, ...)` |
+| `std::process::Command` | `process::run(program, &args)` |
+| `std::process::exit(code)` | `process::exit(code)` |
+| `Path::join` | `path::join(base, part)` |
 | `std::sync::Mutex` | `sync::Mutex` |
 | `std::time::Duration::from_millis` | `time::Duration::from_millis` |
-| `std::thread::spawn` | `go expr` or `spawn(f)` (goroutine); no user-facing OS-thread spawn API |
-
-HTTP/2 is integrated into `std::http` directly (Go-style) -
-`http::serve_h2c` for cleartext h2c, automatic ALPN negotiation
-when serving over TLS. There is no separate `std::http2`.
+| `reqwest::blocking::get(url)` | `http::get(url, [])` |
+| `serde_json` | `encoding::json` |

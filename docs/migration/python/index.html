@@ -1409,10 +1409,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
 
         <li class="md-nav__item">
-  <a href="#differences-that-matter" class="md-nav__link">
+  <a href="#quick-map" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Differences that matter
+        Quick Map
 
     </span>
   </a>
@@ -1420,10 +1420,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#what-stays-the-same" class="md-nav__link">
+  <a href="#data-types" class="md-nav__link">
     <span class="md-ellipsis">
 
-        What stays the same
+        Data Types
 
     </span>
   </a>
@@ -1431,10 +1431,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#translation-examples" class="md-nav__link">
+  <a href="#option-instead-of-none" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Translation examples
+        Option Instead Of None
 
     </span>
   </a>
@@ -1442,10 +1442,54 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#list-comprehensions-become-chains" class="md-nav__link">
+  <a href="#result-instead-of-exceptions" class="md-nav__link">
     <span class="md-ellipsis">
 
-        List comprehensions become |&gt; chains
+        Result Instead Of Exceptions
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#comprehensions-and-pipelines" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Comprehensions And Pipelines
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#strings-and-bytes" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Strings And Bytes
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#concurrency" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Concurrency
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#standard-library-map" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Standard Library Map
 
     </span>
   </a>
@@ -1873,10 +1917,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
 
         <li class="md-nav__item">
-  <a href="#differences-that-matter" class="md-nav__link">
+  <a href="#quick-map" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Differences that matter
+        Quick Map
 
     </span>
   </a>
@@ -1884,10 +1928,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#what-stays-the-same" class="md-nav__link">
+  <a href="#data-types" class="md-nav__link">
     <span class="md-ellipsis">
 
-        What stays the same
+        Data Types
 
     </span>
   </a>
@@ -1895,10 +1939,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#translation-examples" class="md-nav__link">
+  <a href="#option-instead-of-none" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Translation examples
+        Option Instead Of None
 
     </span>
   </a>
@@ -1906,10 +1950,54 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#list-comprehensions-become-chains" class="md-nav__link">
+  <a href="#result-instead-of-exceptions" class="md-nav__link">
     <span class="md-ellipsis">
 
-        List comprehensions become |&gt; chains
+        Result Instead Of Exceptions
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#comprehensions-and-pipelines" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Comprehensions And Pipelines
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#strings-and-bytes" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Strings And Bytes
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#concurrency" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Concurrency
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#standard-library-map" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Standard Library Map
 
     </span>
   </a>
@@ -1934,10 +2022,10 @@
 
 
 <h1 id="migrating-from-python-to-gossamer">Migrating from Python to Gossamer<a class="headerlink" href="#migrating-from-python-to-gossamer" title="Permanent link">&para;</a></h1>
-<p>Python programs map well to Gossamer once you commit to three shifts:
-static types, no implicit <code>None</code>, and pattern matching instead of
-<code>isinstance</code> / duck-typing.</p>
-<h2 id="differences-that-matter">Differences that matter<a class="headerlink" href="#differences-that-matter" title="Permanent link">&para;</a></h2>
+<p>Python code ports cleanly once three habits change: types are checked
+before execution, absence is represented with <code>Option&lt;T&gt;</code>, and failures
+are returned as <code>Result&lt;T, E&gt;</code> instead of raised as exceptions.</p>
+<h2 id="quick-map">Quick Map<a class="headerlink" href="#quick-map" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1947,112 +2035,227 @@ static types, no implicit <code>None</code>, and pattern matching instead of
 </thead>
 <tbody>
 <tr>
-<td>Dynamic typing, runtime <code>TypeError</code>.</td>
-<td>Static typing checked by <code>gos check</code>; most type errors are caught before run.</td>
+<td><code>x = 5</code></td>
+<td><code>let x = 5</code></td>
 </tr>
 <tr>
-<td><code>None</code> is implicit and pervasive.</td>
-<td><code>Option&lt;T&gt;</code> is explicit. <code>None</code> exists only for <code>Option</code>.</td>
+<td>reassigning <code>x</code></td>
+<td><code>let mut x = 5</code></td>
 </tr>
 <tr>
-<td><code>try / except</code>.</td>
-<td><code>Result&lt;T, E&gt;</code> + <code>?</code>. No exception-style control flow.</td>
+<td><code>def f(x): return x + 1</code></td>
+<td><code>fn f(x: i64) -&gt; i64 { x + 1 }</code></td>
 </tr>
 <tr>
-<td>Duck typing via <code>__dunder__</code> methods.</td>
-<td>Traits (<code>impl Iterator for T</code>, <code>impl Display for T</code>).</td>
+<td><code>class User: ...</code> for data</td>
+<td><code>struct User { name: String, age: i64 }</code></td>
 </tr>
 <tr>
-<td><code>str</code> is a sequence of code points; indexing is cheap.</td>
-<td><code>String</code> is UTF-8; indexing returns the byte at that offset. Use <code>std::utf8</code> helpers for code-point iteration.</td>
+<td><code>User("Ada", 36)</code></td>
+<td><code>User { name: "Ada", age: 36 }</code></td>
 </tr>
 <tr>
-<td><code>dict</code>, <code>list</code>, <code>set</code> are built-ins.</td>
-<td><code>std::collections::HashMap</code>, <code>Vec&lt;T&gt;</code> (spelled <code>[T]</code> in types), <code>HashSet&lt;T&gt;</code>.</td>
+<td><code>None</code></td>
+<td><code>Option&lt;T&gt;</code> with <code>Some(v)</code> or <code>None</code></td>
 </tr>
 <tr>
-<td>Decorators, metaclasses.</td>
-<td>Attributes (<code>#[test]</code>, <code>#[cfg(...)]</code>, <code>#[lint(allow(...))]</code>). Not user-extensible.</td>
+<td><code>try</code> / <code>except</code></td>
+<td><code>Result&lt;T, E&gt;</code> with <code>?</code> or <code>match</code></td>
 </tr>
 <tr>
-<td>Indentation is syntax.</td>
-<td>Braces <code>{ }</code> are syntax; <code>gos fmt</code> enforces a consistent shape.</td>
+<td><code>isinstance</code> dispatch</td>
+<td><code>enum</code> plus <code>match</code>, or traits</td>
 </tr>
 <tr>
-<td><code>async def</code> / <code>await</code>.</td>
-<td><code>go expr</code> spawns a goroutine; blocking IO is fine.</td>
+<td>list</td>
+<td><code>[T]</code> / <code>Vec&lt;T&gt;</code></td>
 </tr>
 <tr>
-<td><code>if __name__ == "__main__":</code> guards top-level code.</td>
-<td>No equivalent: top-level code in the entry file just runs. Bare statements become the body of an implicit <code>fn main()</code>; a top-level <code>?</code> makes it return <code>Result&lt;(), errors::Error&gt;</code>; set an exit code with <code>std::process::exit(n)</code>. See <a href="../../language/top_level_statements/">Top-level statements</a>.</td>
+<td>dict</td>
+<td><code>HashMap&lt;K, V&gt;</code></td>
+</tr>
+<tr>
+<td>set</td>
+<td><code>HashSet&lt;T&gt;</code></td>
+</tr>
+<tr>
+<td><code>asyncio.create_task</code></td>
+<td><code>go fn() { ... }()</code></td>
+</tr>
+<tr>
+<td><code>if __name__ == "__main__"</code></td>
+<td>entry-file top-level statements</td>
 </tr>
 </tbody>
 </table>
-<h2 id="what-stays-the-same">What stays the same<a class="headerlink" href="#what-stays-the-same" title="Permanent link">&para;</a></h2>
-<ul>
-<li>List / dict / set comprehensions have direct iterator equivalents (<code>xs |&gt; iter::filter(...) |&gt; iter::map(...)</code>).</li>
-<li><code>print("a", "b")</code> → <code>println!("{} {}", "a", "b")</code>.</li>
-<li>Named arguments → struct-literal call style: <code>Handler { log: true }</code>.</li>
-</ul>
-<h2 id="translation-examples">Translation examples<a class="headerlink" href="#translation-examples" title="Permanent link">&para;</a></h2>
+<h2 id="data-types">Data Types<a class="headerlink" href="#data-types" title="Permanent link">&para;</a></h2>
+<p>Use structs for records. Named structs are always constructed with
+braces:</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">struct</span> <span class="nc">User</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">    </span><span class="n">name</span>: <span class="nb">String</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="n">age</span>: <span class="kt">i64</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="p">}</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="kd">let</span><span class="w"> </span><span class="n">user</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">User</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">name</span>: <span class="s">&quot;Ada&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">age</span>: <span class="mi">36</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="kd">let</span><span class="w"> </span><span class="n">older</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">User</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">age</span>: <span class="mi">37</span><span class="p">,</span><span class="w"> </span><span class="o">..</span><span class="n">user</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>Use enums for a closed set of shapes:</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">enum</span> <span class="nc">Event</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span><span class="n">Click</span><span class="p">(</span><span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="p">),</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="n">Message</span><span class="p">(</span><span class="nb">String</span><span class="p">),</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="n">Closed</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="p">}</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="k">match</span><span class="w"> </span><span class="n">event</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="n">Event</span>::<span class="n">Click</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">y</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;click {x} {y}&quot;</span><span class="p">),</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">    </span><span class="n">Event</span>::<span class="n">Message</span><span class="p">(</span><span class="n">text</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{text}&quot;</span><span class="p">),</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="n">Event</span>::<span class="n">Closed</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;closed&quot;</span><span class="p">),</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="option-instead-of-none">Option Instead Of None<a class="headerlink" href="#option-instead-of-none" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">name</span> <span class="o">=</span> <span class="n">user</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">)</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">display</span> <span class="o">=</span> <span class="n">name</span> <span class="ow">or</span> <span class="s2">&quot;anonymous&quot;</span>
+</code></pre></div>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">name</span>: <span class="nb">Option</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">user_name</span><span class="p">()</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">display</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">name</span><span class="p">.</span><span class="n">unwrap_or</span><span class="p">(</span><span class="s">&quot;anonymous&quot;</span><span class="p">)</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="k">if</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;hello, {n}&quot;</span><span class="p">)</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>None</code> is not a value of every type. It only appears inside
+<code>Option&lt;T&gt;</code>.</p>
+<h2 id="result-instead-of-exceptions">Result Instead Of Exceptions<a class="headerlink" href="#result-instead-of-exceptions" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">text</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">cfg</span> <span class="o">=</span> <span class="n">parse_config</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">log</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">cfg</span> <span class="o">=</span> <span class="n">default_config</span><span class="p">()</span>
+</code></pre></div>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="p">{</span><span class="n">errors</span><span class="p">,</span><span class="w"> </span><span class="n">fs</span><span class="p">}</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="k">fn</span> <span class="nf">read_config</span><span class="p">(</span><span class="n">path</span>: <span class="kp">&amp;</span><span class="nb">String</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="n">Config</span><span class="p">,</span><span class="w"> </span><span class="n">errors</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">text</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fs</span>::<span class="n">read_to_string</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="o">?</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="n">parse_config</span><span class="p">(</span><span class="o">&amp;</span><span class="n">text</span><span class="p">)</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="p">}</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="kd">let</span><span class="w"> </span><span class="n">cfg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">match</span><span class="w"> </span><span class="n">read_config</span><span class="p">(</span><span class="o">&amp;</span><span class="n">path</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">    </span><span class="nb">Ok</span><span class="p">(</span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">v</span><span class="p">,</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">    </span><span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">        </span><span class="n">log</span><span class="p">(</span><span class="o">&amp;</span><span class="n">e</span><span class="p">)</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">        </span><span class="n">default_config</span><span class="p">()</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="comprehensions-and-pipelines">Comprehensions And Pipelines<a class="headerlink" href="#comprehensions-and-pipelines" title="Permanent link">&para;</a></h2>
 <p>Python:</p>
-<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">def</span> <span class="nf">parse</span><span class="p">(</span><span class="n">line</span><span class="p">):</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">parts</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="k">return</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">parts</span><span class="p">]</span>
+<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">n</span> <span class="o">*</span> <span class="n">n</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">11</span><span class="p">)</span> <span class="k">if</span> <span class="n">n</span> <span class="o">%</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
 </code></pre></div>
 <p>Gossamer:</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">fn</span> <span class="nf">parse</span><span class="p">(</span><span class="n">line</span>: <span class="kp">&amp;</span><span class="kt">str</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="p">[</span><span class="kt">i64</span><span class="p">],</span><span class="w"> </span><span class="n">errors</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">out</span>: <span class="p">[</span><span class="kt">i64</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[]</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="n">piece</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="n">line</span><span class="p">.</span><span class="n">trim</span><span class="p">().</span><span class="n">split</span><span class="p">(</span><span class="s">&quot;,&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">strconv</span>::<span class="n">parse_i64</span><span class="p">(</span><span class="o">&amp;</span><span class="n">piece</span><span class="p">.</span><span class="n">trim</span><span class="p">())</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">            </span><span class="p">.</span><span class="n">map_err</span><span class="p">(</span><span class="o">|</span><span class="n">_</span><span class="o">|</span><span class="w"> </span><span class="n">errors</span>::<span class="n">new</span><span class="p">(</span><span class="fm">format!</span><span class="p">(</span><span class="s">&quot;bad number: {piece}&quot;</span><span class="p">)))</span><span class="o">?</span>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">        </span><span class="n">out</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="nb">Ok</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="p">}</span>
-</code></pre></div>
-<p>Python:</p>
-<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">try</span><span class="p">:</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">value</span> <span class="o">=</span> <span class="n">risky</span><span class="p">()</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">log</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">value</span> <span class="o">=</span> <span class="n">default</span>
-</code></pre></div>
-<p>Gossamer:</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">match</span><span class="w"> </span><span class="n">risky</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">    </span><span class="nb">Ok</span><span class="p">(</span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">v</span><span class="p">,</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">log</span><span class="p">(</span><span class="o">&amp;</span><span class="n">e</span><span class="p">);</span><span class="w"> </span><span class="n">default</span><span class="w"> </span><span class="p">},</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="p">}</span>
-</code></pre></div>
-<h2 id="list-comprehensions-become-chains">List comprehensions become <code>|&gt;</code> chains<a class="headerlink" href="#list-comprehensions-become-chains" title="Permanent link">&para;</a></h2>
-<p>Python:</p>
-<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">n</span> <span class="o">*</span> <span class="n">n</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">11</span><span class="p">)</span> <span class="k">if</span> <span class="n">n</span> <span class="o">%</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
-</code></pre></div>
-<p>Gossamer:</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">total</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">iter</span>::<span class="n">range_inclusive</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span><span class="p">)</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">iter</span>::<span class="n">filter</span><span class="p">(</span><span class="o">|</span><span class="n">n</span>: <span class="kt">i64</span><span class="o">|</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">iter</span>::<span class="n">sum_by</span><span class="p">(</span><span class="o">|</span><span class="n">n</span>: <span class="kt">i64</span><span class="o">|</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">n</span><span class="p">)</span>
-</code></pre></div>
-<p>Python:</p>
-<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">names</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">({</span><span class="n">name</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">users</span> <span class="k">if</span> <span class="n">name</span><span class="p">})</span>
-</code></pre></div>
-<p>Gossamer - filter, lowercase, deduplicate via <code>HashSet</code>, then sort:</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">collections</span>::<span class="n">HashSet</span>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">iter</span>
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">set</span>: <span class="nc">HashSet</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">HashSet</span>::<span class="n">new</span><span class="p">()</span>
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="k">for</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="n">users</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="n">n</span><span class="p">.</span><span class="n">len</span><span class="p">()</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">        </span><span class="n">set</span><span class="p">.</span><span class="n">insert</span><span class="p">(</span><span class="n">n</span><span class="p">.</span><span class="n">to_lowercase</span><span class="p">())</span>
-<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="p">}</span>
-<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">names</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">set</span><span class="p">.</span><span class="n">to_vec</span><span class="p">()</span>
-<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="n">names</span><span class="p">.</span><span class="n">sort</span><span class="p">()</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">total</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">iter</span>::<span class="n">range_inclusive</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span><span class="p">)</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">iter</span>::<span class="n">filter</span><span class="p">(</span><span class="o">|</span><span class="n">n</span>: <span class="kt">i64</span><span class="o">|</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">iter</span>::<span class="n">sum_by</span><span class="p">(</span><span class="o">|</span><span class="n">n</span>: <span class="kt">i64</span><span class="o">|</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">n</span><span class="p">)</span>
 </code></pre></div>
-<p>The <code>iter::*</code> module is small and uniform: combinators take the
-data value as the last positional parameter so <code>xs |&gt; iter::map(f)</code>
-desugars to <code>iter::map(f, xs)</code> (SPEC §4.6). For the optional /
-fallible cases there are matching <code>std::option</code> and <code>std::result</code>
-modules.</p>
+<p>For stateful code, ordinary loops are still idiomatic:</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">counts</span>: <span class="nc">HashMap</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">HashMap</span>::<span class="n">new</span><span class="p">()</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="k">for</span><span class="w"> </span><span class="n">word</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="n">words</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="n">counts</span><span class="p">.</span><span class="n">inc</span><span class="p">(</span><span class="n">word</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="strings-and-bytes">Strings And Bytes<a class="headerlink" href="#strings-and-bytes" title="Permanent link">&para;</a></h2>
+<p><code>String</code> is UTF-8. Indexing works on bytes, not Python code points.
+Use UTF-8 helpers when code-point semantics matter. Use <code>[u8]</code> for
+binary data.</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">body</span>: <span class="p">[</span><span class="kt">u8</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fs</span>::<span class="n">read</span><span class="p">(</span><span class="s">&quot;image.bin&quot;</span><span class="p">)</span><span class="o">?</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">text</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fs</span>::<span class="n">read_to_string</span><span class="p">(</span><span class="s">&quot;message.txt&quot;</span><span class="p">)</span><span class="o">?</span>
+</code></pre></div>
+<p>HTTP responses can serve binary bodies directly:</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">http</span>::<span class="n">Response</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">    </span><span class="n">status</span>: <span class="mi">200</span><span class="p">,</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="n">body</span>: <span class="p">[</span><span class="mi">65</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">66</span><span class="p">],</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="n">content_type</span>: <span class="s">&quot;application/octet-stream&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="concurrency">Concurrency<a class="headerlink" href="#concurrency" title="Permanent link">&para;</a></h2>
+<p>Python <code>async</code> code usually becomes goroutines plus channels when work
+must run concurrently:</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kd">let</span><span class="w"> </span><span class="p">(</span><span class="n">tx</span><span class="p">,</span><span class="w"> </span><span class="n">rx</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">channel</span><span class="p">()</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="k">for</span><span class="w"> </span><span class="n">url</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="n">urls</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">tx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">tx</span><span class="p">.</span><span class="n">clone</span><span class="p">()</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">    </span><span class="n">go</span><span class="w"> </span><span class="k">fn</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="w">        </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="n">http</span>::<span class="n">get</span><span class="p">(</span><span class="o">&amp;</span><span class="n">url</span><span class="p">,</span><span class="w"> </span><span class="p">[]))</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="w">    </span><span class="p">}()</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="p">}</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="k">while</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">result</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rx</span><span class="p">.</span><span class="n">recv</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="w">    </span><span class="n">handle</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="p">}</span>
+</code></pre></div>
+<p>Close the sender when no more values will arrive, or coordinate with
+<code>sync::WaitGroup</code>.</p>
+<h2 id="standard-library-map">Standard Library Map<a class="headerlink" href="#standard-library-map" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Python</th>
+<th>Gossamer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Path(path).read_text()</code></td>
+<td><code>fs::read_to_string(path)</code></td>
+</tr>
+<tr>
+<td><code>Path(path).read_bytes()</code></td>
+<td><code>fs::read(path)</code></td>
+</tr>
+<tr>
+<td><code>Path(path).write_text(s)</code></td>
+<td><code>fs::write(path, s)</code></td>
+</tr>
+<tr>
+<td><code>os.environ.get("X")</code></td>
+<td><code>env::var("X")</code></td>
+</tr>
+<tr>
+<td><code>sys.argv</code></td>
+<td><code>env::args()</code></td>
+</tr>
+<tr>
+<td><code>subprocess.run([...])</code></td>
+<td><code>process::run(program, &amp;args)</code></td>
+</tr>
+<tr>
+<td><code>print(x)</code></td>
+<td><code>println!("{x}")</code></td>
+</tr>
+<tr>
+<td><code>json.dumps(v)</code></td>
+<td><code>encoding::json::encode(v)</code></td>
+</tr>
+<tr>
+<td><code>json.loads(s)</code></td>
+<td><code>encoding::json::decode::&lt;T&gt;(s)</code></td>
+</tr>
+<tr>
+<td><code>re.compile(p)</code></td>
+<td><code>regex::compile(p)</code></td>
+</tr>
+<tr>
+<td><code>s.strip()</code></td>
+<td><code>strings::trim(&amp;s)</code></td>
+</tr>
+<tr>
+<td><code>int(s)</code></td>
+<td><code>strconv::parse_i64(&amp;s)</code></td>
+</tr>
+</tbody>
+</table>
 
 
 

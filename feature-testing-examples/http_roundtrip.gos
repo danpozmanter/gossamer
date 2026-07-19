@@ -46,7 +46,11 @@ impl http::Handler for Upstream {
             ))
         }
         if path == "/nul" {
-            return Ok(http::Response(200, [65, 0, 66, 0, 67], "application/octet-stream"))
+            return Ok(http::Response {
+                status: 200,
+                body: [65, 0, 66, 0, 67],
+                content_type: "application/octet-stream",
+            })
         }
         if path == "/hop" {
             return Ok(http::Response::text(302, "redirecting").with_header("Location", "/data"))
@@ -80,13 +84,13 @@ impl http::Handler for Proxy {
 }
 
 fn run_upstream() {
-    if let Err(e) = http::serve("127.0.0.1:23908", Upstream()) {
+    if let Err(e) = http::serve("127.0.0.1:23908", Upstream { }) {
         eprintln!("serve failed: {e}")
     }
 }
 
 fn run_proxy() {
-    if let Err(e) = http::serve("127.0.0.1:23909", Proxy()) {
+    if let Err(e) = http::serve("127.0.0.1:23909", Proxy { }) {
         eprintln!("serve failed: {e}")
     }
 }

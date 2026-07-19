@@ -2322,6 +2322,7 @@ impl<'a> TypeChecker<'a> {
                         let headers_ty = self.tcx.intern(TyKind::Vec(pair));
                         let fields: Vec<(String, Ty)> = vec![
                             ("status".to_string(), self.tcx.int_ty(IntTy::I64)),
+                            ("body".to_string(), self.fresh()),
                             ("content_type".to_string(), s),
                             ("headers".to_string(), headers_ty),
                         ];
@@ -2330,6 +2331,7 @@ impl<'a> TypeChecker<'a> {
                         (struct_ty, None)
                     };
                 let resolved = self.infer.resolve(self.tcx, struct_ty);
+                let http_response_literal = http_response_fields.is_some();
                 let declared: Option<Vec<(String, Ty)>> = match self.tcx.kind_of(resolved) {
                     // The literal-specific Response list takes priority
                     // over the stdlib layout: the layout declares
@@ -2358,6 +2360,7 @@ impl<'a> TypeChecker<'a> {
                 } else {
                     false
                 };
+                let require_all_fields = !http_response_literal;
                 let resolved_literal_fields =
                     if !tuple_struct_literal && let Some(declared_fields) = declared.as_ref() {
                         Some(self.resolve_struct_literal_fields(
@@ -2365,6 +2368,7 @@ impl<'a> TypeChecker<'a> {
                             fields,
                             base.is_some(),
                             declared_fields,
+                            require_all_fields,
                             expr.span,
                         ))
                     } else {
@@ -2465,6 +2469,7 @@ impl<'a> TypeChecker<'a> {
         fields: &[gossamer_ast::StructExprField],
         has_base: bool,
         declared_fields: &[(String, Ty)],
+        require_all_fields: bool,
         span: Span,
     ) -> HashMap<usize, usize> {
         let name = path.segments.last().map_or_else(
@@ -2530,7 +2535,7 @@ impl<'a> TypeChecker<'a> {
             resolved.insert(field_idx, next_pos);
         }
 
-        if !has_base {
+        if require_all_fields && !has_base {
             for (idx, (field_name, _)) in declared_fields.iter().enumerate() {
                 if !filled.contains(&idx) {
                     self.emit(

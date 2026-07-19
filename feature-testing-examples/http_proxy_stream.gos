@@ -51,13 +51,13 @@ impl http::Handler for Proxy {
 }
 
 fn run_upstream() {
-    if let Err(e) = http::serve("127.0.0.1:23877", Upstream()) {
+    if let Err(e) = http::serve("127.0.0.1:23877", Upstream { }) {
         eprintln!("serve failed: {e}")
     }
 }
 
 fn run_proxy() {
-    if let Err(e) = http::serve("127.0.0.1:23878", Proxy()) {
+    if let Err(e) = http::serve("127.0.0.1:23878", Proxy { }) {
         eprintln!("serve failed: {e}")
     }
 }

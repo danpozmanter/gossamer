@@ -2537,11 +2537,14 @@
 <li><code>Response::text(status, body)</code> - sets <code>content-type: text/plain; charset=utf-8</code>.</li>
 <li><code>Response::json(status, body)</code> - sets <code>content-type: application/json</code>.</li>
 <li><code>Response::stream(status, content_type, rs)</code> - streamed body; see below.</li>
-<li><code>http::Response(status, body_bytes, content_type)</code> - constructs a binary
-  response without a lossy round-trip through <code>String</code>; <code>body_bytes</code> is <code>[u8]</code>.</li>
+<li><code>http::Response { status, body, content_type }</code> - constructs a binary
+  response without a lossy round-trip through <code>String</code>; <code>body</code> may be <code>[u8]</code>.</li>
 </ul>
-<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>http::Response(202, [65, 0, 66], &quot;application/octet-stream&quot;)
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    .with_header(&quot;x-k&quot;, &quot;kv&quot;)
+<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>http::Response {
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    status: 202,
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    body: [65, 0, 66],
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    content_type: &quot;application/octet-stream&quot;,
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>}.with_header(&quot;x-k&quot;, &quot;kv&quot;)
 </code></pre></div>
 <p>The byte array is written verbatim, so handlers can return binary payloads
 (images, gzip) including embedded NUL bytes.</p>

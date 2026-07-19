@@ -65,7 +65,7 @@ impl FakeDriver {
 }
 
 fn run() -> Result<(), errors::Error> {
-    sql::register_native("fake", FakeDriver())
+    sql::register_native("fake", FakeDriver { })
     let mut db = sql::open("fake", "memory://x")?
     let mut rows = db.query("SELECT greeting", &[])?
     while let Some(row) = rows.next_row()? {

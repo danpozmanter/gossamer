@@ -27,7 +27,7 @@ fn try_query_each() -> Result<(), sql::Error> {
 // rows.close() is idempotent (a released or never-live handle is
 // Ok); next_row on a released handle reports an error.
 fn cursor_safety() -> String {
-    let mut rows = sql::Rows(0)
+    let mut rows = sql::Rows { 0 }
     let closed = match rows.close() {
         Ok(_) => "close-ok",
         Err(_) => "close-err",

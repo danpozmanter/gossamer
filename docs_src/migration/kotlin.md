@@ -1,59 +1,35 @@
 # Migrating from Kotlin to Gossamer
 
-Kotlin and Gossamer share several ideas: null safety maps to
-`Option<T>`, `val`/`var` maps to `let`/`let mut`, `when`
-expressions map to `match`, data classes map to structs, and
-coroutines map to goroutines. The main shift is from JVM-hosted
-OO with nullable types to a memory-managed compiled language where
-every absent value is explicit and every blocking call is safe.
+Kotlin and Gossamer share null-safe habits, expression-oriented
+control flow, lambdas, and pattern-style branching. Gossamer is not
+JVM-hosted and does not use exceptions or `suspend`; it uses explicit
+`Option<T>`, `Result<T, E>`, goroutines, and channels.
 
-## TL;DR
+## Quick Map
 
-- **What transfers:** `val/var` → `let/let mut`, `when` → `match`,
-  data classes → structs, sealed classes → enums, lambdas → closures,
-  interfaces → traits, `T?` → `Option<T>`, coroutines → goroutines.
-- **What changes:** method-chaining collections vs. `iter::*` +
-  `|>`, `suspend` vs. `go expr`, string templates vs. `format!`,
-  companion objects vs. associated functions, exceptions vs.
-  `Result<T, E>`.
-- **What's absent:** `@` annotations as user-extensible metadata,
-  reflection, JVM interop, `inline`/`reified` generics, Kotlin
-  DSLs.
+| Kotlin | Gossamer |
+| --- | --- |
+| `val x = 5` | `let x = 5` |
+| `var x = 5` | `let mut x = 5` |
+| `fun f(x: Int): Int = x + 1` | `fn f(x: i64) -> i64 { x + 1 }` |
+| `{ x: Int -> x + 1 }` | `|x: i64| x + 1` |
+| `if (c) a else b` | `if c { a } else { b }` |
+| `when (x) { ... }` | `match x { ... }` |
+| `data class User(...)` | `struct User { ... }` |
+| `User("Ada", 36)` | `User { name: "Ada", age: 36 }` |
+| `sealed class` | `enum` |
+| `T?` | `Option<T>` |
+| `try` / `catch` | `Result<T, E>` |
+| `launch { ... }` | `go fn() { ... }()` |
+| `async { ... }.await()` | channel send and receive |
+| `println("$name")` | `println!("{name}")` |
 
-## Syntax cheat-sheet
-
-| Kotlin | Gossamer | Notes |
-|--------|----------|-------|
-| `val x = 5` | `let x = 5` | Immutable binding. |
-| `var x = 5` | `let mut x = 5` | Mutable binding. |
-| `fun f(x: Int): Int = x + 1` | `fn f(x: i64) -> i64 { x + 1 }` | |
-| `{ x: Int -> x + 1 }` | `|x: i64| x + 1` | Lambda / closure. |
-| `if (cond) a else b` | `if cond { a } else { b }` | No parens required. |
-| `when (x) { 1 -> … else -> … }` | `match x { 1 => …, _ => … }` | Exhaustive. |
-| `data class Point(val x: Int, val y: Int)` | `struct Point { x: i64, y: i64 }` | |
-| `sealed class Shape` | `enum Shape { … }` | |
-| `println("$name is $age")` | `println!("{name} is {age}")` | |
-| `"$name".length` | `name.len()` | |
-| `listOf(1, 2, 3)` | `[1, 2, 3]` | `Vec<i64>`. |
-| `mapOf("a" to 1)` | `HashMap::from([("a", 1)])` | |
-| `x?.method()` | `if let Some(v) = x { v.method() }` | |
-| `x ?: default` | `x.unwrap_or(default)` | |
-| `x!!` | `x.unwrap()` | Panics on None. |
-| `launch { … }` | `go fn() { … }()` | Goroutine. |
-| `async { … }.await` | channel send/recv, or direct call | |
-| `try { … } catch (e: …) { … }` | `match f() { Ok(v) => …, Err(e) => … }` | |
-| `throw Exception("msg")` | `return Err(errors::new("msg"))` | |
-
-## Null safety → Option<T>
-
-Kotlin's `T?` has four operators: `?.` (safe call), `?:`
-(Elvis), `!!` (force unwrap), and smart casts after null checks.
-Gossamer uses `Option<T>` with explicit unwrapping:
+## Null Safety To Option
 
 Kotlin:
 
 ```kotlin
-val len: Int? = name?.length
+val len = name?.length
 val display = name ?: "anonymous"
 val forced = name!!.uppercase()
 ```
@@ -61,22 +37,18 @@ val forced = name!!.uppercase()
 Gossamer:
 
 ```gos
-let len: Option<i64> = name.map(|s: String| s.len() as i64)
+let len = name.map(|s: String| s.len())
 let display = name.unwrap_or("anonymous")
-let forced = name.unwrap().to_uppercase()
-```
+let forced = strings::to_uppercase(&name.unwrap())
 
-For conditional access, `if let` is idiomatic:
-
-```gos
 if let Some(n) = name {
     println!("hello, {n}")
 }
 ```
 
-## Data classes → structs
+`None` only exists inside `Option<T>`. It is not a universal null.
 
-Kotlin:
+## Data Classes To Structs
 
 ```kotlin
 data class User(val name: String, val age: Int)
@@ -84,45 +56,27 @@ val u = User("Ada", 36)
 val older = u.copy(age = 37)
 ```
 
-Gossamer:
-
 ```gos
-struct User { name: String, age: i64 }
+struct User {
+    name: String,
+    age: i64,
+}
 
 let u = User { name: "Ada", age: 36 }
 let older = User { age: 37, ..u }
 ```
 
-A data class's auto-generated `equals` / `hashCode` / `copy` come
-for free in Gossamer: structs are value types, so `==`, `a.clone()`,
-`let b = a` (copy), and hashing all work with **no derive**. Only
-`Debug` (the `{:?}` formatter, the `toString` analogue) is opted into:
+Named structs use braces. Tuple-like parentheses are for enum tuple
+variants and tuple structs, not ordinary named structs.
 
-```gos
-#[derive(Debug)]
-struct User { name: String, age: i64 }
-```
-
-The derivable set is exactly `Debug, Default, PartialEq, Eq,
-PartialOrd, Ord`; deriving `Clone` / `Hash` / `Copy` is rejected
-(`GT0025`) because each is already automatic.
-
-## Sealed classes → enums
-
-Kotlin:
+## Sealed Classes To Enums
 
 ```kotlin
-sealed class Result<out T>
-data class Success<T>(val value: T) : Result<T>()
-data class Failure(val error: Throwable) : Result<Nothing>()
-
-when (result) {
-    is Success -> println(result.value)
-    is Failure -> println(result.error.message)
-}
+sealed class Outcome
+data class Win(val message: String) : Outcome()
+data class Loss(val message: String) : Outcome()
+object Draw : Outcome()
 ```
-
-Gossamer uses the built-in `Result<T, E>` or a user enum:
 
 ```gos
 enum Outcome {
@@ -132,73 +86,77 @@ enum Outcome {
 }
 
 match outcome {
-    Outcome::Win(msg) => println!("{msg}"),
-    Outcome::Loss(msg) => eprintln!("{msg}"),
-    Outcome::Draw => println!("tied"),
+    Outcome::Win(message) => println!("{message}"),
+    Outcome::Loss(message) => eprintln!("{message}"),
+    Outcome::Draw => println!("draw"),
 }
 ```
 
-## Collections and iteration
+`match` is exhaustive, so adding a new enum variant forces call sites to
+handle it.
 
-Kotlin collections carry `.map`, `.filter`, `.fold` as methods.
-Gossamer separates these into free functions in `std::iter` (data
-last, piped with `|>`). Mutating helpers (`push`, `sort`,
-`remove`) stay as methods.
+## Exceptions To Result
 
 Kotlin:
 
 ```kotlin
-val total = listOf(1, 2, 3, 4, 5)
+fun readConfig(path: String): Config {
+    val text = File(path).readText()
+    return parseConfig(text)
+}
+```
+
+Gossamer:
+
+```gos
+use std::{errors, fs}
+
+fn read_config(path: &String) -> Result<Config, errors::Error> {
+    let text = fs::read_to_string(path)?
+    parse_config(&text)
+}
+```
+
+Use `match` when a caller should recover locally:
+
+```gos
+let cfg = match read_config(&path) {
+    Ok(v) => v,
+    Err(e) => {
+        eprintln!("config error: {e}")
+        default_config()
+    },
+}
+```
+
+## Collections
+
+Kotlin collection chains become `std::iter` pipelines. The pipe operator
+passes the value on the left into the last argument of the next call.
+
+```kotlin
+val total = listOf(1, 2, 3, 4)
     .filter { it % 2 == 0 }
     .sumOf { it * it }
 ```
 
-Gossamer:
-
 ```gos
-let total = [1, 2, 3, 4, 5]
+use std::iter
+
+let total = [1, 2, 3, 4]
     |> iter::filter(|n: i64| n % 2 == 0)
     |> iter::sum_by(|n: i64| n * n)
 ```
 
-Kotlin:
-
-```kotlin
-val words = sentence.split(" ").map { it.trim() }.filter { it.isNotEmpty() }
-```
-
-Gossamer:
+Mutating operations stay method-shaped:
 
 ```gos
-let words = strings::split(&sentence, " ")
-    |> iter::map(|s: String| strings::trim(&s))
-    |> iter::filter(|s: String| s.len() > 0)
+let mut xs = [3, 1, 2]
+xs.sort()
+xs.push(4)
 ```
 
-## String interpolation
-
-Kotlin uses `"$variable"` and `"${expression}"`. Gossamer uses
-`format!` / `println!` with `{identifier}` or positional `{}`:
-
-Kotlin:
-
-```kotlin
-val msg = "Hello, $name! You are ${age + 1} next year."
-```
-
-Gossamer:
-
-```gos
-let msg = format!("Hello, {name}! You are {} next year.", age + 1)
-```
-
-## Coroutines → goroutines
-
-Kotlin coroutines are cooperative and tied to a `CoroutineScope`.
-Gossamer goroutines are stackful and scheduled by an M:N
-work-stealing runtime - blocking IO doesn't block the OS thread.
-
-Kotlin:
+## Coroutines To Goroutines
 
 ```kotlin
 fun main() = runBlocking {
@@ -207,19 +165,20 @@ fun main() = runBlocking {
 }
 ```
 
-Gossamer:
-
 ```gos
-fn main() {
-    let (tx, rx) = channel()
-    go fn() {
-        tx.send(fetch_data(&url))
-    }()
-    println!("{}", rx.recv().unwrap())
+let (tx, rx) = channel()
+
+go fn() {
+    tx.send(fetch_data(&url))
+    tx.close()
+}()
+
+if let Some(result) = rx.recv() {
+    println!("{result}")
 }
 ```
 
-For fan-out + fan-in, WaitGroup is the Go-shaped idiom:
+For fan-out and fan-in, use `sync::WaitGroup`:
 
 ```gos
 let wg = sync::WaitGroup::new()
@@ -230,7 +189,7 @@ for url in urls {
     let tx = tx.clone()
     go fn() {
         defer wg.done()
-        tx.send(fetch_data(&url))
+        tx.send(http::get(&url, []))
     }()
 }
 
@@ -240,50 +199,13 @@ go fn() {
 }()
 
 while let Some(result) = rx.recv() {
-    process(result)
+    handle(result)
 }
 ```
 
-## Extension functions
+## Associated Functions
 
-Kotlin extension functions add methods to existing types:
-
-```kotlin
-fun String.shout(): String = this.uppercase() + "!"
-```
-
-Gossamer uses `impl` blocks or standalone free functions:
-
-```gos
-fn shout(s: &String) -> String {
-    strings::to_uppercase(s) + "!"
-}
-```
-
-If the method belongs logically to a type you own, use `impl`:
-
-```gos
-impl MyType {
-    pub fn shout(&self) -> String {
-        strings::to_uppercase(&self.name) + "!"
-    }
-}
-```
-
-## Companion objects → associated functions
-
-Kotlin companion objects hold factory methods and constants:
-
-```kotlin
-class Connection private constructor(val host: String) {
-    companion object {
-        fun local() = Connection("localhost")
-        const val DEFAULT_PORT = 5432
-    }
-}
-```
-
-Gossamer uses associated functions on `impl`:
+Kotlin companion factories become associated functions:
 
 ```gos
 struct Connection { host: String }
@@ -297,80 +219,28 @@ impl Connection {
 const DEFAULT_PORT: i64 = 5432
 ```
 
-## Exceptions → Result
-
-Kotlin uses exceptions for errors. Gossamer uses `Result<T, E>`
-with `?` for propagation:
-
-Kotlin:
-
-```kotlin
-fun readConfig(path: String): Config {
-    val text = File(path).readText()  // throws IOException
-    return parseConfig(text)         // throws ParseException
-}
-```
-
-Gossamer:
-
-```gos
-fn read_config(path: &String) -> Result<Config, errors::Error> {
-    let text = fs::read_to_string(path)?
-    parse_config(&text)
-}
-```
-
-`?` unwraps `Ok(v)` or returns `Err(e)` from the enclosing
-function. Combine errors with `errors::wrap`:
-
-```gos
-fn read_config(path: &String) -> Result<Config, errors::Error> {
-    let text = fs::read_to_string(path)
-        .map_err(|e| errors::wrap(e, format!("reading {path}")))?
-    parse_config(&text)
-}
-```
-
-## Standard library mapping (Kotlin / JVM → Gossamer)
+## Standard Library Map
 
 | Kotlin / JVM | Gossamer |
-|--------------|----------|
+| --- | --- |
 | `File(path).readText()` | `fs::read_to_string(path)` |
+| `File(path).readBytes()` | `fs::read(path)` |
 | `File(path).writeText(s)` | `fs::write(path, s)` |
-| `File(path).delete()` | `fs::remove_file(path)` |
-| `File(path).mkdirs()` | `fs::create_dir_all(path)` |
 | `System.getenv("X")` | `env::var("X")` |
-| `System.exit(0)` | `process::exit(0)` |
 | `ProcessBuilder(cmd).start()` | `process::run(cmd, &args)` |
+| `System.exit(0)` | `process::exit(0)` |
 | `println(x)` | `println!("{x}")` |
-| `System.currentTimeMillis()` | `time::now().as_millis()` |
-| `Thread.sleep(ms)` | `time::sleep(ms)` |
-| `Regex(pattern).matches(s)` | `regex::compile(pattern)?.is_match(&s)` |
-| `s.split(delim)` | `strings::split(&s, delim)` |
+| `Regex(pattern)` | `regex::compile(pattern)` |
 | `s.trim()` | `strings::trim(&s)` |
 | `s.uppercase()` | `strings::to_uppercase(&s)` |
 | `s.toInt()` | `strconv::parse_i64(&s)` |
-| `n.toString()` | `strconv::format_i64(n)` |
-| `listOf(...)` | `[...]` (`Vec<T>`) |
+| `listOf(...)` | `[...]` |
 | `mutableListOf(...)` | `let mut xs = [...]` |
-| `mapOf(k to v)` | `HashMap::from([(k, v)])` |
-| `setOf(...)` | `HashSet::from([...])` |
-| `list.map { }` | `list |> iter::map(|x| …)` |
-| `list.filter { }` | `list |> iter::filter(|x| …)` |
-| `list.fold(init) { acc, x -> }` | `list |> iter::fold(init, |acc, x| …)` |
-| `list.sortedBy { }` | `xs.sort_by_key(|x| …)` |
-| `OkHttp / Ktor HttpClient` | `http::Client::new()` |
-| `ktor server { }` | `http::serve(addr, handler)` |
-| `kotlinx.serialization` | `encoding::json::encode(v)` |
-| `Gson / Jackson` | `encoding::json::decode::<T>(s)` |
-| `kotlinx.coroutines.launch` | `go fn() { … }()` |
+| `mapOf(k to v)` | `HashMap::new()` plus `insert` |
+| `setOf(...)` | `HashSet::new()` plus `insert` |
+| `OkHttp` / `Ktor HttpClient` | `http::Client::new()` or `http::get(url, [])` |
+| `ktor server { ... }` | `http::serve(addr, handler)` |
+| `kotlinx.serialization` | `encoding::json` |
+| `kotlinx.coroutines.launch` | `go fn() { ... }()` |
 | `Mutex()` | `sync::Mutex::new()` |
 | `CountDownLatch(n)` | `sync::WaitGroup::new()` |
-
-## Cross-references
-
-- [`../syntax.md`](../syntax.md) - full language tour.
-- [`../stdlib_coverage.md`](../stdlib_coverage.md) - every
-  stdlib module, support state.
-- [`../codegen_abi.md`](../codegen_abi.md) - generic
-  instantiation constraints in v1.

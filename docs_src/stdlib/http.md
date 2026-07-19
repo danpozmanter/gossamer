@@ -151,12 +151,15 @@ fn serve(&self, r: http::Request) -> http::Response {
 - `Response::text(status, body)` - sets `content-type: text/plain; charset=utf-8`.
 - `Response::json(status, body)` - sets `content-type: application/json`.
 - `Response::stream(status, content_type, rs)` - streamed body; see below.
-- `http::Response(status, body_bytes, content_type)` - constructs a binary
-  response without a lossy round-trip through `String`; `body_bytes` is `[u8]`.
+- `http::Response { status, body, content_type }` - constructs a binary
+  response without a lossy round-trip through `String`; `body` may be `[u8]`.
 
 ```text
-http::Response(202, [65, 0, 66], "application/octet-stream")
-    .with_header("x-k", "kv")
+http::Response {
+    status: 202,
+    body: [65, 0, 66],
+    content_type: "application/octet-stream",
+}.with_header("x-k", "kv")
 ```
 
 The byte array is written verbatim, so handlers can return binary payloads

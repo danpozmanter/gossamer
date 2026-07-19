@@ -180,18 +180,22 @@ fn array_index_produces_projection_index_with_local_offset() {
 #[test]
 fn positional_struct_constructor_preserves_declaration_order() {
     let bodies = build(
-        "struct Pair { a: i64, b: i64 }\nfn main() -> i64 { let p = Pair { a: 3i64, b: 7i64 }; p.a }\n",
+        "struct Pair { a: i64, b: i64 }\nfn main() -> i64 { let p = Pair { 3i64, 7i64 }; p.a }\n",
     );
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
-    let args = main
+    let operands = main
         .blocks
         .iter()
-        .find_map(|b| match &b.terminator {
-            Terminator::Call { args, .. } => Some(args.clone()),
+        .flat_map(|b| &b.stmts)
+        .find_map(|s| match &s.kind {
+            StatementKind::Assign {
+                rvalue: Rvalue::Aggregate { operands, .. },
+                ..
+            } => Some(operands.clone()),
             _ => None,
         })
-        .expect("positional struct constructor must lower to a call");
-    assert_eq!(args.len(), 2, "Pair has two fields");
+        .expect("positional struct constructor must lower to an aggregate");
+    assert_eq!(operands.len(), 2, "Pair has two fields");
 }
 
 #[test]

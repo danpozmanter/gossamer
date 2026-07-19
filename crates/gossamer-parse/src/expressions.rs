@@ -1516,17 +1516,7 @@ impl Parser<'_> {
                         return true;
                     }
                 }
-                TokenKind::Ident if depth == 1 => {
-                    let after = self.peek_nth(offset + 1);
-                    if matches!(
-                        after.kind,
-                        TokenKind::Punct(Punct::Colon | Punct::Comma | Punct::RBrace)
-                    ) || !matches!(after.kind, TokenKind::Punct(Punct::LBrace))
-                    {
-                        return true;
-                    }
-                    return false;
-                }
+                TokenKind::Ident if depth == 1 => return true,
                 TokenKind::Punct(Punct::DotDot) if depth == 1 => return true,
                 TokenKind::IntLit
                 | TokenKind::FloatLit

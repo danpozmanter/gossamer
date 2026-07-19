@@ -32,7 +32,7 @@ fn bare_route(_r: http::Request) -> http::Response {
 }
 
 fn serve_struct() {
-    if let Err(e) = http::serve("127.0.0.1:23872", App()) {
+    if let Err(e) = http::serve("127.0.0.1:23872", App { }) {
         eprintln!("serve failed: {e}")
     }
 }

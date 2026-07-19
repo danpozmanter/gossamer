@@ -478,7 +478,7 @@ impl http::Handler for App {
 }
 
 fn main() {
-    let _ = http::serve("127.0.0.1:8080", App())
+    let _ = http::serve("127.0.0.1:8080", App { })
 }
 "#;
 
@@ -553,7 +553,7 @@ impl http::Handler for App {
 }
 
 fn main() {
-    let _ = http::serve("127.0.0.1:8080", App())
+    let _ = http::serve("127.0.0.1:8080", App { })
 }
 "#;
     let (bodies, _) = build(source);
@@ -601,7 +601,7 @@ impl http::Handler for App {
 }
 
 fn main() {
-    let _ = http::serve("127.0.0.1:8080", App())
+    let _ = http::serve("127.0.0.1:8080", App { })
 }
 "#;
     let (bodies, _) = build(source);

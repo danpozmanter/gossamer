@@ -25,7 +25,7 @@ impl http::Handler for App {
 
 fn main() {
     println!("about to bind")
-    let result = http::serve("definitely-not-an-address", App())
+    let result = http::serve("definitely-not-an-address", App { })
     match result {
         Ok(_) => println!("unexpected ok"),
         Err(e) => println!("Error: {}", e),

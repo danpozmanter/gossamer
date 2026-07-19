@@ -52,7 +52,7 @@ fn run(rounds: i64) -> i64 {
         let arr = quad(i)
         total += arr[0] + arr[1] + arr[2] + arr[3]
 
-        let t = Trip(Point { x: i, y: i * 3 }, Point { x: 0, y: 0 }, Point { x: 0, y: 0 })
+        let t = Trip { Point { x: i, y: i * 3 }, Point { x: 0, y: 0 }, Point { x: 0, y: 0 } }
         let h = t.head()
         total += h.x + h.y
 

@@ -43,8 +43,8 @@ impl Echo {{
 
 fn main() {{
     let r = router::Router::new()
-    r.get("/health", Health())
-    r.get("/echo", Echo())
+    r.get("/health", Health {{ }})
+    r.get("/echo", Echo {{ }})
     let _ = http::serve("127.0.0.1:{port}", r)
 }}
 "#,
