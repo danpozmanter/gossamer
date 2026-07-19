@@ -278,8 +278,23 @@ const PACKED_ROWS_MIN_ROWS: i64 = 1024;
 /// Vec tagged [`vec_elem_kind::PACKED_ROWS`].
 pub(crate) struct PackedRows {
     pub(crate) rows: Box<[GosVec]>,
-    // Retains the row-major allocation addressed by `rows[*].ptr`.
-    pub(crate) _data: Box<[u64]>,
+    // Owns the row-major allocation addressed by `rows[*].ptr`. This stays
+    // raw so moving the descriptor does not retag and invalidate those row
+    // pointers under Miri's Stacked Borrows model.
+    data: SyncRawPtr<u64>,
+    data_len: usize,
+}
+
+impl Drop for PackedRows {
+    fn drop(&mut self) {
+        if self.data_len == 0 {
+            return;
+        }
+        unsafe {
+            let data = std::ptr::slice_from_raw_parts_mut(self.data.as_ptr(), self.data_len);
+            drop(Box::from_raw(data));
+        }
+    }
 }
 
 /// Element words held inline, immediately after the [`GosVec`] header, in a
@@ -457,7 +472,9 @@ pub(crate) unsafe fn try_pack_primitive_rows(outer: *mut GosVec) -> bool {
     let Some(words) = row_count.checked_mul(width) else {
         return false;
     };
-    let mut data = vec![0u64; words].into_boxed_slice();
+    let mut data = std::mem::ManuallyDrop::new(vec![0u64; words].into_boxed_slice());
+    let data_len = data.len();
+    let data_base = data.as_mut_ptr();
     let mut rows = Vec::with_capacity(row_count);
     for i in 0..row_count {
         let slot = unsafe {
@@ -474,7 +491,7 @@ pub(crate) unsafe fn try_pack_primitive_rows(outer: *mut GosVec) -> bool {
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     row.ptr.as_ptr(),
-                    data.as_mut_ptr().add(i * width).cast::<u8>(),
+                    data_base.add(i * width).cast::<u8>(),
                     width * std::mem::size_of::<u64>(),
                 );
             }
@@ -482,7 +499,7 @@ pub(crate) unsafe fn try_pack_primitive_rows(outer: *mut GosVec) -> bool {
         let data_ptr = if width == 0 {
             std::ptr::NonNull::<u64>::dangling().as_ptr().cast::<u8>()
         } else {
-            unsafe { data.as_mut_ptr().add(i * width).cast::<u8>() }
+            unsafe { data_base.add(i * width).cast::<u8>() }
         };
         rows.push(GosVec {
             len: width as i64,
@@ -507,7 +524,8 @@ pub(crate) unsafe fn try_pack_primitive_rows(outer: *mut GosVec) -> bool {
     }
     let packed = Box::new(PackedRows {
         rows: rows.into_boxed_slice(),
-        _data: data,
+        data: SyncRawPtr::new(data_base),
+        data_len,
     });
     outer_ref.ptr = SyncRawPtr::new(Box::into_raw(packed).cast::<u8>());
     outer_ref.cap = outer_ref.len;

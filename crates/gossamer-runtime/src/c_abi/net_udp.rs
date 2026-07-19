@@ -185,6 +185,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // Miri does not support UDP datagram sockets.
     fn receive_in_a_goroutine_resumes_after_a_datagram_arrives() {
         let socket = UdpSocket::bind("127.0.0.1:0").expect("bind receiver");
         let addr = socket.local_addr().expect("receiver address");
