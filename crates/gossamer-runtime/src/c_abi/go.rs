@@ -370,7 +370,12 @@ pub unsafe extern "C" fn gos_rt_sleep_ns(ns: i64) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_sleep_ms(ms: i64) {
     ffi_entry!((), {
-        let ns = ms.max(0).saturating_mul(1_000_000);
+        if ms < 0 {
+            unsafe {
+                super::gos_rt_panic(c"time::sleep: duration_ms must be non-negative".as_ptr());
+            };
+        }
+        let ns = ms.saturating_mul(1_000_000);
         unsafe { gos_rt_sleep_ns(ns) }
     });
 }

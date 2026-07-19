@@ -19,6 +19,13 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 
+struct TimedOutput {
+    stdout: String,
+    stderr: String,
+    success: bool,
+    elapsed_ms: u64,
+}
+
 fn gos_bin() -> PathBuf {
     PathBuf::from(env::var("CARGO_BIN_EXE_gos").expect("CARGO_BIN_EXE_gos"))
 }
@@ -79,8 +86,16 @@ fn build_native(src: &Path, release: bool, scratch: &Path) -> Result<PathBuf, St
         .ok_or_else(|| format!("no binary in {}", scratch.display()))
 }
 
-/// Runs the binary, returns (stdout, `elapsed_millis`).
-fn run_timed(bin: &Path) -> (String, u64) {
+fn timed_output(start: Instant, out: std::process::Output) -> TimedOutput {
+    TimedOutput {
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        success: out.status.success(),
+        elapsed_ms: start.elapsed().as_millis() as u64,
+    }
+}
+
+fn run_timed(bin: &Path) -> TimedOutput {
     let start = Instant::now();
     let out = Command::new(bin)
         .stdin(Stdio::null())
@@ -88,12 +103,10 @@ fn run_timed(bin: &Path) -> (String, u64) {
         .stderr(Stdio::piped())
         .output()
         .expect("spawn binary");
-    let elapsed = start.elapsed().as_millis() as u64;
-    (String::from_utf8_lossy(&out.stdout).into_owned(), elapsed)
+    timed_output(start, out)
 }
 
-/// Runs `gos run <src>`, returns (stdout, `elapsed_millis`).
-fn run_vm_timed(src: &Path) -> (String, u64) {
+fn run_vm_timed(src: &Path) -> TimedOutput {
     let start = Instant::now();
     let out = Command::new(gos_bin())
         .arg("run")
@@ -103,8 +116,7 @@ fn run_vm_timed(src: &Path) -> (String, u64) {
         .stderr(Stdio::piped())
         .output()
         .expect("spawn gos run");
-    let elapsed = start.elapsed().as_millis() as u64;
-    (String::from_utf8_lossy(&out.stdout).into_owned(), elapsed)
+    timed_output(start, out)
 }
 
 fn write_source(tag: &str, body: &str) -> (PathBuf, PathBuf) {
@@ -132,79 +144,170 @@ fn main() {
 "#;
     let (dir, src) = write_source("sleep_one_second", body);
 
-    let (vm_out, vm_ms) = run_vm_timed(&src);
+    let vm = run_vm_timed(&src);
+    assert!(vm.success, "vm stderr: {}", vm.stderr);
     assert!(
-        vm_out.contains("before") && vm_out.contains("after"),
-        "vm did not print both before/after: {vm_out:?}"
+        vm.stdout.contains("before") && vm.stdout.contains("after"),
+        "vm did not print both before/after: {:?}",
+        vm.stdout
     );
-    assert!(vm_ms >= 900, "vm slept only {vm_ms} ms; expected ≥ 900");
+    assert!(
+        vm.elapsed_ms >= 900,
+        "vm slept only {} ms; expected ≥ 900",
+        vm.elapsed_ms
+    );
 
     let cl_dir = dir.join("cl");
     fs::create_dir_all(&cl_dir).unwrap();
     let cl_bin = build_native(&src, false, &cl_dir).expect("cranelift build");
-    let (cl_out, cl_ms) = run_timed(&cl_bin);
+    let cl = run_timed(&cl_bin);
+    assert!(cl.success, "cranelift stderr: {}", cl.stderr);
     assert!(
-        cl_out.contains("before") && cl_out.contains("after"),
-        "cranelift stdout: {cl_out:?}"
+        cl.stdout.contains("before") && cl.stdout.contains("after"),
+        "cranelift stdout: {:?}",
+        cl.stdout
     );
     assert!(
-        cl_ms >= 900,
-        "cranelift slept only {cl_ms} ms; expected ≥ 900"
+        cl.elapsed_ms >= 900,
+        "cranelift slept only {} ms; expected ≥ 900",
+        cl.elapsed_ms
     );
 
     let ll_dir = dir.join("ll");
     fs::create_dir_all(&ll_dir).unwrap();
     let ll_bin = build_native(&src, true, &ll_dir).expect("llvm build");
-    let (ll_out, ll_ms) = run_timed(&ll_bin);
+    let ll = run_timed(&ll_bin);
+    assert!(ll.success, "llvm stderr: {}", ll.stderr);
     assert!(
-        ll_out.contains("before") && ll_out.contains("after"),
-        "llvm stdout: {ll_out:?}"
+        ll.stdout.contains("before") && ll.stdout.contains("after"),
+        "llvm stdout: {:?}",
+        ll.stdout
     );
-    assert!(ll_ms >= 900, "llvm slept only {ll_ms} ms; expected ≥ 900");
+    assert!(
+        ll.elapsed_ms >= 900,
+        "llvm slept only {} ms; expected ≥ 900",
+        ll.elapsed_ms
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
-fn time_sleep_zero_or_negative_does_not_block_in_all_tiers() {
-    // Zero / negative durations must not block. Catches a
-    // would-be regression where `gos_rt_sleep_ms` overflowed
-    // the saturating multiply and slept forever.
+fn time_sleep_zero_does_not_block_in_all_tiers() {
+    // Zero duration must not block. Catches a would-be regression where
+    // `gos_rt_sleep_ms` routed zero through a real timer wait.
     let body = r#"
 use std::time
 fn main() {
     time::sleep(0)
-    time::sleep(-5)
     println!("done")
 }
 "#;
     let (dir, src) = write_source("sleep_zero", body);
 
-    let (vm_out, vm_ms) = run_vm_timed(&src);
-    assert!(vm_out.contains("done"));
+    let vm = run_vm_timed(&src);
+    assert!(vm.success, "vm stderr: {}", vm.stderr);
+    assert!(vm.stdout.contains("done"));
     assert!(
-        vm_ms < 2000,
-        "vm should not block on zero sleep, took {vm_ms} ms"
+        vm.elapsed_ms < 2000,
+        "vm should not block on zero sleep, took {} ms",
+        vm.elapsed_ms
     );
 
     let cl_dir = dir.join("cl");
     fs::create_dir_all(&cl_dir).unwrap();
     let cl_bin = build_native(&src, false, &cl_dir).expect("cranelift build");
-    let (cl_out, cl_ms) = run_timed(&cl_bin);
-    assert!(cl_out.contains("done"));
+    let cl = run_timed(&cl_bin);
+    assert!(cl.success, "cranelift stderr: {}", cl.stderr);
+    assert!(cl.stdout.contains("done"));
     assert!(
-        cl_ms < 2000,
-        "cranelift should not block on zero sleep, took {cl_ms} ms"
+        cl.elapsed_ms < 2000,
+        "cranelift should not block on zero sleep, took {} ms",
+        cl.elapsed_ms
     );
 
     let ll_dir = dir.join("ll");
     fs::create_dir_all(&ll_dir).unwrap();
     let ll_bin = build_native(&src, true, &ll_dir).expect("llvm build");
-    let (ll_out, ll_ms) = run_timed(&ll_bin);
-    assert!(ll_out.contains("done"));
+    let ll = run_timed(&ll_bin);
+    assert!(ll.success, "llvm stderr: {}", ll.stderr);
+    assert!(ll.stdout.contains("done"));
     assert!(
-        ll_ms < 2000,
-        "llvm should not block on zero sleep, took {ll_ms} ms"
+        ll.elapsed_ms < 2000,
+        "llvm should not block on zero sleep, took {} ms",
+        ll.elapsed_ms
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn time_sleep_negative_is_rejected_in_all_tiers() {
+    let body = r#"
+use std::time
+fn main() {
+    time::sleep(-5)
+    println!("done")
+}
+"#;
+    let (dir, src) = write_source("sleep_negative", body);
+    let expected = "time::sleep: duration_ms must be non-negative";
+
+    let vm = run_vm_timed(&src);
+    assert!(!vm.success, "vm should reject negative sleep");
+    assert!(
+        vm.stderr.contains(expected),
+        "vm stderr missing `{expected}`: {}",
+        vm.stderr
+    );
+    assert!(
+        !vm.stdout.contains("done"),
+        "vm must not continue after negative sleep"
+    );
+    assert!(
+        vm.elapsed_ms < 2000,
+        "vm should reject negative sleep quickly, took {} ms",
+        vm.elapsed_ms
+    );
+
+    let cl_dir = dir.join("cl");
+    fs::create_dir_all(&cl_dir).unwrap();
+    let cl_bin = build_native(&src, false, &cl_dir).expect("cranelift build");
+    let cl = run_timed(&cl_bin);
+    assert!(!cl.success, "cranelift should reject negative sleep");
+    assert!(
+        cl.stderr.contains(expected),
+        "cranelift stderr missing `{expected}`: {}",
+        cl.stderr
+    );
+    assert!(
+        !cl.stdout.contains("done"),
+        "cranelift must not continue after negative sleep"
+    );
+    assert!(
+        cl.elapsed_ms < 2000,
+        "cranelift should reject negative sleep quickly, took {} ms",
+        cl.elapsed_ms
+    );
+
+    let ll_dir = dir.join("ll");
+    fs::create_dir_all(&ll_dir).unwrap();
+    let ll_bin = build_native(&src, true, &ll_dir).expect("llvm build");
+    let ll = run_timed(&ll_bin);
+    assert!(!ll.success, "llvm should reject negative sleep");
+    assert!(
+        ll.stderr.contains(expected),
+        "llvm stderr missing `{expected}`: {}",
+        ll.stderr
+    );
+    assert!(
+        !ll.stdout.contains("done"),
+        "llvm must not continue after negative sleep"
+    );
+    assert!(
+        ll.elapsed_ms < 2000,
+        "llvm should reject negative sleep quickly, took {} ms",
+        ll.elapsed_ms
     );
 
     let _ = fs::remove_dir_all(&dir);
