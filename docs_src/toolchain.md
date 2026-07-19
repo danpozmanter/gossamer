@@ -40,7 +40,8 @@ the implementation by a rev.
 
 | Command | Purpose |
 |---------|---------|
-| `gos clean [--vendor] [--dry-run]` | Remove toolchain-produced artefacts. By default wipes the frontend parse cache. `--vendor` also deletes `./vendor/`. `--dry-run` reports what would be removed without touching anything. |
+| `gos clean [--all] [--frontend] [--ir] [--runners] [--packages] [--build-cache] [--vendor] [--dry-run]` | Remove selected toolchain caches. With no cache-class flag it clears frontend and IR caches; `--all` includes Rust-binding runners, packages, and legacy build artifacts. `--vendor` also deletes `./vendor/`. |
+| `gos cache [--path] [--prune] [--dry-run]` | Show cache roots and usage, print paths only, or prune files older than 30 days and files exceeding the configured total cap. |
 
 ## Package manager
 

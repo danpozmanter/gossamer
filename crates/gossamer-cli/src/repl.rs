@@ -10,7 +10,7 @@ use regex::Regex;
 
 use crate::paths::repl_history_path;
 
-const REPL_HELP_TEXT: &str = "meta-commands: %quit  %history  %bindings  %declarations  %reset  %help  %ls\n\
+const REPL_HELP_TEXT: &str = "meta-commands: %quit  %history  %bindings  %declarations  %reset  %help  %ls  %find <query>\n\
                          plain expressions render as Out[N]; declarations and\n\
                          `let` bindings persist across inputs.";
 
@@ -167,6 +167,13 @@ pub(crate) fn cmd_repl() -> Result<()> {
                 }
                 "ls" => {
                     match repl_ls(arg) {
+                        Ok(text) => println!("{text}"),
+                        Err(msg) => eprintln!("{msg}"),
+                    }
+                    continue;
+                }
+                "find" => {
+                    match repl_find(arg) {
                         Ok(text) => println!("{text}"),
                         Err(msg) => eprintln!("{msg}"),
                     }
@@ -520,6 +527,121 @@ fn repl_ls(arg: &str) -> std::result::Result<String, String> {
         ));
     }
     Ok(format!("no stdlib module found for `{arg}`"))
+}
+
+/// Fuzzy-searches the public catalog. Unlike `%help`, which resolves an exact
+/// name (or an explicit regex), `%find` accepts abbreviated words such as
+/// `http serv` and ranks the closest modules and exported objects first.
+fn repl_find(arg: &str) -> std::result::Result<String, String> {
+    let query = normalize_query(arg);
+    if query.is_empty() {
+        return Err("usage: %find <module, function, or public object>".to_string());
+    }
+
+    let mut matches = Vec::new();
+    for module in gossamer_std::registry::modules() {
+        let candidate = FindCandidate {
+            path: module.path.to_string(),
+            kind: "module",
+            doc: module.summary,
+        };
+        if let Some(score) = fuzzy_score(query, &candidate.path, candidate.doc) {
+            matches.push((score, candidate));
+        }
+        for item in module.items {
+            let candidate = FindCandidate {
+                path: format!("{}::{}", module.path, item.name),
+                kind: item_kind_label(item.kind),
+                doc: item.doc,
+            };
+            if let Some(score) = fuzzy_score(query, &candidate.path, candidate.doc) {
+                matches.push((score, candidate));
+            }
+        }
+    }
+    for builtin in BUILTIN_MACROS {
+        let candidate = FindCandidate {
+            path: builtin.name.to_string(),
+            kind: "macro",
+            doc: builtin.doc,
+        };
+        if let Some(score) = fuzzy_score(query, &candidate.path, candidate.doc) {
+            matches.push((score, candidate));
+        }
+    }
+    for builtin in PRELUDE_BUILTINS {
+        let candidate = FindCandidate {
+            path: builtin.name.to_string(),
+            kind: "builtin",
+            doc: builtin.doc,
+        };
+        if let Some(score) = fuzzy_score(query, &candidate.path, candidate.doc) {
+            matches.push((score, candidate));
+        }
+    }
+
+    matches.sort_by(|(left_score, left), (right_score, right)| {
+        right_score
+            .cmp(left_score)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    matches.dedup_by(|(_, left), (_, right)| left.path == right.path && left.kind == right.kind);
+
+    if matches.is_empty() {
+        return Ok(format!("no public symbols found for `{query}`"));
+    }
+    let mut out = String::new();
+    for (_, candidate) in matches.into_iter().take(50) {
+        out.push_str(&format!(
+            "{:<48} {:<7} {}\n",
+            candidate.path, candidate.kind, candidate.doc
+        ));
+    }
+    Ok(out.trim_end().to_string())
+}
+
+struct FindCandidate<'a> {
+    path: String,
+    kind: &'a str,
+    doc: &'a str,
+}
+
+/// Returns a subsequence-match score for every whitespace-separated query
+/// token. Exact and boundary matches rank ahead of broad documentation-only
+/// matches, while still keeping the command useful for partial spellings.
+fn fuzzy_score(query: &str, path: &str, doc: &str) -> Option<i32> {
+    let haystack = format!("{} {}", path.to_ascii_lowercase(), doc.to_ascii_lowercase());
+    let path_lower = path.to_ascii_lowercase();
+    let mut score = 0;
+    for token in query.to_ascii_lowercase().split_whitespace() {
+        let token = token
+            .chars()
+            .filter(|character| character.is_alphanumeric())
+            .collect::<String>();
+        if token.is_empty() {
+            continue;
+        }
+        if let Some(index) = path_lower.find(&token) {
+            score += 1_000 - i32::try_from(index).unwrap_or(i32::MAX).min(500);
+            if index == 0 || !path_lower.as_bytes()[index - 1].is_ascii_alphanumeric() {
+                score += 200;
+            }
+            continue;
+        }
+        let mut previous = None;
+        let mut gaps = 0i32;
+        for needle in token.bytes() {
+            let start = previous.map_or(0, |index: usize| index + 1);
+            let relative = haystack[start..].find(char::from(needle))?;
+            let index = start + relative;
+            if let Some(last) = previous {
+                gaps += i32::try_from(index - last - 1).unwrap_or(i32::MAX);
+            }
+            previous = Some(index);
+        }
+        score += 100 - gaps.min(90);
+    }
+    Some(score)
 }
 
 fn regex_argument(arg: &str) -> std::result::Result<Option<Regex>, String> {

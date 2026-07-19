@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.31.0 - Service hardening, REPL discovery, cache management
+
+- Add configurable maximum request-header and chunked-trailer counts and
+  sizes to the native HTTP/1 server. Trailer parsing is now bounded, requires
+  valid CRLF framing, and rejects malformed header fields.
+- Add `%find <query>` to the REPL. It fuzzily ranks public modules, functions,
+  types, traits, constants, macros, and prelude builtins.
+- Add `gos cache` inspection/pruning plus targeted `gos clean` cache classes,
+  including Rust-binding runners that previously accumulated without a
+  supported cleanup path.
+- Add immutable structured diagnostic fields to `std::errors::Error`, for
+  protocol and driver classifications such as SQLSTATE without message parsing.
+
 ## 0.30.2 - Native execution and memory efficiency, fixes
 
 - Replace block-number loop detection in LLVM code generation with CFG

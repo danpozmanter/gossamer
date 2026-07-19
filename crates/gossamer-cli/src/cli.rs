@@ -520,6 +520,18 @@ enum Command {
         /// Shell to emit completions for.
         shell: clap_complete::Shell,
     },
+    /// Inspect cache roots or prune expired and least-recently-modified files.
+    Cache {
+        /// Print only cache-class names and paths.
+        #[arg(long)]
+        path: bool,
+        /// Prune files older than the retention window or beyond the cache cap.
+        #[arg(long)]
+        prune: bool,
+        /// Report pruning without deleting files.
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+    },
     /// Remove cached artefacts produced by the toolchain.
     ///
     /// By default clears the frontend parse cache (where `gos check`
@@ -532,6 +544,24 @@ enum Command {
         /// Report what would be removed without touching anything.
         #[arg(long, short = 'n')]
         dry_run: bool,
+        /// Remove frontend parse cache entries.
+        #[arg(long)]
+        frontend: bool,
+        /// Remove LLVM incremental object caches.
+        #[arg(long)]
+        ir: bool,
+        /// Remove cached Rust-binding runner and staticlib builds.
+        #[arg(long)]
+        runners: bool,
+        /// Remove fetched package source cache entries.
+        #[arg(long)]
+        packages: bool,
+        /// Remove legacy build cache entries.
+        #[arg(long)]
+        build_cache: bool,
+        /// Remove every toolchain cache class.
+        #[arg(long)]
+        all: bool,
     },
     /// Print lifecycle status for every language feature and stdlib
     /// item. Joins the registry in
@@ -777,7 +807,50 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
             clap_complete::generate(shell, &mut Cli::command(), "gos", &mut std::io::stdout());
             Ok(())
         }
-        Some(Command::Clean { vendor, dry_run }) => cmd::clean::run(vendor, dry_run),
+        Some(Command::Cache {
+            path,
+            prune,
+            dry_run,
+        }) => {
+            if prune {
+                cmd::cache::prune(dry_run)
+            } else {
+                cmd::cache::status(path)
+            }
+        }
+        Some(Command::Clean {
+            vendor,
+            dry_run,
+            frontend,
+            ir,
+            runners,
+            packages,
+            build_cache,
+            all,
+        }) => {
+            use gossamer_driver::cache_maintenance::CacheClass;
+            let mut classes = Vec::new();
+            if all {
+                classes.extend(CacheClass::all());
+            } else {
+                for (enabled, class) in [
+                    (frontend, CacheClass::Frontend),
+                    (ir, CacheClass::Ir),
+                    (runners, CacheClass::Runners),
+                    (packages, CacheClass::Packages),
+                    (build_cache, CacheClass::Build),
+                ] {
+                    if enabled {
+                        classes.push(class);
+                    }
+                }
+            }
+            cmd::clean::run(cmd::clean::Options {
+                vendor,
+                dry_run,
+                classes,
+            })
+        }
         Some(Command::FeatureStatus {
             format,
             check,

@@ -561,6 +561,15 @@ pub mod server {
         /// Maximum header-block size (bytes). Requests with a
         /// header block larger than this return `431`. Default 8 KiB.
         pub max_header_bytes: usize,
+        /// Maximum number of request header fields. Requests beyond this cap
+        /// return `431`; the limit includes duplicate fields. Default 100.
+        pub max_header_count: usize,
+        /// Maximum aggregate size of a chunked request's trailer block.
+        /// Default 8 KiB. This is separate from `max_header_bytes` so callers
+        /// can make the policy explicit.
+        pub max_trailer_bytes: usize,
+        /// Maximum number of trailer fields in a chunked request. Default 100.
+        pub max_trailer_count: usize,
         /// Maximum body size (bytes). Requests larger than this
         /// return `413`. Default 1 MiB.
         pub max_body_bytes: usize,
@@ -592,6 +601,9 @@ pub mod server {
                 max_requests: None,
                 shutdown: Arc::new(AtomicBool::new(false)),
                 max_header_bytes: 8 * 1024,
+                max_header_count: 100,
+                max_trailer_bytes: 8 * 1024,
+                max_trailer_count: 100,
                 max_body_bytes: 1024 * 1024,
                 max_connections: DEFAULT_MAX_CONNECTIONS,
                 max_pending_requests: 64,
@@ -861,6 +873,7 @@ pub mod server {
         };
         if chunked {
             let mut decoder = crate::http_chunked::ChunkedReader::new(reader);
+            decoder.set_trailer_limits(config.max_trailer_bytes, config.max_trailer_count);
             let mut payload = Vec::new();
             let mut tmp = [0u8; 8192];
             loop {
@@ -1191,10 +1204,10 @@ pub mod server {
                 break;
             }
             header_count = header_count.saturating_add(1);
-            if header_count > 100 {
+            if header_count > config.max_header_count {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "too many request headers",
+                    format!("request has more than {} headers", config.max_header_count),
                 ));
             }
             if stripped.starts_with([' ', '\t']) {
@@ -1921,6 +1934,13 @@ pub mod server {
             };
             let oversized = b"GET / HTTP/1.1\r\nHost: example.test-with-a-long-name\r\n\r\n";
             assert!(parse_head(oversized, &small).is_err());
+
+            let few_headers = Config {
+                max_header_count: 1,
+                ..Config::default()
+            };
+            let multiple_headers = b"GET / HTTP/1.1\r\nHost: example.test\r\nAccept: */*\r\n\r\n";
+            assert!(parse_head(multiple_headers, &few_headers).is_err());
         }
 
         #[test]

@@ -9,29 +9,45 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 /// Entry point for `gos clean`.
-pub(crate) fn run(vendor: bool, dry_run: bool) -> Result<()> {
+pub(crate) struct Options {
+    pub(crate) vendor: bool,
+    pub(crate) dry_run: bool,
+    pub(crate) classes: Vec<gossamer_driver::cache_maintenance::CacheClass>,
+}
+
+pub(crate) fn run(options: Options) -> Result<()> {
+    let Options {
+        vendor,
+        dry_run,
+        mut classes,
+    } = options;
     let mut removed_bytes: u64 = 0;
     let mut removed_files: u32 = 0;
 
-    // Project-local build artifacts + the incremental IR-object cache,
+    // Project-local build artifacts are always disposable.
     // anchored at the current directory: `gos build` writes the binary
     // under `target/{debug,release}` and caches per-body objects in
     // `.gos-cache/ir-cache`.
     let cwd = std::env::current_dir()?;
-    for (dir, label) in [
-        (cwd.join("target"), "build artifacts (target/)"),
-        (cwd.join(".gos-cache"), "incremental IR cache (.gos-cache/)"),
-    ] {
-        remove_dir(&dir, label, dry_run, &mut removed_bytes, &mut removed_files)?;
+    let (dir, label) = (cwd.join("target"), "build artifacts (target/)");
+    remove_dir(&dir, label, dry_run, &mut removed_bytes, &mut removed_files)?;
+    if classes.is_empty() {
+        classes.extend([
+            gossamer_driver::cache_maintenance::CacheClass::Frontend,
+            gossamer_driver::cache_maintenance::CacheClass::Ir,
+        ]);
     }
-
-    remove_dir(
-        &gossamer_driver::cache_dir(),
-        "frontend cache",
-        dry_run,
-        &mut removed_bytes,
-        &mut removed_files,
-    )?;
+    for entry in gossamer_driver::cache_maintenance::remove(&cwd, &classes, dry_run)? {
+        let verb = if dry_run { "would remove" } else { "removed" };
+        println!(
+            "{verb} {} cache at {} ({} bytes)",
+            entry.class.name(),
+            entry.path.display(),
+            entry.bytes
+        );
+        removed_bytes += entry.bytes;
+        removed_files += 1;
+    }
 
     if vendor {
         remove_dir(

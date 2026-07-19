@@ -403,7 +403,7 @@ fn repl_meta_help_preserves_base_banner() {
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains(
-            "meta-commands: %quit  %history  %bindings  %declarations  %reset  %help  %ls"
+            "meta-commands: %quit  %history  %bindings  %declarations  %reset  %help  %ls  %find <query>"
         ),
         "bare %help should keep the existing banner; stdout: {}",
         out.stdout
@@ -412,6 +412,33 @@ fn repl_meta_help_preserves_base_banner() {
         out.stdout.contains("`let` bindings persist across inputs."),
         "bare %help should keep the existing REPL summary; stdout: {}",
         out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_find_fuzzy_searches_modules_functions_and_types() {
+    let out = run_repl("%find http serv\n%find json valu\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("std::http::serve") && out.stdout.contains("fn"),
+        "fuzzy function lookup should find http::serve: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("std::encoding::json::Value") && out.stdout.contains("type"),
+        "fuzzy public-type lookup should find json::Value: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_find_requires_a_query() {
+    let out = run_repl("%find\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("usage: %find"),
+        "empty find should show usage: {}",
+        out.stderr
     );
 }
 

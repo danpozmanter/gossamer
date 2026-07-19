@@ -13,6 +13,7 @@
 
 pub mod binding_runner;
 pub mod build;
+pub mod cache_maintenance;
 pub mod frontend;
 pub mod frontend_cache;
 pub mod link;

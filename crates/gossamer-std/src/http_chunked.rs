@@ -42,6 +42,11 @@ pub struct ChunkedReader<R: BufRead> {
     /// 16 hex digits = 2^64 bytes, far past the body cap; any
     /// value above this is treated as malformed.
     pub max_size_digits: usize,
+    /// Maximum aggregate size of the trailer block, including line endings.
+    /// This prevents an otherwise unbounded allocation after the final chunk.
+    pub max_trailer_bytes: usize,
+    /// Maximum number of trailer fields accepted after the final chunk.
+    pub max_trailer_count: usize,
 }
 
 #[derive(Debug)]
@@ -61,6 +66,8 @@ impl<R: BufRead> ChunkedReader<R> {
             state: State::ReadSize,
             trailers: Vec::new(),
             max_size_digits: 16,
+            max_trailer_bytes: 8 * 1024,
+            max_trailer_count: 100,
         }
     }
 
@@ -76,6 +83,14 @@ impl<R: BufRead> ChunkedReader<R> {
     /// block have been consumed.
     pub fn is_done(&self) -> bool {
         matches!(self.state, State::Done)
+    }
+
+    /// Sets explicit resource limits for the trailer block. A zero value
+    /// rejects any trailer field while still accepting the terminating blank
+    /// line. Servers should use their request-header limits here.
+    pub fn set_trailer_limits(&mut self, max_bytes: usize, max_count: usize) {
+        self.max_trailer_bytes = max_bytes;
+        self.max_trailer_count = max_count;
     }
 
     fn read_size_line(&mut self) -> io::Result<u64> {
@@ -123,25 +138,111 @@ impl<R: BufRead> ChunkedReader<R> {
     }
 
     fn read_trailers_block(&mut self) -> io::Result<()> {
+        let mut bytes_read = 0usize;
         loop {
             let mut line = String::new();
-            let n = self.inner.read_line(&mut line)?;
+            let n = read_limited_line(
+                &mut self.inner,
+                &mut line,
+                self.max_trailer_bytes.saturating_sub(bytes_read),
+            )?;
             if n == 0 {
                 // No trailing CRLF - be permissive (some peers
                 // send the final 0\r\n then close without the
                 // empty line).
                 return Ok(());
             }
+            bytes_read = bytes_read.saturating_add(n);
             let trimmed = line.trim_end_matches(['\r', '\n']);
             if trimmed.is_empty() {
                 return Ok(());
             }
-            if let Some((name, value)) = trimmed.split_once(':') {
-                self.trailers
-                    .push((name.trim().to_string(), value.trim().to_string()));
+            if !line.ends_with("\r\n") {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "chunked: trailer line lacks CRLF",
+                ));
             }
+            let (name, value) = trimmed.split_once(':').ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "chunked: malformed trailer")
+            })?;
+            if name.is_empty()
+                || !name.bytes().all(is_header_name_byte)
+                || !value.bytes().all(is_header_value_byte)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "chunked: invalid trailer",
+                ));
+            }
+            if self.trailers.len() >= self.max_trailer_count {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "chunked: too many trailers",
+                ));
+            }
+            self.trailers
+                .push((name.trim().to_string(), value.trim().to_string()));
         }
     }
+}
+
+fn read_limited_line<R: BufRead>(
+    reader: &mut R,
+    out: &mut String,
+    remaining: usize,
+) -> io::Result<usize> {
+    let mut read = 0usize;
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return Ok(read);
+        }
+        let take = available
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(available.len(), |index| index + 1);
+        if read.saturating_add(take) > remaining {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "chunked: trailer block exceeds configured cap",
+            ));
+        }
+        let text = std::str::from_utf8(&available[..take]).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "chunked: trailer is not UTF-8")
+        })?;
+        out.push_str(text);
+        reader.consume(take);
+        read += take;
+        if out.ends_with('\n') {
+            return Ok(read);
+        }
+    }
+}
+
+const fn is_header_name_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
+        )
+}
+
+const fn is_header_value_byte(byte: u8) -> bool {
+    byte == b'\t' || (byte >= 0x20 && byte <= 0x7e)
 }
 
 impl<R: BufRead> Read for ChunkedReader<R> {
@@ -397,6 +498,28 @@ mod tests {
         assert_eq!(r.trailers.len(), 2);
         assert_eq!(r.trailers[0], ("Foo".to_string(), "bar".to_string()));
         assert_eq!(r.trailers[1], ("Baz".to_string(), "qux".to_string()));
+    }
+
+    #[test]
+    fn reader_enforces_trailer_size_and_count_limits() {
+        let body = b"1\r\na\r\n0\r\nOne: 1\r\nTwo: 2\r\n\r\n";
+        let mut count_limited = ChunkedReader::new(Cursor::new(body));
+        count_limited.set_trailer_limits(128, 1);
+        let mut out = Vec::new();
+        assert!(count_limited.read_to_end(&mut out).is_err());
+
+        let mut size_limited = ChunkedReader::new(Cursor::new(body));
+        size_limited.set_trailer_limits(4, 10);
+        let mut out = Vec::new();
+        assert!(size_limited.read_to_end(&mut out).is_err());
+    }
+
+    #[test]
+    fn reader_rejects_malformed_trailer_framing() {
+        let body = b"1\r\na\r\n0\r\nBad: trailer\n\r\n";
+        let mut reader = ChunkedReader::new(Cursor::new(body));
+        let mut out = Vec::new();
+        assert!(reader.read_to_end(&mut out).is_err());
     }
 
     #[test]

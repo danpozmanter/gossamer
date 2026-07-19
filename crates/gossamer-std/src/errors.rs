@@ -22,11 +22,13 @@ trait ErrorObj: Send + Sync + 'static {
     fn message(&self) -> &str;
     fn cause(&self) -> Option<&Error>;
     fn debug(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result;
+    fn fields(&self) -> &[(String, String)];
 }
 
 struct Simple {
     message: String,
     cause: Option<Error>,
+    fields: Vec<(String, String)>,
 }
 
 impl ErrorObj for Simple {
@@ -41,6 +43,10 @@ impl ErrorObj for Simple {
     fn debug(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         out.write_str(&self.message)
     }
+
+    fn fields(&self) -> &[(String, String)] {
+        &self.fields
+    }
 }
 
 impl Error {
@@ -51,6 +57,7 @@ impl Error {
             inner: Arc::new(Simple {
                 message: message.into(),
                 cause: None,
+                fields: Vec::new(),
             }),
         }
     }
@@ -64,6 +71,7 @@ impl Error {
             inner: Arc::new(Simple {
                 message: message.into(),
                 cause: Some(cause),
+                fields: Vec::new(),
             }),
         }
     }
@@ -78,6 +86,44 @@ impl Error {
     #[must_use]
     pub fn cause(&self) -> Option<&Error> {
         self.inner.cause()
+    }
+
+    /// Returns a copy of this error with a structured diagnostic field. Fields
+    /// are intended for machine classification such as SQLSTATE, operation,
+    /// or endpoint. Callers must redact secrets before attaching them.
+    #[must_use]
+    pub fn with_field(&self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        let mut fields = self.inner.fields().to_vec();
+        let key = key.into();
+        let value = value.into();
+        if let Some((_, current)) = fields.iter_mut().find(|(name, _)| *name == key) {
+            *current = value;
+        } else {
+            fields.push((key, value));
+        }
+        Self {
+            inner: Arc::new(Simple {
+                message: self.message().to_string(),
+                cause: self.cause().cloned(),
+                fields,
+            }),
+        }
+    }
+
+    /// Returns the value associated with `key`, if present on this error.
+    #[must_use]
+    pub fn field(&self, key: &str) -> Option<&str> {
+        self.inner
+            .fields()
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.as_str())
+    }
+
+    /// Returns structured diagnostic fields in insertion order.
+    #[must_use]
+    pub fn fields(&self) -> &[(String, String)] {
+        self.inner.fields()
     }
 
     /// Walks the cause chain starting at `self` and returns `true` if
@@ -179,6 +225,17 @@ mod tests {
         let outer = Error::wrap(inner, "open /etc/passwd");
         assert!(outer.is("EACCES"));
         assert!(!outer.is("ENOENT"));
+    }
+
+    #[test]
+    fn structured_fields_are_immutable_and_replace_by_key() {
+        let original = Error::new("query failed");
+        let tagged = original
+            .with_field("sqlstate", "40001")
+            .with_field("sqlstate", "23505");
+        assert!(original.field("sqlstate").is_none());
+        assert_eq!(tagged.field("sqlstate"), Some("23505"));
+        assert_eq!(tagged.fields().len(), 1);
     }
 
     #[test]

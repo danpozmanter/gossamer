@@ -2372,7 +2372,11 @@ Package source trees are content-addressed under
 `~/.gossamer/cache/pkg/<sha256>/source/`, overridden by `GOS_CACHE_DIR`.
 Frontend caches follow `GOSSAMER_CACHE_DIR`, then the platform XDG/user cache
 location. Project-native IR objects use `.gos-cache/ir-cache/`. These cache
-locations are performance details and may be removed with `gos clean`.
+locations are performance details and may be removed with `gos clean`. Use
+`gos cache` to inspect every active root and `gos cache --prune` to remove
+entries older than 30 days or beyond the `GOS_CACHE_MAX_BYTES` total budget
+(20 GiB by default). `gos clean --all` also clears Rust-binding runners,
+package sources, and legacy build artifacts.
 
 ### 16.6 Subcommands
 
@@ -2388,6 +2392,8 @@ locations are performance details and may be removed with `gos clean`.
 - `gos tidy` - parse project sources, remove direct project dependencies not
   referenced by a string-quoted project import, and canonicalize manifest
   ordering. Rust bindings are retained independently.
+- `gos cache` - show cache classes and roots; `--path` prints paths only and
+  `--prune` applies retention policy (`--dry-run` reports without deletion).
 - `gos vendor` - copy deps into `./vendor/`.
 - `gos doc` - generate HTML documentation.
 
