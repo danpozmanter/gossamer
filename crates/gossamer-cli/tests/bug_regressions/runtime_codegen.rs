@@ -682,7 +682,7 @@ fn aggregate_alloc_loop_reclaims_deterministically() {
     //     double-free in the drop pass);
     //   - all three tiers agree.
     let src = "struct Pair { a: i64, b: i64 }\n\
-               fn make(i: i64) -> Pair { Pair { left: i, right: i * 2 } }\n\
+               fn make(i: i64) -> Pair { Pair { a: i, b: i * 2 } }\n\
                fn main() {\n\
                    let mut total: i64 = 0\n\
                    let mut i: i64 = 0\n\

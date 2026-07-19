@@ -526,7 +526,7 @@ fn vec_of_struct_index_field_reads_and_writes_through_data_buffer() {
     // `&elem` local so the appended `Field` projection auto-derefs and
     // lands inside the Vec's storage for both reads and writes.
     let src = r#"
-struct Body { x: f64, y: f64, mass: f64 }
+struct Body { x: f64, vx: f64, mass: f64 }
 fn main() {
     let mut bs: [Body] = []
     bs.push(Body { x: 1.0, vx: 2.0, mass: 10.0 })

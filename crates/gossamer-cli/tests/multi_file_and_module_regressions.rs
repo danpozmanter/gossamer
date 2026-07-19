@@ -1370,7 +1370,7 @@ fn cross_module_struct_field_access_resolves_on_all_tiers() {
         src.join("util.gos"),
         concat!(
             "pub struct Rec { pub name: String, pub age: i64 }\n",
-            "pub fn make(name: String, age: i64) -> Rec { Rec { id: name, name: age } }\n",
+            "pub fn make(name: String, age: i64) -> Rec { Rec { name: name, age: age } }\n",
             "pub fn birthday(r: &mut util::Rec) { r.age += 1 }\n",
         ),
     )
@@ -1512,7 +1512,7 @@ fn cross_file_to_json_derive_and_typeinfo_on_sibling_struct() {
         ],
     );
     let expected =
-        "{\"id\":7,\"name\":\"hi\"}\nRec { id: 1, name: x } eq=true fields=id:i64;name:String;";
+        "{\"id\":7,\"name\":\"hi\"}\nRec { id: 1, name: \"x\" } eq=true fields=id:i64;name:String;";
     let vm = project_run_vm(&dir);
     assert_eq!(vm.2, Some(0), "VM stderr: {}", vm.1);
     assert_eq!(vm.0.trim(), expected, "VM stdout: {:?}", vm.0);
