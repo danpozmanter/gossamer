@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.32.1 - Strict function type checking, gos cache readability
+
+- Enforce nominal and structural parameter, return, method, callback,
+  pipeline, generic-call, and enum-constructor types, including mismatches
+  whose numeric literal types resolve after the call is checked.
+- Show `gos cache` sizes in compact, human-readable units by default.
+
 ## 0.32.0 - Struct construction overhaul and correctness fixes
 
 - Breaking: named structs now require braced construction. Named struct

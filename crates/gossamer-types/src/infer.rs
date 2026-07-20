@@ -12,7 +12,7 @@ use thiserror::Error;
 use crate::context::TyCtxt;
 use crate::subst::{GenericArg, Substs};
 use crate::traits::TraitRef;
-use crate::ty::{FloatTy, FnSig, IntTy, Ty, TyKind, TyVid};
+use crate::ty::{FloatTy, FnSig, IntTy, Mutbl, Ty, TyKind, TyVid};
 
 /// One slot in the union-find table maintained by [`InferCtxt`].
 #[derive(Debug, Clone, Copy)]
@@ -202,9 +202,8 @@ impl InferCtxt {
     }
 
     /// Whether `ty` resolves to an as-yet-unbound float-default
-    /// inference variable - an unsuffixed float literal. Such a value
-    /// unifies leniently with concrete types, so it must be rejected
-    /// explicitly where only a string is acceptable.
+    /// inference variable - an unsuffixed float literal. Callers use this to
+    /// preserve the source-facing `{float}` spelling in diagnostics.
     #[must_use]
     pub fn is_float_literal_var(&mut self, tcx: &TyCtxt, ty: Ty) -> bool {
         let resolved = self.resolve(tcx, ty);
@@ -329,24 +328,26 @@ impl InferCtxt {
                 _ => return Err(UnifyError::IntegerConstraint),
             }
         }
-        // Mirror the integer propagation for unsuffixed float
-        // literals: when a float-literal var merges with another
-        // var, carry the float-default flag onto the target's root
-        // so the merged class still defaults to `f64`. Float vars
-        // unify leniently with concrete types (no rejection), so a
-        // concrete float / non-float target needs no special-casing.
+        // Mirror the integer constraint for unsuffixed float literals.
+        // They may select f32 or f64 from context, but must never satisfy an
+        // integer, boolean, string, function, or aggregate slot.
         let needs_float = self
             .float_literal
             .get(root as usize)
             .copied()
             .unwrap_or(false);
         if needs_float {
-            if let Some(TyKind::Var(other_vid)) = tcx.kind(self.resolve(tcx, ty)).cloned() {
-                let other_root = self.root_of(other_vid);
-                if other_root as usize >= self.float_literal.len() {
-                    self.float_literal.resize((other_root as usize) + 1, false);
+            let resolved = self.resolve(tcx, ty);
+            match tcx.kind(resolved).cloned() {
+                Some(TyKind::Float(_)) => {}
+                Some(TyKind::Var(other_vid)) => {
+                    let other_root = self.root_of(other_vid);
+                    if other_root as usize >= self.float_literal.len() {
+                        self.float_literal.resize((other_root as usize) + 1, false);
+                    }
+                    self.float_literal[other_root as usize] = true;
                 }
-                self.float_literal[other_root as usize] = true;
+                _ => return Err(UnifyError::FloatConstraint),
             }
         }
         self.bind(vid, ty);
@@ -399,6 +400,16 @@ impl InferCtxt {
                     inner: bi,
                 },
             ) if am == bm => self.unify(tcx, *ai, *bi),
+            // String literals and owned strings coerce to `&str`. Gossamer's
+            // text references are layout-transparent, but the rule remains
+            // directional so an arbitrary bare value cannot satisfy `&T`.
+            (
+                TyKind::Ref {
+                    mutability: Mutbl::Not,
+                    inner,
+                },
+                TyKind::String,
+            ) if matches!(tcx.kind(*inner), Some(TyKind::String)) => Ok(()),
             (TyKind::FnPtr(a), TyKind::FnPtr(b)) | (TyKind::FnTrait(a), TyKind::FnTrait(b)) => {
                 self.unify_fn_sig(tcx, a, b)
             }
@@ -413,15 +424,12 @@ impl InferCtxt {
             (TyKind::FnTrait(t), TyKind::FnPtr(s)) | (TyKind::FnPtr(s), TyKind::FnTrait(t)) => {
                 self.unify_fn_sig(tcx, t, s)
             }
-            (TyKind::FnTrait(t), TyKind::FnDef { .. })
-            | (TyKind::FnDef { .. }, TyKind::FnTrait(t)) => {
-                // FnDef has no signature on the type itself - the
-                // signature lives at the def. We accept the
-                // conversion structurally; the typeck-level
-                // arity/sig check happens at the call site.
-                let _ = (tcx, t);
-                Ok(())
-            }
+            // A named function item's signature lives in the checker-owned
+            // definition table, not in `TyKind::FnDef`. The checker resolves
+            // and validates this coercion before entering the raw unifier. A
+            // nested or otherwise unchecked function item must fail closed.
+            (TyKind::FnTrait(_), TyKind::FnDef { .. })
+            | (TyKind::FnDef { .. }, TyKind::FnTrait(_)) => Err(UnifyError::Mismatch),
             (TyKind::FnTrait(_), TyKind::Closure { .. })
             | (TyKind::Closure { .. }, TyKind::FnTrait(_)) => {
                 // Closures are tied to a synthesised def id; their
@@ -614,4 +622,7 @@ pub enum UnifyError {
     /// position.
     #[error("integer literal cannot satisfy non-integer type constraint")]
     IntegerConstraint,
+    /// An unsuffixed float literal was forced into a non-float position.
+    #[error("float literal cannot satisfy non-float type constraint")]
+    FloatConstraint,
 }

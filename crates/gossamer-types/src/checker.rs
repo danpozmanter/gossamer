@@ -234,13 +234,20 @@ struct TypeChecker<'a> {
     /// `sel.params()` reaches MIR untyped and the compiled tier
     /// guesses the element layout.
     method_ret_types: HashMap<(String, String, usize), Ty>,
+    /// Declared non-receiver parameter types for methods on concrete user
+    /// types, keyed by `(self type, method)`.
+    method_param_types: HashMap<(String, String), Vec<Ty>>,
     /// Declared return types of generic-`impl` methods (`impl<T> Add for
     /// Wrap<T>`), keyed like [`Self::method_ret_types`]. The stored type
     /// carries rigid `Param` slots; a use site substitutes the receiver
     /// instantiation's `substs` before returning it.
     generic_method_ret_types: HashMap<(String, String, usize), Ty>,
-    /// Declared argument arity (excluding `self`) of each non-generic
-    /// user method, keyed by `(type_name, method_name)`. Drives the
+    /// Generic-impl counterpart of [`Self::method_param_types`]. Stored
+    /// parameter types carry rigid `Param` slots substituted from the
+    /// receiver at each call site.
+    generic_method_param_types: HashMap<(String, String), Vec<Ty>>,
+    /// Declared argument arity (excluding `self`) of each user method,
+    /// keyed by `(type_name, method_name)`. Drives the
     /// method-call arity check (GT0018): a call with the wrong count
     /// aborts on the VM and zero-fills/drops on the compiled tier, so it
     /// is rejected statically the same way free calls are.
@@ -320,6 +327,8 @@ struct TypeChecker<'a> {
     /// return type instead of the i64 default - so a `String`-returning
     /// trait method renders as text on the compiled tiers.
     trait_method_ret: HashMap<(String, String), Ty>,
+    /// Declared non-receiver parameter types of trait methods.
+    trait_method_params: HashMap<(String, String), Vec<Ty>>,
     /// Per-parameter trait bounds of the function currently being checked,
     /// indexed by parameter position. Set on entry to a generic function
     /// body so a method call on a `Param` receiver can find its bounds.
@@ -425,7 +434,9 @@ impl<'a> TypeChecker<'a> {
             current_fn_ret: None,
             loop_break_tys: Vec::new(),
             method_ret_types: HashMap::new(),
+            method_param_types: HashMap::new(),
             generic_method_ret_types: HashMap::new(),
+            generic_method_param_types: HashMap::new(),
             method_arities: HashMap::new(),
             deferred_structural: Vec::new(),
             deferred_type_mismatches: Vec::new(),
@@ -441,6 +452,7 @@ impl<'a> TypeChecker<'a> {
             fn_generic_const_mask: HashMap::new(),
             trait_impl_types: HashMap::new(),
             trait_method_ret: HashMap::new(),
+            trait_method_params: HashMap::new(),
             current_param_bounds: Vec::new(),
             current_generic_scope: HashMap::new(),
             current_const_generic_scope: HashMap::new(),
@@ -1126,10 +1138,77 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn unify(&mut self, lhs: Ty, rhs: Ty, span: Span) {
-        match self.infer.unify(self.tcx, lhs, rhs) {
+        let lhs_resolved = self.infer.resolve(self.tcx, lhs);
+        let rhs_resolved = self.infer.resolve(self.tcx, rhs);
+        let lhs_kind = self.tcx.kind(lhs_resolved).cloned();
+        let rhs_kind = self.tcx.kind(rhs_resolved).cloned();
+
+        // Function items carry only a DefId in their TyKind; their signature
+        // lives in `fn_sigs`. Materialize that signature before unification so
+        // a named function can coerce to a compatible `fn`/`Fn` parameter but
+        // never to an incompatible one.
+        let callable_result = match (&lhs_kind, &rhs_kind) {
+            (Some(TyKind::FnPtr(_) | TyKind::FnTrait(_)), Some(TyKind::FnDef { def, substs })) => {
+                self.instantiated_fn_item_sig(*def, substs).map(|sig| {
+                    let actual = self.tcx.intern(TyKind::FnPtr(sig));
+                    self.infer.unify(self.tcx, lhs_resolved, actual)
+                })
+            }
+            (Some(TyKind::FnDef { def, substs }), Some(TyKind::FnPtr(_) | TyKind::FnTrait(_))) => {
+                self.instantiated_fn_item_sig(*def, substs).map(|sig| {
+                    let actual = self.tcx.intern(TyKind::FnPtr(sig));
+                    self.infer.unify(self.tcx, actual, rhs_resolved)
+                })
+            }
+            _ => None,
+        };
+        let result = callable_result
+            .unwrap_or_else(|| self.infer.unify(self.tcx, lhs_resolved, rhs_resolved));
+        match result {
             Ok(()) => {}
             Err(err) => self.report_unify(err, lhs, rhs, span),
         }
+    }
+
+    fn instantiated_fn_item_sig(
+        &mut self,
+        def: gossamer_resolve::DefId,
+        explicit: &crate::Substs,
+    ) -> Option<FnSig> {
+        let sig = self.fn_sigs.get(&def)?.clone();
+        let n = self.fn_generic_arity.get(&def).copied().unwrap_or(0);
+        if n == 0 {
+            return Some(sig);
+        }
+        let const_mask = self
+            .fn_generic_const_mask
+            .get(&def)
+            .cloned()
+            .unwrap_or_default();
+        let vars: Vec<Ty> = (0..n)
+            .map(|i| match explicit.as_slice().get(i) {
+                Some(crate::GenericArg::Type(ty))
+                    if !const_mask.get(i).copied().unwrap_or(false) =>
+                {
+                    *ty
+                }
+                _ => self.fresh(),
+            })
+            .collect();
+        let consts: Vec<Option<i128>> = (0..n)
+            .map(|i| match explicit.as_slice().get(i) {
+                Some(crate::GenericArg::Const(value)) => Some(*value),
+                _ => None,
+            })
+            .collect();
+        Some(FnSig {
+            inputs: sig
+                .inputs
+                .into_iter()
+                .map(|ty| self.subst_generics_in_ty(ty, &vars, &consts))
+                .collect(),
+            output: self.subst_generics_in_ty(sig.output, &vars, &consts),
+        })
     }
 
     fn report_unify(&mut self, err: UnifyError, lhs: Ty, rhs: Ty, span: Span) {
@@ -1138,6 +1217,10 @@ impl<'a> TypeChecker<'a> {
                 let lhs = self.infer.resolve(self.tcx, lhs);
                 let rhs = self.infer.resolve(self.tcx, rhs);
                 if !self.is_concrete(lhs) || !self.is_concrete(rhs) {
+                    // A structural mismatch cannot become compatible when its
+                    // remaining leaf variables resolve. Hold it only so
+                    // numeric literals render as i64/f64 instead of `?N`.
+                    self.deferred_type_mismatches.push((lhs, rhs, span));
                     return;
                 }
                 let expected = render_ty(self.tcx, lhs);
@@ -1164,6 +1247,23 @@ impl<'a> TypeChecker<'a> {
                     TypeError::TypeMismatch {
                         expected,
                         found: "{integer}".to_string(),
+                    },
+                    span,
+                );
+            }
+            UnifyError::FloatConstraint => {
+                let lhs = self.infer.resolve(self.tcx, lhs);
+                let rhs = self.infer.resolve(self.tcx, rhs);
+                let target_side = if matches!(self.tcx.kind(lhs), Some(TyKind::Var(_))) {
+                    rhs
+                } else {
+                    lhs
+                };
+                let expected = render_ty(self.tcx, target_side);
+                self.emit(
+                    TypeError::TypeMismatch {
+                        expected,
+                        found: "{float}".to_string(),
                     },
                     span,
                 );
@@ -1608,15 +1708,19 @@ impl<'a> TypeChecker<'a> {
                 if let Some(name) = &self_name
                     && fn_decl.generics.params.is_empty()
                 {
-                    let arity = fn_decl
+                    let params: Vec<Ty> = fn_decl
                         .params
                         .iter()
                         .filter(|p| matches!(p, FnParam::Typed { .. }))
-                        .count();
+                        .map(|p| self.param_ty(p))
+                        .collect();
+                    let arity = params.len();
                     let ret = match fn_decl.ret.as_ref() {
                         Some(ty) => self.type_from_ast(ty),
                         None => self.tcx.unit(),
                     };
+                    self.method_param_types
+                        .insert((name.clone(), fn_decl.name.name.clone()), params);
                     self.method_ret_types
                         .insert((name.clone(), fn_decl.name.name.clone(), arity), ret);
                     self.method_arities
@@ -1629,19 +1733,25 @@ impl<'a> TypeChecker<'a> {
                     // record the return with rigid `Param` slots, resolved
                     // inside the impl's generic scope. A receiver-typed use
                     // site substitutes its instantiation's `substs`.
-                    let arity = fn_decl
+                    let scope = self.enter_generic_scope(&decl.generics);
+                    let params: Vec<Ty> = fn_decl
                         .params
                         .iter()
                         .filter(|p| matches!(p, FnParam::Typed { .. }))
-                        .count();
-                    let scope = self.enter_generic_scope(&decl.generics);
+                        .map(|p| self.param_ty(p))
+                        .collect();
+                    let arity = params.len();
                     let ret = match fn_decl.ret.as_ref() {
                         Some(ty) => self.type_from_ast(ty),
                         None => self.tcx.unit(),
                     };
                     self.leave_generic_scope(scope);
+                    self.generic_method_param_types
+                        .insert((name.clone(), fn_decl.name.name.clone()), params);
                     self.generic_method_ret_types
                         .insert((name.clone(), fn_decl.name.name.clone(), arity), ret);
+                    self.method_arities
+                        .insert((name.clone(), fn_decl.name.name.clone()), arity);
                 }
             }
         }
@@ -1657,6 +1767,14 @@ impl<'a> TypeChecker<'a> {
                     Some(ty) => self.type_from_ast(ty),
                     None => self.tcx.unit(),
                 };
+                let params = fn_decl
+                    .params
+                    .iter()
+                    .filter(|p| matches!(p, FnParam::Typed { .. }))
+                    .map(|p| self.param_ty(p))
+                    .collect();
+                self.trait_method_params
+                    .insert((trait_name.clone(), fn_decl.name.name.clone()), params);
                 self.trait_method_ret
                     .insert((trait_name.clone(), fn_decl.name.name.clone()), ret);
             }
@@ -1920,7 +2038,7 @@ impl<'a> TypeChecker<'a> {
         cur
     }
 
-    fn param_method_ret(&mut self, receiver_ty: Ty, method: &str) -> Option<Ty> {
+    fn param_method_sig(&mut self, receiver_ty: Ty, method: &str) -> Option<(Ty, Vec<Ty>)> {
         let mut t = self.infer.resolve(self.tcx, receiver_ty);
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(t) {
             t = self.infer.resolve(self.tcx, *inner);
@@ -1930,8 +2048,14 @@ impl<'a> TypeChecker<'a> {
         };
         let bounds = self.current_param_bounds.get(idx.0 as usize)?.clone();
         for bound in bounds {
-            if let Some(ret) = self.trait_method_ret.get(&(bound, method.to_string())) {
-                return Some(*ret);
+            let key = (bound, method.to_string());
+            if let Some(ret) = self.trait_method_ret.get(&key) {
+                let params = self
+                    .trait_method_params
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_default();
+                return Some((*ret, params));
             }
         }
         None
@@ -2690,7 +2814,7 @@ impl<'a> TypeChecker<'a> {
             return None;
         }
         let sig: Option<FnSig> = match self.tcx.kind(resolved).cloned() {
-            Some(TyKind::FnPtr(sig)) => Some(sig),
+            Some(TyKind::FnPtr(sig) | TyKind::FnTrait(sig)) => Some(sig),
             Some(TyKind::FnDef { def, .. }) => self.fn_sigs.get(&def).cloned(),
             _ => None,
         };
@@ -2803,6 +2927,7 @@ impl<'a> TypeChecker<'a> {
         callee: &Expr,
         def: gossamer_resolve::DefId,
         vars: &[Ty],
+        explicit_substs: &crate::Substs,
         sig: FnSig,
         arg_tys: &[Ty],
     ) -> FnSig {
@@ -2815,7 +2940,12 @@ impl<'a> TypeChecker<'a> {
         // Infer each const generic from the array argument whose length
         // names it (`sum_arr([1, 2, 3])` => N = 3), so the substituted
         // `[T; N]` carries the concrete count.
-        let mut const_substs: Vec<Option<i128>> = vec![None; n];
+        let mut const_substs: Vec<Option<i128>> = (0..n)
+            .map(|i| match explicit_substs.as_slice().get(i) {
+                Some(crate::GenericArg::Const(value)) => Some(*value),
+                _ => None,
+            })
+            .collect();
         for (param, arg_ty) in sig.inputs.iter().zip(arg_tys.iter()) {
             if let Some((idx, value)) = self.infer_array_const_len(*param, *arg_ty)
                 && idx < n
@@ -2886,12 +3016,12 @@ impl<'a> TypeChecker<'a> {
         // `fn_sigs` lets cross-function call sites pin both args and
         // return type to the callee's signature instead of returning
         // a fresh inference variable that never gets bound.
-        let callee_def = match self.tcx.kind(resolved) {
-            Some(TyKind::FnDef { def, .. }) => Some(*def),
+        let callee_item = match self.tcx.kind(resolved) {
+            Some(TyKind::FnDef { def, substs }) => Some((*def, substs.clone())),
             _ => None,
         };
         let sig_lookup: Option<FnSig> = match kind {
-            Some(TyKind::FnPtr(sig)) => Some(sig),
+            Some(TyKind::FnPtr(sig) | TyKind::FnTrait(sig)) => Some(sig),
             Some(TyKind::FnDef { def, .. }) => self.fn_sigs.get(&def).cloned(),
             _ => None,
         };
@@ -2901,21 +3031,54 @@ impl<'a> TypeChecker<'a> {
             // variable each, so independent call sites bind the parameters
             // independently (without this, the second call with a different
             // concrete type fails to unify against the first's binding).
-            let inst: Option<(gossamer_resolve::DefId, Vec<Ty>)> = callee_def.and_then(|def| {
-                self.fn_generic_arity
-                    .get(&def)
-                    .copied()
-                    .filter(|n| *n > 0)
-                    .map(|n| (def, (0..n).map(|_| self.fresh()).collect::<Vec<Ty>>()))
-            });
-            if let Some((def, vars)) = &inst {
-                sig = self.instantiate_generic_sig(callee, *def, vars, sig, arg_tys);
+            let inst: Option<(gossamer_resolve::DefId, Vec<Ty>, crate::Substs)> = callee_item
+                .and_then(|(def, explicit)| {
+                    let n = self.fn_generic_arity.get(&def).copied()?;
+                    if n == 0 {
+                        return None;
+                    }
+                    if !explicit.is_empty() && explicit.len() != n {
+                        self.emit(
+                            TypeError::CallArityMismatch {
+                                callee: format!(
+                                    "{} generic arguments",
+                                    callee_display_name(callee)
+                                ),
+                                expected: n,
+                                found: explicit.len(),
+                            },
+                            callee.span,
+                        );
+                    }
+                    let const_mask = self
+                        .fn_generic_const_mask
+                        .get(&def)
+                        .cloned()
+                        .unwrap_or_default();
+                    let vars = (0..n)
+                        .map(|i| {
+                            if const_mask.get(i).copied().unwrap_or(false) {
+                                self.fresh()
+                            } else {
+                                match explicit.as_slice().get(i) {
+                                    Some(crate::GenericArg::Type(ty)) => *ty,
+                                    _ => self.fresh(),
+                                }
+                            }
+                        })
+                        .collect();
+                    Some((def, vars, explicit))
+                });
+            if let Some((def, vars, explicit)) = &inst {
+                sig = self.instantiate_generic_sig(callee, *def, vars, explicit, sig, arg_tys);
             }
-            if sig.inputs.len() == arg_tys.len() {
+            let pipe_extra = usize::from(self.pipe_stage_callees.contains(&callee.id));
+            let effective = arg_tys.len() + pipe_extra;
+            if effective == sig.inputs.len() {
                 for (param, (arg_ty, arg_expr)) in sig.inputs.iter().zip(arg_tys.iter().zip(args)) {
                     self.check_sig_param_arg(*param, *arg_ty, arg_expr.span);
                 }
-                if let Some((def, vars)) = &inst {
+                if let Some((def, vars, _)) = &inst {
                     self.check_trait_bounds(*def, vars, callee.span);
                 }
                 return sig.output;
@@ -2927,8 +3090,6 @@ impl<'a> TypeChecker<'a> {
             // statically so `check` is never looser than the tiers. A
             // call on the right of `|>` receives the piped value as an
             // implicit trailing argument, so count it toward the arity.
-            let pipe_extra = usize::from(self.pipe_stage_callees.contains(&callee.id));
-            let effective = arg_tys.len() + pipe_extra;
             if effective != sig.inputs.len() {
                 self.emit(
                     TypeError::CallArityMismatch {
@@ -2948,6 +3109,9 @@ impl<'a> TypeChecker<'a> {
         if let Some(ty) = self.check_named_struct_ctor_call(callee, args) {
             return ty;
         }
+        if let Some(ty) = self.check_enum_variant_ctor_call(callee, args, arg_tys) {
+            return ty;
+        }
         // Fallback: known stdlib free functions whose signatures are
         // not present in `fn_sigs` (because they live outside user
         // source). Returning a real type instead of a fresh variable
@@ -2961,6 +3125,8 @@ impl<'a> TypeChecker<'a> {
                 return self.fresh();
             };
             let is_strings_call = matches!(module, ["strings"] | ["std", "strings"]);
+            let has_specialized_combinator_sig = combinator_module_name(module)
+                .is_some_and(|m| Self::std_combinator_arity(m, last).is_some());
             if !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. })) {
                 self.check_stdlib_signature_arity(
                     module,
@@ -2972,7 +3138,7 @@ impl<'a> TypeChecker<'a> {
                 // `strings::*` has a dedicated validator below. Running the
                 // generic signature catalogue too reports the same bad slot
                 // twice, once without its parameter name.
-                if !is_strings_call {
+                if !is_strings_call && !has_specialized_combinator_sig {
                     self.check_stdlib_signature_args(module, last, args, arg_tys);
                 }
             }
@@ -3134,6 +3300,51 @@ impl<'a> TypeChecker<'a> {
         }))
     }
 
+    /// Validates a user enum's tuple-variant constructor. Payload expectations
+    /// shape collection literals before this point, but shaping alone is not a
+    /// type check. Every supplied payload must still unify with its declared
+    /// slot, and the constructor's result remains the nominal enum type.
+    fn check_enum_variant_ctor_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        arg_tys: &[Ty],
+    ) -> Option<Ty> {
+        let ExprKind::Path(path) = &callee.kind else {
+            return None;
+        };
+        let n = path.segments.len();
+        if n < 2 {
+            return None;
+        }
+        let enum_name = path.segments[n - 2].name.name.clone();
+        let variant_name = path.segments[n - 1].name.name.clone();
+        let payloads = self
+            .enum_variant_payloads
+            .get(&(enum_name.clone(), variant_name))?
+            .clone();
+        if payloads.len() == arg_tys.len() {
+            for (param, (arg_ty, arg)) in payloads.iter().zip(arg_tys.iter().zip(args)) {
+                self.check_sig_param_arg(*param, *arg_ty, arg.span);
+            }
+        } else {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: callee_display_name(callee),
+                    expected: payloads.len(),
+                    found: arg_tys.len(),
+                },
+                callee.span,
+            );
+        }
+        Some(
+            self.enum_tys
+                .get(&enum_name)
+                .copied()
+                .unwrap_or_else(|| self.fresh()),
+        )
+    }
+
     /// After a call failed every resolution path: if the callee is a
     /// concrete, fully-known value that can never be a function or an ADT
     /// constructor, reject it (`GT0022`) - the compiled tier would emit a
@@ -3254,11 +3465,9 @@ impl<'a> TypeChecker<'a> {
             (None, Some(a)) => (param, a),
             _ => (param, arg_ty),
         };
-        // An unsuffixed float literal is an inference var that unifies
-        // leniently with any concrete type, so a `String` parameter would
-        // silently accept it and the compiled tier reads its f64 bits as a
-        // string pointer. Reject it here; an integer literal is already
-        // caught by the unifier's integer-constraint check.
+        // Preserve the source-facing `{float}` diagnostic for an unsuffixed
+        // float in a String slot. The unifier also rejects the constraint, but
+        // this parameter-specific path has the better spelling.
         if matches!(
             self.tcx.kind(self.infer.resolve(self.tcx, lhs)),
             Some(TyKind::String)
@@ -3395,10 +3604,8 @@ impl<'a> TypeChecker<'a> {
             Some(TyKind::Ref { inner, .. }) => *inner,
             _ => resolved,
         };
-        // Unsuffixed numeric literals are inference variables that unify
-        // leniently with any concrete type, so a single expected `String`
-        // would not reject them. Catch them up front - in either slot
-        // shape - so a `5` / `1.5` in a string position is rejected with
+        // Catch unsuffixed numeric literals up front in either slot shape so
+        // a `5` / `1.5` in a string position is rejected with
         // the same `{integer}` / `{float}` rendering a user call shows.
         if self.infer.is_integer_constrained_var(self.tcx, inner) {
             self.emit_named_str_slot_mismatch(
@@ -3763,6 +3970,23 @@ impl<'a> TypeChecker<'a> {
     /// `__fmt_prec` to `String` is safe: they're synthetic names the
     /// parser injects and no user code can shadow them.
     fn check_bare_intrinsic_call(&mut self, name: &str, arg_tys: &[Ty], span: Span) -> Option<Ty> {
+        let constructor_arity = match name {
+            "Some" | "Ok" | "Err" => Some(1),
+            "None" => Some(0),
+            _ => None,
+        };
+        if let Some(expected) = constructor_arity
+            && arg_tys.len() != expected
+        {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: name.to_string(),
+                    expected,
+                    found: arg_tys.len(),
+                },
+                span,
+            );
+        }
         let ty = match name {
             "__concat" | "__fmt_prec" | "__fmt_pad" | "__fmt_radix" | "__fmt_upper" => {
                 for ty in arg_tys {
@@ -4395,9 +4619,21 @@ impl<'a> TypeChecker<'a> {
         // `s: &T`, `T: Shape`) resolves to the trait method's declared
         // return type, so a `String`-returning trait method is not left to
         // default to i64 and render its pointer bits on the compiled tiers.
-        if let Some(ret) = self.param_method_ret(receiver_ty, method) {
-            for arg in args {
-                self.check_expr(arg);
+        if let Some((ret, params)) = self.param_method_sig(receiver_ty, method) {
+            let arg_tys: Vec<Ty> = args.iter().map(|arg| self.check_expr(arg)).collect();
+            if params.len() == args.len() {
+                for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
+                    self.check_sig_param_arg(*param, *arg_ty, arg.span);
+                }
+            } else {
+                self.emit(
+                    TypeError::CallArityMismatch {
+                        callee: method.to_string(),
+                        expected: params.len(),
+                        found: args.len(),
+                    },
+                    receiver.span,
+                );
             }
             return ret;
         }
@@ -4442,6 +4678,7 @@ impl<'a> TypeChecker<'a> {
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = self.infer.resolve(self.tcx, *inner);
         }
+        self.check_user_method_args(resolved, method, args, &arg_tys);
         if method == "where_eq"
             && args.len() == 2
             && let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved)
@@ -4505,6 +4742,43 @@ impl<'a> TypeChecker<'a> {
         self.check_method_arity(call_id, resolved, method, args, receiver.span);
         self.maybe_reject_unknown_adt_method(resolved, method, receiver.span);
         self.fresh()
+    }
+
+    fn user_method_params_for(&mut self, receiver_ty: Ty, method: &str) -> Option<Vec<Ty>> {
+        let TyKind::Adt { def, substs } = self.tcx.kind(receiver_ty)?.clone() else {
+            return None;
+        };
+        let name = self.tcx.def_name(def)?.to_string();
+        let key = (name, method.to_string());
+        if let Some(params) = self.method_param_types.get(&key) {
+            return Some(params.clone());
+        }
+        let params = self.generic_method_param_types.get(&key)?.clone();
+        let subst_tys = substs.types();
+        Some(
+            params
+                .into_iter()
+                .map(|param| self.subst_params_in_ty(param, &subst_tys))
+                .collect(),
+        )
+    }
+
+    fn check_user_method_args(
+        &mut self,
+        receiver_ty: Ty,
+        method: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+    ) {
+        let Some(params) = self.user_method_params_for(receiver_ty, method) else {
+            return;
+        };
+        // Arity has its own receiver-aware diagnostic below. Validate every
+        // explicit leading argument here; a pipeline supplies the final slot
+        // later in `pipe_result_ty`.
+        for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
+            self.check_sig_param_arg(*param, *arg_ty, arg.span);
+        }
     }
 
     /// Types a method call's explicit arguments, shaping each by the
@@ -6195,6 +6469,43 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    fn check_direct_pipe_sig(&mut self, sig: &FnSig, lhs: &Expr, lhs_ty: Ty, rhs: &Expr) {
+        if sig.inputs.len() == 1 {
+            self.unify(sig.inputs[0], lhs_ty, lhs.span);
+        } else {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: callee_display_name(rhs),
+                    expected: sig.inputs.len(),
+                    found: 1,
+                },
+                rhs.span,
+            );
+        }
+    }
+
+    fn check_piped_user_method_arg(&mut self, lhs: &Expr, lhs_ty: Ty, rhs: &Expr) {
+        let ExprKind::MethodCall {
+            receiver,
+            name,
+            args,
+            ..
+        } = &rhs.kind
+        else {
+            return;
+        };
+        let Some(receiver_ty) = self.table.get(receiver.id) else {
+            return;
+        };
+        let receiver_ty = self.peel_refs(receiver_ty);
+        if let Some(params) = self.user_method_params_for(receiver_ty, &name.name)
+            && args.len() + 1 == params.len()
+            && let Some(last) = params.last().copied()
+        {
+            self.unify(last, lhs_ty, lhs.span);
+        }
+    }
+
     /// Returns the result type of a `lhs |> rhs` pipe expression.
     ///
     /// `|>` desugars to `rhs(lhs)` (or `rhs(partial_args…, lhs)` for
@@ -6207,21 +6518,22 @@ impl<'a> TypeChecker<'a> {
         let resolved = self.infer.resolve(self.tcx, rhs_ty);
         match self.tcx.kind_of(resolved).clone() {
             TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
-                if let Some(&last) = sig.inputs.last() {
-                    self.unify(lhs_ty, last, lhs.span);
+                if matches!(rhs.kind, ExprKind::Path(_) | ExprKind::Closure { .. }) {
+                    self.check_direct_pipe_sig(&sig, lhs, lhs_ty, rhs);
                 }
                 return self.infer.resolve(self.tcx, sig.output);
             }
             TyKind::FnDef { def, .. } => {
                 if let Some(sig) = self.fn_sigs.get(&def).cloned() {
-                    if let Some(&last) = sig.inputs.last() {
-                        self.unify(lhs_ty, last, lhs.span);
+                    if matches!(rhs.kind, ExprKind::Path(_)) {
+                        self.check_direct_pipe_sig(&sig, lhs, lhs_ty, rhs);
                     }
                     return sig.output;
                 }
             }
             _ => {}
         }
+        self.check_piped_user_method_arg(lhs, lhs_ty, rhs);
         // Data-last std combinators, partially applied through the
         // pipe (`xs |> iter::map(f)`, `r |> result::map_err(f)`,
         // `r |> result::ok`): the piped value is the data argument,
@@ -6276,17 +6588,27 @@ impl<'a> TypeChecker<'a> {
         // fired). Recover by inspecting the call's inner callee type directly.
         if let ExprKind::Call {
             callee: inner_callee,
-            ..
+            args,
         } = &rhs.kind
         {
             let inner_ty = self.table.get(inner_callee.id).unwrap_or(rhs_ty);
             let resolved_inner = self.infer.resolve(self.tcx, inner_ty);
             match self.tcx.kind_of(resolved_inner).clone() {
                 TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
+                    if args.len() + 1 == sig.inputs.len()
+                        && let Some(last) = sig.inputs.last().copied()
+                    {
+                        self.unify(last, lhs_ty, lhs.span);
+                    }
                     return self.infer.resolve(self.tcx, sig.output);
                 }
                 TyKind::FnDef { def, .. } => {
                     if let Some(sig) = self.fn_sigs.get(&def).cloned() {
+                        if args.len() + 1 == sig.inputs.len()
+                            && let Some(last) = sig.inputs.last().copied()
+                        {
+                            self.unify(last, lhs_ty, lhs.span);
+                        }
                         return sig.output;
                     }
                 }
@@ -8783,6 +9105,10 @@ fn primitive_from_name(name: &str) -> Option<PrimitiveTy> {
     Some(match name {
         "bool" => PrimitiveTy::Bool,
         "char" => PrimitiveTy::Char,
+        // `str` is the borrowed spelling of the runtime's string value.
+        // The enclosing `Ref` preserves the source-level distinction while
+        // the pointee shares `String`'s representation and operations.
+        "str" => PrimitiveTy::String,
         "String" => PrimitiveTy::String,
         "i8" => PrimitiveTy::Int(IntWidth::W8),
         "i16" => PrimitiveTy::Int(IntWidth::W16),

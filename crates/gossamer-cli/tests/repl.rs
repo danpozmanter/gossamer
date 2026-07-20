@@ -361,6 +361,39 @@ fn repl_struct_construction_and_display_match_source_shapes() {
 }
 
 #[test]
+fn repl_rejects_plain_tuple_for_tuple_struct_function_parameter() {
+    let out = run_repl(
+        "struct RGB(i64, i64, i64)\n\
+         let color = RGB(0, 100, 100)\n\
+         let three = (1, 500, -200)\n\
+         fn print_color(color: RGB) { println!(\"{}\", color) }\n\
+         print_color(color)\n\
+         print_color(three)\n",
+    );
+    assert!(
+        out.success,
+        "repl should remain live; stderr: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("RGB(0, 100, 100)"),
+        "valid nominal argument did not execute: {}",
+        out.stdout
+    );
+    assert!(
+        out.stderr
+            .contains("expected `RGB`, found `(i64, i64, i64)`"),
+        "nominal mismatch was not reported: {}",
+        out.stderr
+    );
+    assert!(
+        !out.stdout.contains("(1, 500, -200)"),
+        "rejected call still executed: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_open_ranges_are_lazy_and_printable() {
     let out = run_repl("10..\n..10\n..=10\n(10..).take(5) |> iter::collect()\n10..=\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);

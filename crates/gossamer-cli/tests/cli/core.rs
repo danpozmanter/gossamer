@@ -50,6 +50,37 @@ fn version_flag_prints_package_version() {
 }
 
 #[test]
+fn cache_status_uses_human_readable_sizes_by_default() {
+    let root = env::temp_dir().join(format!("gossamer-cache-status-{}", std::process::id()));
+    let frontend = root.join("frontend");
+    let project = root.join("project");
+    std::fs::create_dir_all(&frontend).expect("create frontend cache");
+    std::fs::create_dir_all(&project).expect("create project");
+    std::fs::write(frontend.join("entry"), vec![0_u8; 1536]).expect("write cache entry");
+
+    let out = Command::new(gos_bin())
+        .arg("cache")
+        .current_dir(&project)
+        .env("GOSSAMER_CACHE_DIR", &frontend)
+        .env("GOSSAMER_CACHE", root.join("bindings"))
+        .env("HOME", root.join("home"))
+        .output()
+        .expect("spawn cache status");
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).expect("utf8");
+    assert!(stdout.contains("frontend"), "stdout: {stdout}");
+    assert!(stdout.contains("1.5K"), "stdout: {stdout}");
+    assert!(!stdout.contains("1536 bytes"), "stdout: {stdout}");
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn parse_subcommand_round_trips_hello_world() {
     let fixture = write_fixture("parse", "fn main() { println(\"hello\") }\n");
     let out = Command::new(gos_bin())

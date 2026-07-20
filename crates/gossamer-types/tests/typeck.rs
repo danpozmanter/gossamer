@@ -154,6 +154,173 @@ fn obvious_concrete_mismatch_is_reported() {
 }
 
 #[test]
+fn function_argument_rejects_plain_tuple_for_tuple_struct() {
+    let checked = run("struct RGB(i64, i64, i64)\n\
+         fn print_color(color: RGB) { println!(\"{}\", color) }\n\
+         fn main() { let three = (1, 500, -200); print_color(three) }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::TypeMismatch { expected, found }
+                if expected == "RGB" && found == "(i64, i64, i64)"
+        )),
+        "plain tuple must not satisfy a nominal tuple-struct parameter: {:?}",
+        checked.diagnostics
+    );
+
+    let checked = run("struct RGB(i64, i64, i64)\n\
+         struct Triple(i64, i64, i64)\n\
+         fn print_color(color: RGB) {}\n\
+         fn main() { print_color(Triple(1, 500, -200)) }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::TypeMismatch { expected, found }
+                if expected == "RGB" && found == "Triple"
+        )),
+        "distinct tuple structs should be named concisely: {:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn function_boundaries_preserve_nominal_struct_identity() {
+    let rejected = [
+        "struct A { value: i64 }\nstruct B { value: i64 }\nfn take(v: A) {}\nfn main() { take(B { value: 1 }) }\n",
+        "struct A(i64, i64)\nstruct B(i64, i64)\nfn take(v: A) {}\nfn main() { take(B(1, 2)) }\n",
+        "struct A(i64, i64)\nfn make() -> A { (1, 2) }\nfn main() {}\n",
+        "struct A { value: i64 }\nstruct B { value: i64 }\nfn id<T>(v: T) -> T { v }\nfn main() { let _ = id::<A>(B { value: 1 }) }\n",
+        "struct A(i64)\nstruct B(i64)\nfn id<T>(v: T) -> T { v }\nfn main() { let _ = id::<A, B>(A(1)) }\n",
+    ];
+    for source in rejected {
+        let checked = run(source);
+        assert!(
+            checked.diagnostics.iter().any(|d| matches!(
+                d.error,
+                TypeError::TypeMismatch { .. } | TypeError::CallArityMismatch { .. }
+            )),
+            "nominal mismatch crossed a function boundary: {source}\n{:?}",
+            checked.diagnostics
+        );
+    }
+
+    let accepted = run("struct A(i64, i64)\n\
+         fn take_struct(v: A) {}\n\
+         fn take_tuple(v: (i64, i64)) {}\n\
+         fn id<T>(v: T) -> T { v }\n\
+         fn take_fn(f: Fn(i64) -> i64) { let _ = f(1) }\n\
+         fn main() { take_struct(A(1, 2)); take_tuple((1, 2)); take_fn(id) }\n");
+    assert!(
+        accepted.diagnostics.is_empty(),
+        "{:?}",
+        accepted.diagnostics
+    );
+}
+
+#[test]
+fn string_values_coerce_to_borrowed_str_at_typed_boundaries() {
+    let checked = run("static GREETING: &str = \"hello\"\n\
+         fn classify(value: bool) -> &str { if value { \"yes\" } else { \"no\" } }\n\
+         fn take(value: &str) {}\n\
+         fn main() { take(\"text\"); let _ = classify(true) }\n");
+    assert!(
+        checked.diagnostics.is_empty(),
+        "String to &str coercions must remain valid: {:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn function_boundaries_reject_wrong_float_callable_and_pipeline_types() {
+    let rejected = [
+        "fn take(v: i64) {}\nfn main() { take(1.5) }\n",
+        "fn wrong(v: String) -> bool { true }\nfn take(f: Fn(i64) -> bool) {}\nfn main() { take(wrong) }\n",
+        "fn invoke(f: Fn(i64) -> bool) { let _ = f(\"wrong\") }\nfn main() {}\n",
+        "struct A(i64)\nstruct B(i64)\nfn take(v: A, n: i64) {}\nfn main() { 1 |> take(B(2)) }\n",
+        "fn pair(a: i64, b: i64) -> i64 { a + b }\nfn main() { let _ = 1 |> pair }\n",
+    ];
+    for source in rejected {
+        let checked = run(source);
+        assert!(
+            checked.diagnostics.iter().any(|d| matches!(
+                d.error,
+                TypeError::TypeMismatch { .. } | TypeError::CallArityMismatch { .. }
+            )),
+            "invalid function call was accepted: {source}\n{:?}",
+            checked.diagnostics
+        );
+    }
+}
+
+#[test]
+fn methods_and_enum_constructors_check_declared_payload_types() {
+    let method = run("struct A(i64)\n\
+         struct B(i64)\n\
+         impl A { fn take(&self, value: A) {} }\n\
+         fn main() { let a = A(1); a.take(B(2)) }\n");
+    assert!(
+        method
+            .diagnostics
+            .iter()
+            .any(|d| matches!(d.error, TypeError::TypeMismatch { .. })),
+        "method parameter mismatch was accepted: {:?}",
+        method.diagnostics
+    );
+
+    let variant = run("struct A(i64)\n\
+         struct B(i64)\n\
+         enum E { Value(A) }\n\
+         fn main() { let _ = E::Value(B(2)) }\n");
+    assert!(
+        variant
+            .diagnostics
+            .iter()
+            .any(|d| matches!(d.error, TypeError::TypeMismatch { .. })),
+        "enum payload mismatch was accepted: {:?}",
+        variant.diagnostics
+    );
+
+    let generic_method = run("struct A(i64)\n\
+         struct B(i64)\n\
+         struct Boxed<T> { value: T }\n\
+         impl<T> Boxed<T> { fn take(&self, value: T) {} }\n\
+         fn main() { let boxed = Boxed { value: A(1) }; boxed.take(B(2)) }\n");
+    assert!(
+        generic_method
+            .diagnostics
+            .iter()
+            .any(|d| matches!(d.error, TypeError::TypeMismatch { .. })),
+        "generic method parameter mismatch was accepted: {:?}",
+        generic_method.diagnostics
+    );
+
+    let trait_method = run("struct A(i64)\n\
+         struct B(i64)\n\
+         trait Takes { fn take(&self, value: A); }\n\
+         impl Takes for A { fn take(&self, value: A) {} }\n\
+         fn call<T: Takes>(value: &T) { value.take(B(2)) }\n\
+         fn main() {}\n");
+    assert!(
+        trait_method
+            .diagnostics
+            .iter()
+            .any(|d| matches!(d.error, TypeError::TypeMismatch { .. })),
+        "trait method parameter mismatch was accepted: {:?}",
+        trait_method.diagnostics
+    );
+
+    let variant_arity = run("enum E { Pair(i64, i64) }\nfn main() { let _ = E::Pair(1) }\n");
+    assert!(
+        variant_arity
+            .diagnostics
+            .iter()
+            .any(|d| matches!(d.error, TypeError::CallArityMismatch { .. })),
+        "enum constructor arity mismatch was accepted: {:?}",
+        variant_arity.diagnostics
+    );
+}
+
+#[test]
 fn if_branch_mismatch_is_reported() {
     let checked = run("fn main() { let y = if true { 1i32 } else { false } }\n");
     assert!(
@@ -1467,8 +1634,7 @@ fn strings_free_fn_rejects_misordered_integer_argument() {
 
 #[test]
 fn strings_free_fn_rejects_float_in_string_slot() {
-    // A float literal is a lenient inference var, so it slips past a
-    // plain `String` unification; it must be rejected explicitly.
+    // Preserve the source-facing `{float}` spelling for this mismatch.
     let d = diagnostics_for(
         "use std::strings\nfn main() { let r = strings::contains(&\"hi\", 1.5)\nprintln!(\"{}\", r) }\n",
     );
