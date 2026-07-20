@@ -71,17 +71,18 @@ use super::*;
 
 /// Renders one stdlib module as a Markdown page (Python-style
 /// per-module reference). Used by `gos doc --emit-stdlib`. The
-/// page carries a `Status: ...` marker derived from
-/// `feature_status::lookup` so doc readers can see at a glance
-/// whether a module is `stable`, `shipped`, `experimental`, `planned`, or
-/// `removed`.
+/// page carries a lifecycle marker only when the module is experimental.
+/// Routine availability data belongs in `gos feature-status`, not in the
+/// user-facing reference.
 #[must_use]
 pub fn render_module_markdown(module: &StdModule) -> String {
     let mut out = String::with_capacity(1024);
     out.push_str(&format!("# `{}`\n\n", module.path));
-    let status =
-        super::feature_status::lookup(module.path).map_or("experimental", |e| e.status.tag());
-    out.push_str(&format!("Status: {status}\n\n"));
+    if super::feature_status::lookup(module.path)
+        .is_some_and(|entry| entry.status == super::feature_status::Status::Experimental)
+    {
+        out.push_str("Status: experimental\n\n");
+    }
     out.push_str(&format!("{}\n\n", module.summary));
     out
 }
@@ -137,22 +138,22 @@ pub fn language_slug(path: &str) -> String {
         .replace("::", "_")
 }
 
-/// Renders one language-feature entry as a Markdown stub. The page
-/// carries the same `Status: ...` marker shape stdlib pages use so
-/// the drift check covers both surfaces with one rule.
+/// Renders one language-feature entry as a Markdown stub. Only experimental
+/// features receive a lifecycle marker in the user-facing reference.
 #[must_use]
 pub fn render_language_markdown(entry: &super::feature_status::FeatureStatus) -> String {
     let mut out = String::with_capacity(256);
     out.push_str(&format!("# `{}`\n\n", entry.path));
-    out.push_str(&format!("Status: {}\n\n", entry.status.tag()));
+    if entry.status == super::feature_status::Status::Experimental {
+        out.push_str("Status: experimental\n\n");
+    }
     out.push_str(&format!("{}\n", entry.doc));
     out
 }
 
 /// Renders the `docs_src/language/index.md` landing page listing
-/// every documented language feature with its lifecycle status and
-/// one-line summary. Mirrors `render_index_markdown` for the
-/// language surface.
+/// every documented language feature and its one-line summary. Mirrors
+/// `render_index_markdown` for the language surface.
 #[must_use]
 pub fn render_language_index_markdown() -> String {
     let mut out = String::new();
@@ -163,17 +164,16 @@ pub fn render_language_index_markdown() -> String {
 is regenerated from `manifest::FEATURE_STATUS` by \
 `gos doc --emit-stdlib`.\n\n",
     );
-    out.push_str("| Feature | Status | Summary |\n");
-    out.push_str("|---|---|---|\n");
+    out.push_str("| Feature | Summary |\n");
+    out.push_str("|---|---|\n");
     for entry in super::feature_status::FEATURE_STATUS {
         if !entry.path.starts_with("lang::") {
             continue;
         }
         out.push_str(&format!(
-            "| [`{}`]({}.md) | {} | {} |\n",
+            "| [`{}`]({}.md) | {} |\n",
             entry.path,
             language_slug(entry.path),
-            entry.status.tag(),
             escape_table_cell(entry.doc),
         ));
     }
@@ -283,5 +283,16 @@ mod tests {
         let page = super::render_module_markdown(&module);
         assert!(!page.contains("Public items"));
         assert!(!page.contains("| Name | Kind | Description |"));
+    }
+
+    #[test]
+    fn module_pages_do_not_advertise_shipped_status() {
+        let module = crate::registry::StdModule {
+            path: "std::process",
+            summary: "Process support.",
+            items: &[],
+        };
+        let page = super::render_module_markdown(&module);
+        assert!(!page.contains("Status: shipped"));
     }
 }

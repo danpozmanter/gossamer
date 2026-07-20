@@ -34,8 +34,7 @@ fn merge_handwritten(body: &str, on_disk: &str) -> String {
 /// Emits one Markdown page per stdlib module under `out_dir`, plus
 /// one page per documented language feature under a sibling
 /// `language/` directory derived from `out_dir`'s parent. Both
-/// surfaces carry the `Status: ...` marker driven by
-/// `manifest::feature_status::FEATURE_STATUS`.
+/// surfaces carry a lifecycle marker only for experimental entries.
 ///
 /// When `check` is true, no files are written; instead the
 /// committed pages are compared against the would-be output

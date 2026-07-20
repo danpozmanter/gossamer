@@ -3,7 +3,7 @@
 //! `Experimental`, `Planned`, or `Removed`.
 //!
 //! Single source of truth for the `gos feature-status` subcommand
-//! and the "Status: ..." markers emitted into the per-module doc
+//! and the experimental markers emitted into the per-module docs
 //! pages. `Experimental` is the default for manifest modules;
 //! `Shipped` must be explicit and `Stable` additionally requires
 //! all-tier contract evidence.

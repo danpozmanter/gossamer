@@ -1,7 +1,5 @@
 # `lang::match`
 
-Status: shipped
-
 Exhaustive pattern match expression.
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 

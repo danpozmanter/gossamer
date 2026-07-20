@@ -87,11 +87,31 @@ rebindable. The type checker rejects:
 - A mutating method call on an immutable place.
 - A projection that crosses any shared layer inside a nested reference chain.
 
-These are *correctness* rules, not lifetime proofs. You never
-write `'a`. Gossamer rejects a second simple named `&mut` to the same root
-while the first remains in lexical scope, but it does not perform Rust-style
-lifetime or non-lexical-borrow analysis. This does not change reference
-identity: every permitted alias observes writes to the same source place.
+These are *correctness* rules, not lifetime proofs. You never write `'a`, and
+`&mut` does not mean "the only reference" as it does in Rust. It grants write
+access through an alias. The original mutable binding and every permitted
+mutable-reference chain can therefore observe and update the same value.
+
+Gossamer rejects a second simple named `&mut` taken directly from the same root
+while the first remains in lexical scope. This catches the common accidental
+sibling-alias case, but it is not a general uniqueness proof. Taking a mutable
+reference to an existing mutable-reference binding creates a chain:
+
+```gossamer
+let mut a = [1, 2]
+let mut b = &mut a       // b: &mut [i64; 2]
+let c = &mut b           // c: &mut &mut [i64; 2]
+c[0] = 0                 // auto-dereferences both layers
+// a, b, and c all observe [0, 2]
+```
+
+`c` does not create independent storage or a second direct borrow of `a`; it
+aliases the reference slot `b`, which already points at `a`. This is allowed
+because references express access intent rather than ownership. Within one
+goroutine, coordinating such aliases is the programmer's responsibility.
+Across goroutines, shared mutation must be synchronized with channels,
+`std::sync` primitives, or atomics as described in the
+[concurrency memory model](design/memory_model.md).
 
 ## How reclamation works
 

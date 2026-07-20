@@ -1785,7 +1785,6 @@
 
 
 <h1 id="langlet_mut"><code>lang::let_mut</code><a class="headerlink" href="#langlet_mut" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
 <p>Mutable bindings can be reassigned and can be the source of <code>&amp;mut</code>.</p>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
@@ -1799,6 +1798,9 @@
 </code></pre></div>
 <p>An immutable binding cannot be used as the source of <code>&amp;mut</code>, because that
 would create a write path around its immutability.</p>
+<p>Implicit dereferencing does not weaken this rule. If an access path contains
+any shared <code>&amp;T</code> layer, indexing, field assignment, and mutating method calls
+through that path are rejected even when every outer reference is <code>&amp;mut</code>.</p>
 
 
 

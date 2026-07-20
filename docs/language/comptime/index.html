@@ -2000,7 +2000,6 @@
 
 
 <h1 id="langcomptime"><code>lang::comptime</code><a class="headerlink" href="#langcomptime" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
 <p>Zig-style compile-time evaluation: <code>comptime { ... }</code> blocks, <code>comptime fn</code> calls, and <code>comptime</code> parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. <code>typeInfo::&lt;T&gt;()</code> reflects a type's fields, a <code>for (name, ty) in typeInfo::&lt;T&gt;()</code> loop unrolls into native per-field code, and <code>codegen!(...)</code> splices a <code>comptime fn</code>'s <code>String</code> back as source. Includes the <code>regex!</code> / <code>sql!</code> build-time validation macros.</p>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 

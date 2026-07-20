@@ -11,8 +11,7 @@ collector.
 - Project style guide: [`GUIDELINES.md`](https://github.com/danpozmanter/gossamer/blob/main/GUIDELINES.md)
 - Security policy: [`SECURITY.md`](https://github.com/danpozmanter/gossamer/blob/main/SECURITY.md)
 
-**Status**: pre-1.0.0. The surface is stable to write against; the
-public API may still change before 1.0.
+Gossamer is pre-1.0.0, so the public API may still change before 1.0.
 
 ## Hello, Gossamer
 

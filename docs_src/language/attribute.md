@@ -1,7 +1,5 @@
 # `lang::attribute`
 
-Status: shipped
-
 Built-in attributes (`#[cfg]`, `#[test]`, `#[bench]`, `#[derive]`).
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 

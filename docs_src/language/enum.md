@@ -1,7 +1,5 @@
 # `lang::enum`
 
-Status: shipped
-
 Sum type declaration with payload-carrying variants.
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 

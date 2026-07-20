@@ -1,7 +1,5 @@
 # `std::os::exec`
 
-Status: shipped
-
 Deprecated compatibility facade for child processes; new code uses std::process.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->

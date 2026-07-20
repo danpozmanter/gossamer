@@ -1,7 +1,5 @@
 # `std::html::template`
 
-Status: shipped
-
 Context-aware HTML templates with auto-escape (text/attr/URL/JS). The context classifier is heuristic - sound for typical server-rendered responses but NOT a content-security-policy substitute; sanitize untrusted HTML fragments with a dedicated sanitizer.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->

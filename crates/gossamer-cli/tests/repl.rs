@@ -269,6 +269,23 @@ fn repl_issue_49_cannot_mutate_immutable_value_through_mutable_reference_chain()
 }
 
 #[test]
+fn repl_reference_assignment_error_shows_concrete_type() {
+    let out = run_repl("let mut a = 12\nlet mut b = &mut a\nb = 16\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("type mismatch: expected `&mut i64`, found `{integer}`"),
+        "reference mismatch must show the resolved type: {}",
+        out.stderr
+    );
+    assert!(
+        !out.stderr.contains("&mut ?"),
+        "inference variable leaked into REPL diagnostic: {}",
+        out.stderr
+    );
+}
+
+#[test]
 fn repl_compound_assignment_accumulates_across_lines() {
     // `+=` on a persisted binding must fold across inputs, in order.
     let out = run_repl("let mut c = 0\nc += 5\nc += 3\nc\n");

@@ -1,7 +1,5 @@
 # `std::crypto::x509`
 
-Status: shipped
-
 X.509 certificate parsing.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->

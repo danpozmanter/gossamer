@@ -1,7 +1,5 @@
 # `std::thread`
 
-Status: shipped
-
 OS-thread scheduling hints and CPU introspection; user concurrency uses goroutines, not thread spawning.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->

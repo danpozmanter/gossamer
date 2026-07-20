@@ -1,7 +1,5 @@
 # Memory model
 
-Status: shipped
-
 Gossamer programs are expected to be data-race free. When a program
 shares mutable heap state across goroutines, it must order access with
 channels, `std::sync` primitives, or atomics.

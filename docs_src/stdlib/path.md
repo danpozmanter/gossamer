@@ -1,7 +1,5 @@
 # `std::path`
 
-Status: shipped
-
 Lexical filesystem-path operations; platform path grammar, no URL parsing or I/O.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->

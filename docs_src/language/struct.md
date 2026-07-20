@@ -1,7 +1,5 @@
 # `lang::struct`
 
-Status: shipped
-
 Product type declaration.
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 

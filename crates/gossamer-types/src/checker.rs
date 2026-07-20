@@ -58,6 +58,7 @@ pub fn typecheck_source_file_with_edition(
     checker.infer.default_unresolved_int_vars(checker.tcx);
     checker.infer.default_unresolved_float_vars(checker.tcx);
     checker.check_deferred_type_mismatches();
+    checker.check_deferred_literal_type_mismatches();
     checker.check_deferred_mutating_receivers();
     checker.check_deferred_structural();
     checker.resolve_table();
@@ -279,6 +280,7 @@ struct TypeChecker<'a> {
     /// whose literal elements need integer/float defaulting before their
     /// rendered types are useful to the user.
     deferred_type_mismatches: Vec<(Ty, Ty, Span)>,
+    deferred_literal_type_mismatches: Vec<(Ty, &'static str, Span)>,
     /// Tuple-variant payload types keyed by `(enum_name,
     /// variant_name)`. Drives literal re-typing at variant
     /// constructor sites so `Value::Blob([1, 2, 3])` records a heap
@@ -465,6 +467,7 @@ impl<'a> TypeChecker<'a> {
             deferred_structural: Vec::new(),
             deferred_mutating_receivers: Vec::new(),
             deferred_type_mismatches: Vec::new(),
+            deferred_literal_type_mismatches: Vec::new(),
             enum_variant_payloads: HashMap::new(),
             enum_tys: HashMap::new(),
             const_tys: HashMap::new(),
@@ -1268,14 +1271,8 @@ impl<'a> TypeChecker<'a> {
                         (rhs, lhs)
                     };
                 let _ = literal_side;
-                let expected = render_ty(self.tcx, target_side);
-                self.emit(
-                    TypeError::TypeMismatch {
-                        expected,
-                        found: "{integer}".to_string(),
-                    },
-                    span,
-                );
+                self.deferred_literal_type_mismatches
+                    .push((target_side, "{integer}", span));
             }
             UnifyError::FloatConstraint => {
                 let lhs = self.infer.resolve(self.tcx, lhs);
@@ -1285,14 +1282,8 @@ impl<'a> TypeChecker<'a> {
                 } else {
                     lhs
                 };
-                let expected = render_ty(self.tcx, target_side);
-                self.emit(
-                    TypeError::TypeMismatch {
-                        expected,
-                        found: "{float}".to_string(),
-                    },
-                    span,
-                );
+                self.deferred_literal_type_mismatches
+                    .push((target_side, "{float}", span));
             }
             UnifyError::Occurs { .. } => {}
         }
@@ -5580,6 +5571,23 @@ impl<'a> TypeChecker<'a> {
                 TypeError::TypeMismatch {
                     expected: render_ty(self.tcx, expected),
                     found: render_ty(self.tcx, found),
+                },
+                span,
+            );
+        }
+    }
+
+    /// Emits literal-constraint mismatches after defaulting has resolved every
+    /// nested component of the expected type. This prevents diagnostics such
+    /// as `&mut ?0` when the referent is known to be `i64`.
+    fn check_deferred_literal_type_mismatches(&mut self) {
+        let deferred = std::mem::take(&mut self.deferred_literal_type_mismatches);
+        for (expected, found, span) in deferred {
+            let expected = self.deep_resolve(expected);
+            self.emit(
+                TypeError::TypeMismatch {
+                    expected: render_ty(self.tcx, expected),
+                    found: found.to_string(),
                 },
                 span,
             );

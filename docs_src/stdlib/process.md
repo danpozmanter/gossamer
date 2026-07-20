@@ -1,7 +1,5 @@
 # `std::process`
 
-Status: shipped
-
 Canonical process control and child-process API; std::os::exec is compatibility-only.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->

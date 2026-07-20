@@ -504,6 +504,28 @@ fn mutable_reference_binding_cannot_be_rebound_to_its_referent() {
 }
 
 #[test]
+fn mutable_reference_mismatch_renders_resolved_referent_type() {
+    let checked = run("fn main() { let mut a = 12\n let mut b = &mut a\n b = 16 }\n");
+    assert!(
+        checked.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.error,
+            TypeError::TypeMismatch { expected, found }
+                if expected == "&mut i64" && found == "{integer}"
+        )),
+        "expected concrete reference mismatch, got {:?}",
+        checked.diagnostics
+    );
+    assert!(
+        checked
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.to_string().contains('?')),
+        "inference variables leaked into diagnostics: {:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
 fn mutable_reference_binding_can_be_rebound_with_a_reference() {
     let checked = run("fn main() { let mut x = &[1, 2]\n x = &[2, 3] }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);

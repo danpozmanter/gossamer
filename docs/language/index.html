@@ -1796,199 +1796,160 @@
 <thead>
 <tr>
 <th>Feature</th>
-<th>Status</th>
 <th>Summary</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><a href="let/"><code>lang::let</code></a></td>
-<td>shipped</td>
 <td>Immutable binding.</td>
 </tr>
 <tr>
 <td><a href="let_mut/"><code>lang::let_mut</code></a></td>
-<td>shipped</td>
 <td>Mutable bindings can be reassigned and can be the source of <code>&amp;mut</code>.</td>
 </tr>
 <tr>
 <td><a href="if/"><code>lang::if</code></a></td>
-<td>shipped</td>
 <td>Conditional expression.</td>
 </tr>
 <tr>
 <td><a href="match/"><code>lang::match</code></a></td>
-<td>shipped</td>
 <td>Exhaustive pattern match expression.</td>
 </tr>
 <tr>
 <td><a href="if_let/"><code>lang::if_let</code></a></td>
-<td>shipped</td>
 <td>Single-variant pattern sugar.</td>
 </tr>
 <tr>
 <td><a href="while_let/"><code>lang::while_let</code></a></td>
-<td>shipped</td>
 <td>Loop that drains while a pattern matches.</td>
 </tr>
 <tr>
 <td><a href="for/"><code>lang::for</code></a></td>
-<td>shipped</td>
 <td>Iterator-driven loop.</td>
 </tr>
 <tr>
 <td><a href="loop/"><code>lang::loop</code></a></td>
-<td>shipped</td>
 <td>Unconditional loop with <code>break value</code>.</td>
 </tr>
 <tr>
 <td><a href="break/"><code>lang::break</code></a></td>
-<td>shipped</td>
 <td>Exit the innermost loop, optionally with a value.</td>
 </tr>
 <tr>
 <td><a href="continue/"><code>lang::continue</code></a></td>
-<td>shipped</td>
 <td>Skip to the next iteration of the innermost loop.</td>
 </tr>
 <tr>
 <td><a href="return/"><code>lang::return</code></a></td>
-<td>shipped</td>
 <td>Exit the enclosing function with a value.</td>
 </tr>
 <tr>
 <td><a href="question_mark/"><code>lang::question_mark</code></a></td>
-<td>shipped</td>
 <td>Short-circuit Result / Option propagation operator.</td>
 </tr>
 <tr>
 <td><a href="pipe/"><code>lang::pipe</code></a></td>
-<td>shipped</td>
 <td>Forward-pipe operator <code>|&gt;</code>.</td>
 </tr>
 <tr>
 <td><a href="closure/"><code>lang::closure</code></a></td>
-<td>shipped</td>
 <td>Lambda expression <code>|args| body</code>.</td>
 </tr>
 <tr>
 <td><a href="fn/"><code>lang::fn</code></a></td>
-<td>shipped</td>
 <td>Function declaration.</td>
 </tr>
 <tr>
 <td><a href="struct/"><code>lang::struct</code></a></td>
-<td>shipped</td>
 <td>Product type declaration.</td>
 </tr>
 <tr>
 <td><a href="enum/"><code>lang::enum</code></a></td>
-<td>shipped</td>
 <td>Sum type declaration with payload-carrying variants.</td>
 </tr>
 <tr>
 <td><a href="trait/"><code>lang::trait</code></a></td>
-<td>shipped</td>
 <td>Behaviour interface declaration.</td>
 </tr>
 <tr>
 <td><a href="impl/"><code>lang::impl</code></a></td>
-<td>shipped</td>
 <td>Inherent and trait implementation blocks.</td>
 </tr>
 <tr>
 <td><a href="generics/"><code>lang::generics</code></a></td>
-<td>shipped</td>
 <td>Type parameters on functions / impls / structs.</td>
 </tr>
 <tr>
 <td><a href="go/"><code>lang::go</code></a></td>
-<td>shipped</td>
 <td>Goroutine spawn.</td>
 </tr>
 <tr>
 <td><a href="select/"><code>lang::select</code></a></td>
-<td>shipped</td>
 <td>Channel multiplex select expression.</td>
 </tr>
 <tr>
 <td><a href="channel/"><code>lang::channel</code></a></td>
-<td>shipped</td>
 <td>Typed channel via <code>std::sync::channel</code>.</td>
 </tr>
 <tr>
 <td><a href="weak_references/"><code>lang::weak_references</code></a></td>
-<td>experimental</td>
 <td><code>Weak&lt;T&gt;</code> downgrade/upgrade handles. Native collection is thread-local only and the bytecode VM has no cycle collector, so cross-tier cyclic reclamation is not yet a Stable guarantee.</td>
 </tr>
 <tr>
 <td><a href="spawn/"><code>lang::spawn</code></a></td>
-<td>shipped</td>
 <td>Goroutine join handle: <code>spawn(f)</code> -&gt; <code>JoinHandle&lt;T&gt;</code>, <code>.join()</code> -&gt; <code>Result&lt;T, String&gt;</code>.</td>
 </tr>
 <tr>
 <td><a href="macros/"><code>lang::macros</code></a></td>
-<td>shipped</td>
 <td>Built-in macros only - no user-defined macros: the format family (print/println/eprint/eprintln/format/panic), the desugar macros (matches!/todo!/unimplemented!/unreachable!/dbg!), and the build-time regex!/sql!/codegen!.</td>
 </tr>
 <tr>
 <td><a href="doctest/"><code>lang::doctest</code></a></td>
-<td>shipped</td>
 <td>Fenced code in <code>//</code> doc comments runs under <code>gos test</code>.</td>
 </tr>
 <tr>
 <td><a href="cfg/"><code>lang::cfg</code></a></td>
-<td>shipped</td>
 <td>Conditional compilation attribute.</td>
 </tr>
 <tr>
 <td><a href="attribute/"><code>lang::attribute</code></a></td>
-<td>shipped</td>
 <td>Built-in attributes (<code>#[cfg]</code>, <code>#[test]</code>, <code>#[bench]</code>, <code>#[derive]</code>).</td>
 </tr>
 <tr>
 <td><a href="const/"><code>lang::const</code></a></td>
-<td>shipped</td>
 <td>Compile-time constant binding.</td>
 </tr>
 <tr>
 <td><a href="static/"><code>lang::static</code></a></td>
-<td>shipped</td>
 <td>Module-level mutable or immutable static slot.</td>
 </tr>
 <tr>
 <td><a href="type_alias/"><code>lang::type_alias</code></a></td>
-<td>shipped</td>
 <td>Transparent type alias: <code>type X = T</code> (and generic <code>type Pair&lt;A&gt; = (A, A)</code>) is interchangeable with its target everywhere; a cyclic alias is rejected (<code>GT0024</code>).</td>
 </tr>
 <tr>
 <td><a href="mut_ref_params/"><code>lang::mut_ref_params</code></a></td>
-<td>shipped</td>
 <td>Local <code>&amp;mut</code> aliases write through; <code>&amp;mut Vec&lt;T&gt;</code> / <code>&amp;mut [T]</code> parameters write through on every tier.</td>
 </tr>
 <tr>
 <td><a href="unicode_identifiers/"><code>lang::unicode_identifiers</code></a></td>
-<td>shipped</td>
 <td>Identifiers follow UAX #31 (matches Rust 2024).</td>
 </tr>
 <tr>
 <td><a href="comptime/"><code>lang::comptime</code></a></td>
-<td>shipped</td>
 <td>Zig-style compile-time evaluation: <code>comptime { ... }</code> blocks, <code>comptime fn</code> calls, and <code>comptime</code> parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. <code>typeInfo::&lt;T&gt;()</code> reflects a type's fields, a <code>for (name, ty) in typeInfo::&lt;T&gt;()</code> loop unrolls into native per-field code, and <code>codegen!(...)</code> splices a <code>comptime fn</code>'s <code>String</code> back as source. Includes the <code>regex!</code> / <code>sql!</code> build-time validation macros.</td>
 </tr>
 <tr>
 <td><a href="move_keyword/"><code>lang::move_keyword</code></a></td>
-<td>planned</td>
 <td><code>move</code> closure capture keyword - parses, lowers to the same Fn shape as a non-move closure (the runtime manages ownership).</td>
 </tr>
 <tr>
 <td><a href="async_await/"><code>lang::async_await</code></a></td>
-<td>planned</td>
 <td><code>async fn</code> / <code>.await</code> - goroutines + channels cover the same shape today.</td>
 </tr>
 <tr>
 <td><a href="lifetimes/"><code>lang::lifetimes</code></a></td>
-<td>planned</td>
 <td>Explicit lifetime annotations - not needed under the current memory model; tracked in case a borrow-checker mode lands.</td>
 </tr>
 </tbody>

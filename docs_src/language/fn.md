@@ -1,7 +1,5 @@
 # `lang::fn`
 
-Status: shipped
-
 Function declaration.
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 

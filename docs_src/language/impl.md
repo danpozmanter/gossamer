@@ -1,7 +1,5 @@
 # `lang::impl`
 
-Status: shipped
-
 Inherent and trait implementation blocks.
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 

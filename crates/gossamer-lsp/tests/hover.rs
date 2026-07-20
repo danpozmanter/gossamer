@@ -65,6 +65,24 @@ fn hover_on_local_binding_shows_type() {
 }
 
 #[test]
+fn hover_on_inferred_mutable_reference_shows_concrete_type() {
+    let server = server_with(
+        "file:///ref.gos",
+        "fn main() {\n    let mut a = 12\n    let mut b = &mut a\n    b;\n}\n",
+    );
+    let response = server.hover(&position_params("file:///ref.gos", 3, 4));
+    let text = hover_text(&response);
+    assert!(
+        text.contains("&mut i64"),
+        "mutable-reference hover must show its concrete type, got {text:?}"
+    );
+    assert!(
+        !text.contains('?'),
+        "inference variable leaked into hover, got {text:?}"
+    );
+}
+
+#[test]
 fn hover_on_stdlib_symbol_shows_doc() {
     let server = server_with("file:///p.gos", "fn main() { println!(\"hi\"); }\n");
     // Cursor on `println` (line 0, column 13).

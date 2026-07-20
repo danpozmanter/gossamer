@@ -1,5 +1,3 @@
 # `lang::spawn`
 
-Status: shipped
-
 Goroutine join handle: `spawn(f)` -> `JoinHandle<T>`, `.join()` -> `Result<T, String>`.

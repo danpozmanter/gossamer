@@ -1,7 +1,7 @@
 # Self-hosting feasibility study (Phase 30)
 
-> **Status note.** This is the original Phase 30 feasibility write-up,
-> kept for its gap analysis. Most prerequisites it lists below have
+> This is the original Phase 30 feasibility write-up, kept for its gap
+> analysis. Most prerequisites it lists below have
 > since shipped on all three tiers - growable `Vec`, `HashMap` /
 > `HashSet` / `BTreeMap`, generic functions and types with full
 > monomorphisation, traits with static dispatch, byte literals, and

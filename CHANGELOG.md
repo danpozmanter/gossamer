@@ -1,12 +1,16 @@
 # Changelog
 
-## 0.32.3 - LSP diagnostics and quick fixes
+## 0.32.3 - LSP diagnostics and quick fixes, type info, and mutable-reference fixes
 
 - Add default lint diagnostics, safe lint quick fixes, exact stdlib
   auto-imports, and `source.fixAll.gossamer`.
 - Fix UTF-16 and Unicode position handling, percent-decoded workspace URIs,
   stale diagnostics after close, case-insensitive framing headers, and misplaced
   unused-variable fixes on mutable bindings.
+- Show resolved nested reference types in REPL errors and LSP hover instead of
+  leaking inference variables.
+- Clarify mutable-reference alias chains and reserve documentation lifecycle
+  labels for experimental features.
 
 ## 0.32.2 - Strict mutability, REPL shortcuts, REPL find regex
 

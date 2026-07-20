@@ -1,7 +1,7 @@
 # Lazy iterator protocol
 
-Status: live. Integer range expressions produce lazy iterators in every
-edition, and adapters applied to those iterator values remain lazy. The lazy
+Integer range expressions produce lazy iterators in every edition, and adapters
+applied to those iterator values remain lazy. The lazy
 `std::iter` constructor and Vec adapter surface is enabled in edition 2027;
 projects using edition 2026 otherwise keep the historical eager `std::iter`
 behavior. The `iter::eager_*` aliases remain available as explicit eager

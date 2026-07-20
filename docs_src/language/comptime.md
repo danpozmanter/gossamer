@@ -1,7 +1,5 @@
 # `lang::comptime`
 
-Status: shipped
-
 Zig-style compile-time evaluation: `comptime { ... }` blocks, `comptime fn` calls, and `comptime` parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. `typeInfo::<T>()` reflects a type's fields, a `for (name, ty) in typeInfo::<T>()` loop unrolls into native per-field code, and `codegen!(...)` splices a `comptime fn`'s `String` back as source. Includes the `regex!` / `sql!` build-time validation macros.
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 

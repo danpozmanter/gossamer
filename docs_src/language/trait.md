@@ -1,7 +1,5 @@
 # `lang::trait`
 
-Status: shipped
-
 Behaviour interface declaration.
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 

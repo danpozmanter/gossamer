@@ -1,7 +1,5 @@
 # `lang::generics`
 
-Status: shipped
-
 Type parameters on functions / impls / structs.
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
