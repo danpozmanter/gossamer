@@ -108,6 +108,20 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
             .iter()
             .map(gossamer_types::TypeDiagnostic::to_diagnostic),
     );
+    // Editors should see the same default lint findings as `gos lint`.
+    // Parse the user source without the synthesized autoderive tail so
+    // lint spans and fixes can never point outside the editor buffer.
+    let (lint_sf, lint_parse_diags) = gossamer_parse::parse_source_file(source, file);
+    if lint_parse_diags.is_empty() {
+        let mut registry = gossamer_lint::Registry::with_defaults();
+        for item in &lint_sf.items {
+            gossamer_lint::apply_attributes(&item.attrs, &mut registry);
+        }
+        let mut lint_diagnostics = gossamer_lint::run(&lint_sf, source, &registry);
+        let lint_fixes = gossamer_lint::fixes(&lint_sf, &registry, source);
+        attach_lint_fixes(&mut lint_diagnostics, lint_fixes);
+        diagnostics.extend(lint_diagnostics);
+    }
     // Diagnostics pointing into the synthesized tail would land past
     // the end of the buffer the editor displays; `gos check` surfaces
     // them against the augmented text, but an LSP client cannot.
@@ -135,6 +149,39 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
         diagnostics,
         index,
         user_len,
+    }
+}
+
+/// Attaches `gos lint --fix` edits to their nearest same-lint
+/// diagnostic so the generic LSP suggestion path can expose them.
+fn attach_lint_fixes(diagnostics: &mut [Diagnostic], fixes: Vec<gossamer_lint::Fix>) {
+    use gossamer_diagnostics::{Location, Suggestion};
+
+    for fix in fixes {
+        let lint_note = format!("lint: {}", fix.lint_id);
+        let best = diagnostics
+            .iter()
+            .enumerate()
+            .filter(|(_, diag)| diag.notes.iter().any(|note| note == &lint_note))
+            .min_by_key(|(_, diag)| {
+                let start = diag
+                    .labels
+                    .iter()
+                    .find(|label| label.primary)
+                    .or_else(|| diag.labels.first())
+                    .map_or(0, |label| label.location.span.start);
+                start.abs_diff(fix.span.start)
+            })
+            .map(|(index, _)| index);
+        let Some(index) = best else {
+            continue;
+        };
+        let title = fix.lint_id.replace('_', " ");
+        diagnostics[index].suggestions.push(Suggestion::replacement(
+            Location::new(fix.span.file, fix.span),
+            format!("Fix {title}"),
+            fix.replacement,
+        ));
     }
 }
 
@@ -203,46 +250,52 @@ impl DocumentAnalysis {
         None
     }
 
-    /// Translates a 0-based (line, column) LSP position into a byte
-    /// offset, or `None` when the position is past EOF.
+    /// Translates a 0-based LSP position (whose character is a UTF-16
+    /// code-unit offset) into a UTF-8 byte offset.
     #[must_use]
     pub(crate) fn position_to_offset(&self, line: u32, column: u32) -> Option<u32> {
-        let mut current_line = 0u32;
-        let mut offset = 0u32;
-        let source = self.source();
-        let bytes = source.as_bytes();
-        while offset < bytes.len() as u32 {
-            if current_line == line {
-                return Some(offset + column);
-            }
-            if bytes[offset as usize] == b'\n' {
-                current_line += 1;
-            }
-            offset += 1;
+        let source = self.user_source();
+        let mut line_start = 0usize;
+        for _ in 0..line {
+            let newline = source[line_start..].find('\n')?;
+            line_start += newline + 1;
         }
-        if current_line == line {
-            return Some(offset + column);
+        let remainder = &source[line_start..];
+        let mut line_text = remainder
+            .split_once('\n')
+            .map_or(remainder, |(text, _)| text);
+        if let Some(without_cr) = line_text.strip_suffix('\r') {
+            line_text = without_cr;
         }
-        None
+
+        let mut utf16_column = 0u32;
+        for (byte, ch) in line_text.char_indices() {
+            if utf16_column == column {
+                return u32::try_from(line_start + byte).ok();
+            }
+            utf16_column += ch.len_utf16() as u32;
+            if utf16_column > column {
+                return None;
+            }
+        }
+        (utf16_column == column)
+            .then(|| u32::try_from(line_start + line_text.len()).ok())
+            .flatten()
     }
 
-    /// Translates a byte offset back into an LSP 0-based
-    /// (line, column) position.
+    /// Translates a UTF-8 byte offset back into an LSP 0-based
+    /// position using UTF-16 code units for the character field.
     #[must_use]
     pub(crate) fn offset_to_position(&self, offset: u32) -> (u32, u32) {
-        let mut line = 0u32;
-        let mut column = 0u32;
-        let source = self.source();
-        let bytes = source.as_bytes();
-        let cap = std::cmp::min(offset as usize, bytes.len());
-        for &b in &bytes[..cap] {
-            if b == b'\n' {
-                line += 1;
-                column = 0;
-            } else {
-                column += 1;
-            }
+        let source = self.user_source();
+        let mut cap = std::cmp::min(offset as usize, source.len());
+        while cap > 0 && !source.is_char_boundary(cap) {
+            cap -= 1;
         }
+        let prefix = &source[..cap];
+        let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u32;
+        let line_start = prefix.rfind('\n').map_or(0, |index| index + 1);
+        let column = prefix[line_start..].encode_utf16().count() as u32;
         (line, column)
     }
 
@@ -250,25 +303,30 @@ impl DocumentAnalysis {
     /// hover and go-to-def to map a cursor onto a symbol.
     #[must_use]
     pub(crate) fn word_at(&self, offset: u32) -> Option<&str> {
-        let source = self.source();
-        let bytes = source.as_bytes();
+        let source = self.user_source();
         let offset = offset as usize;
-        if offset > bytes.len() {
+        if offset > source.len() || !source.is_char_boundary(offset) {
             return None;
         }
-        let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+        let is_word = |ch: char| ch == '_' || unicode_ident::is_xid_continue(ch);
         let mut start = offset;
-        while start > 0 && is_word(bytes[start - 1]) {
-            start -= 1;
+        for (index, ch) in source[..offset].char_indices().rev() {
+            if !is_word(ch) {
+                break;
+            }
+            start = index;
         }
         let mut end = offset;
-        while end < bytes.len() && is_word(bytes[end]) {
-            end += 1;
+        for (relative, ch) in source[offset..].char_indices() {
+            if !is_word(ch) {
+                break;
+            }
+            end = offset + relative + ch.len_utf8();
         }
         if start == end {
             return None;
         }
-        std::str::from_utf8(&bytes[start..end]).ok()
+        Some(&source[start..end])
     }
 
     /// Path-aware cursor context. Walks left from `offset` over the
@@ -277,15 +335,21 @@ impl DocumentAnalysis {
     /// the input every modern completion path consumes.
     #[must_use]
     pub(crate) fn cursor_context(&self, offset: u32) -> CursorContext<'_> {
-        let source = self.source();
+        let source = self.user_source();
         let bytes = source.as_bytes();
         let mut end = (offset as usize).min(bytes.len());
-        let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+        while end > 0 && !source.is_char_boundary(end) {
+            end -= 1;
+        }
+        let is_word = |ch: char| ch == '_' || unicode_ident::is_xid_continue(ch);
         // Walk left across the suffix word (the partial identifier the
         // cursor is currently typing).
         let mut start = end;
-        while start > 0 && is_word(bytes[start - 1]) {
-            start -= 1;
+        while let Some((index, ch)) = source[..start].char_indices().next_back() {
+            if !is_word(ch) {
+                break;
+            }
+            start = index;
         }
         let suffix_start = start;
         let suffix_end = end;
@@ -299,8 +363,11 @@ impl DocumentAnalysis {
             scan -= 2;
             // Walk left over a word.
             let seg_end = scan;
-            while scan > 0 && is_word(bytes[scan - 1]) {
-                scan -= 1;
+            while let Some((index, ch)) = source[..scan].char_indices().next_back() {
+                if !is_word(ch) {
+                    break;
+                }
+                scan = index;
             }
             let seg_start = scan;
             if seg_start == seg_end {
@@ -345,26 +412,18 @@ impl DocumentAnalysis {
         if name.is_empty() {
             return Vec::new();
         }
-        let source = self.source();
-        let bytes = source.as_bytes();
-        let needle = name.as_bytes();
-        let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+        let source = self.user_source();
+        let is_word = |ch: char| ch == '_' || unicode_ident::is_xid_continue(ch);
         let mut out = Vec::new();
-        let mut cursor = 0;
-        while cursor + needle.len() <= bytes.len() {
-            if &bytes[cursor..cursor + needle.len()] != needle {
-                cursor += 1;
-                continue;
-            }
-            let before_ok = cursor == 0 || !is_word(bytes[cursor - 1]);
-            let after_ok =
-                cursor + needle.len() == bytes.len() || !is_word(bytes[cursor + needle.len()]);
+        for (cursor, _) in source.match_indices(name) {
+            let end = cursor + name.len();
+            let before_ok = source[..cursor]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !is_word(ch));
+            let after_ok = source[end..].chars().next().is_none_or(|ch| !is_word(ch));
             if before_ok && after_ok {
-                let end = (cursor + needle.len()) as u32;
-                out.push(Span::new(self.file, cursor as u32, end));
-                cursor += needle.len();
-            } else {
-                cursor += 1;
+                out.push(Span::new(self.file, cursor as u32, end as u32));
             }
         }
         out
@@ -447,6 +506,36 @@ mod tests {
         assert!(ctx.qualifier.is_empty());
         assert!(!ctx.is_method_position);
         assert!(!ctx.is_use_context);
+    }
+
+    #[test]
+    fn lsp_positions_use_utf16_code_units() {
+        let doc = analyse("file:///unicode.gos", "fn main() { \"😀\"; café() }\n");
+        let cafe_offset = doc.user_source().find("café").unwrap() as u32;
+        let (line, column) = doc.offset_to_position(cafe_offset);
+        assert_eq!(line, 0);
+        assert_eq!(column, 18, "emoji must occupy two UTF-16 code units");
+        assert_eq!(doc.position_to_offset(line, column), Some(cafe_offset));
+        assert_eq!(
+            doc.position_to_offset(0, 14),
+            None,
+            "a position inside the emoji surrogate pair is invalid"
+        );
+    }
+
+    #[test]
+    fn unicode_words_and_completion_prefixes_remain_whole() {
+        let doc = analyse(
+            "file:///unicode.gos",
+            "fn café() {}\nfn main() { café() }\n",
+        );
+        let call = doc.user_source().rfind("café").unwrap() as u32;
+        assert_eq!(doc.word_at(call + 3), Some("café"));
+        assert_eq!(
+            doc.cursor_context(call + "café".len() as u32).suffix,
+            "café"
+        );
+        assert_eq!(doc.find_references("café").len(), 2);
     }
 
     #[test]

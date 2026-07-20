@@ -161,8 +161,53 @@ fn diagnostic_to_lsp(doc: &DocumentAnalysis, diag: &GossamerDiagnostic) -> Value
         Value::String(diag.code.as_str().to_string()),
     );
     entry.insert("source".to_string(), Value::String("gos".to_string()));
-    entry.insert("message".to_string(), Value::String(diag.title.clone()));
+    let mut message = diag.title.clone();
+    for note in &diag.notes {
+        message.push_str("\n\nnote: ");
+        message.push_str(note);
+    }
+    for help in &diag.helps {
+        message.push_str("\n\nhelp: ");
+        message.push_str(help);
+    }
+    entry.insert("message".to_string(), Value::String(message));
+    if matches!(diag.code.as_str(), "GL0001" | "GL0002" | "GL0003") {
+        // LSP DiagnosticTag.Unnecessary lets editors fade unused code.
+        entry.insert("tags".to_string(), Value::Array(vec![Value::Number(1.0)]));
+    }
+    let related: Vec<Value> = diag
+        .labels
+        .iter()
+        .filter(|label| !label.primary)
+        .filter_map(|label| {
+            let message = label.message.as_ref()?;
+            let mut location_fields = BTreeMap::new();
+            location_fields.insert("uri".to_string(), Value::String(doc.uri.clone()));
+            location_fields.insert(
+                "range".to_string(),
+                span_to_range(doc, label.location.span),
+            );
+            let mut related_fields = BTreeMap::new();
+            related_fields.insert("location".to_string(), Value::Object(location_fields));
+            related_fields.insert("message".to_string(), Value::String(message.clone()));
+            Some(Value::Object(related_fields))
+        })
+        .collect();
+    if !related.is_empty() {
+        entry.insert("relatedInformation".to_string(), Value::Array(related));
+    }
     Value::Object(entry)
+}
+
+/// Clears diagnostics retained by an editor after `didClose`.
+fn empty_diagnostics_notification(uri: &str) -> Value {
+    let mut params = BTreeMap::new();
+    params.insert("uri".to_string(), Value::String(uri.to_string()));
+    params.insert("diagnostics".to_string(), Value::Array(Vec::new()));
+    notification(
+        "textDocument/publishDiagnostics",
+        Value::Object(params),
+    )
 }
 
 const KEYWORDS: &[&str] = &[
@@ -196,4 +241,3 @@ const BUILTIN_COMPLETIONS: &[&str] = &[
     "spawn",
     "channel",
 ];
-

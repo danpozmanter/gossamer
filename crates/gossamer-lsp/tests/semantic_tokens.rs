@@ -120,6 +120,20 @@ fn semantic_tokens_function_index_for_fn_name() {
 }
 
 #[test]
+fn semantic_token_targets_identifier_and_uses_utf16_length() {
+    let uri = "file:///unicode-token.gos";
+    let server = server_with(uri, "fn café() {}\n");
+    let response = server.semantic_tokens(&document_params(uri));
+    let tokens = decode(&data_array(&response));
+    let function = tokens
+        .iter()
+        .find(|token| token.type_index == 6)
+        .expect("function token");
+    assert_eq!((function.line, function.start), (0, 3));
+    assert_eq!(function.length, 4, "`café` is four UTF-16 code units");
+}
+
+#[test]
 fn semantic_tokens_struct_index_for_struct_name() {
     let uri = "file:///s.gos";
     let server = server_with(uri, "struct Widget {}\n");

@@ -41,8 +41,10 @@ impl<R: BufRead, W: Write> Transport<R, W> {
             if trimmed.is_empty() {
                 break;
             }
-            if let Some(value) = trimmed.strip_prefix("Content-Length:") {
-                content_length = value.trim().parse::<usize>().ok();
+            if let Some((name, value)) = trimmed.split_once(':') {
+                if name.eq_ignore_ascii_case("Content-Length") {
+                    content_length = value.trim().parse::<usize>().ok();
+                }
             }
         }
         let Some(len) = content_length else {
@@ -221,5 +223,16 @@ mod protocol_tests {
         assert_eq!(field_u32(&from_int, "line"), Some(7));
         assert_eq!(field_u32(&from_float, "line"), Some(7));
         assert_eq!(field_u32(&from_int, "missing"), None);
+    }
+
+    #[test]
+    fn content_length_header_is_case_insensitive() {
+        let body = "{}";
+        let frame = format!("content-length: {}\r\n\r\n{body}", body.len());
+        let mut transport = Transport::new(frame.as_bytes(), Vec::<u8>::new());
+        assert_eq!(
+            transport.read_message().unwrap(),
+            Some(Value::Object(BTreeMap::default()))
+        );
     }
 }

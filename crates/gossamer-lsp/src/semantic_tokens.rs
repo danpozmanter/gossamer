@@ -66,11 +66,24 @@ enum TokenKind {
 
 const MOD_DECLARATION: u32 = 1 << 0;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct RawToken {
-    span: Span,
+    target: TokenTarget,
     kind: TokenKind,
     modifiers: u32,
+}
+
+#[derive(Debug, Clone)]
+enum TokenTarget {
+    Exact(Span),
+    FirstNamed { within: Span, name: String },
+    LastNamed { within: Span, name: String },
+}
+
+impl From<Span> for TokenTarget {
+    fn from(span: Span) -> Self {
+        Self::Exact(span)
+    }
 }
 
 /// Builds the LSP `data` array for `textDocument/semanticTokens/full`.
@@ -79,20 +92,27 @@ pub(crate) fn full_tokens(doc: &DocumentAnalysis) -> Vec<u32> {
     for item in &doc.sf.items {
         visit_item(item, &mut tokens);
     }
-    tokens.sort_by_key(|t| t.span.start);
+    let mut tokens: Vec<(Span, TokenKind, u32)> = tokens
+        .into_iter()
+        .filter_map(|token| {
+            resolve_token_span(doc, &token.target).map(|span| (span, token.kind, token.modifiers))
+        })
+        .collect();
+    tokens.sort_by_key(|(span, _, _)| span.start);
     encode(doc, &tokens)
 }
 
-fn encode(doc: &DocumentAnalysis, tokens: &[RawToken]) -> Vec<u32> {
+fn encode(doc: &DocumentAnalysis, tokens: &[(Span, TokenKind, u32)]) -> Vec<u32> {
     let mut out = Vec::with_capacity(tokens.len() * 5);
     let mut prev_line: u32 = 0;
     let mut prev_start: u32 = 0;
-    for token in tokens {
-        let (line, start) = doc.offset_to_position(token.span.start);
-        let length = token.span.end.saturating_sub(token.span.start);
-        if length == 0 {
+    for (span, kind, modifiers) in tokens {
+        let (line, start) = doc.offset_to_position(span.start);
+        let (end_line, end) = doc.offset_to_position(span.end);
+        if line != end_line || end <= start {
             continue;
         }
+        let length = end - start;
         let delta_line = line.saturating_sub(prev_line);
         let delta_start = if delta_line == 0 {
             start.saturating_sub(prev_start)
@@ -102,8 +122,8 @@ fn encode(doc: &DocumentAnalysis, tokens: &[RawToken]) -> Vec<u32> {
         out.push(delta_line);
         out.push(delta_start);
         out.push(length);
-        out.push(token.kind as u32);
-        out.push(token.modifiers);
+        out.push(*kind as u32);
+        out.push(*modifiers);
         prev_line = line;
         prev_start = start;
     }
@@ -431,7 +451,7 @@ fn visit_expr(expr: &Expr, out: &mut Vec<RawToken>) {
             ..
         } => {
             visit_expr(receiver, out);
-            push(out, ident_span(expr.span, &name.name), TokenKind::Method, 0);
+            push(out, ident_last(expr.span, &name.name), TokenKind::Method, 0);
             for arg in args {
                 visit_expr(arg, out);
             }
@@ -441,7 +461,7 @@ fn visit_expr(expr: &Expr, out: &mut Vec<RawToken>) {
             if let FieldSelector::Named(name) = field {
                 push(
                     out,
-                    ident_span(expr.span, &name.name),
+                    ident_last(expr.span, &name.name),
                     TokenKind::Property,
                     0,
                 );
@@ -483,7 +503,7 @@ fn visit_expr(expr: &Expr, out: &mut Vec<RawToken>) {
                 );
             }
             for field in fields {
-                visit_struct_field(field, out);
+                visit_struct_field(field, expr.span, out);
             }
             if let Some(base) = base {
                 visit_expr(base, out);
@@ -591,41 +611,76 @@ fn visit_closure(params: &[ClosureParam], body: &Expr, out: &mut Vec<RawToken>) 
     visit_expr(body, out);
 }
 
-fn visit_struct_field(field: &StructExprField, out: &mut Vec<RawToken>) {
+fn visit_struct_field(field: &StructExprField, expression_span: Span, out: &mut Vec<RawToken>) {
+    let search_span = field.value.as_ref().map_or(expression_span, |value| {
+        Span::new(
+            expression_span.file,
+            expression_span.start,
+            value.span.start,
+        )
+    });
+    push(
+        out,
+        ident_last(search_span, &field.name.name),
+        TokenKind::Property,
+        0,
+    );
     if let Some(value) = &field.value {
-        push(
-            out,
-            ident_in(value.span, &field.name.name),
-            TokenKind::Property,
-            0,
-        );
         visit_expr(value, out);
     }
 }
 
-fn ident_span(item_span: Span, name: &str) -> Span {
-    Span::new(
-        item_span.file,
-        item_span.start,
-        item_span.start + name.len() as u32,
-    )
-}
-
-fn ident_in(value_span: Span, name: &str) -> Span {
-    Span::new(
-        value_span.file,
-        value_span.start,
-        value_span.start + name.len() as u32,
-    )
-}
-
-fn push(out: &mut Vec<RawToken>, span: Span, kind: TokenKind, modifiers: u32) {
-    if span.end <= span.start {
-        return;
+fn ident_span(item_span: Span, name: &str) -> TokenTarget {
+    TokenTarget::FirstNamed {
+        within: item_span,
+        name: name.to_string(),
     }
+}
+
+fn ident_last(item_span: Span, name: &str) -> TokenTarget {
+    TokenTarget::LastNamed {
+        within: item_span,
+        name: name.to_string(),
+    }
+}
+
+fn push(out: &mut Vec<RawToken>, target: impl Into<TokenTarget>, kind: TokenKind, modifiers: u32) {
     out.push(RawToken {
-        span,
+        target: target.into(),
         kind,
         modifiers,
     });
+}
+
+fn resolve_token_span(doc: &DocumentAnalysis, target: &TokenTarget) -> Option<Span> {
+    let (within, name, last) = match target {
+        TokenTarget::Exact(span) => return (span.end > span.start).then_some(*span),
+        TokenTarget::FirstNamed { within, name } => (*within, name, false),
+        TokenTarget::LastNamed { within, name } => (*within, name, true),
+    };
+    let source = doc.user_source();
+    let start = (within.start as usize).min(source.len());
+    let end = (within.end as usize).min(source.len()).max(start);
+    let haystack = &source[start..end];
+    let is_word = |ch: char| ch == '_' || unicode_ident::is_xid_continue(ch);
+    let mut candidates = haystack.match_indices(name).filter(|(relative, _)| {
+        let absolute = start + relative;
+        let after = absolute + name.len();
+        source[..absolute]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_word(ch))
+            && source[after..].chars().next().is_none_or(|ch| !is_word(ch))
+    });
+    let (relative, _) = if last {
+        candidates.last()?
+    } else {
+        candidates.next()?
+    };
+    let absolute = start + relative;
+    Some(Span::new(
+        within.file,
+        absolute as u32,
+        (absolute + name.len()) as u32,
+    ))
 }

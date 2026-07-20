@@ -80,6 +80,7 @@ fn run<R: Read, W: Write>(reader: R, writer: W) -> std::io::Result<()> {
             "textDocument/didClose" => {
                 if let Some(uri) = field_str(field(&params, "textDocument"), "uri") {
                     state.close(uri);
+                    transport.write_message(&empty_diagnostics_notification(uri))?;
                 }
             }
             "textDocument/hover" => {
@@ -184,7 +185,10 @@ fn initialize_result() -> Value {
     let mut code_action = BTreeMap::new();
     code_action.insert(
         "codeActionKinds".to_string(),
-        Value::Array(vec![Value::String("quickfix".to_string())]),
+        Value::Array(vec![
+            Value::String("quickfix".to_string()),
+            Value::String("source.fixAll.gossamer".to_string()),
+        ]),
     );
     caps.insert("codeActionProvider".to_string(), Value::Object(code_action));
     let mut rename = BTreeMap::new();
@@ -259,12 +263,29 @@ fn semantic_tokens_capability() -> Value {
 
 /// Converts a `file://...` URI into a filesystem path. Returns
 /// `None` for non-`file://` schemes (e.g. `inmemory://`) and for
-/// URIs that don't decode cleanly. Percent-decoding is not
-/// performed - the discovery path tolerates raw paths the editor
-/// hands us.
+/// URIs that don't decode cleanly.
 fn file_uri_to_path(uri: &str) -> Option<String> {
     let rest = uri.strip_prefix("file://")?;
-    Some(rest.to_string())
+    let bytes = rest.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        let hex = bytes.get(index + 1..index + 3)?;
+        let high = (hex[0] as char).to_digit(16)?;
+        let low = (hex[1] as char).to_digit(16)?;
+        let byte = u8::try_from((high << 4) | low).ok()?;
+        if byte == 0 {
+            return None;
+        }
+        decoded.push(byte);
+        index += 3;
+    }
+    String::from_utf8(decoded).ok()
 }
 
 fn extract_did_open(params: &Value) -> Option<(String, String)> {
@@ -417,13 +438,13 @@ impl ServerState {
         let req_range = field(params, "range");
         let (req_start, req_end) = lsp_range_to_offsets(doc, req_range);
         let mut actions: Vec<Value> = Vec::new();
+        let wants_quickfix = code_action_kind_requested(params, "quickfix");
+        let wants_fix_all = code_action_kind_requested(params, "source.fixAll.gossamer");
+        if !wants_quickfix && !wants_fix_all {
+            return Value::Array(actions);
+        }
         for diag in &doc.diagnostics {
-            // Only quickfix every diagnostic that has at least
-            // one Suggestion. The action surfaces ALL the
-            // diagnostic's suggestions (a single diagnostic may
-            // attach multiple replacements; we emit one action
-            // per suggestion so the user sees each candidate).
-            if diag.suggestions.is_empty() {
+            if !wants_quickfix || !code_action_diagnostic_requested(params, doc, diag) {
                 continue;
             }
             // Skip when the diagnostic's primary label does not
@@ -438,16 +459,64 @@ impl ServerState {
                 .or_else(|| diag.labels.first())
                 .map(|l| l.location.span);
             if let Some(span) = diag_span {
-                let overlaps = (span.start as usize) <= req_end && req_start <= (span.end as usize);
-                if !overlaps {
+                if !offset_ranges_overlap(
+                    req_start,
+                    req_end,
+                    span.start as usize,
+                    span.end as usize,
+                ) {
                     continue;
                 }
             }
             for suggestion in &diag.suggestions {
                 actions.push(suggestion_to_code_action(doc, uri, diag, suggestion));
             }
+            if diag.code.as_str() == "GR0001" {
+                actions.extend(self.auto_import_code_actions(doc, uri, diag));
+            }
+        }
+        if wants_fix_all {
+            if let Some(action) = fix_all_code_action(doc, uri) {
+                actions.push(action);
+            }
         }
         Value::Array(actions)
+    }
+
+    /// Offers exact stdlib imports for an unresolved bare name. This
+    /// complements completion-time auto-imports when the user has
+    /// already finished typing the unknown identifier.
+    fn auto_import_code_actions(
+        &self,
+        doc: &DocumentAnalysis,
+        uri: &str,
+        diag: &GossamerDiagnostic,
+    ) -> Vec<Value> {
+        let Some(span) = diag
+            .labels
+            .iter()
+            .find(|label| label.primary)
+            .or_else(|| diag.labels.first())
+            .map(|label| label.location.span)
+        else {
+            return Vec::new();
+        };
+        let source = doc.user_source();
+        let start = span.start as usize;
+        let end = span.end as usize;
+        let Some(name) = source.get(start..end) else {
+            return Vec::new();
+        };
+        if name.is_empty() || name.contains("::") {
+            return Vec::new();
+        }
+        let existing = collect_existing_imports(source);
+        self.stdlib
+            .fuzzy_paths_for(name)
+            .into_iter()
+            .filter(|path| !existing.contains(path))
+            .map(|path| import_to_code_action(doc, uri, diag, &path))
+            .collect()
     }
 
     fn publish_diagnostics(&self, uri: &str) -> Vec<Value> {
@@ -1213,4 +1282,3 @@ impl ServerState {
         Value::Object(out)
     }
 }
-

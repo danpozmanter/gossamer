@@ -97,6 +97,136 @@ fn lsp_range_to_offsets(doc: &DocumentAnalysis, range: &Value) -> (usize, usize)
     (start_offset, end_offset)
 }
 
+/// Returns whether the client-requested `only` kinds admit `kind`.
+/// A parent kind such as `source` admits a more specific descendant.
+fn code_action_kind_requested(params: &Value, kind: &str) -> bool {
+    let Value::Array(only) = field(field(params, "context"), "only") else {
+        return true;
+    };
+    only.iter().any(|requested| {
+        let Value::String(requested) = requested else {
+            return false;
+        };
+        kind == requested || kind.strip_prefix(requested).is_some_and(|rest| rest.starts_with('.'))
+    })
+}
+
+/// Restricts quick fixes to diagnostics supplied by the client when
+/// that list is non-empty. Empty context means the client wants the
+/// server to derive applicable diagnostics from the requested range.
+fn code_action_diagnostic_requested(
+    params: &Value,
+    doc: &DocumentAnalysis,
+    diagnostic: &GossamerDiagnostic,
+) -> bool {
+    let Value::Array(requested) = field(field(params, "context"), "diagnostics") else {
+        return true;
+    };
+    if requested.is_empty() {
+        return true;
+    }
+    let candidate = diagnostic_to_lsp(doc, diagnostic);
+    requested.iter().any(|item| {
+        field(item, "code") == field(&candidate, "code")
+            && field(item, "range") == field(&candidate, "range")
+    })
+}
+
+fn offset_ranges_overlap(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> bool {
+    if a_start == a_end {
+        return b_start <= a_start && a_start <= b_end;
+    }
+    if b_start == b_end {
+        return a_start <= b_start && b_start <= a_end;
+    }
+    a_start < b_end && b_start < a_end
+}
+
+fn import_to_code_action(
+    doc: &DocumentAnalysis,
+    uri: &str,
+    diagnostic: &GossamerDiagnostic,
+    path: &str,
+) -> Value {
+    let insertion = import_insert_offset(doc.user_source());
+    let edit = build_text_edit(
+        doc,
+        Span::new(doc.file, insertion, insertion),
+        &format!("use {path}\n"),
+    );
+    let mut changes = BTreeMap::new();
+    changes.insert(uri.to_string(), Value::Array(vec![edit]));
+    let mut workspace_edit = BTreeMap::new();
+    workspace_edit.insert("changes".to_string(), Value::Object(changes));
+
+    let mut action = BTreeMap::new();
+    action.insert("title".to_string(), Value::String(format!("Import `{path}`")));
+    action.insert("kind".to_string(), Value::String("quickfix".to_string()));
+    action.insert("edit".to_string(), Value::Object(workspace_edit));
+    action.insert(
+        "diagnostics".to_string(),
+        Value::Array(vec![diagnostic_to_lsp(doc, diagnostic)]),
+    );
+    Value::Object(action)
+}
+
+/// Builds a document-wide safe-fix action from every structured
+/// compiler or lint suggestion, dropping overlapping replacements.
+fn fix_all_code_action(doc: &DocumentAnalysis, uri: &str) -> Option<Value> {
+    let mut suggestions: Vec<&gossamer_diagnostics::Suggestion> = doc
+        .diagnostics
+        .iter()
+        .flat_map(|diagnostic| diagnostic.suggestions.iter())
+        .filter(|suggestion| suggestion.location.span.end <= doc.user_len)
+        .collect();
+    suggestions.sort_by_key(|suggestion| {
+        (
+            suggestion.location.span.start,
+            suggestion.location.span.end,
+        )
+    });
+
+    let mut edits = Vec::new();
+    for (index, suggestion) in suggestions.iter().enumerate() {
+        let span = suggestion.location.span;
+        let conflicts = suggestions.iter().enumerate().any(|(other_index, other)| {
+            if index == other_index {
+                return false;
+            }
+            let other = other.location.span;
+            offset_ranges_overlap(
+                other.start as usize,
+                other.end as usize,
+                span.start as usize,
+                span.end as usize,
+            )
+        });
+        if conflicts {
+            continue;
+        }
+        edits.push(build_text_edit(doc, span, &suggestion.replacement));
+    }
+    if edits.is_empty() {
+        return None;
+    }
+
+    let mut changes = BTreeMap::new();
+    changes.insert(uri.to_string(), Value::Array(edits));
+    let mut workspace_edit = BTreeMap::new();
+    workspace_edit.insert("changes".to_string(), Value::Object(changes));
+    let mut action = BTreeMap::new();
+    action.insert(
+        "title".to_string(),
+        Value::String("Fix all auto-fixable problems".to_string()),
+    );
+    action.insert(
+        "kind".to_string(),
+        Value::String("source.fixAll.gossamer".to_string()),
+    );
+    action.insert("edit".to_string(), Value::Object(workspace_edit));
+    Some(Value::Object(action))
+}
+
 /// Builds a single `CodeAction` of kind `quickfix` from a
 /// diagnostic-attached [`gossamer_diagnostics::Suggestion`]. The
 /// action's `WorkspaceEdit` replaces the suggestion's location
@@ -132,34 +262,13 @@ fn suggestion_to_code_action(
         Value::String(suggestion.message.clone()),
     );
     action.insert("kind".to_string(), Value::String("quickfix".to_string()));
+    action.insert("isPreferred".to_string(), Value::Bool(true));
     action.insert("edit".to_string(), Value::Object(workspace_edit));
     // Link the action to the originating diagnostic so the
     // client groups it under the lightbulb at that location.
-    let mut diag_for_link = BTreeMap::new();
-    diag_for_link.insert(
-        "range".to_string(),
-        span_to_range(
-            doc,
-            diag.labels
-                .iter()
-                .find(|l| l.primary)
-                .or_else(|| diag.labels.first())
-                .map_or(suggestion.location.span, |l| l.location.span),
-        ),
-    );
-    diag_for_link.insert(
-        "severity".to_string(),
-        Value::Number(severity_tag(diag.severity)),
-    );
-    diag_for_link.insert(
-        "code".to_string(),
-        Value::String(diag.code.as_str().to_string()),
-    );
-    diag_for_link.insert("source".to_string(), Value::String("gos".to_string()));
-    diag_for_link.insert("message".to_string(), Value::String(diag.title.clone()));
     action.insert(
         "diagnostics".to_string(),
-        Value::Array(vec![Value::Object(diag_for_link)]),
+        Value::Array(vec![diagnostic_to_lsp(doc, diag)]),
     );
     Value::Object(action)
 }
@@ -178,4 +287,3 @@ fn span_to_range(doc: &DocumentAnalysis, span: Span) -> Value {
     range.insert("end".to_string(), Value::Object(end));
     Value::Object(range)
 }
-

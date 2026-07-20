@@ -1,13 +1,7 @@
 //! Language-server-protocol adapter for Gossamer.
-//! Runs an LSP server over stdio. Three capabilities land in this
-//! first slice:
-//! - `textDocument/publishDiagnostics` on open / change - full
-//!   parse + resolve + typecheck pipeline per document.
-//! - `textDocument/hover` - displays the interned type of the
-//!   symbol under the cursor when the type checker can resolve it.
-//! - `textDocument/definition` - jumps to the declaring item when
-//!   the cursor is on a path expression.
-//!
+//! Runs an LSP server over stdio with compiler and lint diagnostics,
+//! quick fixes, completion, navigation, rename, semantic tokens,
+//! inlay hints, symbols, folding, signature help, and formatting.
 //!
 
 #![forbid(unsafe_code)]

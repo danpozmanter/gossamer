@@ -76,25 +76,105 @@ fn code_action_for_typo_suggests_correction() {
 
 #[test]
 fn code_action_for_import_suggestion() {
-    // Referring to `HashMap` without importing it from std::collections
+    // Referring to `Pattern` without importing it from std::regex
     // should yield a resolver suggestion if the auto-import path is
     // wired.
     let uri = "file:///import.gos";
-    let server = server_with(uri, "fn main() { let _: HashMap<i64, i64>; }\n");
+    let server = server_with(uri, "fn main() { let _: Pattern; }\n");
     let notifs = server.publish_diagnostics(uri);
     let diags = diagnostics_from(&notifs);
-    if diags.is_empty() {
-        // Auto-import diagnostic not produced; nothing more to assert.
-        return;
-    }
-    let diag = &diags[0];
+    let diag = diags
+        .iter()
+        .find(|diag| matches!(field(diag, "code"), Value::String(code) if code == "GR0001"))
+        .expect("Pattern must produce GR0001");
     let range = field(diag, "range");
     let params = code_action_params(uri, range.clone(), vec![diag.clone()]);
     let response = server.code_actions(&params);
+    let titles = action_titles(&response);
     assert!(
-        matches!(response, Value::Array(_)),
-        "codeAction response must be an array, got {response:?}"
+        titles
+            .iter()
+            .any(|title| title.contains("std::regex::Pattern")),
+        "expected exact stdlib import action, got {titles:?}"
     );
+}
+
+#[test]
+fn lint_diagnostics_offer_safe_quickfixes() {
+    let uri = "file:///lint.gos";
+    let server = server_with(uri, "fn main() { let unused = 1; }\n");
+    let diags = diagnostics_from(&server.publish_diagnostics(uri));
+    let diag = diags
+        .iter()
+        .find(|diag| matches!(field(diag, "code"), Value::String(code) if code == "GL0001"))
+        .expect("unused variable lint must be published");
+    let params = code_action_params(uri, field(diag, "range").clone(), vec![diag.clone()]);
+    let response = server.code_actions(&params);
+    assert!(
+        action_titles(&response)
+            .iter()
+            .any(|title| title == "Fix unused variable"),
+        "expected lint quickfix, got {response:?}"
+    );
+}
+
+#[test]
+fn unused_mutable_variable_fix_prefixes_the_identifier() {
+    let uri = "file:///unused-mut.gos";
+    let source = "fn main() { let mut unused = 1; }\n";
+    let server = server_with(uri, source);
+    let diags = diagnostics_from(&server.publish_diagnostics(uri));
+    let diag = diags
+        .iter()
+        .find(|diag| matches!(field(diag, "code"), Value::String(code) if code == "GL0001"))
+        .expect("unused variable lint");
+    let params = code_action_params(uri, field(diag, "range").clone(), vec![diag.clone()]);
+    let response = server.code_actions(&params);
+    let Value::Array(actions) = response else {
+        panic!("codeAction must return an array");
+    };
+    let action = actions
+        .iter()
+        .find(|action| field_str(action, "title") == Some("Fix unused variable"))
+        .expect("unused variable quickfix");
+    let edits = field(field(field(action, "edit"), "changes"), uri);
+    let Value::Array(edits) = edits else {
+        panic!("quickfix edits");
+    };
+    assert_eq!(field_str(&edits[0], "newText"), Some("_"));
+    let start = field(field(&edits[0], "range"), "start");
+    assert_eq!(
+        field(start, "character"),
+        &Value::Number(source.find("unused").unwrap() as f64)
+    );
+}
+
+#[test]
+fn source_fix_all_combines_safe_edits_and_honours_only() {
+    let uri = "file:///fix-all.gos";
+    let server = server_with(uri, "fn main() { let first = 1; let second = 2; }\n");
+    let mut params = code_action_params(uri, range_value(0, 0, 0, 1), Vec::new());
+    let Value::Object(fields) = &mut params else {
+        unreachable!()
+    };
+    let Value::Object(context) = fields.get_mut("context").unwrap() else {
+        unreachable!()
+    };
+    context.insert(
+        "only".to_string(),
+        Value::Array(vec![Value::String("source.fixAll.gossamer".to_string())]),
+    );
+    let response = server.code_actions(&params);
+    let Value::Array(actions) = response else {
+        panic!("codeAction must return an array");
+    };
+    assert_eq!(actions.len(), 1, "only fix-all was requested: {actions:?}");
+    assert_eq!(
+        field_str(&actions[0], "kind"),
+        Some("source.fixAll.gossamer")
+    );
+    let edits = field(field(field(&actions[0], "edit"), "changes"), uri);
+    assert!(matches!(edits, Value::Array(items) if items.len() == 2));
 }
 
 #[test]

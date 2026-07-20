@@ -37,7 +37,7 @@ pub fn fixes(sf: &SourceFile, registry: &Registry, source: &str) -> Vec<Fix> {
         }
         match id {
             "double_negation" => fix_double_negation(sf, source, &mut out),
-            "unused_variable" => fix_unused_variable(sf, &mut out),
+            "unused_variable" => fix_unused_variable(sf, source, &mut out),
             "unused_mut_variable" => fix_unused_mut_variable(sf, source, &mut out),
             "needless_bool" => fix_needless_bool(sf, source, &mut out),
             "comparison_to_bool_literal" => fix_bool_cmp(sf, source, &mut out),
@@ -96,7 +96,7 @@ fn fix_double_negation(sf: &SourceFile, source: &str, out: &mut Vec<Fix>) {
     });
 }
 
-fn fix_unused_variable(sf: &SourceFile, out: &mut Vec<Fix>) {
+fn fix_unused_variable(sf: &SourceFile, source: &str, out: &mut Vec<Fix>) {
     use std::collections::BTreeSet;
     each_fn_body(sf, |body| {
         let Some(block) = as_block(body) else {
@@ -122,8 +122,12 @@ fn fix_unused_variable(sf: &SourceFile, out: &mut Vec<Fix>) {
         });
         for (name, span) in bindings {
             if !used.contains(&name) {
+                let Some(relative) = slice(source, span).rfind(&name) else {
+                    continue;
+                };
+                let insertion = span.start + relative as u32;
                 out.push(Fix {
-                    span: Span::new(span.file, span.start, span.start),
+                    span: Span::new(span.file, insertion, insertion),
                     replacement: "_".to_string(),
                     lint_id: "unused_variable",
                 });
@@ -336,6 +340,14 @@ mod tests {
         let src = "fn f() { let foo = 1; }\n";
         let out = run(src);
         assert!(out.contains("let _foo = 1"), "got: {out}");
+    }
+
+    #[test]
+    fn unused_mutable_variable_prefixes_the_name() {
+        let src = "fn f() { let mut foo = 1; }\n";
+        let out = run(src);
+        assert!(out.contains("let _foo = 1"), "got: {out}");
+        assert!(!out.contains("_mut"), "got: {out}");
     }
 
     #[test]

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.32.3 - LSP diagnostics and quick fixes
+
+- Add default lint diagnostics, safe lint quick fixes, exact stdlib
+  auto-imports, and `source.fixAll.gossamer`.
+- Fix UTF-16 and Unicode position handling, percent-decoded workspace URIs,
+  stale diagnostics after close, case-insensitive framing headers, and misplaced
+  unused-variable fixes on mutable bindings.
+
 ## 0.32.2 - Strict mutability, REPL shortcuts, REPL find regex
 
 - Reject writes or mutable method calls when implicit dereferencing crosses

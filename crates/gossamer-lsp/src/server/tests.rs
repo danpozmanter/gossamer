@@ -63,6 +63,36 @@ mod tests {
         ] {
             assert!(caps.contains_key(key), "missing capability: {key}");
         }
+        let Value::Object(code_actions) = caps.get("codeActionProvider").unwrap() else {
+            panic!("codeActionProvider must be an object");
+        };
+        let Some(Value::Array(kinds)) = code_actions.get("codeActionKinds") else {
+            panic!("missing code action kinds");
+        };
+        assert!(kinds.contains(&Value::String("quickfix".to_string())));
+        assert!(kinds.contains(&Value::String("source.fixAll.gossamer".to_string())));
+    }
+
+    #[test]
+    fn file_uri_percent_decodes_workspace_paths() {
+        assert_eq!(
+            file_uri_to_path("file:///tmp/a%20project/%CF%80.gos").as_deref(),
+            Some("/tmp/a project/π.gos")
+        );
+        assert_eq!(file_uri_to_path("file:///tmp/bad%2"), None);
+        assert_eq!(file_uri_to_path("https://example.com/a.gos"), None);
+    }
+
+    #[test]
+    fn did_close_notification_clears_diagnostics() {
+        let notification = empty_diagnostics_notification("file:///closed.gos");
+        assert_eq!(
+            field_str(&notification, "method"),
+            Some("textDocument/publishDiagnostics")
+        );
+        let params = field(&notification, "params");
+        assert_eq!(field_str(params, "uri"), Some("file:///closed.gos"));
+        assert!(matches!(field(params, "diagnostics"), Value::Array(items) if items.is_empty()));
     }
 
     fn inlay_params(uri: &str) -> Value {
