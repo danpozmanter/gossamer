@@ -60,7 +60,6 @@ My goal is for Gossamer to replace Rust, Go, F#, Kotlin, and Python for most of
 | Reference mutability and escape checks | ✓ |  |  |  |  |
 | Automatic memory management |  | ✓ | ✓ | ✓ | ✓ |
 | Lightweight concurrency primitives |  | ✓ | ✓ |  | ✓ |
-| Fast compilation |  | ✓ |  |  |  |
 | Small portable binaries | ✓ | ✓ |  |  | ✓ |
 | Pipe operator (`\|>`) |  |  | ✓ |  | ✓ |
 | Interpreted / scripting mode |  |  | ✓ | ✓ | ✓ |
@@ -201,7 +200,13 @@ fn main() {
     }
 }
 ```
-## Toolchain cheat-sheet
+
+## REPL meta commands
+
+Commands such as `%help`, `%ls`, and `%find` help users navigate the language
+from the REPL.
+
+## Toolchain commands
 
 ```sh
 # Build the toolchain.
