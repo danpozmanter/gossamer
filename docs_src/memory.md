@@ -84,12 +84,14 @@ rebindable. The type checker rejects:
 
 - A `&mut` taken on a non-`mut` binding.
 - An assignment through a shared `&T` reference.
+- A mutating method call on an immutable place.
+- A projection that crosses any shared layer inside a nested reference chain.
 
 These are *correctness* rules, not lifetime proofs. You never
-write `'a`. Overlapping `&mut` references remain allowed; Gossamer does
-not perform Rust-style exclusivity analysis. This differs from Rust's
-borrow checker, but it does not change reference identity: every alias
-still observes writes to the same source place.
+write `'a`. Gossamer rejects a second simple named `&mut` to the same root
+while the first remains in lexical scope, but it does not perform Rust-style
+lifetime or non-lexical-borrow analysis. This does not change reference
+identity: every permitted alias observes writes to the same source place.
 
 ## How reclamation works
 

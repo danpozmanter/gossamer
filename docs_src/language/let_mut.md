@@ -18,3 +18,7 @@ shared = &[3, 4]       // rebinds shared; it remains read-only
 
 An immutable binding cannot be used as the source of `&mut`, because that
 would create a write path around its immutability.
+
+Implicit dereferencing does not weaken this rule. If an access path contains
+any shared `&T` layer, indexing, field assignment, and mutating method calls
+through that path are rejected even when every outer reference is `&mut`.

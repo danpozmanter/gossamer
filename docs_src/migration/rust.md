@@ -39,9 +39,10 @@ println!("{} {}", a.len(), b.len())
 ```
 
 `&mut` still means the callee may write through the reference, but the
-compiler does not enforce Rust's exclusive-borrow rule. Treat
-overlapping mutable aliases as a correctness hazard in the same way you
-would in a language with shared mutable objects.
+compiler does not implement Rust's lifetime or non-lexical-borrow analysis.
+It rejects a second simple named `&mut` to the same root while the first is in
+lexical scope. More complex overlapping aliases remain a correctness hazard
+as they are in a language with shared mutable objects.
 
 ## Traits
 

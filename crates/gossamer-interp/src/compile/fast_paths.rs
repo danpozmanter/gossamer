@@ -1353,27 +1353,7 @@ impl<'tcx> FnBuilder<'tcx> {
     /// new aggregate" builtin whose result the VM has to thread back
     /// into the receiver's slot.
     pub(crate) fn is_mutating_method_name(name: &str) -> bool {
-        matches!(
-            name,
-            "push"
-                | "push_str"
-                | "push_char"
-                | "push_byte"
-                | "pop"
-                | "insert"
-                | "remove"
-                | "clear"
-                | "extend"
-                | "extend_from_slice"
-                | "truncate"
-                | "sort"
-                | "sort_by"
-                | "sort_by_key"
-                | "reverse"
-                | "retain"
-                | "drain"
-                | "swap"
-        )
+        gossamer_types::is_mutating_method_name(name)
     }
 
     /// Routes the typed-`HashMap<i64, i64>` method-call surface

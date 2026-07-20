@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.32.2 - Strict mutability and REPL shortcuts
+
+- Reject writes or mutable method calls when implicit dereferencing crosses
+  any shared reference layer, including the issue 49 `&mut &T` escape.
+- Enforce immutable bindings for user and trait `&mut self` calls, implicit
+  pattern bindings, and built-in collection and string writeback methods.
+- Add `%h`, `%q`, `%b`, `%d`, `%l`, `%r`, and `%f` aliases for the primary
+  REPL meta-commands and show them in `%help`.
+
 ## 0.32.1 - Strict function type checking, gos cache readability
 
 - Enforce nominal and structural parameter, return, method, callback,

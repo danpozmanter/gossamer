@@ -16,7 +16,7 @@ use std::sync::channel
 use std::collections::HashSet
 
 fn worker(gate: Receiver<i64>, tx: Sender<i64>) {
-    let s: HashSet<i64> = HashSet::new()
+    let mut s: HashSet<i64> = HashSet::new()
     s.insert(10)
     s.insert(20)
     let _ = gate.recv()

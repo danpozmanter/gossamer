@@ -13,7 +13,7 @@ fn drop_pass_guards_conditionally_initialised_local() {
     let source = r"
 fn maybe_build(flag: bool) -> i64 {
     if flag {
-        let m: HashMap<i64, i64> = HashMap::new()
+        let mut m: HashMap<i64, i64> = HashMap::new()
         m.insert(1, 2)
         m.len()
     } else {
@@ -179,7 +179,7 @@ fn ct(url: &String) -> i64 {
 fn drop_pass_keeps_unconditional_drop_intact() {
     let source = r"
 fn build() -> i64 {
-    let m: HashMap<i64, i64> = HashMap::new()
+    let mut m: HashMap<i64, i64> = HashMap::new()
     m.insert(1, 2)
     m.len()
 }

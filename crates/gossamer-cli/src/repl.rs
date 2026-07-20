@@ -10,7 +10,8 @@ use regex::Regex;
 
 use crate::paths::repl_history_path;
 
-const REPL_HELP_TEXT: &str = "meta-commands: %quit  %history  %bindings  %declarations  %reset  %help  %ls  %find <query>\n\
+const REPL_HELP_TEXT: &str = "meta-commands: %quit (%q)  %history  %bindings (%b)  %declarations (%d)\n\
+                         %reset (%r)  %help (%h)  %ls (%l)  %find (%f) <query>\n\
                          plain expressions render as Out[N]; declarations and\n\
                          `let` bindings persist across inputs.";
 
@@ -116,7 +117,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
             let rest = rest.trim();
             let (command, arg) = split_meta_command(rest);
             match command {
-                "quit" | "exit" => {
+                "quit" | "exit" | "q" => {
                     if let Some(path) = &history_path {
                         let _ = editor.save_history(path);
                     }
@@ -128,7 +129,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
                     }
                     continue;
                 }
-                "bindings" => {
+                "bindings" | "b" => {
                     if bindings.is_empty() {
                         println!("    no `let` bindings yet");
                     } else {
@@ -141,7 +142,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
                     }
                     continue;
                 }
-                "declarations" | "decls" => {
+                "declarations" | "decls" | "d" => {
                     if declarations.is_empty() {
                         println!("    no declarations yet");
                     } else {
@@ -151,28 +152,28 @@ pub(crate) fn cmd_repl() -> Result<()> {
                     }
                     continue;
                 }
-                "reset" => {
+                "reset" | "r" => {
                     declarations.clear();
                     lets.clear();
                     bindings.clear();
                     println!("session cleared");
                     continue;
                 }
-                "help" => {
+                "help" | "h" => {
                     match repl_help(arg) {
                         Ok(text) => println!("{text}"),
                         Err(msg) => eprintln!("{msg}"),
                     }
                     continue;
                 }
-                "ls" => {
+                "ls" | "l" => {
                     match repl_ls(arg) {
                         Ok(text) => println!("{text}"),
                         Err(msg) => eprintln!("{msg}"),
                     }
                     continue;
                 }
-                "find" => {
+                "find" | "f" => {
                     match repl_find(arg) {
                         Ok(text) => println!("{text}"),
                         Err(msg) => eprintln!("{msg}"),

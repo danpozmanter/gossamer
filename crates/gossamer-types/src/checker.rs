@@ -58,6 +58,7 @@ pub fn typecheck_source_file_with_edition(
     checker.infer.default_unresolved_int_vars(checker.tcx);
     checker.infer.default_unresolved_float_vars(checker.tcx);
     checker.check_deferred_type_mismatches();
+    checker.check_deferred_mutating_receivers();
     checker.check_deferred_structural();
     checker.resolve_table();
     (checker.table, checker.diagnostics)
@@ -156,6 +157,14 @@ struct DeferredStructural {
     kind: DeferredStructuralKind,
 }
 
+struct DeferredMutatingReceiver {
+    ty: Ty,
+    method: String,
+    place: PlaceMut,
+    name: String,
+    span: Span,
+}
+
 struct TypeChecker<'a> {
     tcx: &'a mut TyCtxt,
     infer: InferCtxt,
@@ -252,9 +261,20 @@ struct TypeChecker<'a> {
     /// aborts on the VM and zero-fills/drops on the compiled tier, so it
     /// is rejected statically the same way free calls are.
     method_arities: HashMap<(String, String), usize>,
+    /// Whether an inherent method requires an `&mut self` receiver, keyed by
+    /// `(self type, method)`. Inherent methods take precedence over trait
+    /// methods with the same name.
+    inherent_method_requires_mut: HashMap<(String, String), bool>,
+    /// Whether a trait-impl method requires an `&mut self` receiver, keyed by
+    /// `(self type, method)`.
+    trait_impl_method_requires_mut: HashMap<(String, String), bool>,
     /// Structural uses whose operand was an unresolved inference var at
     /// first check; re-validated after integer/float defaulting.
     deferred_structural: Vec<DeferredStructural>,
+    /// Method receivers whose concrete type is established only by numeric
+    /// defaulting. Their place capability is stable and can be checked once
+    /// the receiver type selects the actual method.
+    deferred_mutating_receivers: Vec<DeferredMutatingReceiver>,
     /// Assignment mismatches whose outer shapes are already incompatible but
     /// whose literal elements need integer/float defaulting before their
     /// rendered types are useful to the user.
@@ -329,6 +349,8 @@ struct TypeChecker<'a> {
     trait_method_ret: HashMap<(String, String), Ty>,
     /// Declared non-receiver parameter types of trait methods.
     trait_method_params: HashMap<(String, String), Vec<Ty>>,
+    /// Whether a trait method declares `&mut self`, keyed by trait and method.
+    trait_method_requires_mut: HashMap<(String, String), bool>,
     /// Per-parameter trait bounds of the function currently being checked,
     /// indexed by parameter position. Set on entry to a generic function
     /// body so a method call on a `Param` receiver can find its bounds.
@@ -438,7 +460,10 @@ impl<'a> TypeChecker<'a> {
             generic_method_ret_types: HashMap::new(),
             generic_method_param_types: HashMap::new(),
             method_arities: HashMap::new(),
+            inherent_method_requires_mut: HashMap::new(),
+            trait_impl_method_requires_mut: HashMap::new(),
             deferred_structural: Vec::new(),
+            deferred_mutating_receivers: Vec::new(),
             deferred_type_mismatches: Vec::new(),
             enum_variant_payloads: HashMap::new(),
             enum_tys: HashMap::new(),
@@ -453,6 +478,7 @@ impl<'a> TypeChecker<'a> {
             trait_impl_types: HashMap::new(),
             trait_method_ret: HashMap::new(),
             trait_method_params: HashMap::new(),
+            trait_method_requires_mut: HashMap::new(),
             current_param_bounds: Vec::new(),
             current_generic_scope: HashMap::new(),
             current_const_generic_scope: HashMap::new(),
@@ -1346,6 +1372,17 @@ impl<'a> TypeChecker<'a> {
                         .entry(decl.name.name.clone())
                         .or_default()
                         .extend(methods);
+                    for item in &decl.items {
+                        if let TraitItem::Fn(fn_decl) = item {
+                            let requires_mut = fn_decl.params.iter().any(|param| {
+                                matches!(param, FnParam::Receiver(gossamer_ast::Receiver::RefMut))
+                            });
+                            self.trait_method_requires_mut.insert(
+                                (decl.name.name.clone(), fn_decl.name.name.clone()),
+                                requires_mut,
+                            );
+                        }
+                    }
                     let supers: Vec<String> = decl
                         .supertraits
                         .iter()
@@ -1664,28 +1701,7 @@ impl<'a> TypeChecker<'a> {
             _ => None,
         };
         if let Some(owner) = &owner_name {
-            for item in &decl.items {
-                if let ImplItem::Fn(fn_decl) = item {
-                    self.user_method_owners
-                        .entry(fn_decl.name.name.clone())
-                        .or_default()
-                        .insert(owner.clone());
-                }
-            }
-            // A trait impl exposes the trait's declared methods on the
-            // type even when the impl restates only some of them (a
-            // default body would otherwise be attributed to no type).
-            if let Some(trait_ref) = &decl.trait_ref
-                && let Some(trait_seg) = trait_ref.path.segments.last()
-                && let Some(methods) = self.trait_own_methods.get(&trait_seg.name.name).cloned()
-            {
-                for m in methods {
-                    self.user_method_owners
-                        .entry(m)
-                        .or_default()
-                        .insert(owner.clone());
-                }
-            }
+            self.collect_impl_method_owners_and_mutability(decl, owner);
         }
         // Record `impl Trait for Type` so a `T: Trait` bound can be verified
         // against the concrete argument type at a generic call site.
@@ -1757,6 +1773,56 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    fn collect_impl_method_owners_and_mutability(&mut self, decl: &ImplDecl, owner: &str) {
+        let is_trait_impl = decl.trait_ref.is_some();
+        for item in &decl.items {
+            if let ImplItem::Fn(fn_decl) = item {
+                self.user_method_owners
+                    .entry(fn_decl.name.name.clone())
+                    .or_default()
+                    .insert(owner.to_string());
+                let requires_mut = fn_decl.params.iter().any(|param| {
+                    matches!(param, FnParam::Receiver(gossamer_ast::Receiver::RefMut))
+                });
+                let receiver_map = if is_trait_impl {
+                    &mut self.trait_impl_method_requires_mut
+                } else {
+                    &mut self.inherent_method_requires_mut
+                };
+                receiver_map
+                    .entry((owner.to_string(), fn_decl.name.name.clone()))
+                    .and_modify(|current| *current |= requires_mut)
+                    .or_insert(requires_mut);
+            }
+        }
+        // Trait defaults are callable even when the impl does not restate
+        // them, so propagate their ownership and receiver capabilities.
+        let Some(trait_name) = decl
+            .trait_ref
+            .as_ref()
+            .and_then(|trait_ref| trait_ref.path.segments.last())
+            .map(|segment| segment.name.name.as_str())
+        else {
+            return;
+        };
+        if let Some(methods) = self.trait_own_methods.get(trait_name).cloned() {
+            for method in methods {
+                self.user_method_owners
+                    .entry(method)
+                    .or_default()
+                    .insert(owner.to_string());
+            }
+        }
+        for ((declaring_trait, method), requires_mut) in &self.trait_method_requires_mut {
+            if declaring_trait == trait_name {
+                self.trait_impl_method_requires_mut
+                    .entry((owner.to_string(), method.clone()))
+                    .and_modify(|current| *current |= *requires_mut)
+                    .or_insert(*requires_mut);
+            }
+        }
+    }
+
     fn collect_trait_signatures(&mut self, decl: &gossamer_ast::TraitDecl) {
         let trait_name = decl.name.name.clone();
         for item in &decl.items {
@@ -1777,6 +1843,13 @@ impl<'a> TypeChecker<'a> {
                     .insert((trait_name.clone(), fn_decl.name.name.clone()), params);
                 self.trait_method_ret
                     .insert((trait_name.clone(), fn_decl.name.name.clone()), ret);
+                let requires_mut = fn_decl.params.iter().any(|param| {
+                    matches!(param, FnParam::Receiver(gossamer_ast::Receiver::RefMut))
+                });
+                self.trait_method_requires_mut.insert(
+                    (trait_name.clone(), fn_decl.name.name.clone()),
+                    requires_mut,
+                );
             }
         }
     }
@@ -2193,6 +2266,9 @@ impl<'a> TypeChecker<'a> {
                     None => self.fresh(),
                 };
                 self.bind_local("self", ty);
+                // Receiver syntax controls referent capability, not whether
+                // the local `self` slot may be rebound.
+                self.bind_local_mutability("self", false);
             }
         }
     }
@@ -2786,6 +2862,7 @@ impl<'a> TypeChecker<'a> {
                 self.check_expr_expecting(a, exp)
             })
             .collect();
+        self.check_mutating_qualified_call(callee, args);
         self.check_call_inner(callee, args, callee_ty, &arg_tys)
     }
 
@@ -4615,6 +4692,7 @@ impl<'a> TypeChecker<'a> {
         args: &[Expr],
     ) -> Ty {
         let receiver_ty = self.check_expr(receiver);
+        self.check_mutating_method_receiver(receiver, receiver_ty, method);
         // A method on a bound type-parameter receiver (`s.area()` where
         // `s: &T`, `T: Shape`) resolves to the trait method's declared
         // return type, so a `String`-returning trait method is not left to
@@ -4742,6 +4820,152 @@ impl<'a> TypeChecker<'a> {
         self.check_method_arity(call_id, resolved, method, args, receiver.span);
         self.maybe_reject_unknown_adt_method(resolved, method, receiver.span);
         self.fresh()
+    }
+
+    /// Enforces writable receivers for user `&mut self` methods and built-in
+    /// methods whose execution path writes a replacement value back into the
+    /// receiver place.
+    fn check_mutating_method_receiver(&mut self, receiver: &Expr, receiver_ty: Ty, method: &str) {
+        let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
+            resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        if matches!(self.tcx.kind(resolved), Some(TyKind::Var(_))) {
+            self.deferred_mutating_receivers
+                .push(DeferredMutatingReceiver {
+                    ty: receiver_ty,
+                    method: method.to_string(),
+                    place: self.auto_deref_place_mutability(receiver),
+                    name: Self::place_root_name(receiver).unwrap_or_else(|| "value".to_string()),
+                    span: receiver.span,
+                });
+            return;
+        }
+        if !self.method_requires_mut_receiver(receiver_ty, method) {
+            return;
+        }
+        self.check_mutating_receiver_place(receiver);
+    }
+
+    /// Qualified user-method calls (`Type::method(receiver, ...)`) and the
+    /// qualified map/set mutation surface do not pass through
+    /// `check_method_call`, so enforce the same receiver capability here.
+    fn check_mutating_qualified_call(&mut self, callee: &Expr, args: &[Expr]) {
+        let ExprKind::Path(path) = &callee.kind else {
+            return;
+        };
+        let segments = &path.segments;
+        if segments.len() < 2 {
+            return;
+        }
+        let owner = segments[segments.len() - 2].name.name.as_str();
+        let method = segments[segments.len() - 1].name.name.as_str();
+        let key = (owner.to_string(), method.to_string());
+        let user_requirement = self
+            .inherent_method_requires_mut
+            .get(&key)
+            .or_else(|| self.trait_impl_method_requires_mut.get(&key))
+            .copied();
+        let requires_mut = user_requirement.unwrap_or_else(|| {
+            if self.user_type_decls.contains(owner)
+                || matches!(
+                    self.resolutions.get(callee.id),
+                    Some(Resolution::Def { .. })
+                )
+            {
+                return false;
+            }
+            matches!(owner, "HashMap" | "HashSet")
+                && matches!(method, "insert" | "remove" | "clear" | "pop")
+        });
+        if requires_mut && let Some(receiver) = args.first() {
+            self.check_mutating_receiver_place(receiver);
+        }
+    }
+
+    fn check_mutating_receiver_place(&mut self, receiver: &Expr) {
+        let name = Self::place_root_name(receiver).unwrap_or_else(|| "value".to_string());
+        self.emit_mutating_place_error(
+            self.auto_deref_place_mutability(receiver),
+            name,
+            receiver.span,
+        );
+    }
+
+    fn emit_mutating_place_error(&mut self, place: PlaceMut, name: String, span: Span) {
+        match place {
+            PlaceMut::ImmutableBinding => {
+                self.emit(TypeError::AssignToImmutable { name }, span);
+            }
+            PlaceMut::SharedReference => {
+                self.emit(TypeError::AssignThroughSharedReference { name }, span);
+            }
+            PlaceMut::Writable | PlaceMut::Unknown => {}
+        }
+    }
+
+    fn receiver_method_owner_name(&self, resolved: Ty) -> Option<String> {
+        match self.tcx.kind(resolved) {
+            Some(TyKind::Adt { def, .. }) => self.tcx.def_name(*def).map(str::to_string),
+            Some(
+                TyKind::Bool
+                | TyKind::Char
+                | TyKind::String
+                | TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Vec(_)
+                | TyKind::Iterator(_)
+                | TyKind::HashMap { .. }
+                | TyKind::Sender(_)
+                | TyKind::Receiver(_)
+                | TyKind::JoinHandle(_)
+                | TyKind::Duration
+                | TyKind::Instant
+                | TyKind::JsonValue
+                | TyKind::DynError,
+            ) => {
+                let rendered = render_ty(self.tcx, resolved);
+                let bare = rendered.split('<').next().unwrap_or(&rendered);
+                bare.rsplit("::").next().map(str::to_string)
+            }
+            _ => None,
+        }
+    }
+
+    fn method_requires_mut_receiver(&mut self, receiver_ty: Ty, method: &str) -> bool {
+        let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
+            resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        if let Some(TyKind::Param { idx, .. }) = self.tcx.kind(resolved) {
+            return self
+                .current_param_bounds
+                .get(idx.0 as usize)
+                .is_some_and(|bounds| {
+                    bounds.iter().any(|bound| {
+                        self.trait_method_requires_mut
+                            .get(&(bound.clone(), method.to_string()))
+                            .copied()
+                            .unwrap_or(false)
+                    })
+                });
+        }
+        if let Some(owner) = self.receiver_method_owner_name(resolved) {
+            let key = (owner.clone(), method.to_string());
+            if let Some(requires_mut) = self
+                .inherent_method_requires_mut
+                .get(&key)
+                .or_else(|| self.trait_impl_method_requires_mut.get(&key))
+            {
+                return *requires_mut;
+            }
+            // A user method named `push` or `remove` must follow its declared
+            // receiver, not inherit the built-in writeback policy by name.
+            if self.user_type_decls.contains(&owner) {
+                return false;
+            }
+        }
+        crate::is_mutating_method_name(method)
     }
 
     fn user_method_params_for(&mut self, receiver_ty: Ty, method: &str) -> Option<Vec<Ty>> {
@@ -5331,6 +5555,15 @@ impl<'a> TypeChecker<'a> {
                         self.emit(TypeError::WeakDowngradeNonRc { ty }, d.span);
                     }
                 }
+            }
+        }
+    }
+
+    fn check_deferred_mutating_receivers(&mut self) {
+        let deferred = std::mem::take(&mut self.deferred_mutating_receivers);
+        for receiver in deferred {
+            if self.method_requires_mut_receiver(receiver.ty, &receiver.method) {
+                self.emit_mutating_place_error(receiver.place, receiver.name, receiver.span);
             }
         }
     }
@@ -6680,15 +6913,40 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    /// Mutability of a projection base (`base.field`, `base[i]`): a `&mut`
-    /// base is writable, a `&T` base is immutable, and a value base
-    /// inherits the mutability of its own root binding.
-    fn base_place_mutability(&self, base: &Expr) -> PlaceMut {
-        match self.expr_ref_mutbl(base) {
-            Some(Mutbl::Mut) => PlaceMut::Writable,
-            Some(Mutbl::Not) => PlaceMut::SharedReference,
-            None => self.place_mutability(base),
+    /// Mutability of an auto-dereferenced projection or method receiver.
+    /// Every crossed reference layer must be mutable. An outer `&mut` cannot
+    /// tunnel through an inner shared reference in a `&mut &T` chain.
+    fn auto_deref_place_mutability(&self, base: &Expr) -> PlaceMut {
+        let Some(ty) = self.table.get(base.id) else {
+            return self.place_mutability(base);
+        };
+        let mut resolved = self.infer.resolve(self.tcx, ty);
+        let mut crossed_mutable_reference = false;
+        loop {
+            match self.tcx.kind(resolved) {
+                Some(TyKind::Ref {
+                    mutability: Mutbl::Not,
+                    ..
+                }) => return PlaceMut::SharedReference,
+                Some(TyKind::Ref {
+                    mutability: Mutbl::Mut,
+                    inner,
+                }) => {
+                    crossed_mutable_reference = true;
+                    resolved = self.infer.resolve(self.tcx, *inner);
+                }
+                _ => break,
+            }
         }
+        if crossed_mutable_reference {
+            PlaceMut::Writable
+        } else {
+            self.place_mutability(base)
+        }
+    }
+
+    fn base_place_mutability(&self, base: &Expr) -> PlaceMut {
+        self.auto_deref_place_mutability(base)
     }
 
     /// Leftmost path-segment name of a place, naming the root binding in
@@ -8266,6 +8524,17 @@ impl<'a> TypeChecker<'a> {
                 for alt in alts {
                     self.bind_pattern(alt, ty);
                 }
+                // Rust requires every alternative to bind a name with the
+                // same mode. Until that receives its own diagnostic, use the
+                // strict capability intersection: one immutable occurrence
+                // keeps the resulting binding immutable regardless of order.
+                let mut mutability = HashMap::new();
+                for alt in alts {
+                    Self::collect_pattern_binding_mutability(alt, &mut mutability);
+                }
+                for (name, mutable) in mutability {
+                    self.bind_local_mutability(&name, mutable);
+                }
             }
             PatternKind::Ref { inner, .. } => {
                 let inner_ty = self.fresh();
@@ -8286,6 +8555,69 @@ impl<'a> TypeChecker<'a> {
             self.bind_pattern(pattern, ty);
         } else {
             self.bind_local(&field.name.name, ty);
+            self.bind_local_mutability(&field.name.name, false);
+        }
+    }
+
+    fn collect_pattern_binding_mutability(pattern: &Pattern, out: &mut HashMap<String, bool>) {
+        match &pattern.kind {
+            PatternKind::Ident {
+                name,
+                subpattern,
+                mutability,
+            } => {
+                out.entry(name.name.clone())
+                    .and_modify(|current| *current &= mutability.is_mutable())
+                    .or_insert_with(|| mutability.is_mutable());
+                if let Some(subpattern) = subpattern {
+                    Self::collect_pattern_binding_mutability(subpattern, out);
+                }
+            }
+            PatternKind::Tuple(parts) | PatternKind::Or(parts) => {
+                for part in parts {
+                    Self::collect_pattern_binding_mutability(part, out);
+                }
+            }
+            PatternKind::Slice {
+                prefix,
+                rest,
+                suffix,
+            } => {
+                for part in prefix {
+                    Self::collect_pattern_binding_mutability(part, out);
+                }
+                if let Some(rest) = rest {
+                    Self::collect_pattern_binding_mutability(rest, out);
+                }
+                for part in suffix {
+                    Self::collect_pattern_binding_mutability(part, out);
+                }
+            }
+            PatternKind::Struct { fields, .. } => {
+                for field in fields {
+                    if let Some(pattern) = &field.pattern {
+                        Self::collect_pattern_binding_mutability(pattern, out);
+                    } else {
+                        out.entry(field.name.name.clone())
+                            .and_modify(|current| *current = false)
+                            .or_insert(false);
+                    }
+                }
+            }
+            PatternKind::TupleStruct { elems, .. } => {
+                for elem in elems {
+                    Self::collect_pattern_binding_mutability(elem, out);
+                }
+            }
+            PatternKind::Ref { inner, .. } => {
+                Self::collect_pattern_binding_mutability(inner, out);
+            }
+            PatternKind::Wildcard
+            | PatternKind::Literal(_)
+            | PatternKind::Path(_)
+            | PatternKind::Range { .. }
+            | PatternKind::Rest
+            | PatternKind::Error => {}
         }
     }
 
@@ -8750,6 +9082,7 @@ fn arith_op_method(op: BinaryOp) -> Option<&'static str> {
 
 /// Writability of an assignment place, computed from its root binding's
 /// declared mutability and any reference it is reached through.
+#[derive(Clone, Copy)]
 enum PlaceMut {
     /// Rooted at a `mut` binding or reached through a `&mut` reference.
     Writable,

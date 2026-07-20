@@ -437,11 +437,12 @@ type: `let g: Vec<Vec<i64>> = [[1, 2], [3]]` builds a Vec of Vecs.
 - `&mut T` - a **mutable managed reference**, used to signal write
   intent through a reference. Created by taking `&mut` of a writable
   place rooted at a `mut` binding or reached through another `&mut`.
-  Writes through it update that source place. Exclusivity is *not*
-  enforced: no pass rejects two simultaneous `&mut` to the same value,
-  and a `&mut T` struct field is accepted. Does not carry write-through
-  across a `go` or channel boundary (see the parameter-semantics
-  paragraph below).
+  Writes through it update that source place. Complete exclusivity is
+  *not* enforced: the checker rejects a second simple named `&mut` to the
+  same root, but simultaneous call arguments and more complex alias shapes
+  are not tracked, and a `&mut T` struct field is accepted. Does not carry
+  write-through across a `go` or channel boundary (see the
+  parameter-semantics paragraph below).
 
 Raw pointers (`*const T`, `*mut T`) are **not** part of the language
 today: the type spellings do not parse (`GP0001`), and there is no safe
@@ -466,7 +467,7 @@ all visible in the caller's binding after the call returns. Fixed-size
 passed where a `&mut [T]` / `&mut Vec<T>` parameter is expected mutates
 the copy, and write-through for fixed arrays is not part of the
 contract. Passing the same place twice as `&mut` in a single call
-(`f(&mut v, &mut v)`) is accepted (no exclusivity check, §7.5) and the
+(`f(&mut v, &mut v)`) is accepted (no argument-level exclusivity check, §7.5) and the
 resulting write order is unspecified - do not rely on it. A `&mut`
 argument in a `go` expression does not extend
 write-through across the goroutine boundary: `go f(&mut v)` hands the
@@ -624,7 +625,7 @@ Method receivers:
   just "pass the ref".
 - `fn m(&mut self)` - writable access. Same runtime as `&self`; used by the
   type checker to forbid mutating method calls on non-writable places. It does
-  not prevent simultaneous aliases (§7.5).
+  not provide Rust lifetime or non-lexical-borrow analysis (§7.5).
 
 ### 3.10 Generics
 
@@ -1564,7 +1565,7 @@ reported and fails the test run. It is a testing instrument rather than
 an always-on runtime guard, and it sees the compiled-tier accesses the
 codegen instruments.
 
-### 7.5 References and aliasing (write-through references, no borrow checker)
+### 7.5 References and aliasing (write-through references, lexical checks)
 
 Gossamer has no ownership transfer, no `move` keyword, and no lifetime
 annotations anywhere. All bindings stay live and accessible for the
@@ -1573,27 +1574,26 @@ closure capture all behave like Go: a managed reference for
 heap-managed types, a copy for `Copy` types. The cognitive load of "who
 owns this value now" does not exist.
 
-**There is no borrow checker and no aliasing-enforcement pass.** The type
-checker does enforce reference mutability: taking `&mut` requires a
-writable place, assignment through `&T` is rejected, and assignment
-through `&mut T` writes through to its source place independently of
-whether the reference binding itself is `mut`. No compiler pass tracks
-reference activity,
-rejects two simultaneous `&mut`, or forbids `&mut` where a `&` is live.
-Programs that would violate a Rust-style exclusivity rule compile and run
-on every tier; `&mut counter` twice in a row is accepted, and a `&mut T`
-struct field is accepted.
+**There is no lifetime or non-lexical borrow checker.** The type checker does
+enforce reference capabilities. Taking `&mut` requires a writable place,
+assignment through `&T` is rejected, and assignment through `&mut T` writes
+through to its source place independently of whether the reference binding
+itself is `mut`. Every reference layer crossed by implicit field, index, or
+method auto-dereferencing must permit mutation, so an outer `&mut` cannot make
+an inner `&T` writable.
 
-Liveness is the one guarantee that *is* enforced - by automatic memory
+The checker also has a conservative lexical exclusivity rule for simple named
+mutable references. A second named `&mut` to the same root is rejected while
+the first reference binding remains in scope. This check does not infer
+lifetimes, end a borrow at its last use, or track every temporary, projection,
+shared reference, closure capture, or cross-function alias.
+
+Liveness is enforced by automatic memory
 management, at runtime, not by a static check. No reference dangles
 because the runtime keeps every reachable value alive. Mutating a
 collection while iterating it, self-aliasing, and the other patterns a
 borrow checker would reject are the programmer's responsibility today;
 they are not diagnosed.
-
-There is no exclusivity-enforcement pass. A program that would violate a
-Rust-style exclusivity rule compiles and runs on every tier. Nothing in
-this specification depends on adding scope-local exclusivity checks.
 
 #### 7.5.1 What this means in practice
 
@@ -1605,6 +1605,9 @@ this specification depends on adding scope-local exclusivity checks.
   make the shared referent writable. Its type remains `&T` after every
   rebind. Conversely, `let reference = &mut value` permits writing through
   `reference` without making the reference binding itself mutable.
+- In `let mut shared = &value; let outer = &mut shared`, `outer` may rebind
+  the `shared` slot with `*outer = &other`, but it may not mutate `value` via
+  `outer.field` or `outer[index]`. Those projections cross the inner `&T`.
 - References alias their source place on every tier. For example,
   `let mut xs = [1, 2]; let r = &mut xs; r[0] = 0` leaves both `xs` and
   `r` observing `[0, 2]`; it never creates a copy-on-write side value.
@@ -1627,7 +1630,8 @@ this specification depends on adding scope-local exclusivity checks.
 
 This design deliberately does *not* include:
 
-- A borrow checker, region inference, or any aliasing-exclusivity pass.
+- A lifetime borrow checker, region inference, or non-lexical borrows.
+- Complete alias tracking beyond the conservative named-`&mut` lexical check.
 - Explicit lifetime annotations (`'a`, `'static`, `for<'a>`). Lifetime
   syntax in a generic parameter list is parsed and then ignored.
 - `Send`/`Sync` marker traits. The language accepts Go-style sharing
@@ -1635,9 +1639,8 @@ This design deliberately does *not* include:
   state are the programmer's responsibility, not blocked at compile
   time.
 
-A scope-local exclusivity check (many `&T`, or one `&mut T`, never
-both) remains a candidate for a future release, but it is not part of
-the language today and nothing in this specification depends on it.
+A complete exclusivity check (many `&T`, or one `&mut T`, never both) remains
+a candidate for a future release. It is not part of the language today.
 
 ---
 

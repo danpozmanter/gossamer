@@ -51,3 +51,32 @@ pub use trait_index::{
 };
 pub use traits::{Predicate, TraitRef};
 pub use ty::{ArrayLen, ClosureKind, FloatTy, FnSig, IntTy, Mutbl, ParamIdx, Ty, TyKind, TyVid};
+
+/// Method names whose built-in dispatch mutates and writes the receiver back
+/// into its source place. The type checker and execution tiers share this
+/// list so an immutable receiver cannot reach an in-place mutation through a
+/// method call.
+#[must_use]
+pub fn is_mutating_method_name(name: &str) -> bool {
+    matches!(
+        name,
+        "push"
+            | "push_str"
+            | "push_char"
+            | "push_byte"
+            | "pop"
+            | "insert"
+            | "remove"
+            | "clear"
+            | "extend"
+            | "extend_from_slice"
+            | "truncate"
+            | "sort"
+            | "sort_by"
+            | "sort_by_key"
+            | "reverse"
+            | "retain"
+            | "drain"
+            | "swap"
+    )
+}

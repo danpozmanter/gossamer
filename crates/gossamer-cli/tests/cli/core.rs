@@ -297,7 +297,7 @@ fn main() {
 const LAZY_ITERATOR_INVALIDATION_SOURCE: &str = r#"use std::iter
 
 fn main() {
-    let xs: Vec<i64> = [1, 2, 3]
+    let mut xs: Vec<i64> = [1, 2, 3]
     let pending = xs |> iter::map(|x| x)
     xs.push(4)
     println!("{}", pending |> iter::sum)

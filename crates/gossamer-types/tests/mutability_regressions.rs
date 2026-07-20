@@ -1,0 +1,533 @@
+//! Regression matrix for binding and reference mutability.
+//!
+//! These are language-soundness tests, not merely diagnostic snapshots. Every
+//! rejected program describes a path that could otherwise modify storage whose
+//! source binding or intervening reference is immutable. The accepted cases
+//! pin the distinction between a mutable binding and a mutable reference.
+
+use gossamer_lex::SourceMap;
+use gossamer_parse::parse_source_file;
+use gossamer_resolve::resolve_source_file;
+use gossamer_types::{TyCtxt, TypeDiagnostic, TypeError, typecheck_source_file};
+
+#[derive(Clone, Copy, Debug)]
+enum ExpectedError {
+    ImmutableBinding,
+    SharedReference,
+    MutableReferenceToImmutable,
+}
+
+impl ExpectedError {
+    fn matches(self, error: &TypeError) -> bool {
+        match self {
+            Self::ImmutableBinding => matches!(error, TypeError::AssignToImmutable { .. }),
+            Self::SharedReference => {
+                matches!(error, TypeError::AssignThroughSharedReference { .. })
+            }
+            Self::MutableReferenceToImmutable => {
+                matches!(error, TypeError::MutableReferenceToImmutable { .. })
+            }
+        }
+    }
+
+    const fn code(self) -> &'static str {
+        match self {
+            Self::ImmutableBinding => "GT0030",
+            Self::SharedReference => "GT0031",
+            Self::MutableReferenceToImmutable => "GT0032",
+        }
+    }
+}
+
+fn check(source: &str) -> Vec<TypeDiagnostic> {
+    let mut map = SourceMap::new();
+    let file = map.add_file("mutability-regression.gos".to_string(), source.to_string());
+    let (parsed, parse_diagnostics) = parse_source_file(source, file);
+    assert!(
+        parse_diagnostics.is_empty(),
+        "test case must parse before mutability is checked: {parse_diagnostics:#?}\nsource:\n{source}"
+    );
+    let (resolutions, resolve_diagnostics) = resolve_source_file(&parsed);
+    assert!(
+        resolve_diagnostics.is_empty(),
+        "test case must resolve before mutability is checked: {resolve_diagnostics:#?}\nsource:\n{source}"
+    );
+    let mut tcx = TyCtxt::new();
+    let (_, diagnostics) = typecheck_source_file(&parsed, &resolutions, &mut tcx);
+    diagnostics
+}
+
+fn assert_rejected(name: &str, source: &str, expected: ExpectedError) {
+    let diagnostics = check(source);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| expected.matches(&diagnostic.error)),
+        "{name} must report {} ({expected:?}); diagnostics: {diagnostics:#?}\nsource:\n{source}",
+        expected.code(),
+    );
+}
+
+fn assert_accepted(name: &str, source: &str) {
+    let diagnostics = check(source);
+    assert!(
+        diagnostics.is_empty(),
+        "{name} must be accepted; diagnostics: {diagnostics:#?}\nsource:\n{source}"
+    );
+}
+
+#[test]
+fn immutable_bindings_reject_every_assignment_place_shape() {
+    let cases = [
+        (
+            "direct scalar assignment",
+            "fn main() { let value = 1\n value = 2 }",
+        ),
+        (
+            "compound scalar assignment",
+            "fn main() { let value = 1\n value += 2 }",
+        ),
+        (
+            "compound array-element assignment",
+            "fn main() { let values = [1, 2]\n values[0] += 2 }",
+        ),
+        (
+            "compound struct-field assignment",
+            "struct Point { x: i64 }\nfn main() { let point = Point { x: 1 }\n point.x += 2 }",
+        ),
+        (
+            "fixed-array element assignment",
+            "fn main() { let values = [1, 2]\n values[0] = 9 }",
+        ),
+        (
+            "nested-array element assignment",
+            "fn main() { let values = [[1, 2], [3, 4]]\n values[0][1] = 9 }",
+        ),
+        (
+            "tuple-field assignment",
+            "fn main() { let pair = (1, 2)\n pair.0 = 9 }",
+        ),
+        (
+            "struct-field assignment",
+            "struct Point { x: i64 }\nfn main() { let point = Point { x: 1 }\n point.x = 9 }",
+        ),
+        (
+            "nested-struct-field assignment",
+            "struct Inner { x: i64 }\nstruct Outer { inner: Inner }\nfn main() { let outer = Outer { inner: Inner { x: 1 } }\n outer.inner.x = 9 }",
+        ),
+        (
+            "indexed-struct-field assignment",
+            "struct Point { x: i64 }\nfn main() { let points = [Point { x: 1 }]\n points[0].x = 9 }",
+        ),
+        (
+            "struct-field-index assignment",
+            "struct Bag { values: Vec<i64> }\nfn main() { let bag = Bag { values: [1, 2] }\n bag.values[0] = 9 }",
+        ),
+        (
+            "immutable static assignment",
+            "static VALUE: i64 = 1\nfn main() { VALUE = 2 }",
+        ),
+        (
+            "constant assignment",
+            "const VALUE: i64 = 1\nfn main() { VALUE = 2 }",
+        ),
+    ];
+
+    for (name, source) in cases {
+        assert_rejected(name, source, ExpectedError::ImmutableBinding);
+    }
+}
+
+#[test]
+fn mutable_reference_creation_requires_a_writable_place() {
+    let cases = [
+        (
+            "immutable scalar",
+            "fn main() { let value = 1\n let reference = &mut value }",
+            ExpectedError::MutableReferenceToImmutable,
+        ),
+        (
+            "immutable array element",
+            "fn main() { let values = [1, 2]\n let reference = &mut values[0] }",
+            ExpectedError::MutableReferenceToImmutable,
+        ),
+        (
+            "immutable struct field",
+            "struct Point { x: i64 }\nfn main() { let point = Point { x: 1 }\n let reference = &mut point.x }",
+            ExpectedError::MutableReferenceToImmutable,
+        ),
+        (
+            "shared-reference dereference",
+            "fn main() { let mut value = 1\n let shared = &value\n let reference = &mut *shared }",
+            ExpectedError::SharedReference,
+        ),
+        (
+            "shared-reference index",
+            "fn main() { let mut values = [1, 2]\n let shared = &values\n let reference = &mut shared[0] }",
+            ExpectedError::SharedReference,
+        ),
+        (
+            "shared-reference field",
+            "struct Point { x: i64 }\nfn main() { let mut point = Point { x: 1 }\n let shared = &point\n let reference = &mut shared.x }",
+            ExpectedError::SharedReference,
+        ),
+        (
+            "mutable outer reference cannot cross shared inner reference",
+            "fn main() { let values = [1, 2]\n let mut shared = &values\n let outer = &mut shared\n let reference = &mut outer[0] }",
+            ExpectedError::SharedReference,
+        ),
+    ];
+
+    for (name, source, expected) in cases {
+        assert_rejected(name, source, expected);
+    }
+}
+
+#[test]
+fn shared_reference_in_any_auto_deref_layer_blocks_writes() {
+    let cases = [
+        (
+            "direct shared dereference",
+            "fn main() { let mut value = 1\n let shared = &value\n *shared = 2 }",
+        ),
+        (
+            "direct shared index",
+            "fn main() { let mut values = [1, 2]\n let shared = &values\n shared[0] = 9 }",
+        ),
+        (
+            "direct shared field",
+            "struct Point { x: i64 }\nfn main() { let mut point = Point { x: 1 }\n let shared = &point\n shared.x = 9 }",
+        ),
+        (
+            "issue 49 mutable reference around shared array reference",
+            "fn main() { let values = [1, 2]\n let mut shared = &values\n let outer = &mut shared\n outer[0] = 9 }",
+        ),
+        (
+            "parenthesized issue 49 projection",
+            "fn main() { let values = [1, 2]\n let mut shared = &values\n let outer = &mut shared\n (*outer)[0] = 9 }",
+        ),
+        (
+            "explicit double dereference",
+            "fn main() { let values = [1, 2]\n let mut shared = &values\n let outer = &mut shared\n **outer = [9, 2] }",
+        ),
+        (
+            "three-layer mixed reference chain",
+            "fn main() { let values = [1, 2]\n let mut shared = &values\n let mut outer = &mut shared\n let third = &mut outer\n third[0] = 9 }",
+        ),
+        (
+            "mutable outer reference around shared struct reference",
+            "struct Point { x: i64 }\nfn main() { let point = Point { x: 1 }\n let mut shared = &point\n let outer = &mut shared\n outer.x = 9 }",
+        ),
+        (
+            "mutable outer reference around shared nested reference",
+            "struct Point { x: i64 }\nfn main() { let point = Point { x: 1 }\n let mut shared = &point\n let mut outer = &mut shared\n let third = &mut outer\n third.x = 9 }",
+        ),
+    ];
+
+    for (name, source) in cases {
+        assert_rejected(name, source, ExpectedError::SharedReference);
+    }
+}
+
+#[test]
+fn immutable_bindings_cannot_reach_mutation_through_calls() {
+    let cases = [
+        (
+            "mutable-reference argument",
+            "fn replace(value: &mut i64) { *value = 2 }\nfn main() { let value = 1\n replace(&mut value) }",
+            ExpectedError::MutableReferenceToImmutable,
+        ),
+        (
+            "user mutable method on immutable value",
+            "struct Counter { value: i64 }\nimpl Counter { fn bump(&mut self) { self.value += 1 } }\nfn main() { let counter = Counter { value: 0 }\n counter.bump() }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "user mutable method through shared reference",
+            "struct Counter { value: i64 }\nimpl Counter { fn bump(&mut self) { self.value += 1 } }\nfn main() { let mut counter = Counter { value: 0 }\n let shared = &counter\n shared.bump() }",
+            ExpectedError::SharedReference,
+        ),
+        (
+            "user mutable method through mutable-then-shared chain",
+            "struct Counter { value: i64 }\nimpl Counter { fn bump(&mut self) { self.value += 1 } }\nfn main() { let counter = Counter { value: 0 }\n let mut shared = &counter\n let outer = &mut shared\n outer.bump() }",
+            ExpectedError::SharedReference,
+        ),
+        (
+            "qualified user mutable method through shared reference",
+            "struct Counter { value: i64 }\nimpl Counter { fn bump(&mut self) { self.value += 1 } }\nfn main() { let counter = Counter { value: 0 }\n Counter::bump(&counter) }",
+            ExpectedError::SharedReference,
+        ),
+        (
+            "Vec push on immutable binding",
+            "fn main() { let values: Vec<i64> = [1, 2]\n values.push(3) }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "Vec push through shared reference",
+            "fn main() { let mut values: Vec<i64> = [1, 2]\n let shared = &values\n shared.push(3) }",
+            ExpectedError::SharedReference,
+        ),
+        (
+            "String push_str on immutable binding",
+            "fn main() { let text = \"a\".to_string()\n text.push_str(\"b\") }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "built-in mutation on a field of an immutable struct",
+            "struct Bag { values: Vec<i64> }\nfn main() { let bag = Bag { values: [1, 2] }\n bag.values.push(3) }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "built-in mutation through issue 49 reference chain",
+            "fn main() { let values: Vec<i64> = [1, 2]\n let mut shared = &values\n let outer = &mut shared\n outer.push(3) }",
+            ExpectedError::SharedReference,
+        ),
+        (
+            "qualified HashMap mutation on immutable binding",
+            "fn main() { let map: HashMap<i64, i64> = HashMap::new()\n HashMap::insert(map, 1, 2) }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "qualified HashMap mutation through shared reference",
+            "fn main() { let mut map: HashMap<i64, i64> = HashMap::new()\n let shared = &map\n HashMap::remove(shared, 1) }",
+            ExpectedError::SharedReference,
+        ),
+        (
+            "qualified HashSet mutation on immutable binding",
+            "fn main() { let set: HashSet<i64> = HashSet::new()\n HashSet::insert(set, 1) }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "user mutable method on an indexed immutable projection",
+            "struct Counter { value: i64 }\nimpl Counter { fn bump(&mut self) { self.value += 1 } }\nfn main() { let counters = [Counter { value: 0 }]\n counters[0].bump() }",
+            ExpectedError::ImmutableBinding,
+        ),
+    ];
+
+    for (name, source, expected) in cases {
+        assert_rejected(name, source, expected);
+    }
+}
+
+#[test]
+fn every_builtin_writeback_method_requires_a_writable_receiver() {
+    let vec_cases = [
+        ("push", "values.push(3)"),
+        ("pop", "let _ = values.pop()"),
+        ("insert", "values.insert(0, 3)"),
+        ("remove", "let _ = values.remove(0)"),
+        ("clear", "values.clear()"),
+        ("extend", "values.extend([3, 4])"),
+        ("extend_from_slice", "values.extend_from_slice([3, 4])"),
+        ("truncate", "values.truncate(1)"),
+        ("sort", "values.sort()"),
+        ("sort_by", "values.sort_by(|a, b| a - b)"),
+        ("sort_by_key", "values.sort_by_key(|a| a)"),
+        ("reverse", "values.reverse()"),
+        ("retain", "values.retain(|a| a > 0)"),
+        ("drain", "let _ = values.drain()"),
+        ("swap", "values.swap(0, 1)"),
+    ];
+    for (method, call) in vec_cases {
+        let source = format!("fn main() {{ let values: Vec<i64> = [1, 2]\n {call} }}");
+        assert_rejected(
+            &format!("immutable Vec::{method} receiver"),
+            &source,
+            ExpectedError::ImmutableBinding,
+        );
+    }
+
+    let string_cases = [
+        ("push", "text.push('b')"),
+        ("push_str", "text.push_str(\"b\")"),
+        ("push_char", "text.push_char('b')"),
+        ("push_byte", "text.push_byte(98)"),
+        ("clear", "text.clear()"),
+        ("truncate", "text.truncate(1)"),
+    ];
+    for (method, call) in string_cases {
+        let source = format!("fn main() {{ let text = \"a\".to_string()\n {call} }}");
+        assert_rejected(
+            &format!("immutable String::{method} receiver"),
+            &source,
+            ExpectedError::ImmutableBinding,
+        );
+    }
+}
+
+#[test]
+fn trait_mutable_receivers_follow_the_same_capability_rules() {
+    let cases = [
+        (
+            "concrete trait method on immutable value",
+            "trait Advance { fn advance(&mut self) }\nstruct Counter { value: i64 }\nimpl Advance for Counter { fn advance(&mut self) { self.value += 1 } }\nfn main() { let counter = Counter { value: 0 }\n counter.advance() }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "trait default mutable method on immutable value",
+            "trait Reset { fn reset(&mut self) {} }\nstruct Counter { value: i64 }\nimpl Reset for Counter {}\nfn main() { let counter = Counter { value: 0 }\n counter.reset() }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "inherent mutable method takes precedence over shared trait method",
+            "trait Read { fn access(&self) -> i64 }\nstruct Counter { value: i64 }\nimpl Counter { fn access(&mut self) -> i64 { self.value } }\nimpl Read for Counter { fn access(&self) -> i64 { self.value } }\nfn main() { let counter = Counter { value: 0 }\n let value = counter.access() }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "generic mutable trait method through shared reference",
+            "trait Advance { fn advance(&mut self) }\nfn run<T: Advance>(value: &T) { value.advance() }",
+            ExpectedError::SharedReference,
+        ),
+        (
+            "generic mutable trait method through immutable value parameter",
+            "trait Advance { fn advance(&mut self) }\nfn run<T: Advance>(value: T) { value.advance() }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "mutable trait method on immutable primitive receiver",
+            "trait Advance { fn advance(&mut self) }\nimpl Advance for i64 { fn advance(&mut self) { *self += 1 } }\nfn main() { let value = 0\n value.advance() }",
+            ExpectedError::ImmutableBinding,
+        ),
+    ];
+    for (name, source, expected) in cases {
+        assert_rejected(name, source, expected);
+    }
+}
+
+#[test]
+fn implicit_bindings_and_receivers_are_immutable_by_default() {
+    let cases = [
+        (
+            "function parameter",
+            "fn replace(value: i64) { value = 2 }\nfn main() {}",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "closure parameter",
+            "fn main() { let closure = |value: i64| { value = 2 } }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "captured immutable binding",
+            "fn main() { let value = 1\n let closure = || { value = 2 } }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "for-loop binding",
+            "fn main() { for value in [1, 2] { value = 3 } }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "match binding",
+            "fn main() { match Some(1) { Some(value) => { value = 2 }, None => () } }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "tuple destructuring binding",
+            "fn main() { let (left, right) = (1, 2)\n left = right }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "struct-pattern shorthand binding",
+            "struct Point { x: i64 }\nfn main() { let point = Point { x: 1 }\n match point { Point { x } => { x = 2 } } }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "or-pattern with inconsistent binding mutability",
+            "fn main() { match 1 { mut value | value => { value = 2 } } }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "owned self receiver",
+            "struct Counter { value: i64 }\nimpl Counter { fn consume(self) { self.value = 2 } }\nfn main() {}",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
+            "shared self receiver",
+            "struct Counter { value: i64 }\nimpl Counter { fn inspect(&self) { self.value = 2 } }\nfn main() {}",
+            ExpectedError::SharedReference,
+        ),
+    ];
+
+    for (name, source, expected) in cases {
+        assert_rejected(name, source, expected);
+    }
+}
+
+#[test]
+fn mutable_places_and_reference_capabilities_remain_usable() {
+    let cases = [
+        (
+            "direct mutable places",
+            "struct Point { x: i64 }\nfn main() { let mut value = 1\n value = 2\n let mut values = [1, 2]\n values[0] = 9\n let mut point = Point { x: 1 }\n point.x = 9 }",
+        ),
+        (
+            "explicitly mutable implicit bindings",
+            "struct Point { x: i64 }\nfn update(mut value: i64) { value = 2 }\nfn main() { let (mut left, right) = (1, 2)\n left = right\n let point = Point { x: 1 }\n match point { Point { x: mut value } => { value = 2 } } }",
+        ),
+        (
+            "immutable binding holding mutable reference",
+            "fn main() { let mut values = [1, 2]\n let reference = &mut values\n reference[0] = 9 }",
+        ),
+        (
+            "all-mutable nested reference chain",
+            "fn main() { let mut values = [1, 2]\n let mut first = &mut values\n let second = &mut first\n second[0] = 9 }",
+        ),
+        (
+            "reborrow mutable referent through immutable reference binding",
+            "fn main() { let mut value = 1\n let first = &mut value\n let second = &mut *first\n *second = 9 }",
+        ),
+        (
+            "mutable outer reference may rebind shared-reference slot",
+            "fn main() { let first = [1, 2]\n let second = [3, 4]\n let mut shared = &first\n let outer = &mut shared\n *outer = &second }",
+        ),
+        (
+            "mutable user method on mutable value",
+            "struct Counter { value: i64 }\nimpl Counter { fn bump(&mut self) { self.value += 1 } }\nfn main() { let mut counter = Counter { value: 0 }\n counter.bump() }",
+        ),
+        (
+            "mutable user method through mutable reference",
+            "struct Counter { value: i64 }\nimpl Counter { fn bump(&mut self) { self.value += 1 } }\nfn main() { let mut counter = Counter { value: 0 }\n let reference = &mut counter\n reference.bump() }",
+        ),
+        (
+            "qualified mutable user method through mutable reference",
+            "struct Counter { value: i64 }\nimpl Counter { fn bump(&mut self) { self.value += 1 } }\nfn main() { let mut counter = Counter { value: 0 }\n Counter::bump(&mut counter) }",
+        ),
+        (
+            "shared user method on immutable value",
+            "struct Counter { value: i64 }\nimpl Counter { fn get(&self) -> i64 { self.value } }\nfn main() { let counter = Counter { value: 0 }\n let value = counter.get() }",
+        ),
+        (
+            "shared user method may use a built-in mutator name",
+            "struct Reader { value: i64 }\nimpl Reader { fn pop(&self) -> i64 { self.value } }\nfn main() { let reader = Reader { value: 7 }\n let value = reader.pop() }",
+        ),
+        (
+            "inherent shared method takes precedence over mutable trait method",
+            "trait Advance { fn access(&mut self) -> i64 }\nstruct Reader { value: i64 }\nimpl Reader { fn access(&self) -> i64 { self.value } }\nimpl Advance for Reader { fn access(&mut self) -> i64 { self.value } }\nfn main() { let reader = Reader { value: 7 }\n let value = reader.access() }",
+        ),
+        (
+            "mutable trait method through mutable reference",
+            "trait Advance { fn advance(&mut self) }\nstruct Counter { value: i64 }\nimpl Advance for Counter { fn advance(&mut self) { self.value += 1 } }\nfn run<T: Advance>(value: &mut T) { value.advance() }\nfn main() { let mut counter = Counter { value: 0 }\n run(&mut counter) }",
+        ),
+        (
+            "mutable builtin method on mutable value",
+            "fn main() { let mut values: Vec<i64> = [1, 2]\n values.push(3)\n let mut text = \"a\".to_string()\n text.push_str(\"b\") }",
+        ),
+        (
+            "qualified map and set mutations on mutable values",
+            "fn main() { let mut map: HashMap<i64, i64> = HashMap::new()\n HashMap::insert(map, 1, 2)\n let mut set: HashSet<i64> = HashSet::new()\n HashSet::insert(set, 1) }",
+        ),
+        (
+            "mutable method through mutable-reference parameter",
+            "struct Counter { value: i64 }\nimpl Counter { fn bump(&mut self) { self.value += 1 } }\nfn run(counter: &mut Counter) { counter.bump() }\nfn main() { let mut counter = Counter { value: 0 }\n run(&mut counter) }",
+        ),
+        (
+            "value alias mutation does not require the source binding to be mutable",
+            "fn main() { let original = [1, 2]\n let mut copy = original\n copy[0] = 9 }",
+        ),
+    ];
+
+    for (name, source) in cases {
+        assert_accepted(name, source);
+    }
+}

@@ -241,6 +241,34 @@ fn repl_reference_rebind_to_temporary_does_not_mutate_old_referent() {
 }
 
 #[test]
+fn repl_issue_49_cannot_mutate_immutable_value_through_mutable_reference_chain() {
+    let out = run_repl(
+        "let a = [1, 2]\n\
+         let mut b = &a\n\
+         let mut c = &mut b\n\
+         c[0] = 0\n\
+         %bindings\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("cannot assign through shared reference `c`"),
+        "issue #49 write must be rejected as a shared-reference violation: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("a = [1, 2]"),
+        "immutable source changed through the rejected alias chain: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("a = [0, 2]"),
+        "immutable source was modified despite GT0031: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_compound_assignment_accumulates_across_lines() {
     // `+=` on a persisted binding must fold across inputs, in order.
     let out = run_repl("let mut c = 0\nc += 5\nc += 3\nc\n");
@@ -508,15 +536,67 @@ fn repl_meta_help_preserves_base_banner() {
     let out = run_repl("%help\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains(
-            "meta-commands: %quit  %history  %bindings  %declarations  %reset  %help  %ls  %find <query>"
-        ),
-        "bare %help should keep the existing banner; stdout: {}",
+        out.stdout
+            .contains("meta-commands: %quit (%q)  %history  %bindings (%b)  %declarations (%d)"),
+        "bare %help should list the first row of shortcuts; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout
+            .contains("%reset (%r)  %help (%h)  %ls (%l)  %find (%f) <query>"),
+        "bare %help should list the remaining shortcuts; stdout: {}",
         out.stdout
     );
     assert!(
         out.stdout.contains("`let` bindings persist across inputs."),
         "bare %help should keep the existing REPL summary; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_command_shortcuts_match_their_long_forms() {
+    let out = run_repl(
+        "let answer = 42\n\
+         fn identity(value: i64) -> i64 { value }\n\
+         %b\n\
+         %d\n\
+         %l strings\n\
+         %f strings trim\n\
+         %h strings::trim\n\
+         %r\n\
+         %b\n\
+         %d\n\
+         %q\n\
+         1 + 1\n",
+    );
+    assert!(out.success, "shortcut session failed: {}", out.stderr);
+    assert!(
+        out.stdout.contains("answer = 42"),
+        "%b did not render bindings: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout
+            .contains("fn identity(value: i64) -> i64 { value }"),
+        "%d did not render declarations: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("std::strings::trim"),
+        "%l, %f, or %h did not reach stdlib discovery: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("session cleared")
+            && out.stdout.contains("no `let` bindings yet")
+            && out.stdout.contains("no declarations yet"),
+        "%r did not clear session state: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("Out["),
+        "%q did not stop before the trailing expression: {}",
         out.stdout
     );
 }
