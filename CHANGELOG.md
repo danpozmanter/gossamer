@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.32.2 - Strict mutability and REPL shortcuts
+## 0.32.2 - Strict mutability, REPL shortcuts, REPL find regex
 
 - Reject writes or mutable method calls when implicit dereferencing crosses
   any shared reference layer, including the issue 49 `&mut &T` escape.
@@ -8,6 +8,10 @@
   pattern bindings, and built-in collection and string writeback methods.
 - Add `%h`, `%q`, `%b`, `%d`, `%l`, `%r`, and `%f` aliases for the primary
   REPL meta-commands and show them in `%help`.
+- Keep Ctrl+C in the REPL as `KeyboardInterrupt`; only Ctrl+D, `%q`, and
+  `%quit` exit.
+- Make `%find` a regex path search and add optional regex filters to
+  `%bindings` and `%declarations`.
 
 ## 0.32.1 - Strict function type checking, gos cache readability
 

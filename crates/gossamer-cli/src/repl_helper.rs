@@ -161,6 +161,12 @@ impl Validator for GosReplHelper {
 /// comment. In that case the REPL keeps reading subsequent lines as
 /// a continuation of the same expression.
 fn incomplete_reason(input: &str) -> Option<&'static str> {
+    // Meta-command arguments may themselves be incomplete Gossamer syntax,
+    // especially regexes such as `[` or `foo(`. Submit them immediately so
+    // the command can either use the pattern or report its regex error.
+    if input.starts_with('%') {
+        return None;
+    }
     let mut map = SourceMap::new();
     let file = map.add_file("repl.gos", input.to_string());
     let (tokens, lex_errors) = tokenize(input, file);
@@ -277,7 +283,7 @@ impl Highlighter for GosReplHelper {
 
 #[cfg(test)]
 mod repl_helper_tests {
-    use super::complete_at;
+    use super::{complete_at, incomplete_reason};
 
     #[test]
     fn keyword_prefix_completes() {
@@ -308,5 +314,11 @@ mod repl_helper_tests {
     fn completion_offset_is_word_start_not_line_start() {
         let (start, _) = complete_at("    fo", 6);
         assert_eq!(start, 4);
+    }
+
+    #[test]
+    fn meta_command_regex_is_never_treated_as_incomplete_source() {
+        assert_eq!(incomplete_reason("%find ["), None);
+        assert_eq!(incomplete_reason("%bindings foo("), None);
     }
 }

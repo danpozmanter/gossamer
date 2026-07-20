@@ -10,8 +10,9 @@ use regex::Regex;
 
 use crate::paths::repl_history_path;
 
-const REPL_HELP_TEXT: &str = "meta-commands: %quit (%q)  %history  %bindings (%b)  %declarations (%d)\n\
-                         %reset (%r)  %help (%h)  %ls (%l)  %find (%f) <query>\n\
+const REPL_HELP_TEXT: &str = "meta-commands: %quit (%q)  %history\n\
+                         %bindings (%b) [regex]  %declarations (%d) [regex]\n\
+                         %reset (%r)  %help (%h)  %ls (%l)  %find (%f) <regex>\n\
                          plain expressions render as Out[N]; declarations and\n\
                          `let` bindings persist across inputs.";
 
@@ -93,7 +94,11 @@ pub(crate) fn cmd_repl() -> Result<()> {
         };
         let line = match editor.readline(&prompt) {
             Ok(line) => line,
-            Err(ReadlineError::Eof | ReadlineError::Interrupted) => {
+            Err(ReadlineError::Interrupted) => {
+                eprintln!("KeyboardInterrupt");
+                continue;
+            }
+            Err(ReadlineError::Eof) => {
                 if let Some(path) = &history_path {
                     let _ = editor.save_history(path);
                 }
@@ -117,7 +122,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
             let rest = rest.trim();
             let (command, arg) = split_meta_command(rest);
             match command {
-                "quit" | "exit" | "q" => {
+                "quit" | "q" => {
                     if let Some(path) = &history_path {
                         let _ = editor.save_history(path);
                     }
@@ -133,10 +138,27 @@ pub(crate) fn cmd_repl() -> Result<()> {
                     if bindings.is_empty() {
                         println!("    no `let` bindings yet");
                     } else {
-                        for (i, line) in render_repl_bindings(&declarations, &lets, &bindings)
+                        let pattern = if arg.is_empty() {
+                            None
+                        } else {
+                            match compile_search_regex("bindings", arg) {
+                                Ok(pattern) => Some(pattern),
+                                Err(message) => {
+                                    eprintln!("{message}");
+                                    continue;
+                                }
+                            }
+                        };
+                        let lines = render_repl_bindings(&declarations, &lets, &bindings);
+                        let matches = lines
                             .iter()
-                            .enumerate()
-                        {
+                            .filter(|line| pattern.as_ref().is_none_or(|re| re.is_match(line)))
+                            .collect::<Vec<_>>();
+                        if matches.is_empty() {
+                            println!("    no bindings match `{arg}`");
+                            continue;
+                        }
+                        for (i, line) in matches.into_iter().enumerate() {
                             println!("  {}: {line}", i + 1);
                         }
                     }
@@ -146,7 +168,26 @@ pub(crate) fn cmd_repl() -> Result<()> {
                     if declarations.is_empty() {
                         println!("    no declarations yet");
                     } else {
-                        for (i, line) in declarations.iter().enumerate() {
+                        let pattern = if arg.is_empty() {
+                            None
+                        } else {
+                            match compile_search_regex("declarations", arg) {
+                                Ok(pattern) => Some(pattern),
+                                Err(message) => {
+                                    eprintln!("{message}");
+                                    continue;
+                                }
+                            }
+                        };
+                        let matches = declarations
+                            .iter()
+                            .filter(|line| pattern.as_ref().is_none_or(|re| re.is_match(line)))
+                            .collect::<Vec<_>>();
+                        if matches.is_empty() {
+                            println!("    no declarations match `{arg}`");
+                            continue;
+                        }
+                        for (i, line) in matches.into_iter().enumerate() {
                             println!("  {}: {line}", i + 1);
                         }
                     }
@@ -530,14 +571,15 @@ fn repl_ls(arg: &str) -> std::result::Result<String, String> {
     Ok(format!("no stdlib module found for `{arg}`"))
 }
 
-/// Fuzzy-searches the public catalog. Unlike `%help`, which resolves an exact
-/// name (or an explicit regex), `%find` accepts abbreviated words such as
-/// `http serv` and ranks the closest modules and exported objects first.
+/// Searches public symbol paths with a regular expression. Plain text remains
+/// a substring search, while regex operators can broaden or constrain the
+/// match.
 fn repl_find(arg: &str) -> std::result::Result<String, String> {
     let query = normalize_query(arg);
     if query.is_empty() {
-        return Err("usage: %find <module, function, or public object>".to_string());
+        return Err("usage: %find <name-regex>".to_string());
     }
+    let pattern = compile_search_regex("find", query)?;
 
     let mut matches = Vec::new();
     for module in gossamer_std::registry::modules() {
@@ -546,8 +588,8 @@ fn repl_find(arg: &str) -> std::result::Result<String, String> {
             kind: "module",
             doc: module.summary,
         };
-        if let Some(score) = fuzzy_score(query, &candidate.path) {
-            matches.push((score, candidate));
+        if pattern.is_match(&candidate.path) {
+            matches.push(candidate);
         }
         for item in module.items {
             let candidate = FindCandidate {
@@ -555,8 +597,8 @@ fn repl_find(arg: &str) -> std::result::Result<String, String> {
                 kind: item_kind_label(item.kind),
                 doc: item.doc,
             };
-            if let Some(score) = fuzzy_score(query, &candidate.path) {
-                matches.push((score, candidate));
+            if pattern.is_match(&candidate.path) {
+                matches.push(candidate);
             }
         }
     }
@@ -566,8 +608,8 @@ fn repl_find(arg: &str) -> std::result::Result<String, String> {
             kind: "macro",
             doc: builtin.doc,
         };
-        if let Some(score) = fuzzy_score(query, &candidate.path) {
-            matches.push((score, candidate));
+        if pattern.is_match(&candidate.path) {
+            matches.push(candidate);
         }
     }
     for builtin in PRELUDE_BUILTINS {
@@ -576,23 +618,19 @@ fn repl_find(arg: &str) -> std::result::Result<String, String> {
             kind: "builtin",
             doc: builtin.doc,
         };
-        if let Some(score) = fuzzy_score(query, &candidate.path) {
-            matches.push((score, candidate));
+        if pattern.is_match(&candidate.path) {
+            matches.push(candidate);
         }
     }
 
-    matches.sort_by(|(left_score, left), (right_score, right)| {
-        right_score
-            .cmp(left_score)
-            .then_with(|| left.path.cmp(&right.path))
-    });
-    matches.dedup_by(|(_, left), (_, right)| left.path == right.path && left.kind == right.kind);
+    matches.sort_by(|left, right| left.path.cmp(&right.path));
+    matches.dedup_by(|left, right| left.path == right.path && left.kind == right.kind);
 
     if matches.is_empty() {
         return Ok(format!("no public symbols found for `{query}`"));
     }
     let mut out = String::new();
-    for (_, candidate) in matches.into_iter().take(50) {
+    for candidate in matches.into_iter().take(50) {
         out.push_str(&format!(
             "{:<48} {:<7} {}\n",
             candidate.path, candidate.kind, candidate.doc
@@ -607,41 +645,8 @@ struct FindCandidate<'a> {
     doc: &'a str,
 }
 
-/// Returns a subsequence-match score for every whitespace-separated query
-/// token. Matching is intentionally limited to the displayed path/name so
-/// result descriptions do not make unrelated symbols look relevant.
-fn fuzzy_score(query: &str, path: &str) -> Option<i32> {
-    let path_lower = path.to_ascii_lowercase();
-    let mut score = 0;
-    for token in query.to_ascii_lowercase().split_whitespace() {
-        let token = token
-            .chars()
-            .filter(|character| character.is_alphanumeric())
-            .collect::<String>();
-        if token.is_empty() {
-            continue;
-        }
-        if let Some(index) = path_lower.find(&token) {
-            score += 1_000 - i32::try_from(index).unwrap_or(i32::MAX).min(500);
-            if index == 0 || !path_lower.as_bytes()[index - 1].is_ascii_alphanumeric() {
-                score += 200;
-            }
-            continue;
-        }
-        let mut previous = None;
-        let mut gaps = 0i32;
-        for needle in token.bytes() {
-            let start = previous.map_or(0, |index: usize| index + 1);
-            let relative = path_lower[start..].find(char::from(needle))?;
-            let index = start + relative;
-            if let Some(last) = previous {
-                gaps += i32::try_from(index - last - 1).unwrap_or(i32::MAX);
-            }
-            previous = Some(index);
-        }
-        score += 100 - gaps.min(90);
-    }
-    Some(score)
+fn compile_search_regex(command: &str, query: &str) -> std::result::Result<Regex, String> {
+    Regex::new(query).map_err(|error| format!("invalid {command} regex `{query}`: {error}"))
 }
 
 fn regex_argument(arg: &str) -> std::result::Result<Option<Regex>, String> {

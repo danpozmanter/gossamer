@@ -333,6 +333,57 @@ fn repl_bindings_show_immutable_values_without_let_prefix() {
 }
 
 #[test]
+fn repl_bindings_and_declarations_accept_regex_filters() {
+    let out = run_repl(
+        "let alpha_value = 11\n\
+         let beta_value = 22\n\
+         fn AlphaFn(value: i64) -> i64 { value }\n\
+         fn BetaFn(value: String) -> String { value }\n\
+         %bindings ^alpha.*11$\n\
+         %declarations Alpha.*i64\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("  1: alpha_value = 11"),
+        "binding regex should match anywhere in rendered bindings: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("beta_value = 22"),
+        "binding regex should exclude non-matches: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout
+            .contains("  1: fn AlphaFn(value: i64) -> i64 { value }"),
+        "declaration regex should match anywhere in source text: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout
+            .contains("fn BetaFn(value: String) -> String { value }"),
+        "declaration regex should exclude non-matches: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_bindings_and_declarations_report_invalid_regex() {
+    let out = run_repl("let value = 1\nfn value_of() -> i64 { 1 }\n%b [\n%d [\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("invalid bindings regex `[`"),
+        "invalid binding regex should produce a useful error: {}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("invalid declarations regex `[`"),
+        "invalid declaration regex should produce a useful error: {}",
+        out.stderr
+    );
+}
+
+#[test]
 fn repl_struct_construction_and_display_match_source_shapes() {
     let out = run_repl(
         "struct Pair { x: i64, y: i64 }\n\
@@ -532,18 +583,34 @@ fn repl_meta_quit_terminates_with_exit_zero() {
 }
 
 #[test]
+fn repl_only_accepts_documented_quit_commands() {
+    let out = run_repl("%exit\n1 + 2\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("unknown meta-command: %exit"),
+        "%exit should not terminate the REPL; stderr: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("Out[1]: 3"),
+        "the REPL did not continue after %exit; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_meta_help_preserves_base_banner() {
     let out = run_repl("%help\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout
-            .contains("meta-commands: %quit (%q)  %history  %bindings (%b)  %declarations (%d)"),
-        "bare %help should list the first row of shortcuts; stdout: {}",
+            .contains("%bindings (%b) [regex]  %declarations (%d) [regex]"),
+        "bare %help should document filtering session entries; stdout: {}",
         out.stdout
     );
     assert!(
         out.stdout
-            .contains("%reset (%r)  %help (%h)  %ls (%l)  %find (%f) <query>"),
+            .contains("%reset (%r)  %help (%h)  %ls (%l)  %find (%f) <regex>"),
         "bare %help should list the remaining shortcuts; stdout: {}",
         out.stdout
     );
@@ -562,7 +629,7 @@ fn repl_meta_command_shortcuts_match_their_long_forms() {
          %b\n\
          %d\n\
          %l strings\n\
-         %f strings trim\n\
+         %f strings.*trim\n\
          %h strings::trim\n\
          %r\n\
          %b\n\
@@ -602,39 +669,61 @@ fn repl_meta_command_shortcuts_match_their_long_forms() {
 }
 
 #[test]
-fn repl_meta_find_fuzzy_searches_modules_functions_and_types() {
-    let out = run_repl("%find http serv\n%find json valu\n");
+fn repl_meta_find_regex_searches_modules_functions_and_types() {
+    let out = run_repl("%find http.*serv\n%find json.*Valu\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("std::http::serve") && out.stdout.contains("fn"),
-        "fuzzy function lookup should find http::serve: {}",
+        "regex function lookup should find http::serve: {}",
         out.stdout
     );
     assert!(
         out.stdout.contains("std::encoding::json::Value") && out.stdout.contains("type"),
-        "fuzzy public-type lookup should find json::Value: {}",
+        "regex public-type lookup should find json::Value: {}",
         out.stdout
     );
 }
 
 #[test]
-fn repl_meta_find_fuzzy_matches_names_not_descriptions() {
-    let out = run_repl("%find chunk\n");
+fn repl_meta_find_plain_text_is_a_name_substring() {
+    let out = run_repl("%find part\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("std::http::chunked"),
-        "name lookup should still find chunked HTTP items: {}",
+        out.stdout.contains("std::iter::partition")
+            && out.stdout.contains("std::http::multipart::Part"),
+        "plain text should match contiguous symbol-name text: {}",
         out.stdout
     );
     assert!(
-        !out.stdout.contains("std::env::current_dir"),
-        "documentation-only subsequence matches should not be returned: {}",
+        !out.stdout.contains("std::strings::pad_right")
+            && !out.stdout.contains("std::path::parent")
+            && !out.stdout.contains("std::process::abort")
+            && !out.stdout.contains("std::net::netip::join_addr_port"),
+        "plain text should not use fuzzy subsequence matching: {}",
         out.stdout
     );
+}
+
+#[test]
+fn repl_meta_find_accepts_regex_operators() {
+    let out = run_repl("%find p.*rt\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        !out.stdout.contains("std::hash::crc32::checksum_string"),
-        "description text should not participate in fuzzy find: {}",
+        out.stdout.contains("std::iter::partition")
+            && out.stdout.contains("std::net::netip::join_addr_port"),
+        "regex operators should broaden find matches: {}",
         out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_find_reports_invalid_regex() {
+    let out = run_repl("%find [\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("invalid find regex `[`"),
+        "invalid regex should produce a useful error: {}",
+        out.stderr
     );
 }
 
