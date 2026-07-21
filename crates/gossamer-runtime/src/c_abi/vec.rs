@@ -715,19 +715,29 @@ pub(crate) unsafe fn vec_retain_slot_children(v: *const GosVec, slot: *const u8)
 }
 
 /// Builds a borrowing `*mut GosVec` view over an array, for a `&[T]` /
-/// `&Vec<T>` parameter fed a `&array`. Byte-for-byte identical to
-/// [`gos_rt_vec_from_arr`], but the MIR metadata pass deliberately leaves
-/// the result `PRIMITIVE` (never `AGGR_OWNED`): a borrow must not free the
-/// element children, since the borrowed array still owns them and reclaims
-/// them at its own drop. The view's own drop frees only its slot-copy
-/// buffer.
+/// `&Vec<T>` parameter fed a `&array`. Word-sized element layouts point
+/// directly at the source array so mutable slice writes alias the caller's
+/// storage. Fixed arrays store one word per element, so sub-word element
+/// views use an 8-byte stride rather than the packed Vec stride.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_borrow_arr(
     elem_bytes: u32,
     data: *const u8,
     len: i64,
 ) -> *mut GosVec {
-    unsafe { gos_rt_vec_from_arr(elem_bytes, data, len) }
+    ffi_entry!(std::ptr::null_mut(), {
+        if len < 0 {
+            unsafe { gos_rt_panic(c"Vec length must be non-negative".as_ptr()) };
+        }
+        let view_elem_bytes = elem_bytes.max(8);
+        let v = unsafe { alloc_box_vec(view_elem_bytes, vec_elem_kind::PRIMITIVE, 0, 0) };
+        unsafe {
+            (*v).len = len;
+            (*v).cap = len;
+            (*v).ptr = SyncRawPtr::new(data.cast_mut());
+        }
+        v
+    })
 }
 
 /// Release the owned children of every element of an `AGGR_OWNED`

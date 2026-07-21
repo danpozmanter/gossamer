@@ -2362,22 +2362,20 @@ fn invoke_clang_pipeline(
 /// generous enough for huge monomorph fan-outs but tight enough
 /// that an unbounded `opt -O3` blowup turns into a build failure
 /// instead of a process holding the runner forever.
-/// Target CPU passed to `opt` and `llc`. Defaults to `native`
-/// (matching `rustc -C target-cpu=native`); `GOS_LLVM_MCPU` lets
-/// callers override - `x86-64-v3` is the documented escape hatch
-/// for short-running benchmarks where the AVX-512 dirty-state
-/// transition penalty dominates the savings (§5 release-perf
-/// investigation, fannkuch).
-/// Default LLVM `-mcpu` target used when `GOS_LLVM_MCPU` is unset.
-///
-/// x86-64 native builds use a stable `x86-64-v3` ISA baseline. Other native
-/// architectures use their host CPU, while cross builds use a portable target
+/// Target CPU passed to `opt` and `llc`. Host release builds default to
+/// `native` (matching `rustc -C target-cpu=native`); `GOS_LLVM_MCPU` lets
+/// callers override. Reproducible and cross builds keep a portable target
 /// baseline.
+/// Default LLVM `-mcpu` target used when `GOS_LLVM_MCPU` is unset.
 fn mcpu_target(triple: &str) -> String {
     if let Ok(s) = std::env::var("GOS_LLVM_MCPU") {
         return s;
     }
-    mcpu_for(triple, TARGET_TRIPLE_OVERRIDE.get().is_some())
+    mcpu_for(
+        triple,
+        TARGET_TRIPLE_OVERRIDE.get().is_some(),
+        want_reproducible(),
+    )
 }
 
 /// The architecture component of an LLVM target triple
@@ -2392,12 +2390,16 @@ fn target_arch_from_triple(triple: &str) -> &'static str {
 }
 
 /// `-mcpu` for `triple`. `is_cross` is true when an explicit `--target`
-/// override is active. A cross build must never use `native`, which names the
-/// host CPU.
-fn mcpu_for(triple: &str, is_cross: bool) -> String {
+/// override is active. A cross or reproducible build must never use `native`,
+/// which names the host CPU.
+fn mcpu_for(triple: &str, is_cross: bool, reproducible: bool) -> String {
     if !is_cross {
-        return if cfg!(target_arch = "x86_64") {
-            "x86-64-v3".to_string()
+        return if reproducible {
+            match target_arch_from_triple(triple) {
+                "x86_64" => "x86-64-v3".to_string(),
+                "aarch64" => "generic".to_string(),
+                _ => "generic".to_string(),
+            }
         } else {
             "native".to_string()
         };
@@ -2878,9 +2880,27 @@ mod host_triple_tests {
         // A cross build to aarch64 must not inherit an x86 -mcpu, and
         // must never use `native` (the host CPU). Tested through the
         // pure helper so it needs no process-wide override.
-        assert_eq!(mcpu_for("aarch64-unknown-linux-gnu", true), "generic");
-        assert_eq!(mcpu_for("aarch64-unknown-linux-musl", true), "generic");
-        assert_eq!(mcpu_for("x86_64-unknown-linux-gnu", true), "x86-64-v3");
+        assert_eq!(
+            mcpu_for("aarch64-unknown-linux-gnu", true, false),
+            "generic"
+        );
+        assert_eq!(
+            mcpu_for("aarch64-unknown-linux-musl", true, false),
+            "generic"
+        );
+        assert_eq!(
+            mcpu_for("x86_64-unknown-linux-gnu", true, false),
+            "x86-64-v3"
+        );
+    }
+
+    #[test]
+    fn mcpu_native_host_uses_host_cpu_unless_reproducible() {
+        assert_eq!(mcpu_for("x86_64-unknown-linux-gnu", false, false), "native");
+        assert_eq!(
+            mcpu_for("x86_64-unknown-linux-gnu", false, true),
+            "x86-64-v3"
+        );
     }
 
     #[test]

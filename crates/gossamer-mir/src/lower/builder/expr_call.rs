@@ -720,10 +720,22 @@ impl<'a> Builder<'a> {
         // alloca (a harmless no-op). Recorded as (place_local, ref_local).
         let mut mut_ref_reloads: Vec<(Local, Local)> = Vec::new();
         for (idx, arg) in args.iter().enumerate() {
+            let expected_arg_ty = callee_param_tys
+                .as_ref()
+                .and_then(|params| params.get(idx))
+                .copied();
             // Detect a `&mut <bare local>` of a writeback type before lowering;
             // the matching `Rvalue::Ref` emission lives in `lower_unary`.
-            let reload_target = self.mut_ref_reload_target(arg);
-            let local = self.lower_expr(arg)?;
+            let mut reload_target = self.mut_ref_reload_target(arg);
+            let local =
+                if let Some(local) = self.lower_implicit_mut_ref_arg(arg, expected_arg_ty, span) {
+                    if reload_target.is_none() {
+                        reload_target = self.implicit_mut_ref_reload_target(arg, expected_arg_ty);
+                    }
+                    local
+                } else {
+                    self.lower_expr(arg)?
+                };
             if let Some(place_local) = reload_target {
                 mut_ref_reloads.push((place_local, local));
             }
@@ -788,66 +800,38 @@ impl<'a> Builder<'a> {
                 if let TyKind::Array { elem, len } = self.tcx.kind_of(local_inner).clone() {
                     if let Some(expected) = expected_opt {
                         let expected_inner = deref(self, expected);
-                        // A concrete fixed array passed to an exact
-                        // `&mut [T; N]` parameter has value semantics at the
-                        // call boundary. Materialise the copy in the caller so
-                        // the callee receives a stable reference to that copy,
-                        // matching the VM and keeping a returned reference
-                        // valid for the rest of the caller's frame.
-                        if matches!(
-                            self.tcx.kind_of(expected),
-                            TyKind::Ref {
-                                mutability: gossamer_types::Mutbl::Mut,
-                                ..
-                            }
-                        ) && matches!(
+                        // A const generic array parameter (`[T; N]`) is carried
+                        // by the callee as a runtime-length sequence, so a
+                        // concrete-length array argument is coerced to a GosVec
+                        // just like a `Vec<T>` / `[T]` parameter.
+                        let expected_is_const_array = matches!(
                             self.tcx.kind_of(expected_inner),
                             TyKind::Array {
-                                len: gossamer_types::ArrayLen::Concrete(_),
+                                len: gossamer_types::ArrayLen::Param(_),
                                 ..
                             }
-                        ) {
-                            let copy = self.fresh(local_ty);
-                            self.emit_assign(
-                                Place::local(copy),
-                                Rvalue::Use(Operand::Copy(Place::local(local))),
-                                span,
-                            );
-                            copy
-                        } else {
-                            // A const generic array parameter (`[T; N]`) is carried
-                            // by the callee as a runtime-length sequence, so a
-                            // concrete-length array argument is coerced to a GosVec
-                            // just like a `Vec<T>` / `[T]` parameter.
-                            let expected_is_const_array = matches!(
-                                self.tcx.kind_of(expected_inner),
-                                TyKind::Array {
-                                    len: gossamer_types::ArrayLen::Param(_),
-                                    ..
-                                }
-                            );
-                            if matches!(
-                                self.tcx.kind_of(expected_inner),
-                                TyKind::Vec(_) | TyKind::Slice(_)
-                            ) || expected_is_const_array
-                            {
-                                // A `&[T]` parameter borrows: the caller's array
-                                // outlives the call and reclaims its element
-                                // children at its own drop. Build a non-owning
-                                // view so the coerced slice never deep-frees
-                                // those children. A by-value `Vec<T>` / `[T]`
-                                // parameter takes ownership, so keep the owning
-                                // copy.
-                                let param_is_borrow =
-                                    matches!(self.tcx.kind_of(expected), TyKind::Ref { .. });
-                                if param_is_borrow {
-                                    self.coerce_borrow_array_to_vec(local, elem, len, span)
-                                } else {
-                                    self.coerce_array_to_vec(local, elem, len, span)
-                                }
+                        );
+                        if matches!(
+                            self.tcx.kind_of(expected_inner),
+                            TyKind::Vec(_) | TyKind::Slice(_)
+                        ) || expected_is_const_array
+                        {
+                            // A `&[T]` parameter borrows: the caller's array
+                            // outlives the call and reclaims its element
+                            // children at its own drop. Build a non-owning
+                            // view so the coerced slice never deep-frees
+                            // those children. A by-value `Vec<T>` / `[T]`
+                            // parameter takes ownership, so keep the owning
+                            // copy.
+                            let param_is_borrow =
+                                matches!(self.tcx.kind_of(expected), TyKind::Ref { .. });
+                            if param_is_borrow {
+                                self.coerce_borrow_array_to_vec(local, elem, len, span)
                             } else {
-                                local
+                                self.coerce_array_to_vec(local, elem, len, span)
                             }
+                        } else {
+                            local
                         }
                     } else {
                         local
@@ -982,5 +966,100 @@ impl<'a> Builder<'a> {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String
         );
         writeback.then_some(local)
+    }
+
+    fn implicit_mut_ref_reload_target(
+        &self,
+        arg: &HirExpr,
+        expected_ty: Option<Ty>,
+    ) -> Option<Local> {
+        let expected = expected_ty?;
+        let TyKind::Ref {
+            mutability: gossamer_types::Mutbl::Mut,
+            inner,
+        } = self.tcx.kind_of(expected)
+        else {
+            return None;
+        };
+        if !matches!(
+            self.tcx.kind_of(*inner),
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String
+        ) {
+            return None;
+        }
+        let HirExprKind::Path { segments, .. } = &arg.kind else {
+            return None;
+        };
+        let [seg] = segments.as_slice() else {
+            return None;
+        };
+        let local = self.lookup_local(&seg.name)?;
+        if matches!(self.tcx.kind_of(self.locals[local.0 as usize].ty), TyKind::Ref { .. }) {
+            return None;
+        }
+        Some(local)
+    }
+
+    fn lower_implicit_mut_ref_arg(
+        &mut self,
+        arg: &HirExpr,
+        expected_ty: Option<Ty>,
+        span: Span,
+    ) -> Option<Local> {
+        if matches!(
+            arg.kind,
+            HirExprKind::Unary {
+                op: HirUnaryOp::RefMut,
+                ..
+            }
+        ) {
+            return None;
+        }
+        let expected = expected_ty?;
+        let TyKind::Ref {
+            mutability: gossamer_types::Mutbl::Mut,
+            inner,
+        } = self.tcx.kind_of(expected)
+        else {
+            return None;
+        };
+        if !matches!(
+            self.tcx.kind_of(*inner),
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String
+        ) {
+            return None;
+        }
+        if let HirExprKind::Path { segments, .. } = &arg.kind
+            && let [seg] = segments.as_slice()
+            && let Some(local) = self.lookup_local(&seg.name)
+            && matches!(self.tcx.kind_of(self.locals[local.0 as usize].ty), TyKind::Ref { .. })
+        {
+            return Some(local);
+        }
+        let is_place_expr = matches!(
+            arg.kind,
+            HirExprKind::Path { .. }
+                | HirExprKind::Field { .. }
+                | HirExprKind::TupleIndex { .. }
+                | HirExprKind::Index { .. }
+                | HirExprKind::Unary {
+                    op: HirUnaryOp::Deref,
+                    ..
+                }
+        );
+        if !is_place_expr {
+            return None;
+        }
+        let place = self.lower_place_expr(arg)?;
+        let dest = self.fresh(expected);
+        self.emit_assign(
+            Place::local(dest),
+            Rvalue::Ref {
+                mutable: true,
+                place,
+            },
+            span,
+        );
+        Some(dest)
     }
 }

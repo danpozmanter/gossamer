@@ -1257,6 +1257,11 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
         ) {
             return true;
         }
+        if jit_local_ty_needs_bytecode(tcx, body.local_ty(gossamer_mir::Local(
+            u32::try_from(idx).unwrap_or(u32::MAX),
+        ))) {
+            return true;
+        }
         // A `Vec`/`[T]` whose element is a payload-bearing enum is safe in a
         // read-only, `Unit`-returning serializer body, but a builder that
         // returns such a vector still needs native-to-VM element ownership
@@ -1324,6 +1329,55 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
         }
     }
     false
+}
+
+fn jit_local_ty_needs_bytecode(tcx: &TyCtxt, ty: Ty) -> bool {
+    let mut ty = ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+        ty = *inner;
+    }
+    match tcx.kind_of(ty) {
+        TyKind::Bool
+        | TyKind::Char
+        | TyKind::Int(_)
+        | TyKind::Float(_)
+        | TyKind::Unit
+        | TyKind::Never
+        | TyKind::String
+        | TyKind::Duration
+        | TyKind::Instant => false,
+        TyKind::Vec(elem) | TyKind::Slice(elem) => {
+            !(matches!(
+                tcx.kind_of(*elem),
+                TyKind::Int(gossamer_types::IntTy::I64) | TyKind::Float(gossamer_types::FloatTy::F64)
+            ) || is_i64_f64_tuple(tcx, *elem)
+                || is_i64_vec(tcx, *elem))
+        }
+        TyKind::Adt { def, .. } if def.local == u32::MAX - 20 => false,
+        // Result and Option carriers, user ADTs, maps, arrays, and tuples all
+        // have address-backed or tagged aggregate details the in-process JIT
+        // trampoline cannot yet preserve when a body promotes from bytecode.
+        TyKind::Adt { .. }
+        | TyKind::HashMap { .. }
+        | TyKind::Array { .. }
+        | TyKind::Tuple(_)
+        | TyKind::Iterator(_)
+        | TyKind::Sender(_)
+        | TyKind::Receiver(_)
+        | TyKind::JoinHandle(_)
+        | TyKind::JsonValue
+        | TyKind::DynError
+        | TyKind::FnDef { .. }
+        | TyKind::FnPtr(_)
+        | TyKind::FnTrait(_)
+        | TyKind::Closure { .. }
+        | TyKind::Alias { .. }
+        | TyKind::Dyn(_)
+        | TyKind::Var(_)
+        | TyKind::Param { .. }
+        | TyKind::Error => true,
+        TyKind::Ref { .. } => unreachable!("reference layers are peeled above"),
+    }
 }
 
 /// `true` when `body` spawns a goroutine or touches a cross-goroutine

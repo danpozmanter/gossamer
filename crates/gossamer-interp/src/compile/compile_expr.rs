@@ -2613,7 +2613,7 @@ impl<'tcx> FnBuilder<'tcx> {
         let mut place_takes: Vec<(&HirExpr, Reg)> = Vec::new();
         let mut arg_regs: Vec<Reg> = Vec::with_capacity(args.len());
         for (i, arg) in args.iter().enumerate() {
-            if let Some(home) = self.mut_ref_arg_home(arg) {
+            if let Some(home) = self.mut_ref_arg_home(arg, None) {
                 let cell = self.alloc_reg();
                 if Self::mut_ref_place_name(arg)
                     .is_some_and(|name| Self::mut_arg_move_safe(args, i, name))
@@ -2630,7 +2630,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 }
                 cell_takes.push((home, cell));
                 arg_regs.push(cell);
-            } else if let Some(place) = Self::mut_ref_writeback_place(self.tcx, arg) {
+            } else if let Some(place) = Self::mut_ref_writeback_place(self.tcx, arg, None) {
                 let place_reg = self.compile_expr(place)?;
                 let cell = self.alloc_reg();
                 let local_home = Self::path_single_seg_name(place).and_then(|name| {
@@ -2936,6 +2936,7 @@ impl<'tcx> FnBuilder<'tcx> {
             && args.len() == 2
             && matches!(self.tcx.kind(args[0].ty), Some(TyKind::String))
             && matches!(self.tcx.kind(args[1].ty), Some(TyKind::Int(_)))
+            && !self.expr_has_uint_display_provenance(&args[1])
         {
             let prefix = self.compile_expr(&args[0])?;
             let value = self.compile_expr_ex(&args[1])?;
@@ -2976,13 +2977,18 @@ impl<'tcx> FnBuilder<'tcx> {
         let mut cell_takes: Vec<(Reg, Reg)> = Vec::new();
         let mut place_takes: Vec<(&HirExpr, Reg)> = Vec::new();
         let mut arg_regs: Vec<Reg> = Vec::with_capacity(args.len());
-        // A `println!`/`format!` lowers to `__concat(...)`; an unsigned-64
-        // argument is boxed as `Value::Uint` so it renders unsigned (a
-        // `u64` above 2^63 prints as a large positive decimal). Mirrors the
-        // LLVM tier choosing the unsigned printer by declared type.
-        let concat_call = Self::callee_is_concat(callee);
+        // Renderer calls need unsigned-64 arguments boxed as `Value::Uint` so
+        // values above `i64::MAX` render as large positive decimals. This
+        // mirrors the compiled tiers' printer choice from declared type and
+        // MIR cast provenance.
+        let render_call = Self::callee_renders_args(callee);
+        let callee_param_tys = self.callee_param_tys(callee);
         for (i, arg) in args.iter().enumerate() {
-            if let Some(home) = self.mut_ref_arg_home(arg) {
+            let expected_ty = callee_param_tys
+                .as_ref()
+                .and_then(|params| params.get(i))
+                .copied();
+            if let Some(home) = self.mut_ref_arg_home(arg, expected_ty) {
                 // `&mut <local Vec>`: move the local into the cell when no
                 // sibling argument reads it, giving the callee unique
                 // ownership so its first mutation grows in place instead of
@@ -3005,7 +3011,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 }
                 cell_takes.push((home, cell));
                 arg_regs.push(cell);
-            } else if let Some(place) = Self::mut_ref_writeback_place(self.tcx, arg) {
+            } else if let Some(place) = Self::mut_ref_writeback_place(self.tcx, arg, expected_ty) {
                 let place_reg = self.compile_expr(place)?;
                 let cell = self.alloc_reg();
                 // A bare-local place (`&mut s` for a `String` / scalar /
@@ -3042,7 +3048,7 @@ impl<'tcx> FnBuilder<'tcx> {
                     place_takes.push((place, cell));
                 }
                 arg_regs.push(cell);
-            } else if concat_call && self.is_unsigned64_ty(arg.ty) {
+            } else if render_call && self.expr_has_uint_display_provenance(arg) {
                 let tr = self.compile_expr_ex(arg)?;
                 let src_i = self.as_i64(tr);
                 let dst_v = self.alloc_reg();
@@ -3261,14 +3267,37 @@ impl<'tcx> FnBuilder<'tcx> {
         Ok(Some(dst))
     }
 
-    /// True when a call's callee is the `__concat` string builder that
-    /// `format!`/`println!` lower to. Used to box unsigned-64 arguments as
-    /// `Value::Uint` so they render unsigned.
+    /// True when a call renders its arguments through `Display`.
+    fn callee_renders_args(callee: &HirExpr) -> bool {
+        let HirExprKind::Path { segments, .. } = &callee.kind else {
+            return false;
+        };
+        segments.last().is_some_and(|s| {
+            matches!(
+                s.name.as_str(),
+                "__concat" | "println" | "print" | "eprintln" | "format"
+            )
+        })
+    }
+
     fn callee_is_concat(callee: &HirExpr) -> bool {
         let HirExprKind::Path { segments, .. } = &callee.kind else {
             return false;
         };
         segments.last().is_some_and(|s| s.name == "__concat")
+    }
+
+    pub(crate) fn expr_has_uint_display_provenance(&self, expr: &HirExpr) -> bool {
+        if self.is_unsigned64_ty(expr.ty) {
+            return true;
+        }
+        match &expr.kind {
+            HirExprKind::Cast { ty, .. } => self.is_unsigned64_ty(*ty),
+            HirExprKind::Path { segments, .. } if segments.len() == 1 => self
+                .lookup_local(&segments[0].name)
+                .is_some_and(|tr| self.uint_display_locals.contains(&tr.reg)),
+            _ => false,
+        }
     }
 
     /// Returns the home register of a `&mut Vec<T>` / `&mut [T]`
@@ -3318,8 +3347,10 @@ impl<'tcx> FnBuilder<'tcx> {
         })
     }
 
-    fn mut_ref_arg_home(&self, arg: &HirExpr) -> Option<Reg> {
-        if !crate::compile::is_mut_ref_vec(self.tcx, arg.ty) {
+    fn mut_ref_arg_home(&self, arg: &HirExpr, expected_ty: Option<Ty>) -> Option<Reg> {
+        let expects_mut_vec = crate::compile::is_mut_ref_vec(self.tcx, arg.ty)
+            || expected_ty.is_some_and(|ty| crate::compile::is_mut_ref_vec(self.tcx, ty));
+        if !expects_mut_vec {
             return None;
         }
         let place = match &arg.kind {
@@ -3348,8 +3379,13 @@ impl<'tcx> FnBuilder<'tcx> {
     /// after the call. The plain-local-Vec case is handled separately by
     /// [`Self::mut_ref_arg_home`]; everything that isn't a write-through
     /// place (a temporary, a deref of a call result) returns `None`.
-    fn mut_ref_writeback_place<'a>(tcx: &TyCtxt, arg: &'a HirExpr) -> Option<&'a HirExpr> {
-        let typed_as_mut_ref = crate::compile::is_mut_ref_writeback(tcx, arg.ty);
+    fn mut_ref_writeback_place<'a>(
+        tcx: &TyCtxt,
+        arg: &'a HirExpr,
+        expected_ty: Option<Ty>,
+    ) -> Option<&'a HirExpr> {
+        let typed_as_mut_ref = crate::compile::is_mut_ref_writeback(tcx, arg.ty)
+            || expected_ty.is_some_and(|ty| crate::compile::is_mut_ref_writeback(tcx, ty));
         let (place, explicit_mut_place) = match &arg.kind {
             HirExprKind::Unary {
                 op: HirUnaryOp::RefMut,
@@ -3360,14 +3396,23 @@ impl<'tcx> FnBuilder<'tcx> {
         if !typed_as_mut_ref && !explicit_mut_place {
             return None;
         }
-        if explicit_mut_place && crate::compile::is_mut_ref_fixed_array(tcx, arg.ty) {
-            return None;
-        }
         matches!(
             place.kind,
             HirExprKind::Path { .. } | HirExprKind::Field { .. } | HirExprKind::Index { .. }
         )
         .then_some(place)
+    }
+
+    fn callee_param_tys(&self, callee: &HirExpr) -> Option<Vec<Ty>> {
+        let HirExprKind::Path { segments, .. } = &callee.kind else {
+            return None;
+        };
+        let key = segments
+            .iter()
+            .map(|seg| seg.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::");
+        self.fn_param_tys.get(&key).cloned()
     }
 }
 

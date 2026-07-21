@@ -84,6 +84,7 @@ impl<'tcx> FnBuilder<'tcx> {
             self.layouts,
             self.wrappers,
             self.inline_fns,
+            self.fn_param_tys,
             self.module_consts,
             self.method_muts,
             self.mut_statics,

@@ -75,6 +75,14 @@ impl<'tcx> FnBuilder<'tcx> {
         }
     }
 
+    fn record_uint_display_init(&mut self, init: &HirExpr, reg: Reg) {
+        if self.expr_has_uint_display_provenance(init) {
+            self.uint_display_locals.insert(reg);
+        } else {
+            self.uint_display_locals.remove(&reg);
+        }
+    }
+
     /// `true` when `receiver` is a path bound to a `flag::Set` duration
     /// cell, so a `time::Duration` accessor in method form dispatches on
     /// the cell's element type.
@@ -147,6 +155,7 @@ impl<'tcx> FnBuilder<'tcx> {
                         };
                         self.record_flag_init(init, typed.reg);
                         self.record_vec_init(init, typed.reg);
+                        self.record_uint_display_init(init, typed.reg);
                         self.bind_local(&name.name, typed);
                     } else {
                         // Declared-only - default to Value; an
@@ -327,6 +336,11 @@ impl<'tcx> FnBuilder<'tcx> {
                     // unbox round-trip happens in hot loops.
                     let rhs_start = self.cur_idx();
                     let src_tr = self.compile_expr_ex(value)?;
+                    if self.expr_has_uint_display_provenance(value) {
+                        self.uint_display_locals.insert(target.reg);
+                    } else {
+                        self.uint_display_locals.remove(&target.reg);
+                    }
                     if target.kind == RegKind::I64
                         && src_tr.kind == RegKind::I64
                         && self.try_fold_i64_move(rhs_start, src_tr.reg, target.reg)

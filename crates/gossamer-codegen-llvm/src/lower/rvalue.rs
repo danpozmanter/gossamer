@@ -89,13 +89,18 @@ impl<'a> Lowerer<'a> {
                 self.lower_call_intrinsic(name, args, dest_local)
             }
             Rvalue::Ref { place, .. } => {
-                // `&place` - we return the address of the
-                // projection walk (or the bare stack slot when
-                // there's no projection). In Gossamer's
-                // runtime shape references are just raw
-                // pointers, so the store at the caller simply
-                // takes the address value as `ptr`.
-                if place.projection.is_empty() {
+                // `&place` returns the address of the projection walk.
+                // A bare reference local already stores the referent pointer,
+                // so forward that value instead of taking the address of the
+                // stack slot that happens to hold the reference.
+                if place.projection.is_empty()
+                    && matches!(
+                        self.tcx.kind(self.body.local_ty(place.local)),
+                        Some(TyKind::Ref { .. })
+                    )
+                {
+                    Ok(self.lower_place_read(place))
+                } else if place.projection.is_empty() {
                     Ok(local_slot(place.local))
                 } else {
                     Ok(self.lower_place_address(place))

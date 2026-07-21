@@ -13,6 +13,10 @@
   parsing with validation, subcommands, environment fallback, and completions.
 - Bound Rust-binding runner caches, disable generated debug and incremental
   bloat, streamline CI, and align shared dependency versions.
+- Make `&mut` call arguments consistently write through, including fixed
+  arrays and accepted bare writable places passed to `&mut` parameters.
+- Restore release benchmark throughput by using host `-mcpu=native` for native
+  builds and extending loop bounds versioning to invariant indices.
 
 ## 0.32.3 - LSP diagnostics and quick fixes, type info, and mutable-reference fixes
 

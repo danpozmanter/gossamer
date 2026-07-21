@@ -1,5 +1,6 @@
 #![allow(clippy::too_many_lines, clippy::wildcard_imports)]
 use super::*;
+use gossamer_types::Ty;
 
 // The JIT backend: real Cranelift on native, a no-op stub on wasm32
 // (Cranelift has no wasm target). The stub's `has_worthy_jit_body`
@@ -351,7 +352,13 @@ impl Vm {
         // skipping the per-call frame. Built once here; consulted while
         // compiling every function body in pass C.
         let mut inline_fns = crate::compile::InlinableFns::new();
+        let mut fn_param_tys = crate::compile::FnParamTypes::new();
         for item in &program.items {
+            let module_prefix = if item.module_path.is_empty() {
+                None
+            } else {
+                Some(item.module_path.join("::"))
+            };
             match &item.kind {
                 HirItemKind::Adt(adt) => {
                     if let gossamer_hir::HirAdtKind::Struct(fields) = &adt.kind {
@@ -363,6 +370,11 @@ impl Vm {
                     }
                 }
                 HirItemKind::Fn(decl) => {
+                    let params: Vec<Ty> = decl.params.iter().map(|p| p.ty).collect();
+                    fn_param_tys.insert(decl.name.name.clone(), params.clone());
+                    if let Some(prefix) = &module_prefix {
+                        fn_param_tys.insert(format!("{prefix}::{}", decl.name.name), params);
+                    }
                     if let Some(target) = detect_trivial_wrapper(decl) {
                         wrappers.insert(decl.name.name.clone(), target);
                     }
@@ -377,6 +389,32 @@ impl Vm {
                     };
                     if let Some(info) = inlinable {
                         inline_fns.insert(decl.name.name.clone(), info);
+                    }
+                }
+                HirItemKind::Impl(decl) => {
+                    for method in &decl.methods {
+                        let params: Vec<Ty> = method.params.iter().map(|p| p.ty).collect();
+                        fn_param_tys.insert(method.name.name.clone(), params.clone());
+                        if let Some(type_name) = &decl.self_name {
+                            let qualified = format!("{}::{}", type_name.name, method.name.name);
+                            fn_param_tys.insert(qualified.clone(), params.clone());
+                            if let Some(prefix) = &module_prefix {
+                                fn_param_tys
+                                    .insert(format!("{prefix}::{qualified}"), params.clone());
+                            }
+                        }
+                        if let Some(prefix) = &module_prefix {
+                            fn_param_tys.insert(format!("{prefix}::{}", method.name.name), params);
+                        }
+                    }
+                }
+                HirItemKind::Trait(decl) => {
+                    for method in &decl.methods {
+                        let params: Vec<Ty> = method.params.iter().map(|p| p.ty).collect();
+                        fn_param_tys.insert(method.name.name.clone(), params.clone());
+                        if let Some(prefix) = &module_prefix {
+                            fn_param_tys.insert(format!("{prefix}::{}", method.name.name), params);
+                        }
                     }
                 }
                 _ => {}
@@ -417,6 +455,7 @@ impl Vm {
                     &def_layouts,
                     &wrappers,
                     &inline_fns,
+                    &fn_param_tys,
                     &module_consts,
                     &method_muts,
                     &mut_statics,
@@ -446,6 +485,7 @@ impl Vm {
                         &def_layouts,
                         &wrappers,
                         &inline_fns,
+                        &fn_param_tys,
                         &module_consts,
                         &method_muts,
                         &mut_statics,
@@ -473,6 +513,7 @@ impl Vm {
                         &def_layouts,
                         &wrappers,
                         &inline_fns,
+                        &fn_param_tys,
                         &module_consts,
                         &method_muts,
                         &mut_statics,
@@ -508,6 +549,7 @@ impl Vm {
                     &def_layouts,
                     &wrappers,
                     &inline_fns,
+                    &fn_param_tys,
                     &module_consts,
                     &method_muts,
                     &mut_statics,
@@ -531,6 +573,7 @@ impl Vm {
                         &def_layouts,
                         &wrappers,
                         &inline_fns,
+                        &fn_param_tys,
                         &module_consts,
                         &method_muts,
                         &mut_statics,
@@ -945,6 +988,7 @@ impl Vm {
         layouts: &HashMap<gossamer_resolve::DefId, Vec<String>>,
         wrappers: &HashMap<String, Vec<String>>,
         inline_fns: &crate::compile::InlinableFns,
+        fn_param_tys: &crate::compile::FnParamTypes,
         module_consts: &HashMap<String, Value>,
         method_muts: &crate::compile::MutSelfMethods,
         mut_statics: &crate::compile::MutStatics,
@@ -956,6 +1000,7 @@ impl Vm {
             layouts,
             wrappers,
             inline_fns,
+            fn_param_tys,
             module_consts,
             method_muts,
             mut_statics,
@@ -1002,6 +1047,7 @@ impl Vm {
         layouts: &HashMap<gossamer_resolve::DefId, Vec<String>>,
         wrappers: &HashMap<String, Vec<String>>,
         inline_fns: &crate::compile::InlinableFns,
+        fn_param_tys: &crate::compile::FnParamTypes,
         module_consts: &HashMap<String, Value>,
         method_muts: &crate::compile::MutSelfMethods,
         mut_statics: &crate::compile::MutStatics,
@@ -1053,6 +1099,7 @@ impl Vm {
                     layouts,
                     wrappers,
                     inline_fns,
+                    fn_param_tys,
                     module_consts,
                     method_muts,
                     mut_statics,
@@ -1074,6 +1121,7 @@ impl Vm {
                         layouts,
                         wrappers,
                         inline_fns,
+                        fn_param_tys,
                         module_consts,
                         method_muts,
                         mut_statics,
@@ -1105,6 +1153,7 @@ impl Vm {
                             layouts,
                             wrappers,
                             inline_fns,
+                            fn_param_tys,
                             module_consts,
                             method_muts,
                             mut_statics,

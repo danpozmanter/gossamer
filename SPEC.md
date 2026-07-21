@@ -457,16 +457,14 @@ statically checked read/write-intent markers, but there is no lifetime or
 exclusivity analysis (§7.5). No lifetime parameters exist at any level of
 the language.
 
-**`&mut` parameter semantics.** A `&mut Vec<T>` / `&mut [T]` parameter
-writes through to the caller's storage on every tier: element writes,
-growth via `push` (a visible reallocation included), `swap`, forwarding
-the reference into a nested call, early-return paths, a struct field as
-the argument place, and writes from a closure taking the parameter are
-all visible in the caller's binding after the call returns. Fixed-size
-`[T; N]` arguments are copied at the call boundary - a fixed array
-passed where a `&mut [T]` / `&mut Vec<T>` parameter is expected mutates
-the copy, and write-through for fixed arrays is not part of the
-contract. Passing the same place twice as `&mut` in a single call
+**`&mut` parameter semantics.** A `&mut T` parameter writes through to
+the caller's storage on every tier, including scalar values, strings,
+vectors, slices, structs, enums, and fixed-size `[T; N]` arrays. Element
+writes, growth via `push` for growable vectors, `swap`, forwarding the
+reference into a nested call, early-return paths, a struct field as the
+argument place, and writes from a closure taking the parameter are all
+visible in the caller's binding after the call returns. Passing the same
+place twice as `&mut` in a single call
 (`f(&mut v, &mut v)`) is accepted (no argument-level exclusivity check, §7.5) and the
 resulting write order is unspecified - do not rely on it. A `&mut`
 argument in a `go` expression does not extend

@@ -440,7 +440,10 @@ impl<'a> Lowerer<'a> {
         // Any other shape (null / non-builder / region / shared /
         // capacity-exhausted) falls back to the runtime shim, which
         // owns those paths.
-        if name == "gos_rt_str_append_bytes" && args.len() == 3 {
+        if name == "gos_rt_str_append_bytes"
+            && args.len() == 3
+            && matches!(&args[0], Operand::Copy(place) if place.projection.is_empty())
+        {
             self.lower_str_append_bytes_inline(args, destination, target)?;
             return Ok(());
         }
@@ -830,12 +833,16 @@ impl<'a> Lowerer<'a> {
             let tmp = self.fresh();
             if kind == vec_elem_kind_llvm::PRIMITIVE {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_new");
-                writeln!(self.out, "  {tmp} = call ptr @gos_rt_vec_new(i32 {eb_i32})").unwrap();
+                writeln!(
+                    self.out,
+                    "  {tmp} = call noalias ptr @gos_rt_vec_new(i32 {eb_i32})"
+                )
+                .unwrap();
             } else {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_new_typed");
                 writeln!(
                     self.out,
-                    "  {tmp} = call ptr @gos_rt_vec_new_typed(i32 {eb_i32}, i8 {kind})"
+                    "  {tmp} = call noalias ptr @gos_rt_vec_new_typed(i32 {eb_i32}, i8 {kind})"
                 )
                 .unwrap();
             }
@@ -870,14 +877,14 @@ impl<'a> Lowerer<'a> {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_with_capacity");
                 writeln!(
                     self.out,
-                    "  {tmp} = call ptr @gos_rt_vec_with_capacity(i32 {eb_i32}, i64 {cap_i64})"
+                    "  {tmp} = call noalias ptr @gos_rt_vec_with_capacity(i32 {eb_i32}, i64 {cap_i64})"
                 )
                 .unwrap();
             } else {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_with_capacity_typed");
                 writeln!(
                     self.out,
-                    "  {tmp} = call ptr @gos_rt_vec_with_capacity_typed(i32 {eb_i32}, i64 {cap_i64}, i8 {kind})"
+                    "  {tmp} = call noalias ptr @gos_rt_vec_with_capacity_typed(i32 {eb_i32}, i64 {cap_i64}, i8 {kind})"
                 )
                 .unwrap();
             }

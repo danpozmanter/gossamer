@@ -181,10 +181,6 @@ const SPECS: &[Spec] = &[
     spec("examples/heap_demo.gos"),
     spec("examples/hello_world.gos"),
     spec("examples/json_derive_test.gos"),
-    Spec {
-        skip_all: Some("needs live web_server.gos on :8080 - covered by web_server smoke tests"),
-        ..spec("examples/http_client.gos")
-    },
     spec("examples/line_count.gos"),
     spec("examples/linked_list.gos"),
     // Lists the live working directory and prints each entry's mtime, so the
@@ -225,13 +221,6 @@ const SPECS: &[Spec] = &[
         ..spec("examples/uuid_demo.gos")
     },
     spec("examples/vowel_count.gos"),
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             web_auth_api_parity_across_tiers",
-        ),
-        ..spec("examples/web_auth_api.gos")
-    },
     Spec {
         server: Some(ServerFixture {
             boot_ms: 800,
@@ -669,6 +658,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/fs_temp_resources.gos"),
     spec("feature-testing-examples/fs_dir_ops.gos"),
     spec("feature-testing-examples/path_split.gos"),
+    spec("feature-testing-examples/path_value.gos"),
     spec("feature-testing-examples/base32_decode.gos"),
     spec("feature-testing-examples/json_yaml_encode.gos"),
     spec("feature-testing-examples/bounded_channel.gos"),
@@ -690,189 +680,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/http_form_urlencoded.gos"),
     spec("feature-testing-examples/httptest_static_server.gos"),
     spec("examples/http_diagnostics_transport.gos"),
-    Spec {
-        skip_all: Some(
-            "binds fixed loopback ports - covered serially by \
-             http_bare_handler_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_bare_handler.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_bare_aliases_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_bare_aliases.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_client_cookie_jar_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_client_cookie_jar.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_client_verbs_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_client_verbs.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback TLS port - covered serially by \
-             http_serve_tls_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_serve_tls_roundtrip.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_server_headers_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_server_headers.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_middleware_bearer_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_middleware_bearer.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_middleware_compose_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_middleware_compose.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_middleware_ws_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_middleware_ws.gos")
-    },
     spec("feature-testing-examples/http_router_lookup.gos"),
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_router_params_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_router_params.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_router_typed_params_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_router_typed_params.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_router_chain_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_router_chain.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_next_chunk_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_next_chunk.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds fixed loopback ports - covered serially by \
-             http_proxy_stream_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_proxy_stream.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_raw_bytes_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_raw_bytes.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_redirect_policy_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_redirect_policy.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_request_headers_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_request_headers.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_request_values_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_request_values.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_request_form_auth_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_request_form_auth.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_form_file_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_form_file.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_response_headers_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_response_headers.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds fixed loopback ports - covered serially by \
-             http_roundtrip_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_roundtrip.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_static_file_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_static_file.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_static_range_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_static_range.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             http_websocket_accept_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/http_websocket_accept.gos")
-    },
-    Spec {
-        skip_all: Some(
-            "binds a fixed loopback port - covered serially by \
-             websocket_echo_parity_across_tiers",
-        ),
-        ..spec("feature-testing-examples/websocket_echo.gos")
-    },
     spec("feature-testing-examples/http_serve_err_binding.gos"),
     spec("feature-testing-examples/http3_serve_err_binding.gos"),
     spec("feature-testing-examples/integer_overflow_edges.gos"),
@@ -980,6 +788,7 @@ const SPECS: &[Spec] = &[
     // dispatch); previously a borrowed map iterated as a bogus Vec.
     spec("feature-testing-examples/hashmap_ref_param_iter.gos"),
     spec("feature-testing-examples/time_monotonic_vs_wall.gos"),
+    spec("feature-testing-examples/time_civil.gos"),
     spec("feature-testing-examples/tw_go_block.gos"),
     spec("feature-testing-examples/trait_object_dispatch.gos"),
     Spec {
@@ -1190,6 +999,35 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/stdlib_surface_join_parse_take.gos"),
 ];
 
+const DEDICATED_FEATURE_TESTING_EXAMPLES: &[&str] = &[
+    "http_bare_handler.gos",
+    "http_bare_aliases.gos",
+    "http_client_cookie_jar.gos",
+    "http_client_verbs.gos",
+    "http_serve_tls_roundtrip.gos",
+    "http_server_headers.gos",
+    "http_middleware_bearer.gos",
+    "http_middleware_compose.gos",
+    "http_middleware_ws.gos",
+    "http_router_params.gos",
+    "http_router_typed_params.gos",
+    "http_router_chain.gos",
+    "http_next_chunk.gos",
+    "http_proxy_stream.gos",
+    "http_raw_bytes.gos",
+    "http_redirect_policy.gos",
+    "http_request_headers.gos",
+    "http_request_values.gos",
+    "http_request_form_auth.gos",
+    "http_form_file.gos",
+    "http_response_headers.gos",
+    "http_roundtrip.gos",
+    "http_static_file.gos",
+    "http_static_range.gos",
+    "http_websocket_accept.gos",
+    "websocket_echo.gos",
+];
+
 #[test]
 fn specs_cover_every_feature_testing_example() {
     use std::collections::BTreeSet;
@@ -1203,12 +1041,17 @@ fn specs_cover_every_feature_testing_example() {
         .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("gos"))
         .filter_map(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
         .collect();
-    let in_specs: BTreeSet<String> = SPECS
+    let mut covered: BTreeSet<String> = SPECS
         .iter()
         .filter_map(|spec| spec.path.strip_prefix("feature-testing-examples/"))
         .map(str::to_string)
         .collect();
-    let missing: Vec<_> = on_disk.difference(&in_specs).cloned().collect();
+    covered.extend(
+        DEDICATED_FEATURE_TESTING_EXAMPLES
+            .iter()
+            .map(|path| (*path).to_string()),
+    );
+    let missing: Vec<_> = on_disk.difference(&covered).cloned().collect();
     assert!(
         missing.is_empty(),
         "feature-testing-examples fixtures missing from SPECS: {}",

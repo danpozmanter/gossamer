@@ -61,6 +61,30 @@ fn main() {
 }
 
 #[test]
+fn implicit_mut_ref_args_write_through() {
+    let output = run_vm_main(
+        r#"
+fn set_first(v: &mut Vec<i64>) {
+    v[0] = 0
+}
+
+fn inc(x: &mut i64) {
+    *x = *x + 1
+}
+
+fn main() {
+    let mut v: Vec<i64> = [1, 2]
+    set_first(v)
+    let mut n = 1
+    inc(n)
+    println!("{} {}", v[0], n)
+}
+"#,
+    );
+    assert_eq!(output, "0 2\n");
+}
+
+#[test]
 fn mut_vec_param_forwarding_and_early_return_write_through() {
     let output = run_vm_main(
         r#"
@@ -215,11 +239,8 @@ fn main() {
 }
 
 #[test]
-fn fixed_array_mut_param_keeps_copy_semantics() {
-    // Fixed `[T; N]` arrays copy at the call boundary on every
-    // tier (the compiled backends pass a stack copy); the VM must
-    // not write through for them or it would *create* a
-    // divergence. Pin the uniform behaviour.
+fn fixed_array_mut_param_writes_through() {
+    // `&mut` aliases write through for fixed arrays too.
     let output = run_vm_main(
         r#"
 fn set_first(v: &mut [i64]) {
@@ -233,11 +254,11 @@ fn main() {
 }
 "#,
     );
-    assert_eq!(output, "1\n");
+    assert_eq!(output, "99\n");
 }
 
 #[test]
-fn mut_reference_argument_does_not_consume_its_aliased_source() {
+fn fixed_array_mut_reference_argument_writes_through_source() {
     let output = run_vm_main(
         r#"
 fn mutate_copy(a: &mut [i64; 2]) -> &mut [i64; 2] {
@@ -254,11 +275,11 @@ fn main() {
 }
 "#,
     );
-    assert_eq!(output, "[1, 2]\n[0, 2]\n");
+    assert_eq!(output, "[0, 2]\n[0, 2]\n");
 }
 
 #[test]
-fn mut_reference_alias_and_source_remain_live_after_argument_use() {
+fn fixed_array_mut_reference_alias_and_source_see_writeback() {
     let output = run_vm_main(
         r#"
 fn mutate_copy(a: &mut [i64; 2]) -> &mut [i64; 2] {
@@ -276,7 +297,7 @@ fn main() {
 }
 "#,
     );
-    assert_eq!(output, "[1, 2]\n[1, 2]\n[0, 2]\n");
+    assert_eq!(output, "[0, 2]\n[0, 2]\n[0, 2]\n");
 }
 
 #[test]

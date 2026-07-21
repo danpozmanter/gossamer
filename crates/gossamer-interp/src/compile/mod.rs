@@ -117,9 +117,7 @@ pub(crate) type StructLayouts = std::collections::HashMap<gossamer_resolve::DefI
 /// Returns `true` when `ty` is `&mut Vec<T>` / `&mut [T]` - the
 /// parameter / argument shape that rides the write-back cell
 /// protocol (`Op::CellNew` / `Op::CellTake` /
-/// `FnChunk::mut_ref_params`). Fixed `[T; N]` arrays are excluded:
-/// the compiled tiers copy them at the call boundary, so cell
-/// write-back there would *create* a divergence.
+/// `FnChunk::mut_ref_params`).
 pub(crate) fn is_mut_ref_vec(tcx: &TyCtxt, ty: Ty) -> bool {
     let Some(TyKind::Ref {
         mutability: gossamer_types::Mutbl::Mut,
@@ -129,21 +127,6 @@ pub(crate) fn is_mut_ref_vec(tcx: &TyCtxt, ty: Ty) -> bool {
         return false;
     };
     matches!(tcx.kind(*inner), Some(TyKind::Vec(_) | TyKind::Slice(_)))
-}
-
-/// Returns `true` for `&mut [T; N]`. Fixed arrays copy at the call
-/// boundary on the compiled tiers, so the VM must not opt them into
-/// mutable write-back cells just because the source spelling used
-/// `&mut`.
-pub(crate) fn is_mut_ref_fixed_array(tcx: &TyCtxt, ty: Ty) -> bool {
-    let Some(TyKind::Ref {
-        mutability: gossamer_types::Mutbl::Mut,
-        inner,
-    }) = tcx.kind(ty)
-    else {
-        return false;
-    };
-    matches!(tcx.kind(*inner), Some(TyKind::Array { .. }))
 }
 
 /// Returns `true` when `ty` is a `&mut T` whose mutation through the
@@ -156,10 +139,8 @@ pub(crate) fn is_mut_ref_fixed_array(tcx: &TyCtxt, ty: Ty) -> bool {
 /// a free function mutating a `&mut Struct` param silently no-ops under
 /// `gos run` while writing back under `gos build`). Used to decide that
 /// a call carrying such an argument participates in the `MutCell`
-/// write-back + `*p = …` deref-assign protocol. Only fixed `[T; N]`
-/// arrays are excluded: the compiled tiers copy them at the call
-/// boundary, so a cell write-back there would itself create a
-/// divergence.
+/// write-back + `*p = …` deref-assign protocol. Fixed `[T; N]` arrays
+/// participate too: `&mut` aliases always write through.
 pub(crate) fn is_mut_ref_writeback(tcx: &TyCtxt, ty: Ty) -> bool {
     if is_mut_ref_vec(tcx, ty) {
         return true;
@@ -179,6 +160,7 @@ pub(crate) fn is_mut_ref_writeback(tcx: &TyCtxt, ty: Ty) -> bool {
                 | TyKind::Bool
                 | TyKind::Char
                 | TyKind::String
+                | TyKind::Array { .. }
                 | TyKind::Adt { .. }
         )
     )
@@ -220,6 +202,11 @@ pub(crate) struct InlinableFn {
 /// `wrappers` / `module_consts`, so its lifetime never entangles with
 /// the `HirProgram` borrow.
 pub(crate) type InlinableFns = std::collections::HashMap<String, InlinableFn>;
+
+/// User-function parameter types keyed by the source path used at call sites.
+/// The bytecode compiler uses this to honor implicit mutable-reference
+/// arguments accepted by the type checker (`f(x)` for `f(p: &mut T)`).
+pub(crate) type FnParamTypes = std::collections::HashMap<String, Vec<Ty>>;
 
 /// Top-level `const` items, keyed by name, with their already-
 /// evaluated `Value`. The bytecode compiler inlines a path that
@@ -307,6 +294,7 @@ pub fn compile_fn(
     layouts: &StructLayouts,
     wrappers: &InlinableWrappers,
     inline_fns: &InlinableFns,
+    fn_param_tys: &FnParamTypes,
     consts: &ConstValues,
     method_muts: &MutSelfMethods,
     mut_statics: &MutStatics,
@@ -341,6 +329,7 @@ pub fn compile_fn(
         layouts,
         wrappers,
         inline_fns,
+        fn_param_tys,
         consts,
         method_muts,
         mut_statics,
@@ -406,6 +395,7 @@ pub fn compile_initializer(
     layouts: &StructLayouts,
     wrappers: &InlinableWrappers,
     inline_fns: &InlinableFns,
+    fn_param_tys: &FnParamTypes,
     consts: &ConstValues,
     method_muts: &MutSelfMethods,
     mut_statics: &MutStatics,
@@ -418,6 +408,7 @@ pub fn compile_initializer(
         layouts,
         wrappers,
         inline_fns,
+        fn_param_tys,
         consts,
         method_muts,
         mut_statics,
@@ -444,6 +435,9 @@ pub(crate) struct FnBuilder<'tcx> {
     /// [`InlinableFns`]). Borrowed from the VM load frame for the
     /// duration of the compile, like `wrappers`.
     pub(crate) inline_fns: &'tcx InlinableFns,
+    /// Parameter types for user functions, used to lower accepted implicit
+    /// `&mut` call arguments through the write-back protocol.
+    pub(crate) fn_param_tys: &'tcx FnParamTypes,
     /// Names of the functions whose bodies are currently being inlined
     /// into this builder, innermost last. Consulted before each inline to
     /// reject direct / mutual / transitive recursion; pushed before
@@ -476,6 +470,10 @@ pub(crate) struct FnBuilder<'tcx> {
     /// Lets indexed reads / writes route through the typed-`f64`
     /// fast path that skips the `Value::Float` round-trip.
     pub(crate) flat_float_locals: std::collections::HashSet<Reg>,
+    /// Value or integer registers whose source expression is known to be an
+    /// `as u64` / `as usize` cast. Renderer calls box these as `Value::Uint`
+    /// so VM output matches the compiled tiers' unsigned printer choice.
+    pub(crate) uint_display_locals: std::collections::HashSet<Reg>,
     /// Registers shared by a local reference binding and its source place.
     /// Last-use clearing is disabled for these registers because the
     /// consume analysis tracks names, while either name may still access the
