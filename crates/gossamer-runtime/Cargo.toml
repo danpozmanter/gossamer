@@ -62,7 +62,7 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["arbitrary_precision", "unbounded_depth"] }
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
-flate2 = "1"
+flate2 = { workspace = true }
 sha1 = { version = "0.10", default-features = false, features = ["std"] }
 rustc-hash = "2"
 gossamer-coro = { workspace = true }
@@ -72,6 +72,8 @@ gossamer-template = { workspace = true }
 gossamer-ws = { workspace = true }
 http = "1"
 bytes = "1"
+chrono.workspace = true
+chrono-tz.workspace = true
 
 # Unicode tables (`std::unicode` compiled-tier helpers). Same
 # crates as gossamer-std so the property data is single-sourced
@@ -81,7 +83,7 @@ unicode-normalization = { workspace = true }
 unicode-segmentation = { workspace = true }
 
 # User-facing TOML (`std::encoding::toml` compiled-tier helpers).
-toml = "0.9"
+toml = { workspace = true }
 
 # Media type parsing (`std::mime` compiled-tier helpers).
 mime = "0.3"
@@ -153,10 +155,10 @@ mio = { workspace = true }
 # compiled tier matches the interp's `http::stream` semantics.
 # Same feature set as gossamer-std (TLS via rustls, gzip, cookies)
 # for parity with `gos run`.
-ureq = { version = "3", features = ["cookies"] }
-png = "0.17"
+ureq = { workspace = true, features = ["cookies"] }
+png = { workspace = true }
 jpeg-decoder = "0.3"
-jpeg-encoder = "0.6"
+jpeg-encoder = { workspace = true }
 
 # Raw TLS-over-socket (`net::TcpStream::start_tls`) for the compiled
 # tier. Same rustls feature set + roots as gossamer-std's HTTP client

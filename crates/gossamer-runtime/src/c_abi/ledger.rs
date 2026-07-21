@@ -8,7 +8,7 @@
 
 use std::sync::{
     LazyLock,
-    atomic::{AtomicI64, AtomicU64, Ordering},
+    atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering},
 };
 
 /// Runtime-managed work observed during one benchmark measurement scope.
@@ -46,9 +46,17 @@ thread_local! {
         })) };
 }
 
+static BENCHMARK_COUNTER_SCOPES: AtomicUsize = AtomicUsize::new(0);
+
 /// Start a fresh per-thread benchmark measurement scope.
 pub fn begin_benchmark_counters() {
-    BENCHMARK_COUNTERS.with(|counters| counters.set((true, BenchmarkCounters::default())));
+    BENCHMARK_COUNTERS.with(|counters| {
+        let (enabled, _) = counters.get();
+        if !enabled {
+            BENCHMARK_COUNTER_SCOPES.fetch_add(1, Ordering::Relaxed);
+        }
+        counters.set((true, BenchmarkCounters::default()));
+    });
 }
 
 /// Stop the current per-thread benchmark measurement scope and return its data.
@@ -58,6 +66,7 @@ pub fn finish_benchmark_counters() -> BenchmarkCounters {
         let (enabled, snapshot) = counters.get();
         counters.set((false, BenchmarkCounters::default()));
         if enabled {
+            BENCHMARK_COUNTER_SCOPES.fetch_sub(1, Ordering::Relaxed);
             snapshot
         } else {
             BenchmarkCounters::default()
@@ -67,6 +76,9 @@ pub fn finish_benchmark_counters() -> BenchmarkCounters {
 
 #[inline]
 fn with_benchmark_counters(update: impl FnOnce(&mut BenchmarkCounters)) {
+    if BENCHMARK_COUNTER_SCOPES.load(Ordering::Relaxed) == 0 {
+        return;
+    }
     BENCHMARK_COUNTERS.with(|counters| {
         let (enabled, mut snapshot) = counters.get();
         if enabled {
@@ -164,7 +176,7 @@ fn vec_alloc_stats_enabled() -> bool {
 }
 
 #[inline]
-fn rc_alloc_stats_enabled() -> bool {
+pub(crate) fn rc_alloc_stats_enabled() -> bool {
     cfg!(test) || *RC_ALLOC_STATS_ENABLED
 }
 

@@ -68,10 +68,7 @@ use std::fmt::Write as _;
 use crate::BuildError;
 use anyhow::Result;
 use gossamer_abi as abi;
-use gossamer_mir::{
-    BasicBlock, BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, Statement,
-    StatementKind, Terminator, UnOp,
-};
+use gossamer_mir::{BasicBlock, Body, ConstValue, Operand, Place, Projection, UnOp};
 use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 
 /// `!tbaa` suffix for a load/store of an aggregate *header* field: a `GosVec`
@@ -455,12 +452,12 @@ impl<'a> Lowerer<'a> {
         matches!(self.tcx.kind(elem), Some(TyKind::Vec(_) | TyKind::Slice(_)))
     }
 
-    /// Inline fast path for `gos_rt_vec_get_i64(vec, idx) -> i64`. Replicates
-    /// the runtime helper exactly (null vec / out-of-range idx panic; else load
-    /// the i64 at `ptr + idx*elem_bytes`). Inlining removes a per-element FFI
-    /// call from hot index loops (BFS, scans) and lets LLVM hoist the
-    /// loop-invariant `len`/`ptr` loads and keep them in registers. GosVec
-    /// layout: `len@0, elem_bytes@16, ptr@24` (mirrors `lower_vec_len_inline`).
+    /// Inline fast path for `gos_rt_vec_get_i64(vec, idx) -> i64`. The valid
+    /// path loads directly from `ptr + idx*elem_bytes`; the null/out-of-range
+    /// path tail-calls the checked runtime helper so diagnostics and panic
+    /// behavior stay canonical without carrying the panic block in every hot
+    /// function. GosVec layout: `len@0, elem_bytes@16, ptr@24` (mirrors
+    /// `lower_vec_len_inline`).
     pub(crate) fn lower_vec_get_i64_inline(
         &mut self,
         args: &[Operand],
@@ -479,15 +476,20 @@ impl<'a> Lowerer<'a> {
         let dest_slot = local_slot(destination.local);
         let s = self.next_ssa;
         self.next_ssa += 1;
-        let (check, load, oob, cont) = (
+        let (check, load, slow_null, slow_oob, cont) = (
             format!("vg_check_{s}"),
             format!("vg_load_{s}"),
-            format!("vg_oob_{s}"),
+            format!("vg_slow_null_{s}"),
+            format!("vg_slow_oob_{s}"),
             format!("vg_cont_{s}"),
         );
         let isnull = self.fresh();
         writeln!(self.out, "  {isnull} = icmp eq ptr {vec_ptr}, null").unwrap();
-        writeln!(self.out, "  br i1 {isnull}, label %{oob}, label %{check}").unwrap();
+        writeln!(
+            self.out,
+            "  br i1 {isnull}, label %{slow_null}, label %{check}"
+        )
+        .unwrap();
         writeln!(self.out, "{check}:").unwrap();
         let len = self.fresh();
         writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}{TBAA_HEADER}").unwrap();
@@ -498,7 +500,7 @@ impl<'a> Lowerer<'a> {
         // into this itself - `len` is a runtime load it can't prove >= 0.
         let bad = self.fresh();
         writeln!(self.out, "  {bad} = icmp uge i64 {idx}, {len}").unwrap();
-        writeln!(self.out, "  br i1 {bad}, label %{oob}, label %{load}").unwrap();
+        writeln!(self.out, "  br i1 {bad}, label %{slow_oob}, label %{load}").unwrap();
         writeln!(self.out, "{load}:").unwrap();
         // Word-stride elements skip the header `elem_bytes` load: the
         // index scales by a constant 8 that folds into the address
@@ -573,15 +575,37 @@ impl<'a> Lowerer<'a> {
         };
         self.store_i64_as(&loaded, &dest_ty, &dest_slot);
         writeln!(self.out, "  br label %{cont}").unwrap();
-        declare_rt(&mut self.runtime_refs, "gos_rt_panic_oob");
-        let (label, _) = self.strings.borrow_mut().intern("vec index");
-        writeln!(self.out, "{oob}:").unwrap();
-        writeln!(
-            self.out,
-            "  call void @gos_rt_panic_oob(ptr {label}, i64 {idx}, i64 0)"
-        )
-        .unwrap();
-        writeln!(self.out, "  unreachable").unwrap();
+        if matches!(crate::emit::opt_profile(), crate::emit::OptProfile::Release) {
+            declare_rt(&mut self.runtime_refs, "gos_rt_panic_oob");
+            let (label, _) = self.strings.borrow_mut().intern("vec index");
+            writeln!(self.out, "{slow_null}:").unwrap();
+            writeln!(
+                self.out,
+                "  call void @gos_rt_panic_oob(ptr {label}, i64 {idx}, i64 0)"
+            )
+            .unwrap();
+            writeln!(self.out, "  unreachable").unwrap();
+            writeln!(self.out, "{slow_oob}:").unwrap();
+            writeln!(
+                self.out,
+                "  call void @gos_rt_panic_oob(ptr {label}, i64 {idx}, i64 {len})"
+            )
+            .unwrap();
+            writeln!(self.out, "  unreachable").unwrap();
+        } else {
+            declare_rt(&mut self.runtime_refs, "gos_rt_vec_get_i64");
+            for label in [&slow_null, &slow_oob] {
+                writeln!(self.out, "{label}:").unwrap();
+                let checked = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {checked} = call i64 @gos_rt_vec_get_i64(ptr {vec_ptr}, i64 {idx})"
+                )
+                .unwrap();
+                self.store_i64_as(&checked, &dest_ty, &dest_slot);
+                writeln!(self.out, "  br label %{cont}").unwrap();
+            }
+        }
         writeln!(self.out, "{cont}:").unwrap();
         emit_terminator_branch(&mut self.out, target);
         Ok(())
@@ -715,8 +739,9 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    /// Inline fast path for `gos_rt_vec_set_i64(vec, idx, val)`. Invalid
-    /// source indexing panics; valid indices store their value.
+    /// Inline fast path for `gos_rt_vec_set_i64(vec, idx, val)`. Valid indices
+    /// store directly; invalid indexing uses the checked runtime helper so the
+    /// panic path stays canonical and out of the hot function body.
     pub(crate) fn lower_vec_set_i64_inline(
         &mut self,
         args: &[Operand],
@@ -736,15 +761,20 @@ impl<'a> Lowerer<'a> {
         let val = self.value_to_i64(&val_v, &val_ty);
         let s = self.next_ssa;
         self.next_ssa += 1;
-        let (check, store_b, oob, cont) = (
+        let (check, store_b, slow_null, slow_oob, cont) = (
             format!("vs_check_{s}"),
             format!("vs_store_{s}"),
-            format!("vs_oob_{s}"),
+            format!("vs_slow_null_{s}"),
+            format!("vs_slow_oob_{s}"),
             format!("vs_cont_{s}"),
         );
         let isnull = self.fresh();
         writeln!(self.out, "  {isnull} = icmp eq ptr {vec_ptr}, null").unwrap();
-        writeln!(self.out, "  br i1 {isnull}, label %{oob}, label %{check}").unwrap();
+        writeln!(
+            self.out,
+            "  br i1 {isnull}, label %{slow_null}, label %{check}"
+        )
+        .unwrap();
         writeln!(self.out, "{check}:").unwrap();
         let len = self.fresh();
         writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}{TBAA_HEADER}").unwrap();
@@ -755,7 +785,11 @@ impl<'a> Lowerer<'a> {
         // into this itself - `len` is a runtime load it can't prove >= 0.
         let bad = self.fresh();
         writeln!(self.out, "  {bad} = icmp uge i64 {idx}, {len}").unwrap();
-        writeln!(self.out, "  br i1 {bad}, label %{oob}, label %{store_b}").unwrap();
+        writeln!(
+            self.out,
+            "  br i1 {bad}, label %{slow_oob}, label %{store_b}"
+        )
+        .unwrap();
         writeln!(self.out, "{store_b}:").unwrap();
         // Word-stride elements skip the header `elem_bytes` load: the
         // index scales by a constant 8 that folds into the address
@@ -809,15 +843,35 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  store i64 {val}, ptr {ea}{TBAA_DATA}").unwrap();
         }
         writeln!(self.out, "  br label %{cont}").unwrap();
-        declare_rt(&mut self.runtime_refs, "gos_rt_panic_oob");
-        let (label, _) = self.strings.borrow_mut().intern("vec index");
-        writeln!(self.out, "{oob}:").unwrap();
-        writeln!(
-            self.out,
-            "  call void @gos_rt_panic_oob(ptr {label}, i64 {idx}, i64 0)"
-        )
-        .unwrap();
-        writeln!(self.out, "  unreachable").unwrap();
+        if matches!(crate::emit::opt_profile(), crate::emit::OptProfile::Release) {
+            declare_rt(&mut self.runtime_refs, "gos_rt_panic_oob");
+            let (label, _) = self.strings.borrow_mut().intern("vec index");
+            writeln!(self.out, "{slow_null}:").unwrap();
+            writeln!(
+                self.out,
+                "  call void @gos_rt_panic_oob(ptr {label}, i64 {idx}, i64 0)"
+            )
+            .unwrap();
+            writeln!(self.out, "  unreachable").unwrap();
+            writeln!(self.out, "{slow_oob}:").unwrap();
+            writeln!(
+                self.out,
+                "  call void @gos_rt_panic_oob(ptr {label}, i64 {idx}, i64 {len})"
+            )
+            .unwrap();
+            writeln!(self.out, "  unreachable").unwrap();
+        } else {
+            declare_rt(&mut self.runtime_refs, "gos_rt_vec_set_i64");
+            for label in [&slow_null, &slow_oob] {
+                writeln!(self.out, "{label}:").unwrap();
+                writeln!(
+                    self.out,
+                    "  call void @gos_rt_vec_set_i64(ptr {vec_ptr}, i64 {idx}, i64 {val})"
+                )
+                .unwrap();
+                writeln!(self.out, "  br label %{cont}").unwrap();
+            }
+        }
         writeln!(self.out, "{cont}:").unwrap();
         let _ = destination;
         emit_terminator_branch(&mut self.out, target);
@@ -1264,59 +1318,66 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    /// Inline fast path for `gos_rt_str_len(s) -> i64`. Every compiler-typed
-    /// Gossamer string stores its `u32` byte length at `ptr[-5..-1]`, including
-    /// heap builders, region strings, and static literals. Reading that header
-    /// keeps length O(1); calling `strlen` here made repeated `.len()` on a
-    /// dynamic string quadratic.
+    /// Inline fast path for `gos_rt_str_len(s) -> i64`.
     pub(crate) fn lower_str_len_inline(
         &mut self,
         arg: &Operand,
         destination: &Place,
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
+        if let Some(len) = self.const_string_len(arg) {
+            if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
+                let slot = local_slot(destination.local);
+                writeln!(self.out, "  store i64 {len}, ptr {slot}").unwrap();
+            }
+            emit_terminator_branch(&mut self.out, target);
+            return Ok(());
+        }
         let s_v = self.lower_operand(arg)?;
-        let load_label = self.fresh_label("str_len_load");
-        let null_label = self.fresh_label("str_len_null");
-        let cont_label = self.fresh_label("str_len_cont");
-        let is_null = self.fresh();
-        writeln!(self.out, "  {is_null} = icmp eq ptr {s_v}, null").unwrap();
-        writeln!(
-            self.out,
-            "  br i1 {is_null}, label %{null_label}, label %{load_label}"
-        )
-        .unwrap();
-        writeln!(self.out, "{load_label}:").unwrap();
-        let len_ptr = self.fresh();
-        writeln!(
-            self.out,
-            "  {len_ptr} = getelementptr i8, ptr {s_v}, i64 -5"
-        )
-        .unwrap();
-        let len32 = self.fresh();
-        writeln!(
-            self.out,
-            "  {len32} = load i32, ptr {len_ptr}, align 1{TBAA_HEADER}"
-        )
-        .unwrap();
-        let len64 = self.fresh();
-        writeln!(self.out, "  {len64} = zext i32 {len32} to i64").unwrap();
-        writeln!(self.out, "  br label %{cont_label}").unwrap();
-        writeln!(self.out, "{null_label}:").unwrap();
-        writeln!(self.out, "  br label %{cont_label}").unwrap();
-        writeln!(self.out, "{cont_label}:").unwrap();
+        self.runtime_refs
+            .insert("declare i64 @strlen(ptr)".to_string());
         let tmp = self.fresh();
-        writeln!(
-            self.out,
-            "  {tmp} = phi i64 [ {len64}, %{load_label} ], [ 0, %{null_label} ]"
-        )
-        .unwrap();
+        writeln!(self.out, "  {tmp} = call i64 @strlen(ptr {s_v})").unwrap();
         if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
             let slot = local_slot(destination.local);
             writeln!(self.out, "  store i64 {tmp}, ptr {slot}").unwrap();
         }
         emit_terminator_branch(&mut self.out, target);
         Ok(())
+    }
+
+    fn const_string_len(&self, arg: &Operand) -> Option<usize> {
+        match arg {
+            Operand::Const(gossamer_mir::ConstValue::Str(text)) => Some(text.len()),
+            Operand::Copy(place) if place.projection.is_empty() => {
+                let decl = self.body.locals.get(place.local.0 as usize)?;
+                if decl.mutable {
+                    return None;
+                }
+                let mut found = None;
+                for block in &self.body.blocks {
+                    for stmt in &block.stmts {
+                        let gossamer_mir::StatementKind::Assign {
+                            place: assigned,
+                            rvalue:
+                                gossamer_mir::Rvalue::Use(Operand::Const(
+                                    gossamer_mir::ConstValue::Str(text),
+                                )),
+                        } = &stmt.kind
+                        else {
+                            continue;
+                        };
+                        if assigned.local == place.local && assigned.projection.is_empty() {
+                            if found.replace(text.len()).is_some() {
+                                return None;
+                            }
+                        }
+                    }
+                }
+                found
+            }
+            _ => None,
+        }
     }
 
     /// Inline fast path for

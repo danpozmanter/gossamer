@@ -304,11 +304,6 @@ pub(super) fn lower_body(
         } else {
             None
         };
-        let preempt_counter = builder.declare_var(types::I32);
-        let initial_preempt_budget = builder.ins().iconst(types::I32, 1024);
-        builder.def_var(preempt_counter, initial_preempt_budget);
-        intrinsics.preempt_counter = Some(preempt_counter);
-
         // Pre-allocate backing storage for multi-slot aggregate locals that
         // are written through a field projection before any whole-value
         // assignment gives them an address. The MIR zero-inits a tuple /

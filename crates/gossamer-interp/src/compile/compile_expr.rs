@@ -2932,6 +2932,22 @@ impl<'tcx> FnBuilder<'tcx> {
                 }
             }
         }
+        if Self::callee_is_concat(callee)
+            && args.len() == 2
+            && matches!(self.tcx.kind(args[0].ty), Some(TyKind::String))
+            && matches!(self.tcx.kind(args[1].ty), Some(TyKind::Int(_)))
+        {
+            let prefix = self.compile_expr(&args[0])?;
+            let value = self.compile_expr_ex(&args[1])?;
+            let value_i = self.as_i64(value);
+            let dst = self.alloc_reg();
+            self.emit(Op::StrConcatI64 {
+                dst,
+                prefix,
+                value_i,
+            });
+            return Ok(dst);
+        }
         let callee_reg = self.compile_expr(callee)?;
         let argc = u16::try_from(args.len()).map_err(|_| RuntimeError::Arity {
             expected: u16::MAX as usize,

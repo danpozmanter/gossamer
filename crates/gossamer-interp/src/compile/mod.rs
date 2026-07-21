@@ -366,12 +366,20 @@ pub fn compile_fn(
         {
             builder.mut_ref_params.push(reg);
         }
-        // Do not mark parameters as flat storage merely from their source
-        // type. Call arguments use the general `Value` ABI, so an otherwise
-        // well-typed `[i64; N]` parameter can arrive as `Value::Array` rather
-        // than `Value::IntArray`. The flat opcodes are reserved for values
-        // constructed by their matching `Build*` opcode; this keeps a broken
-        // storage invariant an error instead of a hidden generic fallback.
+        // Numeric Vec and slice parameters normally arrive in the flat storage
+        // produced by their constructors. Typed indexed ops retain a boxed-array
+        // fallback for values created by a generic collection operation.
+        if let Some(elem) = builder.array_elem_ty(param.ty) {
+            match tcx.kind(elem) {
+                Some(TyKind::Float(FloatTy::F64)) => {
+                    builder.flat_float_locals.insert(reg);
+                }
+                Some(TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize)) => {
+                    builder.flat_int_locals.insert(reg);
+                }
+                _ => {}
+            }
+        }
     }
     let result = builder.compile_block(&body.block)?;
     if matches!(result, BlockResult::ValueIn(_)) {

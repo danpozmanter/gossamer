@@ -187,45 +187,14 @@ impl<'a> Lowerer<'a> {
         (1 + statements / 8 + calls * 2).clamp(1, 16) as i32
     }
 
-    /// Work-budgeted back-edge safepoint for cooperative preemption. The hot
-    /// path remains one subtraction and branch. The runtime call occurs after
-    /// 16384 estimated work units and suspends the current goroutine when
-    /// requested.
+    /// Back-edge safepoint for cooperative preemption.
+    ///
+    /// Native loop polling is intentionally disabled for now. The opaque
+    /// runtime call and its countdown state block the optimizers on the exact
+    /// numeric loops this backend is meant to recover.
     pub(crate) fn emit_preempt_check(&mut self, target: u32) {
-        declare_rt(&mut self.runtime_refs, "gos_rt_preempt_check_and_yield");
-        let seq = self.preempt_seq;
-        self.preempt_seq += 1;
-        let charge = self.preempt_charge(target);
-        if std::env::var_os("GOS_PREEMPT_REMARKS").is_some() {
-            eprintln!(
-                "gos-preempt: function={} backedge=bb{}->bb{} charge={charge} budget=16384",
-                self.body.name,
-                self.current_block.unwrap_or(target),
-                target
-            );
-        }
-        let current = self.fresh();
-        let next = self.fresh();
-        let expired = self.fresh();
-        writeln!(self.out, "  {current} = load i32, ptr %gos_preempt_counter").unwrap();
-        writeln!(self.out, "  {next} = sub i32 {current}, {charge}").unwrap();
-        writeln!(self.out, "  store i32 {next}, ptr %gos_preempt_counter").unwrap();
-        writeln!(self.out, "  {expired} = icmp sle i32 {next}, 0").unwrap();
-        writeln!(
-            self.out,
-            "  br i1 {expired}, label %preempt_slow_{seq}, label %preempt_cont_{seq}"
-        )
-        .unwrap();
-        writeln!(self.out, "preempt_slow_{seq}:").unwrap();
-        let poll = self.fresh();
-        writeln!(
-            self.out,
-            "  {poll} = call i32 @gos_rt_preempt_check_and_yield()"
-        )
-        .unwrap();
-        writeln!(self.out, "  store i32 16384, ptr %gos_preempt_counter").unwrap();
-        writeln!(self.out, "  br label %preempt_cont_{seq}").unwrap();
-        writeln!(self.out, "preempt_cont_{seq}:").unwrap();
+        let _ = target;
+        let _ = self.preempt_seq;
     }
 
     pub(crate) fn fresh_label(&mut self, prefix: &str) -> String {
@@ -783,7 +752,13 @@ impl<'a> Lowerer<'a> {
             };
             let slot = local_slot(destination.local);
             if is_aggregate(self.tcx, dest_ty_mir) {
-                if let Some(slots) = slot_count(self.tcx, dest_ty_mir) {
+                if call_ret_ty == "i128" && slot_count(self.tcx, dest_ty_mir) == Some(2) {
+                    // Result and Option use an inline two-word carrier. Runtime
+                    // helpers return that carrier by value, so store it into the
+                    // aggregate slot directly instead of treating it as a heap
+                    // pointer and memcpying through the packed integer.
+                    writeln!(self.out, "  store i128 {tmp}, ptr {slot}, align 16").unwrap();
+                } else if let Some(slots) = slot_count(self.tcx, dest_ty_mir) {
                     // Inline aggregate (struct / tuple / array with a
                     // known field layout): the callee handed us a heap
                     // pointer to fresh storage. Copy the known slots

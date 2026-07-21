@@ -12,7 +12,7 @@ use gossamer_hir::{lift_closures, lower_source_file_with_edition};
 use gossamer_lex::SourceMap;
 use gossamer_mir::{
     Body, check_generic_layouts, inline_general, inline_small_callees, inline_trivial_wrappers,
-    lower_program, optimise, optimise_debug,
+    lower_program, optimise,
 };
 use gossamer_resolve::Resolutions;
 use gossamer_types::{TyCtxt, TypeTable};
@@ -297,13 +297,11 @@ fn lower_to_mir_from_frontend(
     let mut bodies = lower_program(&hir, &mut tcx);
     gossamer_mir::monomorphise(&mut bodies, &mut tcx);
     inline_trivial_wrappers(&mut bodies);
-    if matches!(profile, MirProfile::Release) {
-        inline_small_callees(&mut bodies);
-        inline_general(&mut bodies);
-    }
+    inline_small_callees(&mut bodies);
+    inline_general(&mut bodies);
     for body in &mut bodies {
         match profile {
-            MirProfile::Debug => optimise_debug(body, &tcx),
+            MirProfile::Debug => optimise(body, &tcx),
             MirProfile::Release => optimise(body, &tcx),
         }
     }

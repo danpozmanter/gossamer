@@ -1819,6 +1819,11 @@
 </thead>
 <tbody>
 <tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/path.rs"><code>Path</code></a></td>
+<td><code>type Path</code></td>
+<td>Immutable UTF-8 lexical path with value-returning operations.</td>
+</tr>
+<tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/path.rs"><code>extension</code></a></td>
 <td><code>fn extension(path: String) -&gt; Option&lt;String&gt;</code></td>
 <td>Dotted extension as an Option.</td>
@@ -1865,6 +1870,10 @@
 </tr>
 </tbody>
 </table>
+<p><code>Path</code> performs no I/O. Its <code>join</code>, <code>parent</code>, <code>file_name</code>, <code>stem</code>,
+<code>extension</code>, <code>normalize</code>, <code>is_absolute</code>, and <code>starts_with</code> methods return new
+values or observations. Keep filesystem access in <code>std::fs</code> so errors and
+symlink policy stay explicit.</p>
 
 
 

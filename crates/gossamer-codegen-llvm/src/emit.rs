@@ -1595,7 +1595,7 @@ pub fn set_opt_profile(profile: OptProfile) {
 }
 
 /// Reads the active optimisation profile.
-fn opt_profile() -> OptProfile {
+pub(crate) fn opt_profile() -> OptProfile {
     match OPT_PROFILE.load(std::sync::atomic::Ordering::Acquire) {
         1 => OptProfile::Debug,
         _ => OptProfile::Release,

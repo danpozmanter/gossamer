@@ -37,7 +37,7 @@ regex = { version = "1", default-features = false, features = ["std", "unicode"]
 # Compression (`std::compress::{gzip,flate,zlib}`). The pure-Rust
 # `flate2` rust_backend covers gzip/flate/zlib on every target; the C
 # `bzip2`/`zstd` codecs are native-only (gated below).
-flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+flate2 = { workspace = true }
 
 # HTTP message types (`std::http`) - pure wire types, no I/O.
 http = "1"
@@ -77,7 +77,7 @@ num-traits = "0.2"
 
 # User-facing TOML (`std::encoding::toml`). Used internally for
 # project.toml by gossamer-pkg; now exposed to user code.
-toml = "0.9"
+toml = { workspace = true }
 
 # Media type parsing (`std::mime`).
 mime = "0.3"
@@ -93,7 +93,7 @@ unicode-segmentation = { workspace = true }
 
 # Native-only dependencies. These link C (ring, bzip2, zstd), require
 # OS sockets/signals/poll/fs primitives (mio, socket2, signal-hook,
-# notify, memmap2, fs4, nix), pull an OS RNG (getrandom, uuid,
+# notify, memmap2, nix), pull an OS RNG (getrandom, uuid,
 # ed25519-dalek, p256, aes-gcm, chacha20poly1305, rand_core), or drive
 # the native HTTP/TLS/QUIC stack (rustls, ureq, h2, tokio, tokio-rustls,
 # gossamer-http3) - none of which build for wasm32-unknown-unknown. The
@@ -103,7 +103,7 @@ unicode-segmentation = { workspace = true }
 mio = { workspace = true }
 signal-hook = { workspace = true }
 # socket2 provides SO_KEEPALIVE access not exposed by std::net.
-socket2 = "0.5"
+socket2 = "0.6"
 # backtrace powers `std::runtime::caller` / `std::runtime::stack`
 # resolving function names + file/line via DWARF when available.
 backtrace = "0.3"
@@ -121,7 +121,6 @@ zstd = "0.13"
 # (`std::fs::mmap`), and advisory file locks (`std::fs::lock`).
 notify = "8"
 memmap2 = "0.9"
-fs4 = { version = "1.1", features = ["sync"] }
 
 # RSA verify / sign for `std::jwt` and constant-time crypto primitives.
 ring = "0.17"
@@ -147,17 +146,17 @@ rand_core = "0.6"
 uuid = { version = "1", features = ["v4", "v7"] }
 
 # Time-zone surface (`std::time::tz`).
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
-chrono-tz = { version = "0.10", default-features = false }
+chrono.workspace = true
+chrono-tz.workspace = true
 
 # HTTP client surface (`std::http::Client`). HTTPS, redirects, pool.
-ureq = { version = "3", features = ["cookies", "json"] }
+ureq = { workspace = true, features = ["cookies", "json"] }
 
 # Raster image model and PNG/JPEG codecs (`std::image`). Keep the codecs
 # narrowly scoped instead of enabling a broad image-format umbrella.
-png = "0.17"
+png = { workspace = true }
 jpeg-decoder = "0.3"
-jpeg-encoder = "0.6"
+jpeg-encoder = { workspace = true }
 
 # POSIX user / group lookup (`std::os::user`).
 nix = { version = "0.31", default-features = false, features = ["user", "fs", "process", "signal"] }

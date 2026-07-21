@@ -214,9 +214,6 @@ pub(super) struct IntrinsicContext {
     /// the result words through it instead of heap-allocating a per-call block.
     /// `None` for every non-sret body. Cleared between bodies.
     pub(crate) sret_ptr: Option<ir::Value>,
-    /// Per-function countdown used to amortize cooperative-preemption polls at
-    /// loop back-edges. Initialized in the entry block.
-    pub(crate) preempt_counter: Option<Variable>,
     /// Typed iterator locals proven to form a nonescaping range/take chain
     /// ending in `IterNext`. These lower to SSA state instead of heap handles.
     pub(crate) nonescaping_iter_locals: HashSet<Local>,
@@ -255,7 +252,6 @@ impl IntrinsicContext {
             local_declared_ty: HashMap::new(),
             body_cl_types: Vec::new(),
             sret_ptr: None,
-            preempt_counter: None,
             nonescaping_iter_locals: HashSet::new(),
             nonescaping_iter_state: HashMap::new(),
         }

@@ -1,6 +1,8 @@
 //! Runtime support for `std::fs` - filesystem walking + mutation
 //! helpers on top of `std::fs`.
 
+#![allow(missing_docs)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self as stdfs, Metadata};
 use std::io::{self, Cursor, Read, Write};
@@ -840,6 +842,99 @@ where
     Ok(())
 }
 
+/// Policy used when an entry cannot be read during a recursive operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ErrorPolicy {
+    #[default]
+    Fail,
+    Skip,
+}
+
+/// Deterministic recursive-walk options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WalkOptions {
+    pub follow_symlinks: bool,
+    pub max_depth: Option<usize>,
+    pub on_error: ErrorPolicy,
+}
+
+impl Default for WalkOptions {
+    fn default() -> Self {
+        Self {
+            follow_symlinks: false,
+            max_depth: None,
+            on_error: ErrorPolicy::Fail,
+        }
+    }
+}
+
+/// Walks descendants in normalized lexical order with explicit symlink,
+/// depth, and error behavior. Symlink cycles are detected when following.
+pub fn walk_dir_with<F>(
+    root: impl AsRef<Path>,
+    options: WalkOptions,
+    mut visit: F,
+) -> io::Result<()>
+where
+    F: FnMut(&DirEntry) -> io::Result<()>,
+{
+    let root = root.as_ref().to_path_buf();
+    let root_canonical = options
+        .follow_symlinks
+        .then(|| stdfs::canonicalize(&root))
+        .transpose()?;
+    let mut stack = vec![(root, 0usize)];
+    let mut visited = BTreeSet::new();
+    while let Some((dir, depth)) = stack.pop() {
+        if options.follow_symlinks {
+            match stdfs::canonicalize(&dir) {
+                Ok(path)
+                    if root_canonical
+                        .as_ref()
+                        .is_some_and(|root| !path.starts_with(root)) =>
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        format!("walk would leave root through {}", dir.display()),
+                    ));
+                }
+                Ok(path) if !visited.insert(path.clone()) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("symlink loop at {}", path.display()),
+                    ));
+                }
+                Ok(_) => {}
+                Err(_error) if options.on_error == ErrorPolicy::Skip => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        let mut entries = match read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_error) if options.on_error == ErrorPolicy::Skip => continue,
+            Err(error) => return Err(error),
+        };
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+        let mut children = Vec::new();
+        for entry in entries {
+            let child_depth = depth + 1;
+            if options.max_depth.is_some_and(|limit| child_depth > limit) {
+                continue;
+            }
+            visit(&entry)?;
+            let descend = entry.is_dir
+                || (options.follow_symlinks && entry.is_symlink && entry.path.is_dir());
+            if descend && options.max_depth.is_none_or(|limit| child_depth < limit) {
+                children.push(entry.path);
+            }
+        }
+        for child in children.into_iter().rev() {
+            stack.push((child, depth + 1));
+        }
+    }
+    Ok(())
+}
+
 /// Creates `path` and every missing ancestor, mirroring `mkdir -p`.
 pub fn create_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
     stdfs::create_dir_all(path)
@@ -857,6 +952,76 @@ pub fn remove_all(path: impl AsRef<Path>) -> io::Result<()> {
     } else {
         stdfs::remove_file(path)
     }
+}
+
+/// Explicitly named recursive removal alias.
+pub fn remove_tree(path: impl AsRef<Path>) -> io::Result<()> {
+    remove_all(path)
+}
+
+/// Metadata and symlink policy for [`copy_tree`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CopyTreeOptions {
+    pub preserve_permissions: bool,
+    pub follow_symlinks: bool,
+}
+
+impl Default for CopyTreeOptions {
+    fn default() -> Self {
+        Self {
+            preserve_permissions: true,
+            follow_symlinks: false,
+        }
+    }
+}
+
+/// Recursively copies one directory tree. Existing destination files are
+/// replaced, symlinks are rejected unless following was explicitly requested,
+/// and a failure reports the path at which the partial copy stopped.
+pub fn copy_tree(
+    src: impl AsRef<Path>,
+    dst: impl AsRef<Path>,
+    options: CopyTreeOptions,
+) -> io::Result<()> {
+    let src = src.as_ref();
+    let dst = dst.as_ref();
+    if !src.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "copy_tree source is not a directory",
+        ));
+    }
+    stdfs::create_dir_all(dst)?;
+    walk_dir_with(
+        src,
+        WalkOptions {
+            follow_symlinks: options.follow_symlinks,
+            ..WalkOptions::default()
+        },
+        |entry| {
+            let relative = entry.path.strip_prefix(src).map_err(io::Error::other)?;
+            let target = dst.join(relative);
+            if entry.is_symlink && !options.follow_symlinks {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("copy_tree refuses symlink {}", entry.path.display()),
+                ));
+            }
+            let followed_dir = entry.is_symlink && options.follow_symlinks && entry.path.is_dir();
+            if entry.is_dir || followed_dir {
+                stdfs::create_dir_all(&target)?;
+            } else if entry.is_file || (entry.is_symlink && options.follow_symlinks) {
+                if let Some(parent) = target.parent() {
+                    stdfs::create_dir_all(parent)?;
+                }
+                stdfs::copy(&entry.path, &target)?;
+                if options.preserve_permissions {
+                    stdfs::set_permissions(&target, stdfs::metadata(&entry.path)?.permissions())?;
+                }
+            }
+            Ok(())
+        },
+    )
 }
 
 /// Copies `src` to `dst`, creating the destination's parent dirs if
@@ -997,6 +1162,52 @@ pub fn eval_symlinks(path: impl AsRef<Path>) -> io::Result<String> {
 /// Wraps [`std::fs::hard_link`].
 pub fn hard_link(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
     stdfs::hard_link(src, dst)
+}
+
+/// Reads a symbolic link without resolving its target.
+pub fn read_link(path: impl AsRef<Path>) -> io::Result<String> {
+    stdfs::read_link(path).and_then(|path| {
+        path.into_os_string().into_string().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "symbolic-link target is not valid UTF-8",
+            )
+        })
+    })
+}
+
+/// Creates a symbolic link to a file.
+#[cfg(unix)]
+pub fn symlink_file(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
+    std::os::unix::fs::symlink(src, dst)
+}
+#[cfg(windows)]
+pub fn symlink_file(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
+    std::os::windows::fs::symlink_file(src, dst)
+}
+#[cfg(not(any(unix, windows)))]
+pub fn symlink_file(_src: impl AsRef<Path>, _dst: impl AsRef<Path>) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "symbolic links are unsupported on this target",
+    ))
+}
+
+/// Creates a symbolic link to a directory.
+#[cfg(unix)]
+pub fn symlink_dir(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
+    std::os::unix::fs::symlink(src, dst)
+}
+#[cfg(windows)]
+pub fn symlink_dir(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
+    std::os::windows::fs::symlink_dir(src, dst)
+}
+#[cfg(not(any(unix, windows)))]
+pub fn symlink_dir(_src: impl AsRef<Path>, _dst: impl AsRef<Path>) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "symbolic links are unsupported on this target",
+    ))
 }
 
 /// Sets the Unix permission bits on `path` from `mode`. The bits
@@ -1263,14 +1474,14 @@ pub fn mmap_read(path: &str) -> io::Result<Mmap> {
 /// see them.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn lock_exclusive(file: &File) -> io::Result<()> {
-    fs4::FileExt::lock(file)
+    file.lock()
 }
 
 /// Acquires a shared (reader) advisory lock on `file`. Multiple
 /// shared locks may coexist; an exclusive lock blocks them.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn lock_shared(file: &File) -> io::Result<()> {
-    fs4::FileExt::lock_shared(file)
+    file.lock_shared()
 }
 
 /// Non-blocking variant of [`lock_exclusive`]. Returns
@@ -1278,7 +1489,7 @@ pub fn lock_shared(file: &File) -> io::Result<()> {
 /// is held.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn try_lock_exclusive(file: &File) -> io::Result<()> {
-    fs4::FileExt::try_lock(file).map_err(try_lock_err_to_io)
+    file.try_lock().map_err(try_lock_err_to_io)
 }
 
 /// Non-blocking variant of [`lock_shared`]. Returns
@@ -1286,20 +1497,20 @@ pub fn try_lock_exclusive(file: &File) -> io::Result<()> {
 /// is held.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn try_lock_shared(file: &File) -> io::Result<()> {
-    fs4::FileExt::try_lock_shared(file).map_err(try_lock_err_to_io)
+    file.try_lock_shared().map_err(try_lock_err_to_io)
 }
 
-/// Maps `fs4`'s `TryLockError` onto the `io::Result` contract the
+/// Maps the standard library's `TryLockError` onto the `io::Result` contract the
 /// `try_lock_*` helpers expose. `WouldBlock` is surfaced as
-/// `ErrorKind::WouldBlock` on every platform - `fs4` already
+/// `ErrorKind::WouldBlock` on every platform. The standard library
 /// normalizes the Windows `ERROR_LOCK_VIOLATION` contention case
 /// into this variant, so callers matching on `WouldBlock` get the
 /// same shape everywhere.
 #[cfg(not(target_arch = "wasm32"))]
-fn try_lock_err_to_io(e: fs4::TryLockError) -> io::Error {
+fn try_lock_err_to_io(e: stdfs::TryLockError) -> io::Error {
     match e {
-        fs4::TryLockError::WouldBlock => io::ErrorKind::WouldBlock.into(),
-        fs4::TryLockError::Error(err) => err,
+        stdfs::TryLockError::WouldBlock => io::ErrorKind::WouldBlock.into(),
+        stdfs::TryLockError::Error(err) => err,
     }
 }
 
@@ -1307,7 +1518,7 @@ fn try_lock_err_to_io(e: fs4::TryLockError) -> io::Error {
 /// - releasing an already-unlocked handle is not an error on POSIX.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn unlock(file: &File) -> io::Result<()> {
-    fs4::FileExt::unlock(file)
+    file.unlock()
 }
 
 /// RAII wrapper around a freshly-created temporary directory. The
@@ -1358,6 +1569,78 @@ impl TempDir {
         // Prevent Drop from removing the directory.
         std::mem::forget(self);
         out
+    }
+
+    /// Removes the directory now and reports cleanup failure.
+    pub fn close(mut self) -> io::Result<()> {
+        let path = std::mem::take(&mut self.path);
+        if path.as_os_str().is_empty() {
+            Ok(())
+        } else {
+            stdfs::remove_dir_all(path)
+        }
+    }
+}
+
+/// Cleanup-owning temporary file. Dropping removes the directory entry;
+/// [`TempFile::close`] makes any cleanup failure observable.
+#[derive(Debug)]
+pub struct TempFile {
+    file: Option<File>,
+    path: PathBuf,
+}
+
+impl TempFile {
+    pub fn new() -> io::Result<Self> {
+        Self::with_prefix("tmp")
+    }
+
+    pub fn with_prefix(prefix: &str) -> io::Result<Self> {
+        let (file, path) = temp_file(prefix)?;
+        Ok(Self {
+            file: Some(file),
+            path,
+        })
+    }
+
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    #[must_use]
+    pub fn file(&self) -> &File {
+        self.file.as_ref().expect("temporary file is open")
+    }
+
+    pub fn file_mut(&mut self) -> &mut File {
+        self.file.as_mut().expect("temporary file is open")
+    }
+
+    pub fn close(mut self) -> io::Result<()> {
+        self.file.take();
+        let path = std::mem::take(&mut self.path);
+        if path.as_os_str().is_empty() {
+            Ok(())
+        } else {
+            stdfs::remove_file(path)
+        }
+    }
+
+    #[must_use]
+    pub fn keep(mut self) -> (File, PathBuf) {
+        let file = self.file.take().expect("temporary file is open");
+        let path = std::mem::take(&mut self.path);
+        (file, path)
+    }
+}
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        self.file.take();
+        if !self.path.as_os_str().is_empty() {
+            let _ = stdfs::remove_file(&self.path);
+        }
     }
 }
 
@@ -1597,6 +1880,79 @@ mod tests {
         stdfs::remove_dir_all(&dir).unwrap();
         assert!(!path.exists());
         assert!(!dir.exists());
+    }
+
+    #[test]
+    fn cleanup_owning_temp_resources_remove_on_drop_and_close() {
+        let dir_path = {
+            let dir = TempDir::with_prefix("owned-dir").unwrap();
+            write(dir.path().join("nested/file.txt"), b"data").unwrap();
+            dir.path().to_path_buf()
+        };
+        assert!(!dir_path.exists());
+        let file = TempFile::with_prefix("owned-file").unwrap();
+        let file_path = file.path().to_path_buf();
+        file.close().unwrap();
+        assert!(!file_path.exists());
+    }
+
+    #[test]
+    fn copy_tree_preserves_layout_and_rejects_non_directory_source() {
+        let root = TempDir::with_prefix("copy-tree").unwrap();
+        let src = root.path().join("src");
+        let dst = root.path().join("dst");
+        write(src.join("a/b.txt"), b"payload").unwrap();
+        copy_tree(&src, &dst, CopyTreeOptions::default()).unwrap();
+        assert_eq!(read_to_string(dst.join("a/b.txt")).unwrap(), "payload");
+        assert_eq!(
+            copy_tree(
+                src.join("a/b.txt"),
+                root.path().join("bad"),
+                CopyTreeOptions::default()
+            )
+            .unwrap_err()
+            .kind(),
+            io::ErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn walk_options_bound_depth_deterministically() {
+        let root = TempDir::with_prefix("walk-depth").unwrap();
+        write(root.path().join("a/b/file.txt"), b"payload").unwrap();
+        let mut paths = Vec::new();
+        walk_dir_with(
+            root.path(),
+            WalkOptions {
+                max_depth: Some(1),
+                ..WalkOptions::default()
+            },
+            |entry| {
+                paths.push(entry.path.strip_prefix(root.path()).unwrap().to_path_buf());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(paths, [PathBuf::from("a")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn following_symlink_cannot_escape_walk_root() {
+        let root = TempDir::with_prefix("walk-root").unwrap();
+        let outside = TempDir::with_prefix("walk-outside").unwrap();
+        write(outside.path().join("secret.txt"), b"secret").unwrap();
+        symlink_dir(outside.path(), root.path().join("escape")).unwrap();
+        let error = walk_dir_with(
+            root.path(),
+            WalkOptions {
+                follow_symlinks: true,
+                ..WalkOptions::default()
+            },
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
     }
 
     #[test]

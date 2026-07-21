@@ -2377,6 +2377,31 @@ impl<'a> Builder<'a> {
                 "gos_rt_duration_as_micros",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
+            "__gos_time_location_raw" => (
+                "gos_rt_time_location_raw",
+                self.result_string_error_adt_ty(),
+            ),
+            "__gos_time_fixed_location_raw" => (
+                "gos_rt_time_fixed_location_raw",
+                self.result_string_error_adt_ty(),
+            ),
+            "__gos_time_civil_raw" => {
+                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let tuple = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![i; 9]));
+                ("gos_rt_time_civil_raw", self.result_of(tuple))
+            }
+            "__gos_time_resolve_raw" => {
+                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let tuple = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![i; 3]));
+                ("gos_rt_time_resolve_raw", self.result_of(tuple))
+            }
+            "__gos_time_format_in_raw" => (
+                "gos_rt_time_format_in_raw",
+                self.result_string_error_adt_ty(),
+            ),
+            "__gos_time_add_date_raw" => {
+                ("gos_rt_time_add_date_raw", self.result_i64_error_adt_ty())
+            }
             "time::format_rfc3339" => {
                 let s = self.tcx.string_ty();
                 let substs = gossamer_types::Substs::from_types([s, s]);

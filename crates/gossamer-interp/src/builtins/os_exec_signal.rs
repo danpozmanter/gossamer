@@ -335,12 +335,12 @@ fn builtin_os_read_dir(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_time_now(_args: &[Value]) -> RuntimeResult<Value> {
     let ms = time_std::SystemTime::now().unix_millis();
-    Ok(Value::Int(i64::try_from(ms).unwrap_or(i64::MAX)))
+    Ok(Value::Int(ms))
 }
 
 fn builtin_time_now_ms(_args: &[Value]) -> RuntimeResult<Value> {
     let ms = time_std::SystemTime::now().unix_millis();
-    Ok(Value::Int(i64::try_from(ms).unwrap_or(i64::MAX)))
+    Ok(Value::Int(ms))
 }
 
 fn builtin_time_sleep(args: &[Value]) -> RuntimeResult<Value> {
@@ -432,8 +432,7 @@ fn builtin_time_parse_rfc3339(args: &[Value]) -> RuntimeResult<Value> {
     };
     match time_std::parse_rfc3339(s) {
         Ok(when) => {
-            let ms = i64::try_from(when.unix_millis()).unwrap_or(i64::MAX);
-            Ok(ok_variant(Value::Int(ms)))
+            Ok(ok_variant(Value::Int(when.unix_millis())))
         }
         Err(e) => Ok(err_variant(format!("{e}"))),
     }

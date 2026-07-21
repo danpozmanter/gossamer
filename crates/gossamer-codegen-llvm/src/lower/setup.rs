@@ -179,11 +179,6 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(crate) fn emit_allocas(&mut self) {
-        // Back-edges charge an estimate of their loop work against this
-        // budget. Tiny scalar loops poll less often, while call-heavy loops
-        // consume several units per iteration and retain prompt preemption.
-        writeln!(self.out, "  %gos_preempt_counter = alloca i32").unwrap();
-        writeln!(self.out, "  store i32 16384, ptr %gos_preempt_counter").unwrap();
         for (i, decl) in self.body.locals.iter().enumerate() {
             if is_unit(self.tcx, decl.ty) {
                 // Zero-sized: skip. Reads return the singleton

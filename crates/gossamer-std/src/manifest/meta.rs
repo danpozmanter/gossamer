@@ -351,6 +351,21 @@ pub const TIME: StdModule = StdModule {
             doc: "Wall-clock point-in-time.",
         },
         StdItem {
+            name: "CivilTime",
+            kind: StdItemKind::Type,
+            doc: "Calendar fields interpreted only with an explicit location.",
+        },
+        StdItem {
+            name: "CivilResolution",
+            kind: StdItemKind::Type,
+            doc: "Explicit unique, gap, or fold result of resolving civil fields.",
+        },
+        StdItem {
+            name: "Location",
+            kind: StdItemKind::Type,
+            doc: "Immutable IANA or fixed-offset time-zone location.",
+        },
+        StdItem {
             name: "sleep",
             kind: StdItemKind::Function,
             doc: "Suspends the current goroutine for `Duration`.",
@@ -364,6 +379,16 @@ pub const TIME: StdModule = StdModule {
             name: "format_rfc3339",
             kind: StdItemKind::Function,
             doc: "Formats a `SystemTime` in RFC 3339 (`YYYY-MM-DDTHH:MM:SSZ`).",
+        },
+        StdItem {
+            name: "format_in",
+            kind: StdItemKind::Function,
+            doc: "Formats an instant in an explicit civil-time location.",
+        },
+        StdItem {
+            name: "add_date",
+            kind: StdItemKind::Function,
+            doc: "Adds calendar units and rejects ambiguous or nonexistent results.",
         },
         StdItem {
             name: "parse_rfc3339",

@@ -106,6 +106,8 @@ pub struct JitArtifact {
     pub functions: HashMap<String, std::sync::Arc<JitFn>>,
     /// Native code emitted for this artifact. The wasm stub emits none.
     pub code_bytes: u64,
+    /// wasm artifacts are empty and safe to reuse.
+    pub cacheable: bool,
 }
 
 /// Static admission record matching the native backend API.
@@ -132,6 +134,29 @@ pub fn has_worthy_jit_body(
 /// wasm retains no native compiler snapshot.
 #[must_use]
 pub fn jit_compile_body_names(
+    _bodies: &[gossamer_mir::Body],
+    _tcx: &gossamer_types::TyCtxt,
+    _enum_shapes: &HashMap<u32, u32>,
+    _struct_shapes: &HashMap<u32, u32>,
+) -> std::collections::HashSet<String> {
+    std::collections::HashSet::new()
+}
+
+/// wasm retains no trigger-specific compiler snapshot.
+#[must_use]
+pub fn jit_compile_body_names_for_trigger(
+    _bodies: &[gossamer_mir::Body],
+    _tcx: &gossamer_types::TyCtxt,
+    _enum_shapes: &HashMap<u32, u32>,
+    _struct_shapes: &HashMap<u32, u32>,
+    _trigger: &str,
+) -> std::collections::HashSet<String> {
+    std::collections::HashSet::new()
+}
+
+/// wasm exposes no native entry candidates.
+#[must_use]
+pub fn jit_entry_body_names(
     _bodies: &[gossamer_mir::Body],
     _tcx: &gossamer_types::TyCtxt,
     _enum_shapes: &HashMap<u32, u32>,

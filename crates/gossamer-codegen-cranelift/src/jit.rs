@@ -188,6 +188,10 @@ pub struct JitArtifact {
     /// data in each function's finalized code buffer; it deliberately does
     /// not estimate executable-page allocation or unrelated runtime code.
     pub code_bytes: u64,
+    /// Whether this artifact may be reused by another VM. Writable module
+    /// data belongs to one VM instance, so artifacts containing `static mut`
+    /// accessors must never cross that boundary.
+    pub cacheable: bool,
 }
 
 /// Deterministic static admission result for one MIR body.
@@ -210,6 +214,7 @@ impl std::fmt::Debug for JitArtifact {
         f.debug_struct("JitArtifact")
             .field("functions", &self.functions.keys().collect::<Vec<_>>())
             .field("code_bytes", &self.code_bytes)
+            .field("cacheable", &self.cacheable)
             .finish_non_exhaustive()
     }
 }
@@ -312,6 +317,10 @@ fn body_uses_unlowerable_local_repr(
 /// running cannot switch to native code without OSR, so they stay on
 /// bytecode. From recursive roots the set BFS-expands to every user body
 /// they transitively call so intra-module call references resolve.
+#[allow(
+    clippy::too_many_lines,
+    reason = "admission, dependency closure, and rejection propagation form one fixpoint"
+)]
 fn jit_compile_set<'a>(
     bodies: &'a [Body],
     tcx: &TyCtxt,
@@ -346,9 +355,30 @@ fn jit_compile_set<'a>(
         }
         false
     };
+    let loop_bodies: std::collections::HashSet<&str> = bodies
+        .iter()
+        .filter(|body| body_has_loop(body))
+        .map(|body| body.name.as_str())
+        .collect();
+    let reaches_loop_body = |start: &str| -> bool {
+        let mut seen = std::collections::HashSet::new();
+        let mut stack: Vec<&str> = graph.get(start).into_iter().flatten().copied().collect();
+        while let Some(node) = stack.pop() {
+            if loop_bodies.contains(node) {
+                return true;
+            }
+            if seen.insert(node)
+                && let Some(succ) = graph.get(node)
+            {
+                stack.extend(succ.iter().copied());
+            }
+        }
+        false
+    };
 
-    // Seed the compile set from bodies that can amortize native code across
-    // substantial repeated work: recursive helpers and loop-bearing bodies.
+    // Seed from recursive and loop-bearing bodies. Loop bodies are admitted
+    // eagerly before their first invocation, including `main`, because they
+    // cannot report backedge work or switch a live frame without OSR.
     // A body that is not itself hot but is reachable from one of those roots
     // is pulled in by the BFS below so intra-module call references resolve.
     let trace = std::env::var("GOS_JIT_TRACE").is_ok();
@@ -359,6 +389,7 @@ fn jit_compile_set<'a>(
             let unlowerable_local =
                 body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes);
             let goroutine_hit = body_has_cross_goroutine_ops(b);
+            let unsupported = body_jit_unsupported(b, tcx);
             let recursive = reaches_self(b.name.as_str());
             // Recursive aggregate transforms are safe to promote: ownership
             // of their result is described by `compute_returns_fresh`, and
@@ -367,17 +398,29 @@ fn jit_compile_set<'a>(
             // bytecode even when every recursive call was otherwise
             // lowerable.
             let recursive_rc_return = false;
-            let amortizes = recursive || body_has_loop(b);
-            if trace && (!kinds_ok || unlowerable_local || goroutine_hit || recursive_rc_return) {
+            let amortizes = recursive || body_has_loop(b) || reaches_loop_body(b.name.as_str());
+            if trace
+                && (!kinds_ok
+                    || unlowerable_local
+                    || goroutine_hit
+                    || unsupported
+                    || recursive_rc_return)
+            {
                 eprintln!(
                     "jit: seed-reject {} (kinds_ok={kinds_ok} \
                      unlowerable_local={unlowerable_local} \
                      goroutine={goroutine_hit} \
+                     unsupported={unsupported} \
                      recursive_rc_return={recursive_rc_return})",
                     b.name
                 );
             }
-            kinds_ok && !unlowerable_local && !goroutine_hit && !recursive_rc_return && amortizes
+            kinds_ok
+                && !unlowerable_local
+                && !goroutine_hit
+                && !unsupported
+                && !recursive_rc_return
+                && amortizes
         })
         .map(|b| b.name.as_str())
         .collect();
@@ -390,8 +433,12 @@ fn jit_compile_set<'a>(
         let (calls, _) = body_user_calls(body, &all_names, &def_to_name);
         for callee in calls {
             let ok = body_map.get(callee).is_some_and(|b| {
-                body_kinds(b, tcx, enum_shapes, struct_shapes).is_some()
-                    && !body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes)
+                // A native-only link dependency never crosses the VM
+                // trampoline, so its parameter and return types do not need a
+                // JitKind marshalling shape. This admits helpers such as
+                // `energy(&[Body; 5])` while `jit_entry_body_names` still keeps
+                // them out of the VM entry table.
+                !body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes)
                     && !body_has_cross_goroutine_ops(b)
                     && !body_jit_unsupported(b, tcx)
             });
@@ -479,6 +526,152 @@ pub fn jit_compile_body_names(
     compile_set.into_iter().map(str::to_string).collect()
 }
 
+/// Returns admitted bodies that can amortize a VM-to-native entry. Other
+/// bodies may still be compiled as link dependencies, but exposing those as
+/// VM overrides adds boundary cost to tiny helpers such as random-number
+/// steps called from an interpreted loop.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "single interp caller passes the same HashMap shape compile_to_jit uses"
+)]
+#[must_use]
+pub fn jit_entry_body_names(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+    enum_shapes: &HashMap<u32, u32>,
+    struct_shapes: &HashMap<u32, u32>,
+) -> std::collections::HashSet<String> {
+    let admitted = jit_compile_body_names(bodies, tcx, enum_shapes, struct_shapes);
+    let all_names: std::collections::HashSet<&str> =
+        bodies.iter().map(|body| body.name.as_str()).collect();
+    let def_to_name: HashMap<u32, &str> = bodies
+        .iter()
+        .filter_map(|body| body.def.map(|def| (def.local, body.name.as_str())))
+        .collect();
+    let graph: HashMap<&str, Vec<&str>> = bodies
+        .iter()
+        .map(|body| {
+            let (calls, _) = body_user_calls(body, &all_names, &def_to_name);
+            (body.name.as_str(), calls)
+        })
+        .collect();
+    let recursive = |start: &str| {
+        let mut seen = std::collections::HashSet::new();
+        let mut pending: Vec<&str> = graph.get(start).into_iter().flatten().copied().collect();
+        while let Some(name) = pending.pop() {
+            if name == start {
+                return true;
+            }
+            if seen.insert(name)
+                && let Some(callees) = graph.get(name)
+            {
+                pending.extend(callees.iter().copied());
+            }
+        }
+        false
+    };
+    let reaches_admitted_hot_body = |start: &str| {
+        let mut seen = std::collections::HashSet::new();
+        let mut pending: Vec<&str> = graph.get(start).into_iter().flatten().copied().collect();
+        while let Some(name) = pending.pop() {
+            let is_hot = bodies
+                .iter()
+                .find(|body| body.name == name)
+                .is_some_and(|body| body_has_loop(body) || recursive(name));
+            if admitted.contains(name) && is_hot {
+                return true;
+            }
+            if seen.insert(name)
+                && let Some(callees) = graph.get(name)
+            {
+                pending.extend(callees.iter().copied());
+            }
+        }
+        false
+    };
+    bodies
+        .iter()
+        .filter(|body| {
+            let entry_compatible = admitted.contains(body.name.as_str());
+            entry_compatible
+                && (body_has_loop(body)
+                    || recursive(body.name.as_str())
+                    || reaches_admitted_hot_body(body.name.as_str()))
+        })
+        .map(|body| body.name.clone())
+        .collect()
+}
+
+/// Returns the hot recursive SCC containing `trigger` plus the minimum
+/// outbound user-body dependency closure required to link it. Unrelated hot
+/// roots remain available for a later artifact instead of being pulled into
+/// the first compilation.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "single interp caller passes the same HashMap shape compile_to_jit uses"
+)]
+#[must_use]
+pub fn jit_compile_body_names_for_trigger(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+    enum_shapes: &HashMap<u32, u32>,
+    struct_shapes: &HashMap<u32, u32>,
+    trigger: &str,
+) -> std::collections::HashSet<String> {
+    fn reachable<'a>(
+        graph: &HashMap<&'a str, Vec<&'a str>>,
+        start: &'a str,
+    ) -> std::collections::HashSet<&'a str> {
+        let mut found = std::collections::HashSet::new();
+        let mut pending = vec![start];
+        while let Some(name) = pending.pop() {
+            if found.insert(name)
+                && let Some(callees) = graph.get(name)
+            {
+                pending.extend(callees.iter().copied());
+            }
+        }
+        found
+    }
+
+    let admitted = jit_compile_body_names(bodies, tcx, enum_shapes, struct_shapes);
+    if !admitted.contains(trigger) {
+        return std::collections::HashSet::new();
+    }
+    let all_names: std::collections::HashSet<&str> =
+        bodies.iter().map(|body| body.name.as_str()).collect();
+    let def_to_name: HashMap<u32, &str> = bodies
+        .iter()
+        .filter_map(|body| body.def.map(|def| (def.local, body.name.as_str())))
+        .collect();
+    let graph: HashMap<&str, Vec<&str>> = bodies
+        .iter()
+        .map(|body| {
+            let (calls, _) = body_user_calls(body, &all_names, &def_to_name);
+            (body.name.as_str(), calls)
+        })
+        .collect();
+
+    let from_trigger = reachable(&graph, trigger);
+    let scc: std::collections::HashSet<&str> = from_trigger
+        .iter()
+        .copied()
+        .filter(|candidate| reachable(&graph, candidate).contains(trigger))
+        .collect();
+    let mut selected = scc;
+    let mut pending: Vec<&str> = selected.iter().copied().collect();
+    while let Some(name) = pending.pop() {
+        if let Some(callees) = graph.get(name) {
+            for &callee in callees {
+                if admitted.contains(callee) && selected.insert(callee) {
+                    pending.push(callee);
+                }
+            }
+        }
+    }
+    selected.into_iter().map(str::to_owned).collect()
+}
+
 /// Explains static JIT admission for every body in stable name order without
 /// constructing a Cranelift module.
 #[allow(
@@ -528,13 +721,8 @@ pub fn jit_promotion_report(
     report
 }
 
-/// Names of bodies worth JIT-compiling on first call.
-///
-/// A loop-bearing body may only be called once, so it would never trip a
-/// call-count threshold before doing its expensive work. Starting its hot
-/// counter at one lets the VM compile the module before entering that body and
-/// dispatch the same call through native code when the body has a supported
-/// boundary shape.
+/// Names of admitted loop-bearing bodies that must compile before entry
+/// because an already-running bytecode frame cannot switch tiers without OSR.
 #[allow(
     clippy::implicit_hasher,
     reason = "single interp caller passes the same HashMap shape compile_to_jit uses"
@@ -697,6 +885,7 @@ pub fn compile_to_jit(
             module: None,
             functions: HashMap::new(),
             code_bytes: 0,
+            cacheable: true,
         });
     }
     compile_bodies(bodies, tcx, enum_shapes, struct_shapes)
@@ -746,6 +935,7 @@ pub fn compile_to_jit_for_promotion_owned(
             module: None,
             functions: HashMap::new(),
             code_bytes: 0,
+            cacheable: true,
         });
     }
 
@@ -795,6 +985,7 @@ pub fn compile_to_jit_for_promotion_owned(
                     module: None,
                     functions: HashMap::new(),
                     code_bytes: 0,
+                    cacheable: true,
                 });
             }
             compile_bodies(&without_main, tcx, enum_shapes, struct_shapes)
@@ -866,15 +1057,22 @@ fn compile_bodies(
     let body_name_set: std::collections::HashSet<&str> =
         filtered.iter().map(|b| b.name.as_str()).collect();
     let returns_fresh = compute_returns_fresh(filtered, tcx);
+    let trace = std::env::var("GOS_JIT_TRACE").is_ok();
     let mut functions = HashMap::new();
     for body in filtered {
         let Some(id) = lowered.function_ids_by_name.get(&body.name).copied() else {
+            if trace {
+                eprintln!("jit: entry-skip {} (not lowered)", body.name);
+            }
             continue;
         };
         let Some((params, returns)) = body_kinds(body, tcx, enum_shapes, struct_shapes) else {
             // Some param/return type isn't a primitive scalar - the
             // dispatch trampoline can't marshal it, so the VM will
             // fall back to bytecode for this fn.
+            if trace {
+                eprintln!("jit: entry-skip {} (unsupported boundary)", body.name);
+            }
             continue;
         };
         if body_calls_jit_unsafe(body, &runtime_symbol_set, &body_name_set) {
@@ -889,12 +1087,18 @@ fn compile_bodies(
             // `map`, `filter`) plus any other user-facing helper
             // wired in the interpreter but not yet in the codegen
             // dispatch table.
+            if trace {
+                eprintln!("jit: entry-skip {} (unsafe call)", body.name);
+            }
             continue;
         }
         if body_jit_unsupported(body, tcx) {
             // Uses a `&mut` param or passes a closure to a higher-order
             // call - shapes the trampoline / codegen mishandle. Keep the
             // body on bytecode so its semantics stay correct.
+            if trace {
+                eprintln!("jit: entry-skip {} (unsupported operation)", body.name);
+            }
             continue;
         }
         // A `ResultEnumPtr` body dispatches through its out-pointer carrier
@@ -918,25 +1122,13 @@ fn compile_bodies(
         functions.insert(body.name.clone(), handle);
     }
 
-    // Diagnostic per-body promotion gating. `GOS_JIT_ONLY=<fn,fn>` keeps
-    // only the named bodies in the dispatch table; `GOS_JIT_SKIP=<fn,fn>`
-    // drops the named ones. Filtered bodies stay compiled and linked (so
-    // native inter-body calls still resolve), but the VM no longer promotes
-    // them - they run on bytecode. This lets a single run isolate which
-    // body's native code is responsible for a fault (e.g. on Windows CI).
-    if let Ok(only) = std::env::var("GOS_JIT_ONLY") {
-        let allow = parse_fn_set(&only);
-        functions.retain(|name, _| allow.contains(name.as_str()));
-    }
-    if let Ok(skip) = std::env::var("GOS_JIT_SKIP") {
-        let deny = parse_fn_set(&skip);
-        functions.retain(|name, _| !deny.contains(name.as_str()));
-    }
-
     Ok(JitArtifact {
         module: Some(module),
         functions,
         code_bytes: lowered.emitted_code_bytes,
+        cacheable: !filtered
+            .iter()
+            .any(|body| !body_static_symbols(body).is_empty()),
     })
 }
 
@@ -949,14 +1141,6 @@ const fn jit_option_locals_ok() -> bool {
 
 /// Splits a comma-separated `GOS_JIT_ONLY` / `GOS_JIT_SKIP` value into a
 /// set of trimmed, non-empty function names.
-fn parse_fn_set(value: &str) -> std::collections::HashSet<&str> {
-    value
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .collect()
-}
-
 /// Returns `true` when `body` contains a `Call(Const(Str(name)))`
 /// whose `name` cranelift would lower as the "soft-zero stub"
 /// (native.rs ~line 2099) - i.e. neither a registered runtime
@@ -965,11 +1149,9 @@ fn parse_fn_set(value: &str) -> std::collections::HashSet<&str> {
 /// zeroes the destination, so JIT-promoting such a body would
 /// corrupt every program that exercises that call.
 ///
-/// Variant constructors (`Ok`, `Err`, `Some`, `None`, user-defined
-/// uppercase-starting names) and qualified paths (`std::…`,
-/// `fmt::…`) get a dedicated shape in the cranelift backend at
-/// native.rs ~line 2061 and are tolerated; only true unknowns
-/// disqualify a body.
+/// Only names with a proven lowering are accepted. String shape is not a
+/// callable registry: qualified and capitalized unknowns are hard errors in
+/// native lowering and must be rejected here too.
 fn body_calls_jit_unsafe(
     body: &Body,
     runtime_symbols: &std::collections::HashSet<&'static str>,
@@ -1000,11 +1182,27 @@ fn body_calls_jit_unsafe(
         if matches!(n, "println" | "print" | "eprintln" | "eprint") {
             continue;
         }
-        // Variant-constructor / qualified-path shape: the cranelift
-        // backend handles these explicitly (Ok/Err/Some pass-through;
-        // anything qualified or capitalised falls through to a sound
-        // zero-default semantics - uncommon but well-formed).
+        if matches!(
+            n,
+            "math::sqrt"
+                | "math::sin"
+                | "math::cos"
+                | "math::ln"
+                | "math::log"
+                | "math::exp"
+                | "math::abs"
+                | "math::floor"
+                | "math::ceil"
+        ) {
+            continue;
+        }
+        // Variant constructors and qualified stdlib/core constructors have
+        // dedicated native lowering arms. Do not reject hot bodies just because
+        // they allocate a local Vec/U8Vec before entering the loop.
         let starts_uppercase = n.chars().next().is_some_and(char::is_uppercase);
+        if matches!(n, "Ok" | "Err" | "Some" | "None") || starts_uppercase || n.contains("::") {
+            continue;
+        }
         // Compiler-internal intrinsics always have a dedicated cranelift
         // lowering arm, so a body calling one is JIT-safe: the
         // double-underscore family (`__concat` for `format!`) and the
@@ -1013,8 +1211,11 @@ fn body_calls_jit_unsafe(
         // `gos_alloc`, `gos_fn_addr`) - emitted as terminator calls when an
         // aggregate load/store feeds a successor block. (`gos_rt_*` runtime
         // shims are already covered by `runtime_symbols` above.)
-        if n.starts_with("__") || n.starts_with("gos_") || n.contains("::") || starts_uppercase {
+        if n.starts_with("__") || n.starts_with("gos_") {
             continue;
+        }
+        if std::env::var("GOS_JIT_TRACE").is_ok() {
+            eprintln!("jit: unsafe call in {}: {n}", body.name);
         }
         return true;
     }
@@ -1041,7 +1242,7 @@ fn body_calls_jit_unsafe(
 ///   registries instead, so the two sides never observe each other
 ///   (a `wg.wait()` deadlock). Such bodies stay on bytecode.
 fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
-    use gossamer_mir::{Operand, Rvalue, StatementKind, Terminator};
+    use gossamer_mir::{ConstValue, Operand, Rvalue, StatementKind, Terminator};
     use gossamer_types::Mutbl;
     // A function-value local (a closure or `fn`/`Fn` pointer). The JIT has
     // no closure-invocation lowering: such a local is materialised as a
@@ -1107,10 +1308,19 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
                 return true;
             }
         }
-        if let Terminator::Call { args, .. } = &block.terminator
-            && has_fn_arg(args)
-        {
-            return true;
+        if let Terminator::Call { callee, args, .. } = &block.terminator {
+            if has_fn_arg(args) {
+                return true;
+            }
+            // Native String writeback currently loses the builder's unique
+            // ownership proof between successive appends. The runtime then
+            // preserves value semantics by copying the full prefix, turning
+            // an otherwise linear builder loop quadratic. Bytecode preserves
+            // the builder representation and is faster and leaner here.
+            if matches!(callee, Operand::Const(ConstValue::Str(name)) if name == "gos_rt_str_append_bytes")
+            {
+                return true;
+            }
         }
     }
     false
@@ -1585,6 +1795,9 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_path_base"           => rt::gos_rt_path_base,
         "gos_rt_path_dir"            => rt::gos_rt_path_dir,
         "gos_rt_path_ext"            => rt::gos_rt_path_ext,
+        "gos_rt_path_file_name"      => rt::gos_rt_path_file_name,
+        "gos_rt_path_parent"         => rt::gos_rt_path_parent,
+        "gos_rt_path_stem"           => rt::gos_rt_path_stem,
         "gos_rt_vec_first"           => rt::gos_rt_vec_first,
         "gos_rt_vec_last"            => rt::gos_rt_vec_last,
         "gos_rt_vec_reversed"        => rt::gos_rt_vec_reversed,
@@ -2336,6 +2549,12 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_process_id"          => rt::gos_rt_process_id,
         "gos_rt_process_abort"       => rt::gos_rt_process_abort,
         "gos_rt_time_now"            => rt::gos_rt_time_now,
+        "gos_rt_time_add_date_raw"   => rt::gos_rt_time_add_date_raw,
+        "gos_rt_time_civil_raw"      => rt::gos_rt_time_civil_raw,
+        "gos_rt_time_fixed_location_raw" => rt::gos_rt_time_fixed_location_raw,
+        "gos_rt_time_format_in_raw"  => rt::gos_rt_time_format_in_raw,
+        "gos_rt_time_location_raw"   => rt::gos_rt_time_location_raw,
+        "gos_rt_time_resolve_raw"    => rt::gos_rt_time_resolve_raw,
         "gos_rt_math_sqrt"           => rt::gos_rt_math_sqrt,
         "gos_rt_math_pow"            => rt::gos_rt_math_pow,
         "gos_rt_math_sin"            => rt::gos_rt_math_sin,
@@ -2507,7 +2726,7 @@ fn register_binding_symbols(builder: &mut JITBuilder) -> Vec<&'static str> {
 
 #[cfg(test)]
 mod promotion_report_tests {
-    use super::{jit_compile_body_names, jit_promotion_report};
+    use super::{jit_compile_body_names, jit_entry_body_names, jit_promotion_report};
     use gossamer_lex::{SourceMap, Span};
     use gossamer_mir::{
         BasicBlock, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Terminator,
@@ -2568,11 +2787,14 @@ mod promotion_report_tests {
         assert!(!first[0].admitted);
         assert!(first[0].reasons.contains(&"unsupported-boundary"));
         assert_eq!(first[1].name, "z_hot");
-        assert!(first[1].admitted, "report: {first:?}");
+        assert!(
+            first[1].admitted,
+            "repeatedly entered loop helpers can promote"
+        );
     }
 
     #[test]
-    fn caller_of_unsupported_boundary_is_not_promoted() {
+    fn unsupported_boundary_helper_is_native_only_dependency() {
         let mut tcx = TyCtxt::new();
         let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
         let map_ty = tcx.intern(TyKind::HashMap {
@@ -2595,6 +2817,69 @@ mod promotion_report_tests {
         });
         let bodies = vec![caller, body("unsupported", map_ty, false)];
         let admitted = jit_compile_body_names(&bodies, &tcx, &HashMap::new(), &HashMap::new());
+        assert!(admitted.contains("caller"), "admitted bodies: {admitted:?}");
+        assert!(
+            admitted.contains("unsupported"),
+            "native caller needs its link dependency: {admitted:?}"
+        );
+        let entries = jit_entry_body_names(&bodies, &tcx, &HashMap::new(), &HashMap::new());
+        assert!(entries.contains("caller"), "entries: {entries:?}");
+        assert!(
+            !entries.contains("unsupported"),
+            "unmarshallable dependency must not become a VM entry: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn straight_line_link_dependency_is_not_a_vm_entry() {
+        let mut tcx = TyCtxt::new();
+        let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+        let mut main = body("main", i64_ty, true);
+        let span = main.span;
+        main.blocks[0].terminator = Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("rand".to_string())),
+            args: Vec::new(),
+            destination: Place::local(Local(0)),
+            target: Some(BlockId(1)),
+        };
+        main.blocks.push(BasicBlock {
+            id: BlockId(1),
+            stmts: Vec::new(),
+            terminator: Terminator::Goto { target: BlockId(1) },
+            span,
+        });
+        let bodies = vec![main, body("rand", i64_ty, false)];
+        let admitted = jit_compile_body_names(&bodies, &tcx, &HashMap::new(), &HashMap::new());
+        assert_eq!(
+            admitted,
+            std::collections::HashSet::from(["main".to_string(), "rand".to_string()])
+        );
+        let entries = jit_entry_body_names(&bodies, &tcx, &HashMap::new(), &HashMap::new());
+        assert_eq!(
+            entries,
+            std::collections::HashSet::from(["main".to_string()])
+        );
+    }
+
+    #[test]
+    fn string_builder_loop_stays_on_capacity_preserving_vm_path() {
+        let mut tcx = TyCtxt::new();
+        let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+        let mut builder = body("build", i64_ty, true);
+        let span = builder.span;
+        builder.blocks[0].terminator = Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_str_append_bytes".to_string())),
+            args: Vec::new(),
+            destination: Place::local(Local(0)),
+            target: Some(BlockId(1)),
+        };
+        builder.blocks.push(BasicBlock {
+            id: BlockId(1),
+            stmts: Vec::new(),
+            terminator: Terminator::Goto { target: BlockId(1) },
+            span,
+        });
+        let admitted = jit_compile_body_names(&[builder], &tcx, &HashMap::new(), &HashMap::new());
         assert!(admitted.is_empty(), "admitted bodies: {admitted:?}");
     }
 }

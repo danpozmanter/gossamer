@@ -1350,34 +1350,6 @@ fn store_vec_word(
     builder.ins().store(MemFlags::trusted(), val, ea, 0);
 }
 
-fn emit_preempt_poll(
-    module: &mut dyn Module,
-    builder: &mut FunctionBuilder<'_>,
-    intrinsics: &mut IntrinsicContext,
-) -> Result<()> {
-    let counter = intrinsics
-        .preempt_counter
-        .expect("preemption counter initialized in the entry block");
-    let current = builder.use_var(counter);
-    let next = builder.ins().iadd_imm(current, -1);
-    builder.def_var(counter, next);
-    let expired = builder.ins().icmp_imm(IntCC::Equal, next, 0);
-    let slow = builder.create_block();
-    let continuation = builder.create_block();
-    builder.ins().brif(expired, slow, &[], continuation, &[]);
-
-    builder.switch_to_block(slow);
-    let poll = intrinsics.extern_fn_by_name(module, "gos_rt_preempt_check_and_yield")?;
-    let poll_ref = module.declare_func_in_func(poll, builder.func);
-    let _ = builder.ins().call(poll_ref, &[]);
-    let reset = builder.ins().iconst(types::I32, 1024);
-    builder.def_var(counter, reset);
-    builder.ins().jump(continuation, &[]);
-
-    builder.switch_to_block(continuation);
-    Ok(())
-}
-
 pub(super) fn lower_terminator(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -1394,9 +1366,7 @@ pub(super) fn lower_terminator(
 ) -> Result<()> {
     match terminator {
         Terminator::Goto { target } => {
-            if target.as_u32() <= src_block {
-                emit_preempt_poll(module, builder, intrinsics)?;
-            }
+            let _ = src_block;
             let block = blocks[&target.as_u32()];
             builder.ins().jump(block, &[]);
         }
@@ -2087,12 +2057,7 @@ pub(super) fn lower_terminator(
             arms,
             default,
         } => {
-            // Loop back-edge → emit preempt check before dispatching.
-            let has_back_edge =
-                arms.iter().any(|(_, t)| t.as_u32() <= src_block) || default.as_u32() <= src_block;
-            if has_back_edge {
-                emit_preempt_poll(module, builder, intrinsics)?;
-            }
+            let _ = src_block;
             let value = lower_operand(
                 module,
                 builder,

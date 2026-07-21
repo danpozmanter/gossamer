@@ -56,6 +56,33 @@ struct JitCodeCapGuard {
     previous: Option<OsString>,
 }
 
+struct JitFilterGuard {
+    name: &'static str,
+    previous: Option<OsString>,
+}
+
+impl JitFilterGuard {
+    fn new(name: &'static str, value: &str) -> Self {
+        let previous = std::env::var_os(name);
+        // SAFETY: a `GosJitGuard` holds `JIT_ENV_LOCK` for this test.
+        unsafe { std::env::set_var(name, value) };
+        Self { name, previous }
+    }
+}
+
+impl Drop for JitFilterGuard {
+    fn drop(&mut self) {
+        // SAFETY: a `GosJitGuard` still holds `JIT_ENV_LOCK` here.
+        unsafe {
+            if let Some(previous) = &self.previous {
+                std::env::set_var(self.name, previous);
+            } else {
+                std::env::remove_var(self.name);
+            }
+        }
+    }
+}
+
 impl JitCodeCapGuard {
     fn new(bytes: &str) -> Self {
         let previous = std::env::var_os("GOS_JIT_MAX_CODE_BYTES");
@@ -365,13 +392,10 @@ fn jit_metrics_report_promotion_and_snapshot_release() {
 }
 
 #[test]
-fn short_loop_defers_jit_until_it_has_paid_back_its_compile_cost() {
+fn eager_loop_compiles_before_entry() {
     let _g = GosJitGuard::new();
-    // The loop makes this body JIT-eligible, but one hundred executions are
-    // deliberately below the default 8,192-instruction admission floor. The
-    // policy must keep the program on bytecode rather than retaining a
-    // Cranelift module for a short command whose native compile tax cannot
-    // plausibly be repaid.
+    // A loop-bearing body cannot switch tiers after bytecode execution has
+    // already entered the frame, so it compiles at the first entry gate.
     let source = "fn tick(n: i64) -> i64 {\n  let mut out = n\n  let mut i = 0\n  while i < 1 { out += 1\n    i += 1 }\n  out\n}\nfn main() -> i64 { tick(1) }\n";
     let (vm, _) = build_vm(source);
 
@@ -382,16 +406,16 @@ fn short_loop_defers_jit_until_it_has_paid_back_its_compile_cost() {
 
     let metrics = vm.jit_metrics();
     assert!(
-        metrics.tier_up_requests >= 1 && metrics.work_floor_deferrals >= 1,
-        "eligible short work must reach and defer the admission gate: {metrics:?}"
+        metrics.tier_up_requests >= 1,
+        "eligible loop work must reach the admission gate: {metrics:?}"
     );
     assert_eq!(
-        metrics.compile_attempts, 0,
-        "below-floor work must not retain a native artifact: {metrics:?}"
+        metrics.work_floor_deferrals, 0,
+        "eager loop entries must not be deferred by the dynamic work floor: {metrics:?}"
     );
-    assert_eq!(
-        metrics.resident_functions, 0,
-        "deferred short work must remain on bytecode: {metrics:?}"
+    assert!(
+        metrics.compile_attempts >= 1 && metrics.resident_functions >= 1,
+        "eager loop work must install a native artifact: {metrics:?}"
     );
 }
 
@@ -497,6 +521,55 @@ fn jit_reuses_immutable_artifact_for_overlapping_vms_on_one_thread() {
             Ok(Value::Int(55))
         ),
         "reused artifact must preserve bytecode-visible behavior"
+    );
+}
+
+#[test]
+fn jit_filters_are_applied_per_vm_when_artifact_is_reused() {
+    let _g = GosJitGuard::new();
+    let source = "fn filter_f(n: i64) -> i64 { if n == 0i64 { 1i64 } else { filter_g(n - 1i64) } }\nfn filter_g(n: i64) -> i64 { if n == 0i64 { 2i64 } else { filter_f(n - 1i64) } }\nfn main() -> i64 { filter_f(4i64) }\n";
+    let only_f = JitFilterGuard::new("GOS_JIT_ONLY", "filter_f");
+    let (first, _) = build_vm(source);
+    warm_up(&first, "filter_f", &[Value::Int(8)]);
+    assert_eq!(first.jit_metrics().resident_functions, 1);
+    drop(only_f);
+
+    let _only_g = JitFilterGuard::new("GOS_JIT_ONLY", "filter_g");
+    let (second, _) = build_vm(source);
+    warm_up(&second, "filter_f", &[Value::Int(8)]);
+    let metrics = second.jit_metrics();
+    assert_eq!(
+        metrics.compile_attempts, 0,
+        "artifact should be reused: {metrics:?}"
+    );
+    assert_eq!(
+        metrics.reused_artifacts, 1,
+        "reuse should be visible: {metrics:?}"
+    );
+    assert_eq!(
+        metrics.resident_functions, 1,
+        "the second filter must install only the currently allowed entry"
+    );
+}
+
+#[test]
+fn writable_static_artifacts_are_not_reused_between_vms() {
+    let _g = GosJitGuard::new();
+    let source = "static mut CACHE_COUNTER: i64 = 0i64\nfn static_tick(n: i64) -> i64 { CACHE_COUNTER += 1i64; if n == 0i64 { CACHE_COUNTER } else { static_tick(n - 1i64) } }\nfn main() -> i64 { static_tick(4i64) }\n";
+    let (first, _) = build_vm(source);
+    warm_up(&first, "static_tick", &[Value::Int(8)]);
+    assert_eq!(first.jit_metrics().compile_attempts, 1);
+
+    let (second, _) = build_vm(source);
+    warm_up(&second, "static_tick", &[Value::Int(8)]);
+    let metrics = second.jit_metrics();
+    assert_eq!(
+        metrics.compile_attempts, 1,
+        "mutable storage requires a fresh module: {metrics:?}"
+    );
+    assert_eq!(
+        metrics.reused_artifacts, 0,
+        "mutable artifacts must stay VM-local: {metrics:?}"
     );
 }
 

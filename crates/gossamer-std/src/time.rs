@@ -1,6 +1,7 @@
 //! Runtime support for `std::time`.
 
 #![forbid(unsafe_code)]
+#![allow(missing_docs)]
 
 use std::time::{Duration as StdDuration, Instant as StdInstant, SystemTime as StdSystemTime};
 
@@ -77,7 +78,7 @@ impl Duration {
 }
 
 /// Wall-clock point-in-time.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SystemTime(StdSystemTime);
 
 impl SystemTime {
@@ -87,13 +88,21 @@ impl SystemTime {
         Self(StdSystemTime::now())
     }
 
-    /// Milliseconds since the Unix epoch. Returns zero for times
-    /// before 1970 (extremely unlikely in tests).
+    /// Signed milliseconds from the Unix epoch.
+    ///
+    /// Values before 1970 are negative. Values outside the `i64`
+    /// millisecond range are clamped at the corresponding bound.
     #[must_use]
-    pub fn unix_millis(self) -> u128 {
-        self.0
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis())
+    pub fn unix_millis(self) -> i64 {
+        match self.0.duration_since(std::time::UNIX_EPOCH) {
+            Ok(duration) => i64::try_from(duration.as_millis()).unwrap_or(i64::MAX),
+            Err(error) => {
+                let duration = error.duration();
+                let millis = u128::from(duration.as_secs()) * 1_000
+                    + u128::from(duration.subsec_nanos()).div_ceil(1_000_000);
+                i64::try_from(millis).map_or(i64::MIN, |value| -value)
+            }
+        }
     }
 
     /// Wraps a `std::time::SystemTime` into the Gossamer-native
@@ -116,8 +125,12 @@ impl SystemTime {
     #[must_use]
     pub fn unix_seconds(self) -> i64 {
         match self.0.duration_since(std::time::UNIX_EPOCH) {
-            Ok(d) => d.as_secs() as i64,
-            Err(e) => -(e.duration().as_secs() as i64),
+            Ok(duration) => i64::try_from(duration.as_secs()).unwrap_or(i64::MAX),
+            Err(error) => {
+                let duration = error.duration();
+                let seconds = duration.as_secs() + u64::from(duration.subsec_nanos() > 0);
+                i64::try_from(seconds).map_or(i64::MIN, |value| -value)
+            }
         }
     }
 
@@ -126,10 +139,11 @@ impl SystemTime {
     /// Mirrors Go's `time.UnixMilli`.
     #[must_use]
     pub fn from_unix_millis(ms: i64) -> Self {
+        let distance = std::time::Duration::from_millis(ms.unsigned_abs());
         let inner = if ms >= 0 {
-            std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms as u64)
+            std::time::UNIX_EPOCH + distance
         } else {
-            std::time::UNIX_EPOCH - std::time::Duration::from_millis((-ms) as u64)
+            std::time::UNIX_EPOCH - distance
         };
         Self(inner)
     }
@@ -200,7 +214,7 @@ pub fn now() -> Instant {
 }
 
 /// Errors raised by [`format_rfc3339`] / [`parse_rfc3339`].
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FormatError {
     /// Input string did not match the expected layout.
     #[error("time::parse: {0}")]
@@ -675,9 +689,8 @@ impl Drop for TimerHandle {
     }
 }
 
-/// IANA timezone-aware operations. Gated on the `tz` feature so the
-/// stdlib stays slim by default; once the feature is on, callers
-/// can construct a `Location` from any IANA name and convert
+/// IANA timezone-aware operations. Native callers can construct a
+/// `Location` from any bundled IANA name and convert
 /// `SystemTime`s into local civil time and back.
 ///
 /// Backed by `chrono` / `chrono-tz`, which target the host clock and
@@ -688,16 +701,24 @@ pub mod tz {
 
     use std::str::FromStr;
 
-    use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Timelike, Utc};
+    use chrono::{
+        DateTime, Datelike, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, Offset, TimeZone,
+        Timelike, Utc,
+    };
     use chrono_tz::Tz;
 
     use super::{FormatError, SystemTime};
 
-    /// Reference to an IANA timezone (e.g. `"America/Los_Angeles"`).
-    /// Cheap to clone - wraps the `chrono_tz::Tz` enum by value.
+    /// An explicit UTC, fixed-offset, or IANA timezone.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Location {
-        tz: Tz,
+        kind: LocationKind,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum LocationKind {
+        Iana(Tz),
+        Fixed(FixedOffset),
     }
 
     impl Location {
@@ -705,45 +726,100 @@ pub mod tz {
         /// name is not in the bundled tzdata set.
         pub fn lookup(name: &str) -> Result<Self, FormatError> {
             Tz::from_str(name)
-                .map(|tz| Self { tz })
+                .map(|tz| Self {
+                    kind: LocationKind::Iana(tz),
+                })
                 .map_err(|e| FormatError::BadInput(format!("unknown timezone {name:?}: {e}")))
         }
 
         /// UTC location (always available; never traps).
         #[must_use]
         pub fn utc() -> Self {
-            Self { tz: Tz::UTC }
+            Self {
+                kind: LocationKind::Iana(Tz::UTC),
+            }
+        }
+
+        /// Creates a fixed offset east of UTC. The accepted range is
+        /// strictly less than 24 hours in either direction.
+        pub fn fixed(offset_seconds: i32) -> Result<Self, FormatError> {
+            let offset = FixedOffset::east_opt(offset_seconds).ok_or_else(|| {
+                FormatError::OutOfRange(format!(
+                    "fixed UTC offset {offset_seconds} seconds is outside the supported range"
+                ))
+            })?;
+            Ok(Self {
+                kind: LocationKind::Fixed(offset),
+            })
         }
 
         /// IANA name of the timezone.
         #[must_use]
-        pub fn name(self) -> &'static str {
-            self.tz.name()
+        pub fn name(&self) -> String {
+            match self.kind {
+                LocationKind::Iana(zone) => zone.name().to_string(),
+                LocationKind::Fixed(offset) => {
+                    let seconds = offset.local_minus_utc();
+                    let sign = if seconds < 0 { '-' } else { '+' };
+                    let absolute = seconds.unsigned_abs();
+                    format!(
+                        "UTC{sign}{:02}:{:02}",
+                        absolute / 3600,
+                        (absolute / 60) % 60
+                    )
+                }
+            }
         }
 
         /// Civil time fields for `when` rendered through `self`.
-        #[must_use]
-        pub fn civil(self, when: SystemTime) -> Civil {
-            let unix = i64::try_from(when.unix_millis() / 1000).unwrap_or(0);
-            let utc: DateTime<Utc> = DateTime::from_timestamp(unix, 0)
-                .unwrap_or_else(|| DateTime::from_timestamp(0, 0).expect("epoch is valid"));
-            let local = utc.with_timezone(&self.tz);
-            Civil {
-                year: local.year(),
-                month: local.month(),
-                day: local.day(),
-                hour: local.hour(),
-                minute: local.minute(),
-                second: local.second(),
-                offset_seconds: chrono::Offset::fix(local.offset()).local_minus_utc(),
-                weekday: local.weekday().num_days_from_monday(),
+        pub fn civil(&self, when: SystemTime) -> Result<CivilTime, FormatError> {
+            let utc = utc_datetime(when)?;
+            Ok(match self.kind {
+                LocationKind::Iana(zone) => civil_fields(utc.with_timezone(&zone)),
+                LocationKind::Fixed(offset) => civil_fields(utc.with_timezone(&offset)),
+            })
+        }
+
+        /// Resolves local calendar fields without guessing during a daylight-saving
+        /// transition. A fold returns both valid instants in chronological order.
+        pub fn resolve(&self, civil: CivilTime) -> Result<CivilResolution, FormatError> {
+            let naive = civil.naive()?;
+            let result = match self.kind {
+                LocationKind::Iana(zone) => map_local_result(zone.from_local_datetime(&naive)),
+                LocationKind::Fixed(offset) => map_local_result(offset.from_local_datetime(&naive)),
+            };
+            Ok(result)
+        }
+
+        /// Resolves calendar fields under an explicit fold/gap policy.
+        pub fn to_system_time(
+            &self,
+            civil: CivilTime,
+            policy: ResolvePolicy,
+        ) -> Result<SystemTime, CivilTimeError> {
+            match self.resolve(civil).map_err(CivilTimeError::Invalid)? {
+                CivilResolution::Unique(time) => Ok(time),
+                CivilResolution::Gap => Err(CivilTimeError::Gap {
+                    civil,
+                    location: self.name(),
+                }),
+                CivilResolution::Fold { earlier, later } => match policy {
+                    ResolvePolicy::Reject => Err(CivilTimeError::Fold {
+                        civil,
+                        location: self.name(),
+                        earlier,
+                        later,
+                    }),
+                    ResolvePolicy::Earlier => Ok(earlier),
+                    ResolvePolicy::Later => Ok(later),
+                },
             }
         }
     }
 
     /// Civil time fields rendered in a specific [`Location`].
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct Civil {
+    pub struct CivilTime {
         /// Calendar year (e.g. `2026`).
         pub year: i32,
         /// 1..=12 calendar month.
@@ -756,10 +832,164 @@ pub mod tz {
         pub minute: u32,
         /// 0..=59 second.
         pub second: u32,
+        /// 0..=999,999,999 nanoseconds within the second.
+        pub nanosecond: u32,
         /// Offset from UTC in seconds (positive east of Greenwich).
         pub offset_seconds: i32,
         /// 0=Mon … 6=Sun.
         pub weekday: u32,
+    }
+
+    /// Compatibility name retained for callers of the original Rust-only API.
+    pub type Civil = CivilTime;
+
+    impl CivilTime {
+        fn naive(self) -> Result<NaiveDateTime, FormatError> {
+            NaiveDate::from_ymd_opt(self.year, self.month, self.day)
+                .and_then(|date| {
+                    date.and_hms_nano_opt(self.hour, self.minute, self.second, self.nanosecond)
+                })
+                .ok_or_else(|| FormatError::BadInput(format!("invalid civil time {self:?}")))
+        }
+    }
+
+    /// Complete result of mapping civil fields into an absolute timeline.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum CivilResolution {
+        Unique(SystemTime),
+        Gap,
+        Fold {
+            earlier: SystemTime,
+            later: SystemTime,
+        },
+    }
+
+    /// Policy for selecting one side of an ambiguous DST fold.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ResolvePolicy {
+        Reject,
+        Earlier,
+        Later,
+    }
+
+    /// Typed civil-time resolution error.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum CivilTimeError {
+        Invalid(FormatError),
+        Gap {
+            civil: CivilTime,
+            location: String,
+        },
+        Fold {
+            civil: CivilTime,
+            location: String,
+            earlier: SystemTime,
+            later: SystemTime,
+        },
+    }
+
+    impl std::fmt::Display for CivilTimeError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::Invalid(error) => write!(f, "{error}"),
+                Self::Gap { civil, location } => {
+                    write!(f, "{civil:?} does not exist in {location}")
+                }
+                Self::Fold {
+                    civil, location, ..
+                } => write!(f, "{civil:?} occurs twice in {location}"),
+            }
+        }
+    }
+
+    impl std::error::Error for CivilTimeError {}
+
+    fn civil_fields<T: TimeZone>(local: DateTime<T>) -> CivilTime {
+        CivilTime {
+            year: local.year(),
+            month: local.month(),
+            day: local.day(),
+            hour: local.hour(),
+            minute: local.minute(),
+            second: local.second(),
+            nanosecond: local.nanosecond(),
+            offset_seconds: local.offset().fix().local_minus_utc(),
+            weekday: local.weekday().num_days_from_monday(),
+        }
+    }
+
+    fn map_local_result<T: TimeZone>(result: LocalResult<DateTime<T>>) -> CivilResolution {
+        match result {
+            LocalResult::None => CivilResolution::Gap,
+            LocalResult::Single(value) => CivilResolution::Unique(system_time(value)),
+            LocalResult::Ambiguous(a, b) => {
+                let a = system_time(a);
+                let b = system_time(b);
+                if a.unix_millis() <= b.unix_millis() {
+                    CivilResolution::Fold {
+                        earlier: a,
+                        later: b,
+                    }
+                } else {
+                    CivilResolution::Fold {
+                        earlier: b,
+                        later: a,
+                    }
+                }
+            }
+        }
+    }
+
+    fn system_time<T: TimeZone>(value: DateTime<T>) -> SystemTime {
+        let seconds = value.timestamp();
+        let nanos = value.timestamp_subsec_nanos();
+        let base = if seconds >= 0 {
+            std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(seconds as u64))
+        } else {
+            std::time::UNIX_EPOCH
+                .checked_sub(std::time::Duration::from_secs(seconds.unsigned_abs()))
+        };
+        let instant = base
+            .and_then(|time| time.checked_add(std::time::Duration::from_nanos(u64::from(nanos))))
+            .unwrap_or_else(|| SystemTime::from_unix_millis(value.timestamp_millis()).as_std());
+        SystemTime::from_std(instant)
+    }
+
+    fn utc_datetime(when: SystemTime) -> Result<DateTime<Utc>, FormatError> {
+        let (seconds, nanos) = match when.as_std().duration_since(std::time::UNIX_EPOCH) {
+            Ok(duration) => (
+                i64::try_from(duration.as_secs()).map_err(|_| {
+                    FormatError::OutOfRange("instant is too far after the Unix epoch".into())
+                })?,
+                duration.subsec_nanos(),
+            ),
+            Err(error) => {
+                let duration = error.duration();
+                let seconds = i64::try_from(duration.as_secs()).map_err(|_| {
+                    FormatError::OutOfRange("instant is too far before the Unix epoch".into())
+                })?;
+                if duration.subsec_nanos() == 0 {
+                    (-seconds, 0)
+                } else {
+                    (
+                        seconds
+                            .checked_add(1)
+                            .and_then(i64::checked_neg)
+                            .ok_or_else(|| {
+                                FormatError::OutOfRange(
+                                    "instant is too far before the Unix epoch".into(),
+                                )
+                            })?,
+                        1_000_000_000 - duration.subsec_nanos(),
+                    )
+                }
+            }
+        };
+        DateTime::<Utc>::from_timestamp(seconds, nanos).ok_or_else(|| {
+            FormatError::OutOfRange(format!(
+                "timestamp {seconds}.{nanos:09} is outside the Gregorian range"
+            ))
+        })
     }
 
     /// Parses `input` against the supplied `layout` in Go's reference-time
@@ -770,15 +1000,12 @@ pub mod tz {
         let chrono_fmt = go_layout_to_chrono(layout);
         // Try with timezone first, fall back to naive.
         if let Ok(dt) = DateTime::parse_from_str(input, &chrono_fmt) {
-            let unix = dt.with_timezone(&Utc).timestamp();
-            return Ok(SystemTime::from_unix_millis(unix.saturating_mul(1000)));
+            return Ok(SystemTime::from_unix_millis(dt.timestamp_millis()));
         }
         match NaiveDateTime::parse_from_str(input, &chrono_fmt) {
             Ok(dt) => {
                 let utc = Utc.from_utc_datetime(&dt);
-                Ok(SystemTime::from_unix_millis(
-                    utc.timestamp().saturating_mul(1000),
-                ))
+                Ok(SystemTime::from_unix_millis(utc.timestamp_millis()))
             }
             Err(e) => Err(FormatError::BadInput(format!(
                 "time::parse({layout:?}, {input:?}): {e}"
@@ -789,12 +1016,13 @@ pub mod tz {
     /// Renders `when` according to the Go-shaped `layout` in `loc`.
     pub fn format_in(layout: &str, when: SystemTime, loc: Location) -> Result<String, FormatError> {
         let chrono_fmt = go_layout_to_chrono(layout);
-        let unix = i64::try_from(when.unix_millis() / 1000)
-            .map_err(|_| FormatError::OutOfRange("time too far from epoch".into()))?;
-        let utc: DateTime<Utc> = DateTime::from_timestamp(unix, 0)
-            .ok_or_else(|| FormatError::OutOfRange(format!("{unix} seconds out of range")))?;
-        let local = utc.with_timezone(&loc.tz);
-        Ok(local.format(&chrono_fmt).to_string())
+        let utc = utc_datetime(when)?;
+        Ok(match loc.kind {
+            LocationKind::Iana(zone) => utc.with_timezone(&zone).format(&chrono_fmt).to_string(),
+            LocationKind::Fixed(offset) => {
+                utc.with_timezone(&offset).format(&chrono_fmt).to_string()
+            }
+        })
     }
 
     /// Adds `years`, `months`, and `days` to `when` in the supplied
@@ -807,35 +1035,37 @@ pub mod tz {
         months: i32,
         days: i32,
     ) -> Result<SystemTime, FormatError> {
-        let unix = i64::try_from(when.unix_millis() / 1000)
-            .map_err(|_| FormatError::OutOfRange("time too far from epoch".into()))?;
-        let utc: DateTime<Utc> = DateTime::from_timestamp(unix, 0)
-            .ok_or_else(|| FormatError::OutOfRange(format!("{unix} out of range")))?;
-        let local = utc.with_timezone(&loc.tz);
+        let local = loc.civil(when)?;
         // Year/month manually so we clamp to the last day of the
         // target month rather than wrapping into the next.
-        let mut new_year = local.year() + years;
-        let mut new_month_zero = (local.month0() as i32) + months;
+        let mut new_year = local.year + years;
+        let mut new_month_zero = (local.month as i32 - 1) + months;
         new_year += new_month_zero.div_euclid(12);
         new_month_zero = new_month_zero.rem_euclid(12);
         let new_month = (new_month_zero as u32) + 1;
         let dim = days_in_month(new_year, new_month);
-        let new_day = local.day().min(dim);
-        let candidate = loc
-            .tz
-            .with_ymd_and_hms(
-                new_year,
-                new_month,
-                new_day,
-                local.hour(),
-                local.minute(),
-                local.second(),
-            )
-            .single()
-            .ok_or_else(|| FormatError::BadInput("ambiguous local time".into()))?
-            + chrono::Duration::days(i64::from(days));
-        let new_unix = candidate.with_timezone(&Utc).timestamp();
-        Ok(SystemTime::from_unix_millis(new_unix.saturating_mul(1000)))
+        let new_day = local.day.min(dim);
+        let date = NaiveDate::from_ymd_opt(new_year, new_month, new_day)
+            .ok_or_else(|| FormatError::OutOfRange("calendar addition is out of range".into()))?
+            .checked_add_signed(chrono::Duration::days(i64::from(days)))
+            .ok_or_else(|| FormatError::OutOfRange("calendar addition is out of range".into()))?;
+        let target = CivilTime {
+            year: date.year(),
+            month: date.month(),
+            day: date.day(),
+            hour: local.hour,
+            minute: local.minute,
+            second: local.second,
+            nanosecond: local.nanosecond,
+            offset_seconds: 0,
+            weekday: date.weekday().num_days_from_monday(),
+        };
+        loc.to_system_time(target, ResolvePolicy::Reject)
+            .map_err(|error| {
+                FormatError::BadInput(format!(
+                    "calendar addition could not resolve local time: {error}"
+                ))
+            })
     }
 
     fn days_in_month(year: i32, month: u32) -> u32 {
@@ -967,10 +1197,87 @@ pub mod tz {
         fn civil_in_location_includes_offset() {
             let when = super::super::parse_rfc3339("2026-04-27T12:00:00Z").unwrap();
             let la = Location::lookup("America/Los_Angeles").unwrap();
-            let civil = la.civil(when);
+            let civil = la.civil(when).unwrap();
             // Pacific Daylight Time (UTC-7).
             assert_eq!(civil.offset_seconds, -7 * 3600);
             assert_eq!(civil.hour, 5);
+        }
+
+        fn civil(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> CivilTime {
+            CivilTime {
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                second: 0,
+                nanosecond: 0,
+                offset_seconds: 0,
+                weekday: 0,
+            }
+        }
+
+        #[test]
+        fn dst_gap_and_fold_are_never_guessed() {
+            for (zone, gap, fold) in [
+                (
+                    "America/New_York",
+                    civil(2026, 3, 8, 2, 30),
+                    civil(2026, 11, 1, 1, 30),
+                ),
+                (
+                    "Europe/Berlin",
+                    civil(2026, 3, 29, 2, 30),
+                    civil(2026, 10, 25, 2, 30),
+                ),
+            ] {
+                let location = Location::lookup(zone).unwrap();
+                assert_eq!(location.resolve(gap).unwrap(), CivilResolution::Gap);
+                let CivilResolution::Fold { earlier, later } = location.resolve(fold).unwrap()
+                else {
+                    panic!("expected fold in {zone}");
+                };
+                assert!(earlier < later);
+                assert!(matches!(
+                    location.to_system_time(fold, ResolvePolicy::Reject),
+                    Err(CivilTimeError::Fold { .. })
+                ));
+                assert_eq!(
+                    location
+                        .to_system_time(fold, ResolvePolicy::Earlier)
+                        .unwrap(),
+                    earlier
+                );
+                assert_eq!(
+                    location.to_system_time(fold, ResolvePolicy::Later).unwrap(),
+                    later
+                );
+            }
+        }
+
+        #[test]
+        fn fixed_offset_and_subseconds_round_trip() {
+            let location = Location::fixed(5 * 3600 + 30 * 60).unwrap();
+            let source = CivilTime {
+                nanosecond: 123_456_789,
+                ..civil(1965, 7, 4, 12, 30)
+            };
+            let instant = location
+                .to_system_time(source, ResolvePolicy::Reject)
+                .unwrap();
+            assert!(instant.unix_millis() < 0);
+            let round_trip = location.civil(instant).unwrap();
+            assert_eq!(
+                (
+                    round_trip.year,
+                    round_trip.month,
+                    round_trip.day,
+                    round_trip.hour,
+                    round_trip.minute,
+                    round_trip.nanosecond
+                ),
+                (1965, 7, 4, 12, 30, 123_456_789)
+            );
         }
     }
 }
@@ -983,6 +1290,17 @@ mod tests {
     fn round_trip_epoch_renders_zero() {
         let formatted = format_rfc3339(SystemTime(std::time::UNIX_EPOCH)).unwrap();
         assert_eq!(formatted, "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn signed_unix_millis_preserve_pre_epoch_values() {
+        for millis in [-1, -999, -1_001, -123_456_789] {
+            assert_eq!(SystemTime::from_unix_millis(millis).unix_millis(), millis);
+        }
+        assert_eq!(
+            SystemTime::from_unix_millis(i64::MIN).unix_millis(),
+            i64::MIN
+        );
     }
 
     #[test]

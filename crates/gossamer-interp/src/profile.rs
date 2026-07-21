@@ -563,6 +563,10 @@ fn op_label(tag: usize) -> &'static str {
                 "BuildIntArray",
             ),
             (
+                O::CheckNonNegativeCapacity { capacity_i: 0 },
+                "CheckNonNegativeCapacity",
+            ),
+            (
                 O::BuildTuple {
                     dst: 0,
                     first: 0,

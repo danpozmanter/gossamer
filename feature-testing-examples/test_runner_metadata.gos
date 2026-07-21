@@ -1,0 +1,27 @@
+use std::testing
+
+#[test]
+#[test_case(2, 3, 5)]
+#[test_case(-4, 9, 5)]
+fn addition_case(left: i64, right: i64, expected: i64) {
+    let _ = testing::check_eq(left + right, expected, "parameter case")
+}
+
+#[test]
+#[ignore]
+fn ignored_example() {
+    let _ = testing::check(false, "ignored test executed unexpectedly")
+}
+
+#[test]
+#[skip]
+fn skipped_example() {
+    let _ = testing::check(false, "skipped test executed unexpectedly")
+}
+
+#[test]
+#[ignore]
+#[timeout("50ms")]
+fn timeout_example() {
+    while true {}
+}

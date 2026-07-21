@@ -9,6 +9,9 @@ fn synthesize_stdlib_wrappers(source: &str) -> String {
     if source.contains("fs::metadata") {
         stdlib_wrappers.push_str(FS_METADATA_WRAPPERS);
     }
+    if source.contains("path::Path") {
+        stdlib_wrappers.push_str(PATH_WRAPPERS);
+    }
     if source.contains("tar::") {
         stdlib_wrappers.push_str(TAR_WRAPPERS);
     }
@@ -23,6 +26,11 @@ fn synthesize_stdlib_wrappers(source: &str) -> String {
     }
     if source.contains("time::after") {
         stdlib_wrappers.push_str(TIME_TIMER_WRAPPERS);
+    }
+    if ["time::Location", "time::CivilTime", "time::CivilResolution", "time::format_in", "time::add_date"]
+        .iter().any(|marker| source.contains(marker))
+    {
+        stdlib_wrappers.push_str(TIME_CIVIL_WRAPPERS);
     }
     stdlib_wrappers
 }
@@ -92,6 +100,38 @@ fn __gos_time_after(d: time::Duration) -> Receiver<i64> {
 }
 ";
 
+const TIME_CIVIL_WRAPPERS: &str = r#"
+struct __gos_time_CivilTime { year: i64, month: i64, day: i64, hour: i64, minute: i64, second: i64, nanosecond: i64, offset_seconds: i64, weekday: i64 }
+enum __gos_time_CivilResolution { Unique(i64), Gap, Fold(i64, i64) }
+struct __gos_time_Location { spec: String }
+impl __gos_time_Location {
+    fn lookup(name: String) -> Result<__gos_time_Location, errors::Error> {
+        Ok(__gos_time_Location { spec: __gos_time_location_raw(name)? })
+    }
+    fn utc() -> __gos_time_Location { __gos_time_Location { spec: "UTC" } }
+    fn fixed(offset_seconds: i64) -> Result<__gos_time_Location, errors::Error> {
+        Ok(__gos_time_Location { spec: __gos_time_fixed_location_raw(offset_seconds)? })
+    }
+    fn name(&self) -> String { self.spec }
+    fn civil(&self, unix_ms: i64) -> Result<__gos_time_CivilTime, errors::Error> {
+        let (year, month, day, hour, minute, second, nano, offset, weekday) = __gos_time_civil_raw(unix_ms, self.spec)?
+        Ok(__gos_time_CivilTime { year: year, month: month, day: day, hour: hour, minute: minute, second: second, nanosecond: nano, offset_seconds: offset, weekday: weekday })
+    }
+    fn resolve(&self, civil: __gos_time_CivilTime) -> Result<__gos_time_CivilResolution, errors::Error> {
+        let (kind, earlier, later) = __gos_time_resolve_raw(self.spec, civil.year, civil.month, civil.day, civil.hour, civil.minute, civil.second, civil.nanosecond)?
+        if kind == 0 { Ok(__gos_time_CivilResolution::Gap) }
+        else if kind == 1 { Ok(__gos_time_CivilResolution::Unique(earlier)) }
+        else { Ok(__gos_time_CivilResolution::Fold(earlier, later)) }
+    }
+}
+fn __gos_time_format_in(layout: String, unix_ms: i64, location: __gos_time_Location) -> Result<String, errors::Error> {
+    __gos_time_format_in_raw(layout, unix_ms, location.spec)
+}
+fn __gos_time_add_date(unix_ms: i64, location: __gos_time_Location, years: i64, months: i64, days: i64) -> Result<i64, errors::Error> {
+    __gos_time_add_date_raw(unix_ms, location.spec, years, months, days)
+}
+"#;
+
 /// Real-struct + wrapper source for `std::crypto::x509`.
 const X509_WRAPPERS: &str = r"
 struct __gos_x509_CertInfo { subject: String, issuer: String, serial: [u8], not_before_unix: i64, not_after_unix: i64, san_dns: [String], sha256: [u8] }
@@ -111,6 +151,26 @@ struct __gos_fs_Metadata { size: i64, is_file: bool, is_dir: bool, is_symlink: b
 fn __gos_fs_metadata(path: &String) -> Result<__gos_fs_Metadata, errors::Error> {
     let (size, is_file, is_dir, is_symlink, readonly, modified) = __gos_fs_metadata_raw(path)?
     Ok(__gos_fs_Metadata { size: size, is_file: is_file, is_dir: is_dir, is_symlink: is_symlink, readonly: readonly, modified_unix_ms: modified })
+}
+";
+
+/// Immutable UTF-8 path value implemented in ordinary Gossamer so its
+/// representation and behavior are identical in VM, JIT, and AOT execution.
+const PATH_WRAPPERS: &str = r"
+struct __gos_path_Path { value: String }
+impl __gos_path_Path {
+    fn new(value: String) -> __gos_path_Path { __gos_path_Path { value: value } }
+    fn as_str(&self) -> String { self.value }
+    fn join(&self, segment: String) -> __gos_path_Path { __gos_path_Path { value: path::join(self.value, segment) } }
+    fn parent(&self) -> Option<__gos_path_Path> {
+        match path::parent(self.value) { Some(value) => Some(__gos_path_Path { value: value }), None => None }
+    }
+    fn file_name(&self) -> Option<String> { path::file_name(self.value) }
+    fn stem(&self) -> Option<String> { path::file_stem(self.value) }
+    fn extension(&self) -> Option<String> { path::extension(self.value) }
+    fn normalize(&self) -> __gos_path_Path { __gos_path_Path { value: path::normalize(self.value) } }
+    fn is_absolute(&self) -> bool { path::is_absolute(self.value) }
+    fn starts_with(&self, prefix: &__gos_path_Path) -> bool { path::starts_with(self.value, prefix.value) }
 }
 ";
 

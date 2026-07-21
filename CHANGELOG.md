@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.33.0 - Adaptive JIT coverage + improvements for datetime, filesystem libraries and caching
+
+- Extend JIT promotion and native lowering for loops, recursion, native-only
+  helpers, typed vectors, string lengths, and integer formatting while
+  preserving VM, JIT, and LLVM AOT parity.
+- Add immutable paths and civil time with signed pre-epoch precision, explicit
+  DST gap and fold resolution, fixed offsets, and IANA locations across tiers.
+- Extend `gos test` with listing, exact selection, ignores, skips, parameter
+  cases, deterministic shuffling, fail-fast, process timeouts, and JUnit output.
+- Add deterministic filesystem workflows and reusable structured command
+  parsing with validation, subcommands, environment fallback, and completions.
+- Bound Rust-binding runner caches, disable generated debug and incremental
+  bloat, streamline CI, and align shared dependency versions.
+
 ## 0.32.3 - LSP diagnostics and quick fixes, type info, and mutable-reference fixes
 
 - Add default lint diagnostics, safe lint quick fixes, exact stdlib

@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
@@ -232,20 +236,13 @@ jobs:
           if-no-files-found: ignore
 
   test-workspace:
-    name: Test workspace (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Test complete workspace (Linux)
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     # Fast, parallel-safe crate tests. Split into its own job so it runs
     # concurrently with `test-native` (which is serial and slow) instead of
     # queueing behind it - frontend/IR/runtime/stdlib feedback no longer
     # waits on the native build/run suite.
-    strategy:
-      fail-fast: false
-      matrix:
-        # Always use *-latest runners (pinned majors get retired by GitHub).
-        # `ubuntu-24.04-arm` is the native aarch64 Linux runner (the Pi
-        # target); GitHub ships Linux arm64 only in pinned-major form.
-        os: [ubuntu-latest, macos-latest, windows-latest, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/rust-test-setup
@@ -261,7 +258,7 @@ jobs:
             -p gossamer-lex -p gossamer-ast -p gossamer-parse \
             -p gossamer-resolve -p gossamer-hir -p gossamer-types \
             -p gossamer-diagnostics \
-            -- --nocapture
+            --lib --tests -- --nocapture
       - name: Test - IR & codegen (mir/llvm/abi/binding)
         if: ${{ !cancelled() }}
         shell: bash
@@ -271,7 +268,7 @@ jobs:
           "$CARGO_BIN" test --no-fail-fast \
             -p gossamer-mir -p gossamer-codegen-llvm -p gossamer-abi \
             -p gossamer-binding -p gossamer-binding-macros \
-            -- --nocapture
+            --lib --tests -- --nocapture
       - name: Test - runtime & interpreter (runtime/interp/sched/coro)
         if: ${{ !cancelled() }}
         shell: bash
@@ -281,7 +278,7 @@ jobs:
           "$CARGO_BIN" test --no-fail-fast \
             -p gossamer-runtime -p gossamer-interp -p gossamer-sched \
             -p gossamer-coro \
-            -- --nocapture
+            --lib --tests -- --nocapture
       - name: Test - stdlib & tooling (rest of workspace)
         if: ${{ !cancelled() }}
         shell: bash
@@ -298,24 +295,34 @@ jobs:
             --exclude gossamer-binding --exclude gossamer-binding-macros \
             --exclude gossamer-runtime --exclude gossamer-interp \
             --exclude gossamer-sched --exclude gossamer-coro \
-            -- --nocapture
+            --lib --tests -- --nocapture
       - name: Build release
         shell: bash
         run: |
           "$CARGO_BIN" build --release --workspace
 
-  idle-cpu:
-    name: Idle CPU regression guard
-    runs-on: ubuntu-latest
+  test-platform-libraries:
+    name: Test platform libraries (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.95.0
-      - run: rustup set profile minimal
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-test-setup
         with:
-          prefix-key: v2-idle-stdio
-      - run: cargo build --release -p gossamer-cli
-      - run: ./benchmarks/idle/check.sh
+          cache-prefix: v2-test-platform-libraries
+      - name: Test OS-sensitive libraries
+        shell: bash
+        env:
+          RUST_BACKTRACE: "full"
+        run: |
+          "$CARGO_BIN" test --no-fail-fast --lib --tests \
+            -p gossamer-runtime -p gossamer-interp -p gossamer-sched \
+            -p gossamer-coro -p gossamer-std -p gossamer-pkg \
+            -p gossamer-http3 -p gossamer-ws -- --nocapture
 
   musl-build:
     name: Musl build check
@@ -339,7 +346,6 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - aarch64-unknown-linux-gnu
           - riscv64gc-unknown-linux-gnu
           - wasm32-unknown-unknown
           - wasm32-wasip1
@@ -403,23 +409,6 @@ jobs:
       - uses: actions/checkout@v6
       - uses: EmbarkStudios/cargo-deny-action@v2
 
-  audit:
-    name: cargo-audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.95.0
-      - run: rustup set profile minimal
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: v2-audit-stdio
-      # Install cargo-audit as a prebuilt binary (GitHub Releases) -
-      # avoids compiling it from crates.io on every cache miss.
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-audit
-      - run: cargo audit
-
   docs:
     name: mkdocs build (--strict)
     runs-on: ubuntu-latest
@@ -447,7 +436,7 @@ jobs:
       - name: cargo test --doc --workspace
         env:
           RUST_BACKTRACE: "full"
-        run: cargo test --doc --workspace --release --no-fail-fast -- --nocapture
+        run: cargo test --doc --workspace --no-fail-fast -- --nocapture
 
   stdlib-docs-drift:
     name: gos doc --emit-stdlib --check

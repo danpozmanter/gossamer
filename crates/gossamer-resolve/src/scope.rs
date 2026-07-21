@@ -271,6 +271,12 @@ const PRELUDE_VALUES: &[&str] = &[
     "__gos_pem_encode_raw",
     "__gos_x509_parse_pem_raw",
     "__gos_fs_metadata_raw",
+    "__gos_time_location_raw",
+    "__gos_time_fixed_location_raw",
+    "__gos_time_civil_raw",
+    "__gos_time_resolve_raw",
+    "__gos_time_format_in_raw",
+    "__gos_time_add_date_raw",
     "__gos_tar_read_raw",
     "__gos_zip_read_raw",
     // Leaf intrinsics for the injected `database::sql` real-struct

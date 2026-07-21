@@ -74,6 +74,11 @@ pub const OS_EXEC: StdModule = StdModule {
     summary: "Deprecated compatibility facade for child processes; new code uses std::process.",
     items: &[
         StdItem {
+            name: "Path",
+            kind: StdItemKind::Type,
+            doc: "Immutable UTF-8 lexical path value with value-returning operations.",
+        },
+        StdItem {
             name: "Child",
             kind: StdItemKind::Type,
             doc: "Handle to a still-running child supporting wait / kill.",

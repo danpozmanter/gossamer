@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Tree-walking interpreter for the Gossamer language."
+description = "Bytecode interpreter and adaptive JIT runtime for the Gossamer language."
 
 [lints]
 workspace = true

@@ -1060,33 +1060,39 @@ impl<'tcx> FnBuilder<'tcx> {
         }))
     }
 
-    /// Lowers a numeric `Vec::new()` to a flat empty `IntArray` /
+    /// Lowers a numeric `Vec::new()` or `Vec::with_capacity(n)` to a flat empty `IntArray` /
     /// `FloatVec` (8 bytes per element) instead of the boxed
     /// `Value::Array` the generic `Vec::new` builtin returns. The local
     /// is tagged flat so a following `push` loop grows the flat backing
-    /// store in place. Only the zero-argument `Vec::new()` is taken;
-    /// `Vec::with_capacity(n)` keeps the generic path so its capacity
-    /// argument (and any side effect) is still evaluated.
+    /// store in place. The VM has historically treated capacity as a hint,
+    /// but still evaluates the capacity expression exactly once.
     pub(crate) fn try_build_empty_typed_vec(
         &mut self,
         callee: &HirExpr,
         args: &[HirExpr],
         result_ty: Ty,
     ) -> RuntimeResult<Option<TypedReg>> {
-        if !args.is_empty() {
-            return Ok(None);
-        }
         let HirExprKind::Path { segments, .. } = &callee.kind else {
             return Ok(None);
         };
         let n = segments.len();
-        if n < 2 || segments[n - 2].name.as_str() != "Vec" || segments[n - 1].name.as_str() != "new"
+        if n < 2 || segments[n - 2].name.as_str() != "Vec" {
+            return Ok(None);
+        }
+        let constructor = segments[n - 1].name.as_str();
+        if !((constructor == "new" && args.is_empty())
+            || (constructor == "with_capacity" && args.len() == 1))
         {
             return Ok(None);
         }
         let Some(elem) = self.array_elem_ty(result_ty) else {
             return Ok(None);
         };
+        if constructor == "with_capacity" {
+            let capacity = self.compile_expr_ex(&args[0])?;
+            let capacity_i = self.as_i64(capacity);
+            self.emit(Op::CheckNonNegativeCapacity { capacity_i });
+        }
         let dst = self.alloc_reg();
         match self.tcx.kind(elem) {
             Some(TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize)) => {

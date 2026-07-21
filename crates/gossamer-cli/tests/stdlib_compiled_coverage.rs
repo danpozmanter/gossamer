@@ -83,6 +83,10 @@ const COMPILED_VIA_SPECIAL_MECHANISM: &[&str] = &[
     "encoding::pem::decode_all",
     "encoding::pem::encode",
     "fs::metadata",
+    // Civil-time wrappers carry the source-visible Location struct's compact
+    // specification string into the scalar runtime leaves below.
+    "time::add_date",
+    "time::format_in",
     // `flag::define` expansion consumes these declarative builders
     // (`lower_flag_define`); they are only meaningful inside it.
     "flag::bool",

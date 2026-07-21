@@ -163,6 +163,80 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  {widened} = zext i1 {bool_tmp} to {dest_llvm}").unwrap();
             return Ok(widened);
         }
+        // Option<String> equality is structural. The inline carrier's high
+        // word contains a string pointer, so comparing the full i128 would
+        // incorrectly make separately allocated equal strings unequal.
+        let is_option_string = |ty: Ty| {
+            matches!(
+                self.tcx.kind(ty),
+                Some(TyKind::Adt { def, substs })
+                    if def.local == u32::MAX - 1
+                        && substs.types().first().is_some_and(|inner| {
+                            matches!(self.tcx.kind(*inner), Some(TyKind::String))
+                        })
+            )
+        };
+        if matches!(op, BinOp::Eq | BinOp::Ne)
+            && (is_option_string(self.operand_ty(lhs)) || is_option_string(self.operand_ty(rhs)))
+        {
+            let lhs_v = self.lower_operand(lhs)?;
+            let rhs_v = self.lower_operand(rhs)?;
+            let lhs_disc = self.fresh();
+            let rhs_disc = self.fresh();
+            writeln!(self.out, "  {lhs_disc} = trunc i128 {lhs_v} to i64").unwrap();
+            writeln!(self.out, "  {rhs_disc} = trunc i128 {rhs_v} to i64").unwrap();
+            let discs_equal = self.fresh();
+            writeln!(
+                self.out,
+                "  {discs_equal} = icmp eq i64 {lhs_disc}, {rhs_disc}"
+            )
+            .unwrap();
+            let lhs_hi = self.fresh();
+            let rhs_hi = self.fresh();
+            writeln!(self.out, "  {lhs_hi} = lshr i128 {lhs_v}, 64").unwrap();
+            writeln!(self.out, "  {rhs_hi} = lshr i128 {rhs_v}, 64").unwrap();
+            let lhs_payload = self.fresh();
+            let rhs_payload = self.fresh();
+            writeln!(self.out, "  {lhs_payload} = trunc i128 {lhs_hi} to i64").unwrap();
+            writeln!(self.out, "  {rhs_payload} = trunc i128 {rhs_hi} to i64").unwrap();
+            let lhs_ptr = self.fresh();
+            let rhs_ptr = self.fresh();
+            writeln!(self.out, "  {lhs_ptr} = inttoptr i64 {lhs_payload} to ptr").unwrap();
+            writeln!(self.out, "  {rhs_ptr} = inttoptr i64 {rhs_payload} to ptr").unwrap();
+            declare_rt(&mut self.runtime_refs, "gos_rt_str_eq");
+            let strings_equal8 = self.fresh();
+            writeln!(
+                self.out,
+                "  {strings_equal8} = call i8 @gos_rt_str_eq(ptr {lhs_ptr}, ptr {rhs_ptr})"
+            )
+            .unwrap();
+            let strings_equal = self.fresh();
+            writeln!(
+                self.out,
+                "  {strings_equal} = icmp ne i8 {strings_equal8}, 0"
+            )
+            .unwrap();
+            let is_some = self.fresh();
+            writeln!(self.out, "  {is_some} = icmp eq i64 {lhs_disc}, 0").unwrap();
+            let payloads_equal = self.fresh();
+            writeln!(
+                self.out,
+                "  {payloads_equal} = select i1 {is_some}, i1 {strings_equal}, i1 true"
+            )
+            .unwrap();
+            let equal = self.fresh();
+            writeln!(
+                self.out,
+                "  {equal} = and i1 {discs_equal}, {payloads_equal}"
+            )
+            .unwrap();
+            if matches!(op, BinOp::Eq) {
+                return Ok(equal);
+            }
+            let not_equal = self.fresh();
+            writeln!(self.out, "  {not_equal} = xor i1 {equal}, true").unwrap();
+            return Ok(not_equal);
+        }
         let mut lhs_v = self.lower_operand(lhs)?;
         let mut rhs_v = self.lower_operand(rhs)?;
         // Comparisons return `i1`; everything else returns the

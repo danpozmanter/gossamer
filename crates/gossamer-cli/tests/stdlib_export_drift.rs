@@ -5,6 +5,33 @@
 //! it, a newly-added `module::fn` would be wrongly rejected by
 //! `gos check` / the LSP as an unknown member.
 
+/// Public members implemented by parse-time injected Gossamer wrappers rather
+/// than direct interpreter registrations.
+const SOURCE_VISIBLE_VIA_REWRITE: &[&str] = &[
+    "path::Path",
+    "path::Path::as_str",
+    "path::Path::extension",
+    "path::Path::file_name",
+    "path::Path::is_absolute",
+    "path::Path::join",
+    "path::Path::new",
+    "path::Path::normalize",
+    "path::Path::parent",
+    "path::Path::starts_with",
+    "path::Path::stem",
+    "time::CivilResolution::Fold",
+    "time::CivilResolution::Gap",
+    "time::CivilResolution::Unique",
+    "time::Location::civil",
+    "time::Location::fixed",
+    "time::Location::lookup",
+    "time::Location::name",
+    "time::Location::resolve",
+    "time::Location::utc",
+    "time::add_date",
+    "time::format_in",
+];
+
 #[test]
 fn resolver_stdlib_table_matches_runtime() {
     let mut live: Vec<&str> = gossamer_interp::registered_names()
@@ -18,11 +45,13 @@ fn resolver_stdlib_table_matches_runtime() {
 
     let missing: Vec<&str> = live
         .iter()
+        .filter(|n| !n.contains("::__gos_"))
         .filter(|n| !table.contains(n))
         .copied()
         .collect();
     let extra: Vec<&str> = table
         .iter()
+        .filter(|n| !SOURCE_VISIBLE_VIA_REWRITE.contains(n))
         .filter(|n| !live.contains(n))
         .copied()
         .collect();
@@ -109,6 +138,7 @@ fn registry_members_match_manifest() {
     let unmatched: Vec<&str> = gossamer_interp::registered_names()
         .into_iter()
         .filter(|n| n.contains("::") && n.chars().next().is_some_and(char::is_lowercase))
+        .filter(|n| !n.contains("::__gos_"))
         .filter(|n| !ALLOWED_UNMANIFESTED.contains(n))
         .filter(|n| {
             let mut segs: Vec<&str> = n.split("::").collect();
@@ -173,6 +203,10 @@ const MANIFEST_IMPL_VIA_REWRITE: &[&str] = &[
     "database::sql::drivers",
     "database::sql::open",
     "database::sql::migrate_up",
+    // Civil-time calls are rewritten to wrappers that pass Location's compact
+    // source representation into the registered raw runtime leaves.
+    "time::add_date",
+    "time::format_in",
 ];
 
 #[test]

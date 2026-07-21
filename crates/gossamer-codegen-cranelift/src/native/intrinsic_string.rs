@@ -1660,12 +1660,6 @@ pub(super) fn lower_intrinsic_call_string(
         // `gos_load(ptr, 0)` so the same code handles scalar
         // and pointer-shaped element types.
         "gos_rt_vec_get_ptr" => {
-            let get_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_vec_get_ptr",
-                &[ptr_ty, types::I64],
-                &[ptr_ty],
-            )?;
             let vec_p = match args.first() {
                 Some(a) => lower_operand(
                     module,
@@ -1684,9 +1678,71 @@ pub(super) fn lower_intrinsic_call_string(
                 None => builder.ins().iconst(types::I64, 0),
             };
             let i = coerce_arg_to(builder, i_val, types::I64)?;
-            let fref = module.declare_func_in_func(get_fn, builder.func);
-            let call = builder.ins().call(fref, &[vec_p, i]);
-            let ptr = builder.inst_results(call)[0];
+            let can_inline_header_stride = args.first().is_some_and(|arg| match arg {
+                Operand::Copy(place) => match tcx.kind_of(resolve_place_ty(tcx, body, place)) {
+                    TyKind::Vec(elem) | TyKind::Slice(elem) => {
+                        !matches!(tcx.kind_of(*elem), TyKind::Vec(_))
+                    }
+                    _ => false,
+                },
+                _ => false,
+            });
+            let ptr = if can_inline_header_stride && destination.projection.is_empty() {
+                let valid_blk = builder.create_block();
+                let null_blk = builder.create_block();
+                let done_blk = builder.create_block();
+                builder.append_block_param(done_blk, ptr_ty);
+
+                let is_null = builder.ins().icmp_imm(IntCC::Equal, vec_p, 0);
+                builder.ins().brif(is_null, null_blk, &[], valid_blk, &[]);
+
+                builder.switch_to_block(valid_blk);
+                let len = builder
+                    .ins()
+                    .load(types::I64, MemFlags::trusted(), vec_p, 0);
+                let ge0 = builder
+                    .ins()
+                    .icmp_imm(IntCC::SignedGreaterThanOrEqual, i, 0);
+                let lt_len = builder.ins().icmp(IntCC::SignedLessThan, i, len);
+                let in_bounds = builder.ins().band(ge0, lt_len);
+                let load_blk = builder.create_block();
+                let oob_blk = builder.create_block();
+                builder.ins().brif(in_bounds, load_blk, &[], oob_blk, &[]);
+
+                builder.switch_to_block(load_blk);
+                let elem_bytes32 = builder
+                    .ins()
+                    .load(types::I32, MemFlags::trusted(), vec_p, 16);
+                let elem_bytes64 = builder.ins().uextend(types::I64, elem_bytes32);
+                let off64 = builder.ins().imul(i, elem_bytes64);
+                let off = coerce_arg_to(builder, off64, ptr_ty)?;
+                let data = builder.ins().load(ptr_ty, MemFlags::trusted(), vec_p, 24);
+                let elem_ptr = builder.ins().iadd(data, off);
+                builder
+                    .ins()
+                    .jump(done_blk, &[ir::BlockArg::Value(elem_ptr)]);
+
+                builder.switch_to_block(oob_blk);
+                let null = builder.ins().iconst(ptr_ty, 0);
+                builder.ins().jump(done_blk, &[ir::BlockArg::Value(null)]);
+
+                builder.switch_to_block(null_blk);
+                let null = builder.ins().iconst(ptr_ty, 0);
+                builder.ins().jump(done_blk, &[ir::BlockArg::Value(null)]);
+
+                builder.switch_to_block(done_blk);
+                builder.block_params(done_blk)[0]
+            } else {
+                let get_fn = intrinsics.extern_fn(
+                    module,
+                    "gos_rt_vec_get_ptr",
+                    &[ptr_ty, types::I64],
+                    &[ptr_ty],
+                )?;
+                let fref = module.declare_func_in_func(get_fn, builder.func);
+                let call = builder.ins().call(fref, &[vec_p, i]);
+                builder.inst_results(call)[0]
+            };
             define_var_to(
                 builder,
                 locals,

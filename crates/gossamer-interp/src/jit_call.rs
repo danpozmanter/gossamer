@@ -1259,51 +1259,189 @@ fn free_in_flight(natives: &[NativeArg], built_enums: &[(i64, u32)], str_cells: 
 /// owned solely by the cache (never handed to `free_natives`) and freed when
 /// the cache is cleared at Vm teardown or between pooled worker tasks, so
 /// there is no double free and no per-run leak.
-/// One cached graph: the native outer-`GosVec` pointer plus a strong clone of
-/// the source `Arc` (pinning its address as the cache key's identity).
-type GraphCacheEntry = (i64, Arc<Vec<Value>>);
+struct GraphCacheEntry {
+    ptr: i64,
+    _src: Arc<Vec<Value>>,
+    bytes: usize,
+}
+
+#[derive(Default)]
+struct GraphCacheState {
+    entries: rustc_hash::FxHashMap<usize, GraphCacheEntry>,
+    lru: std::collections::VecDeque<usize>,
+    candidate: Option<(usize, std::sync::Weak<Vec<Value>>)>,
+    bytes: usize,
+    hits: u64,
+    misses: u64,
+    evictions: u64,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct GraphCacheMetrics {
+    pub(crate) bytes: usize,
+    pub(crate) hits: u64,
+    pub(crate) misses: u64,
+    pub(crate) evictions: u64,
+}
 
 #[derive(Default)]
 pub(crate) struct GraphCache {
-    entries: std::cell::RefCell<rustc_hash::FxHashMap<usize, GraphCacheEntry>>,
+    state: std::cell::RefCell<GraphCacheState>,
 }
 
 impl GraphCache {
+    const DEFAULT_MAX_BYTES: usize = 16 * 1024 * 1024;
+
+    fn max_bytes() -> usize {
+        std::env::var("GOS_JIT_GRAPH_CACHE_BYTES")
+            .ok()
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(Self::DEFAULT_MAX_BYTES)
+    }
+
+    fn graph_bytes(src: &[Value]) -> usize {
+        let payload = src.iter().fold(0usize, |total, row| {
+            let len = match row {
+                Value::IntArray(values) => values.len(),
+                Value::Array(values) => values.len(),
+                _ => 0,
+            };
+            total.saturating_add(len.saturating_mul(std::mem::size_of::<i64>()))
+        });
+        payload.saturating_add(src.len().saturating_mul(std::mem::size_of::<usize>()))
+    }
+
     /// Cached native outer-`GosVec` pointer for `key`, if marshalled before.
     fn get(&self, key: usize) -> Option<i64> {
-        self.entries.borrow().get(&key).map(|(ptr, _)| *ptr)
+        let mut state = self.state.borrow_mut();
+        let ptr = state.entries.get(&key).map(|entry| entry.ptr);
+        if ptr.is_some() {
+            state.hits = state.hits.saturating_add(1);
+            state.lru.retain(|cached| *cached != key);
+            state.lru.push_back(key);
+        } else {
+            state.misses = state.misses.saturating_add(1);
+        }
+        ptr
     }
 
     /// `true` when `ptr` is a cache-owned native graph. A body that returns
     /// one of its `&[[i64]]` params hands back a pointer the cache still owns;
     /// the trampoline must not free it (the cache frees it at teardown).
     fn owns_ptr(&self, ptr: i64) -> bool {
-        self.entries.borrow().values().any(|(p, _)| *p == ptr)
+        self.state
+            .borrow()
+            .entries
+            .values()
+            .any(|entry| entry.ptr == ptr)
     }
 
-    /// Records `ptr` for `key`, retaining the source `Arc` so its address
-    /// stays unique for the entry's lifetime.
-    fn insert(&self, key: usize, ptr: i64, src: Arc<Vec<Value>>) {
-        self.entries.borrow_mut().insert(key, (ptr, src));
+    /// Returns true only on a repeated call with the same still-live source.
+    /// One-off streaming graphs are therefore marshalled for the call and
+    /// immediately freed instead of entering the retained cache.
+    fn should_cache(&self, key: usize, src: &Arc<Vec<Value>>) -> bool {
+        let mut state = self.state.borrow_mut();
+        let repeated = state.candidate.as_ref().is_some_and(|(candidate, weak)| {
+            *candidate == key && weak.upgrade().is_some_and(|value| Arc::ptr_eq(&value, src))
+        });
+        state.candidate = Some((key, Arc::downgrade(src)));
+        repeated
+    }
+
+    /// Records `ptr` under a byte-accounted LRU budget. Oversized graphs are
+    /// not retained at all.
+    fn insert(&self, key: usize, ptr: i64, src: Arc<Vec<Value>>) -> bool {
+        let bytes = Self::graph_bytes(&src);
+        let max_bytes = Self::max_bytes();
+        if max_bytes == 0 || bytes > max_bytes {
+            return false;
+        }
+        let mut state = self.state.borrow_mut();
+        while state.bytes.saturating_add(bytes) > max_bytes {
+            let Some(old_key) = state.lru.pop_front() else {
+                break;
+            };
+            if let Some(old) = state.entries.remove(&old_key) {
+                state.bytes = state.bytes.saturating_sub(old.bytes);
+                state.evictions = state.evictions.saturating_add(1);
+                // SAFETY: the removed entry solely owns this native graph.
+                unsafe { rt::gos_rt_vec_free(old.ptr as *mut rt::vec::GosVec) };
+            }
+        }
+        state.bytes = state.bytes.saturating_add(bytes);
+        state.lru.push_back(key);
+        state.entries.insert(
+            key,
+            GraphCacheEntry {
+                ptr,
+                _src: src,
+                bytes,
+            },
+        );
+        true
+    }
+
+    pub(crate) fn metrics(&self) -> GraphCacheMetrics {
+        let state = self.state.borrow();
+        GraphCacheMetrics {
+            bytes: state.bytes,
+            hits: state.hits,
+            misses: state.misses,
+            evictions: state.evictions,
+        }
     }
 
     /// Frees every cached native graph and empties the cache. Called at Vm
     /// teardown (via [`Drop`]) and between pooled worker tasks.
     pub(crate) fn clear(&self) {
-        for (_, (ptr, _)) in self.entries.borrow_mut().drain() {
+        let mut state = self.state.borrow_mut();
+        for (_, entry) in state.entries.drain() {
             // SAFETY: each `ptr` is a live native outer `GosVec` built by
             // `build_native_vec_vec_i64`, owned solely by this cache (it is
             // never pushed into a call's `natives`, so `free_natives` never
             // touches it), and freed exactly once here. Freeing the outer
             // recursively reclaims every inner vec.
-            unsafe { rt::gos_rt_vec_free(ptr as *mut rt::vec::GosVec) };
+            unsafe { rt::gos_rt_vec_free(entry.ptr as *mut rt::vec::GosVec) };
         }
+        state.lru.clear();
+        state.candidate = None;
+        state.bytes = 0;
     }
 }
 
 impl Drop for GraphCache {
     fn drop(&mut self) {
         self.clear();
+    }
+}
+
+#[cfg(test)]
+mod graph_cache_tests {
+    use super::*;
+
+    #[test]
+    fn graph_cache_admits_only_after_reuse_and_reports_bytes() {
+        let cache = GraphCache::default();
+        let graph = Arc::new(vec![Value::IntArray(Arc::new(vec![1, 2, 3]))]);
+        let key = Arc::as_ptr(&graph) as usize;
+
+        assert!(cache.get(key).is_none());
+        assert!(!cache.should_cache(key, &graph));
+        let first = build_native_vec_vec_i64(&graph).expect("first graph marshal");
+        // SAFETY: the first-use graph was deliberately not retained.
+        unsafe { rt::gos_rt_vec_free(first as *mut rt::vec::GosVec) };
+
+        assert!(cache.get(key).is_none());
+        assert!(cache.should_cache(key, &graph));
+        let second = build_native_vec_vec_i64(&graph).expect("second graph marshal");
+        assert!(cache.insert(key, second, Arc::clone(&graph)));
+        assert_eq!(cache.get(key), Some(second));
+        let metrics = cache.metrics();
+        assert_eq!(metrics.hits, 1);
+        assert_eq!(metrics.misses, 2);
+        assert!(metrics.bytes >= 3 * std::mem::size_of::<i64>());
+        cache.clear();
+        assert_eq!(cache.metrics().bytes, 0);
     }
 }
 
@@ -3194,7 +3332,11 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
                         free_in_flight(&natives, &built_enums, &str_cells);
                         return Dispatch::Fallback;
                     };
-                    graph_cache.insert(key, built, arc.clone());
+                    if !graph_cache.should_cache(key, arc)
+                        || !graph_cache.insert(key, built, arc.clone())
+                    {
+                        natives.push((JitKind::NativeVecVecI64, built, None));
+                    }
                     built
                 };
                 Slot::I(ptr)

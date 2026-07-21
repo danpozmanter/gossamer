@@ -137,10 +137,7 @@ use cranelift_codegen::{Context, ir};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module, ModuleDeclarations};
 use cranelift_object::{ObjectBuilder, ObjectModule};
-use gossamer_mir::{
-    BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, StatementKind, Terminator,
-    UnOp,
-};
+use gossamer_mir::{Body, ConstValue, Local, Operand, Place, Projection, UnOp};
 use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 use rayon::prelude::*;
 
@@ -1588,12 +1585,6 @@ pub(super) fn lower_intrinsic_call_io_math(
                 }
                 None => builder.ins().iconst(types::I64, 0),
             };
-            let idx_ptr = match value_type(idx, builder) {
-                t if t == ptr_ty => idx,
-                t if t == types::I64 && ptr_ty == types::I32 => builder.ins().ireduce(ptr_ty, idx),
-                t if t == types::I32 && ptr_ty == types::I64 => builder.ins().uextend(ptr_ty, idx),
-                _ => idx,
-            };
             if !destination.projection.is_empty() {
                 bail!("native codegen: gos_rt_str_byte_at destination cannot have projections");
             }
@@ -1609,6 +1600,12 @@ pub(super) fn lower_intrinsic_call_io_math(
             let idx_i64 = match value_type(idx, builder) {
                 t if t == types::I64 => idx,
                 t if t == types::I32 => builder.ins().sextend(types::I64, idx),
+                _ => idx,
+            };
+            let idx_ptr = match value_type(idx, builder) {
+                t if t == ptr_ty => idx,
+                t if t == types::I64 && ptr_ty == types::I32 => builder.ins().ireduce(ptr_ty, idx),
+                t if t == types::I32 && ptr_ty == types::I64 => builder.ins().uextend(ptr_ty, idx),
                 _ => idx,
             };
             let ge0 = builder
@@ -1645,20 +1642,20 @@ pub(super) fn lower_intrinsic_call_io_math(
             );
             Ok(true)
         }
-        // String length: we treat `String` at the native ABI as a
-        // nul-terminated pointer today, so `.len()` is plain
-        // `strlen(ptr)`. Once the real `{ptr, len, cap}` header
-        // ships this will route to a proper runtime symbol.
+        // Runtime strings carry their byte length in the header. Calling
+        // `strlen` here made `byte_at` loops quadratic because the bounds
+        // check above asks for the length on every iteration.
         "gos_rt_str_len" => {
-            let strlen = intrinsics.extern_fn(module, "strlen", &[ptr_ty], &[types::I64])?;
-            let strlen_ref = module.declare_func_in_func(strlen, builder.func);
+            let str_len =
+                intrinsics.extern_fn(module, "gos_rt_str_len", &[ptr_ty], &[types::I64])?;
+            let str_len_ref = module.declare_func_in_func(str_len, builder.func);
             let ptr = match args.first() {
                 Some(arg) => {
                     lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
                 }
                 None => builder.ins().iconst(ptr_ty, 0),
             };
-            let call = builder.ins().call(strlen_ref, &[ptr]);
+            let call = builder.ins().call(str_len_ref, &[ptr]);
             let len = builder.inst_results(call)[0];
             define_var_to(
                 builder,

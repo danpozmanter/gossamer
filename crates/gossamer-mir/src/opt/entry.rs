@@ -3,7 +3,6 @@
 // copy propagation, and dead-store elimination. Each pass is
 // idempotent so callers can run them in any order.
 
-
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use gossamer_lex::Span;
@@ -118,9 +117,8 @@ fn bounds_access_counts(body: &Body) -> (usize, usize) {
 ///
 /// Monomorphisation and ownership lowering happen outside this function and
 /// remain identical across profiles. Debug builds skip whole-program inlining,
-/// but retain inexpensive local canonicalisation. Aggregate scalar replacement
-/// and bounds analyses stay release-only so debug compilation remains the
-/// shortest possible pipeline.
+/// but retain inexpensive local canonicalisation and local bounds facts. Those
+/// facts are required for predictable debug-tier runtime on counted loops.
 pub fn optimise_debug(body: &mut Body, tcx: &TyCtxt) {
     crate::verify::debug_verify_body(body);
     copy_propagate(body, tcx);
@@ -134,6 +132,12 @@ pub fn optimise_debug(body: &mut Body, tcx: &TyCtxt) {
     dead_block_sweep(body);
     crate::verify::debug_verify_body(body);
     dead_store_elim(body, tcx);
+    crate::verify::debug_verify_body(body);
+    bounds_check_elim(body, tcx);
+    crate::verify::debug_verify_body(body);
+    local_branch_bounds_check_elim(body, tcx);
+    crate::verify::debug_verify_body(body);
+    bounds_check_versioning(body, tcx);
     crate::verify::debug_verify_body(body);
 }
 

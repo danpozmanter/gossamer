@@ -101,3 +101,346 @@ pub extern "C" fn gos_rt_duration_as_secs(ms: i64) -> i64 {
 pub extern "C" fn gos_rt_duration_as_micros(ms: i64) -> i64 {
     ms.saturating_mul(1_000)
 }
+
+// Civil-time bridge used by the source-level `time` wrappers. Locations are
+// encoded as stable strings so values remain immutable and require no native
+// handle lifetime management.
+
+use chrono::{
+    DateTime, Datelike, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, Offset, TimeZone,
+    Timelike, Utc,
+};
+use chrono_tz::Tz;
+use std::ffi::CStr;
+use std::os::raw::c_char;
+
+use crate::c_abi::{gos_rt_error_new, gos_rt_gc_alloc, gos_rt_result_new};
+
+enum CivilLocation {
+    Iana(Tz),
+    Fixed(FixedOffset),
+}
+
+fn read_time_string(ptr: *const c_char) -> Result<String, String> {
+    if ptr.is_null() {
+        return Err("time: null string".to_string());
+    }
+    Ok(unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned())
+}
+
+fn parse_location(spec: &str) -> Result<CivilLocation, String> {
+    if spec == "UTC" {
+        return Ok(CivilLocation::Iana(chrono_tz::UTC));
+    }
+    if let Ok(zone) = spec.parse::<Tz>() {
+        return Ok(CivilLocation::Iana(zone));
+    }
+    let Some(offset) = spec.strip_prefix("UTC") else {
+        return Err(format!("time: unknown location {spec:?}"));
+    };
+    let sign = match offset.as_bytes().first() {
+        Some(b'+') => 1,
+        Some(b'-') => -1,
+        _ => return Err(format!("time: invalid fixed location {spec:?}")),
+    };
+    let mut parts = offset[1..].split(':');
+    let hours = parts.next().and_then(|part| part.parse::<i32>().ok());
+    let minutes = parts.next().and_then(|part| part.parse::<i32>().ok());
+    if parts.next().is_some() {
+        return Err(format!("time: invalid fixed location {spec:?}"));
+    }
+    let seconds = match (hours, minutes) {
+        (Some(hours), Some(minutes)) if hours <= 23 && minutes <= 59 => {
+            sign * (hours * 3_600 + minutes * 60)
+        }
+        _ => return Err(format!("time: invalid fixed location {spec:?}")),
+    };
+    FixedOffset::east_opt(seconds)
+        .map(CivilLocation::Fixed)
+        .ok_or_else(|| format!("time: invalid fixed location {spec:?}"))
+}
+
+fn time_error(message: &str) -> i128 {
+    let text = super::string::alloc_cstring(message.as_bytes());
+    let error = unsafe { gos_rt_error_new(text) };
+    gos_rt_result_new(1, error as i64)
+}
+
+fn time_ok_string(value: &str) -> i128 {
+    gos_rt_result_new(0, super::string::alloc_cstring(value.as_bytes()) as i64)
+}
+
+fn alloc_i64_words(values: &[i64]) -> i64 {
+    let size = u64::try_from(values.len().saturating_mul(8)).unwrap_or(u64::MAX);
+    let ptr = gos_rt_gc_alloc(size).cast::<i64>();
+    if ptr.is_null() {
+        return 0;
+    }
+    unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), ptr, values.len()) };
+    ptr as i64
+}
+
+fn naive_civil(
+    year: i64,
+    month: i64,
+    day: i64,
+    hour: i64,
+    minute: i64,
+    second: i64,
+    nanos: i64,
+) -> Result<NaiveDateTime, String> {
+    let year = i32::try_from(year).map_err(|_| "time: year out of range".to_string())?;
+    let month = u32::try_from(month).map_err(|_| "time: month out of range".to_string())?;
+    let day = u32::try_from(day).map_err(|_| "time: day out of range".to_string())?;
+    let hour = u32::try_from(hour).map_err(|_| "time: hour out of range".to_string())?;
+    let minute = u32::try_from(minute).map_err(|_| "time: minute out of range".to_string())?;
+    let second = u32::try_from(second).map_err(|_| "time: second out of range".to_string())?;
+    let nanos = u32::try_from(nanos).map_err(|_| "time: nanoseconds out of range".to_string())?;
+    NaiveDate::from_ymd_opt(year, month, day)
+        .and_then(|date| date.and_hms_nano_opt(hour, minute, second, nanos))
+        .ok_or_else(|| "time: invalid civil time".to_string())
+}
+
+fn resolve_civil(location: &CivilLocation, civil: NaiveDateTime) -> LocalResult<DateTime<Utc>> {
+    match location {
+        CivilLocation::Iana(zone) => zone
+            .from_local_datetime(&civil)
+            .map(|dt| dt.with_timezone(&Utc)),
+        CivilLocation::Fixed(offset) => offset
+            .from_local_datetime(&civil)
+            .map(|dt| dt.with_timezone(&Utc)),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_time_location_raw(name: *const c_char) -> i128 {
+    ffi_entry!(time_error("time: runtime panic"), {
+        match read_time_string(name).and_then(|name| {
+            parse_location(&name)?;
+            Ok(name)
+        }) {
+            Ok(name) => time_ok_string(&name),
+            Err(error) => time_error(&error),
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_time_fixed_location_raw(offset_seconds: i64) -> i128 {
+    ffi_entry!(time_error("time: runtime panic"), {
+        let Ok(offset) = i32::try_from(offset_seconds) else {
+            return time_error("time: fixed offset out of range");
+        };
+        if FixedOffset::east_opt(offset).is_none() {
+            return time_error("time: fixed offset out of range");
+        }
+        let sign = if offset < 0 { '-' } else { '+' };
+        let magnitude = offset.unsigned_abs();
+        time_ok_string(&format!(
+            "UTC{sign}{:02}:{:02}",
+            magnitude / 3_600,
+            (magnitude / 60) % 60
+        ))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_time_civil_raw(ms: i64, location: *const c_char) -> i128 {
+    ffi_entry!(time_error("time: runtime panic"), {
+        let result = read_time_string(location)
+            .and_then(|spec| parse_location(&spec))
+            .and_then(|location| {
+                let utc = DateTime::<Utc>::from_timestamp_millis(ms)
+                    .ok_or_else(|| "time: timestamp out of range".to_string())?;
+                let fields = match location {
+                    CivilLocation::Iana(zone) => {
+                        let value = utc.with_timezone(&zone);
+                        [
+                            value.year() as i64,
+                            value.month() as i64,
+                            value.day() as i64,
+                            value.hour() as i64,
+                            value.minute() as i64,
+                            value.second() as i64,
+                            value.nanosecond() as i64,
+                            value.offset().fix().local_minus_utc() as i64,
+                            value.weekday().num_days_from_monday() as i64,
+                        ]
+                    }
+                    CivilLocation::Fixed(offset) => {
+                        let value = utc.with_timezone(&offset);
+                        [
+                            value.year() as i64,
+                            value.month() as i64,
+                            value.day() as i64,
+                            value.hour() as i64,
+                            value.minute() as i64,
+                            value.second() as i64,
+                            value.nanosecond() as i64,
+                            value.offset().local_minus_utc() as i64,
+                            value.weekday().num_days_from_monday() as i64,
+                        ]
+                    }
+                };
+                Ok(alloc_i64_words(&fields))
+            });
+        match result {
+            Ok(payload) if payload != 0 => gos_rt_result_new(0, payload),
+            Ok(_) => time_error("time: allocation failed"),
+            Err(error) => time_error(&error),
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_time_resolve_raw(
+    location: *const c_char,
+    year: i64,
+    month: i64,
+    day: i64,
+    hour: i64,
+    minute: i64,
+    second: i64,
+    nanos: i64,
+) -> i128 {
+    ffi_entry!(time_error("time: runtime panic"), {
+        let result = read_time_string(location)
+            .and_then(|spec| parse_location(&spec))
+            .and_then(|location| {
+                let civil = naive_civil(year, month, day, hour, minute, second, nanos)?;
+                let values = match resolve_civil(&location, civil) {
+                    LocalResult::Single(value) => [1, value.timestamp_millis(), 0],
+                    LocalResult::None => [0, 0, 0],
+                    LocalResult::Ambiguous(a, b) => {
+                        let mut values = [a.timestamp_millis(), b.timestamp_millis()];
+                        values.sort_unstable();
+                        [2, values[0], values[1]]
+                    }
+                };
+                Ok(alloc_i64_words(&values))
+            });
+        match result {
+            Ok(payload) if payload != 0 => gos_rt_result_new(0, payload),
+            Ok(_) => time_error("time: allocation failed"),
+            Err(error) => time_error(&error),
+        }
+    })
+}
+
+fn chrono_layout(layout: &str) -> String {
+    let mut output = layout.to_string();
+    for (from, to) in [
+        ("2006", "%Y"),
+        ("January", "%B"),
+        ("Jan", "%b"),
+        ("01", "%m"),
+        ("Monday", "%A"),
+        ("Mon", "%a"),
+        ("02", "%d"),
+        ("15", "%H"),
+        ("03", "%I"),
+        ("04", "%M"),
+        ("05", "%S"),
+        ("PM", "%p"),
+        ("MST", "%Z"),
+        ("-07:00", "%:z"),
+        ("-0700", "%z"),
+    ] {
+        output = output.replace(from, to);
+    }
+    output
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_time_format_in_raw(
+    layout: *const c_char,
+    ms: i64,
+    location: *const c_char,
+) -> i128 {
+    ffi_entry!(time_error("time: runtime panic"), {
+        let result = read_time_string(layout).and_then(|layout| {
+            let spec = read_time_string(location)?;
+            let location = parse_location(&spec)?;
+            let utc = DateTime::<Utc>::from_timestamp_millis(ms)
+                .ok_or_else(|| "time: timestamp out of range".to_string())?;
+            let format = chrono_layout(&layout);
+            Ok(match location {
+                CivilLocation::Iana(zone) => utc.with_timezone(&zone).format(&format).to_string(),
+                CivilLocation::Fixed(offset) => {
+                    utc.with_timezone(&offset).format(&format).to_string()
+                }
+            })
+        });
+        match result {
+            Ok(value) => time_ok_string(&value),
+            Err(error) => time_error(&error),
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_time_add_date_raw(
+    ms: i64,
+    location: *const c_char,
+    years: i64,
+    months: i64,
+    days: i64,
+) -> i128 {
+    ffi_entry!(time_error("time: runtime panic"), {
+        let result = read_time_string(location)
+            .and_then(|spec| parse_location(&spec))
+            .and_then(|location| {
+                let utc = DateTime::<Utc>::from_timestamp_millis(ms)
+                    .ok_or_else(|| "time: timestamp out of range".to_string())?;
+                let local = match &location {
+                    CivilLocation::Iana(zone) => utc.with_timezone(zone).naive_local(),
+                    CivilLocation::Fixed(offset) => utc.with_timezone(offset).naive_local(),
+                };
+                let total_month = i64::from(local.year()) * 12
+                    + i64::from(local.month0())
+                    + years.saturating_mul(12)
+                    + months;
+                let year = i32::try_from(total_month.div_euclid(12))
+                    .map_err(|_| "time: resulting year out of range".to_string())?;
+                let month = u32::try_from(total_month.rem_euclid(12) + 1).unwrap_or(1);
+                let next_month = if month == 12 {
+                    NaiveDate::from_ymd_opt(year + 1, 1, 1)
+                } else {
+                    NaiveDate::from_ymd_opt(year, month + 1, 1)
+                }
+                .ok_or_else(|| "time: resulting date out of range".to_string())?;
+                let last_day = next_month.pred_opt().map_or(28, |date| date.day());
+                let base = NaiveDate::from_ymd_opt(year, month, local.day().min(last_day))
+                    .and_then(|date| {
+                        date.and_hms_nano_opt(
+                            local.hour(),
+                            local.minute(),
+                            local.second(),
+                            local.nanosecond(),
+                        )
+                    })
+                    .ok_or_else(|| "time: resulting date out of range".to_string())?;
+                let shifted = base
+                    .checked_add_signed(
+                        chrono::Duration::try_days(days)
+                            .ok_or_else(|| "time: day offset out of range".to_string())?,
+                    )
+                    .ok_or_else(|| "time: resulting date out of range".to_string())?;
+                match resolve_civil(&location, shifted) {
+                    LocalResult::Single(value) => Ok(value.timestamp_millis()),
+                    LocalResult::None => {
+                        Err("time: resulting civil time falls in a gap".to_string())
+                    }
+                    LocalResult::Ambiguous(_, _) => {
+                        Err("time: resulting civil time is ambiguous".to_string())
+                    }
+                }
+            });
+        match result {
+            Ok(value) => gos_rt_result_new(0, value),
+            Err(error) => time_error(&error),
+        }
+    })
+}

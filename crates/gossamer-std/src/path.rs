@@ -8,6 +8,84 @@
 
 #![forbid(unsafe_code)]
 #![allow(clippy::manual_let_else)]
+#![allow(missing_docs)]
+
+/// Immutable UTF-8 lexical path value.
+///
+/// This type never touches the filesystem. Operations return new values and
+/// use the same normalized `/` grammar as the free functions in this module.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Path(String);
+
+impl Path {
+    #[must_use]
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn join(&self, segment: &str) -> Self {
+        Self(join(&self.0, segment))
+    }
+
+    #[must_use]
+    pub fn parent(&self) -> Option<Self> {
+        parent(&self.0).map(Self)
+    }
+
+    #[must_use]
+    pub fn file_name(&self) -> Option<String> {
+        file_name(&self.0)
+    }
+
+    #[must_use]
+    pub fn stem(&self) -> Option<String> {
+        stem(&self.0)
+    }
+
+    #[must_use]
+    pub fn extension(&self) -> Option<String> {
+        let value = ext(&self.0);
+        (!value.is_empty()).then_some(value)
+    }
+
+    #[must_use]
+    pub fn normalize(&self) -> Self {
+        Self(clean(&self.0))
+    }
+
+    #[must_use]
+    pub fn is_absolute(&self) -> bool {
+        is_absolute(&self.0)
+    }
+
+    #[must_use]
+    pub fn starts_with(&self, prefix: &Self) -> bool {
+        has_prefix(&self.0, &prefix.0)
+    }
+}
+
+impl std::fmt::Display for Path {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<String> for Path {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+impl From<&str> for Path {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
 
 /// Joins `base` with `segment`, collapsing duplicate separators and
 /// absorbing a leading `/` in `segment`.
@@ -530,23 +608,21 @@ pub fn glob(pattern: &str) -> std::io::Result<Vec<String>> {
                 let mut bfs: Vec<std::path::PathBuf> = vec![current.clone()];
                 while let Some(p) = bfs.pop() {
                     next.push(p.clone());
-                    if let Ok(entries) = std::fs::read_dir(&p) {
-                        for entry in entries.flatten() {
-                            let path = entry.path();
-                            if path.is_dir() {
-                                bfs.push(path);
-                            }
+                    let entries = std::fs::read_dir(&p)?;
+                    for entry in entries {
+                        let entry = entry?;
+                        let path = entry.path();
+                        let metadata = std::fs::symlink_metadata(&path)?;
+                        if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                            bfs.push(path);
                         }
                     }
                 }
                 continue;
             }
-            let entries = match std::fs::read_dir(current) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
+            let entries = std::fs::read_dir(current)?;
+            for entry in entries {
+                let path = entry?.path();
                 let name = match path.file_name().and_then(|n| n.to_str()) {
                     Some(n) => n,
                     None => continue,

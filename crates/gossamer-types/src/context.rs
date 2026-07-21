@@ -106,6 +106,16 @@ impl TyCtxt {
     /// otherwise identical compilation into a cache miss.
     #[must_use]
     pub fn stable_snapshot_key(&self) -> String {
+        let mut output = String::new();
+        self.write_stable_snapshot(&mut output)
+            .expect("writing a type-context snapshot to String cannot fail");
+        output
+    }
+
+    /// Streams the deterministic compiler-artifact description into a
+    /// formatter. Hashing callers can avoid constructing a second large
+    /// snapshot string at peak compilation memory.
+    pub fn write_stable_snapshot(&self, output: &mut impl std::fmt::Write) -> std::fmt::Result {
         fn sorted<I>(items: I) -> Vec<String>
         where
             I: IntoIterator<Item = String>,
@@ -115,7 +125,8 @@ impl TyCtxt {
             items
         }
 
-        format!(
+        write!(
+            output,
             "kinds={:?};primitives={:?};struct_fields={:?};enum_variant_tys={:?};enum_ty_by_name={:?};struct_fields_inst={:?};def_names={:?};rc_metas={:?};aggr_copy_metas={:?};rc_managed_tys={:?};rc_managed_enum_defs={:?};tuple_struct_defs={:?};inline_enum_defs={:?}",
             self.kinds,
             self.primitives,

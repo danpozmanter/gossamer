@@ -2990,6 +2990,16 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::time",
+        name: "add_date",
+        signature: "fn add_date(unix_ms: i64, location: time::Location, years: i64, months: i64, days: i64) -> Result<i64, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::time",
+        name: "format_in",
+        signature: "fn format_in(layout: String, unix_ms: i64, location: time::Location) -> Result<String, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::time",
         name: "format_rfc3339",
         signature: "fn format_rfc3339(ms: i64) -> Result<String, errors::Error>",
     },

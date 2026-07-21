@@ -1707,12 +1707,12 @@ pub unsafe extern "C" fn gos_rt_rc_alloc_tagged(size: u64, meta: *const i64) -> 
         (*h).meta_id = meta_id;
     }
     rc_live_inc();
-    crate::c_abi::ledger::rc_alloc(
-        size as usize,
-        unsafe { rc_block_usable_size(base) },
-        false,
-        false,
-    );
+    let usable = if crate::c_abi::ledger::rc_alloc_stats_enabled() {
+        unsafe { rc_block_usable_size(base) }
+    } else {
+        0
+    };
+    crate::c_abi::ledger::rc_alloc(size as usize, usable, false, false);
     unsafe { base.add(RC_HEADER_SIZE) }
 }
 
@@ -1745,16 +1745,14 @@ pub unsafe extern "C" fn gos_rt_rc_alloc(size: u64, meta: *const i64) -> *mut u8
         (*h).meta_id = meta_id;
     }
     rc_live_inc();
-    crate::c_abi::ledger::rc_alloc(
-        size as usize,
-        if in_region {
-            total
-        } else {
-            unsafe { rc_block_usable_size(base) }
-        },
-        in_region,
-        false,
-    );
+    let usable = if in_region {
+        total
+    } else if crate::c_abi::ledger::rc_alloc_stats_enabled() {
+        unsafe { rc_block_usable_size(base) }
+    } else {
+        0
+    };
+    crate::c_abi::ledger::rc_alloc(size as usize, usable, in_region, false);
     unsafe { base.add(RC_HEADER_SIZE) }
 }
 
@@ -1791,7 +1789,12 @@ pub extern "C" fn gos_rt_enum_unit(tag: i64) -> *mut u8 {
             (*h).meta_id = 0;
             let payload = base.add(RC_HEADER_SIZE);
             rc_live_inc();
-            crate::c_abi::ledger::rc_alloc(8, rc_block_usable_size(base), false, false);
+            let usable = if crate::c_abi::ledger::rc_alloc_stats_enabled() {
+                rc_block_usable_size(base)
+            } else {
+                0
+            };
+            crate::c_abi::ledger::rc_alloc(8, usable, false, false);
             payload
         }
     };
@@ -2289,12 +2292,12 @@ pub unsafe extern "C" fn gos_rt_rc_alloc_reuse(
     let payload = unsafe { token.add(RC_HEADER_SIZE) };
     unsafe { std::ptr::write_bytes(payload, 0, size as usize) };
     rc_reuse_inc();
-    crate::c_abi::ledger::rc_alloc(
-        size as usize,
-        unsafe { rc_block_usable_size(token) },
-        false,
-        true,
-    );
+    let usable = if crate::c_abi::ledger::rc_alloc_stats_enabled() {
+        unsafe { rc_block_usable_size(token) }
+    } else {
+        0
+    };
+    crate::c_abi::ledger::rc_alloc(size as usize, usable, false, true);
     payload
 }
 

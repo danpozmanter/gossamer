@@ -4765,6 +4765,26 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_time_format_rfc3339 as *const u8,
         ),
         (
+            "gos_rt_time_add_date_raw",
+            crate::c_abi::gos_rt_time_add_date_raw as *const u8,
+        ),
+        (
+            "gos_rt_time_civil_raw",
+            crate::c_abi::gos_rt_time_civil_raw as *const u8,
+        ),
+        (
+            "gos_rt_time_fixed_location_raw",
+            crate::c_abi::gos_rt_time_fixed_location_raw as *const u8,
+        ),
+        (
+            "gos_rt_time_format_in_raw",
+            crate::c_abi::gos_rt_time_format_in_raw as *const u8,
+        ),
+        (
+            "gos_rt_time_location_raw",
+            crate::c_abi::gos_rt_time_location_raw as *const u8,
+        ),
+        (
             "gos_rt_time_now",
             crate::c_abi::gos_rt_time_now as *const u8,
         ),
@@ -4779,6 +4799,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_time_parse_rfc3339",
             crate::c_abi::gos_rt_time_parse_rfc3339 as *const u8,
+        ),
+        (
+            "gos_rt_time_resolve_raw",
+            crate::c_abi::gos_rt_time_resolve_raw as *const u8,
         ),
         (
             "gos_rt_time_since_ms",

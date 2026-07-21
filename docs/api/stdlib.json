@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "gossamer_version": "0.32.3",
+  "gossamer_version": "0.33.0",
   "entries": [
     {
       "id": "std-archive-tar-TarEntry",
@@ -11650,6 +11650,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-os-exec-Path",
+      "name": "std::os::exec::Path",
+      "kind": "type",
+      "signature": null,
+      "description": "Immutable UTF-8 lexical path value with value-returning operations.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdosexec",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-os-exec-Pipeline",
       "name": "std::os::exec::Pipeline",
       "kind": "type",
@@ -14462,6 +14481,44 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-time-CivilResolution",
+      "name": "std::time::CivilResolution",
+      "kind": "type",
+      "signature": null,
+      "description": "Explicit unique, gap, or fold result of resolving civil fields.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdtime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-time-CivilTime",
+      "name": "std::time::CivilTime",
+      "kind": "type",
+      "signature": null,
+      "description": "Calendar fields interpreted only with an explicit location.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdtime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-time-Duration",
       "name": "std::time::Duration",
       "kind": "type",
@@ -14500,11 +14557,68 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-time-Location",
+      "name": "std::time::Location",
+      "kind": "type",
+      "signature": null,
+      "description": "Immutable IANA or fixed-offset time-zone location.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdtime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-time-SystemTime",
       "name": "std::time::SystemTime",
       "kind": "type",
       "signature": null,
       "description": "Wall-clock point-in-time.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdtime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-time-add-date",
+      "name": "std::time::add_date",
+      "kind": "function",
+      "signature": "fn add_date(unix_ms: i64, location: time::Location, years: i64, months: i64, days: i64) -> Result<i64, errors::Error>",
+      "description": "Adds calendar units and rejects ambiguous or nonexistent results.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdtime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-time-format-in",
+      "name": "std::time::format_in",
+      "kind": "function",
+      "signature": "fn format_in(layout: String, unix_ms: i64, location: time::Location) -> Result<String, errors::Error>",
+      "description": "Formats an instant in an explicit civil-time location.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

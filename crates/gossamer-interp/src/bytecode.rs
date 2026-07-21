@@ -357,6 +357,11 @@ pub enum Op {
         /// Number of elements.
         count: u16,
     },
+    /// Rejects a negative `i64` before using it as a collection capacity.
+    CheckNonNegativeCapacity {
+        /// Capacity in the typed integer register file.
+        capacity_i: Reg,
+    },
     /// Builds a `Value::Tuple` from `count` consecutive value
     /// registers starting at `first` for an `(a, b, …)` literal.
     /// `Arc::clone`s each register and assembles the tuple.
@@ -738,6 +743,17 @@ pub enum Op {
         receiver: Reg,
         /// Register holding the value to append.
         value: Reg,
+    },
+    /// `__concat(prefix, integer)` fast path used by two-piece `format!`
+    /// expansions. Builds the result in one allocation without a builtin call
+    /// frame or boxed integer argument.
+    StrConcatI64 {
+        /// Destination string value register.
+        dst: Reg,
+        /// String prefix value register.
+        prefix: Reg,
+        /// Signed integer register to append in decimal form.
+        value_i: Reg,
     },
     /// `dst = receiver.pop()` - in-place removal of the last element.
     /// `dst` receives `Some(last)` / `None`; the receiver register's

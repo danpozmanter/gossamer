@@ -82,7 +82,7 @@ fn decode_png(bytes: &[u8]) -> Option<Image> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().ok()?;
-    let mut buffer = vec![0; reader.output_buffer_size()];
+    let mut buffer = vec![0; reader.output_buffer_size()?];
     let info = reader.next_frame(&mut buffer).ok()?;
     let bytes = &buffer[..info.buffer_size()];
     let rgba = match info.color_type {

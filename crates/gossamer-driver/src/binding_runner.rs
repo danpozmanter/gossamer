@@ -165,6 +165,7 @@ impl BindingRunner {
         profile: Profile,
     ) -> io::Result<Option<Self>> {
         let cache = cache_root()?;
+        prune_runner_cache_once(&cache);
         Self::from_manifest_in(manifest, manifest_dir, gossamer_root, profile, &cache)
     }
 
@@ -244,6 +245,16 @@ impl BindingRunner {
             "<runner>",
         )?;
         write_stamp(&stamp, &self.fingerprint_hex, self.profile, "runner")?;
+        // A single Cargo invocation can cross the runner budget after the
+        // startup prune. Keep this workdir locked while reclaiming older
+        // artifacts so concurrent and just-produced outputs are protected.
+        if let Some(root) = self.workdir.parent() {
+            let _ = crate::cache_maintenance::prune_runner_root(
+                root,
+                crate::cache_maintenance::CachePolicy::default(),
+                false,
+            );
+        }
         Ok(bin_path)
     }
 
@@ -289,6 +300,13 @@ impl BindingRunner {
             "gos-sigs-dump",
             "<sigs>",
         )?;
+        if let Some(root) = self.workdir.parent() {
+            let _ = crate::cache_maintenance::prune_runner_root(
+                root,
+                crate::cache_maintenance::CachePolicy::default(),
+                false,
+            );
+        }
         let mut out = Command::new(&bin_path)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -420,6 +438,7 @@ impl StaticBindingsLib {
         profile: Profile,
     ) -> io::Result<Option<Self>> {
         let cache = cache_root()?;
+        prune_runner_cache_once(&cache);
         Self::from_manifest_in(manifest, manifest_dir, gossamer_root, profile, &cache)
     }
 
@@ -521,6 +540,13 @@ impl StaticBindingsLib {
             None => "staticlib".to_string(),
         };
         write_stamp(&stamp, &self.fingerprint_hex, self.profile, &kind)?;
+        if let Some(root) = self.workdir.parent().and_then(Path::parent) {
+            let _ = crate::cache_maintenance::prune_runner_root(
+                root,
+                crate::cache_maintenance::CachePolicy::default(),
+                false,
+            );
+        }
         Ok(archive)
     }
 
@@ -1021,6 +1047,18 @@ fn cache_root() -> io::Result<PathBuf> {
     Err(io::Error::other(
         "cannot determine cache directory: set GOSSAMER_CACHE, XDG_CACHE_HOME, HOME, LOCALAPPDATA, or USERPROFILE",
     ))
+}
+
+fn prune_runner_cache_once(cache_root: &Path) {
+    use std::sync::OnceLock;
+    static PRUNED: OnceLock<()> = OnceLock::new();
+    PRUNED.get_or_init(|| {
+        let _ = crate::cache_maintenance::prune_runner_root(
+            &cache_root.join("runners"),
+            crate::cache_maintenance::CachePolicy::default(),
+            false,
+        );
+    });
 }
 
 fn write_if_different(path: &Path, contents: &str) -> io::Result<()> {

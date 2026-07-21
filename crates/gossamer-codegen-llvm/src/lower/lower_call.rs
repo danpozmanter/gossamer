@@ -573,11 +573,9 @@ impl<'a> Lowerer<'a> {
             )?;
             return Ok(());
         }
-        // Inline primitive Vec index get/set/get_ptr (lenient bounds: null /
-        // out-of-range → 0 / no-op / null, matching the runtime). Removes a
-        // per-element FFI call from hot index loops (BFS, scans, numeric
-        // kernels) and lets LLVM hoist the loop-invariant len/ptr loads and
-        // vectorize the body.
+        // Inline primitive Vec index get/set/get_ptr. Checked scalar
+        // get/set keep their runtime panic semantics on the slow path while
+        // valid indices avoid a per-element FFI call in hot loops.
         // Inline when the element is a single-word scalar with no read-time
         // ownership: integer/bool and `f64` (the numeric-kernel case - a
         // `Vec<f64>` matvec read is bit-identical to the i64 path through the
@@ -641,10 +639,14 @@ impl<'a> Lowerer<'a> {
         // whole element out of the returned address (the generic call-result
         // path's memcpy), which the inline does not reproduce, so that case
         // stays on the opaque call.
-        // Keep `gos_rt_vec_get_ptr` on its runtime path. Besides bounds
-        // handling, it is the representation boundary for packed nested rows:
-        // a direct header-address calculation would treat the descriptor as a
-        // generic element buffer and bypass the one-allocation row layout.
+        if name == "gos_rt_vec_get_ptr"
+            && args.len() == 2
+            && render_ty(self.tcx, self.body.local_ty(destination.local)) == "ptr"
+            && !is_aggregate(self.tcx, self.body.local_ty(destination.local))
+        {
+            self.lower_vec_get_ptr_inline(args, destination, target)?;
+            return Ok(());
+        }
         // Variant constructor stubs: `Ok(v)`, `Some(v)`, `Err(e)`
         // pass the wrapped value through unchanged (the compiled
         // tier flattens Option/Result, so `unwrap` is identity).

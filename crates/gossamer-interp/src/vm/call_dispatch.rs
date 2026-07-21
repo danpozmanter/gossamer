@@ -138,7 +138,7 @@ impl Vm {
                         if next == 0 {
                             self.jit_counters.tier_up_requested();
                             if state.jit_observed_work.get() >= state.jit_min_work {
-                                self.try_compile_jit_lazy();
+                                self.try_compile_jit_lazy(chunk.name);
                             } else {
                                 self.jit_counters.work_floor_deferred();
                                 state.hot_counter.set(1);

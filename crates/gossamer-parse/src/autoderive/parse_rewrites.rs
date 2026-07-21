@@ -435,6 +435,12 @@ fn mangled_stdlib_name(parent: &str, item: &str) -> Option<&'static str> {
         ("x509", "CertInfo") => Some("__gos_x509_CertInfo"),
         ("fs", "metadata") => Some("__gos_fs_metadata"),
         ("fs", "Metadata") => Some("__gos_fs_Metadata"),
+        ("path", "Path") => Some("__gos_path_Path"),
+        ("time", "Location") => Some("__gos_time_Location"),
+        ("time", "CivilTime") => Some("__gos_time_CivilTime"),
+        ("time", "CivilResolution") => Some("__gos_time_CivilResolution"),
+        ("time", "format_in") => Some("__gos_time_format_in"),
+        ("time", "add_date") => Some("__gos_time_add_date"),
         // tar/zip `read` route through the struct wrapper; `write`
         // lowers directly (no struct), so it is NOT rewritten.
         ("tar", "read") => Some("__gos_tar_read"),

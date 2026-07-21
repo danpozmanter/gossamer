@@ -189,7 +189,10 @@ pub fn decode_png(bytes: &[u8]) -> Result<Image, ImageError> {
     let mut reader = decoder
         .read_info()
         .map_err(|error| ImageError::Png(error.to_string()))?;
-    let mut buffer = vec![0; reader.output_buffer_size()];
+    let output_size = reader
+        .output_buffer_size()
+        .ok_or_else(|| ImageError::Png("decoded image exceeds addressable memory".into()))?;
+    let mut buffer = vec![0; output_size];
     let info = reader
         .next_frame(&mut buffer)
         .map_err(|error| ImageError::Png(error.to_string()))?;

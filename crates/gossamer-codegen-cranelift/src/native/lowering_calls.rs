@@ -246,7 +246,9 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_uuid_simple" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_path_base" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_path_dir" => (&[ptr_ty], Some(ptr_ty)),
-        "gos_rt_path_ext" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_path_ext" | "gos_rt_path_file_name" | "gos_rt_path_parent" | "gos_rt_path_stem" => {
+            (&[ptr_ty], Some(types::I128))
+        }
         "gos_rt_vec_first" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_vec_pop_opt" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_vec_last" => (&[ptr_ty], Some(types::I128)),
@@ -326,6 +328,27 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_duration_from_millis" => (&[types::I64], Some(types::I64)),
         "gos_rt_time_format_rfc3339" => (&[types::I64], Some(ptr_ty)),
         "gos_rt_time_parse_rfc3339" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_time_add_date_raw" => (
+            &[types::I64, ptr_ty, types::I64, types::I64, types::I64],
+            Some(types::I128),
+        ),
+        "gos_rt_time_civil_raw" => (&[types::I64, ptr_ty], Some(types::I128)),
+        "gos_rt_time_fixed_location_raw" => (&[types::I64], Some(types::I128)),
+        "gos_rt_time_format_in_raw" => (&[ptr_ty, types::I64, ptr_ty], Some(types::I128)),
+        "gos_rt_time_location_raw" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_time_resolve_raw" => (
+            &[
+                ptr_ty,
+                types::I64,
+                types::I64,
+                types::I64,
+                types::I64,
+                types::I64,
+                types::I64,
+                types::I64,
+            ],
+            Some(types::I128),
+        ),
         "gos_rt_flag_parse" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_flag_map_get" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_os_env" => (&[ptr_ty], Some(ptr_ty)),

@@ -758,7 +758,15 @@ pub fn send_group_term(pid: i64) -> bool {
     }
     #[cfg(windows)]
     {
-        terminate_pid(pid as u32)
+        // CREATE_NEW_PROCESS_GROUP does not make TerminateProcess recursive.
+        // taskkill's tree mode terminates the worker and every descendant.
+        std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
     }
     #[cfg(not(any(unix, windows)))]
     {

@@ -3,6 +3,7 @@
     reason = "VM dispatch loop - see vm/run.rs roadmap for arm-group decomp"
 )]
 use super::*;
+use std::fmt::Write as _;
 
 const VM_PREEMPT_INTERVAL: u16 = 1024;
 
@@ -1590,6 +1591,20 @@ impl Vm {
                         }
                     }
                 }
+                Op::StrConcatI64 {
+                    dst,
+                    prefix,
+                    value_i,
+                } => {
+                    let prefix = match &registers[prefix as usize] {
+                        Value::String(value) => value.as_str(),
+                        _ => "",
+                    };
+                    let mut out = String::with_capacity(prefix.len() + 20);
+                    out.push_str(prefix);
+                    let _ = write!(out, "{}", ints[value_i as usize]);
+                    registers[dst as usize] = Value::String(out.into());
+                }
                 Op::VecPop { dst, receiver } => {
                     let has_item = match &registers[receiver as usize] {
                         Value::Array(items) => !items.is_empty(),
@@ -3025,6 +3040,13 @@ impl Vm {
                     let data: Vec<i64> = ints[start..end].to_vec();
                     registers[dst_v as usize] = Value::IntArray(Arc::new(data));
                 }
+                Op::CheckNonNegativeCapacity { capacity_i } => unsafe {
+                    if *ints.get_unchecked(capacity_i as usize) < 0 {
+                        return Err(RuntimeError::Type(
+                            "Vec::with_capacity: capacity must be non-negative".to_string(),
+                        ));
+                    }
+                },
                 Op::IntToFloatF64 { dst_f, src_i } => unsafe {
                     *floats.get_unchecked_mut(dst_f as usize) =
                         *ints.get_unchecked(src_i as usize) as f64;
@@ -3287,6 +3309,17 @@ impl Vm {
                         Value::IntArray(data) => data.get(i).copied().ok_or_else(|| {
                             RuntimeError::Panic("index out of bounds".to_string())
                         })?,
+                        Value::Array(data) => match data.get(i) {
+                            Some(Value::Int(value)) => *value,
+                            Some(other) => {
+                                return Err(RuntimeError::Type(format!(
+                                    "expected i64 array element, found `{other}`"
+                                )));
+                            }
+                            None => {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                        },
                         Value::FloatVec(_) | Value::FloatArray(_) => {
                             return Err(RuntimeError::Type(
                                 "IntArrayGetI64: receiver is a float array".to_string(),
@@ -3321,6 +3354,12 @@ impl Vm {
                                 return Err(RuntimeError::Panic("index out of bounds".to_string()));
                             }
                             *Arc::make_mut(data).get_unchecked_mut(i) = new_val;
+                        }
+                        Value::Array(data) => {
+                            if i >= data.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                            *Arc::make_mut(data).get_unchecked_mut(i) = Value::Int(new_val);
                         }
                         _ => {
                             return Err(RuntimeError::Type(
@@ -3404,6 +3443,22 @@ impl Vm {
                         Value::FloatVec(data) => data.get(i).copied().ok_or_else(|| {
                             RuntimeError::Panic("index out of bounds".to_string())
                         })?,
+                        Value::Array(data) => match data.get(i) {
+                            Some(Value::Float(value)) => *value,
+                            Some(other) => {
+                                return Err(RuntimeError::Type(format!(
+                                    "expected f64 array element, found `{other}`"
+                                )));
+                            }
+                            None => {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                        },
+                        Value::FloatArray(data) if data.stride == 1 => {
+                            data.data.get(i).copied().ok_or_else(|| {
+                                RuntimeError::Panic("index out of bounds".to_string())
+                            })?
+                        }
                         _ => {
                             return Err(RuntimeError::Type(
                                 "FloatVecGetF64: receiver lost flat invariant".to_string(),
@@ -3425,18 +3480,28 @@ impl Vm {
                         &Value::Float(new_f),
                     );
                     let b = registers.get_unchecked_mut(base as usize);
-                    let Value::FloatVec(data_arc) = b else {
-                        return Err(RuntimeError::Type(
-                            "FloatVecSetF64: receiver lost flat invariant".to_string(),
-                        ));
-                    };
                     let i = usize::try_from(idx)
                         .map_err(|_| RuntimeError::Panic("index out of bounds".to_string()))?;
-                    let buf = Arc::make_mut(data_arc);
-                    if i >= buf.len() {
-                        return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                    match b {
+                        Value::FloatVec(data_arc) => {
+                            let buf = Arc::make_mut(data_arc);
+                            if i >= buf.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                            *buf.get_unchecked_mut(i) = new_f;
+                        }
+                        Value::Array(data) => {
+                            if i >= data.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                            *Arc::make_mut(data).get_unchecked_mut(i) = Value::Float(new_f);
+                        }
+                        _ => {
+                            return Err(RuntimeError::Type(
+                                "FloatVecSetF64: receiver is not a float vector".to_string(),
+                            ));
+                        }
                     }
-                    *buf.get_unchecked_mut(i) = new_f;
                 },
                 Op::BuildIntMap { dst_v } => {
                     registers[dst_v as usize] = Value::IntMap(Arc::new(parking_lot::Mutex::new(

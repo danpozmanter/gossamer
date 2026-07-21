@@ -400,6 +400,33 @@ enum Command {
         /// Run only tests whose name matches this regex.
         #[arg(long)]
         run: Option<String>,
+        /// List discovered tests without executing or typechecking modules.
+        #[arg(long)]
+        list: bool,
+        /// Select one test by its complete name.
+        #[arg(long, value_name = "NAME", conflicts_with = "run")]
+        exact: Option<String>,
+        /// Stop scheduling tests after the first failure.
+        #[arg(long)]
+        fail_fast: bool,
+        /// Include tests carrying `#[ignore]`.
+        #[arg(long)]
+        include_ignored: bool,
+        /// Run only tests carrying `#[ignore]`.
+        #[arg(long, conflicts_with = "include_ignored")]
+        ignored_only: bool,
+        /// Randomize test order and print the replayable seed.
+        #[arg(long)]
+        shuffle: bool,
+        /// Seed used by `--shuffle`.
+        #[arg(long, requires = "shuffle")]
+        seed: Option<u64>,
+        /// Maximum duration for each test file, such as `30s` or `500ms`.
+        #[arg(long, value_name = "DURATION")]
+        timeout: Option<String>,
+        /// Internal isolated-test worker marker.
+        #[arg(long, hide = true)]
+        test_worker: bool,
         /// Number of test files to run in parallel. Defaults to the
         /// number of logical CPUs. Use `--serial` to force sequential
         /// execution, or `--parallel 1` for the same effect.
@@ -751,6 +778,15 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
         Some(Command::Test {
             path,
             run,
+            list,
+            exact,
+            fail_fast,
+            include_ignored,
+            ignored_only,
+            shuffle,
+            seed,
+            timeout,
+            test_worker,
             parallel,
             serial,
             format,
@@ -770,6 +806,18 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
             cmd::test::run_with_opts(TestOpts {
                 path: path.as_deref().map(Path::to_path_buf),
                 run_filter: run,
+                list,
+                exact,
+                fail_fast,
+                include_ignored,
+                ignored_only,
+                shuffle,
+                seed,
+                timeout: timeout
+                    .as_deref()
+                    .map(cmd::test::parse_timeout)
+                    .transpose()?,
+                worker: test_worker,
                 parallel: n_parallel,
                 format: format.unwrap_or_else(|| "human".to_string()),
                 junit_out,

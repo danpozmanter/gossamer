@@ -33,7 +33,7 @@ env:
 
 jobs:
   miri:
-    name: Miri (${{ matrix.crate }})
+    name: Miri (${{ matrix.shard }})
     runs-on: ubuntu-latest
     # Allow long wall-clock; the largest crate (gossamer-runtime)
     # runs ~30 minutes under miri because every alloc path goes
@@ -48,13 +48,11 @@ jobs:
         # off-MIR by design), gossamer-pkg / gossamer-lsp (mostly
         # I/O glue). The fundamental memory-safety crates are
         # in-scope.
-        crate:
-          - gossamer-mir
-          - gossamer-types
-          - gossamer-resolve
-          - gossamer-runtime
-          - gossamer-coro
-          - gossamer-sched
+        include:
+          - shard: compiler
+            crates: gossamer-mir gossamer-types gossamer-resolve
+          - shard: runtime
+            crates: gossamer-runtime gossamer-coro gossamer-sched
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
@@ -64,7 +62,7 @@ jobs:
       - run: rustup set profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v1-miri-${{ matrix.crate }}
+          prefix-key: v2-miri-${{ matrix.shard }}
       - name: Run miri
         env:
           # Miri flags:
@@ -77,4 +75,7 @@ jobs:
           #   under tests that don't run a full collection cycle.
           MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-permissive-provenance -Zmiri-ignore-leaks
           RUST_BACKTRACE: "full"
-        run: cargo miri test -p ${{ matrix.crate }} --lib --no-fail-fast -- --nocapture --test-threads=1
+        run: |
+          for crate in ${{ matrix.crates }}; do
+            cargo miri test -p "$crate" --lib --no-fail-fast -- --nocapture --test-threads=1
+          done

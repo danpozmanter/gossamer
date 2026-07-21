@@ -335,6 +335,53 @@ fn string_len_main() -> (Body, TyCtxt) {
     (body, tcx)
 }
 
+fn dynamic_string_len_main() -> (Body, TyCtxt) {
+    let mut tcx = TyCtxt::new();
+    let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+    let string_ty = tcx.intern(TyKind::String);
+    let span = dummy_span();
+    let body = Body {
+        name: "main".to_string(),
+        def: None,
+        arity: 1,
+        locals: vec![
+            LocalDecl {
+                ty: i64_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+            LocalDecl {
+                ty: string_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+        ],
+        blocks: vec![
+            BasicBlock {
+                id: BlockId(0),
+                stmts: Vec::new(),
+                terminator: Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_str_len".to_string())),
+                    args: vec![Operand::Copy(Place::local(Local(1)))],
+                    destination: Place::local(Local(0)),
+                    target: Some(BlockId(1)),
+                },
+                span,
+            },
+            BasicBlock {
+                id: BlockId(1),
+                stmts: Vec::new(),
+                terminator: Terminator::Return,
+                span,
+            },
+        ],
+        span,
+    };
+    (body, tcx)
+}
+
 #[test]
 fn llvm_lowers_constant_return_to_object_bytes() {
     if skip_if_llvm_missing() {
@@ -367,17 +414,13 @@ fn llvm_lowers_constant_return_to_object_bytes() {
 }
 
 #[test]
-fn llvm_numeric_loop_has_native_preemption_poll() {
+fn llvm_numeric_loop_has_no_native_preemption_poll() {
     let (body, tcx) = looping_main();
     let ir = gossamer_codegen_llvm::render_ir_to_string(&[body], &tcx, false)
         .expect("loop MIR must render to LLVM IR");
     assert!(
-        ir.contains("gos_rt_preempt_check") && ir.contains("gos_preempt_counter"),
-        "native loop back-edges must preserve cooperative preemption: {ir}"
-    );
-    assert!(
-        ir.contains("store i32 16384, ptr %gos_preempt_counter") && ir.contains("icmp sle i32"),
-        "native loops must use the bounded work-budget poll: {ir}"
+        !ir.contains("call i32 @gos_rt_preempt_check_and_yield"),
+        "native loop back-edges should not inject an opaque preemption poll: {ir}"
     );
 }
 
@@ -393,21 +436,32 @@ fn llvm_acyclic_backward_numbered_edge_has_no_preemption_poll() {
 }
 
 #[test]
-fn llvm_string_len_reads_the_constant_time_header() {
+fn llvm_string_len_of_literal_local_folds_to_constant() {
     let (body, tcx) = string_len_main();
     let ir = gossamer_codegen_llvm::render_ir_to_string(&[body], &tcx, false)
         .expect("string length MIR must render to LLVM IR");
     assert!(
-        ir.contains("getelementptr i8") && ir.contains("i64 -5"),
-        "string length must address the length header: {ir}"
+        ir.contains("store i64 5"),
+        "literal string length must fold before the fasta-style modulus path: {ir}"
     );
     assert!(
-        ir.contains("load i32") && ir.contains("zext i32"),
-        "string length must load and widen the u32 header: {ir}"
+        !ir.contains("i64 -5") && !ir.contains("call i64 @gos_rt_str_len"),
+        "literal string length must not load a dynamic header or call runtime: {ir}"
+    );
+}
+
+#[test]
+fn llvm_dynamic_string_len_calls_strlen() {
+    let (body, tcx) = dynamic_string_len_main();
+    let ir = gossamer_codegen_llvm::render_ir_to_string(&[body], &tcx, false)
+        .expect("string length MIR must render to LLVM IR");
+    assert!(
+        ir.contains("declare i64 @strlen(ptr)") && ir.contains("call i64 @strlen"),
+        "dynamic string length must lower through strlen: {ir}"
     );
     assert!(
-        !ir.contains("call i64 @gos_rt_str_len") && !ir.contains("call i64 @strlen"),
-        "string length must not scan bytes: {ir}"
+        !ir.contains("call i64 @gos_rt_str_len"),
+        "dynamic string length must not call the runtime helper: {ir}"
     );
     assert!(
         !ir.contains("%%"),

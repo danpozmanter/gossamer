@@ -4,6 +4,10 @@
 /// wrappers. Mirrors `rewrite_serde_generic_calls` but covers
 /// multi-segment module paths in call, struct-literal, and type
 /// positions.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the nested visitor helpers form one closed stdlib path-rewrite pass"
+)]
 pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
     use gossamer_ast::VisitorMut;
     use gossamer_ast::expr::{Expr, ExprKind};
@@ -45,6 +49,32 @@ pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
                 _ => None,
             } {
                 path.segments = vec![gossamer_ast::PathSegment::new(mangled)];
+                return;
+            }
+        }
+        if n >= 3
+            && path.segments[n - 3].name.name.as_str() == "path"
+            && path.segments[n - 2].name.name.as_str() == "Path"
+        {
+            let method = std::mem::replace(
+                &mut path.segments[n - 1],
+                gossamer_ast::PathSegment::new(""),
+            );
+            path.segments = vec![gossamer_ast::PathSegment::new("__gos_path_Path"), method];
+            return;
+        }
+        if n >= 3 && path.segments[n - 3].name.name.as_str() == "time" {
+            let public_type = path.segments[n - 2].name.name.as_str();
+            if let Some(mangled) = match public_type {
+                "Location" => Some("__gos_time_Location"),
+                "CivilResolution" => Some("__gos_time_CivilResolution"),
+                _ => None,
+            } {
+                let member = std::mem::replace(
+                    &mut path.segments[n - 1],
+                    gossamer_ast::PathSegment::new(""),
+                );
+                path.segments = vec![gossamer_ast::PathSegment::new(mangled), member];
                 return;
             }
         }
@@ -831,4 +861,3 @@ fn already_imports(uses: &[UseDecl], segs: &[&str]) -> bool {
 fn synth_is_empty(synth: &str) -> bool {
     !synth.contains("__gos_serde_")
 }
-

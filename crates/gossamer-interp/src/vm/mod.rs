@@ -369,6 +369,18 @@ pub struct JitMetrics {
     /// native dispatches. This counts each directly dispatched chunk; native
     /// calls made entirely inside JIT code are deliberately not guessed.
     pub saved_vm_instructions: u64,
+    /// Native graph bytes currently retained by the boundary cache.
+    pub graph_cache_bytes: usize,
+    /// Reuses of an already-marshalled graph.
+    pub graph_cache_hits: u64,
+    /// Graph lookups that required marshalling.
+    pub graph_cache_misses: u64,
+    /// Graphs removed to stay within the byte budget.
+    pub graph_cache_evictions: u64,
+    /// Lower-bound estimate of MIR and shape bytes retained for deferred JIT.
+    pub retained_jit_preparation_bytes: usize,
+    /// Compilations rejected by the pre-Cranelift MIR complexity budget.
+    pub pre_admission_skipped_compiles: u64,
 }
 
 /// Interior counters backing [`JitMetrics`]. Kept separate from `JitState`
@@ -393,6 +405,8 @@ pub(crate) struct JitCounters {
     emitted_code_bytes: Cell<u64>,
     last_emitted_code_bytes: Cell<u64>,
     saved_vm_instructions: Cell<u64>,
+    retained_jit_preparation_bytes: Cell<usize>,
+    pre_admission_skipped_compiles: Cell<u64>,
 }
 
 impl JitCounters {
@@ -482,6 +496,16 @@ impl JitCounters {
         self.saved_vm_instructions
             .set(self.saved_vm_instructions.get().saturating_add(count));
     }
+
+    #[inline]
+    pub(crate) fn retained_preparation_bytes(&self, count: usize) {
+        self.retained_jit_preparation_bytes.set(count);
+    }
+
+    #[inline]
+    pub(crate) fn pre_admission_skipped_compile(&self) {
+        Self::bump(&self.pre_admission_skipped_compiles);
+    }
 }
 
 pub(crate) struct ChunkState {
@@ -530,9 +554,9 @@ impl ChunkState {
         let initial = if jit_disabled {
             crate::bytecode::HOT_DISABLED
         } else if eager {
-            // A loop-bearing helper reaches the admission gate on its first
-            // call. The gate still enforces `jit_min_work` below: bypassing
-            // that floor compiled one-iteration helpers for short commands.
+            // A statically loop-bearing body compiles before its first call.
+            // Entry counting cannot observe loop backedges without OSR, so a
+            // dynamic work floor would otherwise defer it forever.
             1
         } else {
             crate::bytecode::hot_threshold_for(instr_count)
@@ -550,9 +574,11 @@ impl ChunkState {
                 .collect(),
             hot_counter: Cell::new(initial),
             jit_observed_work: Cell::new(0),
-            // Eagerness affects only when the first admission check happens,
-            // never whether a body must repay its fixed compile cost.
-            jit_min_work: crate::bytecode::jit_min_work_for(instr_count),
+            jit_min_work: if eager {
+                0
+            } else {
+                crate::bytecode::jit_min_work_for(instr_count)
+            },
             instr_count: instr_count as u64,
             jit_resolve: RefCell::new(JitResolve::Unresolved),
         }
@@ -575,10 +601,9 @@ pub(crate) struct JitState {
     /// Map from chunk name to the JIT entry the deferred compile
     /// produced. Populated together with `artifact`. Skips entries
     /// for `main` (see vm.rs:343 comment) and any function the
-    /// cranelift backend rejected. Soft-bounded by
-    /// [`Self::insertion_order`] + [`JIT_OVERRIDE_CAP`] so a
-    /// long-running daemon that JITs new functions over time
-    /// doesn't grow this map without bound.
+    /// cranelift backend rejected. The artifact is compiled once, so this map
+    /// is bounded by the artifact itself rather than a misleading partial
+    /// eviction policy.
     pub(crate) overrides: HashMap<String, Arc<JitFn>>,
     /// Map from the bytecode chunk's stable `Arc` allocation address to the
     /// JIT entry. Impl methods have qualified JIT names
@@ -586,14 +611,6 @@ pub(crate) struct JitState {
     /// only `method`; pointer-keyed lookup lets `apply` find the exact
     /// promoted method without relying on collision-prone bare names.
     pub(crate) chunk_overrides: HashMap<usize, Arc<JitFn>>,
-    /// FIFO record of insertion order for `overrides`. On every
-    /// insert that pushes the map past [`JIT_OVERRIDE_CAP`] entries
-    /// the front name is popped and its entry dropped - releasing
-    /// the `Arc<JitFn>`. Cheaper to maintain than a true LRU
-    /// (no per-hit reordering on the dispatch hot path) and
-    /// sufficient for the long-running-daemon shape that motivates
-    /// the cap.
-    pub(crate) insertion_order: std::collections::VecDeque<String>,
     /// State machine for the one-shot deferred compile. Once it
     /// reaches `Done` or `Failed` no thread retries.
     pub(crate) compiled: JitCompileState,
@@ -617,23 +634,9 @@ thread_local! {
 
 const THREAD_JIT_ARTIFACT_CACHE_CAP: usize = 8;
 
-/// Soft cap on the size of [`JitState::overrides`]. Picked an
-/// order of magnitude above any realistic single-program function
-/// count so steady-state programs never trip the eviction path
-/// while a daemon that synthesises new functions stays bounded.
-const JIT_OVERRIDE_CAP: usize = 1024;
-
 impl JitState {
-    /// Inserts a JIT entry, evicting the oldest entry when the map
-    /// is at capacity. Cheap (one `pop_front` + one `HashMap::remove`)
-    /// since eviction only fires past the cap.
+    /// Inserts one entry from the VM's single retained artifact.
     fn insert_override(&mut self, name: String, jit: Arc<JitFn>) {
-        if self.overrides.len() >= JIT_OVERRIDE_CAP
-            && let Some(old) = self.insertion_order.pop_front()
-        {
-            self.overrides.remove(&old);
-        }
-        self.insertion_order.push_back(name.clone());
         self.overrides.insert(name, jit);
     }
 }
@@ -1108,14 +1111,18 @@ fn index_get_checked(base: &Value, idx: &Value) -> RuntimeResult<Value> {
 }
 
 fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
-    if let Value::LazyIter(id) = idx
-        && let Some((start, end, inclusive, start_open, end_open)) =
-            crate::stdlib_builtins::iter::lazy_range_bounds(*id)
-    {
-        return index_range_get(base, start, end, inclusive, start_open, end_open);
-    }
     let raw = match idx {
         Value::Int(n) => *n,
+        Value::LazyIter(id) => {
+            let Some((start, end, inclusive, start_open, end_open)) =
+                crate::stdlib_builtins::iter::lazy_range_bounds(*id)
+            else {
+                return Err(RuntimeError::Type(
+                    "index range is no longer valid".to_string(),
+                ));
+            };
+            return index_range_get(base, start, end, inclusive, start_open, end_open);
+        }
         _ => return Err(RuntimeError::Type("index must be integer".to_string())),
     };
     let len = match base {
@@ -1632,18 +1639,29 @@ fn compare(
     Ok(Value::Bool(matches))
 }
 
-/// True when `program` declares at least one recursive user `fn` or contains a
-/// loop that the backend may promote on first call. Used by `Vm::load` to skip
-/// MIR lowering on programs where the JIT cannot improve the current
-/// invocation.
+/// Cheap, conservative HIR gate for programs that may contain a recursive
+/// call graph. The authoritative MIR admission pass decides afterward. This
+/// gate includes impl methods, trait defaults, and calls between distinct
+/// bodies so it cannot hide mutual recursion from that pass.
 fn has_jit_eligible_fn(program: &HirProgram) -> bool {
-    program.items.iter().any(|item| match &item.kind {
-        HirItemKind::Fn(decl) => decl.body.as_ref().is_some_and(|body| {
+    let mut bodies = Vec::new();
+    for item in &program.items {
+        match &item.kind {
+            HirItemKind::Fn(decl) => bodies.push(decl),
+            HirItemKind::Impl(decl) => bodies.extend(decl.methods.iter()),
+            HirItemKind::Trait(decl) => bodies.extend(decl.methods.iter()),
+            HirItemKind::Const(_) | HirItemKind::Static(_) | HirItemKind::Adt(_) => {}
+        }
+    }
+    let names: Vec<&str> = bodies.iter().map(|decl| decl.name.name.as_str()).collect();
+    bodies.iter().any(|decl| {
+        decl.body.as_ref().is_some_and(|body| {
             !hir_block_has_slice_pattern(&body.block)
                 && (hir_block_has_loop(&body.block)
-                    || hir_block_calls_name(&body.block, decl.name.name.as_str()))
-        }),
-        _ => false,
+                    || names
+                        .iter()
+                        .any(|name| hir_block_calls_name(&body.block, name)))
+        })
     })
 }
 
@@ -2324,7 +2342,7 @@ mod tests {
     }
 
     #[test]
-    fn jit_hir_admission_requires_a_loop_or_recursion() {
+    fn jit_hir_admission_conservatively_finds_user_call_graphs() {
         assert!(
             !has_jit_eligible_fn(&hir_for_jit_admission("fn main() -> i64 { 42i64 }")),
             "straight-line programs must not retain JIT MIR state"
@@ -2334,6 +2352,9 @@ mod tests {
         )));
         assert!(has_jit_eligible_fn(&hir_for_jit_admission(
             "fn f(n: i64) -> i64 { if n == 0i64 { 0i64 } else { f(n - 1i64) } } fn main() -> i64 { f(2i64) }"
+        )));
+        assert!(has_jit_eligible_fn(&hir_for_jit_admission(
+            "fn even(n: i64) -> bool { if n == 0i64 { true } else { odd(n - 1i64) } } fn odd(n: i64) -> bool { if n == 0i64 { false } else { even(n - 1i64) } } fn main() -> bool { even(4i64) }"
         )));
         assert!(
             !has_jit_eligible_fn(&hir_for_jit_admission(

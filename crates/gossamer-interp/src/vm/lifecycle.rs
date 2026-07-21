@@ -111,6 +111,7 @@ impl Vm {
     #[must_use]
     pub fn jit_metrics(&self) -> JitMetrics {
         let state = self.jit.read();
+        let graph = self.jit_graph_cache.metrics();
         JitMetrics {
             tier_up_requests: self.jit_counters.tier_up_requests.get(),
             work_floor_deferrals: self.jit_counters.work_floor_deferrals.get(),
@@ -131,6 +132,12 @@ impl Vm {
             emitted_code_bytes: self.jit_counters.emitted_code_bytes.get(),
             last_emitted_code_bytes: self.jit_counters.last_emitted_code_bytes.get(),
             saved_vm_instructions: self.jit_counters.saved_vm_instructions.get(),
+            graph_cache_bytes: graph.bytes,
+            graph_cache_hits: graph.hits,
+            graph_cache_misses: graph.misses,
+            graph_cache_evictions: graph.evictions,
+            retained_jit_preparation_bytes: self.jit_counters.retained_jit_preparation_bytes.get(),
+            pre_admission_skipped_compiles: self.jit_counters.pre_admission_skipped_compiles.get(),
         }
     }
 
@@ -281,6 +288,7 @@ impl Vm {
         *self.struct_shape_defs.borrow_mut() = None;
         *self.jit_eager_names.borrow_mut() = Arc::new(std::collections::HashSet::new());
         *self.jit_cache_key.borrow_mut() = None;
+        self.jit_counters.retained_preparation_bytes(0);
         if had_snapshot {
             self.jit_counters.snapshots_released();
         }
@@ -540,9 +548,9 @@ impl Vm {
         // entirely.
         // `--no-jit` / `GOS_JIT=0` skips the MIR lower too.
         //
-        // Scripts with no recursive helper functions also skip the MIR
-        // lower: there is no body that can amortize native compilation across
-        // repeated bytecode-to-native entries.
+        // Scripts with no possible user-body call graph skip MIR lowering.
+        // The conservative HIR gate includes methods and mutual calls; the
+        // canonical MIR pass makes the final recursive-SCC decision.
         // Coverage runs stay on the bytecode path: the cranelift JIT
         // lowers from MIR and never sees the `Op::CovHit` markers, so a
         // promoted function would silently stop recording line hits.
@@ -604,6 +612,12 @@ impl Vm {
                     }
                 }
                 bodies.retain(|body| compile_names.contains(body.name.as_str()));
+                self.jit_counters
+                    .retained_preparation_bytes(jit_preparation_bytes(
+                        &bodies,
+                        &shapes,
+                        &struct_shapes,
+                    ));
                 // Compute the eager-compile set from the post-inlining
                 // bodies now, while they are still in hand: the deferred
                 // compile below releases `mir_bodies` for spawn-free
@@ -668,7 +682,7 @@ impl Vm {
     /// runs at most once per `Arc<RwLock<JitState>>`. Failures
     /// transition to `Failed` and stay there - no observable
     /// behaviour change for the bytecode path.
-    pub(crate) fn try_compile_jit_lazy(&self) {
+    pub(crate) fn try_compile_jit_lazy(&self, _trigger: &str) {
         // Fast read-only check first: avoids exclusive locks once
         // the compile has settled (Done / Failed). The hot
         // counter at the call site already got us here, so the
@@ -724,7 +738,7 @@ impl Vm {
             self.release_terminal_jit_snapshot();
             return;
         };
-        let bodies = Arc::try_unwrap(bodies).unwrap_or_else(|shared| (*shared).clone());
+        let mut bodies = Arc::try_unwrap(bodies).unwrap_or_else(|shared| (*shared).clone());
         let trace = jit_call::jit_trace();
         let started = std::time::Instant::now();
         if let Some(rss_bytes) = current_process_rss_bytes() {
@@ -738,6 +752,26 @@ impl Vm {
         let struct_shape_defs: &std::collections::HashMap<u32, u32> =
             struct_shape_defs_arc.as_deref().unwrap_or(&empty);
         let cache_key = self.jit_cache_key.borrow_mut().take();
+        // The JIT state is currently one-shot: after a successful compile it is
+        // Done, and later hot bodies will not request another artifact. Compile
+        // the whole admitted set from the first trigger so one small helper
+        // cannot starve unrelated hot loops for the rest of the process.
+        let selected =
+            jit_backend::jit_compile_body_names(&bodies, &tcx, shape_defs, struct_shape_defs);
+        let entry_names =
+            jit_backend::jit_entry_body_names(&bodies, &tcx, shape_defs, struct_shape_defs);
+        bodies.retain(|body| selected.contains(body.name.as_str()));
+        if bodies.is_empty() {
+            self.jit.write().compiled = JitCompileState::Failed;
+            self.release_terminal_jit_snapshot();
+            return;
+        }
+        if !jit_mir_fits_pre_admission_budget(&bodies) {
+            self.jit_counters.pre_admission_skipped_compile();
+            self.jit.write().compiled = JitCompileState::Failed;
+            self.release_terminal_jit_snapshot();
+            return;
+        }
         if self.jit_droppable.get() {
             *self.jit_eager_names.borrow_mut() = Arc::new(std::collections::HashSet::new());
             self.jit_counters.snapshots_released();
@@ -746,9 +780,8 @@ impl Vm {
             && let Some(artifact) = thread_jit_artifact(cache_key)
         {
             if self.jit_artifact_fits_code_cap(&artifact) {
-                if self.install_jit_artifact(artifact) > 0 {
-                    self.jit_counters.artifact_reused();
-                }
+                self.jit_counters.artifact_reused();
+                self.install_jit_artifact(artifact, &entry_names);
             } else {
                 self.jit.write().compiled = JitCompileState::Failed;
                 self.jit_counters.code_size_skipped_compile();
@@ -800,10 +833,12 @@ impl Vm {
             self.release_terminal_jit_snapshot();
             return;
         }
-        if let Some(cache_key) = cache_key {
+        if artifact.cacheable
+            && let Some(cache_key) = cache_key
+        {
             cache_thread_jit_artifact(cache_key, &artifact);
         }
-        if self.install_jit_artifact(artifact) > 0 {
+        if self.install_jit_artifact(artifact, &entry_names) > 0 {
             self.jit_counters.compile_succeeded();
             self.jit_counters.emitted_code_bytes(emitted_code_bytes);
         } else {
@@ -816,11 +851,29 @@ impl Vm {
     /// Installs callable entries from an immutable artifact. The artifact is
     /// held by this VM before its raw entry pointers become reachable through
     /// `overrides`, so a cache eviction can never invalidate a dispatch.
-    fn install_jit_artifact(&self, artifact: Rc<JitArtifact>) -> usize {
+    fn install_jit_artifact(
+        &self,
+        artifact: Rc<JitArtifact>,
+        entry_names: &std::collections::HashSet<String>,
+    ) -> usize {
         let trace = jit_call::jit_trace();
+        let only = jit_filter("GOS_JIT_ONLY");
+        let skip = jit_filter("GOS_JIT_SKIP");
         let mut state = self.jit.write();
         let mut installed_count = 0usize;
         for (name, jit_fn) in &artifact.functions {
+            if !entry_names.contains(name) {
+                continue;
+            }
+            if only
+                .as_ref()
+                .is_some_and(|names| !names.contains(name.as_str()))
+                || skip
+                    .as_ref()
+                    .is_some_and(|names| names.contains(name.as_str()))
+            {
+                continue;
+            }
             let Some(Global::Fn(chunk)) = self.lookup_global_ref(name.as_str()) else {
                 continue;
             };
@@ -1113,6 +1166,18 @@ impl Vm {
     }
 }
 
+fn jit_filter(name: &str) -> Option<std::collections::HashSet<String>> {
+    let value = std::env::var(name).ok()?;
+    Some(
+        value
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+
 /// Returns a live artifact for `key` from this OS thread. Pruning dead weak
 /// entries here keeps the cache metadata bounded even when many short-lived
 /// programs execute on one worker.
@@ -1175,8 +1240,8 @@ fn jit_artifact_key(
     use std::fmt::Write as _;
     digest.0.update(b"gossamer-jit-artifact-v2\0");
     write!(&mut digest, "bodies={bodies:?};tcx=").expect("hashing JIT MIR through fmt cannot fail");
-    let tcx_key = tcx.stable_snapshot_key();
-    digest.0.update(tcx_key.as_bytes());
+    tcx.write_stable_snapshot(&mut digest)
+        .expect("hashing JIT type context through fmt cannot fail");
     write!(
         &mut digest,
         ";enum_shapes={:?};struct_shapes={:?}",
@@ -1185,6 +1250,66 @@ fn jit_artifact_key(
     )
     .expect("hashing JIT shapes through fmt cannot fail");
     format!("{:x}", digest.0.finalize())
+}
+
+fn jit_preparation_bytes(
+    bodies: &[Body],
+    enum_shapes: &std::collections::HashMap<u32, u32>,
+    struct_shapes: &std::collections::HashMap<u32, u32>,
+) -> usize {
+    let body_bytes = bodies.iter().fold(0usize, |total, body| {
+        let statements = body
+            .blocks
+            .iter()
+            .map(|block| block.stmts.len())
+            .sum::<usize>();
+        total
+            .saturating_add(std::mem::size_of::<Body>())
+            .saturating_add(
+                body.locals
+                    .len()
+                    .saturating_mul(std::mem::size_of::<gossamer_mir::LocalDecl>()),
+            )
+            .saturating_add(
+                body.blocks
+                    .len()
+                    .saturating_mul(std::mem::size_of::<gossamer_mir::BasicBlock>()),
+            )
+            .saturating_add(
+                statements.saturating_mul(std::mem::size_of::<gossamer_mir::Statement>()),
+            )
+    });
+    body_bytes.saturating_add(
+        enum_shapes
+            .len()
+            .saturating_add(struct_shapes.len())
+            .saturating_mul(std::mem::size_of::<(u32, u32)>()),
+    )
+}
+
+fn jit_mir_fits_pre_admission_budget(bodies: &[Body]) -> bool {
+    const DEFAULT_MAX_UNITS: usize = 250_000;
+    const DEFAULT_MAX_BODIES: usize = 1_024;
+    let max_units = std::env::var("GOS_JIT_MAX_MIR_UNITS")
+        .ok()
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(DEFAULT_MAX_UNITS);
+    let max_bodies = std::env::var("GOS_JIT_MAX_BODIES")
+        .ok()
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(DEFAULT_MAX_BODIES);
+    let units = bodies.iter().fold(0usize, |total, body| {
+        total
+            .saturating_add(body.locals.len())
+            .saturating_add(body.blocks.len())
+            .saturating_add(
+                body.blocks
+                    .iter()
+                    .map(|block| block.stmts.len())
+                    .sum::<usize>(),
+            )
+    });
+    bodies.len() <= max_bodies && units <= max_units
 }
 
 fn jit_rss_sample_and_cap() -> Option<(u64, u64)> {

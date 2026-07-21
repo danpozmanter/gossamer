@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: fuzz-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   # Fuzz harnesses link against libfuzzer, which uses its own
@@ -29,12 +33,8 @@ env:
 
 jobs:
   fuzz-smoke:
-    name: Fuzz smoke (${{ matrix.target }})
+    name: Fuzz smoke
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [lex, parse, manifest, http_request, typecheck, mir_lower, vm_compile, resolve, hir_lower, vm_run]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
@@ -65,14 +65,16 @@ jobs:
         # on musl, but cargo-fuzz does not set that flag).
         run: |
           set -euo pipefail
-          cargo +nightly-2026-04-14 fuzz run --target x86_64-unknown-linux-gnu \
-            ${{ matrix.target }} \
-            -- -max_total_time=30 -max_len=65536 \
-               -rss_limit_mb=2048 -malloc_limit_mb=2048 -timeout=30
+          for target in lex parse manifest http_request typecheck mir_lower vm_compile resolve hir_lower vm_run; do
+            cargo +nightly-2026-04-14 fuzz run --target x86_64-unknown-linux-gnu \
+              "$target" \
+              -- -max_total_time=30 -max_len=65536 \
+                 -rss_limit_mb=2048 -malloc_limit_mb=2048 -timeout=30
+          done
       - name: Upload any crash inputs
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: fuzz-crashes-${{ matrix.target }}
-          path: fuzz/artifacts/${{ matrix.target }}/
+          name: fuzz-crashes
+          path: fuzz/artifacts/
           if-no-files-found: ignore

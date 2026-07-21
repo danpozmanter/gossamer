@@ -14,6 +14,92 @@
 
 use crate::errors::Error;
 
+static ENV_STATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static CWD_STATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Restores a process environment variable when dropped.
+///
+/// The guard serializes environment and working-directory mutations made
+/// through the testing helpers so parallel tests cannot observe partial state.
+pub struct ScopedEnv {
+    name: String,
+    previous: Option<String>,
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+impl ScopedEnv {
+    /// Sets `name` for the lifetime of the returned guard.
+    pub fn set(name: &str, value: &str) -> Result<Self, crate::io::IoError> {
+        let guard = ENV_STATE_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let previous = crate::env::var(name);
+        crate::env::set_var(name, value)?;
+        Ok(Self {
+            name: name.to_string(),
+            previous,
+            _guard: guard,
+        })
+    }
+}
+
+impl Drop for ScopedEnv {
+    fn drop(&mut self) {
+        if let Some(value) = &self.previous {
+            let _ = crate::env::set_var(&self.name, value);
+        } else {
+            crate::env::unset_var(&self.name);
+        }
+    }
+}
+
+/// Restores the process working directory when dropped.
+pub struct ScopedCwd {
+    previous: std::path::PathBuf,
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+impl ScopedCwd {
+    /// Changes the working directory for the lifetime of the returned guard.
+    pub fn set(path: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
+        let guard = CWD_STATE_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let previous = std::env::current_dir()?;
+        std::env::set_current_dir(path)?;
+        Ok(Self {
+            previous,
+            _guard: guard,
+        })
+    }
+}
+
+impl Drop for ScopedCwd {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.previous);
+    }
+}
+
+/// Polls `condition` until it succeeds or the deadline expires.
+#[must_use]
+pub fn poll_until(
+    timeout: std::time::Duration,
+    interval: std::time::Duration,
+    mut condition: impl FnMut() -> bool,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if condition() {
+            return true;
+        }
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            return false;
+        }
+        std::thread::sleep(interval.min(deadline.saturating_duration_since(now)));
+    }
+}
+
 /// Loopback HTTP server for integration tests.
 ///
 /// `TestServer` binds `127.0.0.1:0` before its worker starts, so every

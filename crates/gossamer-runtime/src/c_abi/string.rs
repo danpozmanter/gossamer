@@ -124,9 +124,6 @@ unsafe fn typed_str_len(s: *const c_char) -> usize {
     if s.is_null() {
         return 0;
     }
-    if str_owner(s).is_none() {
-        return unsafe { c_str_len(s) };
-    }
     let tag = unsafe { *s.cast::<u8>().sub(1) };
     if matches!(tag, STR_BUILDER_TAG | STR_STATIC_TAG | STR_REGION_TAG) {
         let p = unsafe { s.cast::<u8>().sub(5) };
