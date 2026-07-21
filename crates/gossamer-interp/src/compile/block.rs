@@ -133,6 +133,7 @@ mod elide_unit_load_tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
             &HashSet::new(),
             &HashSet::new(),
             None,
