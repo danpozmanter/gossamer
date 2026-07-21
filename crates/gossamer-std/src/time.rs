@@ -79,13 +79,16 @@ impl Duration {
 
 /// Wall-clock point-in-time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SystemTime(StdSystemTime);
+pub struct SystemTime {
+    unix_seconds: i64,
+    nanos: u32,
+}
 
 impl SystemTime {
     /// Current wall-clock time.
     #[must_use]
     pub fn now() -> Self {
-        Self(StdSystemTime::now())
+        Self::from_std(StdSystemTime::now())
     }
 
     /// Signed milliseconds from the Unix epoch.
@@ -94,15 +97,8 @@ impl SystemTime {
     /// millisecond range are clamped at the corresponding bound.
     #[must_use]
     pub fn unix_millis(self) -> i64 {
-        match self.0.duration_since(std::time::UNIX_EPOCH) {
-            Ok(duration) => i64::try_from(duration.as_millis()).unwrap_or(i64::MAX),
-            Err(error) => {
-                let duration = error.duration();
-                let millis = u128::from(duration.as_secs()) * 1_000
-                    + u128::from(duration.subsec_nanos()).div_ceil(1_000_000);
-                i64::try_from(millis).map_or(i64::MIN, |value| -value)
-            }
-        }
+        let millis = i128::from(self.unix_seconds) * 1_000 + i128::from(self.nanos / 1_000_000);
+        i64::try_from(millis).unwrap_or(if millis < 0 { i64::MIN } else { i64::MAX })
     }
 
     /// Wraps a `std::time::SystemTime` into the Gossamer-native
@@ -111,27 +107,69 @@ impl SystemTime {
     /// like [`format_rfc1123_gmt`].
     #[must_use]
     pub fn from_std(t: StdSystemTime) -> Self {
-        Self(t)
+        match t.duration_since(std::time::UNIX_EPOCH) {
+            Ok(duration) => {
+                let unix_seconds = i64::try_from(duration.as_secs()).unwrap_or(i64::MAX);
+                let nanos = if unix_seconds == i64::MAX {
+                    999_999_999
+                } else {
+                    duration.subsec_nanos()
+                };
+                Self {
+                    unix_seconds,
+                    nanos,
+                }
+            }
+            Err(error) => {
+                let duration = error.duration();
+                let secs = i64::try_from(duration.as_secs()).unwrap_or(i64::MAX);
+                if duration.subsec_nanos() == 0 {
+                    Self {
+                        unix_seconds: secs.checked_neg().unwrap_or(i64::MIN),
+                        nanos: 0,
+                    }
+                } else {
+                    Self {
+                        unix_seconds: secs
+                            .checked_add(1)
+                            .and_then(i64::checked_neg)
+                            .unwrap_or(i64::MIN),
+                        nanos: 1_000_000_000 - duration.subsec_nanos(),
+                    }
+                }
+            }
+        }
     }
 
     /// Returns the underlying `std::time::SystemTime`.
     #[must_use]
     pub fn as_std(self) -> StdSystemTime {
-        self.0
+        if self.unix_seconds >= 0 {
+            let duration = std::time::Duration::new(self.unix_seconds as u64, self.nanos);
+            return std::time::UNIX_EPOCH
+                .checked_add(duration)
+                .unwrap_or(std::time::UNIX_EPOCH);
+        }
+        let duration = if self.nanos == 0 {
+            std::time::Duration::from_secs(self.unix_seconds.unsigned_abs())
+        } else {
+            std::time::Duration::new(
+                self.unix_seconds
+                    .checked_add(1)
+                    .map_or(i64::MAX as u64, i64::unsigned_abs),
+                1_000_000_000 - self.nanos,
+            )
+        };
+        std::time::UNIX_EPOCH
+            .checked_sub(duration)
+            .unwrap_or(std::time::UNIX_EPOCH)
     }
 
     /// Returns seconds since the Unix epoch (negative for
     /// pre-1970 instants).
     #[must_use]
     pub fn unix_seconds(self) -> i64 {
-        match self.0.duration_since(std::time::UNIX_EPOCH) {
-            Ok(duration) => i64::try_from(duration.as_secs()).unwrap_or(i64::MAX),
-            Err(error) => {
-                let duration = error.duration();
-                let seconds = duration.as_secs() + u64::from(duration.subsec_nanos() > 0);
-                i64::try_from(seconds).map_or(i64::MIN, |value| -value)
-            }
-        }
+        self.unix_seconds
     }
 
     /// Constructs a `SystemTime` from a millisecond offset relative
@@ -139,13 +177,20 @@ impl SystemTime {
     /// Mirrors Go's `time.UnixMilli`.
     #[must_use]
     pub fn from_unix_millis(ms: i64) -> Self {
-        let distance = std::time::Duration::from_millis(ms.unsigned_abs());
-        let inner = if ms >= 0 {
-            std::time::UNIX_EPOCH + distance
-        } else {
-            std::time::UNIX_EPOCH - distance
-        };
-        Self(inner)
+        let unix_seconds = ms.div_euclid(1_000);
+        let nanos = (ms.rem_euclid(1_000) as u32) * 1_000_000;
+        Self {
+            unix_seconds,
+            nanos,
+        }
+    }
+
+    fn from_unix_parts(unix_seconds: i64, nanos: u32) -> Self {
+        let extra_seconds = i64::from(nanos / 1_000_000_000);
+        Self {
+            unix_seconds: unix_seconds.saturating_add(extra_seconds),
+            nanos: nanos % 1_000_000_000,
+        }
     }
 }
 
@@ -229,10 +274,7 @@ pub enum FormatError {
 /// canonical encoding for HTTP `Date`, `Last-Modified`, and
 /// `If-Modified-Since` headers.
 pub fn format_rfc1123_gmt(when: SystemTime) -> Result<String, FormatError> {
-    let secs = match when.0.duration_since(std::time::UNIX_EPOCH) {
-        Ok(dur) => i128::from(dur.as_secs()),
-        Err(err) => -i128::from(err.duration().as_secs()),
-    };
+    let secs = i128::from(when.unix_seconds);
     if secs > i128::from(i64::MAX) || secs < i128::from(i64::MIN) {
         return Err(FormatError::OutOfRange(format!(
             "{secs} seconds out of range"
@@ -266,16 +308,7 @@ pub fn format_rfc1123_gmt(when: SystemTime) -> Result<String, FormatError> {
 /// (`2006-01-02T15:04:05Z`). Always emits UTC; offset-aware
 /// formatting waits on a real timezone surface.
 pub fn format_rfc3339(when: SystemTime) -> Result<String, FormatError> {
-    let secs = match when.0.duration_since(std::time::UNIX_EPOCH) {
-        Ok(dur) => i128::from(dur.as_secs()),
-        // Floor toward negative infinity so a pre-epoch instant maps to
-        // the whole second that contains it (e.g. -1500ms is 23:59:58,
-        // not 23:59:59); this matches the compiled tier's `div_euclid`.
-        Err(err) => {
-            let dur = err.duration();
-            -(i128::from(dur.as_secs()) + i128::from(dur.subsec_nanos() > 0))
-        }
-    };
+    let secs = i128::from(when.unix_seconds);
     let civil = unix_to_civil(secs)?;
     Ok(format!(
         "{year:04}-{mo:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z",
@@ -360,12 +393,7 @@ pub fn parse_rfc3339(s: &str) -> Result<SystemTime, FormatError> {
         minute,
         second,
     }) - offset_seconds;
-    let stdtime = if unix >= 0 {
-        std::time::UNIX_EPOCH + std::time::Duration::from_secs(unix as u64)
-    } else {
-        std::time::UNIX_EPOCH - std::time::Duration::from_secs((-unix) as u64)
-    };
-    Ok(SystemTime(stdtime))
+    Ok(SystemTime::from_unix_parts(unix, 0))
 }
 
 /// Parses an HTTP-date (RFC 7231 §7.1.1.1). The preferred RFC 1123
@@ -433,12 +461,7 @@ pub fn parse_rfc1123_gmt(s: &str) -> Result<SystemTime, FormatError> {
         minute,
         second,
     });
-    let stdtime = if unix >= 0 {
-        std::time::UNIX_EPOCH + std::time::Duration::from_secs(unix as u64)
-    } else {
-        std::time::UNIX_EPOCH - std::time::Duration::from_secs((-unix) as u64)
-    };
-    Ok(SystemTime(stdtime))
+    Ok(SystemTime::from_unix_parts(unix, 0))
 }
 
 /// Month abbreviation (`Jan`..`Dec`, case-insensitive) to 1-based index.
@@ -941,53 +964,14 @@ pub mod tz {
     }
 
     fn system_time<T: TimeZone>(value: DateTime<T>) -> SystemTime {
-        let seconds = value.timestamp();
-        let nanos = value.timestamp_subsec_nanos();
-        let base = if seconds >= 0 {
-            std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(seconds as u64))
-        } else {
-            std::time::UNIX_EPOCH
-                .checked_sub(std::time::Duration::from_secs(seconds.unsigned_abs()))
-        };
-        let instant = base
-            .and_then(|time| time.checked_add(std::time::Duration::from_nanos(u64::from(nanos))))
-            .unwrap_or_else(|| SystemTime::from_unix_millis(value.timestamp_millis()).as_std());
-        SystemTime::from_std(instant)
+        SystemTime::from_unix_parts(value.timestamp(), value.timestamp_subsec_nanos())
     }
 
     fn utc_datetime(when: SystemTime) -> Result<DateTime<Utc>, FormatError> {
-        let (seconds, nanos) = match when.as_std().duration_since(std::time::UNIX_EPOCH) {
-            Ok(duration) => (
-                i64::try_from(duration.as_secs()).map_err(|_| {
-                    FormatError::OutOfRange("instant is too far after the Unix epoch".into())
-                })?,
-                duration.subsec_nanos(),
-            ),
-            Err(error) => {
-                let duration = error.duration();
-                let seconds = i64::try_from(duration.as_secs()).map_err(|_| {
-                    FormatError::OutOfRange("instant is too far before the Unix epoch".into())
-                })?;
-                if duration.subsec_nanos() == 0 {
-                    (-seconds, 0)
-                } else {
-                    (
-                        seconds
-                            .checked_add(1)
-                            .and_then(i64::checked_neg)
-                            .ok_or_else(|| {
-                                FormatError::OutOfRange(
-                                    "instant is too far before the Unix epoch".into(),
-                                )
-                            })?,
-                        1_000_000_000 - duration.subsec_nanos(),
-                    )
-                }
-            }
-        };
-        DateTime::<Utc>::from_timestamp(seconds, nanos).ok_or_else(|| {
+        DateTime::<Utc>::from_timestamp(when.unix_seconds, when.nanos).ok_or_else(|| {
             FormatError::OutOfRange(format!(
-                "timestamp {seconds}.{nanos:09} is outside the Gregorian range"
+                "timestamp {}.{:09} is outside the Gregorian range",
+                when.unix_seconds, when.nanos
             ))
         })
     }
@@ -1288,7 +1272,7 @@ mod tests {
 
     #[test]
     fn round_trip_epoch_renders_zero() {
-        let formatted = format_rfc3339(SystemTime(std::time::UNIX_EPOCH)).unwrap();
+        let formatted = format_rfc3339(SystemTime::from_std(std::time::UNIX_EPOCH)).unwrap();
         assert_eq!(formatted, "1970-01-01T00:00:00Z");
     }
 
@@ -1312,7 +1296,7 @@ mod tests {
 
     #[test]
     fn rfc1123_epoch() {
-        let formatted = format_rfc1123_gmt(SystemTime(std::time::UNIX_EPOCH)).unwrap();
+        let formatted = format_rfc1123_gmt(SystemTime::from_std(std::time::UNIX_EPOCH)).unwrap();
         // 1970-01-01 is a Thursday.
         assert_eq!(formatted, "Thu, 01 Jan 1970 00:00:00 GMT");
     }

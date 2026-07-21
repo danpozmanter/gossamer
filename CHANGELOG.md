@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.33.0 - Adaptive JIT coverage + improvements for datetime, filesystem libraries and caching
+## 0.33.0 - Adaptive JIT coverage + improvements for civil time, filesystem libraries and caching
 
 - Extend JIT promotion and native lowering for loops, recursion, native-only
-  helpers, typed vectors, string lengths, and integer formatting while
-  preserving VM, JIT, and LLVM AOT parity.
+  helpers, typed vectors, and header-backed string lengths while preserving VM,
+  JIT, and LLVM AOT parity.
 - Add immutable paths and civil time with signed pre-epoch precision, explicit
   DST gap and fold resolution, fixed offsets, and IANA locations across tiers.
 - Extend `gos test` with listing, exact selection, ignores, skips, parameter
