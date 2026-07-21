@@ -80,6 +80,33 @@ impl TestStyle {
     }
 }
 
+fn assertion_elapsed_summary(assertions: u32, elapsed_ms: u128) -> String {
+    format!(
+        "({assertions} {asserts}, {elapsed_ms}ms)",
+        asserts = if assertions == 1 {
+            "assertion"
+        } else {
+            "assertions"
+        },
+    )
+}
+
+fn is_worker_harness_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    (trimmed.starts_with("===") && trimmed.ends_with("==="))
+        || trimmed.starts_with("PASS ")
+        || trimmed.starts_with("FAIL ")
+        || trimmed.starts_with("test: ")
+}
+
+fn print_worker_user_output(captured: &str) {
+    for line in captured.lines() {
+        if !is_worker_harness_line(line) {
+            println!("{line}");
+        }
+    }
+}
+
 /// Options threaded into [`run_with_opts`].
 #[allow(
     clippy::struct_excessive_bools,
@@ -473,7 +500,7 @@ pub(crate) fn run_with_opts(opts: TestOpts) -> Result<()> {
             style.dim(&fail_part).into_owned()
         };
         let trailing = format!(
-            "{total_ignored} ignored, {total_skipped} skipped, {total_assertions} assertion(s), {total_doc_tests} doc-test(s), across {} file(s), {empty_files} with no tests",
+            "{total_assertions} assertion(s), {total_ignored} ignored, {total_skipped} skipped, {total_doc_tests} doc-test(s), across {} file(s), {empty_files} with no tests",
             files.len()
         );
         println!(
@@ -904,16 +931,8 @@ fn run_tests_filtered_inner(
         });
         if !quiet {
             if passed {
-                let assertion_summary = format!(
-                    "({} {asserts}, {}ms)",
-                    tally.assertions,
-                    elapsed.as_millis(),
-                    asserts = if tally.assertions == 1 {
-                        "assertion"
-                    } else {
-                        "assertions"
-                    },
-                );
+                let assertion_summary =
+                    assertion_elapsed_summary(tally.assertions, elapsed.as_millis());
                 println!(
                     "  {} {} {}",
                     style.pass(),
@@ -1087,11 +1106,14 @@ fn run_tests_isolated(
             };
             if !quiet {
                 if record.passed {
+                    print_worker_user_output(&captured);
+                    let assertion_summary =
+                        assertion_elapsed_summary(record.assertions, record.elapsed_ms);
                     println!(
-                        "  {} {} ({}ms)",
+                        "  {} {} {}",
                         style.pass(),
                         record.name,
-                        record.elapsed_ms
+                        style.dim(&assertion_summary)
                     );
                 } else {
                     println!(
