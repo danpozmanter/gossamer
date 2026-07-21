@@ -173,11 +173,10 @@ fn jit_dispatches_through_simple_arithmetic() {
 }
 
 #[test]
-fn jit_struct_return_uses_structural_return_buffer() {
-    // Registered flat structs are the common aggregate boundary shape in the
-    // VM's hot method/helper workloads. Codegen already emits their trailing
-    // sret parameter; exercise the trampoline's matching caller-owned block
-    // so returning the struct stays native instead of falling back.
+fn jit_struct_return_falls_back_without_losing_result() {
+    // Struct-returning helpers carry aggregate locals and heap children. The
+    // in-process JIT admission guard keeps that representation on bytecode
+    // until the trampoline can preserve it safely.
     let _g = GosJitGuard::new();
     let source = "struct Pair { label: String, right: i64 }\nfn build_pair(n: i64) -> Pair {\n  let mut i = 0i64\n  while i < 100i64 { i = i + 1i64 }\n  Pair { label: \"native\", right: n + 1i64 }\n}\nfn main() -> i64 { 0i64 }\n";
     let (vm, _) = build_vm(source);
@@ -200,9 +199,9 @@ fn jit_struct_return_uses_structural_return_buffer() {
     assert!(matches!(pair.fields[1].1, Value::Int(21)));
 
     let metrics = vm.jit_metrics();
-    assert!(
-        metrics.resident_functions >= 1 && metrics.saved_vm_instructions > 0,
-        "the struct-returning body must dispatch natively: {metrics:?}"
+    assert_eq!(
+        metrics.successful_compiles, 0,
+        "the struct-returning body must stay on bytecode: {metrics:?}"
     );
 }
 
@@ -276,11 +275,7 @@ fn main() -> i64 { hot_loop(10i64) }
 }
 
 #[test]
-// Cranelift currently rejects this Option-local promotion on Windows. The
-// bytecode result is covered cross-platform; native promotion is asserted on
-// the platforms where this representation is supported.
-#[cfg(not(windows))]
-fn option_local_loop_is_promotable_by_default() {
+fn option_local_loop_falls_back_without_losing_result() {
     let _g = GosJitGuard::new();
     let source = r"
 fn option_sum(n: i64) -> i64 {
@@ -296,17 +291,17 @@ fn option_sum(n: i64) -> i64 {
 fn main() -> i64 { option_sum(10i64) }
 ";
     let (vm, _) = build_vm(source);
-    // Use the real admission policy here too. This proves Option locals do
-    // not need a special opt-in once the function has repaid JIT setup cost.
+    // Use the real admission policy here too. Option locals carry enum state,
+    // so the current in-process JIT leaves the body on bytecode.
     warm_up_n(&vm, "option_sum", &[Value::Int(100)], 1_000);
     let result = vm
         .call("option_sum", vec![Value::Int(10)])
         .expect("option_sum");
     assert!(matches!(result, Value::Int(45)), "result: {result:?}");
     let metrics = vm.jit_metrics();
-    assert!(
-        metrics.successful_compiles >= 1 && metrics.resident_functions >= 1,
-        "Option locals should not require an opt-in environment switch: {metrics:?}"
+    assert_eq!(
+        metrics.successful_compiles, 0,
+        "Option locals should stay on bytecode: {metrics:?}"
     );
 }
 

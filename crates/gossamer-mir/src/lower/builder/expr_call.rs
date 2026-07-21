@@ -994,7 +994,10 @@ impl<'a> Builder<'a> {
             return None;
         };
         let local = self.lookup_local(&seg.name)?;
-        if matches!(self.tcx.kind_of(self.locals[local.0 as usize].ty), TyKind::Ref { .. }) {
+        if matches!(
+            self.tcx.kind_of(self.locals[local.0 as usize].ty),
+            TyKind::Ref { .. }
+        ) {
             return None;
         }
         Some(local)
@@ -1032,7 +1035,10 @@ impl<'a> Builder<'a> {
         if let HirExprKind::Path { segments, .. } = &arg.kind
             && let [seg] = segments.as_slice()
             && let Some(local) = self.lookup_local(&seg.name)
-            && matches!(self.tcx.kind_of(self.locals[local.0 as usize].ty), TyKind::Ref { .. })
+            && matches!(
+                self.tcx.kind_of(self.locals[local.0 as usize].ty),
+                TyKind::Ref { .. }
+            )
         {
             return Some(local);
         }

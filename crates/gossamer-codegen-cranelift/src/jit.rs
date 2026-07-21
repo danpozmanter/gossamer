@@ -1257,9 +1257,10 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
         ) {
             return true;
         }
-        if jit_local_ty_needs_bytecode(tcx, body.local_ty(gossamer_mir::Local(
-            u32::try_from(idx).unwrap_or(u32::MAX),
-        ))) {
+        if jit_local_ty_needs_bytecode(
+            tcx,
+            body.local_ty(gossamer_mir::Local(u32::try_from(idx).unwrap_or(u32::MAX))),
+        ) {
             return true;
         }
         // A `Vec`/`[T]` whose element is a payload-bearing enum is safe in a
@@ -1349,7 +1350,8 @@ fn jit_local_ty_needs_bytecode(tcx: &TyCtxt, ty: Ty) -> bool {
         TyKind::Vec(elem) | TyKind::Slice(elem) => {
             !(matches!(
                 tcx.kind_of(*elem),
-                TyKind::Int(gossamer_types::IntTy::I64) | TyKind::Float(gossamer_types::FloatTy::F64)
+                TyKind::Int(gossamer_types::IntTy::I64)
+                    | TyKind::Float(gossamer_types::FloatTy::F64)
             ) || is_i64_f64_tuple(tcx, *elem)
                 || is_i64_vec(tcx, *elem))
         }

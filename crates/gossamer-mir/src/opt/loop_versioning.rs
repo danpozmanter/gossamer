@@ -1316,6 +1316,231 @@ fn invariant_index_operand(
     }
 }
 
+fn collect_version_checks(cands: &[VersionedAccess]) -> (Vec<(Local, VersionedIndex)>, Vec<Local>) {
+    let mut checks: Vec<(Local, VersionedIndex)> = Vec::new();
+    for c in cands {
+        if !checks.iter().any(|(x, idx)| *x == c.xs && idx == &c.index) {
+            checks.push((c.xs, c.index.clone()));
+        }
+    }
+
+    let mut xs_list: Vec<Local> = Vec::new();
+    for (x, _) in &checks {
+        if !xs_list.contains(x) {
+            xs_list.push(*x);
+        }
+    }
+
+    (checks, xs_list)
+}
+
+fn version_preheader_len(checks: &[(Local, VersionedIndex)], xs_count: usize) -> usize {
+    xs_count
+        + checks
+            .iter()
+            .map(|(_, index)| match index {
+                VersionedIndex::AffineCounter { .. } => 2,
+                VersionedIndex::Invariant { expr } => {
+                    2 + usize::from(invariant_index_needs_block(expr))
+                }
+            })
+            .sum::<usize>()
+}
+
+fn version_next_block(
+    pbase: usize,
+    total: usize,
+    unchecked_header: BlockId,
+    p: usize,
+) -> BlockId {
+    if p + 1 < total {
+        BlockId((pbase + p + 1) as u32)
+    } else {
+        unchecked_header
+    }
+}
+
+fn emit_version_len_blocks(
+    body: &mut Body,
+    ctx: &PreheaderCtx,
+    xs_list: &[Local],
+    pbase: usize,
+    total: usize,
+    unchecked_header: BlockId,
+    pre: &mut Vec<BasicBlock>,
+) -> HashMap<Local, Local> {
+    let mut len_of: HashMap<Local, Local> = HashMap::new();
+    for &x in xs_list {
+        let l = fresh_local(body, ctx.i64t);
+        len_of.insert(x, l);
+    }
+
+    for (i, &x) in xs_list.iter().enumerate() {
+        pre.push(BasicBlock {
+            id: BlockId((pbase + i) as u32),
+            stmts: Vec::new(),
+            terminator: Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".to_string())),
+                args: vec![Operand::Copy(Place::local(x))],
+                destination: Place::local(len_of[&x]),
+                target: Some(version_next_block(pbase, total, unchecked_header, i)),
+            },
+            span: ctx.sp,
+        });
+    }
+
+    len_of
+}
+
+struct VersionPreheader<'a> {
+    body: &'a mut Body,
+    ctx: &'a PreheaderCtx,
+    pbase: usize,
+    total: usize,
+    unchecked_header: BlockId,
+    len_of: &'a HashMap<Local, Local>,
+    pre: &'a mut Vec<BasicBlock>,
+}
+
+#[derive(Clone, Copy)]
+struct VersionLoopLocals {
+    counter: Local,
+    bound: Local,
+}
+
+impl VersionPreheader<'_> {
+    fn next(&self, p: usize) -> BlockId {
+        version_next_block(self.pbase, self.total, self.unchecked_header, p)
+    }
+
+    fn push_range(&mut self, p: usize, check: RangeCheck) {
+        self.pre.push(range_check_block(
+            self.body,
+            self.ctx,
+            self.pbase + p,
+            self.next(p),
+            check,
+        ));
+    }
+
+    fn push_affine_counter(
+        &mut self,
+        p: &mut usize,
+        x: Local,
+        base: &Operand,
+        locals: VersionLoopLocals,
+    ) {
+        self.push_range(
+            *p,
+            RangeCheck {
+                arith_lhs: Operand::Copy(Place::local(self.len_of[&x])),
+                arith_rhs: Operand::Copy(Place::local(locals.bound)),
+                base: base.clone(),
+                cmp: BinOp::Le,
+            },
+        );
+        *p += 1;
+
+        self.push_range(
+            *p,
+            RangeCheck {
+                arith_lhs: Operand::Const(ConstValue::Int(0)),
+                arith_rhs: Operand::Copy(Place::local(locals.counter)),
+                base: base.clone(),
+                cmp: BinOp::Ge,
+            },
+        );
+        *p += 1;
+    }
+
+    fn push_invariant(&mut self, p: &mut usize, x: Local, expr: &InvariantIndex) {
+        let index_op = if invariant_index_needs_block(expr) {
+            let op = invariant_index_operand(
+                self.body,
+                self.ctx,
+                self.pre,
+                self.pbase + *p,
+                self.next(*p),
+                expr,
+            );
+            *p += 1;
+            op
+        } else {
+            invariant_index_operand(
+                self.body,
+                self.ctx,
+                self.pre,
+                self.pbase + *p,
+                self.next(*p),
+                expr,
+            )
+        };
+
+        self.push_range(
+            *p,
+            RangeCheck {
+                arith_lhs: Operand::Const(ConstValue::Int(0)),
+                arith_rhs: Operand::Const(ConstValue::Int(0)),
+                base: index_op.clone(),
+                cmp: BinOp::Ge,
+            },
+        );
+        *p += 1;
+
+        self.push_range(
+            *p,
+            RangeCheck {
+                arith_lhs: Operand::Copy(Place::local(self.len_of[&x])),
+                arith_rhs: Operand::Const(ConstValue::Int(0)),
+                base: index_op,
+                cmp: BinOp::Lt,
+            },
+        );
+        *p += 1;
+    }
+}
+
+fn emit_version_preheader(
+    body: &mut Body,
+    ctx: &PreheaderCtx,
+    pbase: usize,
+    unchecked_header: BlockId,
+    checks: &[(Local, VersionedIndex)],
+    xs_list: &[Local],
+    locals: VersionLoopLocals,
+) -> Vec<BasicBlock> {
+    let total = version_preheader_len(checks, xs_list.len());
+    let mut pre = Vec::with_capacity(total);
+    let len_of = emit_version_len_blocks(
+        body,
+        ctx,
+        xs_list,
+        pbase,
+        total,
+        unchecked_header,
+        &mut pre,
+    );
+    let mut emit = VersionPreheader {
+        body,
+        ctx,
+        pbase,
+        total,
+        unchecked_header,
+        len_of: &len_of,
+        pre: &mut pre,
+    };
+    let mut p = xs_list.len();
+    for (x, index) in checks {
+        match index {
+            VersionedIndex::AffineCounter { base } => {
+                emit.push_affine_counter(&mut p, *x, base, locals);
+            }
+            VersionedIndex::Invariant { expr } => emit.push_invariant(&mut p, *x, expr),
+        }
+    }
+    pre
+}
+
 /// Emits the versioned form of the loop: an unchecked clone, a preheader
 /// that proves every candidate's affine index in range, and a redirect of
 /// the loop's external entry edges into that preheader.
@@ -1327,21 +1552,7 @@ fn emit_loop_version(
     loop_blocks: &[usize],
     cands: &[VersionedAccess],
 ) {
-    // Distinct `(xs, index)` precondition checks and the distinct receivers
-    // whose length the preheader must read.
-    let mut checks: Vec<(Local, VersionedIndex)> = Vec::new();
-    for c in cands {
-        if !checks.iter().any(|(x, idx)| *x == c.xs && idx == &c.index) {
-            checks.push((c.xs, c.index.clone()));
-        }
-    }
-    let mut xs_list: Vec<Local> = Vec::new();
-    for (x, _) in &checks {
-        if !xs_list.contains(x) {
-            xs_list.push(*x);
-        }
-    }
-
+    let (checks, xs_list) = collect_version_checks(cands);
     let ctx = PreheaderCtx {
         i64t: body.local_ty(counter),
         boolt: match &body.blocks[h].terminator {
@@ -1358,123 +1569,17 @@ fn emit_loop_version(
     let n0 = body.blocks.len();
     let cand_blocks: std::collections::HashSet<usize> = cands.iter().map(|c| c.block).collect();
     let clone_blocks = clone_loop_unchecked(body, loop_blocks, n0, &cand_blocks);
-
-    // Preheader: one length read per distinct receiver, then a short-circuit
-    // chain of comparisons dispatching to the unchecked clone (index `n0`)
-    // when every precondition holds or the original checked loop otherwise.
-    let mut len_of: HashMap<Local, Local> = HashMap::new();
-    for &x in &xs_list {
-        let l = fresh_local(body, ctx.i64t);
-        len_of.insert(x, l);
-    }
     let pbase = n0 + clone_blocks.len();
-    let total = xs_list.len()
-        + checks
-            .iter()
-            .map(|(_, index)| match index {
-                VersionedIndex::AffineCounter { .. } => 2,
-                VersionedIndex::Invariant { expr } => {
-                    2 + usize::from(invariant_index_needs_block(expr))
-                }
-            })
-            .sum::<usize>();
     let unchecked_header = BlockId(n0 as u32);
-    let next_of = |p: usize| -> BlockId {
-        if p + 1 < total {
-            BlockId((pbase + p + 1) as u32)
-        } else {
-            unchecked_header
-        }
-    };
-    let mut pre: Vec<BasicBlock> = Vec::with_capacity(total);
-    for (i, &x) in xs_list.iter().enumerate() {
-        pre.push(BasicBlock {
-            id: BlockId((pbase + i) as u32),
-            stmts: Vec::new(),
-            terminator: Terminator::Call {
-                callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".to_string())),
-                args: vec![Operand::Copy(Place::local(x))],
-                destination: Place::local(len_of[&x]),
-                target: Some(next_of(i)),
-            },
-            span: ctx.sp,
-        });
-    }
-    let mut p = xs_list.len();
-    for (x, index) in &checks {
-        match index {
-            VersionedIndex::AffineCounter { base } => {
-                // Upper bound: base <= len(xs) - bound  <=>  base + bound <= len.
-                let hi = range_check_block(
-                    body,
-                    &ctx,
-                    pbase + p,
-                    next_of(p),
-                    RangeCheck {
-                        arith_lhs: Operand::Copy(Place::local(len_of[x])),
-                        arith_rhs: Operand::Copy(Place::local(bound)),
-                        base: base.clone(),
-                        cmp: BinOp::Le,
-                    },
-                );
-                pre.push(hi);
-                p += 1;
-                // Lower bound: base >= -lo, with lo = counter's value at the
-                // preheader (its non-negative loop-entry init).
-                let lo = range_check_block(
-                    body,
-                    &ctx,
-                    pbase + p,
-                    next_of(p),
-                    RangeCheck {
-                        arith_lhs: Operand::Const(ConstValue::Int(0)),
-                        arith_rhs: Operand::Copy(Place::local(counter)),
-                        base: base.clone(),
-                        cmp: BinOp::Ge,
-                    },
-                );
-                pre.push(lo);
-                p += 1;
-            }
-            VersionedIndex::Invariant { expr } => {
-                let index_op = if invariant_index_needs_block(expr) {
-                    let op = invariant_index_operand(body, &ctx, &mut pre, pbase + p, next_of(p), expr);
-                    p += 1;
-                    op
-                } else {
-                    invariant_index_operand(body, &ctx, &mut pre, pbase + p, next_of(p), expr)
-                };
-                let lo = range_check_block(
-                    body,
-                    &ctx,
-                    pbase + p,
-                    next_of(p),
-                    RangeCheck {
-                        arith_lhs: Operand::Const(ConstValue::Int(0)),
-                        arith_rhs: Operand::Const(ConstValue::Int(0)),
-                        base: index_op.clone(),
-                        cmp: BinOp::Ge,
-                    },
-                );
-                pre.push(lo);
-                p += 1;
-                let hi = range_check_block(
-                    body,
-                    &ctx,
-                    pbase + p,
-                    next_of(p),
-                    RangeCheck {
-                        arith_lhs: Operand::Copy(Place::local(len_of[x])),
-                        arith_rhs: Operand::Const(ConstValue::Int(0)),
-                        base: index_op,
-                        cmp: BinOp::Lt,
-                    },
-                );
-                pre.push(hi);
-                p += 1;
-            }
-        }
-    }
+    let pre = emit_version_preheader(
+        body,
+        &ctx,
+        pbase,
+        unchecked_header,
+        &checks,
+        &xs_list,
+        VersionLoopLocals { counter, bound },
+    );
 
     body.blocks.extend(clone_blocks);
     body.blocks.extend(pre);
