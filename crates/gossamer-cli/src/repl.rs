@@ -386,12 +386,15 @@ fn render_repl_bindings(
                 lets = let_body,
                 name = var.name,
             );
-            let value = match build_and_call(&source, &entry) {
-                Ok(value) => render_repl_value(&value),
-                Err(msg) => format!("<error: {}>", msg.lines().next().unwrap_or("unknown")),
+            let (ty, value) = match build_and_call_with_type(&source, &entry) {
+                Ok((value, ty)) => (ty, render_repl_value(&value)),
+                Err(msg) => (
+                    "<unknown>".to_string(),
+                    format!("<error: {}>", msg.lines().next().unwrap_or("unknown")),
+                ),
             };
             let prefix = if var.mutable { "mut " } else { "" };
-            lines.push(format!("{prefix}{} = {value}", var.name));
+            lines.push(format!("{prefix}{}: {ty} = {value}", var.name));
         }
     }
     lines
@@ -977,6 +980,13 @@ fn build_and_call(
     source: &str,
     entry: &str,
 ) -> std::result::Result<gossamer_interp::Value, String> {
+    build_and_call_with_type(source, entry).map(|(value, _)| value)
+}
+
+fn build_and_call_with_type(
+    source: &str,
+    entry: &str,
+) -> std::result::Result<(gossamer_interp::Value, String), String> {
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file("irepl".to_string(), source.to_string());
     let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(source, file);
@@ -1002,10 +1012,36 @@ fn build_and_call(
     if !user_type_diags.is_empty() {
         return Err(format_semantic_diags("type", &user_type_diags));
     }
+    let tail_ty = repl_generated_tail_expr(&sf)
+        .and_then(|expr| tbl.get(expr.id))
+        .map_or_else(
+            || "<unknown>".to_string(),
+            |ty| gossamer_types::render_ty(&tcx, ty),
+        );
     let program = gossamer_hir::lower_source_file(&sf, &res, &tbl, &mut tcx);
     let mut vm = gossamer_interp::Vm::new();
     vm.load(&program, tcx, true).map_err(|e| format!("{e}"))?;
-    vm.call(entry, Vec::new()).map_err(|e| format!("{e}"))
+    vm.call(entry, Vec::new())
+        .map(|value| (value, tail_ty))
+        .map_err(|e| format!("{e}"))
+}
+
+fn repl_generated_tail_expr(sf: &gossamer_ast::SourceFile) -> Option<&gossamer_ast::Expr> {
+    use gossamer_ast::{ExprKind, ItemKind};
+
+    sf.items.iter().find_map(|item| {
+        let ItemKind::Fn(decl) = &item.kind else {
+            return None;
+        };
+        if !decl.name.name.starts_with("__irepl_") {
+            return None;
+        }
+        let body = decl.body.as_ref()?;
+        let ExprKind::Block(block) = &body.kind else {
+            return None;
+        };
+        block.tail.as_deref()
+    })
 }
 
 fn repl_generated_body_span(sf: &gossamer_ast::SourceFile) -> Option<gossamer_lex::Span> {

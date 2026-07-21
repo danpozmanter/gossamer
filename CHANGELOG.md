@@ -9,6 +9,7 @@
   unused-variable fixes on mutable bindings.
 - Show resolved nested reference types in REPL errors and LSP hover instead of
   leaking inference variables.
+- Show each binding's resolved type in REPL `%bindings` output.
 - Clarify mutable-reference alias chains and reserve documentation lifecycle
   labels for experimental features.
 
