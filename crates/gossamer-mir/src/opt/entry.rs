@@ -26,6 +26,18 @@ fn inlining_enabled() -> bool {
     )
 }
 
+/// Loop versioning duplicates a counted loop behind runtime guards. It can
+/// help when a single preheader check removes a small number of runtime calls,
+/// while a large candidate set can bloat tight inner loops enough to block
+/// LLVM's best codegen on DP kernels. Leave it enabled by default, with an
+/// escape hatch for differential benchmark work.
+fn bounds_versioning_enabled() -> bool {
+    !matches!(
+        std::env::var("GOSSAMER_BOUNDS_VERSIONING").ok().as_deref(),
+        Some("0" | "false" | "no")
+    )
+}
+
 /// Maps each body's resolver `DefId` (its `local` index) to the body
 /// name, so an `Operand::FnRef` call site can be resolved to the
 /// callee body the same way the JIT compile-set BFS resolves it.
@@ -55,6 +67,17 @@ fn callee_body_name(callee: &Operand, def_to_name: &HashMap<u32, String>) -> Opt
 /// into the two-constant form folding recognises. A second copy-prop
 /// pass after folding propagates the newly-created constants.
 pub fn optimise(body: &mut Body, tcx: &TyCtxt) {
+    optimise_with_bounds_limit(body, tcx, Some(versioning_candidate_limit()));
+}
+
+/// JIT preparation optimises for Cranelift promotion admission and hot-loop
+/// dispatch, where the unchecked clone is often required to make a body
+/// lowerable. Keep the general versioning pass aggressive for this path.
+pub fn optimise_for_jit(body: &mut Body, tcx: &TyCtxt) {
+    optimise_with_bounds_limit(body, tcx, None);
+}
+
+fn optimise_with_bounds_limit(body: &mut Body, tcx: &TyCtxt, versioning_candidate_limit: Option<usize>) {
     crate::verify::debug_verify_body(body);
     copy_propagate(body, tcx);
     crate::verify::debug_verify_body(body);
@@ -77,7 +100,9 @@ pub fn optimise(body: &mut Body, tcx: &TyCtxt) {
     local_branch_bounds_check_elim(body, tcx);
     let after_local = bounds_access_counts(body);
     crate::verify::debug_verify_body(body);
-    bounds_check_versioning(body, tcx);
+    if bounds_versioning_enabled() {
+        bounds_check_versioning_with_limit(body, tcx, versioning_candidate_limit);
+    }
     if std::env::var_os("GOS_BOUNDS_REMARKS").is_some() {
         let after_versioning = bounds_access_counts(body);
         eprintln!(
@@ -137,7 +162,9 @@ pub fn optimise_debug(body: &mut Body, tcx: &TyCtxt) {
     crate::verify::debug_verify_body(body);
     local_branch_bounds_check_elim(body, tcx);
     crate::verify::debug_verify_body(body);
-    bounds_check_versioning(body, tcx);
+    if bounds_versioning_enabled() {
+        bounds_check_versioning(body, tcx);
+    }
     crate::verify::debug_verify_body(body);
 }
 

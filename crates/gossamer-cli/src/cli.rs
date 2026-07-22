@@ -547,15 +547,18 @@ enum Command {
         /// Shell to emit completions for.
         shell: clap_complete::Shell,
     },
-    /// Inspect cache roots or prune expired and least-recently-modified files.
+    /// Inspect, prune, or clear Gossamer cache roots.
     Cache {
         /// Print only cache-class names and paths.
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["prune", "clear"])]
         path: bool,
         /// Prune files older than the retention window or beyond the cache cap.
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["path", "clear"])]
         prune: bool,
-        /// Report pruning without deleting files.
+        /// Remove every Gossamer cache class.
+        #[arg(long, conflicts_with_all = ["path", "prune"])]
+        clear: bool,
+        /// Report cache removal without deleting files.
         #[arg(long, short = 'n')]
         dry_run: bool,
     },
@@ -858,9 +861,12 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
         Some(Command::Cache {
             path,
             prune,
+            clear,
             dry_run,
         }) => {
-            if prune {
+            if clear {
+                cmd::cache::clear(dry_run)
+            } else if prune {
                 cmd::cache::prune(dry_run)
             } else {
                 cmd::cache::status(path)

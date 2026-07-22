@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.33.1 - Cache clearing, AOT performance recovery, and leaner JIT preparation
+
+- Add `gos cache --clear` to remove every known Gossamer cache class without
+  removing project build outputs or vendored dependencies.
+- Recover native edit-distance throughput by limiting release loop-versioning
+  clones that bloat dense dynamic-programming loops; retain aggressive
+  versioning for JIT promotion.
+- Reduce baseline JIT memory when no body can promote by discarding retained
+  preparation state, and admit scalar fixed-array locals to Cranelift JIT.
+- Add `GOS_JIT_TRACE` rejection diagnostics for unsupported promotion shapes.
+
 ## 0.33.0 - Adaptive JIT coverage + improvements for civil time, filesystem libraries and caching
 
 - Extend JIT promotion and native lowering for loops, recursion, native-only

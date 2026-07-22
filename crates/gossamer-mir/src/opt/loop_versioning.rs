@@ -1056,18 +1056,38 @@ fn redirect_terminator_target(term: &mut Terminator, from: usize, to: BlockId) {
 /// unchecked path runs only when every index is proven in `[0, len)`,
 /// matching the checked path's in-bounds behaviour exactly.
 pub(crate) fn bounds_check_versioning(body: &mut Body, tcx: &TyCtxt) {
+    bounds_check_versioning_with_limit(body, tcx, Some(versioning_candidate_limit()));
+}
+
+pub(crate) fn bounds_check_versioning_with_limit(
+    body: &mut Body,
+    tcx: &TyCtxt,
+    candidate_limit: Option<usize>,
+) {
     let headers: Vec<usize> = (0..body.blocks.len())
         .filter(|&h| recognise_counted_header(&body.blocks[h]).is_some())
         .collect();
     for h in headers {
-        try_version_loop(body, tcx, h);
+        try_version_loop(body, tcx, h, candidate_limit);
     }
+}
+
+fn versioning_candidate_limit() -> usize {
+    std::env::var("GOSSAMER_BOUNDS_VERSIONING_MAX_ACCESSES")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(4)
 }
 
 /// Attempts to version the counted loop headed at block `h`. A no-op when
 /// the loop is not a clean innermost counted loop, has no versionable
 /// affine access, or sits at the function entry.
-fn try_version_loop(body: &mut Body, tcx: &TyCtxt, h: usize) {
+fn try_version_loop(
+    body: &mut Body,
+    tcx: &TyCtxt,
+    h: usize,
+    candidate_limit: Option<usize>,
+) {
     if h == 0 {
         return;
     }
@@ -1104,6 +1124,11 @@ fn try_version_loop(body: &mut Body, tcx: &TyCtxt, h: usize) {
     let loop_blocks: Vec<usize> = std::iter::once(h).chain(region.iter().copied()).collect();
     let cands = collect_affine_candidates(body, tcx, h, counter, &region, &loop_blocks);
     if cands.is_empty() {
+        return;
+    }
+    if let Some(limit) = candidate_limit
+        && cands.len() > limit
+    {
         return;
     }
     emit_loop_version(body, h, counter, bound, &loop_blocks, &cands);

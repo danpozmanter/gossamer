@@ -635,7 +635,7 @@ impl Vm {
                 // JIT must hand it the same MIR shape or the tiers can
                 // diverge on constructs only one shape exercises.
                 for body in &mut bodies {
-                    gossamer_mir::optimise(body, &jit_tcx);
+                    gossamer_mir::optimise_for_jit(body, &jit_tcx);
                 }
                 let compile_names =
                     jit_backend::jit_compile_body_names(&bodies, &jit_tcx, &shapes, &struct_shapes);
@@ -655,6 +655,16 @@ impl Vm {
                     }
                 }
                 bodies.retain(|body| compile_names.contains(body.name.as_str()));
+                if bodies.is_empty() {
+                    self.jit.write().compiled = JitCompileState::Failed;
+                    *self.jit_eager_names.borrow_mut() = Arc::new(std::collections::HashSet::new());
+                    gossamer_runtime::collect_process_allocator(true);
+                    if let Some(globals) = Arc::get_mut(&mut self.globals) {
+                        globals.shrink_to_fit();
+                    }
+                    return Ok(());
+                }
+                compact_jit_bodies(&mut bodies);
                 self.jit_counters
                     .retained_preparation_bytes(jit_preparation_bytes(
                         &bodies,
@@ -1212,6 +1222,17 @@ impl Vm {
             },
         }
         Ok(())
+    }
+}
+
+fn compact_jit_bodies(bodies: &mut Vec<Body>) {
+    bodies.shrink_to_fit();
+    for body in bodies {
+        body.locals.shrink_to_fit();
+        body.blocks.shrink_to_fit();
+        for block in &mut body.blocks {
+            block.stmts.shrink_to_fit();
+        }
     }
 }
 

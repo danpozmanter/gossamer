@@ -120,7 +120,6 @@ pub fn paths(cwd: &Path) -> Vec<(CacheClass, PathBuf)> {
     let shared = frontend
         .parent()
         .map_or_else(|| frontend.clone(), Path::to_path_buf);
-    let home = std::env::var_os("HOME").map(PathBuf::from);
     let binding_root = if let Some(root) = std::env::var_os("GOSSAMER_CACHE") {
         PathBuf::from(root).join("gossamer")
     } else {
@@ -132,10 +131,15 @@ pub fn paths(cwd: &Path) -> Vec<(CacheClass, PathBuf)> {
         (CacheClass::Runners, binding_root.join("runners")),
         (CacheClass::Ir, cwd.join(".gos-cache").join("ir-cache")),
     ];
-    if let Some(home) = home {
-        out.push((CacheClass::Packages, home.join(".gossamer").join("cache")));
-        out.push((CacheClass::Build, home.join(".gossamer").join("build")));
+    if let Some(root) = gossamer_pkg::default_cache_root() {
+        out.push((CacheClass::Packages, root));
     }
+    out.push((
+        CacheClass::Build,
+        crate::build::BuildCache::user_default()
+            .root()
+            .to_path_buf(),
+    ));
     out
 }
 

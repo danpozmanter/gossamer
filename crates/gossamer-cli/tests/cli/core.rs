@@ -81,6 +81,67 @@ fn cache_status_uses_human_readable_sizes_by_default() {
 }
 
 #[test]
+fn cache_clear_removes_every_known_cache_class() {
+    let root = env::temp_dir().join(format!(
+        "gossamer-cache-clear-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let frontend = root.join("frontend");
+    let shared_ir = root.join("ir-cache");
+    let binding = root.join("binding-cache");
+    let runners = binding.join("gossamer").join("runners");
+    let packages = root.join("packages");
+    let home = root.join("home");
+    let build = home.join(".gossamer").join("build");
+    let project = root.join("project");
+    let project_ir = project.join(".gos-cache").join("ir-cache");
+    let target = project.join("target");
+    let vendor = project.join("vendor");
+
+    for path in [&frontend, &shared_ir, &runners, &packages, &build, &project_ir] {
+        std::fs::create_dir_all(path).expect("create cache root");
+        std::fs::write(path.join("entry"), b"cache").expect("write cache entry");
+    }
+    for path in [&target, &vendor] {
+        std::fs::create_dir_all(path).expect("create project directory");
+        std::fs::write(path.join("entry"), b"project data").expect("write project data");
+    }
+
+    let out = Command::new(gos_bin())
+        .args(["cache", "--clear"])
+        .current_dir(&project)
+        .env("GOSSAMER_CACHE_DIR", &frontend)
+        .env("GOSSAMER_CACHE", &binding)
+        .env("GOS_CACHE_DIR", &packages)
+        .env("HOME", &home)
+        .env_remove("XDG_CACHE_HOME")
+        .output()
+        .expect("spawn cache --clear");
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("cache clear: removed"),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    for path in [&frontend, &shared_ir, &runners, &packages, &build, &project_ir] {
+        assert!(!path.exists(), "cache root remains: {}", path.display());
+    }
+    assert!(target.exists(), "cache clear removed target/");
+    assert!(vendor.exists(), "cache clear removed vendor/");
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn parse_subcommand_round_trips_hello_world() {
     let fixture = write_fixture("parse", "fn main() { println(\"hello\") }\n");
     let out = Command::new(gos_bin())

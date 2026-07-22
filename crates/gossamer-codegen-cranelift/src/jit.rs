@@ -1255,12 +1255,25 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
             lty,
             TyKind::FnDef { .. } | TyKind::FnPtr(_) | TyKind::Closure { .. }
         ) {
+            if std::env::var("GOS_JIT_TRACE").is_ok() {
+                eprintln!(
+                    "jit: unsupported {} local#{idx} callable kind={lty:?}",
+                    body.name
+                );
+            }
             return true;
         }
         if jit_local_ty_needs_bytecode(
             tcx,
             body.local_ty(gossamer_mir::Local(u32::try_from(idx).unwrap_or(u32::MAX))),
         ) {
+            if std::env::var("GOS_JIT_TRACE").is_ok() {
+                eprintln!(
+                    "jit: unsupported {} local#{idx} bytecode-only {}",
+                    body.name,
+                    describe_jit_local_ty(tcx, lty)
+                );
+            }
             return true;
         }
         // A `Vec`/`[T]` whose element is a payload-bearing enum is safe in a
@@ -1275,6 +1288,12 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
                 TyKind::Unit
             )
         {
+            if std::env::var("GOS_JIT_TRACE").is_ok() {
+                eprintln!(
+                    "jit: unsupported {} local#{idx} payload-enum vec return kind={lty:?}",
+                    body.name
+                );
+            }
             return true;
         }
     }
@@ -1296,10 +1315,19 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
                 TyKind::Vec(_) | TyKind::Slice(_) | TyKind::HashMap { .. }
             )
         {
+            if std::env::var("GOS_JIT_TRACE").is_ok() {
+                eprintln!(
+                    "jit: unsupported {} param#{pidx} mutable aggregate ref",
+                    body.name
+                );
+            }
             return true;
         }
     }
     if body_has_cross_goroutine_ops(body) {
+        if std::env::var("GOS_JIT_TRACE").is_ok() {
+            eprintln!("jit: unsupported {} cross-goroutine op", body.name);
+        }
         return true;
     }
     let has_fn_arg = |args: &[Operand]| args.iter().any(|a| matches!(a, Operand::FnRef { .. }));
@@ -1316,6 +1344,9 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
         }
         if let Terminator::Call { callee, args, .. } = &block.terminator {
             if has_fn_arg(args) {
+                if std::env::var("GOS_JIT_TRACE").is_ok() {
+                    eprintln!("jit: unsupported {} function argument call", body.name);
+                }
                 return true;
             }
             // Native String writeback currently loses the builder's unique
@@ -1325,6 +1356,9 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
             // the builder representation and is faster and leaner here.
             if matches!(callee, Operand::Const(ConstValue::Str(name)) if name == "gos_rt_str_append_bytes")
             {
+                if std::env::var("GOS_JIT_TRACE").is_ok() {
+                    eprintln!("jit: unsupported {} string append bytes", body.name);
+                }
                 return true;
             }
         }
@@ -1355,13 +1389,13 @@ fn jit_local_ty_needs_bytecode(tcx: &TyCtxt, ty: Ty) -> bool {
             ) || is_i64_f64_tuple(tcx, *elem)
                 || is_i64_vec(tcx, *elem))
         }
+        TyKind::Array { elem, .. } => !jit_local_array_elem_ok(tcx, *elem),
         TyKind::Adt { def, .. } if def.local == u32::MAX - 20 => false,
-        // Result and Option carriers, user ADTs, maps, arrays, and tuples all
+        // Result and Option carriers, user ADTs, maps, and tuples all
         // have address-backed or tagged aggregate details the in-process JIT
         // trampoline cannot yet preserve when a body promotes from bytecode.
         TyKind::Adt { .. }
         | TyKind::HashMap { .. }
-        | TyKind::Array { .. }
         | TyKind::Tuple(_)
         | TyKind::Iterator(_)
         | TyKind::Sender(_)
@@ -1379,6 +1413,26 @@ fn jit_local_ty_needs_bytecode(tcx: &TyCtxt, ty: Ty) -> bool {
         | TyKind::Param { .. }
         | TyKind::Error => true,
         TyKind::Ref { .. } => unreachable!("reference layers are peeled above"),
+    }
+}
+
+fn jit_local_array_elem_ok(tcx: &TyCtxt, elem: Ty) -> bool {
+    match tcx.kind_of(elem) {
+        TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Float(_) => true,
+        TyKind::Array { elem, .. } => jit_local_array_elem_ok(tcx, *elem),
+        _ => false,
+    }
+}
+
+fn describe_jit_local_ty(tcx: &TyCtxt, kind: &TyKind) -> String {
+    match kind {
+        TyKind::Vec(elem) | TyKind::Slice(elem) => {
+            format!("{kind:?} elem={:?}", tcx.kind_of(*elem))
+        }
+        TyKind::Array { elem, .. } => {
+            format!("{kind:?} elem={:?}", tcx.kind_of(*elem))
+        }
+        _ => format!("{kind:?}"),
     }
 }
 

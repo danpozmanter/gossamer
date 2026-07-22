@@ -1,7 +1,7 @@
 //! Cache inspection and retention commands.
 
 use anyhow::Result;
-use gossamer_driver::cache_maintenance::{self, CachePolicy};
+use gossamer_driver::cache_maintenance::{self, CacheClass, CachePolicy};
 
 pub(crate) fn status(paths_only: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
@@ -41,6 +41,21 @@ pub(crate) fn prune(dry_run: bool) -> Result<()> {
         human_bytes(bytes),
         human_bytes(policy.max_bytes),
         policy.max_age.as_secs() / 86_400
+    );
+    Ok(())
+}
+
+/// Removes every cache class known to the toolchain without touching project
+/// build outputs or vendored dependencies.
+pub(crate) fn clear(dry_run: bool) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let removed = cache_maintenance::remove(&cwd, CacheClass::all(), dry_run)?;
+    let bytes = removed.iter().map(|entry| entry.bytes).sum::<u64>();
+    let verb = if dry_run { "would remove" } else { "removed" };
+    println!(
+        "cache clear: {verb} {} from {} cache roots",
+        human_bytes(bytes),
+        removed.len()
     );
     Ok(())
 }
