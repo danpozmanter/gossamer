@@ -2021,7 +2021,7 @@ fn chunk_has_spawn(chunk: &crate::bytecode::FnChunk) -> bool {
         .instrs
         .iter()
         .any(|op| matches!(op, Op::Spawn { .. } | Op::SpawnMethod { .. }))
-        || chunk.globals.iter().any(|name| name == "spawn")
+        || chunk.globals.iter().any(|name| &**name == "spawn")
         || chunk
             .closure_protos
             .iter()

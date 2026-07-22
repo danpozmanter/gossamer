@@ -45,13 +45,13 @@ pub(crate) fn fold_comptime(augmented: String, file_label: &str) -> Result<Strin
 /// reached the fold.
 fn fold_comptime_on_vm(augmented: String, file_label: String) -> Result<String> {
     let mut map = gossamer_lex::SourceMap::new();
-    let file_id = map.add_file(file_label.clone(), augmented.clone());
-    let outcome = gossamer_driver::check_frontend(&augmented, file_id);
+    let file_id = map.add_file(file_label.clone(), augmented);
+    let outcome = gossamer_driver::check_frontend(map.source(file_id), file_id);
     if !outcome.is_ok() {
         // Other front-end errors exist; let the caller's authoritative
         // gate render them rather than masking them behind a comptime
         // failure.
-        return Ok(augmented);
+        return Ok(map.into_source(file_id));
     }
 
     let gossamer_driver::CheckedFrontend {
@@ -63,6 +63,6 @@ fn fold_comptime_on_vm(augmented: String, file_label: String) -> Result<String> 
     } = outcome.checked;
     let program = gossamer_hir::lower_source_file(&sf, &resolutions, &table, &mut tcx);
 
-    gossamer_interp::fold_into_source(&program, tcx, &augmented, &file_label)
+    gossamer_interp::fold_into_source(&program, tcx, map.source(file_id), &file_label)
         .map_err(|message| anyhow!(message))
 }

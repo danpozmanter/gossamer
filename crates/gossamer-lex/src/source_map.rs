@@ -85,6 +85,16 @@ impl SourceMap {
         &self.files[file.0 as usize].source
     }
 
+    /// Consumes the map and returns the owned source text for `file`.
+    ///
+    /// This is useful for frontend pipelines that temporarily need span
+    /// lookup but must return the original source on an early exit without
+    /// keeping or creating a second complete `String`.
+    #[must_use]
+    pub fn into_source(mut self, file: FileId) -> String {
+        self.files.swap_remove(file.0 as usize).source
+    }
+
     /// Returns the source slice covered by `span`.
     #[must_use]
     pub fn slice(&self, span: Span) -> &str {

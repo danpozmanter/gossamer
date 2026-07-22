@@ -24,5 +24,6 @@ fn main() -> std::process::ExitCode {
         std::env::set_var("GOSSAMER_IN_RUNNER", "1");
     }
 
-    gossamer_cli::run_main()
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    gossamer_cli::run_main_with_args(&args)
 }

@@ -1615,7 +1615,7 @@ pub struct FnChunk {
     /// Raw `i64` constants referenced by `LoadConstI64`.
     pub i64_consts: Vec<i64>,
     /// Global names referenced by `LoadGlobal`.
-    pub globals: Vec<String>,
+    pub globals: Vec<Box<str>>,
     /// INTERNED variant/struct names referenced by `VariantIs` /
     /// `StructIs` (`name_idx` indexes here, not `consts`). Both sides
     /// of the shape test come from `intern_type_name`, so the run
@@ -1787,6 +1787,8 @@ impl FnChunk {
         self.f64_consts.shrink_to_fit();
         self.i64_consts.shrink_to_fit();
         self.globals.shrink_to_fit();
+        self.shape_names.shrink_to_fit();
+        self.mut_ref_params.shrink_to_fit();
         self.closure_protos.shrink_to_fit();
         self.select_arms.shrink_to_fit();
     }

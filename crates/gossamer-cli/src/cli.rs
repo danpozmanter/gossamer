@@ -638,6 +638,73 @@ pub(crate) fn run() -> ExitCode {
     }
 }
 
+/// Executes an unambiguous common `gos run` command without constructing
+/// Clap's full, deeply recursive schema. Commands outside this deliberately
+/// narrow grammar return `None` and retain the authoritative Clap path.
+///
+/// Accepted grammar: `gos run [--no-jit] [--main-thread] [--locked] [FILE]
+/// [-- ARGS...]`, with flags and `FILE` in either order. Duplicate flags,
+/// unknown options, help, and more than one path fall back so diagnostics and
+/// edge-case behavior remain owned by Clap.
+#[must_use]
+pub fn try_fast_run(args: &[std::ffi::OsString]) -> Option<ExitCode> {
+    let parsed = parse_fast_run(args)?;
+    let result = (|| {
+        crate::cmd::pkg::enforce_lockfile_if_requested(parsed.locked)?;
+        dispatch_run(
+            parsed.file,
+            parsed.no_jit,
+            parsed.main_thread,
+            &parsed.forwarded,
+        )
+    })();
+    Some(match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("{}: {err:#}", style::error("error"));
+            ExitCode::FAILURE
+        }
+    })
+}
+
+struct FastRun {
+    file: Option<PathBuf>,
+    no_jit: bool,
+    main_thread: bool,
+    locked: bool,
+    forwarded: Vec<String>,
+}
+
+fn parse_fast_run(args: &[std::ffi::OsString]) -> Option<FastRun> {
+    if args.get(1)?.to_str()? != "run" {
+        return None;
+    }
+    let mut parsed = FastRun {
+        file: None,
+        no_jit: false,
+        main_thread: false,
+        locked: false,
+        forwarded: Vec::new(),
+    };
+    let mut forwarded = false;
+    for arg in &args[2..] {
+        if forwarded {
+            parsed.forwarded.push(arg.to_str()?.to_owned());
+            continue;
+        }
+        match arg.to_str() {
+            Some("--") => forwarded = true,
+            Some("--no-jit") if !parsed.no_jit => parsed.no_jit = true,
+            Some("--main-thread") if !parsed.main_thread => parsed.main_thread = true,
+            Some("--locked") if !parsed.locked => parsed.locked = true,
+            Some(text) if text.starts_with('-') => return None,
+            _ if parsed.file.is_none() => parsed.file = Some(PathBuf::from(arg)),
+            _ => return None,
+        }
+    }
+    Some(parsed)
+}
+
 fn parse_cli() -> Cli {
     // Clap's derived command schema is deeply recursive. Construct it on an
     // explicitly sized stack so Windows' smaller main-thread stack does not
@@ -1081,8 +1148,44 @@ fn dispatch_build(
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, configure_pgo};
+    use super::{Cli, configure_pgo, parse_fast_run};
     use clap::Parser;
+
+    fn os_args(args: &[&str]) -> Vec<std::ffi::OsString> {
+        args.iter().map(std::ffi::OsString::from).collect()
+    }
+
+    #[test]
+    fn fast_run_accepts_only_the_unambiguous_common_grammar() {
+        let args = os_args(&[
+            "gos",
+            "run",
+            "--no-jit",
+            "src/main.gos",
+            "--locked",
+            "--",
+            "--port",
+            "8080",
+        ]);
+        let parsed = parse_fast_run(&args).expect("common run command should use fast path");
+        assert_eq!(parsed.file, Some(std::path::PathBuf::from("src/main.gos")));
+        assert!(parsed.no_jit);
+        assert!(parsed.locked);
+        assert!(!parsed.main_thread);
+        assert_eq!(parsed.forwarded, ["--port", "8080"]);
+    }
+
+    #[test]
+    fn fast_run_defers_edge_cases_to_clap() {
+        for args in [
+            &["gos", "run", "--help"][..],
+            &["gos", "run", "--no-jit", "--no-jit"][..],
+            &["gos", "run", "a.gos", "b.gos"][..],
+            &["gos", "build", "a.gos"][..],
+        ] {
+            assert!(parse_fast_run(&os_args(args)).is_none(), "args={args:?}");
+        }
+    }
 
     #[test]
     fn bare_invocation_parses() {

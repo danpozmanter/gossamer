@@ -731,7 +731,7 @@ impl Vm {
                     // qualified-key build + double `HashMap::get`
                     // lookup chain that dominates tight per-element
                     // method call loops.
-                    let name = &chunk.globals[name_idx as usize];
+                    let name = &*chunk.globals[name_idx as usize];
                     let argc_usz = argc as usize;
                     let total = argc_usz + 1;
                     let recv_token = type_token(&registers[receiver as usize]);
@@ -797,7 +797,7 @@ impl Vm {
                             let r = self
                                 .qualified_key(&buf[0], name)
                                 .and_then(|qual| self.lookup_global(qual.as_ref()))
-                                .or_else(|| self.lookup_global(name.as_str()));
+                                .or_else(|| self.lookup_global(name));
                             if recv_token != 0 {
                                 if let Some(ref g) = r {
                                     let mut cache = state.call_caches.borrow_mut();
@@ -814,7 +814,7 @@ impl Vm {
                                     apply_or_suspend_bytecode!(dst, g, v)
                                 }
                                 None => {
-                                    return Err(RuntimeError::UnresolvedName(name.clone()));
+                                    return Err(RuntimeError::UnresolvedName(name.to_owned()));
                                 }
                             }
                         }
@@ -836,7 +836,7 @@ impl Vm {
                             let r = self
                                 .qualified_key(&call_args[0], name)
                                 .and_then(|qual| self.lookup_global(qual.as_ref()))
-                                .or_else(|| self.lookup_global(name.as_str()));
+                                .or_else(|| self.lookup_global(name));
                             if recv_token != 0 {
                                 if let Some(ref g) = r {
                                     let mut cache = state.call_caches.borrow_mut();
@@ -850,7 +850,7 @@ impl Vm {
                                 }
                                 Some(g) => apply_or_suspend_bytecode!(dst, g, call_args),
                                 None => {
-                                    return Err(RuntimeError::UnresolvedName(name.clone()));
+                                    return Err(RuntimeError::UnresolvedName(name.to_owned()));
                                 }
                             }
                         }
@@ -3605,7 +3605,7 @@ impl Vm {
                     argc,
                 } => {
                     let recv = registers[receiver as usize].clone();
-                    let name = chunk.globals[name_idx as usize].as_str();
+                    let name = &*chunk.globals[name_idx as usize];
                     // Resolve method dispatch the same way `Op::MethodCall`
                     // does (qualified key first, bare name fallback). The
                     // resolved global is what the spawned goroutine

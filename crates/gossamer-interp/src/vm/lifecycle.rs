@@ -937,7 +937,7 @@ impl Vm {
             };
             // Keep panic-capable code on bytecode so the VM's diagnostic and
             // side-effect semantics remain the single execution path.
-            if chunk.globals.iter().any(|g| g == "panic") {
+            if chunk.globals.iter().any(|g| &**g == "panic") {
                 continue;
             }
             if trace {

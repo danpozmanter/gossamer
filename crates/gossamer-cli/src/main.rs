@@ -27,7 +27,7 @@ fn main() -> ExitCode {
     );
     let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
     match gossamer_cli::dispatch_runner_if_needed(&args) {
-        gossamer_cli::DispatchOutcome::InProcess => gossamer_cli::run_main(),
+        gossamer_cli::DispatchOutcome::InProcess => gossamer_cli::run_main_with_args(&args),
         gossamer_cli::DispatchOutcome::Failed(err) => {
             eprintln!("error: {err}");
             ExitCode::FAILURE

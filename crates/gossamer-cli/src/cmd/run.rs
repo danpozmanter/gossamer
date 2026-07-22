@@ -65,11 +65,11 @@ fn run_on_vm(file: &PathBuf, forwarded: &[String]) -> Result<()> {
     let source = crate::comptime_fold::fold_comptime(source, &file.to_string_lossy())?;
     profile_rss_stage("source_prepared");
     let mut map = gossamer_lex::SourceMap::new();
-    let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
+    let file_id = map.add_file(file.to_string_lossy().into_owned(), source);
     // Static checks always run first. A program with parse / resolve /
     // type errors has no business reaching the VM - execution would
     // either crash or produce unsound output.
-    let (program, tcx) = load_and_check_with_edition(&source, file_id, &map, edition)?;
+    let (program, tcx) = load_and_check_with_edition(map.source(file_id), file_id, &map, edition)?;
     // The VM keeps the HIR and type context it needs for bytecode/JIT loading,
     // but it neither renders source diagnostics nor consults the SourceMap at
     // runtime. Release the augmented source and parse-time map before the VM
@@ -77,7 +77,6 @@ fn run_on_vm(file: &PathBuf, forwarded: &[String]) -> Result<()> {
     // deferred Cranelift artifact. Runtime tracebacks use the VM call stack,
     // not this compile-time map.
     drop(map);
-    drop(source);
     profile_rss_stage("frontend_released");
     gossamer_interp::set_program_name(&file.to_string_lossy());
     gossamer_interp::set_program_args(forwarded);

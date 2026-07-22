@@ -511,7 +511,7 @@ pub(crate) struct FnBuilder<'tcx> {
     pub(crate) f64_const_cache: HashMap<u64, ConstIdx>,
     pub(crate) i64_consts: Vec<i64>,
     pub(crate) i64_const_cache: HashMap<i64, ConstIdx>,
-    pub(crate) globals: Vec<String>,
+    pub(crate) globals: Vec<Box<str>>,
     pub(crate) shape_names: Vec<&'static str>,
     pub(crate) global_cache: HashMap<String, GlobalIdx>,
     pub(crate) next_reg: u16,

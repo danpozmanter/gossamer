@@ -133,7 +133,7 @@ pub(crate) fn heap_extract_i64s(v: &Value) -> Vec<i64> {
 }
 
 pub(crate) fn heap_to_value(xs: Vec<i64>) -> Value {
-    Value::Array(Arc::new(xs.into_iter().map(Value::Int).collect()))
+    Value::IntArray(Arc::new(xs))
 }
 
 pub(crate) fn builtin_heap_push(args: &[Value]) -> RuntimeResult<Value> {
@@ -158,6 +158,31 @@ pub(crate) fn builtin_heap_peek(args: &[Value]) -> RuntimeResult<Value> {
 pub(crate) fn builtin_heap_len(args: &[Value]) -> RuntimeResult<Value> {
     let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
     Ok(Value::Int(gossamer_std::container_heap::len(&xs)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn integer_container_results_keep_typed_storage() {
+        let value = heap_to_value(vec![1, 3, 2]);
+        assert!(matches!(&value, Value::IntArray(xs) if xs.as_slice() == [1, 3, 2]));
+        assert_eq!(heap_extract_i64s(&value), [1, 3, 2]);
+    }
+
+    #[test]
+    fn heap_operations_preserve_typed_storage_and_order() {
+        let empty = heap_to_value(Vec::new());
+        let one = builtin_heap_push(&[empty, Value::Int(5)]).unwrap();
+        let two = builtin_heap_push(&[one, Value::Int(1)]).unwrap();
+        assert!(matches!(
+            builtin_heap_peek(std::slice::from_ref(&two)).unwrap(),
+            Value::Int(1)
+        ));
+        let popped = builtin_heap_pop(&[two]).unwrap();
+        assert!(matches!(&popped, Value::IntArray(xs) if xs.as_slice() == [5]));
+    }
 }
 
 // ----------------------------------------------------------------------

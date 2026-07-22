@@ -78,7 +78,7 @@ impl<'tcx> FnBuilder<'tcx> {
             return *idx;
         }
         let idx = GlobalIdx::try_from(self.globals.len()).expect("global pool overflow");
-        self.globals.push(name.to_string());
+        self.globals.push(name.into());
         self.global_cache.insert(name.to_string(), idx);
         idx
     }

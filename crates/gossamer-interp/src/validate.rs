@@ -2243,7 +2243,7 @@ mod tests {
             consts: vec![Value::Int(0)],
             f64_consts: vec![0.0],
             i64_consts: vec![0],
-            globals: vec!["g".to_string()],
+            globals: vec!["g".into()],
             shape_names: vec!["TestVariant"],
             call_cache_count: 0,
             arith_cache_count: 0,

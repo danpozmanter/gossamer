@@ -13,6 +13,9 @@
   dispatch metadata alive during native execution.
 - Share struct field-name layouts across instances to reduce repeated boxed
   object metadata while preserving declaration-order field access.
+- Reduce VM memory by avoiding duplicate frontend source ownership, using a
+  lightweight common `gos run` path, compacting bytecode names, and preserving
+  typed integer storage across container operations.
 
 ## 0.33.1 - Cache clearing, AOT performance recovery, and leaner JIT preparation
 
