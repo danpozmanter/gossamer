@@ -173,10 +173,10 @@ fn jit_dispatches_through_simple_arithmetic() {
 }
 
 #[test]
-fn jit_struct_return_falls_back_without_losing_result() {
-    // Struct-returning helpers carry aggregate locals and heap children. The
-    // in-process JIT admission guard keeps that representation on bytecode
-    // until the trampoline can preserve it safely.
+fn jit_struct_return_promotes_without_losing_result() {
+    // Struct returns use the explicit StructPtr trampoline shape. Exercise a
+    // heap child as well as a scalar field so promotion covers both decoding
+    // and ownership transfer back into VM values.
     let _g = GosJitGuard::new();
     let source = "struct Pair { label: String, right: i64 }\nfn build_pair(n: i64) -> Pair {\n  let mut i = 0i64\n  while i < 100i64 { i = i + 1i64 }\n  Pair { label: \"native\", right: n + 1i64 }\n}\nfn main() -> i64 { 0i64 }\n";
     let (vm, _) = build_vm(source);
@@ -200,8 +200,8 @@ fn jit_struct_return_falls_back_without_losing_result() {
 
     let metrics = vm.jit_metrics();
     assert_eq!(
-        metrics.successful_compiles, 0,
-        "the struct-returning body must stay on bytecode: {metrics:?}"
+        metrics.successful_compiles, 1,
+        "the struct-returning body must promote: {metrics:?}"
     );
 }
 

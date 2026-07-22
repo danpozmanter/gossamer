@@ -3039,10 +3039,10 @@ mod promotion_report_tests {
             substs: Substs::new(),
         });
         tcx.register_struct_fields(def, vec![pair_ty]);
-        let records_ty = tcx.intern(TyKind::Vec(record_ty));
+        let record_vec_ty = tcx.intern(TyKind::Vec(record_ty));
 
         assert!(!jit_local_ty_needs_bytecode(&tcx, vec_string_ty));
-        assert!(!jit_local_ty_needs_bytecode(&tcx, records_ty));
+        assert!(!jit_local_ty_needs_bytecode(&tcx, record_vec_ty));
     }
 
     #[test]
