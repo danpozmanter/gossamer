@@ -8,7 +8,8 @@
   clones that bloat dense dynamic-programming loops; retain aggressive
   versioning for JIT promotion.
 - Reduce baseline JIT memory when no body can promote by discarding retained
-  preparation state, and admit scalar fixed-array locals to Cranelift JIT.
+  preparation state, and admit lowerable internal arrays, vectors, tuples,
+  structs, recursive enums, and by-value results to Cranelift JIT.
 - Add `GOS_JIT_TRACE` rejection diagnostics for unsupported promotion shapes.
 
 ## 0.33.0 - Adaptive JIT coverage + improvements for civil time, filesystem libraries and caching

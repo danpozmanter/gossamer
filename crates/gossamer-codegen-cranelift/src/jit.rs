@@ -1367,9 +1367,24 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
 }
 
 fn jit_local_ty_needs_bytecode(tcx: &TyCtxt, ty: Ty) -> bool {
+    jit_local_ty_needs_bytecode_inner(tcx, ty, &mut std::collections::HashSet::new())
+}
+
+fn jit_local_ty_needs_bytecode_inner(
+    tcx: &TyCtxt,
+    ty: Ty,
+    visiting: &mut std::collections::HashSet<Ty>,
+) -> bool {
     let mut ty = ty;
     while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+        if matches!(tcx.kind_of(*inner), TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1)
+        {
+            return true;
+        }
         ty = *inner;
+    }
+    if !visiting.insert(ty) {
+        return false;
     }
     match tcx.kind_of(ty) {
         TyKind::Bool
@@ -1381,22 +1396,39 @@ fn jit_local_ty_needs_bytecode(tcx: &TyCtxt, ty: Ty) -> bool {
         | TyKind::String
         | TyKind::Duration
         | TyKind::Instant => false,
-        TyKind::Vec(elem) | TyKind::Slice(elem) => {
-            !(matches!(
-                tcx.kind_of(*elem),
-                TyKind::Int(gossamer_types::IntTy::I64)
-                    | TyKind::Float(gossamer_types::FloatTy::F64)
-            ) || is_i64_f64_tuple(tcx, *elem)
-                || is_i64_vec(tcx, *elem))
+        TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. } => {
+            jit_local_ty_needs_bytecode_inner(tcx, *elem, visiting)
         }
-        TyKind::Array { elem, .. } => !jit_local_array_elem_ok(tcx, *elem),
+        TyKind::Tuple(elems) => elems
+            .iter()
+            .any(|elem| jit_local_ty_needs_bytecode_inner(tcx, *elem, visiting)),
+        TyKind::Adt { def, .. } if def.local == u32::MAX - 1 => true,
+        TyKind::Adt { def, substs } if def.local == u32::MAX => {
+            substs.types().into_iter().any(|payload| {
+                !matches!(tcx.kind_of(payload), TyKind::DynError)
+                    && jit_local_ty_needs_bytecode_inner(tcx, payload, visiting)
+            })
+        }
         TyKind::Adt { def, .. } if def.local == u32::MAX - 20 => false,
-        // Result and Option carriers, user ADTs, maps, and tuples all
-        // have address-backed or tagged aggregate details the in-process JIT
-        // trampoline cannot yet preserve when a body promotes from bytecode.
+        TyKind::Adt { def, substs } if def.local < u32::MAX - 64 => {
+            let struct_unsafe = tcx.adt_field_tys(*def, substs).is_some_and(|fields| {
+                fields
+                    .iter()
+                    .any(|field| jit_local_ty_needs_bytecode_inner(tcx, *field, visiting))
+            });
+            let enum_unsafe = tcx.enum_variant_tys(*def).is_some_and(|variants| {
+                variants
+                    .iter()
+                    .flatten()
+                    .any(|field| jit_local_ty_needs_bytecode_inner(tcx, *field, visiting))
+            });
+            struct_unsafe || enum_unsafe
+        }
+        // Options, other tagged standard-library carriers, and opaque handles
+        // still need the bytecode path. Ordinary user aggregates are safe as
+        // internal native locals and are checked recursively above.
         TyKind::Adt { .. }
         | TyKind::HashMap { .. }
-        | TyKind::Tuple(_)
         | TyKind::Iterator(_)
         | TyKind::Sender(_)
         | TyKind::Receiver(_)
@@ -1409,18 +1441,9 @@ fn jit_local_ty_needs_bytecode(tcx: &TyCtxt, ty: Ty) -> bool {
         | TyKind::Closure { .. }
         | TyKind::Alias { .. }
         | TyKind::Dyn(_)
-        | TyKind::Var(_)
-        | TyKind::Param { .. }
         | TyKind::Error => true,
+        TyKind::Var(_) | TyKind::Param { .. } => false,
         TyKind::Ref { .. } => unreachable!("reference layers are peeled above"),
-    }
-}
-
-fn jit_local_array_elem_ok(tcx: &TyCtxt, elem: Ty) -> bool {
-    match tcx.kind_of(elem) {
-        TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Float(_) => true,
-        TyKind::Array { elem, .. } => jit_local_array_elem_ok(tcx, *elem),
-        _ => false,
     }
 }
 
@@ -1431,6 +1454,14 @@ fn describe_jit_local_ty(tcx: &TyCtxt, kind: &TyKind) -> String {
         }
         TyKind::Array { elem, .. } => {
             format!("{kind:?} elem={:?}", tcx.kind_of(*elem))
+        }
+        TyKind::Adt { substs, .. } => {
+            let payloads: Vec<&TyKind> = substs
+                .types()
+                .into_iter()
+                .map(|ty| tcx.kind_of(ty))
+                .collect();
+            format!("{kind:?} payloads={payloads:?}")
         }
         _ => format!("{kind:?}"),
     }
@@ -2836,12 +2867,16 @@ fn register_binding_symbols(builder: &mut JITBuilder) -> Vec<&'static str> {
 
 #[cfg(test)]
 mod promotion_report_tests {
-    use super::{jit_compile_body_names, jit_entry_body_names, jit_promotion_report};
+    use super::{
+        jit_compile_body_names, jit_entry_body_names, jit_local_ty_needs_bytecode,
+        jit_promotion_report,
+    };
     use gossamer_lex::{SourceMap, Span};
     use gossamer_mir::{
         BasicBlock, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Terminator,
     };
-    use gossamer_types::{IntTy, TyCtxt, TyKind};
+    use gossamer_resolve::DefId;
+    use gossamer_types::{IntTy, Mutbl, Substs, TyCtxt, TyKind};
     use std::collections::HashMap;
 
     fn span() -> Span {
@@ -2989,5 +3024,48 @@ mod promotion_report_tests {
         });
         let admitted = jit_compile_body_names(&[builder], &tcx, &HashMap::new(), &HashMap::new());
         assert!(admitted.is_empty(), "admitted bodies: {admitted:?}");
+    }
+
+    #[test]
+    fn internal_aggregate_locals_do_not_block_promotion() {
+        let mut tcx = TyCtxt::new();
+        let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+        let string_ty = tcx.intern(TyKind::String);
+        let vec_string_ty = tcx.intern(TyKind::Vec(string_ty));
+        let pair_ty = tcx.intern(TyKind::Tuple(vec![i64_ty, string_ty]));
+        let def = DefId::local(7);
+        let record_ty = tcx.intern(TyKind::Adt {
+            def,
+            substs: Substs::new(),
+        });
+        tcx.register_struct_fields(def, vec![pair_ty]);
+        let records_ty = tcx.intern(TyKind::Vec(record_ty));
+
+        assert!(!jit_local_ty_needs_bytecode(&tcx, vec_string_ty));
+        assert!(!jit_local_ty_needs_bytecode(&tcx, records_ty));
+    }
+
+    #[test]
+    fn recursive_user_enum_is_safe_but_option_is_not() {
+        let mut tcx = TyCtxt::new();
+        let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+        let tree_def = DefId::local(9);
+        let tree_ty = tcx.intern(TyKind::Adt {
+            def: tree_def,
+            substs: Substs::new(),
+        });
+        tcx.register_enum_variant_tys(tree_def, vec![vec![], vec![i64_ty, tree_ty, tree_ty]]);
+        let option_ty = tcx.intern(TyKind::Adt {
+            def: DefId::local(u32::MAX - 1),
+            substs: Substs::from_types([i64_ty]),
+        });
+        let option_ref_ty = tcx.intern(TyKind::Ref {
+            mutability: Mutbl::Not,
+            inner: option_ty,
+        });
+
+        assert!(!jit_local_ty_needs_bytecode(&tcx, tree_ty));
+        assert!(jit_local_ty_needs_bytecode(&tcx, option_ty));
+        assert!(jit_local_ty_needs_bytecode(&tcx, option_ref_ty));
     }
 }
