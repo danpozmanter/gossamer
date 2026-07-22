@@ -2850,7 +2850,7 @@ mod promotion_report_tests {
     }
 
     #[test]
-    fn unsupported_boundary_helper_is_native_only_dependency() {
+    fn unsupported_boundary_dependency_rejects_caller() {
         let mut tcx = TyCtxt::new();
         let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
         let map_ty = tcx.intern(TyKind::HashMap {
@@ -2873,16 +2873,14 @@ mod promotion_report_tests {
         });
         let bodies = vec![caller, body("unsupported", map_ty, false)];
         let admitted = jit_compile_body_names(&bodies, &tcx, &HashMap::new(), &HashMap::new());
-        assert!(admitted.contains("caller"), "admitted bodies: {admitted:?}");
         assert!(
-            admitted.contains("unsupported"),
-            "native caller needs its link dependency: {admitted:?}"
+            admitted.is_empty(),
+            "unsupported native dependency should reject its caller too: {admitted:?}"
         );
         let entries = jit_entry_body_names(&bodies, &tcx, &HashMap::new(), &HashMap::new());
-        assert!(entries.contains("caller"), "entries: {entries:?}");
         assert!(
-            !entries.contains("unsupported"),
-            "unmarshallable dependency must not become a VM entry: {entries:?}"
+            entries.is_empty(),
+            "caller with unsupported dependency must not become a VM entry: {entries:?}"
         );
     }
 
