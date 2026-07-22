@@ -115,7 +115,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
-    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlagsData, Signature,
     StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
     immediates::Imm64, types,
 };
@@ -288,7 +288,9 @@ pub(super) fn lower_place_address(
                             | TyKind::String
                     );
                 if !inline_aggregate && !terminal_value {
-                    let loaded = builder.ins().load(ptr_ty, MemFlags::trusted(), current, 0);
+                    let loaded = builder
+                        .ins()
+                        .load(ptr_ty, MemFlagsData::trusted(), current, 0);
                     current = loaded;
                 }
                 if let TyKind::Ref { inner, .. } = tcx.kind_of(current_ty).clone() {
@@ -330,7 +332,9 @@ pub(super) fn lower_place_store(
     // Coerce the value to the leaf's cranelift type where possible;
     // bail loudly when that would be lossy.
     let coerced = coerce_store_value(builder, value, leaf_ty)?;
-    builder.ins().store(MemFlags::trusted(), coerced, addr, 0);
+    builder
+        .ins()
+        .store(MemFlagsData::trusted(), coerced, addr, 0);
     Ok(())
 }
 
@@ -397,7 +401,9 @@ pub(super) fn lower_place_read(
     // `_payload`, stores, call args) take the packed value, so load the
     // 16-byte carrier rather than returning the field's address.
     if is_carrier_ty(tcx, leaf_ty_mir) {
-        return Ok(builder.ins().load(types::I128, MemFlags::new(), addr, 0));
+        return Ok(builder
+            .ins()
+            .load(types::I128, MemFlagsData::new(), addr, 0));
     }
     // A one-word address-represented aggregate leaf (a single-managed-field
     // struct embedded in a parent) is likewise handed out by address so the
@@ -406,7 +412,7 @@ pub(super) fn lower_place_read(
         return Ok(addr);
     }
     let leaf_ty = resolve_place_cl_type(tcx, body, place, module, hint);
-    // Use plain `MemFlags::new()` instead of `trusted()` - without
+    // Use plain `MemFlagsData::new()` instead of `trusted()` - without
     // it cranelift's alias analysis was load-CSEing reads across
     // unrelated stores, e.g. in
     //   let t = arr[lo]
@@ -416,5 +422,5 @@ pub(super) fn lower_place_read(
     // the second store materialised `u` from a fresh load of
     // `arr+hi*8` *after* `arr+hi*8` had been overwritten with `t`,
     // collapsing the swap to a degenerate `arr[lo] = arr[lo]`.
-    Ok(builder.ins().load(leaf_ty, MemFlags::new(), addr, 0))
+    Ok(builder.ins().load(leaf_ty, MemFlagsData::new(), addr, 0))
 }

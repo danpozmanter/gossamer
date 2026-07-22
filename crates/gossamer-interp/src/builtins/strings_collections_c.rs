@@ -230,7 +230,7 @@ fn builtin_flag_map_get(args: &[Value]) -> RuntimeResult<Value> {
             ));
         }
     };
-    let found = map.iter().find(|(ident, _)| (*ident) == key);
+    let found = map.iter().find(|(ident, _)| (**ident) == key);
     Ok(match found {
         Some((_, value)) => some_variant(value.clone()),
         None => none_variant(),
@@ -357,17 +357,10 @@ fn arg_int(args: &[Value], idx: usize) -> Option<i64> {
     }
 }
 
-fn non_negative_arg(
-    args: &[Value],
-    idx: usize,
-    default: i64,
-    label: &str,
-) -> RuntimeResult<usize> {
+fn non_negative_arg(args: &[Value], idx: usize, default: i64, label: &str) -> RuntimeResult<usize> {
     let n = arg_int(args, idx).unwrap_or(default);
     if n < 0 {
-        return Err(RuntimeError::Type(format!(
-            "{label} must be non-negative"
-        )));
+        return Err(RuntimeError::Type(format!("{label} must be non-negative")));
     }
     usize::try_from(n).map_err(|_| RuntimeError::Type(format!("{label} is too large")))
 }
@@ -797,7 +790,7 @@ fn builtin_u8vec_to_string(args: &[Value]) -> RuntimeResult<Value> {
         Some(n) if n < 0 => {
             return Err(RuntimeError::Type(
                 "to_string: length must be non-negative".to_string(),
-            ))
+            ));
         }
         Some(n) => usize::try_from(n)
             .map_err(|_| RuntimeError::Type("to_string: length is too large".to_string()))?,
@@ -1139,8 +1132,10 @@ mod tests {
         let Value::Struct(inner) = &r2 else {
             panic!("expected struct");
         };
-        let Some((_, Value::Array(items))) =
-            inner.fields.iter().find(|(ident, _)| (*ident) == "headers")
+        let Some((_, Value::Array(items))) = inner
+            .fields
+            .iter()
+            .find(|(ident, _)| (**ident) == "headers")
         else {
             panic!("expected headers array");
         };

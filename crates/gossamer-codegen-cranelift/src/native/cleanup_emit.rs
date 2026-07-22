@@ -115,7 +115,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
-    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlagsData, Signature,
     StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
     immediates::Imm64, types,
 };
@@ -224,12 +224,12 @@ pub(super) fn clone_aggregate_value(
         let off = (slot_idx as i32) * 8;
         let word = builder.ins().load(
             types::I64,
-            MemFlags::trusted(),
+            MemFlagsData::trusted(),
             src_ptr,
             ir::immediates::Offset32::new(off),
         );
         builder.ins().store(
-            MemFlags::trusted(),
+            MemFlagsData::trusted(),
             word,
             dst,
             ir::immediates::Offset32::new(off),

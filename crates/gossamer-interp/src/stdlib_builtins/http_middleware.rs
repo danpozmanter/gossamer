@@ -192,7 +192,7 @@ pub(crate) fn native_middleware_serve(
         Some(Value::Struct(s)) => s
             .fields
             .iter()
-            .find(|(f, _)| (*f) == "__mw_inner")
+            .find(|(f, _)| (**f) == "__mw_inner")
             .map(|(_, v)| v.clone()),
         _ => None,
     };

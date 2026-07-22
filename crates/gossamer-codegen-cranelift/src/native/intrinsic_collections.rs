@@ -121,7 +121,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
-    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlagsData, Signature,
     StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
     immediates::Imm64, types,
 };
@@ -1100,8 +1100,8 @@ pub(super) fn lower_intrinsic_call_collections(
             ));
             let k_addr = builder.ins().stack_addr(ptr_ty, k_slot, 0);
             let v_addr = builder.ins().stack_addr(ptr_ty, v_slot, 0);
-            builder.ins().store(MemFlags::trusted(), k64, k_addr, 0);
-            builder.ins().store(MemFlags::trusted(), v64, v_addr, 0);
+            builder.ins().store(MemFlagsData::trusted(), k64, k_addr, 0);
+            builder.ins().store(MemFlagsData::trusted(), v64, v_addr, 0);
             let fref = module.declare_func_in_func(ins_fn, builder.func);
             let _ = builder.ins().call(fref, &[m, k_addr, v_addr]);
             let unit = builder.ins().iconst(types::I64, 0);
@@ -1151,12 +1151,12 @@ pub(super) fn lower_intrinsic_call_collections(
             ));
             let k_addr = builder.ins().stack_addr(ptr_ty, k_slot, 0);
             let out_addr = builder.ins().stack_addr(ptr_ty, out_slot, 0);
-            builder.ins().store(MemFlags::trusted(), k64, k_addr, 0);
+            builder.ins().store(MemFlagsData::trusted(), k64, k_addr, 0);
             let fref = module.declare_func_in_func(get_fn, builder.func);
             let _ = builder.ins().call(fref, &[m, k_addr, out_addr]);
             let loaded = builder
                 .ins()
-                .load(types::I64, MemFlags::trusted(), out_addr, 0);
+                .load(types::I64, MemFlagsData::trusted(), out_addr, 0);
             define_var_to(
                 builder,
                 locals,

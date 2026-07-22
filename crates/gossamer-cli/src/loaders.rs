@@ -14,15 +14,16 @@ use crate::paths::stderr_supports_colour;
 /// Emits an opt-in resident-memory sample for a compiler/runtime phase.
 ///
 /// Kept in the CLI rather than the driver so library users do not acquire a
-/// process-introspection policy. The profiler is deliberately best-effort:
-/// unsupported platforms simply omit the sample, while normal compilation is
-/// never affected.
+/// process-introspection policy. Call sites are unconditional at the small set
+/// of lifecycle boundaries, but rendering is gated by `GOS_PROFILE_RSS`. The
+/// profiler is deliberately best-effort: unsupported platforms simply omit the
+/// sample, while normal compilation is never affected.
 pub(crate) fn profile_rss_stage(stage: &str) {
-    if std::env::var_os("GOS_PROFILE_RSS").is_none() {
-        return;
-    }
     #[cfg(target_os = "linux")]
     {
+        if std::env::var_os("GOS_PROFILE_RSS").is_none() {
+            return;
+        }
         if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
             let rss_bytes = proc_status_memory_bytes(&status, "VmRSS:");
             let peak_rss_bytes = proc_status_memory_bytes(&status, "VmHWM:");

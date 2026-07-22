@@ -408,7 +408,7 @@ fn builtin_http_response_text(args: &[Value]) -> RuntimeResult<Value> {
             let body = inner
                 .fields
                 .iter()
-                .find(|(ident, _)| (*ident) == "body")
+                .find(|(ident, _)| (**ident) == "body")
                 .and_then(|(_, v)| as_str(v))
                 .unwrap_or_default();
             return Ok(ok_variant(Value::String(SmolStr::from(body.to_string()))));

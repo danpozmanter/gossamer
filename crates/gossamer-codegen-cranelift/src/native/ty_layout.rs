@@ -115,7 +115,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
-    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlagsData, Signature,
     StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
     immediates::Imm64, types,
 };

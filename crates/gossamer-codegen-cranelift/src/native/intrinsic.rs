@@ -115,7 +115,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
-    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlagsData, Signature,
     StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
     immediates::Imm64, types,
 };
@@ -321,8 +321,8 @@ impl IntrinsicContext {
     ) -> ir::Value {
         let ptr_ty = module.target_config().pointer_type();
         let global = module.declare_data_in_func(data_id, builder.func);
-        let base = builder.ins().global_value(ptr_ty, global);
-        builder.ins().iadd_imm(base, 29)
+        let base = builder.ins().symbol_value(ptr_ty, global);
+        builder.ins().iadd_imm_s(base, 29)
     }
 
     /// Returns the `DataId` for a scalar `static mut`'s backing writable

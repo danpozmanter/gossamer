@@ -11,8 +11,9 @@
 //! # Safety invariants
 //!
 //! Every transmute below relies on the following invariants:
-//! - `jit.ptr` was produced by `JITModule::get_finalized_function`
-//!   for a body whose Cranelift signature exactly matches the
+//! - `jit.ptr` was produced by `JITModule::get_finalized_function` before the
+//!   module was dropped. The artifact still owns its native allocations, and
+//!   the pointer names a body whose Cranelift signature exactly matches the
 //!   chosen `extern "C" fn` shape - that match is guaranteed by
 //!   `JitArtifact::compile_to_jit`'s own type classification, which
 //!   only registers a [`JitFn`] when `JitKind` for every slot lines
@@ -843,7 +844,7 @@ fn build_native_struct(
     }
     let mut slots = vec![0i64; shape.fields.len()].into_boxed_slice();
     for (i, (_, kind)) in shape.fields.iter().enumerate() {
-        let word = match (kind, &inner.fields[i].1) {
+        let word = match (kind, &inner.fields[i]) {
             (NativeFieldKind::I64, Value::Int(n)) => *n,
             (NativeFieldKind::I64, Value::Uint(u)) => *u as i64,
             (NativeFieldKind::F64, Value::Float(f)) => f.to_bits() as i64,
@@ -908,7 +909,7 @@ fn read_native_struct(ptr: i64, shape: &NativeStructShape) -> Value {
         .collect();
     Value::Struct(std::sync::Arc::new(StructInner {
         name: crate::value::intern_type_tag(shape.struct_name),
-        fields,
+        fields: crate::value::StructFields::new(fields.into_vec()),
     }))
 }
 
@@ -3103,7 +3104,7 @@ pub(crate) fn invoke_prepared(p: &Prepared, args: &[Value], graph_cache: &GraphC
     // Name the body for the fault handler: a hard crash inside this native
     // code (or its result marshalling) carries no Rust frame, so the guard
     // attributes the fault to `jit.name` and the guard clears it on return.
-    gossamer_runtime::stack_guard::set_jit_breadcrumb(jit.name.as_str());
+    gossamer_runtime::stack_guard::set_jit_breadcrumb(jit.name.as_ref());
     let _crumb = BreadcrumbGuard;
     // Bodies with a native aggregate param or return marshal through a
     // separate path that owns the runtime objects it builds; the scalar

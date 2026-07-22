@@ -631,27 +631,27 @@ dependencies = [
 
 [[package]]
 name = "cranelift-assembler-x64"
-version = "0.132.3"
+version = "0.134.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d521bdbc6098937af83ef4ab6d5c07398126bc71878f7ef4ea9499977978ef5"
+checksum = "8f0435c6939d6ef218bf0a3063094f2cc5c46f7a44a88f81cf932da8d3922ff8"
 dependencies = [
  "cranelift-assembler-x64-meta",
 ]
 
 [[package]]
 name = "cranelift-assembler-x64-meta"
-version = "0.132.3"
+version = "0.134.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3dde0b83164d4a497860af4236271178bc640512b067101e0853e4f74eaa4df5"
+checksum = "aca52511cc21a2c9c927aef493d11c8087bdc5483249a3d93aee41e81b8bd4d1"
 dependencies = [
  "cranelift-srcgen",
 ]
 
 [[package]]
 name = "cranelift-bforest"
-version = "0.132.3"
+version = "0.134.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0111d110b72b4efad69a372e29e21628652fd0bcab66967e5c8350ab679affd5"
+checksum = "6867e99f068454b0c81c50b807af88aa80aaf383105e2be26675d81fc4278466"
 dependencies = [
  "cranelift-entity",
  "wasmtime-internal-core",
@@ -659,18 +659,18 @@ dependencies = [
 
 [[package]]
 name = "cranelift-bitset"
-version = "0.132.3"
+version = "0.134.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf01ecc92fc5499789d79c3b817299d5a8ddd828d31dcf0f9cc3cc66f38dbb36"
+checksum = "3cf66017aed971344230199ad35ca01c955cf824a0e65fed5240452d2a302445"
 dependencies = [
  "wasmtime-internal-core",
 ]
 
 [[package]]
 name = "cranelift-codegen"
-version = "0.132.3"
+version = "0.134.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cd2563bead0090c3879a7ff7327f7550c9d59bb5d05ecc8cd7886977aa3125a"
+checksum = "933b2e5237665bf9367a34ad2100eed70c94b2796586cb09d9ba11693e061667"
 dependencies = [
  "bumpalo",
  "cranelift-assembler-x64",
@@ -695,9 +695,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-codegen-meta"
-version = "0.132.3"
+version = "0.134.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9640d250d26f9381a73dc7f9862b27928d4809119aec73be0e556612e67b6a99"
+checksum = "322e3ca0603683cc17f0c808559c0fb85ad52b0f20ace0478bdd4ba2fa1e9678"
 dependencies = [
  "cranelift-assembler-x64-meta",
  "cranelift-codegen-shared",
@@ -707,24 +707,24 @@ dependencies = [
 
 [[package]]
 name = "cranelift-codegen-shared"
-version = "0.132.3"
+version = "0.134.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a07f156b90efc94371ddb3536f76e4ab671ad2e093bfa5511e10198cadbb0c47"
+checksum = "287ab88211d049178dc8dda243e2db176919d8b29db605c0efc7c6d76ebea0f7"
 
 [[package]]
 name = "cranelift-control"
-version = "0.132.3"
+version = "0.134.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d75a76fd9dd37dcbc3d2d2e00abe3281a7e88adc035fba3b8114cc69981576ec"
+checksum = "c11438f9becf9a1e1e061bf76a33241b941a07ed01a489e9dad5fa79dc3624e9"
 dependencies = [
  "arbitrary",
 ]
 
 [[package]]
 name = "cranelift-entity"
-version = "0.132.3"
+version = "0.134.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2eea22522144ba08c7e7ef94bfc25d474ef016c2771974b8ab1986734ac85965"
+checksum = "584ecabe1462593a9cba9efbf9022e0987421ddb548989b455ab8bdd444b743c"
 dependencies = [
  "cranelift-bitset",
  "wasmtime-internal-core",
@@ -732,11 +732,12 @@ dependencies = [
 
 [[package]]
 name = "cranelift-frontend"
-version = "0.132.3"
+version = "0.134.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efa2826c80dff1d93b19b3cfbcaf9fae44c78d739a98d146dd5bd89c51e14367"
+checksum = "34249873145213a12106d5fd8a98a9dc9e90e16525e2337b2907874d1e7e9ee7"
 dependencies = [
  "cranelift-codegen",
+ "hashbrown 0.17.1",
  "log",
  "smallvec",
  "target-lexicon",
@@ -744,15 +745,15 @@ dependencies = [
 
 [[package]]
 name = "cranelift-isle"
-version = "0.132.3"
+version = "0.134.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e238a69b95c5415456f22189494a12db94f313bb72b6ec9cc88ddf2f1056e28e"
+checksum = "b6f1c1dc4d6b4bc4f0be12b08cee0e59f7610287827aa62590f8e9ec6f45dff4"
 
 [[package]]
 name = "cranelift-jit"
-version = "0.132.3"
+version = "0.134.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7def01f2b14f97421558d1db33e396b97b97ab2ed40dedc8165ba00d13088e6"
+checksum = "fc96ccb592b046be204bf2fbeb397761384e5da10cbf0c2095078af3eaaebe55"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
@@ -762,7 +763,7 @@ dependencies = [
  "cranelift-native",
  "libc",
  "log",
- "memmap2 0.2.3",
+ "memmap2",
  "region",
  "target-lexicon",
  "wasmtime-internal-jit-icache-coherence",
@@ -771,9 +772,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-module"
-version = "0.132.3"
+version = "0.134.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "985df7eceefc91cb75bf7f51b32b7f1739d0fc0e25ddf023b1de407cb3c93d77"
+checksum = "790e3fa73ee25bbb25eee937986051f8b6f6a2f5582477662f95e09d1e9f85f3"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
@@ -782,9 +783,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-native"
-version = "0.132.3"
+version = "0.134.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eceb0ebd8d6aef6bb287e8d532a164b0db1c0062961211e9c22a91f67521c098"
+checksum = "31d9e4f6d9a3777b1ffa818000b4a6d7afd1b8787af71a9c58d94baef9076ced"
 dependencies = [
  "cranelift-codegen",
  "libc",
@@ -793,14 +794,15 @@ dependencies = [
 
 [[package]]
 name = "cranelift-object"
-version = "0.132.3"
+version = "0.134.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a476f25c5740a43ad0ba7ac398fb5484f1e9dfd662bba127a111d591e90350d"
+checksum = "ef16bb4647b1f9b8ca0e8f0a8354165310551943af44d42aa9ec3307f172c7de"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
  "cranelift-control",
  "cranelift-module",
+ "gimli 0.33.0",
  "log",
  "object 0.39.1",
  "target-lexicon",
@@ -808,9 +810,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-srcgen"
-version = "0.132.3"
+version = "0.134.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "004643f39a7bec553de5263d650db30e5b9caec1d5cbe065fd732b7ec9ae40d0"
+checksum = "4155f8a1afdef96a0272c67804926eee4ef35f9708ab22ad6878d4c9543df596"
 
 [[package]]
 name = "crc32fast"
@@ -1350,11 +1352,11 @@ dependencies = [
 
 [[package]]
 name = "gossamer-abi"
-version = "0.33.1"
+version = "0.33.2"
 
 [[package]]
 name = "gossamer-ast"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "gossamer-lex",
  "serde",
@@ -1362,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-binding"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "gossamer-ast",
  "gossamer-binding-macros",
@@ -1378,7 +1380,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-binding-macros"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1387,7 +1389,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-cli"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1428,7 +1430,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-cranelift"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
@@ -1455,7 +1457,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-llvm"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "anyhow",
  "gossamer-abi",
@@ -1473,14 +1475,14 @@ dependencies = [
 
 [[package]]
 name = "gossamer-coro"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "corosensei",
 ]
 
 [[package]]
 name = "gossamer-diagnostics"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1492,7 +1494,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-driver"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "anyhow",
  "gossamer-ast",
@@ -1520,7 +1522,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-hir"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1532,7 +1534,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-http3"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "bytes",
  "h3",
@@ -1548,7 +1550,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-interp"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "gossamer-ast",
  "gossamer-codegen-cranelift",
@@ -1574,7 +1576,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lex"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "insta",
  "serde",
@@ -1584,7 +1586,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lint"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1594,7 +1596,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lsp"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1609,7 +1611,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-mcp"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "gossamer-lsp",
  "gossamer-std",
@@ -1617,7 +1619,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-mir"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "gossamer-abi",
  "gossamer-ast",
@@ -1631,7 +1633,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-parse"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1642,7 +1644,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-pkg"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "ed25519-dalek",
  "parking_lot",
@@ -1660,7 +1662,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-playground"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "console_error_panic_hook",
  "gossamer-ast",
@@ -1678,7 +1680,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-resolve"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1690,7 +1692,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runner-template"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "syn",
  "toml",
@@ -1698,7 +1700,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runtime"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1769,14 +1771,14 @@ dependencies = [
 
 [[package]]
 name = "gossamer-sched"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "gossamer-runtime",
 ]
 
 [[package]]
 name = "gossamer-std"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1808,7 +1810,7 @@ dependencies = [
  "jpeg-encoder",
  "libc",
  "md-5",
- "memmap2 0.9.11",
+ "memmap2",
  "mime",
  "mime_guess",
  "mio",
@@ -1854,7 +1856,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-template"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "serde_json",
  "thiserror",
@@ -1862,7 +1864,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-types"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1875,7 +1877,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-ws"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "parking_lot",
  "thiserror",
@@ -2354,15 +2356,6 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
-
-[[package]]
-name = "memmap2"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "723e3ebdcdc5c023db1df315364573789f8857c11b631a2fdfad7c00f5c046b4"
-dependencies = [
- "libc",
-]
 
 [[package]]
 name = "memmap2"
@@ -3936,9 +3929,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-core"
-version = "45.0.3"
+version = "47.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3073c03f97f871fe6400e68621c863b93ba79296f8e570285231952d23fcc804"
+checksum = "ea33e1f9685be82f90223bebcf2ffefb6b596ea3d82a3c42384527b9c6f5b447"
 dependencies = [
  "hashbrown 0.17.1",
  "libm",
@@ -3946,9 +3939,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-jit-icache-coherence"
-version = "45.0.3"
+version = "47.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37dee05e8c35759826f6b926cd949c51f771b6a58619d8e60c63c3f3d3e5e59b"
+checksum = "fae6decb025ae6d12f3391b36deb62a6838d45b18864f796d84bced722ceac0d"
 dependencies = [
  "cfg-if",
  "libc",
@@ -4271,7 +4264,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "anyhow",
  "gossamer-lex",

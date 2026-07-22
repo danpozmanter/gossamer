@@ -169,10 +169,7 @@ impl Vm {
                                 let chunk_key = Arc::as_ptr(&chunk) as usize;
                                 let override_jit = {
                                     let jit = self.jit.read();
-                                    jit.chunk_overrides
-                                        .get(&chunk_key)
-                                        .or_else(|| jit.overrides.get(chunk.name))
-                                        .cloned()
+                                    jit.chunk_overrides.get(&chunk_key).cloned()
                                 };
                                 let resolved = match override_jit {
                                     Some(j) => match jit_call::prepare(j) {
@@ -603,9 +600,9 @@ mod tests {
         };
         assert_eq!(result.name, sentinel.name);
         assert_eq!(result.fields.len(), 2);
-        assert_eq!(result.fields[0].0, positional_field_name(0));
-        assert!(matches!(result.fields[0].1, Value::Int(3)));
-        assert_eq!(result.fields[1].0, positional_field_name(1));
-        assert!(matches!(result.fields[1].1, Value::Int(5)));
+        assert_eq!(result.fields.get(0).unwrap().0, positional_field_name(0));
+        assert!(matches!(result.fields[0], Value::Int(3)));
+        assert_eq!(result.fields.get(1).unwrap().0, positional_field_name(1));
+        assert!(matches!(result.fields[1], Value::Int(5)));
     }
 }

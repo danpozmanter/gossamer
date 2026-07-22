@@ -103,7 +103,7 @@ fn builtin_truncate(args: &[Value]) -> RuntimeResult<Value> {
         Some(Value::Int(_)) => {
             return Err(RuntimeError::Type(
                 "truncate: length must be non-negative".to_string(),
-            ))
+            ));
         }
         _ => return Ok(args.first().cloned().unwrap_or(Value::Unit)),
     };
@@ -779,7 +779,7 @@ fn builtin_testing_wait_for_scheduler_idle(args: &[Value]) -> RuntimeResult<Valu
         Some(n) if n < 0 => {
             return Err(RuntimeError::Type(
                 "testing::wait_for_scheduler_idle: timeout_ms must be non-negative".to_string(),
-            ))
+            ));
         }
         Some(n) => n,
         None => 1000,
@@ -862,7 +862,7 @@ fn builtin_struct_new(args: &[Value]) -> RuntimeResult<Value> {
             Some(Value::Struct(inner)) => inner
                 .fields
                 .iter()
-                .find(|(n, _)| (*n) == field_name)
+                .find(|(n, _)| (**n) == field_name)
                 .map(|(_, v)| v.clone()),
             _ => None,
         }
@@ -934,7 +934,7 @@ fn builtin_channel_new(args: &[Value]) -> RuntimeResult<Value> {
         Some(Value::Int(n)) if *n < 0 => {
             return Err(RuntimeError::Type(
                 "channel: capacity must be non-negative".to_string(),
-            ))
+            ));
         }
         Some(Value::Int(n)) if *n > 0 => *n as usize,
         _ => 0,

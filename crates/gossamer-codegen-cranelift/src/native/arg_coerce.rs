@@ -115,7 +115,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
-    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlagsData, Signature,
     StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
     immediates::Imm64, types,
 };
@@ -148,12 +148,12 @@ pub(super) fn coerce_arg_to(
     if have == types::I64 && want == types::F64 {
         return Ok(builder
             .ins()
-            .bitcast(types::F64, ir::MemFlags::new(), value));
+            .bitcast(types::F64, ir::MemFlagsData::new(), value));
     }
     if have == types::F64 && want == types::I64 {
         return Ok(builder
             .ins()
-            .bitcast(types::I64, ir::MemFlags::new(), value));
+            .bitcast(types::I64, ir::MemFlagsData::new(), value));
     }
     if have.is_int() && want.is_int() {
         if have.bits() > want.bits() {
@@ -179,17 +179,17 @@ pub(super) fn coerce_arg_to(
     }
     // Same-width bit reinterpret (i32 ↔ f32, i8 ↔ ints, etc.).
     if have.bits() == want.bits() {
-        return Ok(builder.ins().bitcast(want, ir::MemFlags::new(), value));
+        return Ok(builder.ins().bitcast(want, ir::MemFlagsData::new(), value));
     }
     if have.is_float() && want.is_int() {
         let int_form = if have == types::F64 {
             builder
                 .ins()
-                .bitcast(types::I64, ir::MemFlags::new(), value)
+                .bitcast(types::I64, ir::MemFlagsData::new(), value)
         } else {
             builder
                 .ins()
-                .bitcast(types::I32, ir::MemFlags::new(), value)
+                .bitcast(types::I32, ir::MemFlagsData::new(), value)
         };
         let int_ty = value_type(int_form, builder);
         if want.bits() > int_ty.bits() {
@@ -213,7 +213,9 @@ pub(super) fn coerce_arg_to(
         } else {
             value
         };
-        return Ok(builder.ins().bitcast(want, ir::MemFlags::new(), resized));
+        return Ok(builder
+            .ins()
+            .bitcast(want, ir::MemFlagsData::new(), resized));
     }
     // Last resort: typed zero of the wanted shape so the call
     // doesn't fail the verifier.
@@ -261,7 +263,9 @@ pub(super) fn coerce_store_value(
     // numeric-cast logic lives in `Rvalue::Cast`; a raw
     // aggregate-slot write gets the bit pattern through.
     if src.bits() == leaf_ty.bits() && src != leaf_ty {
-        return Ok(builder.ins().bitcast(leaf_ty, ir::MemFlags::new(), value));
+        return Ok(builder
+            .ins()
+            .bitcast(leaf_ty, ir::MemFlagsData::new(), value));
     }
     bail!("native codegen: cannot coerce store {src:?} -> {leaf_ty:?}");
 }

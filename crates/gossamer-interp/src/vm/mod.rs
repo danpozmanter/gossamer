@@ -183,8 +183,8 @@ pub struct Vm {
     /// JIT artifact + override map filled by
     /// [`Vm::try_compile_jit_lazy`] the first time any chunk's hot
     /// counter trips on this `Vm`. Per-`Vm` (not shared across
-    /// goroutines) because Cranelift's `JITModule` carries raw
-    /// pointers and `dyn Fn` boxes that aren't `Send + Sync`.
+    /// goroutines) because finalized entry handles carry raw pointers and are
+    /// deliberately not `Send + Sync`.
     /// Goroutines spawned via [`Op::Spawn`] start with an empty
     /// JIT and stay on bytecode unless their own per-`Vm` hot
     /// counter trips - which only happens for genuinely long-lived
@@ -587,24 +587,17 @@ impl ChunkState {
 
 /// Owns the cranelift JIT state once the deferred compile has
 /// run. The `artifact` keeps every code page alive; the
-/// `overrides` map lets `apply` route a `Global::Fn(chunk)` call
-/// through native dispatch by name. `compiled` collapses the
+/// `chunk_overrides` lets `apply` route a `Global::Fn(chunk)` call
+/// through native dispatch by stable chunk identity. `compiled` collapses the
 /// previous `jit_attempted` flag so two goroutines tripping the
 /// hot counter concurrently can't both kick a compile - the
 /// first transitions `Pending → InProgress`, the others see
 /// `InProgress` / `Done` / `Failed` and skip.
 #[derive(Default)]
 pub(crate) struct JitState {
-    /// Owns the finalised `JITModule`; dropped along with the Vm so
+    /// Owns the detached native allocation heap; dropped along with the Vm so
     /// the code pages outlive every reachable `JitFn` handle.
     pub(crate) artifact: Option<Rc<JitArtifact>>,
-    /// Map from chunk name to the JIT entry the deferred compile
-    /// produced. Populated together with `artifact`. Skips entries
-    /// for `main` (see vm.rs:343 comment) and any function the
-    /// cranelift backend rejected. The artifact is compiled once, so this map
-    /// is bounded by the artifact itself rather than a misleading partial
-    /// eviction policy.
-    pub(crate) overrides: HashMap<String, Arc<JitFn>>,
     /// Map from the bytecode chunk's stable `Arc` allocation address to the
     /// JIT entry. Impl methods have qualified JIT names
     /// (`Type::method`) but their shared bytecode chunk can still be named
@@ -616,7 +609,7 @@ pub(crate) struct JitState {
     pub(crate) compiled: JitCompileState,
 }
 
-/// A weak, per-thread cache of finalized JIT modules. `JitArtifact` and its
+/// A weak, per-thread cache of finalized JIT artifacts. `JitArtifact` and its
 /// raw entry pointers are deliberately not `Send`/`Sync`; a thread-local cache
 /// gives overlapping VM executions reuse without pretending that Cranelift's
 /// module ownership is cross-thread safe. Weak entries do not retain code
@@ -633,13 +626,6 @@ thread_local! {
 }
 
 const THREAD_JIT_ARTIFACT_CACHE_CAP: usize = 8;
-
-impl JitState {
-    /// Inserts one entry from the VM's single retained artifact.
-    fn insert_override(&mut self, name: String, jit: Arc<JitFn>) {
-        self.overrides.insert(name, jit);
-    }
-}
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum JitCompileState {
@@ -2200,7 +2186,7 @@ pub(crate) fn auto_deref_cell(v: &Value) -> Option<Value> {
 /// Native struct-field read.
 fn field_get(receiver: &Value, name: &str) -> RuntimeResult<Value> {
     if let Value::Struct(inner) = receiver {
-        if let Some((_, v)) = inner.fields.iter().find(|(ident, _)| (*ident) == name) {
+        if let Some((_, v)) = inner.fields.iter().find(|(ident, _)| (**ident) == name) {
             return Ok(v.clone());
         }
         return Err(RuntimeError::Type(format!(
@@ -2232,7 +2218,7 @@ fn field_set(receiver: &mut Value, name: &str, new_value: Value) -> RuntimeResul
     }
     let mut grown = std::mem::take(slots).into_vec();
     grown.push((crate::value::intern_type_name(name), new_value));
-    *slots = grown.into_boxed_slice();
+    *slots = crate::value::StructFields::new(grown);
     Ok(())
 }
 

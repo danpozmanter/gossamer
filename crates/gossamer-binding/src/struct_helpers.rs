@@ -4,7 +4,7 @@
 //! `Value::Struct` without depending on `gossamer-ast` from the
 //! binding crate.
 
-use gossamer_interp::value::{Value, intern_field_name};
+use gossamer_interp::value::{StructFields, Value, intern_field_name};
 
 /// Builds a `Value::Struct` with the supplied name and ordered
 /// field list. Field names are interned to `&'static str` on the
@@ -21,7 +21,7 @@ pub fn build_struct(name: &str, fields: Vec<(String, Value)>) -> Value {
 /// Looks up a struct's field value by name, returning
 /// `Value::Unit` if missing. Used by the derive's `FromGos`.
 #[must_use]
-pub fn struct_field<'a>(fields: &'a [(&'static str, Value)], name: &str) -> &'a Value {
+pub fn struct_field<'a>(fields: &'a StructFields, name: &str) -> &'a Value {
     fields
         .iter()
         .find_map(|(k, v)| if *k == name { Some(v) } else { None })

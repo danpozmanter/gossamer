@@ -461,7 +461,10 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "runtime",
         &[
             ("collect_cycles", builtin_runtime_collect_cycles),
-            ("cycle_collection_supported", builtin_runtime_cycle_collection_supported),
+            (
+                "cycle_collection_supported",
+                builtin_runtime_cycle_collection_supported,
+            ),
             ("arena_push", builtin_runtime_region_noop),
             ("arena_pop", builtin_runtime_region_noop),
             ("scheduler_stats_json", builtin_runtime_scheduler_stats_json),
@@ -969,29 +972,29 @@ fn register_flag_spec(set_id: u64, spec: &Value) -> Option<(&'static str, Value)
     }
     let kind = spec_fields
         .iter()
-        .find(|(i, _)| (*i) == "kind")
+        .find(|(i, _)| (**i) == "kind")
         .and_then(|(_, v)| as_str(v))
         .unwrap_or("")
         .to_string();
     let long = spec_fields
         .iter()
-        .find(|(i, _)| (*i) == "long")
+        .find(|(i, _)| (**i) == "long")
         .and_then(|(_, v)| as_str(v))
         .unwrap_or("")
         .to_string();
     let default = spec_fields
         .iter()
-        .find(|(i, _)| (*i) == "default")
+        .find(|(i, _)| (**i) == "default")
         .map_or(Value::Unit, |(_, v)| v.clone());
     let help = spec_fields
         .iter()
-        .find(|(i, _)| (*i) == "help")
+        .find(|(i, _)| (**i) == "help")
         .and_then(|(_, v)| as_str(v))
         .unwrap_or("")
         .to_string();
     let short = spec_fields
         .iter()
-        .find(|(i, _)| (*i) == "short")
+        .find(|(i, _)| (**i) == "short")
         .and_then(|(_, v)| match v {
             Value::Char(c) => Some(*c),
             _ => None,

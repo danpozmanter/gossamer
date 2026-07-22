@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.33.2 - JIT efficiency and updates
+
+- Add lifecycle RSS attribution and native-code byte reporting around JIT
+  promotion so compilation peak, post-finalization, and steady execution
+  memory are measured separately.
+- Compact finalized JIT metadata by replacing duplicate name and lookup maps
+  with dense entry/signature tables and dropping compile-only state before
+  artifact installation.
+- Upgrade Cranelift to 0.134.2 and detach finalized native allocations from
+  compiler module state, keeping only runtime-owned mappings and compact
+  dispatch metadata alive during native execution.
+- Share struct field-name layouts across instances to reduce repeated boxed
+  object metadata while preserving declaration-order field access.
+
 ## 0.33.1 - Cache clearing, AOT performance recovery, and leaner JIT preparation
 
 - Add `gos cache --clear` to remove every known Gossamer cache class without

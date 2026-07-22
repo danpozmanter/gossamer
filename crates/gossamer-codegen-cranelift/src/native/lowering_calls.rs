@@ -115,7 +115,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
-    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlagsData, Signature,
     StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
     immediates::Imm64, types,
 };
@@ -185,7 +185,7 @@ pub(super) fn emit_win64_rt_call(
                 16,
                 4,
             ));
-            builder.ins().stack_store(val, slot, 0);
+            builder.ins().stack_store(ptr_ty, val, slot, 0);
             wire_args.push(builder.ins().stack_addr(ptr_ty, slot, 0));
         } else {
             wire_args.push(val);
@@ -196,7 +196,7 @@ pub(super) fn emit_win64_rt_call(
         Some(t) => {
             let raw = builder.inst_results(call)[0];
             let v = if fat(t) {
-                builder.ins().bitcast(types::I128, MemFlags::new(), raw)
+                builder.ins().bitcast(types::I128, MemFlagsData::new(), raw)
             } else {
                 raw
             };

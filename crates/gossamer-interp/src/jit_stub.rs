@@ -86,11 +86,11 @@ pub enum TupleElem {
 #[derive(Clone)]
 pub struct JitFn {
     /// Gossamer source name.
-    pub name: String,
+    pub name: std::sync::Arc<str>,
     /// Entry pointer (never valid on wasm - no instance is created).
     pub ptr: *const u8,
     /// Parameter kinds in source order.
-    pub params: Vec<JitKind>,
+    pub params: Box<[JitKind]>,
     /// Return slot kind.
     pub returns: JitKind,
     /// Mirrors `gossamer_codegen_cranelift::JitFn::returns_fresh` so the
@@ -103,7 +103,7 @@ pub struct JitFn {
 #[derive(Default)]
 pub struct JitArtifact {
     /// Compiled functions keyed by Gossamer source name.
-    pub functions: HashMap<String, std::sync::Arc<JitFn>>,
+    pub functions: HashMap<std::sync::Arc<str>, std::sync::Arc<JitFn>>,
     /// Native code emitted for this artifact. The wasm stub emits none.
     pub code_bytes: u64,
     /// wasm artifacts are empty and safe to reuse.

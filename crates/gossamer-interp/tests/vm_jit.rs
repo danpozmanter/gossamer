@@ -195,8 +195,8 @@ fn jit_struct_return_promotes_without_losing_result() {
         panic!("JIT struct return must decode to Value::Struct");
     };
     assert_eq!(pair.name.as_str(), "Pair");
-    assert!(matches!(pair.fields[0].1, Value::String(ref s) if s.as_str() == "native"));
-    assert!(matches!(pair.fields[1].1, Value::Int(21)));
+    assert!(matches!(pair.fields.get(0), Some((_, Value::String(s))) if s.as_str() == "native"));
+    assert!(matches!(pair.fields.get(1), Some((_, Value::Int(21)))));
 
     let metrics = vm.jit_metrics();
     assert_eq!(

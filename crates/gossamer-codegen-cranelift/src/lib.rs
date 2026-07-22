@@ -23,6 +23,7 @@
 
 mod emit;
 mod jit;
+mod jit_memory;
 mod native;
 pub mod native_symbols;
 

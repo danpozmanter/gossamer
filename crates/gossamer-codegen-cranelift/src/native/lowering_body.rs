@@ -115,7 +115,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
-    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlagsData, Signature,
     StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
     immediates::Imm64, types,
 };
@@ -466,7 +466,7 @@ pub(super) fn lower_body(
     }
 
     builder.seal_all_blocks();
-    builder.finalize();
+    builder.finalize(module.target_config());
     Ok(())
 }
 
@@ -668,16 +668,16 @@ pub(super) fn define_var_to_with(
     } else if decl_ty == types::F64 && value_ty == types::I64 {
         builder
             .ins()
-            .bitcast(types::F64, ir::MemFlags::new(), value)
+            .bitcast(types::F64, ir::MemFlagsData::new(), value)
     } else if decl_ty == types::I64 && value_ty == types::F64 {
         builder
             .ins()
-            .bitcast(types::I64, ir::MemFlags::new(), value)
+            .bitcast(types::I64, ir::MemFlagsData::new(), value)
     } else if decl_ty == types::F32 && value_ty == types::I64 {
         let truncated = builder.ins().ireduce(types::I32, value);
         builder
             .ins()
-            .bitcast(types::F32, ir::MemFlags::new(), truncated)
+            .bitcast(types::F32, ir::MemFlagsData::new(), truncated)
     } else if decl_ty == types::F32 && value_ty == types::F64 {
         builder.ins().fdemote(types::F32, value)
     } else if decl_ty == types::F64 && value_ty == types::F32 {
@@ -696,11 +696,11 @@ pub(super) fn define_var_to_with(
         let int_form = if value_ty == types::F64 {
             builder
                 .ins()
-                .bitcast(types::I64, ir::MemFlags::new(), value)
+                .bitcast(types::I64, ir::MemFlagsData::new(), value)
         } else {
             builder
                 .ins()
-                .bitcast(types::I32, ir::MemFlags::new(), value)
+                .bitcast(types::I32, ir::MemFlagsData::new(), value)
         };
         let int_ty = value_type(int_form, builder);
         if decl_ty.bits() > int_ty.bits() {
@@ -733,13 +733,17 @@ pub(super) fn define_var_to_with(
         } else {
             value
         };
-        builder.ins().bitcast(decl_ty, ir::MemFlags::new(), resized)
+        builder
+            .ins()
+            .bitcast(decl_ty, ir::MemFlagsData::new(), resized)
     } else {
         // Last-ditch: bitcast through equal-width types when we
         // can; otherwise drop the value and substitute a typed
         // zero so the def_var doesn't trap the verifier.
         if decl_ty.bits() == value_ty.bits() {
-            builder.ins().bitcast(decl_ty, ir::MemFlags::new(), value)
+            builder
+                .ins()
+                .bitcast(decl_ty, ir::MemFlagsData::new(), value)
         } else if decl_ty.is_int() {
             builder.ins().iconst(decl_ty, 0)
         } else if decl_ty == types::F64 {

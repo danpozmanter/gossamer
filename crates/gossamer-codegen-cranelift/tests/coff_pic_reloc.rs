@@ -93,9 +93,9 @@ fn symbol_ref_opcode(pic: bool) -> u8 {
             colocated: true,
             tls: false,
         });
-        let addr = fb.ins().global_value(ptr_ty, gv);
+        let addr = fb.ins().symbol_value(ptr_ty, gv);
         fb.ins().return_(&[addr]);
-        fb.finalize();
+        fb.finalize(module.target_config());
     }
     let mut ctx = Context::for_function(func);
     module.define_function(func_id, &mut ctx).unwrap();

@@ -120,7 +120,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
-    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlagsData, Signature,
     StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
     immediates::Imm64, types,
 };
@@ -1039,7 +1039,9 @@ pub(super) fn lower_intrinsic_call_string(
             let zero = builder.ins().iconst(types::I64, 0);
             let null_ptr = builder.ins().iconst(ptr_ty, 0);
             let is_null = builder.ins().icmp(ir::condcodes::IntCC::Equal, m, null_ptr);
-            let loaded = builder.ins().load(types::I64, MemFlags::trusted(), m, 0);
+            let loaded = builder
+                .ins()
+                .load(types::I64, MemFlagsData::trusted(), m, 0);
             let n = builder.ins().select(is_null, zero, loaded);
             define_var_to(
                 builder,
@@ -1560,7 +1562,9 @@ pub(super) fn lower_intrinsic_call_string(
                         3,
                     ));
                     let slot_addr = builder.ins().stack_addr(ptr_ty, slot, 0);
-                    builder.ins().store(MemFlags::trusted(), v64, slot_addr, 0);
+                    builder
+                        .ins()
+                        .store(MemFlagsData::trusted(), v64, slot_addr, 0);
                     slot_addr
                 }
             };
@@ -1693,16 +1697,16 @@ pub(super) fn lower_intrinsic_call_string(
                 let done_blk = builder.create_block();
                 builder.append_block_param(done_blk, ptr_ty);
 
-                let is_null = builder.ins().icmp_imm(IntCC::Equal, vec_p, 0);
+                let is_null = builder.ins().icmp_imm_s(IntCC::Equal, vec_p, 0);
                 builder.ins().brif(is_null, null_blk, &[], valid_blk, &[]);
 
                 builder.switch_to_block(valid_blk);
                 let len = builder
                     .ins()
-                    .load(types::I64, MemFlags::trusted(), vec_p, 0);
+                    .load(types::I64, MemFlagsData::trusted(), vec_p, 0);
                 let ge0 = builder
                     .ins()
-                    .icmp_imm(IntCC::SignedGreaterThanOrEqual, i, 0);
+                    .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, i, 0);
                 let lt_len = builder.ins().icmp(IntCC::SignedLessThan, i, len);
                 let in_bounds = builder.ins().band(ge0, lt_len);
                 let load_blk = builder.create_block();
@@ -1710,13 +1714,16 @@ pub(super) fn lower_intrinsic_call_string(
                 builder.ins().brif(in_bounds, load_blk, &[], oob_blk, &[]);
 
                 builder.switch_to_block(load_blk);
-                let elem_bytes32 = builder
-                    .ins()
-                    .load(types::I32, MemFlags::trusted(), vec_p, 16);
+                let elem_bytes32 =
+                    builder
+                        .ins()
+                        .load(types::I32, MemFlagsData::trusted(), vec_p, 16);
                 let elem_bytes64 = builder.ins().uextend(types::I64, elem_bytes32);
                 let off64 = builder.ins().imul(i, elem_bytes64);
                 let off = coerce_arg_to(builder, off64, ptr_ty)?;
-                let data = builder.ins().load(ptr_ty, MemFlags::trusted(), vec_p, 24);
+                let data = builder
+                    .ins()
+                    .load(ptr_ty, MemFlagsData::trusted(), vec_p, 24);
                 let elem_ptr = builder.ins().iadd(data, off);
                 builder
                     .ins()

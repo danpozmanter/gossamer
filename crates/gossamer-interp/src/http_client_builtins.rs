@@ -79,7 +79,7 @@ fn client_registry_lookup(id: i64) -> Option<StdClient> {
 pub(crate) fn builtin_http_client_new(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::struct_(
         "Client",
-        Arc::unwrap_or_clone(crate::value::empty_struct_fields()),
+        crate::value::empty_struct_fields(),
     ))
 }
 
@@ -112,7 +112,7 @@ fn int_field(inner: &crate::value::StructInner, name: &str) -> Option<i64> {
     inner
         .fields
         .iter()
-        .find(|(ident, _)| (*ident) == name)
+        .find(|(ident, _)| (**ident) == name)
         .and_then(|(_, v)| match v {
             Value::Int(n) => Some(*n),
             _ => None,
@@ -123,7 +123,7 @@ fn bool_field(inner: &crate::value::StructInner, name: &str) -> Option<bool> {
     inner
         .fields
         .iter()
-        .find(|(ident, _)| (*ident) == name)
+        .find(|(ident, _)| (**ident) == name)
         .and_then(|(_, v)| match v {
             Value::Bool(b) => Some(*b),
             _ => None,
@@ -134,7 +134,7 @@ fn str_field(inner: &crate::value::StructInner, name: &str) -> Option<String> {
     inner
         .fields
         .iter()
-        .find(|(ident, _)| (*ident) == name)
+        .find(|(ident, _)| (**ident) == name)
         .and_then(|(_, v)| as_str(v).map(str::to_string))
 }
 
@@ -393,7 +393,7 @@ pub(crate) fn builtin_http_request_send(args: &[Value]) -> RuntimeResult<Value> 
         inner
             .fields
             .iter()
-            .find(|(ident, _)| (*ident) == name)
+            .find(|(ident, _)| (**ident) == name)
             .map(|(_, v)| v)
     };
     let url = field("url").and_then(as_str).unwrap_or("").to_string();
@@ -443,7 +443,7 @@ pub(crate) fn builtin_http_response_bytes(args: &[Value]) -> RuntimeResult<Value
     let body = inner
         .fields
         .iter()
-        .find(|(ident, _)| (*ident) == "body")
+        .find(|(ident, _)| (**ident) == "body")
         .and_then(|(_, v)| as_str(v))
         .unwrap_or_default();
     let bytes: Vec<Value> = body.bytes().map(|b| Value::Int(i64::from(b))).collect();
@@ -1006,7 +1006,7 @@ mod tests {
         inner
             .fields
             .iter()
-            .find(|(ident, _)| (*ident) == name)
+            .find(|(ident, _)| (**ident) == name)
             .map(|(_, v)| v)
     }
 
@@ -1100,7 +1100,7 @@ mod tests {
         let msg = err
             .fields
             .iter()
-            .find(|(ident, _)| (*ident) == "message")
+            .find(|(ident, _)| (**ident) == "message")
             .and_then(|(_, v)| as_str(v))
             .unwrap_or("");
         assert!(
@@ -1116,7 +1116,7 @@ mod tests {
         inner
             .fields
             .iter()
-            .find(|(ident, _)| (*ident) == name)
+            .find(|(ident, _)| (**ident) == name)
             .map(|(_, v)| v)
     }
 
@@ -1145,7 +1145,7 @@ mod tests {
         };
         err.fields
             .iter()
-            .find(|(ident, _)| (*ident) == "message")
+            .find(|(ident, _)| (**ident) == "message")
             .and_then(|(_, v)| as_str(v))
             .unwrap_or("")
             .to_string()
@@ -1388,7 +1388,7 @@ mod tests {
         let (_, headers_val) = lifted
             .fields
             .iter()
-            .find(|(ident, _)| (*ident) == "headers")
+            .find(|(ident, _)| (**ident) == "headers")
             .expect("lifted Response must carry a `headers` field");
         let Value::Array(items) = headers_val else {
             panic!("`headers` must be an array, got {headers_val:?}");
@@ -1427,7 +1427,7 @@ mod tests {
         let (_, headers_val) = lifted
             .fields
             .iter()
-            .find(|(ident, _)| (*ident) == "headers")
+            .find(|(ident, _)| (**ident) == "headers")
             .expect("lifted Response must carry a `headers` field");
         let Value::Array(items) = headers_val else {
             panic!("`headers` must be an array, got {headers_val:?}");
@@ -1465,7 +1465,7 @@ mod tests {
         let (_, headers_val) = lifted
             .fields
             .iter()
-            .find(|(ident, _)| (*ident) == "headers")
+            .find(|(ident, _)| (**ident) == "headers")
             .expect("lifted Response must carry a `headers` field");
         let Value::Array(items) = headers_val else {
             panic!("`headers` must be an array, got {headers_val:?}");

@@ -45,7 +45,7 @@ fn set_id_from_value(value: &Value) -> Option<u64> {
         Value::Struct(inner) if inner.name == "Set" => inner
             .fields
             .iter()
-            .find(|(ident, _)| (*ident) == "__id")
+            .find(|(ident, _)| (**ident) == "__id")
             .and_then(|(_, v)| match v {
                 Value::Int(n) => Some(*n as u64),
                 _ => None,

@@ -115,7 +115,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
-    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlagsData, Signature,
     StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
     immediates::Imm64, types,
 };
@@ -167,13 +167,13 @@ pub(super) fn store_i128_words(
 ) {
     let (lo, hi) = builder.ins().isplit(val);
     builder.ins().store(
-        MemFlags::trusted(),
+        MemFlagsData::trusted(),
         lo,
         base,
         ir::immediates::Offset32::new(off),
     );
     builder.ins().store(
-        MemFlags::trusted(),
+        MemFlagsData::trusted(),
         hi,
         base,
         ir::immediates::Offset32::new(off + 8),
@@ -362,7 +362,7 @@ pub(super) fn lower_rvalue_into(
                 (s, d)
                     if s.is_int() && d.is_int() && matches!(tcx.kind_of(*target), TyKind::Char) =>
                 {
-                    let masked = builder.ins().band_imm(src_v, 0xFF);
+                    let masked = builder.ins().band_imm_s(src_v, 0xFF);
                     if d.bits() < s.bits() {
                         builder.ins().ireduce(d, masked)
                     } else if d.bits() > s.bits() {
@@ -600,12 +600,12 @@ pub(super) fn lower_rvalue_into(
                             let off = (slot_idx as i32) * 8;
                             let word = builder.ins().load(
                                 types::I64,
-                                MemFlags::trusted(),
+                                MemFlagsData::trusted(),
                                 src,
                                 ir::immediates::Offset32::new(off),
                             );
                             builder.ins().store(
-                                MemFlags::trusted(),
+                                MemFlagsData::trusted(),
                                 word,
                                 base,
                                 ir::immediates::Offset32::new((dst_off as i32) + off),
@@ -617,7 +617,7 @@ pub(super) fn lower_rvalue_into(
                         module, builder, locals, body, tcx, operand, None, intrinsics,
                     )?;
                     builder.ins().store(
-                        MemFlags::trusted(),
+                        MemFlagsData::trusted(),
                         value,
                         base,
                         ir::immediates::Offset32::new(dst_off as i32),
@@ -709,21 +709,21 @@ pub(super) fn lower_rvalue_into(
                             let ok = builder.ins().icmp(IntCC::SignedLessThan, ctr, cnt_v);
                             builder.ins().brif(ok, loop_body, &[], exit_blk, &[]);
                             builder.switch_to_block(loop_body);
-                            let byte_off = builder.ins().imul_imm(ctr, 16_i64);
+                            let byte_off = builder.ins().imul_imm_s(ctr, 16_i64);
                             let dst = builder.ins().iadd(base, byte_off);
                             builder.ins().store(
-                                MemFlags::trusted(),
+                                MemFlagsData::trusted(),
                                 lo,
                                 dst,
                                 ir::immediates::Offset32::new(0),
                             );
                             builder.ins().store(
-                                MemFlags::trusted(),
+                                MemFlagsData::trusted(),
                                 hi,
                                 dst,
                                 ir::immediates::Offset32::new(8),
                             );
-                            let next = builder.ins().iadd_imm(ctr, 1);
+                            let next = builder.ins().iadd_imm_s(ctr, 1);
                             builder.ins().jump(loop_hdr, &[ir::BlockArg::Value(next)]);
                             builder.switch_to_block(exit_blk);
                         }
@@ -734,12 +734,12 @@ pub(super) fn lower_rvalue_into(
                                 let off = (slot_idx as i32) * 8;
                                 let word = builder.ins().load(
                                     types::I64,
-                                    MemFlags::trusted(),
+                                    MemFlagsData::trusted(),
                                     src,
                                     ir::immediates::Offset32::new(off),
                                 );
                                 builder.ins().store(
-                                    MemFlags::trusted(),
+                                    MemFlagsData::trusted(),
                                     word,
                                     base,
                                     ir::immediates::Offset32::new((dst_offset as i32) + off),
@@ -761,24 +761,26 @@ pub(super) fn lower_rvalue_into(
                         builder.ins().brif(ok, loop_body, &[], exit_blk, &[]);
                         builder.switch_to_block(loop_body);
                         let stride = i64::from(elem_slots) * 8;
-                        let dst_base = builder.ins().imul_imm(ctr, stride);
+                        let dst_base = builder.ins().imul_imm_s(ctr, stride);
                         for slot_idx in 0..elem_slots {
                             let src_off = ir::immediates::Offset32::new(slot_idx as i32 * 8);
-                            let word =
-                                builder
-                                    .ins()
-                                    .load(types::I64, MemFlags::trusted(), src, src_off);
+                            let word = builder.ins().load(
+                                types::I64,
+                                MemFlagsData::trusted(),
+                                src,
+                                src_off,
+                            );
                             let slot_off =
-                                builder.ins().iadd_imm(dst_base, i64::from(slot_idx) * 8);
+                                builder.ins().iadd_imm_s(dst_base, i64::from(slot_idx) * 8);
                             let dst = builder.ins().iadd(base, slot_off);
                             builder.ins().store(
-                                MemFlags::trusted(),
+                                MemFlagsData::trusted(),
                                 word,
                                 dst,
                                 ir::immediates::Offset32::new(0),
                             );
                         }
-                        let next = builder.ins().iadd_imm(ctr, 1);
+                        let next = builder.ins().iadd_imm_s(ctr, 1);
                         builder.ins().jump(loop_hdr, &[ir::BlockArg::Value(next)]);
                         builder.switch_to_block(exit_blk);
                     }
@@ -810,7 +812,7 @@ pub(super) fn lower_rvalue_into(
                             );
                             builder
                                 .ins()
-                                .store(MemFlags::trusted(), element, base, offset);
+                                .store(MemFlagsData::trusted(), element, base, offset);
                         }
                     } else {
                         let loop_hdr = builder.create_block();
@@ -825,15 +827,15 @@ pub(super) fn lower_rvalue_into(
                         let ok = builder.ins().icmp(IntCC::SignedLessThan, ctr, cnt_v);
                         builder.ins().brif(ok, loop_body, &[], exit_blk, &[]);
                         builder.switch_to_block(loop_body);
-                        let byte_off = builder.ins().imul_imm(ctr, 8_i64);
+                        let byte_off = builder.ins().imul_imm_s(ctr, 8_i64);
                         let dst = builder.ins().iadd(base, byte_off);
                         builder.ins().store(
-                            MemFlags::trusted(),
+                            MemFlagsData::trusted(),
                             element,
                             dst,
                             ir::immediates::Offset32::new(0),
                         );
-                        let next = builder.ins().iadd_imm(ctr, 1);
+                        let next = builder.ins().iadd_imm_s(ctr, 1);
                         builder.ins().jump(loop_hdr, &[ir::BlockArg::Value(next)]);
                         builder.switch_to_block(exit_blk);
                     }
@@ -894,7 +896,7 @@ pub(super) fn lower_rvalue_into(
                             8,
                             8,
                         ));
-                    builder.ins().stack_store(val, slot, 0);
+                    builder.ins().stack_store(ptr_ty, val, slot, 0);
                     builder.ins().stack_addr(ptr_ty, slot, 0)
                 } else {
                     val
@@ -923,8 +925,8 @@ pub(super) fn lower_rvalue_into(
             let data_id = intrinsics.intern_static(module, sref, cl_ty)?;
             let ptr_ty = module.target_config().pointer_type();
             let gv = module.declare_data_in_func(data_id, builder.func);
-            let addr = builder.ins().global_value(ptr_ty, gv);
-            builder.ins().load(cl_ty, MemFlags::trusted(), addr, 0)
+            let addr = builder.ins().symbol_value(ptr_ty, gv);
+            builder.ins().load(cl_ty, MemFlagsData::trusted(), addr, 0)
         }
     })
 }
@@ -1066,10 +1068,14 @@ pub(super) fn lower_binop(
         // as an i64 are the same bits that were stored as an f64,
         // and a `bitcast` is a zero-cost reinterpret.
         if a_ty == types::I64 && b_ty == types::F64 {
-            a = builder.ins().bitcast(types::F64, ir::MemFlags::new(), a);
+            a = builder
+                .ins()
+                .bitcast(types::F64, ir::MemFlagsData::new(), a);
             a_ty = types::F64;
         } else if a_ty == types::F64 && b_ty == types::I64 {
-            b = builder.ins().bitcast(types::F64, ir::MemFlags::new(), b);
+            b = builder
+                .ins()
+                .bitcast(types::F64, ir::MemFlagsData::new(), b);
             b_ty = types::F64;
         } else if a_ty.is_int() && b_ty.is_int() {
             // Integer width mismatch: extend the narrower side up

@@ -115,7 +115,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
-    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlagsData, Signature,
     StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
     immediates::Imm64, types,
 };
@@ -187,7 +187,7 @@ fn emit_nonescaping_iter_next(
                 .ins()
                 .icmp(IntCC::SignedLessThan, current_value, end_value);
             let has_value = builder.ins().band(allowed, before_end);
-            let incremented = builder.ins().iadd_imm(current_value, 1);
+            let incremented = builder.ins().iadd_imm_s(current_value, 1);
             let next_value = builder.ins().select(has_value, incremented, current_value);
             builder.def_var(current, next_value);
             Some((has_value, current_value))
@@ -204,7 +204,7 @@ fn emit_nonescaping_iter_next(
             let upstream_allowed = builder.ins().band(allowed, has_budget);
             let (has_value, value) =
                 emit_nonescaping_iter_next(builder, intrinsics, upstream, upstream_allowed)?;
-            let decremented = builder.ins().iadd_imm(remaining_value, -1);
+            let decremented = builder.ins().iadd_imm_s(remaining_value, -1);
             let next_remaining = builder
                 .ins()
                 .select(has_value, decremented, remaining_value);
@@ -975,11 +975,15 @@ pub(super) fn lower_statement(
                         let src_ptr = coerce_arg_to(builder, value, ptr_ty).unwrap_or(value);
                         for slot_idx in 0..slots {
                             let off = ir::immediates::Offset32::new((slot_idx as i32) * 8);
-                            let word =
-                                builder
-                                    .ins()
-                                    .load(types::I64, MemFlags::trusted(), src_ptr, off);
-                            builder.ins().store(MemFlags::trusted(), word, dst_ptr, off);
+                            let word = builder.ins().load(
+                                types::I64,
+                                MemFlagsData::trusted(),
+                                src_ptr,
+                                off,
+                            );
+                            builder
+                                .ins()
+                                .store(MemFlagsData::trusted(), word, dst_ptr, off);
                         }
                     }
                 } else if heap_agg_copy {
@@ -1003,11 +1007,15 @@ pub(super) fn lower_statement(
                         let src_ptr = coerce_arg_to(builder, value, ptr_ty).unwrap_or(value);
                         for slot_idx in 0..slots {
                             let off = ir::immediates::Offset32::new((slot_idx as i32) * 8);
-                            let word =
-                                builder
-                                    .ins()
-                                    .load(types::I64, MemFlags::trusted(), src_ptr, off);
-                            builder.ins().store(MemFlags::trusted(), word, dst_ptr, off);
+                            let word = builder.ins().load(
+                                types::I64,
+                                MemFlagsData::trusted(),
+                                src_ptr,
+                                off,
+                            );
+                            builder
+                                .ins()
+                                .store(MemFlagsData::trusted(), word, dst_ptr, off);
                         }
                     }
                     define_var_to(
@@ -1091,7 +1099,7 @@ pub(super) fn lower_statement(
             };
             let tag = builder.ins().iconst(types::I64, i64::from(*variant));
             builder.ins().store(
-                MemFlags::trusted(),
+                MemFlagsData::trusted(),
                 tag,
                 addr,
                 ir::immediates::Offset32::new(0),
@@ -1120,8 +1128,8 @@ pub(super) fn lower_statement(
             )?;
             let ptr_ty = module.target_config().pointer_type();
             let gv = module.declare_data_in_func(data_id, builder.func);
-            let addr = builder.ins().global_value(ptr_ty, gv);
-            builder.ins().store(MemFlags::trusted(), val, addr, 0);
+            let addr = builder.ins().symbol_value(ptr_ty, gv);
+            builder.ins().store(MemFlagsData::trusted(), val, addr, 0);
         }
     }
     Ok(())
@@ -1237,7 +1245,7 @@ fn try_lower_vec_index_inline(
             builder.switch_to_block(check_b);
             let len = builder
                 .ins()
-                .load(types::I64, MemFlags::trusted(), vec_ptr, 0);
+                .load(types::I64, MemFlagsData::trusted(), vec_ptr, 0);
             let zero_i = builder.ins().iconst(types::I64, 0);
             let lo = builder.ins().icmp(IntCC::SignedLessThan, idx, zero_i);
             let hi = builder
@@ -1290,7 +1298,7 @@ fn try_lower_vec_index_inline(
             builder.switch_to_block(check_b);
             let len = builder
                 .ins()
-                .load(types::I64, MemFlags::trusted(), vec_ptr, 0);
+                .load(types::I64, MemFlagsData::trusted(), vec_ptr, 0);
             let zero_i = builder.ins().iconst(types::I64, 0);
             let lo = builder.ins().icmp(IntCC::SignedLessThan, idx, zero_i);
             let hi = builder
@@ -1326,11 +1334,15 @@ fn load_vec_word(
     vec_ptr: ir::Value,
     idx_ptr: ir::Value,
 ) -> ir::Value {
-    let dptr = builder.ins().load(ptr_ty, MemFlags::trusted(), vec_ptr, 24);
+    let dptr = builder
+        .ins()
+        .load(ptr_ty, MemFlagsData::trusted(), vec_ptr, 24);
     let eight = builder.ins().iconst(ptr_ty, 8);
     let off = builder.ins().imul(idx_ptr, eight);
     let ea = builder.ins().iadd(dptr, off);
-    builder.ins().load(types::I64, MemFlags::trusted(), ea, 0)
+    builder
+        .ins()
+        .load(types::I64, MemFlagsData::trusted(), ea, 0)
 }
 
 /// Store the 8-byte word `val` into a word-stride `GosVec` element address
@@ -1343,11 +1355,13 @@ fn store_vec_word(
     idx_ptr: ir::Value,
     val: ir::Value,
 ) {
-    let dptr = builder.ins().load(ptr_ty, MemFlags::trusted(), vec_ptr, 24);
+    let dptr = builder
+        .ins()
+        .load(ptr_ty, MemFlagsData::trusted(), vec_ptr, 24);
     let eight = builder.ins().iconst(ptr_ty, 8);
     let off = builder.ins().imul(idx_ptr, eight);
     let ea = builder.ins().iadd(dptr, off);
-    builder.ins().store(MemFlags::trusted(), val, ea, 0);
+    builder.ins().store(MemFlagsData::trusted(), val, ea, 0);
 }
 
 pub(super) fn lower_terminator(
@@ -1440,12 +1454,12 @@ pub(super) fn lower_terminator(
                     let off = (slot_idx as i32) * 8;
                     let word = builder.ins().load(
                         types::I64,
-                        MemFlags::trusted(),
+                        MemFlagsData::trusted(),
                         retval,
                         ir::immediates::Offset32::new(off),
                     );
                     builder.ins().store(
-                        MemFlags::trusted(),
+                        MemFlagsData::trusted(),
                         word,
                         sret,
                         ir::immediates::Offset32::new(off),
@@ -1491,12 +1505,12 @@ pub(super) fn lower_terminator(
                         let off = (slot_idx as i32) * 8;
                         let word = builder.ins().load(
                             types::I64,
-                            MemFlags::trusted(),
+                            MemFlagsData::trusted(),
                             retval,
                             ir::immediates::Offset32::new(off),
                         );
                         builder.ins().store(
-                            MemFlags::trusted(),
+                            MemFlagsData::trusted(),
                             word,
                             heap,
                             ir::immediates::Offset32::new(off),
@@ -1642,7 +1656,7 @@ pub(super) fn lower_terminator(
                 } else {
                     builder.ins().load(
                         ptr_ty,
-                        MemFlags::trusted(),
+                        MemFlagsData::trusted(),
                         env_ptr,
                         ir::immediates::Offset32::new(0),
                     )
@@ -2002,11 +2016,13 @@ pub(super) fn lower_terminator(
                         let src_ptr = coerce_arg_to(builder, v, ptr_ty).unwrap_or(v);
                         for slot_idx in 0..slots {
                             let off = ir::immediates::Offset32::new((slot_idx as i32) * 8);
-                            let word =
-                                builder
-                                    .ins()
-                                    .load(types::I64, MemFlags::trusted(), src_ptr, off);
-                            builder.ins().store(MemFlags::trusted(), word, dst, off);
+                            let word = builder.ins().load(
+                                types::I64,
+                                MemFlagsData::trusted(),
+                                src_ptr,
+                                off,
+                            );
+                            builder.ins().store(MemFlagsData::trusted(), word, dst, off);
                         }
                         v = dst;
                     } else {

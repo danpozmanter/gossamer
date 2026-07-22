@@ -22,6 +22,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use gossamer_mir::Body;
 use gossamer_types::{Ty, TyCtxt, TyKind};
 
+use crate::jit_memory::NativeCodeHeap;
 use crate::native::{build_native_isa, lower_program_serial};
 
 /// Cranelift register class for one parameter or return slot of a
@@ -148,12 +149,12 @@ pub enum TupleElem {
 pub struct JitFn {
     /// The Gossamer source name of the function. Mainly for
     /// `GOS_JIT_TRACE` diagnostics.
-    pub name: String,
+    pub name: std::sync::Arc<str>,
     /// Raw pointer to the entry of the compiled function. Valid for
     /// the lifetime of the owning [`JitArtifact`].
     pub ptr: *const u8,
     /// One [`JitKind`] per parameter, in source order.
-    pub params: Vec<JitKind>,
+    pub params: Box<[JitKind]>,
     /// The return slot's kind.
     pub returns: JitKind,
     /// `true` when the body's return value provably originates from a
@@ -170,19 +171,19 @@ pub struct JitFn {
 // single-threaded today. We do not implement Send/Sync for `JitFn`
 // - anyone who copies it must keep it on the owning thread.
 
-/// Owns a finalised [`JITModule`] and a name → [`JitFn`] map.
+/// Owns finalized native allocations and a name → [`JitFn`] map.
 /// Dropping the artifact frees every page that backs the function
 /// pointers it has handed out, so the VM must hold the artifact
 /// for as long as any compiled fn is reachable.
 pub struct JitArtifact {
-    /// `Option` so [`Drop`] can call `JITModule::free_memory(self)`,
-    /// which takes the module by value.
-    module: Option<JITModule>,
+    /// Shared allocation owner retained after the compiler module is dropped.
+    /// Empty artifacts do not construct a native heap.
+    heap: Option<std::sync::Arc<NativeCodeHeap>>,
     /// Compiled functions keyed by their Gossamer source name.
     /// Handles are immutable and are shared with the VM's dispatch map.
     /// Keeping one `Arc<JitFn>` per native entry avoids duplicating the
     /// signature vectors and names merely to install an override.
-    pub functions: HashMap<String, std::sync::Arc<JitFn>>,
+    pub functions: HashMap<std::sync::Arc<str>, std::sync::Arc<JitFn>>,
     /// Exact number of bytes Cranelift generated for the lowered user bodies
     /// in this artifact. It includes machine code, jump tables, and constant
     /// data in each function's finalized code buffer; it deliberately does
@@ -215,19 +216,18 @@ impl std::fmt::Debug for JitArtifact {
             .field("functions", &self.functions.keys().collect::<Vec<_>>())
             .field("code_bytes", &self.code_bytes)
             .field("cacheable", &self.cacheable)
+            .field("detached", &self.is_detached())
             .finish_non_exhaustive()
     }
 }
 
-impl Drop for JitArtifact {
-    fn drop(&mut self) {
-        if let Some(module) = self.module.take() {
-            // SAFETY: we have unique ownership of the JITModule (the
-            // `Option::take` above is single-threaded), and the VM
-            // promises to drop the artifact only after every JitFn
-            // copy in its globals table has been flushed.
-            unsafe { module.free_memory() };
-        }
+impl JitArtifact {
+    /// Confirms that a non-empty artifact no longer retains its compiler
+    /// module. This is public so integration and cross-platform CI tests can
+    /// prove execution happens after module destruction.
+    #[must_use]
+    pub fn is_detached(&self) -> bool {
+        self.heap.as_ref().is_none_or(|heap| heap.is_detached())
     }
 }
 
@@ -882,7 +882,7 @@ pub fn compile_to_jit(
 ) -> Result<JitArtifact> {
     if bodies.is_empty() {
         return Ok(JitArtifact {
-            module: None,
+            heap: None,
             functions: HashMap::new(),
             code_bytes: 0,
             cacheable: true,
@@ -932,7 +932,7 @@ pub fn compile_to_jit_for_promotion_owned(
     restrict_static_leaky_bodies(&mut compile_set, &bodies);
     if compile_set.is_empty() {
         return Ok(JitArtifact {
-            module: None,
+            heap: None,
             functions: HashMap::new(),
             code_bytes: 0,
             cacheable: true,
@@ -982,7 +982,7 @@ pub fn compile_to_jit_for_promotion_owned(
                 .collect();
             if without_main.is_empty() {
                 return Ok(JitArtifact {
-                    module: None,
+                    heap: None,
                     functions: HashMap::new(),
                     code_bytes: 0,
                     cacheable: true,
@@ -1010,6 +1010,8 @@ fn compile_bodies(
 ) -> Result<JitArtifact> {
     let isa = build_native_isa(false)?;
     let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+    let heap = NativeCodeHeap::new();
+    builder.memory_provider(Box::new(NativeCodeHeap::provider(&heap)));
     let mut runtime_symbol_set = register_runtime_symbols(&mut builder);
     // Register every `gos_binding_<...>` C-ABI thunk advertised by
     // the binding crates. Without these, `JITModule::finalize_definitions`
@@ -1112,18 +1114,29 @@ fn compile_bodies(
             clippy::arc_with_non_send_sync,
             reason = "JIT pointers remain thread-confined; Arc shares immutable metadata with the VM override map"
         )]
+        let name: std::sync::Arc<str> = body.name.as_str().into();
+        #[allow(
+            clippy::arc_with_non_send_sync,
+            reason = "JIT pointers remain thread-confined; Arc shares immutable metadata with the VM override map"
+        )]
         let handle = std::sync::Arc::new(JitFn {
-            name: body.name.clone(),
+            name: std::sync::Arc::clone(&name),
             ptr,
-            params,
+            params: params.into_boxed_slice(),
             returns,
             returns_fresh: returns_fresh.get(&body.name).copied().unwrap_or(false),
         });
-        functions.insert(body.name.clone(), handle);
+        functions.insert(name, handle);
     }
 
+    // Ordinary `JITModule` drop releases declarations, symbol maps, the ISA,
+    // compiled-blob relocation metadata, and the provider adapter. It does
+    // not call `free_memory`; the artifact's shared heap owns those mappings.
+    drop(module);
+    heap.mark_detached();
+
     Ok(JitArtifact {
-        module: Some(module),
+        heap: Some(heap),
         functions,
         code_bytes: lowered.emitted_code_bytes,
         cacheable: !filtered

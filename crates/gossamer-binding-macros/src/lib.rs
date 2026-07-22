@@ -362,7 +362,7 @@ pub fn derive_gos_struct(input: TokenStream) -> TokenStream {
             quote! {
                 #name: {
                     let v = ::gossamer_binding::struct_helpers::struct_field(
-                        &inner.fields[..], #name_str
+                        &inner.fields, #name_str
                     );
                     <#ty as ::gossamer_binding::FromGos>::from_gos(v)?
                 }

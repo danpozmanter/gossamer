@@ -127,7 +127,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
-    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlagsData, Signature,
     StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
     immediates::Imm64, types,
 };
@@ -1045,7 +1045,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                 }
                 None => builder.ins().iconst(types::I64, 0),
             };
-            let base = builder.ins().band_imm(p, -8);
+            let base = builder.ins().band_imm_s(p, -8);
             // Tagged-null unit variants (base zero) yield 0 instead of
             // dereferencing address zero.
             let load_b = builder.create_block();
@@ -1060,7 +1060,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             let addr = builder.ins().iadd(base, off);
             let lv = builder.ins().load(
                 types::I64,
-                cranelift_codegen::ir::MemFlags::trusted(),
+                cranelift_codegen::ir::MemFlagsData::trusted(),
                 addr,
                 0,
             );
@@ -1094,7 +1094,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                 }
                 None => builder.ins().iconst(types::I64, 0),
             };
-            let sh = builder.ins().ishl_imm(d, 1);
+            let sh = builder.ins().ishl_imm_u(d, 1);
             let v = builder.ins().bor(p, sh);
             if !destination.projection.is_empty() {
                 bail!("native codegen: gos_enum_tag destination cannot have projections");
@@ -1116,8 +1116,8 @@ pub(super) fn lower_intrinsic_call_io_math(
                 }
                 None => builder.ins().iconst(types::I64, 0),
             };
-            let sh = builder.ins().ushr_imm(p, 1);
-            let v = builder.ins().band_imm(sh, 3);
+            let sh = builder.ins().ushr_imm_u(p, 1);
+            let v = builder.ins().band_imm_s(sh, 3);
             if !destination.projection.is_empty() {
                 bail!("native codegen: gos_enum_disc_tag destination cannot have projections");
             }
@@ -1138,7 +1138,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                 }
                 None => builder.ins().iconst(types::I64, 0),
             };
-            let v = builder.ins().band_imm(p, -8);
+            let v = builder.ins().band_imm_s(p, -8);
             if !destination.projection.is_empty() {
                 bail!("native codegen: gos_enum_untag destination cannot have projections");
             }
@@ -1161,7 +1161,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             };
             let b = builder.ins().uload8(
                 types::I64,
-                cranelift_codegen::ir::MemFlags::trusted(),
+                cranelift_codegen::ir::MemFlagsData::trusted(),
                 p,
                 -3,
             );
@@ -1193,7 +1193,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             };
             builder
                 .ins()
-                .istore8(cranelift_codegen::ir::MemFlags::trusted(), d, p, -3);
+                .istore8(cranelift_codegen::ir::MemFlagsData::trusted(), d, p, -3);
             Ok(true)
         }
         "gos_rt_rc_drop_reuse" => {
@@ -1391,7 +1391,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                 builder.ins().ireduce(ptr_ty, addr_i64)
             };
             builder.ins().store(
-                MemFlags::trusted(),
+                MemFlagsData::trusted(),
                 value,
                 addr,
                 ir::immediates::Offset32::new(0),
@@ -1431,7 +1431,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             };
             let loaded = builder.ins().load(
                 types::I64,
-                MemFlags::trusted(),
+                MemFlagsData::trusted(),
                 addr,
                 ir::immediates::Offset32::new(0),
             );
@@ -1610,7 +1610,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             };
             let ge0 = builder
                 .ins()
-                .icmp_imm(IntCC::SignedGreaterThanOrEqual, idx_i64, 0);
+                .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, idx_i64, 0);
             let lt_len = builder.ins().icmp(IntCC::SignedLessThan, idx_i64, len);
             let in_bounds = builder.ins().band(ge0, lt_len);
             let read_blk = builder.create_block();
@@ -1621,7 +1621,9 @@ pub(super) fn lower_intrinsic_call_io_math(
 
             builder.switch_to_block(read_blk);
             let addr = builder.ins().iadd(ptr, idx_ptr);
-            let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+            let byte = builder
+                .ins()
+                .load(types::I8, MemFlagsData::trusted(), addr, 0);
             let read_val = builder.ins().uextend(types::I64, byte);
             builder
                 .ins()

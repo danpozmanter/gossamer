@@ -118,7 +118,7 @@ impl Vm {
             work_floor_deferrals: self.jit_counters.work_floor_deferrals.get(),
             compile_attempts: self.jit_counters.compile_attempts.get(),
             successful_compiles: self.jit_counters.successful_compiles.get(),
-            resident_functions: state.overrides.len(),
+            resident_functions: state.chunk_overrides.len(),
             discarded_artifacts: self.jit_counters.discarded_artifacts.get(),
             released_snapshots: self.jit_counters.released_snapshots.get(),
             reused_artifacts: self.jit_counters.reused_artifacts.get(),
@@ -796,6 +796,7 @@ impl Vm {
         let started = std::time::Instant::now();
         if let Some(rss_bytes) = current_process_rss_bytes() {
             self.jit_counters.observed_rss(rss_bytes);
+            profile_jit_rss("before_compile", rss_bytes);
         }
         let empty = std::collections::HashMap::new();
         let shape_defs_arc = self.enum_shape_defs.borrow_mut().take();
@@ -866,11 +867,15 @@ impl Vm {
                 return;
             }
         };
+        if let Some(rss_bytes) = current_process_rss_bytes() {
+            profile_jit_rss("after_module_drop", rss_bytes);
+        }
         let compile_ms = elapsed.as_millis();
         if trace {
             eprintln!(
-                "jit: compiled {} functions in {compile_ms} ms",
-                artifact.functions.len()
+                "jit: compiled {} functions ({} native bytes) in {compile_ms} ms",
+                artifact.functions.len(),
+                artifact.code_bytes
             );
         }
         if artifact.functions.is_empty() {
@@ -903,7 +908,7 @@ impl Vm {
 
     /// Installs callable entries from an immutable artifact. The artifact is
     /// held by this VM before its raw entry pointers become reachable through
-    /// `overrides`, so a cache eviction can never invalidate a dispatch.
+    /// `chunk_overrides`, so a cache eviction can never invalidate a dispatch.
     fn install_jit_artifact(
         &self,
         artifact: Rc<JitArtifact>,
@@ -915,19 +920,19 @@ impl Vm {
         let mut state = self.jit.write();
         let mut installed_count = 0usize;
         for (name, jit_fn) in &artifact.functions {
-            if !entry_names.contains(name) {
+            if !entry_names.contains(name.as_ref()) {
                 continue;
             }
             if only
                 .as_ref()
-                .is_some_and(|names| !names.contains(name.as_str()))
+                .is_some_and(|names| !names.contains(name.as_ref()))
                 || skip
                     .as_ref()
-                    .is_some_and(|names| names.contains(name.as_str()))
+                    .is_some_and(|names| names.contains(name.as_ref()))
             {
                 continue;
             }
-            let Some(Global::Fn(chunk)) = self.lookup_global_ref(name.as_str()) else {
+            let Some(Global::Fn(chunk)) = self.lookup_global_ref(name.as_ref()) else {
                 continue;
             };
             // Keep panic-capable code on bytecode so the VM's diagnostic and
@@ -943,7 +948,6 @@ impl Vm {
                 reason = "JitFn is immutable but intentionally not Send/Sync; artifacts are cached per thread"
             )]
             let jit_arc = Arc::clone(jit_fn);
-            state.insert_override(name.clone(), jit_arc.clone());
             state
                 .chunk_overrides
                 .insert(Arc::as_ptr(chunk) as usize, jit_arc);
@@ -952,7 +956,7 @@ impl Vm {
         let installed = installed_count > 0;
         if installed {
             self.jit_override_count
-                .store(state.overrides.len(), Ordering::Release);
+                .store(state.chunk_overrides.len(), Ordering::Release);
             state.artifact = Some(artifact);
             state.compiled = JitCompileState::Done;
         } else {
@@ -1396,6 +1400,12 @@ fn jit_code_bytes_cap() -> Option<u64> {
     let cap = std::env::var("GOS_JIT_MAX_CODE_BYTES").ok()?;
     let cap = cap.trim().parse::<u64>().ok()?;
     (cap > 0).then_some(cap)
+}
+
+fn profile_jit_rss(stage: &str, rss_bytes: u64) {
+    if std::env::var_os("GOS_PROFILE_RSS").is_some() {
+        eprintln!("rss: stage=jit_{stage} bytes={rss_bytes}");
+    }
 }
 
 #[cfg(target_os = "linux")]

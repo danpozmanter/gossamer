@@ -119,7 +119,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
-    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlagsData, Signature,
     StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
     immediates::Imm64, types,
 };
@@ -630,7 +630,7 @@ pub(super) fn lower_intrinsic_call_handles(
                 3,
             ));
             let k_addr = builder.ins().stack_addr(ptr_ty, k_slot, 0);
-            builder.ins().store(MemFlags::trusted(), k64, k_addr, 0);
+            builder.ins().store(MemFlagsData::trusted(), k64, k_addr, 0);
             let fref = module.declare_func_in_func(rm_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k_addr]);
             let ok = builder.inst_results(call)[0];
@@ -1113,13 +1113,13 @@ pub(super) fn lower_intrinsic_call_handles(
             ));
             let base = builder.ins().stack_addr(ptr_ty, slot, 0);
             builder.ins().store(
-                MemFlags::trusted(),
+                MemFlagsData::trusted(),
                 chan_ptr,
                 base,
                 ir::immediates::Offset32::new(0),
             );
             builder.ins().store(
-                MemFlags::trusted(),
+                MemFlagsData::trusted(),
                 chan_ptr,
                 base,
                 ir::immediates::Offset32::new(8),
@@ -1175,7 +1175,9 @@ pub(super) fn lower_intrinsic_call_handles(
                 3,
             ));
             let slot_addr = builder.ins().stack_addr(ptr_ty, slot, 0);
-            builder.ins().store(MemFlags::trusted(), v64, slot_addr, 0);
+            builder
+                .ins()
+                .store(MemFlagsData::trusted(), v64, slot_addr, 0);
             let send_fn = intrinsics.extern_fn_by_name(module, "gos_rt_chan_send")?;
             let fref = module.declare_func_in_func(send_fn, builder.func);
             let _ = builder.ins().call(fref, &[chan, slot_addr]);
@@ -1220,7 +1222,9 @@ pub(super) fn lower_intrinsic_call_handles(
                 3,
             ));
             let slot_addr = builder.ins().stack_addr(ptr_ty, slot, 0);
-            builder.ins().store(MemFlags::trusted(), v64, slot_addr, 0);
+            builder
+                .ins()
+                .store(MemFlagsData::trusted(), v64, slot_addr, 0);
             let send_fn = intrinsics.extern_fn(
                 module,
                 "gos_rt_chan_try_send",

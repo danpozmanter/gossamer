@@ -275,8 +275,8 @@ pub(crate) fn builtin_request_set_value(args: &[Value]) -> RuntimeResult<Value> 
     let mut fields: Vec<(&'static str, Value)> = inner
         .fields
         .iter()
-        .filter(|(f, _)| (*f) != "__values")
-        .cloned()
+        .filter(|(f, _)| (**f) != "__values")
+        .map(|(name, value)| (*name, value.clone()))
         .collect();
     fields.push(("__values", Value::Array(Arc::new(pairs))));
     Ok(Value::struct_(inner.name.clone(), fields))

@@ -115,7 +115,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
-    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlagsData, Signature,
     StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
     immediates::Imm64, types,
 };
@@ -290,7 +290,7 @@ pub(super) fn define_shape_thunk(
         // Load the real fn address from env + 8.
         let real_fn_ptr = builder.ins().load(
             ptr_ty,
-            MemFlags::trusted(),
+            MemFlagsData::trusted(),
             env_param,
             ir::immediates::Offset32::new(8),
         );
@@ -320,7 +320,7 @@ pub(super) fn define_shape_thunk(
             }
         }
         builder.seal_all_blocks();
-        builder.finalize();
+        builder.finalize(module.target_config());
     }
     let mut ctx = Context::for_function(func);
     module
@@ -384,23 +384,23 @@ pub(crate) fn emit_carrier_outptr_thunk(
         // as `out[0]` / `out[1]`. Two plain `i64` stores avoid relying on the
         // backend's 128-bit memory-access lowering.
         let disc = builder.ins().ireduce(types::I64, carrier);
-        let high = builder.ins().ushr_imm(carrier, 64);
+        let high = builder.ins().ushr_imm_u(carrier, 64);
         let payload = builder.ins().ireduce(types::I64, high);
         builder.ins().store(
-            MemFlags::new(),
+            MemFlagsData::new(),
             disc,
             out_ptr,
             ir::immediates::Offset32::new(0),
         );
         builder.ins().store(
-            MemFlags::new(),
+            MemFlagsData::new(),
             payload,
             out_ptr,
             ir::immediates::Offset32::new(8),
         );
         builder.ins().return_(&[]);
         builder.seal_all_blocks();
-        builder.finalize();
+        builder.finalize(module.target_config());
     }
     let mut ctx = Context::for_function(func);
     module
@@ -466,7 +466,7 @@ pub(super) fn emit_c_main_shim(module: &mut dyn Module, gos_main: FuncId) -> Res
         let result32 = builder.inst_results(exit_call)[0];
         builder.ins().return_(&[result32]);
         builder.seal_all_blocks();
-        builder.finalize();
+        builder.finalize(module.target_config());
     }
     let mut ctx = Context::for_function(func);
     module

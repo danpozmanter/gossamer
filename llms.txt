@@ -1,6 +1,6 @@
 # Gossamer
 
-Gossamer is a Rust-flavoured language with goroutines and deterministic memory management; use `gos` to check, run, build, test, format, and query programs. This generated index points models and agents at the reviewed primer and canonical API data for Gossamer 0.33.1.
+Gossamer is a Rust-flavoured language with goroutines and deterministic memory management; use `gos` to check, run, build, test, format, and query programs. This generated index points models and agents at the reviewed primer and canonical API data.
 
 - [Compact LLM reference](llms-full.txt)
 - [Reviewed skill card](SKILL.md)

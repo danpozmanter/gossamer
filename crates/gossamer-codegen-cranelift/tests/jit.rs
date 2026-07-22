@@ -14,7 +14,7 @@ use gossamer_mir::{
     BasicBlock, BinOp, Body, ConstValue, LocalDecl, Operand, Place, Projection, Rvalue, Statement,
     StatementKind, Terminator,
 };
-use gossamer_types::{IntTy, TyCtxt};
+use gossamer_types::{FloatTy, IntTy, TyCtxt};
 
 fn dummy_span() -> gossamer_lex::Span {
     let mut map = SourceMap::new();
@@ -139,6 +139,68 @@ fn jit_compiles_simple_arithmetic_function() {
     assert_eq!(result, 42);
 }
 
+#[test]
+fn detached_jit_preserves_float_abi() {
+    let mut tcx = TyCtxt::new();
+    let f64_ty = tcx.float_ty(FloatTy::F64);
+    let body = Body {
+        name: "add_f64".to_string(),
+        def: None,
+        arity: 2,
+        locals: vec![
+            LocalDecl {
+                ty: f64_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+            LocalDecl {
+                ty: f64_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+            LocalDecl {
+                ty: f64_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+        ],
+        blocks: vec![BasicBlock {
+            id: gossamer_mir::BlockId(0),
+            stmts: vec![Statement {
+                span: dummy_span(),
+                kind: StatementKind::Assign {
+                    place: place(0),
+                    rvalue: Rvalue::BinaryOp {
+                        op: BinOp::Add,
+                        lhs: Operand::Copy(place(1)),
+                        rhs: Operand::Copy(place(2)),
+                    },
+                },
+            }],
+            terminator: Terminator::Return,
+            span: dummy_span(),
+        }],
+        span: dummy_span(),
+    };
+    let artifact = compile_to_jit(
+        &[body],
+        &tcx,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+    )
+    .expect("compile f64 body");
+    assert!(artifact.is_detached());
+    let ptr = artifact.functions.get("add_f64").expect("f64 entry").ptr;
+    // SAFETY: MIR and the cast both use the platform C ABI with two f64
+    // parameters and one f64 result. The artifact owns the code during call.
+    let result =
+        unsafe { mem::transmute::<*const u8, extern "C" fn(f64, f64) -> f64>(ptr)(1.25, 2.5) };
+    assert_eq!(result, 3.75);
+}
+
 fn i64_decl(ty: gossamer_types::Ty) -> LocalDecl {
     LocalDecl {
         ty,
@@ -251,6 +313,10 @@ fn jit_some_constructor_still_compiles_as_identity() {
         &std::collections::HashMap::new(),
     )
     .expect("Some(x) lowers to identity and must still compile");
+    assert!(
+        artifact.is_detached(),
+        "the compiler module must be dropped before entries are callable"
+    );
     let f = artifact.functions.get("f").expect("f present");
     // SAFETY: `f` is live for the duration of `artifact`.
     let result: i64 = unsafe {
@@ -295,5 +361,53 @@ fn jit_artifact_drops_without_panic() {
         &std::collections::HashMap::new(),
     )
     .expect("compile");
+    assert!(artifact.is_detached());
     drop(artifact);
+}
+
+#[test]
+fn detached_artifacts_can_be_repeatedly_called_and_reclaimed() {
+    let mut tcx = TyCtxt::new();
+    let i64_ty = tcx.int_ty(IntTy::I64);
+    let body = Body {
+        name: "answer".to_string(),
+        def: None,
+        arity: 0,
+        locals: vec![LocalDecl {
+            ty: i64_ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        }],
+        blocks: vec![BasicBlock {
+            id: gossamer_mir::BlockId(0),
+            stmts: vec![Statement {
+                span: dummy_span(),
+                kind: StatementKind::Assign {
+                    place: place(0),
+                    rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(42))),
+                },
+            }],
+            terminator: Terminator::Return,
+            span: dummy_span(),
+        }],
+        span: dummy_span(),
+    };
+
+    for _ in 0..32 {
+        let artifact = compile_to_jit(
+            std::slice::from_ref(&body),
+            &tcx,
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+        )
+        .expect("compile detached artifact");
+        assert!(artifact.is_detached());
+        let ptr = artifact.functions.get("answer").expect("answer entry").ptr;
+        // SAFETY: the signature is derived from the scalar MIR body and the
+        // owning artifact remains alive across this call.
+        let result = unsafe { mem::transmute::<*const u8, extern "C" fn() -> i64>(ptr)() };
+        assert_eq!(result, 42);
+        drop(artifact);
+    }
 }

@@ -365,7 +365,7 @@ fn dismantle_children(mut stack: Vec<Value>) {
             Value::Struct(a) => {
                 if let Ok(mut inner) = Arc::try_unwrap(a) {
                     let fields = std::mem::take(&mut inner.fields);
-                    stack.extend(fields.into_vec().into_iter().map(|(_, val)| val));
+                    stack.extend(fields.into_values());
                 }
             }
             Value::Tuple(a) | Value::Array(a) => {
@@ -447,7 +447,7 @@ impl Drop for StructInner {
         let depth = DROP_DEPTH.with(std::cell::Cell::get);
         if depth >= DROP_RECURSION_LIMIT {
             let fields = std::mem::take(&mut self.fields);
-            dismantle_children(fields.into_vec().into_iter().map(|(_, v)| v).collect());
+            dismantle_children(fields.into_values().into_vec());
             return;
         }
         DROP_DEPTH.with(|d| d.set(depth + 1));
@@ -729,6 +729,99 @@ pub struct VariantInner {
     pub fields: SmallVec<[Value; 2]>,
 }
 
+/// Values for one struct instance plus a shared, program-owned field layout.
+/// Field names are interned once per distinct declaration-order shape instead
+/// of storing one pointer beside every value in every instance.
+#[derive(Debug, Clone, Default)]
+pub struct StructFields {
+    names: Arc<[&'static str]>,
+    values: Box<[Value]>,
+}
+
+impl StructFields {
+    pub(crate) fn new(fields: Vec<(&'static str, Value)>) -> Self {
+        let (names, values): (Vec<_>, Vec<_>) = fields.into_iter().unzip();
+        Self {
+            names: intern_struct_field_names(&names),
+            values: values.into_boxed_slice(),
+        }
+    }
+
+    /// Returns the number of struct fields.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+    /// Returns true when this struct has no fields.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+    /// Iterates over field names and values in declaration order.
+    pub fn iter(&self) -> impl Iterator<Item = (&&'static str, &Value)> {
+        self.names.iter().zip(self.values.iter())
+    }
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (&&'static str, &mut Value)> {
+        self.names.iter().zip(self.values.iter_mut())
+    }
+    /// Returns the field name and value at `index`.
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<(&'static str, &Value)> {
+        Some((*self.names.get(index)?, self.values.get(index)?))
+    }
+    pub(crate) fn get_mut(&mut self, index: usize) -> Option<(&&'static str, &mut Value)> {
+        Some((self.names.get(index)?, self.values.get_mut(index)?))
+    }
+    pub(crate) fn position(&self, name: &str) -> Option<usize> {
+        self.names.iter().position(|candidate| *candidate == name)
+    }
+    pub(crate) fn to_vec(&self) -> Vec<(&'static str, Value)> {
+        self.iter()
+            .map(|(name, value)| (*name, value.clone()))
+            .collect()
+    }
+    pub(crate) fn into_vec(self) -> Vec<(&'static str, Value)> {
+        self.names
+            .iter()
+            .copied()
+            .zip(self.values.into_vec())
+            .collect()
+    }
+    fn into_values(self) -> Box<[Value]> {
+        self.values
+    }
+}
+
+impl std::ops::Index<usize> for StructFields {
+    type Output = Value;
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.values[index]
+    }
+}
+
+impl std::ops::IndexMut<usize> for StructFields {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.values[index]
+    }
+}
+
+impl<'a> IntoIterator for &'a StructFields {
+    type Item = (&'a &'static str, &'a Value);
+    type IntoIter = std::iter::Zip<std::slice::Iter<'a, &'static str>, std::slice::Iter<'a, Value>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.names.iter().zip(self.values.iter())
+    }
+}
+
+impl<'a> IntoIterator for &'a mut StructFields {
+    type Item = (&'a &'static str, &'a mut Value);
+    type IntoIter =
+        std::iter::Zip<std::slice::Iter<'a, &'static str>, std::slice::IterMut<'a, Value>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.names.iter().zip(self.values.iter_mut())
+    }
+}
+
 /// Boxed payload of [`Value::Struct`].
 #[derive(Debug, Clone)]
 pub struct StructInner {
@@ -742,7 +835,7 @@ pub struct StructInner {
     /// allocations and shrank each slot from 40 to 32 bytes. A
     /// `Box<[_]>` (not `Vec`) drops the unused capacity word: a struct's
     /// field count is fixed at construction.
-    pub fields: Box<[(&'static str, Value)]>,
+    pub fields: StructFields,
 }
 
 /// Boxed payload of [`Value::Builtin`]. Builtins are constructed
@@ -1315,16 +1408,9 @@ unsafe impl Send for SmolStr {}
 unsafe impl Sync for SmolStr {}
 
 /// Compact integer identity for struct and enum-variant names.
-///
-/// The intern table owns one leaked `&'static str` per distinct name, while
-/// each aggregate node stores only the numeric tag. Callers that need the text
-/// recover it through [`Self::as_str`].
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TypeTag(Arc<str>);
 
-/// Compatibility lookup only: it owns no type-name storage. Live values,
-/// chunks, and VM sessions own the `Arc<str>` handles; stale entries are
-/// replaced on the next lookup after their session is dropped.
 static TYPE_TAGS: std::sync::LazyLock<
     parking_lot::Mutex<rustc_hash::FxHashMap<String, std::sync::Weak<str>>>,
 > = std::sync::LazyLock::new(|| parking_lot::Mutex::new(rustc_hash::FxHashMap::default()));
@@ -1522,6 +1608,24 @@ pub fn intern_field_name(name: &str) -> &'static str {
     intern_type_name(name)
 }
 
+fn intern_struct_field_names(names: &[&'static str]) -> Arc<[&'static str]> {
+    type StructShapeCache = rustc_hash::FxHashMap<Box<[&'static str]>, Arc<[&'static str]>>;
+
+    thread_local! {
+        static SHAPES: std::cell::RefCell<StructShapeCache> =
+            std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+    }
+    SHAPES.with(|shapes| {
+        let mut shapes = shapes.borrow_mut();
+        if let Some(existing) = shapes.get(names) {
+            return Arc::clone(existing);
+        }
+        let shape: Arc<[&'static str]> = Arc::from(names);
+        shapes.insert(names.into(), Arc::clone(&shape));
+        shape
+    })
+}
+
 /// Shared empty `Arc<Vec<Value>>` sentinel returned by every
 /// constructor that would otherwise allocate a fresh empty `Vec`
 /// plus Arc header (~32 B per call). All empty-payload variants
@@ -1536,9 +1640,8 @@ pub(crate) fn empty_value_arc() -> Arc<Vec<Value>> {
 /// field-less struct constructors.
 #[must_use]
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-pub(crate) fn empty_struct_fields() -> Arc<Vec<(&'static str, Value)>> {
-    static EMPTY: OnceLock<Arc<Vec<(&'static str, Value)>>> = OnceLock::new();
-    Arc::clone(EMPTY.get_or_init(|| Arc::new(Vec::new())))
+pub(crate) fn empty_struct_fields() -> Vec<(&'static str, Value)> {
+    Vec::new()
 }
 
 impl Value {
@@ -1621,7 +1724,7 @@ impl Value {
     pub(crate) fn struct_with_tag(name: TypeTag, fields: Vec<(&'static str, Value)>) -> Self {
         Self::Struct(Arc::new(StructInner {
             name,
-            fields: fields.into_boxed_slice(),
+            fields: StructFields::new(fields),
         }))
     }
 
@@ -1637,7 +1740,10 @@ impl Value {
     ) -> Self {
         Self::Struct(Arc::new(StructInner {
             name: type_tag_from_static(name),
-            fields: Box::new([(field0, Self::Int(first)), (field1, Self::Int(second))]),
+            fields: StructFields::new(vec![
+                (field0, Self::Int(first)),
+                (field1, Self::Int(second)),
+            ]),
         }))
     }
     /// Constructs a [`Value::FloatArray`].
@@ -2266,14 +2372,14 @@ impl fmt::Display for Value {
                     if let Some(msg) = inner
                         .fields
                         .iter()
-                        .find(|(n, _)| (*n) == "message")
+                        .find(|(n, _)| (**n) == "message")
                         .map(|(_, v)| v.clone())
                     {
                         write!(out, "{msg}")?;
                         let mut cursor = inner
                             .fields
                             .iter()
-                            .find(|(n, _)| (*n) == "cause")
+                            .find(|(n, _)| (**n) == "cause")
                             .map(|(_, v)| v.clone());
                         while let Some(Self::Variant(link)) = cursor {
                             if link.name != "Some" || link.fields.is_empty() {
@@ -2285,7 +2391,8 @@ impl fmt::Display for Value {
                             if cause.name != "errors::Error" {
                                 break;
                             }
-                            let Some((_, m)) = cause.fields.iter().find(|(n, _)| (*n) == "message")
+                            let Some((_, m)) =
+                                cause.fields.iter().find(|(n, _)| (**n) == "message")
                             else {
                                 break;
                             };
@@ -2293,13 +2400,13 @@ impl fmt::Display for Value {
                             cursor = cause
                                 .fields
                                 .iter()
-                                .find(|(n, _)| (*n) == "cause")
+                                .find(|(n, _)| (**n) == "cause")
                                 .map(|(_, v)| v.clone());
                         }
                         return Ok(());
                     }
                 }
-                write_struct(out, inner.name.as_str(), &inner.fields)
+                write_struct(out, inner.name.as_str(), &inner.fields.to_vec())
             }
             Self::Closure(_) => out.write_str("<closure>"),
             Self::Builtin(inner) => write!(out, "<builtin {}>", inner.name),
@@ -2343,7 +2450,7 @@ fn repr_value(value: &Value) -> String {
                 format!("{}({})", inner.name.as_str(), fields.join(", "))
             }
         }
-        Value::Struct(inner) => repr_struct(inner.name.as_str(), &inner.fields),
+        Value::Struct(inner) => repr_struct(inner.name.as_str(), &inner.fields.to_vec()),
         Value::Map(map) => {
             let map = map.lock();
             let mut entries: Vec<_> = map.iter().collect();
@@ -2733,8 +2840,8 @@ mod size_assertions {
         // raw `String`) will fail this test.
         //
         // The natural fit on 64-bit is 16 bytes (8 disc + 8
-        // payload). A future D9 NaN-box pass can collapse this
-        // further to 8 by encoding the tag inside the payload -
+        // payload). A future compact-value representation can collapse this
+        // further to 8 bytes by encoding the tag inside the payload -
         // see `gossamer_runtime::GossamerValue` for the layout
         // the LLVM lowerer already speaks. Until then this
         // assertion is the regression guard.
@@ -3534,7 +3641,7 @@ mod repr_tests {
 
     use smallvec::smallvec;
 
-    use super::{StructInner, Value, VariantInner, intern_type_tag};
+    use super::{StructFields, StructInner, Value, VariantInner, intern_type_tag};
 
     #[test]
     fn repr_quotes_strings_and_chars_recursively() {
@@ -3548,7 +3655,10 @@ mod repr_tests {
         }));
         let record = Value::Struct(Arc::new(StructInner {
             name: intern_type_tag("Message"),
-            fields: Box::new([("text", Value::String("hello".into())), ("value", variant)]),
+            fields: StructFields::new(vec![
+                ("text", Value::String("hello".into())),
+                ("value", variant),
+            ]),
         }));
 
         assert_eq!(
@@ -3586,7 +3696,7 @@ mod thread_confined_cell_tests {
 
 #[cfg(test)]
 mod deep_drop_tests {
-    use super::{StructInner, Value, VariantInner, intern_type_tag};
+    use super::{StructFields, StructInner, Value, VariantInner, intern_type_tag};
     use smallvec::SmallVec;
     use std::sync::Arc;
 
@@ -3621,7 +3731,7 @@ mod deep_drop_tests {
             let fields: Box<[(&'static str, Value)]> = Box::new([("next", v)]);
             v = Value::Struct(Arc::new(StructInner {
                 name: intern_type_tag("Link"),
-                fields,
+                fields: StructFields::new(fields.into_vec()),
             }));
         }
         drop(v);
@@ -3669,6 +3779,30 @@ mod native_consume_tests {
             !super::TYPE_TAGS.lock().contains_key(name),
             "compatibility lookup retained a dead type tag"
         );
+    }
+
+    #[test]
+    fn struct_instances_share_field_name_shape_but_not_values() {
+        let first = Value::struct_(
+            "Point",
+            vec![
+                (intern_type_name("x"), Value::Int(1)),
+                (intern_type_name("y"), Value::Int(2)),
+            ],
+        );
+        let second = Value::struct_(
+            "Point",
+            vec![
+                (intern_type_name("x"), Value::Int(3)),
+                (intern_type_name("y"), Value::Int(4)),
+            ],
+        );
+        let (Value::Struct(first), Value::Struct(second)) = (first, second) else {
+            unreachable!();
+        };
+        assert!(Arc::ptr_eq(&first.fields.names, &second.fields.names));
+        assert!(matches!(first.fields[0], Value::Int(1)));
+        assert!(matches!(second.fields[0], Value::Int(3)));
     }
 
     #[test]

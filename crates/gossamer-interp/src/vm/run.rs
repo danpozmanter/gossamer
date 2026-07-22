@@ -1475,7 +1475,7 @@ impl Vm {
                         if slot.type_token.get() == token {
                             let off = slot.offset.get() as usize;
                             if off < inner.fields.len() {
-                                registers[dst as usize] = inner.fields[off].1.clone();
+                                registers[dst as usize] = inner.fields[off].clone();
                                 continue;
                             }
                         }
@@ -1491,14 +1491,11 @@ impl Vm {
                                 ));
                             }
                         };
-                        if let Some(pos) = inner
-                            .fields
-                            .iter()
-                            .position(|(ident, _)| (*ident) == field_name)
-                        {
+                        if let Some(pos) = inner.fields.position(field_name) {
                             slot.type_token.set(token);
                             slot.offset.set(pos as u16);
-                            registers[dst as usize] = inner.fields[pos].1.clone();
+                            let value = inner.fields[pos].clone();
+                            registers[dst as usize] = value;
                         } else {
                             registers[dst as usize] = Value::Unit;
                         }
@@ -1889,13 +1886,13 @@ impl Vm {
                         .iter()
                         .position(|(ident, _)| (*ident) == field_name);
                     if let Some(p) = pos {
-                        field_slots[p].1 = new_value;
+                        field_slots[p] = new_value;
                     } else {
                         // Dynamic field add (e.g. `json::Object`): the
                         // fixed-arity slice grows by one, rebuilt once.
                         let mut grown = std::mem::take(field_slots).into_vec();
                         grown.push((crate::value::intern_type_name(field_name), new_value));
-                        *field_slots = grown.into_boxed_slice();
+                        *field_slots = crate::value::StructFields::new(grown);
                     }
                 }
                 Op::MakeClosure { dst, proto } => {
@@ -2633,13 +2630,13 @@ impl Vm {
                         .iter()
                         .position(|(ident, _)| (*ident) == field_name);
                     if let Some(p) = pos {
-                        field_slots[p].1 = new_value;
+                        field_slots[p] = new_value;
                     } else {
                         // Dynamic field add (e.g. `json::Object`): the
                         // fixed-arity slice grows by one, rebuilt once.
                         let mut grown = std::mem::take(field_slots).into_vec();
                         grown.push((crate::value::intern_type_name(field_name), new_value));
-                        *field_slots = grown.into_boxed_slice();
+                        *field_slots = crate::value::StructFields::new(grown);
                     }
                 }
 
@@ -2770,7 +2767,7 @@ impl Vm {
                         let struct_inner = Arc::make_mut(struct_arc);
                         let field_slots = &mut struct_inner.fields;
                         if let Some(entry) = field_slots.get_mut(offset as usize) {
-                            entry.1 = new_value;
+                            *entry.1 = new_value;
                         }
                     }
                 }

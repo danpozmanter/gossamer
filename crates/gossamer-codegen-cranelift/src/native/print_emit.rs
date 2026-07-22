@@ -115,7 +115,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
-    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlagsData, Signature,
     StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
     immediates::Imm64, types,
 };
@@ -542,7 +542,7 @@ pub(super) fn emit_tuple_format_value(
     let n = tags.len() as i64;
     let tags_data = intrinsics.intern_tuple_tags(module, &tags)?;
     let tags_global = module.declare_data_in_func(tags_data, builder.func);
-    let tags_ptr = builder.ins().global_value(ptr_ty, tags_global);
+    let tags_ptr = builder.ins().symbol_value(ptr_ty, tags_global);
     let n_v = builder.ins().iconst(types::I64, n);
     let f = intrinsics.extern_fn_by_name(module, "gos_rt_tuple_format")?;
     let fref = module.declare_func_in_func(f, builder.func);
