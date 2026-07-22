@@ -11,6 +11,8 @@
   preparation state, and admit lowerable internal arrays, vectors, tuples,
   structs, recursive enums, and by-value results to Cranelift JIT.
 - Add `GOS_JIT_TRACE` rejection diagnostics for unsupported promotion shapes.
+- Parse the generated CLI schema on an explicitly sized stack so Windows-hosted
+  cross builds do not overflow before command dispatch.
 
 ## 0.33.0 - Adaptive JIT coverage + improvements for civil time, filesystem libraries and caching
 

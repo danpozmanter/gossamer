@@ -628,7 +628,7 @@ enum Command {
 /// Parses `argv`, dispatches the chosen subcommand, and maps any
 /// `Err` into a non-zero exit code with a styled `error:` prefix.
 pub(crate) fn run() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = parse_cli();
     match dispatch(cli.command) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
@@ -636,6 +636,20 @@ pub(crate) fn run() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn parse_cli() -> Cli {
+    // Clap's derived command schema is deeply recursive. Construct it on an
+    // explicitly sized stack so Windows' smaller main-thread stack does not
+    // overflow before a command starts. Dispatch remains on the caller's
+    // thread for commands that require main-thread execution.
+    std::thread::Builder::new()
+        .name("gos-cli-parser".to_string())
+        .stack_size(4 * 1024 * 1024)
+        .spawn(Cli::parse)
+        .expect("failed to start CLI parser")
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 /// Routes the parsed [`Command`] to the matching `cmd::*` module.
