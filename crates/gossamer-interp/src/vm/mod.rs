@@ -998,6 +998,20 @@ pub(crate) enum Global {
 /// than exhausting process memory.
 const MAX_CALL_DEPTH: usize = 4_096;
 
+/// Native-stack depth at which direct bytecode calls switch to the heap-frame
+/// trampoline.
+///
+/// The trampoline is required for adversarial deep recursion, but shallow
+/// bytecode calls are common in real workloads: binary trees, AST rewrite, and
+/// ordinary helper calls rarely exceed a few dozen live language frames. Those
+/// shapes were paying a full register-file suspension and resume on every
+/// call. Keep a conservative native-stack budget for the fast path, then fall
+/// back to suspended VM frames before stack pressure becomes material.
+#[cfg(debug_assertions)]
+pub(crate) const DIRECT_BYTECODE_CALL_DEPTH: usize = 16;
+#[cfg(not(debug_assertions))]
+pub(crate) const DIRECT_BYTECODE_CALL_DEPTH: usize = 128;
+
 /// Maximum logical tail frames retained for diagnostics in one trampoline
 /// chain. Tail calls reuse their physical VM frame, so [`MAX_CALL_DEPTH`]
 /// cannot bound an unbounded tail-recursive program. This remains above the

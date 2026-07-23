@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.33.4 - VM recursion throughput recovery
+
+- Restore bytecode VM throughput for shallow named function calls by using a
+  bounded direct-call fast path before falling back to heap-backed explicit
+  frames for deep recursion.
+- Keep closure calls on the explicit-frame path and use a smaller debug-build
+  direct-call limit so stack-safety regression coverage remains intact.
+
 ## 0.33.3 - VM regression fixes
 
 - Recover bytecode VM recursive enum throughput by compiling nullary variants

@@ -215,22 +215,26 @@ impl Vm {
             ($dst:expr, $target:expr, $call_args:expr) => {
                 match $target {
                     Global::Fn(next_chunk) if allow_explicit_frames => {
-                        guard.suspended = true;
-                        return Ok(RunControl::Call {
-                            chunk: next_chunk,
-                            args: $call_args,
-                            dst: $dst,
-                            parent: SuspendedFrame {
-                                chunk: Arc::clone(&chunk),
-                                registers: std::mem::take(registers),
-                                floats: std::mem::take(floats),
-                                ints: std::mem::take(ints),
-                                ref_cells,
-                                pc,
-                                #[cfg(feature = "fuel")]
-                                prev_pc,
-                            },
-                        });
+                        if self.call_depth.get() < crate::vm::DIRECT_BYTECODE_CALL_DEPTH {
+                            self.apply(Global::Fn(next_chunk), $call_args)?
+                        } else {
+                            guard.suspended = true;
+                            return Ok(RunControl::Call {
+                                chunk: next_chunk,
+                                args: $call_args,
+                                dst: $dst,
+                                parent: SuspendedFrame {
+                                    chunk: Arc::clone(&chunk),
+                                    registers: std::mem::take(registers),
+                                    floats: std::mem::take(floats),
+                                    ints: std::mem::take(ints),
+                                    ref_cells,
+                                    pc,
+                                    #[cfg(feature = "fuel")]
+                                    prev_pc,
+                                },
+                            });
+                        }
                     }
                     target => self.apply(target, $call_args)?,
                 }
@@ -575,6 +579,7 @@ impl Vm {
                         _ => None,
                     };
                     if let Some((next_chunk, closure)) = bytecode_target {
+                        let closure_call = closure.is_some();
                         let next_args = if let Some(closure) = closure {
                             let expected = next_chunk.arity as usize - closure.capture_values.len();
                             if expected != arg_values.len() {
@@ -608,6 +613,13 @@ impl Vm {
                         if !allow_explicit_frames {
                             // Kept for callers that deliberately request the
                             // old direct path; local initializers now opt in.
+                            let result = self.apply(Global::Fn(next_chunk), next_args)?;
+                            registers[dst as usize] = result;
+                            continue;
+                        }
+                        if !closure_call
+                            && self.call_depth.get() < crate::vm::DIRECT_BYTECODE_CALL_DEPTH
+                        {
                             let result = self.apply(Global::Fn(next_chunk), next_args)?;
                             registers[dst as usize] = result;
                             continue;
