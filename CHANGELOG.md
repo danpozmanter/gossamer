@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.33.3 - VM regression fixes
+
+- Recover bytecode VM recursive enum throughput by compiling nullary variants
+  to their canonical values and keeping arity 1 to 2 payloads inline.
+- Reduce bytecode VM numeric-loop dispatch by eliminating dead post-FMA float
+  moves and fusing integer-to-float divisors into typed float division.
+- Restore the no-temporary-vector path for two-integer struct construction
+  while preserving shared field-name layouts.
+- Refresh the generated stdlib API catalog and remove an obsolete `cargo-deny`
+  duplicate-skip entry.
+
 ## 0.33.2 - JIT efficiency and updates
 
 - Add lifecycle RSS attribution and native-code byte reporting around JIT

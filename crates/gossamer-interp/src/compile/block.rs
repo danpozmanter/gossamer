@@ -401,4 +401,83 @@ fn make(a: i64, b: i64) -> Pair { Pair(a, b) }
             chunk.instrs
         );
     }
+
+    #[test]
+    fn nullary_enum_constructor_skips_generic_call() {
+        let source = r"
+enum Tree { Leaf, Node(Tree, Tree) }
+fn make_leaf() -> Tree { Tree::Leaf }
+";
+        let (chunk, _) = compile_named(source, "make_leaf");
+        assert!(
+            chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::LoadGlobal { .. })),
+            "nullary constructor should load its canonical sentinel: {:?}",
+            chunk.instrs
+        );
+        assert!(
+            !chunk.instrs.iter().any(|op| matches!(op, Op::Call { .. })),
+            "nullary constructor must not retain generic dispatch: {:?}",
+            chunk.instrs
+        );
+    }
+
+    #[test]
+    fn i64_to_f64_divisor_uses_fused_typed_opcode() {
+        let source = r"
+fn recip(i: i64) -> f64 {
+    1.0 / (i as f64)
+}
+";
+        let (chunk, _) = compile_named(source, "recip");
+        assert!(
+            chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::DivF64ByI64 { .. })),
+            "expected fused DivF64ByI64: {:?}",
+            chunk.instrs
+        );
+        assert!(
+            !chunk
+                .instrs
+                .windows(2)
+                .any(|ops| matches!(ops, [Op::IntToFloatF64 { .. }, Op::DivF64 { .. }])),
+            "IntToFloatF64 + DivF64 pair should be fused: {:?}",
+            chunk.instrs
+        );
+    }
+
+    #[test]
+    fn fma_accumulator_does_not_emit_dead_float_move() {
+        let source = r"
+fn step(a: f64, b: f64, c: f64) -> f64 {
+    let mut sum = c
+    sum += a * b
+    sum
+}
+";
+        let (chunk, _) = compile_named(source, "step");
+        assert!(
+            chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::MulAddF64 { .. })),
+            "expected MulAddF64: {:?}",
+            chunk.instrs
+        );
+        assert!(
+            !chunk.instrs.windows(2).any(|ops| matches!(
+                ops,
+                [
+                    Op::MulAddF64 { dst_f, .. } | Op::MulSubF64 { dst_f, .. },
+                    Op::MoveF64 { src_f, .. }
+                ] if dst_f == src_f
+            )),
+            "post-FMA MoveF64 should be folded into the fused op: {:?}",
+            chunk.instrs
+        );
+    }
 }

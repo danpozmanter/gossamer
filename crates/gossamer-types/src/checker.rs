@@ -1447,6 +1447,13 @@ impl<'a> TypeChecker<'a> {
     fn register_enum(&mut self, item_id: NodeId, decl: &gossamer_ast::EnumDecl, span: Span) {
         if let Some(def) = self.resolutions.definition_of(item_id) {
             self.tcx.register_def_name(def, decl.name.name.as_str());
+            self.tcx.register_enum_variant_names(
+                def,
+                decl.variants
+                    .iter()
+                    .map(|variant| variant.name.name.clone())
+                    .collect(),
+            );
             // Payload-bearing enums are reference-counted heap
             // values; register the def eagerly so the MIR drop pass
             // sees enum-typed locals as RC-managed in every body,

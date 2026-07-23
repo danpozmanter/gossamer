@@ -648,6 +648,15 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_f(op_idx, dst_f)?;
                 check_i(op_idx, src_i)?;
             }
+            Op::DivF64ByI64 {
+                dst_f,
+                lhs_f,
+                rhs_i,
+            } => {
+                check_f(op_idx, dst_f)?;
+                check_f(op_idx, lhs_f)?;
+                check_i(op_idx, rhs_i)?;
+            }
             Op::FloatToIntI64 { dst_i, src_f } => {
                 check_i(op_idx, dst_i)?;
                 check_f(op_idx, src_f)?;
@@ -1734,6 +1743,7 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
         | Op::SubF64 { dst_f, .. }
         | Op::MulF64 { dst_f, .. }
         | Op::DivF64 { dst_f, .. }
+        | Op::DivF64ByI64 { dst_f, .. }
         | Op::MulAddF64 { dst_f, .. }
         | Op::MulSubF64 { dst_f, .. } => effect.f_writes.push(dst_f),
         Op::LoadConstI64 { dst_i, .. }
@@ -1922,6 +1932,10 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
         Op::CheckNonNegativeCapacity { capacity_i } => effect.i_reads.push(capacity_i),
         Op::BuildFloatVec { first_f, count, .. } => {
             add_f_span(&mut effect.f_reads, first_f, u32::from(count));
+        }
+        Op::DivF64ByI64 { lhs_f, rhs_i, .. } => {
+            effect.f_reads.push(lhs_f);
+            effect.i_reads.push(rhs_i);
         }
         Op::IntToFloatF64 { src_i, .. }
         | Op::TruncCastI64 { src_i, .. }

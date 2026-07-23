@@ -858,6 +858,8 @@ pub enum Op {
     MulF64 { dst_f: Reg, lhs_f: Reg, rhs_f: Reg },
     /// `floats[dst_f] = floats[lhs_f] / floats[rhs_f]`.
     DivF64 { dst_f: Reg, lhs_f: Reg, rhs_f: Reg },
+    /// `floats[dst_f] = floats[lhs_f] / (ints[rhs_i] as f64)`.
+    DivF64ByI64 { dst_f: Reg, lhs_f: Reg, rhs_i: Reg },
     /// `floats[dst_f] = -floats[src_f]`.
     NegF64 { dst_f: Reg, src_f: Reg },
     /// `registers[dst_v] = Bool(floats[lhs_f] < floats[rhs_f])`.

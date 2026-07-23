@@ -2861,6 +2861,22 @@ impl<'tcx> FnBuilder<'tcx> {
         args: &[HirExpr],
         result_ty: Ty,
     ) -> RuntimeResult<Reg> {
+        // A payload-less enum constructor is already represented by its
+        // immutable global sentinel. Its HIR callee has the enum value type,
+        // unlike a zero-argument function returning that enum, whose callee
+        // has a function type. Return the loaded sentinel directly and avoid
+        // generic call dispatch on every leaf construction.
+        if args.is_empty()
+            && let Some(TyKind::Adt { def, .. }) = self.tcx.kind(callee.ty)
+            && let HirExprKind::Path { segments, .. } = &callee.kind
+            && let Some(variant_name) = segments.last()
+            && self
+                .tcx
+                .enum_variant_names(*def)
+                .is_some_and(|variants| variants.iter().any(|name| name == &variant_name.name))
+        {
+            return self.compile_expr(callee);
+        }
         if let Some(reg) = self.try_compile_struct2_i64(callee, args, result_ty)? {
             return Ok(reg);
         }

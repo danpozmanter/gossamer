@@ -493,24 +493,43 @@ impl Vm {
                     if let Value::Variant(inner) = &registers[callee as usize]
                         && inner.fields.is_empty()
                     {
-                        let variant_name = inner.name.clone();
-                        let mut fields = Vec::with_capacity(argc_usz);
-                        for i in 0..argc_usz {
-                            // Constructor argument slots are the compiler's
-                            // one-shot call scratch area. Move them into the
-                            // variant payload directly instead of first
-                            // building an arg Vec and then immediately
-                            // re-wrapping it in `apply(Global::Value(..))`.
-                            let raw =
-                                std::mem::replace(&mut registers[args as usize + i], Value::Void);
-                            let v = if may_have_cells {
+                        let take_arg = |registers: &mut [Value], offset: usize| {
+                            let raw = std::mem::replace(
+                                &mut registers[args as usize + offset],
+                                Value::Void,
+                            );
+                            if may_have_cells {
                                 auto_deref_cell(&raw).unwrap_or(raw)
                             } else {
                                 raw
-                            };
-                            fields.push(v);
-                        }
-                        registers[dst as usize] = Value::variant(variant_name, fields);
+                            }
+                        };
+                        registers[dst as usize] = match argc_usz {
+                            // A nullary constructor's callee sentinel is already
+                            // the exact immutable value the call would create.
+                            // Reuse it instead of hashing through the small-value
+                            // cache on every invocation.
+                            0 => registers[callee as usize].clone(),
+                            1 => {
+                                let variant_name = inner.name.clone();
+                                let field = take_arg(registers, 0);
+                                Value::variant_with_tag_1(variant_name, field)
+                            }
+                            2 => {
+                                let variant_name = inner.name.clone();
+                                let first = take_arg(registers, 0);
+                                let second = take_arg(registers, 1);
+                                Value::variant_with_tag_2(variant_name, first, second)
+                            }
+                            _ => {
+                                let variant_name = inner.name.clone();
+                                let mut fields = Vec::with_capacity(argc_usz);
+                                for i in 0..argc_usz {
+                                    fields.push(take_arg(registers, i));
+                                }
+                                Value::variant_with_tag(variant_name, fields)
+                            }
+                        };
                         continue;
                     }
                     let mut arg_values = self.pool.borrow_mut().take_args(argc_usz);
@@ -1969,6 +1988,15 @@ impl Vm {
                     *floats.get_unchecked_mut(dst_f as usize) = *floats
                         .get_unchecked(lhs_f as usize)
                         / *floats.get_unchecked(rhs_f as usize);
+                },
+                Op::DivF64ByI64 {
+                    dst_f,
+                    lhs_f,
+                    rhs_i,
+                } => unsafe {
+                    *floats.get_unchecked_mut(dst_f as usize) = *floats
+                        .get_unchecked(lhs_f as usize)
+                        / (*ints.get_unchecked(rhs_i as usize) as f64);
                 },
                 Op::NegF64 { dst_f, src_f } => unsafe {
                     *floats.get_unchecked_mut(dst_f as usize) =

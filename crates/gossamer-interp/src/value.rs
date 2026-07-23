@@ -747,6 +747,18 @@ impl StructFields {
         }
     }
 
+    pub(crate) fn from_two_values(
+        field0: &'static str,
+        value0: Value,
+        field1: &'static str,
+        value1: Value,
+    ) -> Self {
+        Self {
+            names: intern_struct_field_names_2(field0, field1),
+            values: Box::new([value0, value1]),
+        }
+    }
+
     /// Returns the number of struct fields.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -1569,20 +1581,24 @@ fn small_variant_key(name: &TypeTag, fields: &[Value]) -> Option<SmallVariantKey
 /// references.
 fn intern_small_variant(
     name: TypeTag,
-    fields: Vec<Value>,
+    fields: SmallVec<[Value; 2]>,
     key: SmallVariantKey,
 ) -> Arc<VariantInner> {
     SMALL_VARIANT_CACHE.with(|cache| {
         if let Some(existing) = cache.borrow().get(&key).and_then(std::sync::Weak::upgrade) {
             return existing;
         }
-        let node = Arc::new(VariantInner {
-            name,
-            fields: variant_fields(fields),
-        });
+        let node = Arc::new(VariantInner { name, fields });
         cache.borrow_mut().insert(key, Arc::downgrade(&node));
         node
     })
+}
+
+fn variant_with_tag_and_fields(name: TypeTag, fields: SmallVec<[Value; 2]>) -> Value {
+    if let Some(key) = small_variant_key(&name, &fields) {
+        return Value::Variant(intern_small_variant(name, fields, key));
+    }
+    Value::Variant(Arc::new(VariantInner { name, fields }))
 }
 
 /// Converts a constructor's temporary field `Vec` into the inline payload
@@ -1624,6 +1640,14 @@ fn intern_struct_field_names(names: &[&'static str]) -> Arc<[&'static str]> {
         shapes.insert(names.into(), Arc::clone(&shape));
         shape
     })
+}
+
+fn intern_struct_field_names_2(field0: &'static str, field1: &'static str) -> Arc<[&'static str]> {
+    if field0 == "0" && field1 == "1" {
+        static POSITIONAL_2: OnceLock<Arc<[&'static str]>> = OnceLock::new();
+        return Arc::clone(POSITIONAL_2.get_or_init(|| Arc::from(["0", "1"])));
+    }
+    intern_struct_field_names(&[field0, field1])
 }
 
 /// Shared empty `Arc<Vec<Value>>` sentinel returned by every
@@ -1684,13 +1708,31 @@ impl Value {
         // multi-GB RSS. Native representation is still built lazily at the JIT
         // boundary by `jit_call::build_variant_to_native_enum`, where it is
         // actually needed.
-        if let Some(key) = small_variant_key(&name, &fields) {
-            return Self::Variant(intern_small_variant(name, fields, key));
-        }
-        Self::Variant(Arc::new(VariantInner {
-            name,
-            fields: variant_fields(fields),
-        }))
+        Self::variant_with_tag(name, fields)
+    }
+
+    /// Constructs a [`Value::Variant`] from an already-interned variant tag.
+    ///
+    /// Bytecode enum-constructor dispatch already holds this tag in the
+    /// callee sentinel. Reusing it avoids a global intern-table lookup per
+    /// constructed node in recursive enum workloads.
+    #[must_use]
+    pub(crate) fn variant_with_tag(name: TypeTag, fields: Vec<Value>) -> Self {
+        variant_with_tag_and_fields(name, variant_fields(fields))
+    }
+
+    /// Constructs a one-field variant without an intermediate argument buffer.
+    #[must_use]
+    pub(crate) fn variant_with_tag_1(name: TypeTag, field: Value) -> Self {
+        let mut fields = SmallVec::new();
+        fields.push(field);
+        variant_with_tag_and_fields(name, fields)
+    }
+
+    /// Constructs a two-field variant without an intermediate argument buffer.
+    #[must_use]
+    pub(crate) fn variant_with_tag_2(name: TypeTag, first: Value, second: Value) -> Self {
+        variant_with_tag_and_fields(name, SmallVec::from_buf([first, second]))
     }
 
     /// Constructs the boxed `Variant` representation unconditionally, never the
@@ -1701,13 +1743,7 @@ impl Value {
     #[must_use]
     pub(crate) fn variant_boxed(name: &'static str, fields: Vec<Value>) -> Self {
         let name = type_tag_from_static(name);
-        if let Some(key) = small_variant_key(&name, &fields) {
-            return Self::Variant(intern_small_variant(name, fields, key));
-        }
-        Self::Variant(Arc::new(VariantInner {
-            name,
-            fields: variant_fields(fields),
-        }))
+        Self::variant_with_tag(name, fields)
     }
     /// Constructs a [`Value::Struct`].
     #[must_use]
@@ -1740,10 +1776,12 @@ impl Value {
     ) -> Self {
         Self::Struct(Arc::new(StructInner {
             name: type_tag_from_static(name),
-            fields: StructFields::new(vec![
-                (field0, Self::Int(first)),
-                (field1, Self::Int(second)),
-            ]),
+            fields: StructFields::from_two_values(
+                field0,
+                Self::Int(first),
+                field1,
+                Self::Int(second),
+            ),
         }))
     }
     /// Constructs a [`Value::FloatArray`].

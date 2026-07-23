@@ -22,6 +22,8 @@ pub struct TyCtxt {
     /// by the typechecker; consumed by MIR to build the structural-equality
     /// descriptor for heap (recursive / `Box`) enum `==` / `!=`.
     enum_variant_tys: HashMap<gossamer_resolve::DefId, Vec<Vec<Ty>>>,
+    /// Declared variant names for each user enum.
+    enum_variant_names: HashMap<gossamer_resolve::DefId, Vec<String>>,
     /// Concrete non-generic user-enum `Adt` type by name. Lets MIR recover the
     /// enum type from the name its `==` dispatch resolves (operand types are
     /// often still inference vars at lowering time).
@@ -127,7 +129,7 @@ impl TyCtxt {
 
         write!(
             output,
-            "kinds={:?};primitives={:?};struct_fields={:?};enum_variant_tys={:?};enum_ty_by_name={:?};struct_fields_inst={:?};def_names={:?};rc_metas={:?};aggr_copy_metas={:?};rc_managed_tys={:?};rc_managed_enum_defs={:?};tuple_struct_defs={:?};inline_enum_defs={:?}",
+            "kinds={:?};primitives={:?};struct_fields={:?};enum_variant_tys={:?};enum_variant_names={:?};enum_ty_by_name={:?};struct_fields_inst={:?};def_names={:?};rc_metas={:?};aggr_copy_metas={:?};rc_managed_tys={:?};rc_managed_enum_defs={:?};tuple_struct_defs={:?};inline_enum_defs={:?}",
             self.kinds,
             self.primitives,
             sorted(
@@ -137,6 +139,11 @@ impl TyCtxt {
             ),
             sorted(
                 self.enum_variant_tys
+                    .iter()
+                    .map(|(k, v)| format!("{k:?}:{v:?}"))
+            ),
+            sorted(
+                self.enum_variant_names
                     .iter()
                     .map(|(k, v)| format!("{k:?}:{v:?}"))
             ),
@@ -371,6 +378,21 @@ impl TyCtxt {
     #[must_use]
     pub fn enum_variant_tys(&self, def: gossamer_resolve::DefId) -> Option<&[Vec<Ty>]> {
         self.enum_variant_tys.get(&def).map(Vec::as_slice)
+    }
+
+    /// Records variant names in declaration order for a user enum.
+    pub fn register_enum_variant_names(
+        &mut self,
+        def: gossamer_resolve::DefId,
+        variants: Vec<String>,
+    ) {
+        self.enum_variant_names.insert(def, variants);
+    }
+
+    /// Returns the declared variant names for `def`.
+    #[must_use]
+    pub fn enum_variant_names(&self, def: gossamer_resolve::DefId) -> Option<&[String]> {
+        self.enum_variant_names.get(&def).map(Vec::as_slice)
     }
 
     /// Records the concrete `Adt` type of a non-generic user enum by name.

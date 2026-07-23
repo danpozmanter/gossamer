@@ -575,6 +575,14 @@ fn op_label(tag: usize) -> &'static str {
                 "BuildTuple",
             ),
             (O::IntToFloatF64 { dst_f: 0, src_i: 0 }, "IntToFloatF64"),
+            (
+                O::DivF64ByI64 {
+                    dst_f: 0,
+                    lhs_f: 0,
+                    rhs_i: 0,
+                },
+                "DivF64ByI64",
+            ),
             (O::FloatToIntI64 { dst_i: 0, src_f: 0 }, "FloatToIntI64"),
             (
                 O::IntArrayGetI64 {
