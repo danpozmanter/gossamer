@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.33.5 - REPL documentation metadata
+
+- Expose runtime receiver methods in REPL `%help`, `%ls`, and `%find`,
+  including `String::parse`, collections, `Option`, `Result`, iterators, and
+  handle types.
+- Add metadata coverage for every registered builtin `Type::method` surface.
+- Correct `std::strings` conversion signatures and refresh generated stdlib
+  docs/catalog output.
+
 ## 0.33.4 - VM recursion throughput recovery
 
 - Restore bytecode VM throughput for shallow named function calls by using a

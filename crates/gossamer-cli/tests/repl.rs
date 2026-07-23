@@ -918,6 +918,125 @@ fn repl_meta_help_finds_stdlib_symbol() {
 }
 
 #[test]
+fn repl_meta_help_ls_and_find_cover_core_string_parse() {
+    let out = run_repl(
+        "%help string::parse\n\
+         %help String::parse\n\
+         %ls string\n\
+         %find String::parse\n\
+         \"123\".parse()\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("String::parse [method]"),
+        "expected core method help; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout
+            .contains("fn parse<T>(self: String) -> Result<T, errors::Error>"),
+        "expected parse signature; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("String::parse")
+            && out
+                .stdout
+                .contains("Parses the string into the expected result type."),
+        "expected %ls and %find to expose String::parse; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("Out[1]: Ok(123)"),
+        "existing String::parse execution must still work; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_help_ls_and_find_cover_core_collection_types() {
+    let out = run_repl(
+        "%help Vec::new\n\
+         %help Vec::push\n\
+         %ls Vec\n\
+         %find Vec::join\n\
+         %help HashMap::new\n\
+         %help HashMap::insert\n\
+         %ls HashMap\n\
+         %find HashMap::pop\n\
+         %help BTreeMap::new\n\
+         %help BTreeMap::insert\n\
+         %ls BTreeMap\n\
+         %help HashSet::union\n\
+         %ls HashSet\n\
+         %help VecDeque::push_back\n\
+         %ls VecDeque\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for expected in [
+        "Vec::new [assoc]",
+        "Vec::push [method]",
+        "Vec::join",
+        "HashMap::new [assoc]",
+        "HashMap::insert [method]",
+        "HashMap::pop",
+        "BTreeMap::new [assoc]",
+        "BTreeMap::insert [method]",
+        "HashSet::union [method]",
+        "VecDeque::push_back [method]",
+    ] {
+        assert!(
+            out.stdout.contains(expected),
+            "missing `{expected}` from collection metadata output: {}",
+            out.stdout
+        );
+    }
+    assert!(
+        out.stderr.is_empty(),
+        "collection metadata lookups should not fail: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn repl_meta_help_covers_builtin_receiver_types() {
+    let out = run_repl(
+        "%help Option::map\n\
+         %help Result::map_err\n\
+         %help Iterator::collect\n\
+         %help Stream::write\n\
+         %help Child::wait\n\
+         %help AtomicI64::new\n\
+         %help http::Response::text\n\
+         %help validate::Errors::add\n\
+         %ls Option\n\
+         %ls http::Response\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for expected in [
+        "Option::map [method]",
+        "Result::map_err [method]",
+        "Iterator::collect [method]",
+        "Stream::write [method]",
+        "Child::wait [method]",
+        "AtomicI64::new [assoc]",
+        "http::Response::text [method]",
+        "validate::Errors::add [method]",
+    ] {
+        assert!(
+            out.stdout.contains(expected),
+            "missing `{expected}` from builtin receiver metadata output: {}",
+            out.stdout
+        );
+    }
+    assert!(
+        out.stderr.is_empty(),
+        "builtin receiver metadata lookups should not fail: {}",
+        out.stderr
+    );
+}
+
+#[test]
 fn repl_meta_help_covers_every_builtin_macro_and_prelude_assertion() {
     let mut input = String::new();
     for builtin in gossamer_parse::builtin_macros::BUILTIN_MACROS {

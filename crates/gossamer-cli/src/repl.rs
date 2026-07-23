@@ -3,6 +3,8 @@
 //! Kept in its own module so `main.rs` stays under the 2000-line
 //! hard limit defined in `GUIDELINES.md`.
 
+use std::collections::BTreeMap;
+
 use anyhow::{Result, anyhow};
 use gossamer_parse::builtin_macros::{BUILTIN_MACROS, BuiltinMacro};
 use gossamer_std::registry::{StdItem, StdItemKind, StdModule};
@@ -22,6 +24,23 @@ struct PreludeBuiltinHelp {
     doc: &'static str,
 }
 
+struct CoreMethodHelp {
+    owner: &'static str,
+    name: &'static str,
+    kind: &'static str,
+    signature: &'static str,
+    doc: &'static str,
+}
+
+#[derive(Clone)]
+struct CoreMethodEntry {
+    owner: String,
+    name: String,
+    kind: &'static str,
+    signature: String,
+    doc: String,
+}
+
 // These prelude functions are runtime builtins rather than stdlib-manifest
 // exports. Every parser-recognized macro is sourced from BUILTIN_MACROS below.
 const PRELUDE_BUILTINS: &[PreludeBuiltinHelp] = &[
@@ -34,6 +53,677 @@ const PRELUDE_BUILTINS: &[PreludeBuiltinHelp] = &[
         name: "assert_eq",
         signature: "assert_eq(left, right, message?: String)",
         doc: "Panics when left and right are not equal.",
+    },
+];
+
+// Core receiver and associated methods are runtime builtins, not stdlib module
+// exports. Keep them visible to REPL discovery so working calls such as
+// `"123".parse()` are not hidden from `%help`, `%ls`, and `%find`.
+const CORE_METHODS: &[CoreMethodHelp] = &[
+    CoreMethodHelp {
+        owner: "String",
+        name: "new",
+        kind: "assoc",
+        signature: "fn new() -> String",
+        doc: "Creates an empty owned string.",
+    },
+    CoreMethodHelp {
+        owner: "String",
+        name: "with_capacity",
+        kind: "assoc",
+        signature: "fn with_capacity(capacity: i64) -> String",
+        doc: "Creates an empty string with capacity reserved.",
+    },
+    CoreMethodHelp {
+        owner: "String",
+        name: "from",
+        kind: "assoc",
+        signature: "fn from(value) -> String",
+        doc: "Converts a displayable value into a string.",
+    },
+    CoreMethodHelp {
+        owner: "String",
+        name: "from_utf8",
+        kind: "assoc",
+        signature: "fn from_utf8(bytes: Vec<u8>) -> Result<String, errors::Error>",
+        doc: "Decodes UTF-8 bytes into a string.",
+    },
+    CoreMethodHelp {
+        owner: "String",
+        name: "parse",
+        kind: "method",
+        signature: "fn parse<T>(self: String) -> Result<T, errors::Error>",
+        doc: "Parses the string into the expected result type.",
+    },
+    CoreMethodHelp {
+        owner: "String",
+        name: "len",
+        kind: "method",
+        signature: "fn len(self: String) -> i64",
+        doc: "Returns the byte length of the string.",
+    },
+    CoreMethodHelp {
+        owner: "String",
+        name: "is_empty",
+        kind: "method",
+        signature: "fn is_empty(self: String) -> bool",
+        doc: "Returns true when the string has zero bytes.",
+    },
+    CoreMethodHelp {
+        owner: "String",
+        name: "clear",
+        kind: "method",
+        signature: "fn clear(self: &mut String) -> ()",
+        doc: "Clears the string in place.",
+    },
+    CoreMethodHelp {
+        owner: "String",
+        name: "truncate",
+        kind: "method",
+        signature: "fn truncate(self: &mut String, len: i64) -> ()",
+        doc: "Truncates the string at a valid UTF-8 boundary.",
+    },
+    CoreMethodHelp {
+        owner: "String",
+        name: "push",
+        kind: "method",
+        signature: "fn push(self: &mut String, ch: char) -> ()",
+        doc: "Appends a Unicode scalar.",
+    },
+    CoreMethodHelp {
+        owner: "String",
+        name: "push_char",
+        kind: "method",
+        signature: "fn push_char(self: &mut String, ch: char) -> ()",
+        doc: "Appends a Unicode scalar.",
+    },
+    CoreMethodHelp {
+        owner: "String",
+        name: "push_byte",
+        kind: "method",
+        signature: "fn push_byte(self: &mut String, byte: i64) -> ()",
+        doc: "Appends the byte as a Unicode scalar.",
+    },
+    CoreMethodHelp {
+        owner: "String",
+        name: "push_str",
+        kind: "method",
+        signature: "fn push_str(self: &mut String, text: String) -> ()",
+        doc: "Appends string contents.",
+    },
+    CoreMethodHelp {
+        owner: "String",
+        name: "clone",
+        kind: "method",
+        signature: "fn clone(self: String) -> String",
+        doc: "Returns a copy of the string.",
+    },
+    CoreMethodHelp {
+        owner: "String",
+        name: "to_string",
+        kind: "method",
+        signature: "fn to_string(self: String) -> String",
+        doc: "Returns the string unchanged.",
+    },
+    CoreMethodHelp {
+        owner: "String",
+        name: "as_bytes",
+        kind: "method",
+        signature: "fn as_bytes(self: String) -> Vec<u8>",
+        doc: "Returns the UTF-8 bytes of the string.",
+    },
+    CoreMethodHelp {
+        owner: "String",
+        name: "as_str",
+        kind: "method",
+        signature: "fn as_str(self: String) -> String",
+        doc: "Returns the string view as a string value.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "new",
+        kind: "assoc",
+        signature: "fn new<T>() -> Vec<T>",
+        doc: "Creates an empty vector.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "with_capacity",
+        kind: "assoc",
+        signature: "fn with_capacity<T>(capacity: i64) -> Vec<T>",
+        doc: "Creates an empty vector with capacity reserved.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "push",
+        kind: "method",
+        signature: "fn push<T>(self: &mut Vec<T>, value: T) -> ()",
+        doc: "Appends a value to the end of the vector.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "pop",
+        kind: "method",
+        signature: "fn pop<T>(self: &mut Vec<T>) -> Option<T>",
+        doc: "Removes and returns the last value when present.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "insert",
+        kind: "method",
+        signature: "fn insert<T>(self: &mut Vec<T>, index: i64, value: T) -> Result<(), errors::Error>",
+        doc: "Inserts a value at an index.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "remove",
+        kind: "method",
+        signature: "fn remove<T>(self: &mut Vec<T>, index: i64) -> Result<T, errors::Error>",
+        doc: "Removes and returns the value at an index.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "clear",
+        kind: "method",
+        signature: "fn clear<T>(self: &mut Vec<T>) -> ()",
+        doc: "Removes all values.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "len",
+        kind: "method",
+        signature: "fn len<T>(self: Vec<T>) -> i64",
+        doc: "Returns the number of values.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "is_empty",
+        kind: "method",
+        signature: "fn is_empty<T>(self: Vec<T>) -> bool",
+        doc: "Returns true when the vector has no values.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "slice",
+        kind: "method",
+        signature: "fn slice<T>(self: Vec<T>, start: i64, end: i64) -> Result<Vec<T>, errors::Error>",
+        doc: "Returns a checked sub-slice copy.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "first",
+        kind: "method",
+        signature: "fn first<T>(self: Vec<T>) -> Option<T>",
+        doc: "Returns the first value when present.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "last",
+        kind: "method",
+        signature: "fn last<T>(self: Vec<T>) -> Option<T>",
+        doc: "Returns the last value when present.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "contains",
+        kind: "method",
+        signature: "fn contains<T>(self: Vec<T>, value: T) -> bool",
+        doc: "Returns true when the vector contains the value.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "index_of",
+        kind: "method",
+        signature: "fn index_of<T>(self: Vec<T>, value: T) -> i64",
+        doc: "Returns the first matching index or -1.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "count_of",
+        kind: "method",
+        signature: "fn count_of<T>(self: Vec<T>, value: T) -> i64",
+        doc: "Counts values equal to the argument.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "sort",
+        kind: "method",
+        signature: "fn sort<T>(self: &mut Vec<T>) -> ()",
+        doc: "Sorts the vector in place.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "sort_by",
+        kind: "method",
+        signature: "fn sort_by<T>(self: &mut Vec<T>, cmp: fn(T, T) -> i64) -> ()",
+        doc: "Sorts the vector in place with a comparator.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "sort_by_key",
+        kind: "method",
+        signature: "fn sort_by_key<T, K>(self: Vec<T>, f: fn(T) -> K) -> Vec<T>",
+        doc: "Returns values sorted by a derived key.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "reverse",
+        kind: "method",
+        signature: "fn reverse<T>(self: &mut Vec<T>) -> ()",
+        doc: "Reverses the vector in place.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "rev",
+        kind: "method",
+        signature: "fn rev<T>(self: Vec<T>) -> Vec<T>",
+        doc: "Returns a reversed vector.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "swap",
+        kind: "method",
+        signature: "fn swap<T>(self: &mut Vec<T>, a: i64, b: i64) -> Result<(), errors::Error>",
+        doc: "Swaps two vector positions.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "join",
+        kind: "method",
+        signature: "fn join<T>(self: Vec<T>, sep: String) -> String",
+        doc: "Joins displayable values with a separator.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "map",
+        kind: "method",
+        signature: "fn map<T, U>(self: Vec<T>, f: fn(T) -> U) -> Vec<U>",
+        doc: "Maps every value through a closure.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "filter",
+        kind: "method",
+        signature: "fn filter<T>(self: Vec<T>, f: fn(T) -> bool) -> Vec<T>",
+        doc: "Keeps values accepted by a predicate.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "fold",
+        kind: "method",
+        signature: "fn fold<T, A>(self: Vec<T>, init: A, f: fn(A, T) -> A) -> A",
+        doc: "Reduces values with an accumulator.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "any",
+        kind: "method",
+        signature: "fn any<T>(self: Vec<T>, f: fn(T) -> bool) -> bool",
+        doc: "Returns true if any value matches.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "all",
+        kind: "method",
+        signature: "fn all<T>(self: Vec<T>, f: fn(T) -> bool) -> bool",
+        doc: "Returns true if all values match.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "find",
+        kind: "method",
+        signature: "fn find<T>(self: Vec<T>, f: fn(T) -> bool) -> Option<T>",
+        doc: "Returns the first matching value.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "position",
+        kind: "method",
+        signature: "fn position<T>(self: Vec<T>, f: fn(T) -> bool) -> Option<i64>",
+        doc: "Returns the first matching index.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "sum",
+        kind: "method",
+        signature: "fn sum<T>(self: Vec<T>) -> T",
+        doc: "Sums numeric values.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "min",
+        kind: "method",
+        signature: "fn min<T>(self: Vec<T>) -> Option<T>",
+        doc: "Returns the minimum value when present.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "max",
+        kind: "method",
+        signature: "fn max<T>(self: Vec<T>) -> Option<T>",
+        doc: "Returns the maximum value when present.",
+    },
+    CoreMethodHelp {
+        owner: "HashMap",
+        name: "new",
+        kind: "assoc",
+        signature: "fn new<K, V>() -> HashMap<K, V>",
+        doc: "Creates an empty hash map.",
+    },
+    CoreMethodHelp {
+        owner: "HashMap",
+        name: "with_capacity",
+        kind: "assoc",
+        signature: "fn with_capacity<K, V>(capacity: i64) -> HashMap<K, V>",
+        doc: "Creates an empty hash map with capacity reserved.",
+    },
+    CoreMethodHelp {
+        owner: "HashMap",
+        name: "insert",
+        kind: "method",
+        signature: "fn insert<K, V>(self: &mut HashMap<K, V>, key: K, value: V) -> ()",
+        doc: "Inserts or replaces a key-value pair.",
+    },
+    CoreMethodHelp {
+        owner: "HashMap",
+        name: "get",
+        kind: "method",
+        signature: "fn get<K, V>(self: HashMap<K, V>, key: K) -> Option<V>",
+        doc: "Returns the value for a key when present.",
+    },
+    CoreMethodHelp {
+        owner: "HashMap",
+        name: "get_or",
+        kind: "method",
+        signature: "fn get_or<K, V>(self: HashMap<K, V>, key: K, default: V) -> V",
+        doc: "Returns the value for a key or a default.",
+    },
+    CoreMethodHelp {
+        owner: "HashMap",
+        name: "or_insert",
+        kind: "method",
+        signature: "fn or_insert<K, V>(self: &mut HashMap<K, V>, key: K, default: V) -> V",
+        doc: "Returns the existing value or inserts a default.",
+    },
+    CoreMethodHelp {
+        owner: "HashMap",
+        name: "remove",
+        kind: "method",
+        signature: "fn remove<K, V>(self: &mut HashMap<K, V>, key: K) -> ()",
+        doc: "Removes a key in place.",
+    },
+    CoreMethodHelp {
+        owner: "HashMap",
+        name: "pop",
+        kind: "method",
+        signature: "fn pop<K, V>(self: &mut HashMap<K, V>, key: K) -> Option<V>",
+        doc: "Removes and returns the value for a key when present.",
+    },
+    CoreMethodHelp {
+        owner: "HashMap",
+        name: "contains_key",
+        kind: "method",
+        signature: "fn contains_key<K, V>(self: HashMap<K, V>, key: K) -> bool",
+        doc: "Returns true when the map contains a key.",
+    },
+    CoreMethodHelp {
+        owner: "HashMap",
+        name: "contains",
+        kind: "method",
+        signature: "fn contains<K, V>(self: HashMap<K, V>, key: K) -> bool",
+        doc: "Alias for contains_key.",
+    },
+    CoreMethodHelp {
+        owner: "HashMap",
+        name: "len",
+        kind: "method",
+        signature: "fn len<K, V>(self: HashMap<K, V>) -> i64",
+        doc: "Returns the number of entries.",
+    },
+    CoreMethodHelp {
+        owner: "HashMap",
+        name: "is_empty",
+        kind: "method",
+        signature: "fn is_empty<K, V>(self: HashMap<K, V>) -> bool",
+        doc: "Returns true when the map has no entries.",
+    },
+    CoreMethodHelp {
+        owner: "HashMap",
+        name: "keys",
+        kind: "method",
+        signature: "fn keys<K, V>(self: HashMap<K, V>) -> Vec<K>",
+        doc: "Returns all keys.",
+    },
+    CoreMethodHelp {
+        owner: "HashMap",
+        name: "values",
+        kind: "method",
+        signature: "fn values<K, V>(self: HashMap<K, V>) -> Vec<V>",
+        doc: "Returns all values.",
+    },
+    CoreMethodHelp {
+        owner: "HashMap",
+        name: "iter",
+        kind: "method",
+        signature: "fn iter<K, V>(self: HashMap<K, V>) -> Vec<(K, V)>",
+        doc: "Returns key-value pairs.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeMap",
+        name: "new",
+        kind: "assoc",
+        signature: "fn new<K, V>() -> BTreeMap<K, V>",
+        doc: "Creates an empty ordered map.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeMap",
+        name: "insert",
+        kind: "method",
+        signature: "fn insert<K, V>(self: &mut BTreeMap<K, V>, key: K, value: V) -> ()",
+        doc: "Inserts or replaces a key-value pair.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeMap",
+        name: "get",
+        kind: "method",
+        signature: "fn get<K, V>(self: BTreeMap<K, V>, key: K) -> Option<V>",
+        doc: "Returns the value for a key when present.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeMap",
+        name: "get_or",
+        kind: "method",
+        signature: "fn get_or<K, V>(self: BTreeMap<K, V>, key: K, default: V) -> V",
+        doc: "Returns the value for a key or a default.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeMap",
+        name: "contains_key",
+        kind: "method",
+        signature: "fn contains_key<K, V>(self: BTreeMap<K, V>, key: K) -> bool",
+        doc: "Returns true when the ordered map contains a key.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeMap",
+        name: "contains",
+        kind: "method",
+        signature: "fn contains<K, V>(self: BTreeMap<K, V>, key: K) -> bool",
+        doc: "Alias for contains_key.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeMap",
+        name: "len",
+        kind: "method",
+        signature: "fn len<K, V>(self: BTreeMap<K, V>) -> i64",
+        doc: "Returns the number of entries.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeMap",
+        name: "keys",
+        kind: "method",
+        signature: "fn keys<K, V>(self: BTreeMap<K, V>) -> Vec<K>",
+        doc: "Returns ordered keys.",
+    },
+    CoreMethodHelp {
+        owner: "HashSet",
+        name: "new",
+        kind: "assoc",
+        signature: "fn new<T>() -> HashSet<T>",
+        doc: "Creates an empty hash set.",
+    },
+    CoreMethodHelp {
+        owner: "HashSet",
+        name: "insert",
+        kind: "method",
+        signature: "fn insert<T>(self: &mut HashSet<T>, value: T) -> ()",
+        doc: "Adds a value to the set.",
+    },
+    CoreMethodHelp {
+        owner: "HashSet",
+        name: "remove",
+        kind: "method",
+        signature: "fn remove<T>(self: &mut HashSet<T>, value: T) -> ()",
+        doc: "Removes a value from the set.",
+    },
+    CoreMethodHelp {
+        owner: "HashSet",
+        name: "contains",
+        kind: "method",
+        signature: "fn contains<T>(self: HashSet<T>, value: T) -> bool",
+        doc: "Returns true when the set contains a value.",
+    },
+    CoreMethodHelp {
+        owner: "HashSet",
+        name: "union",
+        kind: "method",
+        signature: "fn union<T>(self: HashSet<T>, other: HashSet<T>) -> HashSet<T>",
+        doc: "Returns the union of two sets.",
+    },
+    CoreMethodHelp {
+        owner: "HashSet",
+        name: "intersection",
+        kind: "method",
+        signature: "fn intersection<T>(self: HashSet<T>, other: HashSet<T>) -> HashSet<T>",
+        doc: "Returns the intersection of two sets.",
+    },
+    CoreMethodHelp {
+        owner: "HashSet",
+        name: "difference",
+        kind: "method",
+        signature: "fn difference<T>(self: HashSet<T>, other: HashSet<T>) -> HashSet<T>",
+        doc: "Returns values present only in the receiver.",
+    },
+    CoreMethodHelp {
+        owner: "HashSet",
+        name: "symmetric_difference",
+        kind: "method",
+        signature: "fn symmetric_difference<T>(self: HashSet<T>, other: HashSet<T>) -> HashSet<T>",
+        doc: "Returns values present in exactly one set.",
+    },
+    CoreMethodHelp {
+        owner: "VecDeque",
+        name: "new",
+        kind: "assoc",
+        signature: "fn new<T>() -> VecDeque<T>",
+        doc: "Creates an empty double-ended queue.",
+    },
+    CoreMethodHelp {
+        owner: "VecDeque",
+        name: "push_back",
+        kind: "method",
+        signature: "fn push_back<T>(self: &mut VecDeque<T>, value: T) -> ()",
+        doc: "Appends a value to the back.",
+    },
+    CoreMethodHelp {
+        owner: "VecDeque",
+        name: "push_front",
+        kind: "method",
+        signature: "fn push_front<T>(self: &mut VecDeque<T>, value: T) -> ()",
+        doc: "Appends a value to the front.",
+    },
+    CoreMethodHelp {
+        owner: "VecDeque",
+        name: "pop_front",
+        kind: "method",
+        signature: "fn pop_front<T>(self: &mut VecDeque<T>) -> Option<T>",
+        doc: "Removes and returns the front value when present.",
+    },
+    CoreMethodHelp {
+        owner: "VecDeque",
+        name: "pop_back",
+        kind: "method",
+        signature: "fn pop_back<T>(self: &mut VecDeque<T>) -> Option<T>",
+        doc: "Removes and returns the back value when present.",
+    },
+    CoreMethodHelp {
+        owner: "VecDeque",
+        name: "peek_front",
+        kind: "method",
+        signature: "fn peek_front<T>(self: VecDeque<T>) -> Option<T>",
+        doc: "Returns the front value without removing it.",
+    },
+    CoreMethodHelp {
+        owner: "VecDeque",
+        name: "peek_back",
+        kind: "method",
+        signature: "fn peek_back<T>(self: VecDeque<T>) -> Option<T>",
+        doc: "Returns the back value without removing it.",
+    },
+    CoreMethodHelp {
+        owner: "Option",
+        name: "map",
+        kind: "method",
+        signature: "fn map<T, U>(self: Option<T>, f: fn(T) -> U) -> Option<U>",
+        doc: "Maps Some through a closure and leaves None unchanged.",
+    },
+    CoreMethodHelp {
+        owner: "Option",
+        name: "and_then",
+        kind: "method",
+        signature: "fn and_then<T, U>(self: Option<T>, f: fn(T) -> Option<U>) -> Option<U>",
+        doc: "Chains an Option-returning closure.",
+    },
+    CoreMethodHelp {
+        owner: "Option",
+        name: "is_some",
+        kind: "method",
+        signature: "fn is_some<T>(self: Option<T>) -> bool",
+        doc: "Returns true for Some.",
+    },
+    CoreMethodHelp {
+        owner: "Option",
+        name: "is_none",
+        kind: "method",
+        signature: "fn is_none<T>(self: Option<T>) -> bool",
+        doc: "Returns true for None.",
+    },
+    CoreMethodHelp {
+        owner: "Result",
+        name: "map",
+        kind: "method",
+        signature: "fn map<T, U, E>(self: Result<T, E>, f: fn(T) -> U) -> Result<U, E>",
+        doc: "Maps Ok through a closure and leaves Err unchanged.",
+    },
+    CoreMethodHelp {
+        owner: "Result",
+        name: "map_err",
+        kind: "method",
+        signature: "fn map_err<T, E, F>(self: Result<T, E>, f: fn(E) -> F) -> Result<T, F>",
+        doc: "Maps Err through a closure and leaves Ok unchanged.",
+    },
+    CoreMethodHelp {
+        owner: "Result",
+        name: "is_ok",
+        kind: "method",
+        signature: "fn is_ok<T, E>(self: Result<T, E>) -> bool",
+        doc: "Returns true for Ok.",
+    },
+    CoreMethodHelp {
+        owner: "Result",
+        name: "is_err",
+        kind: "method",
+        signature: "fn is_err<T, E>(self: Result<T, E>) -> bool",
+        doc: "Returns true for Err.",
     },
 ];
 
@@ -529,6 +1219,9 @@ fn repl_help(arg: &str) -> std::result::Result<String, String> {
     for builtin in matching_prelude_builtins(query) {
         push_prelude_builtin_help(&mut out, builtin);
     }
+    for method in matching_core_methods(query) {
+        push_core_method_help(&mut out, &method);
+    }
     for module in matching_modules(query) {
         push_module_help(&mut out, &module);
     }
@@ -555,9 +1248,21 @@ fn repl_ls(arg: &str) -> std::result::Result<String, String> {
     }
 
     let query = normalize_query(arg);
+    let core_namespaces = matching_core_namespaces(query);
+    if !core_namespaces.is_empty() {
+        return Ok(render_core_method_dir(&core_namespaces));
+    }
+
     let modules = matching_modules(query);
     if !modules.is_empty() {
         return Ok(render_module_dir(&modules));
+    }
+
+    if let Some(method) = matching_core_methods(query).into_iter().next() {
+        return Err(format!(
+            "`{}::{}` is a {}; %ls accepts module or core type names only (use %help for an item)",
+            method.owner, method.name, method.kind
+        ));
     }
 
     if let Some((module, item)) = matching_items(query).into_iter().next() {
@@ -586,7 +1291,7 @@ fn repl_find(arg: &str) -> std::result::Result<String, String> {
         let candidate = FindCandidate {
             path: module.path.to_string(),
             kind: "module",
-            doc: module.summary,
+            doc: module.summary.to_string(),
         };
         if pattern.is_match(&candidate.path) {
             matches.push(candidate);
@@ -595,7 +1300,7 @@ fn repl_find(arg: &str) -> std::result::Result<String, String> {
             let candidate = FindCandidate {
                 path: format!("{}::{}", module.path, item.name),
                 kind: item_kind_label(item.kind),
-                doc: item.doc,
+                doc: item.doc.to_string(),
             };
             if pattern.is_match(&candidate.path) {
                 matches.push(candidate);
@@ -606,7 +1311,7 @@ fn repl_find(arg: &str) -> std::result::Result<String, String> {
         let candidate = FindCandidate {
             path: builtin.name.to_string(),
             kind: "macro",
-            doc: builtin.doc,
+            doc: builtin.doc.to_string(),
         };
         if pattern.is_match(&candidate.path) {
             matches.push(candidate);
@@ -616,9 +1321,19 @@ fn repl_find(arg: &str) -> std::result::Result<String, String> {
         let candidate = FindCandidate {
             path: builtin.name.to_string(),
             kind: "builtin",
-            doc: builtin.doc,
+            doc: builtin.doc.to_string(),
         };
         if pattern.is_match(&candidate.path) {
+            matches.push(candidate);
+        }
+    }
+    for method in core_method_entries() {
+        let candidate = FindCandidate {
+            path: format!("{}::{}", method.owner, method.name),
+            kind: method.kind,
+            doc: method.doc.clone(),
+        };
+        if pattern.is_match(&candidate.path) || pattern.is_match(&core_lower_path(&method)) {
             matches.push(candidate);
         }
     }
@@ -642,7 +1357,7 @@ fn repl_find(arg: &str) -> std::result::Result<String, String> {
 struct FindCandidate<'a> {
     path: String,
     kind: &'a str,
-    doc: &'a str,
+    doc: String,
 }
 
 fn compile_search_regex(command: &str, query: &str) -> std::result::Result<Regex, String> {
@@ -676,6 +1391,17 @@ fn render_help_matches(pattern: &Regex) -> String {
             push_prelude_builtin_help(&mut out, builtin);
         }
     }
+    for method in core_method_entries() {
+        let path = format!("{}::{}", method.owner, method.name);
+        if pattern.is_match(&path)
+            || pattern.is_match(&core_lower_path(&method))
+            || pattern.is_match(&method.name)
+            || pattern.is_match(&method.signature)
+            || pattern.is_match(&method.doc)
+        {
+            push_core_method_help(&mut out, &method);
+        }
+    }
     for module in gossamer_std::registry::modules() {
         if module_matches_regex(pattern, module) {
             push_module_help(&mut out, module);
@@ -702,6 +1428,13 @@ fn render_help_matches(pattern: &Regex) -> String {
 
 fn render_dir_matches(pattern: &Regex) -> String {
     let mut lines = Vec::new();
+    for owner in all_core_namespaces() {
+        if pattern.is_match(&owner) || pattern.is_match(&owner.to_ascii_lowercase()) {
+            let mut line = String::new();
+            push_core_namespace_dir_line(&mut line, &owner);
+            lines.push(line);
+        }
+    }
     for module in gossamer_std::registry::modules() {
         if module_matches_regex(pattern, module) {
             let mut line = String::new();
@@ -715,6 +1448,22 @@ fn render_dir_matches(pattern: &Regex) -> String {
         lines.sort_unstable();
         lines.concat().trim_end().to_string()
     }
+}
+
+fn render_core_method_dir(owners: &[String]) -> String {
+    let mut out = String::new();
+    for owner in owners {
+        push_core_namespace_dir_line(&mut out, owner);
+        for method in core_method_entries()
+            .into_iter()
+            .filter(|method| method.owner == **owner)
+        {
+            push_core_method_dir(&mut out, &method);
+        }
+    }
+    let mut lines = out.lines().collect::<Vec<_>>();
+    lines.sort_unstable();
+    lines.join("\n")
 }
 
 fn render_module_dir(modules: &[StdModule]) -> String {
@@ -768,6 +1517,15 @@ fn push_item_help(out: &mut String, module: &StdModule, item: &StdItem) {
     out.push_str(&format!("  {}\n\n", item.doc));
 }
 
+fn push_core_method_help(out: &mut String, method: &CoreMethodEntry) {
+    out.push_str(&format!(
+        "{}::{} [{}]\n",
+        method.owner, method.name, method.kind
+    ));
+    out.push_str(&format!("  {}\n", method.signature));
+    out.push_str(&format!("  {}\n\n", method.doc));
+}
+
 fn push_builtin_macro_help(out: &mut String, builtin: &BuiltinMacro) {
     out.push_str(&format!("{} [macro]\n", builtin.name));
     out.push_str(&format!("  {}\n", builtin.signature));
@@ -789,6 +1547,12 @@ fn push_module_dir_line(out: &mut String, module: &StdModule) {
     out.push_str(&format!("{:<32} module  {}\n", module.path, module.summary));
 }
 
+fn push_core_namespace_dir_line(out: &mut String, owner: &str) {
+    out.push_str(&format!(
+        "{owner:<32} type    Built-in receiver and associated methods.\n"
+    ));
+}
+
 fn push_item_dir(out: &mut String, module: &StdModule, item: &StdItem) {
     out.push_str(&format!(
         "{:<32} {:<6} {}\n",
@@ -796,6 +1560,133 @@ fn push_item_dir(out: &mut String, module: &StdModule, item: &StdItem) {
         item_kind_label(item.kind),
         item.doc
     ));
+}
+
+fn push_core_method_dir(out: &mut String, method: &CoreMethodEntry) {
+    out.push_str(&format!(
+        "{:<32} {:<6} {}\n",
+        format!("{}::{}", method.owner, method.name),
+        method.kind,
+        method.doc
+    ));
+}
+
+fn core_method_entries() -> Vec<CoreMethodEntry> {
+    let mut entries = BTreeMap::<(String, String), CoreMethodEntry>::new();
+    for method in CORE_METHODS {
+        insert_core_method_entry(
+            &mut entries,
+            CoreMethodEntry {
+                owner: method.owner.to_string(),
+                name: method.name.to_string(),
+                kind: method.kind,
+                signature: method.signature.to_string(),
+                doc: method.doc.to_string(),
+            },
+        );
+    }
+    for registered in gossamer_interp::registered_names() {
+        if let Some((owner, name)) = registered_core_method_path(registered) {
+            let kind = if runtime_assoc_name(&name) {
+                "assoc"
+            } else {
+                "method"
+            };
+            let signature = if kind == "assoc" {
+                format!("fn {name}(...) -> ...")
+            } else {
+                format!("fn {name}(self, ...) -> ...")
+            };
+            insert_core_method_entry(
+                &mut entries,
+                CoreMethodEntry {
+                    owner: owner.clone(),
+                    name: name.clone(),
+                    kind,
+                    signature,
+                    doc: format!("Runtime builtin registered as `{owner}::{name}`."),
+                },
+            );
+        }
+    }
+    entries.into_values().collect()
+}
+
+fn insert_core_method_entry(
+    entries: &mut BTreeMap<(String, String), CoreMethodEntry>,
+    entry: CoreMethodEntry,
+) {
+    entries
+        .entry((entry.owner.clone(), entry.name.clone()))
+        .or_insert(entry);
+}
+
+fn registered_core_method_path(path: &str) -> Option<(String, String)> {
+    let (owner, name) = path.rsplit_once("::")?;
+    if name.starts_with("__") || owner == "Type" {
+        return None;
+    }
+    let owner = canonical_runtime_owner(owner)?;
+    Some((owner, name.to_string()))
+}
+
+fn canonical_runtime_owner(owner: &str) -> Option<String> {
+    let owner = owner.strip_prefix("collections::").unwrap_or(owner);
+    let owner = match owner {
+        "option" => "Option",
+        "result" => "Result",
+        other => other,
+    };
+    let last = owner.rsplit("::").next().unwrap_or(owner);
+    if last.chars().next().is_some_and(char::is_uppercase) {
+        Some(owner.to_string())
+    } else {
+        None
+    }
+}
+
+fn runtime_assoc_name(name: &str) -> bool {
+    matches!(
+        name,
+        "new"
+            | "with_capacity"
+            | "from"
+            | "from_utf8"
+            | "background"
+            | "with_cancel"
+            | "with_timeout"
+            | "bind"
+            | "connect"
+            | "open"
+            | "create"
+            | "default"
+            | "builder"
+            | "object"
+            | "Object"
+            | "Array"
+            | "String"
+            | "Int"
+            | "Float"
+            | "Bool"
+            | "Null"
+    )
+}
+
+fn all_core_namespaces() -> Vec<String> {
+    let mut owners = core_method_entries()
+        .into_iter()
+        .map(|method| method.owner)
+        .collect::<Vec<_>>();
+    owners.sort_unstable();
+    owners.dedup();
+    owners
+}
+
+fn matching_core_namespaces(query: &str) -> Vec<String> {
+    all_core_namespaces()
+        .into_iter()
+        .filter(|owner| core_namespace_matches(owner, query))
+        .collect()
 }
 
 fn matching_modules(query: &str) -> Vec<StdModule> {
@@ -816,6 +1707,13 @@ fn matching_items(query: &str) -> Vec<(StdModule, StdItem)> {
         }
     }
     out
+}
+
+fn matching_core_methods(query: &str) -> Vec<CoreMethodEntry> {
+    core_method_entries()
+        .into_iter()
+        .filter(|method| core_method_query_matches(method, query))
+        .collect()
 }
 
 fn matching_features(query: &str) -> Vec<gossamer_std::manifest::FeatureStatus> {
@@ -848,6 +1746,10 @@ fn module_query_matches(module: &StdModule, query: &str) -> bool {
     module_aliases(module.path).contains(&query)
 }
 
+fn core_namespace_matches(owner: &str, query: &str) -> bool {
+    owner == query || owner.eq_ignore_ascii_case(query)
+}
+
 fn item_query_matches(module: &StdModule, item: &StdItem, query: &str) -> bool {
     if item.name == query {
         return true;
@@ -855,6 +1757,16 @@ fn item_query_matches(module: &StdModule, item: &StdItem, query: &str) -> bool {
     module_aliases(module.path)
         .iter()
         .any(|alias| format!("{alias}::{}", item.name) == query)
+}
+
+fn core_method_query_matches(method: &CoreMethodEntry, query: &str) -> bool {
+    method.name == query
+        || format!("{}::{}", method.owner, method.name) == query
+        || core_lower_path(method) == query
+}
+
+fn core_lower_path(method: &CoreMethodEntry) -> String {
+    format!("{}::{}", method.owner.to_ascii_lowercase(), method.name)
 }
 
 fn feature_query_matches(path: &str, query: &str) -> bool {
@@ -1108,4 +2020,48 @@ fn format_parse_diags(
         out.pop();
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repl_metadata_covers_registered_runtime_type_builtins() {
+        let mut missing = Vec::new();
+        for name in gossamer_interp::registered_names() {
+            let Some((owner, method)) = registered_core_method_path(name) else {
+                continue;
+            };
+            let query = format!("{owner}::{method}");
+            if matching_core_methods(&query).is_empty() {
+                missing.push(query);
+            }
+        }
+        missing.sort();
+        missing.dedup();
+        assert!(
+            missing.is_empty(),
+            "missing REPL metadata for registered runtime type builtins: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn repl_metadata_keeps_checked_core_collection_methods() {
+        for query in [
+            "String::parse",
+            "Vec::push",
+            "HashMap::insert",
+            "BTreeMap::insert",
+            "HashSet::union",
+            "VecDeque::push_back",
+            "Option::map",
+            "Result::map_err",
+        ] {
+            assert!(
+                !matching_core_methods(query).is_empty(),
+                "missing REPL metadata for {query}"
+            );
+        }
+    }
 }

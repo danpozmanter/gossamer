@@ -2886,17 +2886,17 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::strings",
         name: "to_bool",
-        signature: "fn to_bool(text: String) -> Result<bool, errors::Error>",
+        signature: "fn to_bool(text: String) -> Option<bool>",
     },
     StdFunctionSignature {
         module_path: "std::strings",
         name: "to_f64",
-        signature: "fn to_f64(text: String) -> Result<f64, errors::Error>",
+        signature: "fn to_f64(text: String) -> Option<f64>",
     },
     StdFunctionSignature {
         module_path: "std::strings",
         name: "to_i64",
-        signature: "fn to_i64(text: String) -> Result<i64, errors::Error>",
+        signature: "fn to_i64(text: String) -> Option<i64>",
     },
     StdFunctionSignature {
         module_path: "std::strings",

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "gossamer_version": "0.33.4",
+  "gossamer_version": "0.33.5",
   "entries": [
     {
       "id": "std-archive-tar-TarEntry",
@@ -13876,7 +13876,7 @@
       "id": "std-strings-to-bool",
       "name": "std::strings::to_bool",
       "kind": "function",
-      "signature": "fn to_bool(text: String) -> Result<bool, errors::Error>",
+      "signature": "fn to_bool(text: String) -> Option<bool>",
       "description": "Parses exactly `true` / `false` to Option<bool>.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -13895,7 +13895,7 @@
       "id": "std-strings-to-f64",
       "name": "std::strings::to_f64",
       "kind": "function",
-      "signature": "fn to_f64(text: String) -> Result<f64, errors::Error>",
+      "signature": "fn to_f64(text: String) -> Option<f64>",
       "description": "Strict full-string parse to Option<f64>.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -13914,7 +13914,7 @@
       "id": "std-strings-to-i64",
       "name": "std::strings::to_i64",
       "kind": "function",
-      "signature": "fn to_i64(text: String) -> Result<i64, errors::Error>",
+      "signature": "fn to_i64(text: String) -> Option<i64>",
       "description": "Strict full-string parse to Option<i64>.",
       "lifecycle": "experimental",
       "tier_support": [
