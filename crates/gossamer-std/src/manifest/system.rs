@@ -272,7 +272,7 @@ pub const FS: StdModule = StdModule {
         StdItem {
             name: "read_dir",
             kind: StdItemKind::Function,
-            doc: "Returns DirInfo metadata for the immediate children of a directory.",
+            doc: "Returns immediate children as DirInfo values. Inspect their metadata fields directly; each path can be passed back to filesystem APIs.",
         },
         StdItem {
             name: "walk_dir",

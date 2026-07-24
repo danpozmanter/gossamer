@@ -522,7 +522,11 @@ mod tests {
     #[test]
     fn module_qualified_completion_returns_module_members() {
         let mut state = ServerState::new();
-        let labels = complete_at(&mut state, "fn main() { os::e| }\n", "file:///os.gos");
+        let labels = complete_at(
+            &mut state,
+            "use std::os\nfn main() { os::e| }\n",
+            "file:///os.gos",
+        );
         // `os::e|` should suggest the `exec` submodule.
         assert!(
             labels.iter().any(|l| l == "exec"),
@@ -531,9 +535,63 @@ mod tests {
     }
 
     #[test]
+    fn unimported_module_completion_adds_import_edit() {
+        let mut state = ServerState::new();
+        let response = complete_full(&mut state, "fn main() { env::a| }\n", "file:///env.gos");
+        let Value::Array(items) = response else {
+            panic!("expected completion array");
+        };
+        let args = items.into_iter().find(|item| {
+            matches!(
+                item,
+                Value::Object(fields)
+                    if fields.get("label") == Some(&Value::String("args".to_string()))
+            )
+        });
+        let Some(Value::Object(fields)) = args else {
+            panic!("expected `env::args` completion");
+        };
+        assert!(
+            matches!(fields.get("additionalTextEdits"), Some(Value::Array(edits)) if !edits.is_empty()),
+            "expected completion to insert `use std::env`"
+        );
+    }
+
+    #[test]
+    fn grouped_module_import_does_not_add_duplicate_import_edit() {
+        let mut state = ServerState::new();
+        let response = complete_full(
+            &mut state,
+            "use std::{env, fs}\nfn main() { env::a| }\n",
+            "file:///grouped.gos",
+        );
+        let Value::Array(items) = response else {
+            panic!("expected completion array");
+        };
+        let args = items.into_iter().find(|item| {
+            matches!(
+                item,
+                Value::Object(fields)
+                    if fields.get("label") == Some(&Value::String("args".to_string()))
+            )
+        });
+        let Some(Value::Object(fields)) = args else {
+            panic!("expected `env::args` completion");
+        };
+        assert!(
+            !fields.contains_key("additionalTextEdits"),
+            "grouped import must suppress a duplicate import edit"
+        );
+    }
+
+    #[test]
     fn nested_module_qualifier_resolves() {
         let mut state = ServerState::new();
-        let labels = complete_at(&mut state, "fn main() { std::os::e| }\n", "file:///os2.gos");
+        let labels = complete_at(
+            &mut state,
+            "use std::os\nfn main() { os::e| }\n",
+            "file:///os2.gos",
+        );
         // std::os::exec is a known submodule.
         assert!(
             labels.iter().any(|l| l == "exec"),
@@ -682,7 +740,11 @@ fn main() { Color::R| }
     #[test]
     fn module_member_completion_carries_documentation() {
         let mut state = ServerState::new();
-        let response = complete_full(&mut state, "fn main() { env::a| }\n", "file:///doc.gos");
+        let response = complete_full(
+            &mut state,
+            "use std::env\nfn main() { env::a| }\n",
+            "file:///doc.gos",
+        );
         let Value::Array(items) = response else {
             panic!("expected array");
         };

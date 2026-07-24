@@ -37,3 +37,8 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 | [`rename`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `fn rename(src: String, dst: String) -> Result<(), io::Error>` | Renames a file or directory. |
 | [`walk_dir`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `fn walk_dir(path: String, visit: Fn(fs::DirInfo) -> Result<(), io::Error>) -> Result<(), io::Error>` | Recursively visits every descendant entry. |
 | [`write`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `fn write(path: String, contents: Vec<u8>) -> Result<(), io::Error>` | Writes bytes to a file, creating or truncating it. |
+
+`DirInfo.path` is safe to pass back to `fs::read_dir` and `fs::walk_dir`
+even when the operating-system path is not valid UTF-8. Such paths use an
+internal reversible string encoding; applications should treat the field as
+an opaque filesystem path rather than user-facing display text.

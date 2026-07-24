@@ -254,6 +254,12 @@ impl StdlibIndex {
         out.truncate(50);
         out
     }
+
+    /// Returns the unique canonical module path for a bare qualifier.
+    pub(crate) fn canonical_module_for_leaf(&self, leaf: &str) -> Option<&str> {
+        let paths = self.by_leaf.get(leaf)?;
+        (paths.len() == 1).then(|| paths[0].as_str())
+    }
 }
 
 const COMPLETION_KIND_FUNCTION: u32 = 3;

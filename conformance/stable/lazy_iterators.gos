@@ -1,4 +1,4 @@
-use std::iter
+use std::{iter, option}
 
 fn main() {
     let empty_count = iter::range(0, 0) |> iter::count

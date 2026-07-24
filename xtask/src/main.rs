@@ -585,6 +585,14 @@ fn render_stdlib_page(modules: &[StdModule]) -> String {
     writeln!(out).unwrap();
     writeln!(
         out,
+        "Every module listed below requires an explicit `use`, such as \
+         `use std::env` before calling `env::args()`. Importing one module \
+         does not implicitly import sibling modules or its individual functions."
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+    writeln!(
+        out,
         "Receiver methods on built-in types such as `String`, `Vec`, \
          `HashMap`, `Option`, and `Result` are listed in \
          [Methods by type](method_support.md)."

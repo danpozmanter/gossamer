@@ -109,6 +109,17 @@ impl ResolveDiagnostic {
         let mut out =
             Diagnostic::error(Code(self.error.code()), title.clone()).with_primary(location, title);
         if let ResolveError::UnresolvedName { name } = &self.error {
+            let mut module_paths = crate::STDLIB_MODULE_PATHS.iter().filter(|path| {
+                **path == name.as_str()
+                    || path
+                        .strip_suffix(name)
+                        .is_some_and(|prefix| prefix.ends_with("::"))
+            });
+            if let (Some(path), None) = (module_paths.next(), module_paths.next()) {
+                out = out.with_help(format!(
+                    "standard library module `{name}` is not in scope; add `use std::{path}`"
+                ));
+            }
             if let Some(suggestion) = suggest(name, in_scope.iter().copied(), 2) {
                 let msg = format!("did you mean `{suggestion}`?");
                 out = out.with_suggestion(Suggestion::replacement(

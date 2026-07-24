@@ -879,7 +879,7 @@ fn builtin_fs_list_dir(args: &[Value]) -> RuntimeResult<Value> {
     let Some(path) = args.first().and_then(as_str) else {
         return Ok(err_variant("fs::read_dir: path argument must be a string"));
     };
-    let entries = match fs_std::read_dir(path) {
+    let entries = match fs_std::read_dir(fs_std::decode_path(path)) {
         Ok(es) => es,
         Err(e) => return Ok(err_variant(format!("{e}"))),
     };
@@ -899,7 +899,7 @@ fn dir_info_value(entry: &fs_std::DirEntry) -> Value {
             .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
         (size, modified_ms)
     });
-    let path_str = entry.path.to_string_lossy().into_owned();
+    let path_str = fs_std::encode_path(&entry.path);
     let fields = vec![
         ("name", Value::String(SmolStr::from(entry.name.clone()))),
         ("path", Value::String(SmolStr::from(path_str))),
@@ -923,7 +923,7 @@ fn builtin_fs_walk_dir(args: &[Value]) -> RuntimeResult<Value> {
         return Ok(err_variant("fs::walk_dir: root argument must be a string"));
     };
     let collected = std::cell::RefCell::new(Vec::<Value>::new());
-    let visit_result = fs_std::walk_dir(root, |entry| {
+    let visit_result = fs_std::walk_dir(fs_std::decode_path(root), |entry| {
         collected.borrow_mut().push(dir_info_value(entry));
         Ok(())
     });
@@ -1267,5 +1267,39 @@ mod blocking_file_tests {
             .expect("remove dir all"),
         );
         assert!(!nested.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_dir_path_field_reopens_non_utf8_directory() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "gossamer-interp-non-utf8-dir-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let child = root.join(std::ffi::OsString::from_vec(b"x\xa0y".to_vec()));
+        std::fs::create_dir(&child).unwrap();
+        std::fs::write(child.join("payload"), b"x").unwrap();
+
+        let root_value = Value::String(root.to_string_lossy().into_owned().into());
+        let listed = ok_payload(builtin_fs_list_dir(&[root_value]).unwrap());
+        let Value::Array(entries) = listed else {
+            panic!("expected directory entries");
+        };
+        let Value::Struct(entry) = &entries[0] else {
+            panic!("expected DirInfo");
+        };
+        let path = entry
+            .fields
+            .iter()
+            .find_map(|(name, value)| (*name == "path").then_some(value.clone()))
+            .expect("DirInfo.path");
+        let nested = ok_payload(builtin_fs_list_dir(&[path]).unwrap());
+        assert!(matches!(nested, Value::Array(entries) if entries.len() == 1));
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

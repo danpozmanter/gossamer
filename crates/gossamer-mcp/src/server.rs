@@ -88,7 +88,9 @@ fn initialize_result(params: &Value) -> Value {
             s(
                 "Gossamer toolchain server. Run `check` before `run`; read the \
                gossamer://skill-card resource (or the skill-card prompt) to learn \
-               idiomatic Gossamer before writing .gos code.",
+               idiomatic Gossamer before writing .gos code. Prefer receiver methods \
+               and metadata fields already returned by standard library records over \
+               redundant module calls.",
             ),
         ),
     ])
@@ -166,5 +168,17 @@ fn prompts_get(id: Value, params: &Value) -> Value {
             -32602,
             &format!("unknown prompt: {}", other.unwrap_or("<missing name>")),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SKILL_CARD;
+
+    #[test]
+    fn skill_card_teaches_explicit_imports_and_direct_metadata_access() {
+        assert!(SKILL_CARD.contains("Import every standard library module you use"));
+        assert!(SKILL_CARD.contains("entry.is_symlink"));
+        assert!(SKILL_CARD.contains("fs::is_symlink(&entry.path)"));
     }
 }

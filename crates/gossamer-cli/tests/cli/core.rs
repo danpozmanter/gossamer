@@ -215,7 +215,7 @@ fn run_subcommand_executes_via_vm() {
     let _ = std::fs::remove_file(&fixture);
 }
 
-const LAZY_ITERATOR_TIER_SOURCE: &str = r#"use std::iter
+const LAZY_ITERATOR_TIER_SOURCE: &str = r#"use std::{iter, option}
 
 fn main() {
     let xs = 1..100
@@ -302,7 +302,7 @@ fn main() {
 const LAZY_ITERATOR_TIER_OUTPUT: &str =
     "6\n9\n14\n20\ntrue\nfalse\n4\n41\n24\n4\n6\n3\n3\n3\n14\n13\n4\n";
 
-const EAGER_ITERATOR_ALIAS_SOURCE: &str = r#"use std::iter
+const EAGER_ITERATOR_ALIAS_SOURCE: &str = r#"use std::{iter, option}
 
 fn main() {
     let exclusive = iter::eager_range(1, 5)

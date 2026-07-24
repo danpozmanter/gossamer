@@ -490,13 +490,14 @@ fn repl_rejects_plain_tuple_for_tuple_struct_function_parameter() {
 
 #[test]
 fn repl_open_ranges_are_lazy_and_printable() {
-    let out = run_repl("10..\n..10\n..=10\n(10..).take(5) |> iter::collect()\n10..=\n");
+    let out =
+        run_repl("use std::iter\n10..\n..10\n..=10\n(10..).take(5) |> iter::collect()\n10..=\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
-        "Out[1]: 10..",
-        "Out[2]: ..10",
-        "Out[3]: ..=10",
-        "Out[4]: [10, 11, 12, 13, 14]",
+        "Out[2]: 10..",
+        "Out[3]: ..10",
+        "Out[4]: ..=10",
+        "Out[5]: [10, 11, 12, 13, 14]",
     ] {
         assert!(
             out.stdout.contains(expected),
@@ -757,7 +758,8 @@ fn repl_meta_find_requires_a_query() {
 #[test]
 fn repl_iter_receiver_methods_pipe_dotdot_and_range_index_work() {
     let out = run_repl(
-        "let a = [1, 2, 3, 4, 5]\n\
+        "use std::iter\n\
+         let a = [1, 2, 3, 4, 5]\n\
          a.skip(2)\n\
          a.enumerate()\n\
          a.zip(0..).collect()\n\
@@ -772,17 +774,17 @@ fn repl_iter_receiver_methods_pipe_dotdot_and_range_index_work() {
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
-        "Out[2]: [3, 4, 5]",
-        "Out[3]: [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]",
-        "Out[4]: [(1, 0), (2, 1), (3, 2), (4, 3), (5, 4)]",
-        "Out[5]: [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]",
-        "Out[6]: [1, 2]",
+        "Out[3]: [3, 4, 5]",
+        "Out[4]: [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]",
+        "Out[5]: [(1, 0), (2, 1), (3, 2), (4, 3), (5, 4)]",
+        "Out[6]: [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]",
         "Out[7]: [1, 2]",
-        "Out[8]: [[1, 2], [2, 3], [3, 4], [4, 5]]",
-        "Out[9]: [[1, 2], [3, 4], [5]]",
-        "Out[10]: [(1, 2), (2, 3), (3, 4), (4, 5)]",
-        "Out[11]: [1, 2, 3]",
-        "Out[12]: [5, 4, 3, 2, 1]",
+        "Out[8]: [1, 2]",
+        "Out[9]: [[1, 2], [2, 3], [3, 4], [4, 5]]",
+        "Out[10]: [[1, 2], [3, 4], [5]]",
+        "Out[11]: [(1, 2), (2, 3), (3, 4), (4, 5)]",
+        "Out[12]: [1, 2, 3]",
+        "Out[13]: [5, 4, 3, 2, 1]",
     ] {
         assert!(
             out.stdout.contains(expected),
@@ -811,7 +813,8 @@ fn repl_iter_take_rejects_negative_counts() {
 #[test]
 fn repl_rejects_negative_size_arguments_across_stdlib() {
     let out = run_repl(
-        "strings::repeat(\"x\", -1)\n\
+        "use std::{image, iter, strings, time}\n\
+         strings::repeat(\"x\", -1)\n\
          strings::splitn(\"a,b\", -1, \",\")\n\
          strings::pad_left(\"x\", -1, ' ')\n\
          strings::replacen(\"aaa\", \"a\", \"b\", -1)\n\
@@ -849,12 +852,12 @@ fn repl_rejects_negative_size_arguments_across_stdlib() {
         );
     }
     for forbidden in [
-        "Out[1]: \"\"",
-        "Out[2]: []",
-        "Out[6]: []",
-        "Out[9]: []",
+        "Out[2]: \"\"",
+        "Out[3]: []",
+        "Out[7]: []",
         "Out[10]: []",
-        "Out[11]: \"\"",
+        "Out[11]: []",
+        "Out[12]: \"\"",
     ] {
         assert!(
             !out.stdout.contains(forbidden),
@@ -1315,7 +1318,7 @@ fn repl_rejects_invalid_string_call_arguments_before_execution() {
 
 #[test]
 fn repl_reports_each_invalid_string_argument_once_with_its_value() {
-    let out = run_repl("strings::count(1, \"a\")\nstrings::count(\"ab\", 1)\n");
+    let out = run_repl("use std::strings\nstrings::count(1, \"a\")\nstrings::count(\"ab\", 1)\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert_eq!(
         out.stderr
@@ -1342,7 +1345,7 @@ fn repl_reports_each_invalid_string_argument_once_with_its_value() {
 
 #[test]
 fn repl_reports_array_arguments_without_inference_variable_types() {
-    let out = run_repl("strings::slice([1, 2, 3], 1, 2)\n");
+    let out = run_repl("use std::strings\nstrings::slice([1, 2, 3], 1, 2)\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr.contains("found `array`"),
@@ -1358,7 +1361,7 @@ fn repl_reports_array_arguments_without_inference_variable_types() {
 
 #[test]
 fn repl_rejects_unqualified_std_functions() {
-    let out = run_repl("count(\"abc\", 'a')\nstrings::count(\"abc\")\n");
+    let out = run_repl("use std::strings\ncount(\"abc\", 'a')\nstrings::count(\"abc\")\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr.contains("cannot find `count` in this scope"),

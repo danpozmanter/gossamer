@@ -23,6 +23,105 @@ use parking_lot::RwLock;
 
 pub use std::fs::{File, OpenOptions};
 
+#[cfg(any(unix, windows))]
+const ENCODED_PATH_PREFIX: &str = "@gossamer-path:x";
+const ESCAPED_PATH_PREFIX: &str = "@gossamer-path:u";
+
+/// Encodes an operating-system path into a Gossamer `String` without losing
+/// non-UTF-8 bytes. Ordinary UTF-8 paths are returned unchanged.
+#[must_use]
+pub fn encode_path(path: &Path) -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let bytes = path.as_os_str().as_bytes();
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            return escape_reserved_path_prefix(text);
+        }
+        let mut encoded = String::with_capacity(ENCODED_PATH_PREFIX.len() + bytes.len() * 2);
+        encoded.push_str(ENCODED_PATH_PREFIX);
+        for byte in bytes {
+            use std::fmt::Write;
+            write!(encoded, "{byte:02X}").expect("writing to String cannot fail");
+        }
+        encoded
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        if let Some(text) = path.to_str() {
+            return escape_reserved_path_prefix(text);
+        }
+        let mut encoded = String::from(ENCODED_PATH_PREFIX);
+        for unit in path.as_os_str().encode_wide() {
+            use std::fmt::Write;
+            write!(encoded, "{unit:04X}").expect("writing to String cannot fail");
+        }
+        encoded
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        escape_reserved_path_prefix(&path.to_string_lossy())
+    }
+}
+
+/// Decodes a path produced by [`encode_path`].
+#[must_use]
+pub fn decode_path(path: &str) -> PathBuf {
+    if let Some(text) = path.strip_prefix(ESCAPED_PATH_PREFIX) {
+        return PathBuf::from(format!("@gossamer-path:{text}"));
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        return PathBuf::from(path);
+    }
+    #[cfg(any(unix, windows))]
+    let Some(hex) = path.strip_prefix(ENCODED_PATH_PREFIX) else {
+        return PathBuf::from(path);
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let bytes = decode_hex(hex, 2).unwrap_or_else(|| path.as_bytes().to_vec());
+        PathBuf::from(std::ffi::OsString::from_vec(bytes))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        let units = decode_hex_units(hex).unwrap_or_else(|| path.encode_utf16().collect());
+        PathBuf::from(std::ffi::OsString::from_wide(&units))
+    }
+}
+
+fn escape_reserved_path_prefix(path: &str) -> String {
+    path.strip_prefix("@gossamer-path:").map_or_else(
+        || path.to_string(),
+        |rest| format!("{ESCAPED_PATH_PREFIX}{rest}"),
+    )
+}
+
+#[cfg(unix)]
+fn decode_hex(hex: &str, width: usize) -> Option<Vec<u8>> {
+    if !hex.len().is_multiple_of(width) {
+        return None;
+    }
+    (0..hex.len())
+        .step_by(width)
+        .map(|start| u8::from_str_radix(&hex[start..start + width], 16).ok())
+        .collect()
+}
+
+#[cfg(windows)]
+fn decode_hex_units(hex: &str) -> Option<Vec<u16>> {
+    if !hex.len().is_multiple_of(4) {
+        return None;
+    }
+    (0..hex.len())
+        .step_by(4)
+        .map(|start| u16::from_str_radix(&hex[start..start + 4], 16).ok())
+        .collect()
+}
+
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -145,7 +244,7 @@ impl FileSystem for OsFileSystem {
             let ty = raw.file_type()?;
             out.push(DirEntry {
                 path: raw.path(),
-                name: raw.file_name().to_string_lossy().into_owned(),
+                name: encode_path(Path::new(&raw.file_name())),
                 is_dir: ty.is_dir(),
                 is_file: ty.is_file(),
                 is_symlink: ty.is_symlink(),
@@ -813,7 +912,7 @@ pub fn read_dir(path: impl AsRef<Path>) -> io::Result<Vec<DirEntry>> {
         let ty = raw.file_type()?;
         out.push(DirEntry {
             path: raw.path(),
-            name: raw.file_name().to_string_lossy().into_owned(),
+            name: encode_path(Path::new(&raw.file_name())),
             is_dir: ty.is_dir(),
             is_file: ty.is_file(),
             is_symlink: ty.is_symlink(),
@@ -1727,6 +1826,28 @@ mod tests {
         let text = read_to_string(&path).unwrap();
         assert_eq!(text, "hello");
         let _ = remove_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn encoded_non_utf8_directory_path_round_trips() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let root = scratch("non-utf8-dir");
+        stdfs::create_dir_all(&root).unwrap();
+        let child = root.join(std::ffi::OsString::from_vec(b"x\xa0y".to_vec()));
+        stdfs::create_dir(&child).unwrap();
+        stdfs::write(child.join("payload"), b"x").unwrap();
+
+        let entries = read_dir(&root).unwrap();
+        assert_eq!(entries.len(), 1);
+        let encoded = encode_path(&entries[0].path);
+        assert!(encoded.starts_with(ENCODED_PATH_PREFIX));
+        let nested = read_dir(decode_path(&encoded)).unwrap();
+        assert_eq!(nested.len(), 1);
+        assert_eq!(nested[0].name, "payload");
+
+        stdfs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

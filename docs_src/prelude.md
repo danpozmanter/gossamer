@@ -1,7 +1,21 @@
 # Builtins and prelude
 
-Gossamer 0.28.2 puts these names in every file. No `use` needed. A local
+Gossamer puts these names in every file. No `use` is needed. A local
 definition with the same name wins.
+
+Standard library modules are not part of the prelude. Import each module
+before using its qualified name:
+
+```gossamer
+use std::{env, fs}
+
+let args = env::args()
+let text = fs::read_to_string("input.txt")?
+```
+
+Without the corresponding `use`, `env::args()` and
+`fs::read_to_string(...)` are unresolved. Importing a module does not place
+all of its functions in the bare-name namespace.
 
 ## Output and formatting
 

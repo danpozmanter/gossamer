@@ -1364,8 +1364,14 @@ use net::http::Server
 // no string literal.
 use std::io
 use std::sync::atomic::{AtomicU64, Ordering}
-use fmt
+use std::fmt
 ```
+
+Standard library modules require an explicit `use`. Writing a qualified
+path such as `fs::read(path)` without first importing `std::fs` is an
+unresolved-name error. The prelude remains available without imports.
+Importing a module binds its final segment, or its requested alias, but
+does not import sibling modules or all module members as bare names.
 
 The string-literal form is mandatory for any project whose identifier
 contains `.` or `/`, which is every real-world external dependency.

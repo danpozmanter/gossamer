@@ -808,15 +808,16 @@ pub unsafe extern "C" fn gos_rt_str_byte_at(s: *const c_char, i: i64) -> i64 {
 pub unsafe extern "C" fn gos_rt_os_read_dir(path: *const c_char) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         let p = if path.is_null() {
-            ".".to_string()
+            std::path::PathBuf::from(".")
         } else {
-            unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
+            let encoded = unsafe { CStr::from_ptr(path).to_string_lossy() };
+            super::args::decode_os_path(&encoded)
         };
         let entries: Vec<String> = match std::fs::read_dir(&p) {
             Ok(it) => {
                 let mut names: Vec<String> = it
                     .flatten()
-                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .map(|e| super::args::encode_os_path(std::path::Path::new(&e.file_name())))
                     .collect();
                 names.sort();
                 names

@@ -554,6 +554,24 @@ mod tests {
     }
 
     #[test]
+    fn top_level_stdlib_paths_mark_grouped_imports_used() {
+        let doc = analyse(
+            "file:///imports.gos",
+            "use std::{env, fs}\n\
+             let root = env::args().first()\n\
+             let exists = fs::exists(\".\")\n\
+             println!(\"{} {:?}\", exists, root)\n",
+        );
+        assert!(
+            doc.diagnostics
+                .iter()
+                .all(|diag| diag.code.as_str() != "GL0002"),
+            "used grouped imports were reported unused: {:?}",
+            doc.diagnostics
+        );
+    }
+
+    #[test]
     fn top_level_question_operator_is_accepted() {
         let src = "use std::errors\n\
                    fn f() -> Result<i64, errors::Error> { Ok(1) }\n\

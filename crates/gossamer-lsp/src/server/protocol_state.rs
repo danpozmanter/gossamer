@@ -507,10 +507,19 @@ impl ServerState {
         let Some(name) = source.get(start..end) else {
             return Vec::new();
         };
-        if name.is_empty() || name.contains("::") {
+        if name.is_empty() {
             return Vec::new();
         }
-        let existing = collect_existing_imports(source);
+        let existing = collect_existing_imports(doc);
+        if let Some((head, _)) = name.split_once("::") {
+            let Some(path) = self.stdlib.canonical_module_for_leaf(head) else {
+                return Vec::new();
+            };
+            if existing.iter().any(|import| import == path) {
+                return Vec::new();
+            }
+            return vec![import_to_code_action(doc, uri, diag, path)];
+        }
         self.stdlib
             .fuzzy_paths_for(name)
             .into_iter()
@@ -721,10 +730,20 @@ impl ServerState {
 
         // Module / type-qualified path completion (`os::p|`, `Vec::n|`).
         if !cursor.qualifier.is_empty() {
-            if let Some(members) = self.stdlib.members_of(&cursor.qualifier_segments()) {
-                for spec in &members {
-                    if spec.name.starts_with(prefix) && seen.insert(spec.name.clone()) {
-                        items.push(member_to_completion(spec));
+            let qualifier = cursor.qualifier_segments();
+            if let Some(members) = self.stdlib.members_of(&qualifier) {
+                let imported = stdlib_qualifier_is_imported(doc, &qualifier);
+                let import_path = (!imported && qualifier.len() == 1)
+                    .then(|| self.stdlib.canonical_module_for_leaf(qualifier[0]))
+                    .flatten();
+                if imported || import_path.is_some() {
+                    for spec in members {
+                        if spec.name.starts_with(prefix) && seen.insert(spec.name.clone()) {
+                            let item = member_to_completion(&spec);
+                            items.push(import_path.map_or(item.clone(), |path| {
+                                completion_with_module_import(doc, item, path)
+                            }));
+                        }
                     }
                 }
             }
@@ -848,7 +867,7 @@ impl ServerState {
         items: &mut Vec<Value>,
         seen: &mut std::collections::HashSet<String>,
     ) {
-        let already_imported = collect_existing_imports(doc.source());
+        let already_imported = collect_existing_imports(doc);
         for path in self.stdlib.fuzzy_paths_for_prefix(prefix) {
             // The user already typed an exact-name match: only suggest
             // when the bare-name space doesn't already cover this name.

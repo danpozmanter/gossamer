@@ -123,6 +123,10 @@ pub(crate) fn install_strconv(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
+    globals.push((
+        "__gos_strconv_quote",
+        Value::builtin("__gos_strconv_quote", builtin_strconv_quote),
+    ));
 }
 
 pub(crate) fn builtin_strconv_parse_i64_radix(args: &[Value]) -> RuntimeResult<Value> {

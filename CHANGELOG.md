@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.34.0 - Explicit standard library imports, filesystem fixes, mcp & CI improvements
+
+- Require `use` for every standard library module, including qualified calls
+  such as `env::args()` and `fs::read(...)`, while retaining the documented
+  primitive, collection, macro, concurrency, and helper prelude.
+- Remove generated derive code's hidden `strconv` import dependency.
+- Make resolver and LSP diagnostics, completions, import edits, and unused-import
+  analysis accurate for missing, explicit, grouped, aliased, and top-level uses;
+  suppress duplicate edits for modules already imported through a group.
+- Traverse top-level statements in shared immutable and mutable AST visitors.
+- Preserve arbitrary OS names and paths returned by `fs::read_dir` across
+  interpreter and native filesystem traversal.
+- Refresh examples, conformance and REPL fixtures, specifications, generated
+  catalogs, and stdlib documentation for explicit imports and opaque paths.
+- Improve MCP guidance to require imports and prefer receiver methods or metadata
+  already returned by APIs.
+- Run independent Linux CI suites and release builds concurrently, and remove
+  the redundant default-feature Clippy pass.
+
 ## 0.33.6 - Methods and docs audit + fixes and mutability fixes
 
 - Fix `String::parse` generic syntax and type inference, including
@@ -120,7 +139,7 @@
 ## 0.32.2 - Strict mutability, REPL shortcuts, REPL find regex
 
 - Reject writes or mutable method calls when implicit dereferencing crosses
-  any shared reference layer, including the issue 49 `&mut &T` escape.
+  any shared reference layer, including nested `&mut &T` escapes.
 - Enforce immutable bindings for user and trait `&mut self` calls, implicit
   pattern bindings, and built-in collection and string writeback methods.
 - Add `%h`, `%q`, `%b`, `%d`, `%l`, `%r`, and `%f` aliases for the primary

@@ -55,7 +55,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v2-clippy-stdio
-      - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   macos-deployment-target:
@@ -236,66 +235,60 @@ jobs:
           if-no-files-found: ignore
 
   test-workspace:
-    name: Test complete workspace (Linux)
+    name: Test workspace (${{ matrix.suite }})
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    # Fast, parallel-safe crate tests. Split into its own job so it runs
-    # concurrently with `test-native` (which is serial and slow) instead of
-    # queueing behind it - frontend/IR/runtime/stdlib feedback no longer
-    # waits on the native build/run suite.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: frontend
+            cargo_args: >-
+              -p gossamer-lex -p gossamer-ast -p gossamer-parse
+              -p gossamer-resolve -p gossamer-hir -p gossamer-types
+              -p gossamer-diagnostics
+          - suite: ir-codegen
+            cargo_args: >-
+              -p gossamer-mir -p gossamer-codegen-llvm -p gossamer-abi
+              -p gossamer-binding -p gossamer-binding-macros
+          - suite: runtime-interpreter
+            cargo_args: >-
+              -p gossamer-runtime -p gossamer-interp -p gossamer-sched
+              -p gossamer-coro
+          - suite: stdlib-tooling
+            cargo_args: >-
+              --workspace
+              --exclude gossamer-cli --exclude gossamer-codegen-cranelift
+              --exclude gossamer-lex --exclude gossamer-ast
+              --exclude gossamer-parse --exclude gossamer-resolve
+              --exclude gossamer-hir --exclude gossamer-types
+              --exclude gossamer-diagnostics --exclude gossamer-mir
+              --exclude gossamer-codegen-llvm --exclude gossamer-abi
+              --exclude gossamer-binding --exclude gossamer-binding-macros
+              --exclude gossamer-runtime --exclude gossamer-interp
+              --exclude gossamer-sched --exclude gossamer-coro
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/rust-test-setup
         with:
-          cache-prefix: v2-test-workspace-stdio
-      - name: Test - frontend (lex/parse/resolve/hir/types)
-        if: ${{ !cancelled() }}
+          cache-prefix: v3-test-workspace-${{ matrix.suite }}
+      - name: Test ${{ matrix.suite }}
         shell: bash
         env:
           RUST_BACKTRACE: "full"
         run: |
-          "$CARGO_BIN" test --no-fail-fast \
-            -p gossamer-lex -p gossamer-ast -p gossamer-parse \
-            -p gossamer-resolve -p gossamer-hir -p gossamer-types \
-            -p gossamer-diagnostics \
+          "$CARGO_BIN" test --no-fail-fast ${{ matrix.cargo_args }} \
             --lib --tests -- --nocapture
-      - name: Test - IR & codegen (mir/llvm/abi/binding)
-        if: ${{ !cancelled() }}
-        shell: bash
-        env:
-          RUST_BACKTRACE: "full"
-        run: |
-          "$CARGO_BIN" test --no-fail-fast \
-            -p gossamer-mir -p gossamer-codegen-llvm -p gossamer-abi \
-            -p gossamer-binding -p gossamer-binding-macros \
-            --lib --tests -- --nocapture
-      - name: Test - runtime & interpreter (runtime/interp/sched/coro)
-        if: ${{ !cancelled() }}
-        shell: bash
-        env:
-          RUST_BACKTRACE: "full"
-        run: |
-          "$CARGO_BIN" test --no-fail-fast \
-            -p gossamer-runtime -p gossamer-interp -p gossamer-sched \
-            -p gossamer-coro \
-            --lib --tests -- --nocapture
-      - name: Test - stdlib & tooling (rest of workspace)
-        if: ${{ !cancelled() }}
-        shell: bash
-        env:
-          RUST_BACKTRACE: "full"
-        run: |
-          "$CARGO_BIN" test --workspace --no-fail-fast \
-            --exclude gossamer-cli --exclude gossamer-codegen-cranelift \
-            --exclude gossamer-lex --exclude gossamer-ast \
-            --exclude gossamer-parse --exclude gossamer-resolve \
-            --exclude gossamer-hir --exclude gossamer-types \
-            --exclude gossamer-diagnostics --exclude gossamer-mir \
-            --exclude gossamer-codegen-llvm --exclude gossamer-abi \
-            --exclude gossamer-binding --exclude gossamer-binding-macros \
-            --exclude gossamer-runtime --exclude gossamer-interp \
-            --exclude gossamer-sched --exclude gossamer-coro \
-            --lib --tests -- --nocapture
+
+  release-build:
+    name: Build release workspace
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-test-setup
+        with:
+          cache-prefix: v3-release-workspace
       - name: Build release
         shell: bash
         run: |

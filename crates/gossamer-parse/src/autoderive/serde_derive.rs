@@ -831,7 +831,7 @@ fn emit_named_struct_fmt_impl(
         .iter()
         .map(|f| {
             if type_head_name(&f.ty) == Some("String") {
-                format!("strconv::quote(self.{})", f.name.name)
+                format!("__gos_strconv_quote(self.{})", f.name.name)
             } else {
                 format!("self.{}", f.name.name)
             }
@@ -948,7 +948,7 @@ fn emit_tuple_struct_derive_impl(
             .enumerate()
             .map(|(i, f)| {
                 if type_head_name(&f.ty) == Some("String") {
-                    format!("strconv::quote(self.{i})")
+                    format!("__gos_strconv_quote(self.{i})")
                 } else {
                     format!("self.{i}")
                 }

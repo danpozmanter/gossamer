@@ -326,6 +326,29 @@ mod tests {
     }
 
     #[test]
+    fn visitor_walks_top_level_statements() {
+        let stmt = Stmt::new(
+            NodeId::DUMMY,
+            fake_span(),
+            StmtKind::Expr {
+                expr: Box::new(int("7")),
+                has_semi: false,
+            },
+        );
+        let mut source = SourceFile::new(fake_file(), vec![], vec![]);
+        source.top_level_stmts.push(stmt);
+        let mut counter = ExprCounter { count: 0 };
+        counter.visit_source_file(&source);
+        assert_eq!(counter.count, 1);
+
+        LiteralRewriter.visit_source_file(&mut source);
+        let StmtKind::Expr { expr, .. } = &source.top_level_stmts[0].kind else {
+            panic!("expected expression statement");
+        };
+        assert!(matches!(&expr.kind, ExprKind::Literal(Literal::Int(raw)) if raw == "99"));
+    }
+
+    #[test]
     fn visitor_mut_rewrites_int_literal_text() {
         let mut expr = int("1");
         LiteralRewriter.visit_expr(&mut expr);

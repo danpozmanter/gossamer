@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "gossamer_version": "0.33.6",
+  "gossamer_version": "0.34.0",
   "entries": [
     {
       "id": "std-archive-tar-TarEntry",
@@ -4643,7 +4643,7 @@
       "name": "std::fs::read_dir",
       "kind": "function",
       "signature": "fn read_dir(path: String) -> Result<Vec<fs::DirInfo>, io::Error>",
-      "description": "Returns DirInfo metadata for the immediate children of a directory.",
+      "description": "Returns immediate children as DirInfo values. Inspect their metadata fields directly; each path can be passed back to filesystem APIs.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

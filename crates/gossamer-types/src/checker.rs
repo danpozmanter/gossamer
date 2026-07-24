@@ -4222,7 +4222,12 @@ impl<'a> TypeChecker<'a> {
             );
         }
         let ty = match name {
-            "__concat" | "__fmt_prec" | "__fmt_pad" | "__fmt_radix" | "__fmt_upper" => {
+            "__concat"
+            | "__fmt_prec"
+            | "__fmt_pad"
+            | "__fmt_radix"
+            | "__fmt_upper"
+            | "__gos_strconv_quote" => {
                 for ty in arg_tys {
                     let resolved = self.infer.resolve(self.tcx, *ty);
                     if matches!(self.tcx.kind(resolved), Some(TyKind::Iterator(_))) {

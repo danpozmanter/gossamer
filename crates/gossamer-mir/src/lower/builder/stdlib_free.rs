@@ -1826,7 +1826,9 @@ impl<'a> Builder<'a> {
             "strconv::format_i64_radix" => {
                 ("gos_rt_strconv_format_i64_radix", self.tcx.string_ty())
             }
-            "strconv::quote" => ("gos_rt_strconv_quote", self.tcx.string_ty()),
+            "strconv::quote" | "__gos_strconv_quote" => {
+                ("gos_rt_strconv_quote", self.tcx.string_ty())
+            }
             "strconv::unquote" => ("gos_rt_strconv_unquote", self.result_string_error_adt_ty()),
             // Format-spec intrinsics from `{:spec}` expansion. `__fmt_radix`
             // and `__fmt_upper` reuse the strconv/strings shims; `__fmt_pad`

@@ -79,6 +79,11 @@ fn main() {
 
 Write clear, low-complexity, concise code.
 
+- **Import every standard library module you use.** Qualified access
+  does not implicitly import a module: write `use std::{env, fs}` before
+  `env::args()` or `fs::read(...)`. Primitive and core collection types,
+  variants, macros, and the documented prelude remain available without
+  imports.
 - **Default to immutable.** `let` first; `let mut` only for a binding
   that genuinely changes, kept near a single update site. `if` /
   `match` / `loop ... break v` are expressions - bind their result.
@@ -105,6 +110,13 @@ Write clear, low-complexity, concise code.
   `take`, `step_by`; `(1..5).map(|i| i * i).sum()`. Data-last `iter::`
   free forms exist for `|>` pipelines. `xs.join(sep)` Display-joins
   scalar/String sequences.
+- **Use metadata already returned by an API.** For entries from
+  `fs::read_dir` or `fs::walk_dir`, inspect `entry.is_file`,
+  `entry.is_dir`, `entry.is_symlink`, `entry.size`, `entry.path`, and
+  `entry.name` directly. Do not repeat the lookup with
+  `fs::is_symlink(&entry.path)`, `fs::is_file`, `fs::is_dir`, or
+  `fs::file_size`; redundant filesystem calls are slower and can race
+  with changes after the directory read.
 - **`s.to_i64()` / `to_f64()` / `to_bool()`** - strict full-string
   parses returning `Option<T>`:
   `env::args().first().unwrap_or("8").to_i64().unwrap_or(8)`.

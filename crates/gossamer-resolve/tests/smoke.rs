@@ -116,6 +116,27 @@ fn imported_name_resolves_to_import_resolution() {
 }
 
 #[test]
+fn qualified_stdlib_module_requires_import() {
+    let source = "fn main() {\n    env::args()\n}\n";
+    let sf = parse(source);
+    let (_resolutions, diags) = resolve_source_file(&sf);
+    assert!(
+        diags.iter().any(
+            |diag| matches!(&diag.error, ResolveError::UnresolvedName { name } if name == "env")
+        ),
+        "expected unimported stdlib module to be unresolved: {diags:?}"
+    );
+}
+
+#[test]
+fn qualified_stdlib_module_resolves_after_import() {
+    let source = "use std::env\n\nfn main() {\n    env::args()\n}\n";
+    let sf = parse(source);
+    let (_resolutions, diags) = resolve_source_file(&sf);
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+}
+
+#[test]
 fn example_programs_resolve_without_diagnostics() {
     for name in ["hello_world.gos", "line_count.gos", "web_server.gos"] {
         let path = format!("{}/../../examples/{name}", env!("CARGO_MANIFEST_DIR"));

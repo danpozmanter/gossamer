@@ -1,15 +1,61 @@
-fn collect_existing_imports(source: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for line in source.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("use ") {
-            let path = rest.trim_end_matches(';').trim().to_string();
-            if !path.is_empty() {
+fn collect_existing_imports(doc: &DocumentAnalysis) -> Vec<String> {
+    let mut out = Vec::new();
+    for decl in &doc.sf.uses {
+        let gossamer_ast::UseTarget::Module(target) = &decl.target else {
+            continue;
+        };
+        let base = target
+            .segments
+            .iter()
+            .map(|segment| segment.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::");
+        if let Some(list) = &decl.list {
+            for entry in list {
+                let mut path = base.clone();
+                for segment in &entry.prefix {
+                    path.push_str("::");
+                    path.push_str(&segment.name);
+                }
+                path.push_str("::");
+                path.push_str(&entry.name.name);
                 out.push(path);
             }
+        } else {
+            out.push(base);
         }
     }
     out
+}
+
+fn stdlib_qualifier_is_imported(doc: &DocumentAnalysis, qualifier: &[&str]) -> bool {
+    let Some(head) = qualifier.first() else {
+        return false;
+    };
+    doc.sf.uses.iter().any(|decl| {
+        if let Some(list) = &decl.list {
+            return list.iter().any(|entry| {
+                entry
+                    .alias
+                    .as_ref()
+                    .map_or(entry.name.name.as_str(), |alias| alias.name.as_str())
+                    == *head
+            });
+        }
+        decl.alias
+            .as_ref()
+            .map(|alias| alias.name.as_str())
+            .or_else(|| match &decl.target {
+                gossamer_ast::UseTarget::Module(path) => {
+                    path.segments.last().map(|segment| segment.name.as_str())
+                }
+                gossamer_ast::UseTarget::Project { module, .. } => module
+                    .as_ref()
+                    .and_then(|path| path.segments.last())
+                    .map(|segment| segment.name.as_str()),
+            })
+            == Some(*head)
+    })
 }
 
 fn import_completion_item(doc: &DocumentAnalysis, leaf: &str, full_path: &str) -> Value {
@@ -52,6 +98,35 @@ fn import_completion_item(doc: &DocumentAnalysis, leaf: &str, full_path: &str) -
         Value::Array(vec![Value::Object(edit)]),
     );
     Value::Object(item)
+}
+
+fn completion_with_module_import(
+    doc: &DocumentAnalysis,
+    item: Value,
+    module_path: &str,
+) -> Value {
+    let Value::Object(mut fields) = item else {
+        return item;
+    };
+    let insert_offset = import_insert_offset(doc.source());
+    let (line, col) = doc.offset_to_position(insert_offset);
+    let position = Value::Object(BTreeMap::from([
+        ("line".to_string(), Value::Number(f64::from(line))),
+        ("character".to_string(), Value::Number(f64::from(col))),
+    ]));
+    let range = Value::Object(BTreeMap::from([
+        ("start".to_string(), position.clone()),
+        ("end".to_string(), position),
+    ]));
+    let edit = Value::Object(BTreeMap::from([
+        ("range".to_string(), range),
+        (
+            "newText".to_string(),
+            Value::String(format!("use {module_path}\n")),
+        ),
+    ]));
+    fields.insert("additionalTextEdits".to_string(), Value::Array(vec![edit]));
+    Value::Object(fields)
 }
 
 fn import_insert_offset(source: &str) -> u32 {

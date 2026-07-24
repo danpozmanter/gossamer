@@ -22,6 +22,9 @@ pub fn walk_source_file_mut<V: VisitorMut + ?Sized>(visitor: &mut V, source_file
     for item in &mut source_file.items {
         visitor.visit_item(item);
     }
+    for stmt in &mut source_file.top_level_stmts {
+        visitor.visit_stmt(stmt);
+    }
 }
 
 /// Walks into every child of a [`UseDecl`] mutably.

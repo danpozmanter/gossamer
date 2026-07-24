@@ -386,6 +386,96 @@ struct DirInfoData {
     modified_ms: i64,
 }
 
+#[cfg(any(unix, windows))]
+const ENCODED_PATH_PREFIX: &str = "@gossamer-path:x";
+const ESCAPED_PATH_PREFIX: &str = "@gossamer-path:u";
+
+pub(super) fn encode_os_path(path: &std::path::Path) -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let bytes = path.as_os_str().as_bytes();
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            return escape_path_prefix(text);
+        }
+        let mut encoded = String::with_capacity(ENCODED_PATH_PREFIX.len() + bytes.len() * 2);
+        encoded.push_str(ENCODED_PATH_PREFIX);
+        for byte in bytes {
+            use std::fmt::Write;
+            write!(encoded, "{byte:02X}").expect("writing to String cannot fail");
+        }
+        encoded
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        if let Some(text) = path.to_str() {
+            return escape_path_prefix(text);
+        }
+        let mut encoded = String::from(ENCODED_PATH_PREFIX);
+        for unit in path.as_os_str().encode_wide() {
+            use std::fmt::Write;
+            write!(encoded, "{unit:04X}").expect("writing to String cannot fail");
+        }
+        encoded
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        escape_path_prefix(&path.to_string_lossy())
+    }
+}
+
+pub(super) fn decode_os_path(path: &str) -> std::path::PathBuf {
+    if let Some(text) = path.strip_prefix(ESCAPED_PATH_PREFIX) {
+        return std::path::PathBuf::from(format!("@gossamer-path:{text}"));
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        return std::path::PathBuf::from(path);
+    }
+    #[cfg(any(unix, windows))]
+    let Some(hex) = path.strip_prefix(ENCODED_PATH_PREFIX) else {
+        return std::path::PathBuf::from(path);
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        if !hex.len().is_multiple_of(2) {
+            return std::path::PathBuf::from(path);
+        }
+        let Some(bytes) = (0..hex.len())
+            .step_by(2)
+            .map(|start| u8::from_str_radix(&hex[start..start + 2], 16).ok())
+            .collect::<Option<Vec<_>>>()
+        else {
+            return std::path::PathBuf::from(path);
+        };
+        std::path::PathBuf::from(std::ffi::OsString::from_vec(bytes))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        if !hex.len().is_multiple_of(4) {
+            return std::path::PathBuf::from(path);
+        }
+        let Some(units) = (0..hex.len())
+            .step_by(4)
+            .map(|start| u16::from_str_radix(&hex[start..start + 4], 16).ok())
+            .collect::<Option<Vec<_>>>()
+        else {
+            return std::path::PathBuf::from(path);
+        };
+        std::path::PathBuf::from(std::ffi::OsString::from_wide(&units))
+    }
+}
+
+fn escape_path_prefix(path: &str) -> String {
+    path.strip_prefix("@gossamer-path:").map_or_else(
+        || path.to_string(),
+        |rest| format!("{ESCAPED_PATH_PREFIX}{rest}"),
+    )
+}
+
 fn dir_info(entry: std::fs::DirEntry) -> Option<DirInfoData> {
     let entry_path = entry.path();
     // Use std::fs::metadata (opens a handle) rather than entry.metadata()
@@ -397,8 +487,8 @@ fn dir_info(entry: std::fs::DirEntry) -> Option<DirInfoData> {
     let meta = std::fs::metadata(&entry_path).ok()?;
     let ft = entry.file_type().ok()?;
     Some(DirInfoData {
-        name: entry.file_name().to_string_lossy().into_owned(),
-        path: entry_path.to_string_lossy().into_owned(),
+        name: encode_os_path(std::path::Path::new(&entry.file_name())),
+        path: encode_os_path(&entry_path),
         is_file: ft.is_file(),
         is_dir: ft.is_dir(),
         is_symlink: ft.is_symlink(),
@@ -413,14 +503,15 @@ fn dir_info(entry: std::fs::DirEntry) -> Option<DirInfoData> {
 }
 
 fn list_dir_data(path: &str) -> Result<Vec<DirInfoData>, std::io::Error> {
-    let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(path)?.flatten().collect();
+    let mut entries: Vec<std::fs::DirEntry> =
+        std::fs::read_dir(decode_os_path(path))?.flatten().collect();
     entries.sort_by_key(std::fs::DirEntry::file_name);
     Ok(entries.into_iter().filter_map(dir_info).collect())
 }
 
 fn walk_dir_data(root: &str) -> Result<Vec<DirInfoData>, std::io::Error> {
     let mut out = Vec::new();
-    let mut stack = vec![std::path::PathBuf::from(root)];
+    let mut stack = vec![decode_os_path(root)];
     while let Some(dir) = stack.pop() {
         let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(&dir)?.flatten().collect();
         entries.sort_by_key(std::fs::DirEntry::file_name);
@@ -813,5 +904,30 @@ mod args_tests {
         let after = unsafe { CStr::from_ptr(arg0) }.to_bytes().to_vec();
         assert_eq!(before, after, "retaining neighbours must not mutate arg 0");
         assert_eq!(after, b"Qwen3.6-35B");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn encoded_non_utf8_directory_path_can_be_listed_again() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "gossamer-native-non-utf8-dir-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let child = root.join(std::ffi::OsString::from_vec(b"x\xa0y".to_vec()));
+        std::fs::create_dir(&child).unwrap();
+        std::fs::write(child.join("payload"), b"x").unwrap();
+
+        let root_text = root.to_str().unwrap();
+        let first = list_dir_data(root_text).unwrap();
+        assert_eq!(first.len(), 1);
+        assert!(first[0].path.starts_with(ENCODED_PATH_PREFIX));
+        let nested = list_dir_data(&first[0].path).unwrap();
+        assert_eq!(nested.len(), 1);
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

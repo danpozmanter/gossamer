@@ -55,6 +55,17 @@ fn unused_import_silent_when_path_referenced() {
 }
 
 #[test]
+fn grouped_stdlib_imports_used_by_top_level_statements_are_not_unused() {
+    let diags = lint(
+        "use std::{env, fs}\n\
+         let root = env::args().first()\n\
+         let exists = fs::exists(\".\")\n\
+         println!(\"{} {:?}\", exists, root)\n",
+    );
+    assert!(!has_code(&diags, "GL0002"), "got {:?}", diags_codes(&diags));
+}
+
+#[test]
 fn unused_mut_variable_fires_when_never_reassigned() {
     let diags = lint("fn main() { let mut x = 1i64 let _y: i64 = x }\n");
     assert!(has_code(&diags, "GL0003"), "{:?}", diags_codes(&diags));

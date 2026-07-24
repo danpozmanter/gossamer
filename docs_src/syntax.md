@@ -236,6 +236,8 @@ Range binds looser than arithmetic and tighter than `|>`, so
 ## Error handling
 
 ```gossamer
+use std::{fs, io}
+
 fn load(path: String) -> Result<String, io::Error> {
     let raw = fs::read_to_string(&path)?
     Ok(raw)
@@ -352,6 +354,21 @@ use std::http
 use std::http::{Handler, Request, Response}
 use example.org/other::widget
 ```
+
+Standard library modules require an explicit import. The import binds the
+module's final path segment, or the requested alias, into the file:
+
+```gossamer
+use std::encoding::json
+use std::fs as filesystem
+
+let value = json::parse(text)?
+let bytes = filesystem::read(path)?
+```
+
+Writing `json::parse(text)` without importing `std::encoding::json` is an
+unresolved-name error. Prelude types, variants, macros, and functions listed
+on the [Prelude page](prelude.md) remain available without imports.
 
 A project's module tree is file-based: `src/foo.gos` becomes
 `mod foo`, `src/bar/mod.gos` becomes `mod bar`.

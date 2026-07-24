@@ -28,6 +28,9 @@ pub fn walk_source_file<V: Visitor + ?Sized>(visitor: &mut V, source_file: &Sour
     for item in &source_file.items {
         visitor.visit_item(item);
     }
+    for stmt in &source_file.top_level_stmts {
+        visitor.visit_stmt(stmt);
+    }
 }
 
 /// Walks into every child of a [`UseDecl`].
