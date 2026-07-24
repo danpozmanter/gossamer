@@ -749,7 +749,7 @@ fn format_missing(missing: &[String]) -> String {
 mod m13_tests {
     use super::*;
 
-    /// Audit M13 bug #2: element-blind subsumption flagged the
+    /// Audit M13 tuple bug: element-blind subsumption flagged the
     /// second arm of `(true, false) => .., (true, true) => ..`
     /// as redundant because both lowered to `Pat::Tuple(_)`. The
     /// 0.6.0 fix recurses field-by-field; (true, false) does NOT
@@ -775,7 +775,7 @@ mod m13_tests {
         assert!(subsumes(&earlier, &later));
     }
 
-    /// Audit M13 bug #1: `Foo::A(true)` matched alone is NOT
+    /// Audit M13 enum-payload bug: `Foo::A(true)` matched alone is NOT
     /// exhaustive for `enum Foo { A(bool) }`; `Foo::A(false)`
     /// is missing. The 0.6.0 fix recurses into the payload's
     /// finite domain.

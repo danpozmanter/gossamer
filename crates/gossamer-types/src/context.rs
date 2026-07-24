@@ -616,6 +616,22 @@ impl TyCtxt {
         ) {
             return false;
         }
+        // `flag::Set` is an opaque parser handle, owned by the runtime
+        // registry rather than an RC allocation.
+        if matches!(
+            self.kind(ty),
+            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 21
+        ) {
+            return false;
+        }
+        // HTTP client builder/request handles are runtime-owned opaque
+        // pointers, not reference-counted user aggregates.
+        if matches!(
+            self.kind(ty),
+            Some(TyKind::Adt { def, .. }) if (u32::MAX - 24..=u32::MAX - 22).contains(&def.local)
+        ) {
+            return false;
+        }
         // Inline-able user enums are by-value (their payload's RC, if any, is
         // released per-discriminant on drop), never RC-managed as a whole.
         if self.is_inline_enum_ty(ty) {

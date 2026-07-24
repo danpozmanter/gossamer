@@ -137,6 +137,7 @@ pub(crate) fn install_strings(globals: &mut Vec<(&'static str, Value)>) {
         ("to_i64", builtin_strings_to_i64),
         ("to_f64", builtin_strings_to_f64),
         ("to_bool", builtin_strings_to_bool),
+        ("parse", builtin_strings_parse),
         ("starts_with", builtin_strings_starts_with),
         ("ends_with", builtin_strings_ends_with),
         ("repeat", builtin_strings_repeat),
@@ -161,6 +162,23 @@ pub(crate) fn install_strings(globals: &mut Vec<(&'static str, Value)>) {
     // under the `Vec::` key so receiver-typed dispatch resolves it ahead of
     // the bare `join` name shared with `path::join`.
     install_module_pub("Vec", &[("join", builtin_strings_join)], globals);
+}
+
+/// `strings::parse<T>(s)` / `s.parse<T>() -> Result<T, errors::Error>`.
+///
+/// The runtime parser currently supports integer payloads; type checking pins
+/// `T` from the turbofish or use site, and integer widths share the VM's
+/// `Value::Int` representation.
+pub(crate) fn builtin_strings_parse(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("").trim();
+    if let Ok(n) = text.parse::<i64>() {
+        return Ok(ok_variant(Value::Int(n)));
+    }
+    let msg = format!(
+        "unexpected byte 0x{:x} at 1:1",
+        text.as_bytes().first().copied().unwrap_or(0)
+    );
+    Ok(err_variant(msg))
 }
 
 /// String form of a separator / needle argument. A `char`

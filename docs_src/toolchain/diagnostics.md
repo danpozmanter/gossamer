@@ -52,6 +52,8 @@ version. This page is auto-generated from the catalogue in
 | [`GT0003`](#gt0003) | Types | unresolved operator |
 | [`GT0004`](#gt0004) | Match exhaustiveness | non-exhaustive match |
 | [`GT0005`](#gt0005) | Types | non-primitive cast |
+| [`GT0044`](#gt0044) | Types | generic return type not inferred |
+| [`GT0045`](#gt0045) | Types | question mark not supported here |
 | [`GK0001`](#gk0001) | Package manager | manifest parse error |
 
 ## `GP0001` <a id="gp0001"></a>
@@ -293,6 +295,18 @@ A `match` expression does not cover every possible value. Add an arm for the pat
 **Types** - non-primitive cast
 
 The `as` cast is restricted to a whitelist: numeric ↔ numeric, `bool`/`char` → integer, `u8` → `char`, and same-type no-ops. Struct / enum / String sources are rejected. Use a conversion method when you need serialisation; `as` does not run code.
+
+## `GT0044` <a id="gt0044"></a>
+
+**Types** - generic return type not inferred
+
+A generic return payload cannot be inferred from call arguments alone. Add an explicit generic argument or assign the expression to an expected `Result` type.
+
+## `GT0045` <a id="gt0045"></a>
+
+**Types** - question mark not supported here
+
+The `?` operator can only unwrap `Result` inside a `Result`-returning function or `Option` inside an `Option`-returning function.
 
 ## `GK0001` <a id="gk0001"></a>
 

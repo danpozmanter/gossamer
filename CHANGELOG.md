@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.33.6 - Methods and docs audit + fixes and mutability fixes
+
+- Fix `String::parse` generic syntax and type inference, including
+  `s.parse<i64>()`, `s.parse::<i64>()`, and expected `Result` payloads.
+- Reject unconstrained parse payloads and keep missing `?` diagnostics specific
+  to the inferred `Result` payload.
+- Reject invalid `?` operands before lowering so non-`Result` and non-`Option`
+  values cannot reach runtime-only match failures.
+- Reject `Option`-only methods on `Result` values, including the Rust-like
+  `String::parse` result surface.
+- Align native `crypto::rand::bytes` with its `Result<Vec<u8>, errors::Error>`
+  contract, including negative-count errors.
+- Align `io::ReadAll`, `flag::Set::parse`, and `http::Client` request chains
+  with their fallible `Result` contracts across checking, VM, and native tiers.
+- Keep native `http::Request` handler params as opaque runtime pointers while
+  preserving typed request field access in the checker and generated docs.
+- Add `std::strings::parse` and document it on the strings stdlib page.
+- Audit core type method discovery so REPL listings show user-facing method
+  descriptions for String, Vec, map, set, deque, Option, and Result surfaces.
+- Stop unused-mut linting from warning when mutable bindings are required for
+  indexed or field-place writes.
+- Preserve VM aliasing when a single mutable-reference argument is returned and
+  bound locally, so writes through that returned reference update the original.
+- Correct BTreeMap docs to stop advertising unsupported `remove`.
+- Fold the standalone core method contract page into the standard library
+  method support reference and generated stdlib entry points.
+
 ## 0.33.5 - REPL documentation metadata
 
 - Expose runtime receiver methods in REPL `%help`, `%ls`, and `%find`,

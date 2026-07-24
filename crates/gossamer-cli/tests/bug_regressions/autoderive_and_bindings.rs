@@ -244,6 +244,32 @@ fn main() {
 }
 
 #[test]
+fn returned_mut_vec_reference_aliases_original_binding_in_vm() {
+    let src = r#"
+fn change(v: &mut Vec<i64>) -> &mut Vec<i64> {
+    v[0] = 0
+    v
+}
+
+fn main() {
+    let mut a: Vec<i64> = [1, 2]
+    let b = change(&mut a)
+    println!("a: {:?}", a)
+    println!("b: {:?}", b)
+    b[0] = 2
+    println!("a: {:?}", a)
+    println!("b: {:?}", b)
+}
+"#;
+    let dir = fresh_dir("returned_mut_vec_ref");
+    let path = write_source(&dir, "returned_mut_vec_ref", src);
+    let (stdout, stderr, code) = run_vm(&path);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(code, Some(0), "stderr: {stderr}");
+    assert_eq!(stdout, "a: [0, 2]\nb: [0, 2]\na: [2, 2]\nb: [2, 2]\n");
+}
+
+#[test]
 fn mut_self_field_compound_assign_writes_back() {
     // Bug fixed in 0.10.0: `self.field += 1` in an `&mut self`
     // method silently dropped the mutation in the LLVM AOT tier.

@@ -583,6 +583,14 @@ fn render_stdlib_page(modules: &[StdModule]) -> String {
     )
     .unwrap();
     writeln!(out).unwrap();
+    writeln!(
+        out,
+        "Receiver methods on built-in types such as `String`, `Vec`, \
+         `HashMap`, `Option`, and `Result` are listed in \
+         [Methods by type](method_support.md)."
+    )
+    .unwrap();
+    writeln!(out).unwrap();
     writeln!(out, "## Modules").unwrap();
     writeln!(out).unwrap();
     writeln!(out, "| Module | Items | Summary |").unwrap();
@@ -996,6 +1004,18 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "Types",
         "non-primitive cast",
         "The `as` cast is restricted to a whitelist: numeric ↔ numeric, `bool`/`char` → integer, `u8` → `char`, and same-type no-ops. Struct / enum / String sources are rejected. Use a conversion method when you need serialisation; `as` does not run code.",
+    ),
+    (
+        "GT0044",
+        "Types",
+        "generic return type not inferred",
+        "A generic return payload cannot be inferred from call arguments alone. Add an explicit generic argument or assign the expression to an expected `Result` type.",
+    ),
+    (
+        "GT0045",
+        "Types",
+        "question mark not supported here",
+        "The `?` operator can only unwrap `Result` inside a `Result`-returning function or `Option` inside an `Option`-returning function.",
     ),
     (
         "GK0001",

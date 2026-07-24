@@ -180,16 +180,13 @@ fn builtin_stream_read_to_string(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// `io::ReadAll(reader) -> String` - drains the reader until EOF
-/// and returns the accumulated bytes as a String. Mirrors Go's
-/// `io.ReadAll`. Today the only Reader-shaped value the interp
-/// surfaces is the stdin Stream (fd 0); other fds return an empty
-/// String. `io::Copy(dst, src)` uses the same drain.
+/// Drains a reader to a fallible String result. Today the only
+/// Reader-shaped value the interp surfaces is the stdin Stream.
 fn builtin_io_read_all(args: &[Value]) -> RuntimeResult<Value> {
     use std::io::Read;
     let fd = args.first().map_or(0, stream_fd);
     if fd != 0 {
-        return Ok(Value::String(SmolStr::from(String::new())));
+        return Ok(ok_variant(Value::String(SmolStr::from(String::new()))));
     }
     let read = gossamer_runtime::sched_global::run_blocking("stdin-read-all", || {
         let stdin = std::io::stdin();
@@ -199,9 +196,10 @@ fn builtin_io_read_all(args: &[Value]) -> RuntimeResult<Value> {
     match read {
         Ok(Ok(mut buf)) => {
             buf.shrink_to_fit();
-            Ok(Value::String(buf.into()))
+            Ok(ok_variant(Value::String(buf.into())))
         }
-        Ok(Err(_)) | Err(_) => Ok(Value::String(SmolStr::from(String::new()))),
+        Ok(Err(e)) => Ok(err_variant(format!("io::ReadAll: {e}"))),
+        Err(e) => Ok(err_variant(format!("io::ReadAll: {e}"))),
     }
 }
 

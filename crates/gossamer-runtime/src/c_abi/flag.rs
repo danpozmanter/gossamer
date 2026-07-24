@@ -448,20 +448,19 @@ fn apply_flag_value(
 /// Parses GNU-style `--name value` and `--bool` flags out of
 /// `args` (a `*mut GosVec` of c-string pointers from
 /// `os::args()`), filling in each registered cell. Returns a
-/// `*mut GosVec` of the leftover positional arguments.
+/// `Result<Vec<String>, Error>` containing the leftover positional arguments.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_flag_set_parse(
-    set: *mut GosFlagSet,
-    args: *const GosVec,
-) -> *mut GosVec {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_flag_set_parse(set: *mut GosFlagSet, args: *const GosVec) -> i128 {
+    ffi_entry!(unsafe { crate::c_abi::vec::gos_rt_result_new(1, 0) }, {
         if set.is_null() {
-            return unsafe { gos_rt_vec_new(8) };
+            let out = unsafe { gos_rt_vec_new(8) };
+            return unsafe { crate::c_abi::vec::gos_rt_result_new(0, out as i64) };
         }
         let set = unsafe { &mut *set };
         set.positional.clear();
         if args.is_null() {
-            return unsafe { gos_rt_vec_new(8) };
+            let out = unsafe { gos_rt_vec_new(8) };
+            return unsafe { crate::c_abi::vec::gos_rt_result_new(0, out as i64) };
         }
         // Two callers reach this function: the runner-build path
         // passes a real `*mut GosVec` of c-string pointers; the
@@ -575,6 +574,6 @@ pub unsafe extern "C" fn gos_rt_flag_set_parse(
                 gos_rt_vec_push(out, std::ptr::addr_of!(ptr_val).cast::<u8>());
             }
         }
-        out
+        unsafe { crate::c_abi::vec::gos_rt_result_new(0, out as i64) }
     })
 }

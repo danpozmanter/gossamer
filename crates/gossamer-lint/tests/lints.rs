@@ -67,6 +67,19 @@ fn unused_mut_variable_silent_when_reassigned() {
 }
 
 #[test]
+fn unused_mut_variable_silent_when_indexed_place_is_written() {
+    let diags = lint("fn main() { let mut c = [1, 2] c[0] = 3 }\n");
+    assert!(!has_code(&diags, "GL0003"), "{:?}", diags_codes(&diags));
+}
+
+#[test]
+fn unused_mut_variable_silent_when_field_place_is_written() {
+    let diags =
+        lint("struct Box { value: i64 }\nfn main() { let mut b = Box { value: 1 } b.value = 2 }\n");
+    assert!(!has_code(&diags, "GL0003"), "{:?}", diags_codes(&diags));
+}
+
+#[test]
 fn needless_return_fires_on_trailing_return_stmt() {
     let diags = lint("fn answer() -> i64 { return 42i64 }\n");
     assert!(has_code(&diags, "GL0004"), "{:?}", diags_codes(&diags));

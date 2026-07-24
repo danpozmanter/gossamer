@@ -118,6 +118,21 @@ fn clean_program_emits_no_errors() {
 }
 
 #[test]
+fn indexed_write_does_not_emit_unused_mut_warning() {
+    let uri = "file:///indexed-write.gos";
+    let server = server_with(uri, "fn main() { let mut c = [1, 2]\nc[0] = 3 }\n");
+    let notifs = server.publish_diagnostics(uri);
+    let diags = diagnostics_from(&notifs);
+    assert!(
+        !diags
+            .iter()
+            .filter_map(diagnostic_code)
+            .any(|code| code == "GL0003"),
+        "indexed mutation should not produce unused-mut diagnostics: {diags:?}"
+    );
+}
+
+#[test]
 fn publish_diagnostics_notification_has_uri() {
     let uri = "file:///u.gos";
     let server = server_with(uri, "fn main() {}\n");

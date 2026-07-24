@@ -3,7 +3,7 @@
 //! native, asserts byte-identical stdout. Covers the surfaces
 //! that exist in BOTH tiers - stateful types (`Router`,
 //! `FileServer` method chains, `Proxy`, full `NativeClient`,
-//! WebSocket framing) are interp-only and tracked in #54.
+//! WebSocket framing) are interp-only and tracked in the bridge parity matrix.
 
 use std::path::PathBuf;
 use std::process::Command;

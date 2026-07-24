@@ -552,12 +552,31 @@ fn aot_crypto_rand_bytes() {
         "crypto_rand_bytes",
         r#"
 use std::crypto
-fn main() {
-    let b = crypto::rand::bytes(16)
+use std::errors
+fn main() -> Result<(), errors::Error> {
+    let b = crypto::rand::bytes(16)?
     println!("n={}", b.len())
+    Ok(())
 }
 "#,
         "n=16\n",
+    );
+}
+
+#[test]
+fn aot_crypto_rand_bytes_rejects_negative_count() {
+    assert_release_stdout_eq(
+        "crypto_rand_bytes_negative",
+        r#"
+use std::crypto
+fn main() {
+    match crypto::rand::bytes(-1) {
+        Ok(_) => println!("unexpected"),
+        Err(_) => println!("err"),
+    }
+}
+"#,
+        "err\n",
     );
 }
 

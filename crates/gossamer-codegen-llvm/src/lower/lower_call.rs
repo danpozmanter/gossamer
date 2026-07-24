@@ -1616,10 +1616,10 @@ impl<'a> Lowerer<'a> {
                 // (a gossamer `ret i128`) returns it in the GP-register
                 // pair. Take the address of the synthesized `<16 x i8>`
                 // C-ABI return thunk (`name$cabi`) instead so the runtime
-                // reads the discriminant/payload from the register it
-                // expects. `cabi_handlers` is empty off Windows, so this
-                // is a no-op there and for non-handler fn-addresses.
-                let sym = if self.cabi_handlers.contains_key(fname.as_str()) {
+                // reads the discriminant/payload from the register it expects.
+                let sym = if crate::emit::target_is_windows()
+                    && self.cabi_handlers.contains_key(fname.as_str())
+                {
                     format!("{fname}$cabi")
                 } else {
                     // Same mangling as the definition: a user function

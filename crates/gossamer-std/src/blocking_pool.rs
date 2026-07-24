@@ -12,7 +12,7 @@
 //! `4` threads; up to `2 * num_cpus` for I/O-heavy workloads. Pool
 //! size is fixed for the program's lifetime.
 //!
-//! Defense #3: the submit side is a `crossbeam_channel::bounded`
+//! The submit side is a `crossbeam_channel::bounded`
 //! channel sized at `4 * pool_size`. If the queue saturates,
 //! `run` blocks on `submit` instead of growing an unbounded backlog
 //! that would silently turn into RAM. This puts a hard cap on the

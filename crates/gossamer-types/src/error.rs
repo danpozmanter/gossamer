@@ -260,6 +260,28 @@ pub enum TypeError {
         /// Qualified combinator path, e.g. `iter::map`.
         combinator: String,
     },
+    /// A generic call returns a type parameter that cannot be inferred from
+    /// arguments, an expected `Result<T, E>`, or explicit turbofish syntax.
+    #[error(
+        "cannot infer type parameter `{param}` for `{callable}`; \
+         write `{callable}::<{param}>(...)` or assign to `Result<{param}, errors::Error>`"
+    )]
+    GenericReturnTypeUninferred {
+        /// Callable name shown in diagnostics.
+        callable: String,
+        /// Generic type parameter name.
+        param: String,
+    },
+    /// The `?` operator was applied to a value that is not a
+    /// `Result` or `Option`, or appeared outside a function returning
+    /// the same propagation family.
+    #[error("the `?` operator cannot be used in this context")]
+    QuestionMarkUnsupported {
+        /// Rendered type of the operand or enclosing return type.
+        ty: String,
+        /// Why the operator is unsupported at this position.
+        reason: String,
+    },
     /// `i128` / `u128` appeared in a type position, a literal
     /// suffix, or a cast target. The runtime's i64 value model has
     /// no 128-bit representation on any tier, so the checker
@@ -480,6 +502,8 @@ impl TypeError {
             Self::TraitBoundNotSatisfied { .. } => "trait-bound-not-satisfied",
             Self::TooManyVariants { .. } => "too-many-variants",
             Self::ClosureParamUninferred { .. } => "closure-param-uninferred",
+            Self::GenericReturnTypeUninferred { .. } => "generic-return-type-uninferred",
+            Self::QuestionMarkUnsupported { .. } => "question-mark-unsupported",
             Self::Int128Unsupported { .. } => "int128-unsupported",
             Self::StdFnValueUnsupported { .. } => "std-fn-value-unsupported",
             Self::IteratorStateFormatted => "iterator-state-formatted",
@@ -527,6 +551,8 @@ impl TypeError {
             Self::UnknownTraitBound { .. } => "GT0011",
             Self::TooManyVariants { .. } => "GT0012",
             Self::ClosureParamUninferred { .. } => "GT0013",
+            Self::GenericReturnTypeUninferred { .. } => "GT0044",
+            Self::QuestionMarkUnsupported { .. } => "GT0045",
             Self::Int128Unsupported { .. } => "GT0014",
             Self::StdFnValueUnsupported { .. } => "GT0015",
             Self::IteratorStateFormatted => "GT0041",
@@ -806,6 +832,21 @@ impl TypeDiagnostic {
             }
             TypeError::ClosureParamUninferred { combinator } => {
                 out = closure_param_diagnostic(out, combinator);
+            }
+            TypeError::GenericReturnTypeUninferred { callable, param } => {
+                out = out
+                    .with_help(format!(
+                        "write `{callable}::<{param}>(...)` or give the expression an expected `Result<{param}, errors::Error>` type"
+                    ))
+                    .with_note("the payload type does not appear in the call arguments");
+            }
+            TypeError::QuestionMarkUnsupported { reason, .. } => {
+                out = out
+                    .with_help(
+                        "use `?` on a `Result<T, E>` inside a function returning `Result<_, _>`, or on an `Option<T>` inside a function returning `Option<_>`"
+                            .to_string(),
+                    )
+                    .with_note(reason.clone());
             }
             TypeError::Int128Unsupported { ty } => out = int128_diagnostic(out, ty),
             TypeError::StdFnValueUnsupported { path } => {

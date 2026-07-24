@@ -594,7 +594,7 @@ pub fn debug_verify_body(body: &Body) {
 /// destinations, structural `i128::MIN` negation, struct aggregate
 /// operand counts).
 ///
-/// The cross-body call-arity check (#1) lives in [`verify_program`]
+/// The cross-body call-arity check lives in [`verify_program`]
 /// because a single body cannot look up its callees' declared
 /// arities; pass that entry point a slice of bodies and a `TyCtxt`
 /// to get the full coverage.

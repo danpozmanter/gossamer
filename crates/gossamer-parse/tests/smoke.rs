@@ -314,6 +314,28 @@ fn pipe_accepts_dotdot_as_range_argument() {
 }
 
 #[test]
+fn method_turbofish_shorthand_parses_only_before_calls() {
+    let source = concat!(
+        "struct Point { x: i64 }\n",
+        "fn main() {\n",
+        "    let left = Point { x: 1 }\n",
+        "    let right = Point { x: 2 }\n",
+        "    let a = \"12\".parse<i64>()\n",
+        "    let b = \"34\".parse::<i64>()\n",
+        "    let shorter = a.len < 3\n",
+        "    let ordered = left.x < right.x\n",
+        "}\n",
+    );
+    let mut map = SourceMap::new();
+    let file = map.add_file("method_turbofish.gos", source.to_string());
+    let (_sf, diags) = parse_source_file(source, file);
+    assert!(
+        diags.is_empty(),
+        "method turbofish shorthand and field comparisons should parse cleanly: {diags:?}"
+    );
+}
+
+#[test]
 fn format_macro_family_rejects_missing_and_unused_positional_arguments() {
     for macro_name in ["format", "println", "print", "eprintln", "eprint", "panic"] {
         for (template, expected, found) in [("one", 0, 1), ("{}", 1, 0)] {

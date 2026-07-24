@@ -1003,6 +1003,7 @@ pub const STDLIB_QUALIFIED: &[&str] = &[
     "strings::lines",
     "strings::pad_left",
     "strings::pad_right",
+    "strings::parse",
     "strings::repeat",
     "strings::replace",
     "strings::replacen",

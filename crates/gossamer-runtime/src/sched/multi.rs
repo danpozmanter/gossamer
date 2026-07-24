@@ -862,7 +862,7 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
     // same peer first, which would imbalance work.
     let mut steal_cursor = index.wrapping_add(1);
     // Publish this thread's pthread_t so the watchdog can pthread_kill
-    // a stuck worker (Defense #2). Released so the watchdog observes
+    // a stuck worker. Released so the watchdog observes
     // the value before it tries to use it.
     slot.thread_handle
         .store(crate::preempt::current_thread_handle(), Ordering::Release);
@@ -1052,7 +1052,7 @@ fn default_max_live() -> usize {
 /// [`crate::preempt::should_yield`] at safepoints and
 /// honour the request.
 ///
-/// Defense #2: when a worker has been running for more than
+/// When a worker has been running for more than
 /// `kill_threshold`, the watchdog also sends SIGURG to that worker's
 /// OS thread. The cooperative bump alone is silent if the worker is
 /// inside a tight C-side loop or a blocking syscall; the kernel

@@ -15,7 +15,7 @@
         <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/method_support/">
 
 
-        <link rel="prev" href="../core_method_contract/">
+        <link rel="prev" href="../prelude/">
 
 
         <link rel="next" href="../stdlib_coverage/">
@@ -29,7 +29,7 @@
 
 
 
-        <title>Method support - Gossamer</title>
+        <title>Methods by type - Gossamer</title>
 
 
 
@@ -82,7 +82,7 @@
     <div data-md-component="skip">
 
 
-        <a href="#method-support-reference" class="md-skip">
+        <a href="#methods-by-type" class="md-skip">
           Skip to content
         </a>
 
@@ -117,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
 
-              Method support
+              Methods by type
 
           </span>
         </div>
@@ -669,8 +669,6 @@
 
 
 
-
-
     <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
 
 
@@ -778,34 +776,6 @@
 
 
 
-    <li class="md-nav__item">
-      <a href="../core_method_contract/" class="md-nav__link">
-
-
-
-  <span class="md-ellipsis">
-
-
-    Core method contract
-
-
-
-  </span>
-
-
-
-      </a>
-    </li>
-
-
-
-
-
-
-
-
-
-
 
 
     <li class="md-nav__item md-nav__item--active">
@@ -823,7 +793,7 @@
   <span class="md-ellipsis">
 
 
-    Method support
+    Methods by type
 
 
 
@@ -841,7 +811,7 @@
   <span class="md-ellipsis">
 
 
-    Method support
+    Methods by type
 
 
 
@@ -911,10 +881,43 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#hashset" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        HashSet
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#vecdeque" class="md-nav__link">
     <span class="md-ellipsis">
 
         VecDeque
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#option" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Option
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#result" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Result
 
     </span>
   </a>
@@ -959,6 +962,17 @@
     <span class="md-ellipsis">
 
         Module-style functions
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#compatibility-apis" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Compatibility APIs
 
     </span>
   </a>
@@ -1994,10 +2008,43 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#hashset" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        HashSet
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#vecdeque" class="md-nav__link">
     <span class="md-ellipsis">
 
         VecDeque
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#option" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Option
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#result" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Result
 
     </span>
   </a>
@@ -2049,6 +2096,17 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#compatibility-apis" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Compatibility APIs
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#adding-a-method-to-the-dispatch-table" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -2087,16 +2145,20 @@
 
 
 
-<h1 id="method-support-reference">Method support reference<a class="headerlink" href="#method-support-reference" title="Permanent link">&para;</a></h1>
-<p>This page lists every method dispatched by name through the
-compiler's MIR table at
-<a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-mir/src/lower.rs"><code>crates/gossamer-mir/src/lower.rs</code></a>.
-Methods listed here resolve in <code>gos run</code> (interpreter) and in
-<code>gos build [--release]</code> (compiled).</p>
+<h1 id="methods-by-type">Methods by type<a class="headerlink" href="#methods-by-type" title="Permanent link">&para;</a></h1>
+<p>This page is the source-facing reference for inherent methods on core
+types such as <code>String</code>, <code>Vec</code>, <code>HashMap</code>, <code>HashSet</code>, <code>Option</code>, and
+<code>Result</code>.</p>
+<p>Items listed here resolve in <code>gos run</code> (interpreter), forced-JIT execution,
+and <code>gos build [--release]</code> (compiled) unless a row explicitly says
+otherwise. The implementation contract is that interpreter builtins, MIR
+lowering, compiled runtime ABI, docs, and parity tests all agree.</p>
+<p>Most methods below dispatch by name through the compiler's MIR table at
+<a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-mir/src/lower.rs"><code>crates/gossamer-mir/src/lower.rs</code></a>.</p>
 <p>If a method you expect is not listed, the compiler will emit a
 <code>CallIntrinsic{name:"unsupported"}</code> MIR node and the codegen
-will refuse to emit it. File an issue with the call shape; most
-gaps are one-line additions to the dispatch table.</p>
+will refuse to emit it. Report the call shape; most gaps are small
+dispatch-table additions.</p>
 <h2 id="string">String<a class="headerlink" href="#string" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -2231,6 +2293,11 @@ gaps are one-line additions to the dispatch table.</p>
 <td><code>s.as_str()</code></td>
 <td><code>&amp;str</code></td>
 <td>Zero-copy borrow.</td>
+</tr>
+<tr>
+<td><code>s.parse&lt;T&gt;()</code> / <code>s.parse::&lt;T&gt;()</code></td>
+<td><code>Result&lt;T, errors::Error&gt;</code></td>
+<td>Parses into the expected result type, such as <code>let n: i64 = s.parse()?</code>.</td>
 </tr>
 <tr>
 <td><code>s.to_i64()</code></td>
@@ -2505,11 +2572,6 @@ yields pairs in ascending key order.</p>
 <td>Key-membership test.</td>
 </tr>
 <tr>
-<td><code>m.remove(k)</code></td>
-<td><code>()</code></td>
-<td>Deletes the key in place.</td>
-</tr>
-<tr>
 <td><code>m.len()</code></td>
 <td><code>i64</code></td>
 <td></td>
@@ -2518,6 +2580,78 @@ yields pairs in ascending key order.</p>
 <td><code>m.iter()</code></td>
 <td><code>[(K, V)]</code></td>
 <td>Yields pairs in ascending key order.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="hashset">HashSet<a class="headerlink" href="#hashset" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Returns</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>s.insert(v)</code></td>
+<td><code>()</code></td>
+<td>Inserts the value in place.</td>
+</tr>
+<tr>
+<td><code>s.contains(v)</code></td>
+<td><code>bool</code></td>
+<td>Membership test.</td>
+</tr>
+<tr>
+<td><code>s.remove(v)</code></td>
+<td><code>()</code></td>
+<td>Deletes the value in place.</td>
+</tr>
+<tr>
+<td><code>s.len()</code></td>
+<td><code>i64</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>s.clear()</code></td>
+<td><code>()</code></td>
+<td>Removes all values.</td>
+</tr>
+<tr>
+<td><code>s.to_vec()</code></td>
+<td><code>[T]</code></td>
+<td>Materialises the set values.</td>
+</tr>
+<tr>
+<td><code>s.union(other)</code></td>
+<td><code>HashSet&lt;T&gt;</code></td>
+<td>Set union.</td>
+</tr>
+<tr>
+<td><code>s.intersection(other)</code></td>
+<td><code>HashSet&lt;T&gt;</code></td>
+<td>Shared values.</td>
+</tr>
+<tr>
+<td><code>s.difference(other)</code></td>
+<td><code>HashSet&lt;T&gt;</code></td>
+<td>Values present only in <code>s</code>.</td>
+</tr>
+<tr>
+<td><code>s.symmetric_difference(other)</code></td>
+<td><code>HashSet&lt;T&gt;</code></td>
+<td>Values present in exactly one set.</td>
+</tr>
+<tr>
+<td><code>s.is_subset(other)</code> / <code>s.is_superset(other)</code></td>
+<td><code>bool</code></td>
+<td>Inclusion checks.</td>
+</tr>
+<tr>
+<td><code>s.is_disjoint(other)</code></td>
+<td><code>bool</code></td>
+<td>True when the sets share no values.</td>
 </tr>
 </tbody>
 </table>
@@ -2572,6 +2706,145 @@ constant-time. The pop / peek methods return <code>Option</code>.</p>
 <td><code>d.is_empty()</code></td>
 <td><code>bool</code></td>
 <td></td>
+</tr>
+</tbody>
+</table>
+<h2 id="option">Option<a class="headerlink" href="#option" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Returns</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>o.is_some()</code> / <code>o.is_none()</code></td>
+<td><code>bool</code></td>
+<td>Variant checks.</td>
+</tr>
+<tr>
+<td><code>o.unwrap()</code></td>
+<td><code>T</code></td>
+<td>Returns the payload or panics.</td>
+</tr>
+<tr>
+<td><code>o.expect(message)</code></td>
+<td><code>T</code></td>
+<td>Returns the payload or panics with <code>message</code>.</td>
+</tr>
+<tr>
+<td><code>o.unwrap_or(default)</code></td>
+<td><code>T</code></td>
+<td>Fallback value for <code>None</code>.</td>
+</tr>
+<tr>
+<td><code>o.unwrap_or_else(f)</code></td>
+<td><code>T</code></td>
+<td>Lazy fallback for <code>None</code>.</td>
+</tr>
+<tr>
+<td><code>o.map(f)</code></td>
+<td><code>Option&lt;U&gt;</code></td>
+<td>Maps the payload when present.</td>
+</tr>
+<tr>
+<td><code>o.and_then(f)</code></td>
+<td><code>Option&lt;U&gt;</code></td>
+<td>Flat-map over the payload.</td>
+</tr>
+<tr>
+<td><code>o.filter(pred)</code></td>
+<td><code>Option&lt;T&gt;</code></td>
+<td>Keeps <code>Some</code> only when the predicate accepts the payload.</td>
+</tr>
+<tr>
+<td><code>o.or(other)</code> / <code>o.or_else(f)</code></td>
+<td><code>Option&lt;T&gt;</code></td>
+<td>Fallback option.</td>
+</tr>
+<tr>
+<td><code>o.ok_or(err)</code> / <code>o.ok_or_else(f)</code></td>
+<td><code>Result&lt;T, E&gt;</code></td>
+<td>Converts absence into an error.</td>
+</tr>
+<tr>
+<td><code>o.flatten()</code></td>
+<td><code>Option&lt;T&gt;</code></td>
+<td>Collapses <code>Option&lt;Option&lt;T&gt;&gt;</code> one level.</td>
+</tr>
+<tr>
+<td><code>o.zip(other)</code></td>
+<td><code>Option&lt;(T, U)&gt;</code></td>
+<td>Pairs two present payloads.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="result">Result<a class="headerlink" href="#result" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Returns</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>r.is_ok()</code> / <code>r.is_err()</code></td>
+<td><code>bool</code></td>
+<td>Variant checks.</td>
+</tr>
+<tr>
+<td><code>r.unwrap()</code></td>
+<td><code>T</code></td>
+<td>Returns <code>Ok</code> or panics.</td>
+</tr>
+<tr>
+<td><code>r.expect(message)</code></td>
+<td><code>T</code></td>
+<td>Returns <code>Ok</code> or panics with <code>message</code>.</td>
+</tr>
+<tr>
+<td><code>r.unwrap_or(default)</code></td>
+<td><code>T</code></td>
+<td>Fallback value for <code>Err</code>.</td>
+</tr>
+<tr>
+<td><code>r.unwrap_or_else(f)</code></td>
+<td><code>T</code></td>
+<td>Lazy fallback for <code>Err</code>.</td>
+</tr>
+<tr>
+<td><code>r.map(f)</code></td>
+<td><code>Result&lt;U, E&gt;</code></td>
+<td>Maps the <code>Ok</code> payload.</td>
+</tr>
+<tr>
+<td><code>r.map_err(f)</code></td>
+<td><code>Result&lt;T, F&gt;</code></td>
+<td>Maps the <code>Err</code> payload.</td>
+</tr>
+<tr>
+<td><code>r.and_then(f)</code></td>
+<td><code>Result&lt;U, E&gt;</code></td>
+<td>Flat-map over the <code>Ok</code> payload.</td>
+</tr>
+<tr>
+<td><code>r.or_else(f)</code></td>
+<td><code>Result&lt;T, F&gt;</code></td>
+<td>Recovers from <code>Err</code>.</td>
+</tr>
+<tr>
+<td><code>r.ok()</code> / <code>r.err()</code></td>
+<td><code>Option&lt;_&gt;</code></td>
+<td>Extracts one side as an option.</td>
+</tr>
+<tr>
+<td><code>r.transpose()</code></td>
+<td><code>Option&lt;Result&lt;T, E&gt;&gt;</code></td>
+<td>Converts <code>Result&lt;Option&lt;T&gt;, E&gt;</code>.</td>
 </tr>
 </tbody>
 </table>
@@ -2774,6 +3047,11 @@ goroutine fan-out:</p>
 <h2 id="module-style-functions">Module-style functions<a class="headerlink" href="#module-style-functions" title="Permanent link">&para;</a></h2>
 <p>Functions accessed through <code>use std::module</code> paths (not method
 calls) are listed in <a href="../stdlib_coverage/"><code>stdlib_coverage.md</code></a>.</p>
+<h2 id="compatibility-apis">Compatibility APIs<a class="headerlink" href="#compatibility-apis" title="Permanent link">&para;</a></h2>
+<p>Some older container helpers still return sentinel values such as <code>0</code>,
+<code>-1</code>, or an empty string for absence or failure. New core APIs should
+prefer <code>Option&lt;T&gt;</code> or <code>Result&lt;T, errors::Error&gt;</code>. Existing sentinel helpers
+remain compatibility aliases until their callers have migrated.</p>
 <h2 id="adding-a-method-to-the-dispatch-table">Adding a method to the dispatch table<a class="headerlink" href="#adding-a-method-to-the-dispatch-table" title="Permanent link">&para;</a></h2>
 <p>If you need a method that isn't listed:</p>
 <ol>
@@ -2799,7 +3077,8 @@ dispatch table, (b) the LLVM declarations, (c) the interpreter
 builtins, is a bug.</p>
 <h2 id="cross-references">Cross-references<a class="headerlink" href="#cross-references" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="../stdlib/"><code>stdlib.md</code></a> - module index.</li>
+<li><a href="../stdlib/"><code>stdlib/index.md</code></a> - module landing page.</li>
+<li><a href="../stdlib/"><code>stdlib.md</code></a> - full generated stdlib overview.</li>
 <li><a href="../stdlib_coverage/"><code>stdlib_coverage.md</code></a> - auto-generated
   coverage matrix.</li>
 <li><a href="../codegen_abi/"><code>codegen_abi.md</code></a> - generic call ABI.</li>

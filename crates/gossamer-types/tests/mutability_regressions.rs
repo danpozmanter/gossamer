@@ -199,11 +199,11 @@ fn shared_reference_in_any_auto_deref_layer_blocks_writes() {
             "struct Point { x: i64 }\nfn main() { let mut point = Point { x: 1 }\n let shared = &point\n shared.x = 9 }",
         ),
         (
-            "issue 49 mutable reference around shared array reference",
+            "mutable reference around shared array reference",
             "fn main() { let values = [1, 2]\n let mut shared = &values\n let outer = &mut shared\n outer[0] = 9 }",
         ),
         (
-            "parenthesized issue 49 projection",
+            "parenthesized shared-reference projection",
             "fn main() { let values = [1, 2]\n let mut shared = &values\n let outer = &mut shared\n (*outer)[0] = 9 }",
         ),
         (
@@ -278,7 +278,7 @@ fn immutable_bindings_cannot_reach_mutation_through_calls() {
             ExpectedError::ImmutableBinding,
         ),
         (
-            "built-in mutation through issue 49 reference chain",
+            "built-in mutation through shared-reference chain",
             "fn main() { let values: Vec<i64> = [1, 2]\n let mut shared = &values\n let outer = &mut shared\n outer.push(3) }",
             ExpectedError::SharedReference,
         ),

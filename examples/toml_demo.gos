@@ -7,8 +7,9 @@
  */
 
 use std::encoding::toml
+use std::errors
 
-fn main() {
+fn main() -> Result<(), errors::Error> {
     let config = "port = 8080\nhost = \"localhost\"\nverbose = true\n"
 
     println!("valid: {}", toml::is_valid(&config))
@@ -23,4 +24,5 @@ fn main() {
 
     let pp = toml::pretty(&config)?
     println!("pretty contains host: {}", pp.contains("host"))
+    Ok(())
 }

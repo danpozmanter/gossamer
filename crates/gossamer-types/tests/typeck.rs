@@ -1115,6 +1115,30 @@ fn piped_result_default_with_closure_param_pins_to_err_type() {
 }
 
 #[test]
+fn result_rejects_option_only_methods() {
+    let checked = run("fn main() { let v = \"12\".parse::<i64>().ok_or(\"missing\") }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            d.error,
+            TypeError::UnresolvedMethod { ref ty, ref name }
+                if ty == "Result" && name == "ok_or"
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn raw_stdlib_result_helpers_support_question_mark() {
+    let checked = run("use std::errors\n\
+         fn load(path: String) -> Result<i64, errors::Error> {\n\
+             let (size, is_file, is_dir, is_symlink, readonly, modified) = __gos_fs_metadata_raw(path)?\n\
+             Ok(size)\n\
+         }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
 fn unknown_std_combinator_with_closure_errors_loudly() {
     // `iter::mystery` has no checker signature row. A closure passed
     // there is uninferrable, which the compiled tiers would render as
@@ -1900,7 +1924,7 @@ fn string_slice_rejects_a_duplicate_receiver_argument() {
             ))
             .count(),
         2,
-        "the closure form from issue #36 must reject the duplicate receiver too: {d:?}"
+        "the closure form must reject the duplicate receiver too: {d:?}"
     );
 }
 
@@ -1927,6 +1951,94 @@ fn strings_free_calls_enforce_complete_arity() {
             TypeError::CallArityMismatch { ref callee, .. } if callee == "strings::slice"
         )),
         "valid string slice must retain its three-argument contract: {d:?}"
+    );
+}
+
+#[test]
+fn string_parse_requires_payload_type_when_result_is_unexpected() {
+    let d = diagnostics_for(
+        "use std::strings\n\
+         use std::errors\n\
+         fn main() {\n\
+         let good_a: Result<i64, errors::Error> = \"12\".parse()\n\
+         let good_b: Result<i64, errors::Error> = strings::parse(\"34\")\n\
+         let missing_a = \"56\".parse()\n\
+         let missing_b = strings::parse(\"78\")\n\
+         }\n",
+    );
+    let uninferred = d
+        .iter()
+        .filter(|diag| matches!(diag.error, TypeError::GenericReturnTypeUninferred { .. }))
+        .count();
+    assert_eq!(
+        uninferred, 2,
+        "untyped parse calls must require a concrete payload type: {d:?}"
+    );
+}
+
+#[test]
+fn string_parse_missing_question_mark_uses_assignment_type_as_payload_hint() {
+    let d = diagnostics_for(
+        "use std::strings\n\
+         fn main() {\n\
+         let bad_a: u8 = \"12\".parse()\n\
+         let bad_b: u8 = strings::parse(\"34\")\n\
+         }\n",
+    );
+    let mismatches = d
+        .iter()
+        .filter(|diag| {
+            matches!(
+                &diag.error,
+                TypeError::TypeMismatch { expected, found }
+                    if expected == "u8" && found == "Result<u8, errors::Error>"
+            )
+        })
+        .count();
+    assert_eq!(
+        mismatches, 2,
+        "missing-question-mark parse diagnostics must use the concrete target payload: {d:?}"
+    );
+}
+
+#[test]
+fn question_mark_requires_result_or_option_context() {
+    let invalid_operand = diagnostics_for(
+        "use std::errors\n\
+         fn main() -> Result<i64, errors::Error> {\n\
+         \"12\"?\n\
+         }\n",
+    );
+    assert!(
+        invalid_operand
+            .iter()
+            .any(|diag| matches!(diag.error, TypeError::QuestionMarkUnsupported { .. })),
+        "question mark on a string must be rejected before lowering: {invalid_operand:?}"
+    );
+
+    let unit_function = diagnostics_for(
+        "use std::errors\n\
+         fn main() {\n\
+         let bad: u8 = \"12\".parse()?\n\
+         }\n",
+    );
+    assert!(
+        unit_function
+            .iter()
+            .any(|diag| matches!(diag.error, TypeError::QuestionMarkUnsupported { .. })),
+        "question mark in a unit-returning function must be rejected: {unit_function:?}"
+    );
+
+    let valid = diagnostics_for(
+        "use std::errors\n\
+         fn parse_one() -> Result<u8, errors::Error> {\n\
+         let value: u8 = \"12\".parse()?\n\
+         Ok(value)\n\
+         }\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "valid result propagation failed: {valid:?}"
     );
 }
 
@@ -1989,7 +2101,7 @@ fn named_string_argument_mismatch_includes_the_actual_literal_value() {
 }
 
 #[test]
-fn strings_count_issue_27_reports_exact_parameter_types_and_names() {
+fn strings_count_reports_exact_parameter_types_and_names() {
     let d = diagnostics_for(
         "use std::strings\n\
          fn main() {\n\
@@ -2030,7 +2142,7 @@ fn strings_count_issue_27_reports_exact_parameter_types_and_names() {
                 "1"
             ),
         ],
-        "issue 27 diagnostics must match the source-facing signature: {d:?}"
+        "diagnostics must match the source-facing signature: {d:?}"
     );
 }
 
@@ -2286,4 +2398,20 @@ fn index_on_struct_with_impl_is_accepted() {
          fn main() { let a = P { x: 1 }\nprintln!(\"{}\", a[0]) }\n",
     );
     assert!(!has_code(&d, "GT0021"), "{d:?}");
+}
+
+#[test]
+fn flag_set_parse_supports_question_mark() {
+    let d = diagnostics_for(
+        "use std::env\n\
+         use std::errors\n\
+         use std::flag\n\
+         fn main() -> Result<(), errors::Error> {\n\
+         let mut fs = flag::Set::new(\"demo\")\n\
+         let rest = fs.parse(env::args())?\n\
+         println!(\"{}\", rest.len())\n\
+         Ok(())\n\
+         }\n",
+    );
+    assert!(!has_code(&d, "GT0045"), "{d:?}");
 }

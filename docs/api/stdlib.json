@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "gossamer_version": "0.33.5",
+  "gossamer_version": "0.33.6",
   "entries": [
     {
       "id": "std-archive-tar-TarEntry",
@@ -13593,6 +13593,25 @@
       "kind": "function",
       "signature": "fn pad_right(text: String, width: i64, fill: char) -> String",
       "description": "Right-pads to `width` with the given character.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdstrings",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-strings-parse",
+      "name": "std::strings::parse",
+      "kind": "function",
+      "signature": "fn parse<T>(text: String) -> Result<T, errors::Error>",
+      "description": "Parses the string into the expected Result payload type.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

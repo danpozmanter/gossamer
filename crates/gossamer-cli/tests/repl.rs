@@ -151,9 +151,8 @@ fn repl_decodes_byte_string_literals_without_prefix_or_quotes() {
 
 #[test]
 fn repl_mutable_assignment_persists_across_lines() {
-    // Regression (issue #14): reassigning a `let mut` binding from an earlier
-    // input was applied in a throwaway frame and discarded, so a later read
-    // still saw the original value.
+    // Reassigning a `let mut` binding from an earlier input must update the
+    // persisted frame so a later read sees the new value.
     let out = run_repl("let mut name = \"Steven\"\nname = \"Mark\"\nname\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
@@ -241,7 +240,7 @@ fn repl_reference_rebind_to_temporary_does_not_mutate_old_referent() {
 }
 
 #[test]
-fn repl_issue_49_cannot_mutate_immutable_value_through_mutable_reference_chain() {
+fn repl_cannot_mutate_immutable_value_through_mutable_reference_chain() {
     let out = run_repl(
         "let a = [1, 2]\n\
          let mut b = &a\n\
@@ -253,7 +252,7 @@ fn repl_issue_49_cannot_mutate_immutable_value_through_mutable_reference_chain()
     assert!(
         out.stderr
             .contains("cannot assign through shared reference `c`"),
-        "issue #49 write must be rejected as a shared-reference violation: {}",
+        "write must be rejected as a shared-reference violation: {}",
         out.stderr
     );
     assert!(
@@ -787,7 +786,7 @@ fn repl_iter_receiver_methods_pipe_dotdot_and_range_index_work() {
     ] {
         assert!(
             out.stdout.contains(expected),
-            "missing `{expected}` from issue 44 regression output: {}",
+            "missing `{expected}` from iterator regression output: {}",
             out.stdout
         );
     }
@@ -922,9 +921,10 @@ fn repl_meta_help_ls_and_find_cover_core_string_parse() {
     let out = run_repl(
         "%help string::parse\n\
          %help String::parse\n\
+         %help strings::parse\n\
          %ls string\n\
          %find String::parse\n\
-         \"123\".parse()\n",
+         \"123\".parse<i64>()\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
@@ -939,6 +939,14 @@ fn repl_meta_help_ls_and_find_cover_core_string_parse() {
         out.stdout
     );
     assert!(
+        out.stdout.contains("std::strings::parse [fn]")
+            && out
+                .stdout
+                .contains("fn parse<T>(text: String) -> Result<T, errors::Error>"),
+        "expected strings::parse help; stdout: {}",
+        out.stdout
+    );
+    assert!(
         out.stdout.contains("String::parse")
             && out
                 .stdout
@@ -950,6 +958,59 @@ fn repl_meta_help_ls_and_find_cover_core_string_parse() {
         out.stdout.contains("Out[1]: Ok(123)"),
         "existing String::parse execution must still work; stdout: {}",
         out.stdout
+    );
+}
+
+#[test]
+fn repl_string_parse_turbofish_forms_typecheck_without_bool_diagnostics() {
+    let out = run_repl(
+        "use std::strings\n\
+         use std::errors\n\
+         let a: Result<i64, errors::Error> = \"12\".parse<i64>()\n\
+         let b: Result<i64, errors::Error> = \"34\".parse::<i64>()\n\
+         let c: Result<i64, errors::Error> = strings::parse::<i64>(\"56\")\n\
+         a\n\
+         b\n\
+         c\n\
+         let bad: i64 = \"78\".parse<i64>()\n\
+         let bad_u8: u8 = \"90\".parse<u8>()\n\
+         let bad_plain: u8 = \"91\".parse()\n\
+         let missing = \"92\".parse()\n\
+         let missing_free = strings::parse(\"93\")\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Out[6]: Ok(12)")
+            && out.stdout.contains("Out[7]: Ok(34)")
+            && out.stdout.contains("Out[8]: Ok(56)"),
+        "parse turbofish forms did not evaluate as Result values; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stderr
+            .contains("expected `i64`, found `Result<i64, errors::Error>`"),
+        "missing Result mismatch for assignment without `?`; stderr: {}",
+        out.stderr
+    );
+    assert!(
+        out.stderr
+            .contains("expected `u8`, found `Result<u8, errors::Error>`"),
+        "missing Result mismatch for u8 assignment; stderr: {}",
+        out.stderr
+    );
+    assert!(
+        out.stderr
+            .contains("cannot infer type parameter `T` for `String::parse`")
+            && out
+                .stderr
+                .contains("cannot infer type parameter `T` for `strings::parse`"),
+        "untyped parse calls must be rejected; stderr: {}",
+        out.stderr
+    );
+    assert!(
+        !out.stderr.contains("expected `bool`"),
+        "parse turbofish regressed into comparison parsing; stderr: {}",
+        out.stderr
     );
 }
 
@@ -1032,6 +1093,29 @@ fn repl_meta_help_covers_builtin_receiver_types() {
     assert!(
         out.stderr.is_empty(),
         "builtin receiver metadata lookups should not fail: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn repl_question_mark_rejects_invalid_contexts_before_execution() {
+    let out = run_repl(
+        "let bad_operand = \"12\"?.parse()\n\
+         let bad_context: u8 = \"12\".parse()?\n\
+         let malformed u8 = \"12\".parse()?\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr
+            .matches("the `?` operator cannot be used in this context")
+            .count()
+            >= 2,
+        "invalid question-mark uses must be type errors; stderr: {}",
+        out.stderr
+    );
+    assert!(
+        !out.stderr.contains("GX0005") && !out.stderr.contains("GX0007"),
+        "invalid question-mark uses must not reach runtime errors; stderr: {}",
         out.stderr
     );
 }

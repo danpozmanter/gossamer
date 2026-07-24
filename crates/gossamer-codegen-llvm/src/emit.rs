@@ -668,11 +668,12 @@ fn render_chunk_module(
     let mut chunk_fallback_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut main_idx: Option<usize> = None;
 
-    // Win64 handler-return ABI bridge: user functions whose address is
+    // Handler ABI bridge: user functions whose address is
     // handed to a runtime server-start shim are called by the rustc
     // runtime through `extern "C" fn(..) -> i128` (xmm0 return), so their
     // `gos_fn_addr` must point at a `<16 x i8>` return thunk. Empty off
-    // Windows - the GP-register-pair `i128` already agrees there.
+    // Windows for return thunks, but the collected set is still used by
+    // function setup to bind raw runtime pointer params correctly.
     let cabi_handlers = collect_cabi_handlers(ctx.all_bodies);
 
     for &idx in chunk_indices {
@@ -806,26 +807,27 @@ fn render_chunk_module(
         }
     }
 
-    // Win64 handler-return thunks (`name$cabi`): emitted as a plain `define`
-    // in the one chunk that owns the handler body, and as an extern `declare`
-    // in every other chunk. Emitting `linkonce_odr` in every chunk would work
-    // on ELF (which deduplicates `linkonce_odr` implicitly), but lld-link
-    // (COFF/PE, Windows) requires an explicit COMDAT section for dedup and
-    // treats bare `linkonce_odr` as a duplicate strong symbol error.
-    // Empty (no iterations) off Windows.
-    for (name, arity) in &cabi_handlers {
-        let handler_idx = ctx.all_bodies.iter().position(|b| b.name == *name);
-        let owns_handler = handler_idx.is_some_and(|i| chunk_set.contains(&i));
-        if owns_handler {
-            out.push_str(&render_cabi_handler_thunk(name, *arity));
-        } else {
-            let param_list = (0..*arity)
-                .map(|_| "ptr".to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            writeln!(out, "declare <16 x i8> @\"{name}$cabi\"({param_list})").unwrap();
+    if target_is_windows() {
+        // Win64 handler-return thunks (`name$cabi`): emitted as a plain `define`
+        // in the one chunk that owns the handler body, and as an extern `declare`
+        // in every other chunk. Emitting `linkonce_odr` in every chunk would work
+        // on ELF (which deduplicates `linkonce_odr` implicitly), but lld-link
+        // (COFF/PE, Windows) requires an explicit COMDAT section for dedup and
+        // treats bare `linkonce_odr` as a duplicate strong symbol error.
+        for (name, arity) in &cabi_handlers {
+            let handler_idx = ctx.all_bodies.iter().position(|b| b.name == *name);
+            let owns_handler = handler_idx.is_some_and(|i| chunk_set.contains(&i));
+            if owns_handler {
+                out.push_str(&render_cabi_handler_thunk(name, *arity));
+            } else {
+                let param_list = (0..*arity)
+                    .map(|_| "ptr".to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                writeln!(out, "declare <16 x i8> @\"{name}$cabi\"({param_list})").unwrap();
+            }
+            writeln!(out).unwrap();
         }
-        writeln!(out).unwrap();
     }
 
     // C `@main` shim lives in the chunk that owns `main`. Emitted whether
@@ -1854,10 +1856,9 @@ fn resolve_env_slot0_fn(body: &Body, env_local: gossamer_mir::Local) -> Option<S
 /// mapped to the fn-addr argument's position in the shim's signature.
 /// Every stored callback crosses the rustc/LLVM i128-return boundary,
 /// so on Win64 it must be registered through its `<16 x i8>` `$cabi`
-/// thunk. A runtime shim that gains an i128-returning callback arg
-/// MUST be listed here: an unlisted registration hands the runtime a
-/// GP-pair-returning address that the rustc side reads from xmm0,
-/// so every request through that handler faults.
+/// thunk. On every target the collected names also identify functions
+/// entered directly from the Rust runtime, whose opaque request params
+/// arrive as raw pointers.
 const CABI_HANDLER_REGISTRATIONS: &[(&str, usize)] = &[
     ("gos_rt_http2_bind_and_run_h2c", 2),
     ("gos_rt_http3_serve", 4),
@@ -1890,14 +1891,10 @@ const CABI_HANDLER_REGISTRATIONS: &[(&str, usize)] = &[
 /// blob passed to the helper). The Win64 ABI returns the 2-word `i128` in xmm0,
 /// but a gossamer `define i128`/`ret i128` returns it in the GP-register pair,
 /// so each collected function needs a `<16 x i8>` return thunk taken in place
-/// of its raw address. Returns an empty map off Windows, where both sides
-/// already agree on the GP pair.
+/// of its raw address on that target.
 fn collect_cabi_handlers(all_bodies: &[Body]) -> std::collections::BTreeMap<String, usize> {
     use gossamer_mir::{ConstValue, Operand, Terminator};
     let mut handlers = std::collections::BTreeMap::new();
-    if !target_is_windows() {
-        return handlers;
-    }
     let arity_of = |name: &str| -> usize {
         all_bodies
             .iter()

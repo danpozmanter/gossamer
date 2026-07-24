@@ -389,24 +389,31 @@ fn block_reassigns(block: &Block, target: &str) -> bool {
         // counting them keeps the lint free of false positives on
         // receiver-mutating APIs.
         match &expr.kind {
-            ExprKind::Assign { place, .. } if path_is(place, target) => found = true,
-            ExprKind::MethodCall { receiver, .. } if path_is(receiver, target) => found = true,
+            ExprKind::Assign { place, .. } if place_root_is(place, target) => found = true,
+            ExprKind::MethodCall { receiver, .. } if place_root_is(receiver, target) => {
+                found = true;
+            }
             ExprKind::Unary {
                 op: UnaryOp::RefMut,
                 operand,
-            } if path_is(operand, target) => found = true,
+            } if place_root_is(operand, target) => found = true,
             _ => {}
         }
     });
     found
 }
 
-/// `true` when `expr` is a bare path whose first segment is `target`.
-fn path_is(expr: &Expr, target: &str) -> bool {
-    if let ExprKind::Path(path) = &expr.kind {
-        path.segments.first().is_some_and(|s| s.name.name == target)
-    } else {
-        false
+/// `true` when `expr` is a place rooted at `target`.
+fn place_root_is(expr: &Expr, target: &str) -> bool {
+    match &expr.kind {
+        ExprKind::Path(path) => path.segments.first().is_some_and(|s| s.name.name == target),
+        ExprKind::FieldAccess { receiver, .. } => place_root_is(receiver, target),
+        ExprKind::Index { base, .. } => place_root_is(base, target),
+        ExprKind::Unary {
+            op: UnaryOp::Deref,
+            operand,
+        } => place_root_is(operand, target),
+        _ => false,
     }
 }
 

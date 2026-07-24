@@ -667,8 +667,6 @@
 
 
 
-
-
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -777,34 +775,6 @@
 
 
     <li class="md-nav__item">
-      <a href="../../core_method_contract/" class="md-nav__link">
-
-
-
-  <span class="md-ellipsis">
-
-
-    Core method contract
-
-
-
-  </span>
-
-
-
-      </a>
-    </li>
-
-
-
-
-
-
-
-
-
-
-    <li class="md-nav__item">
       <a href="../../method_support/" class="md-nav__link">
 
 
@@ -812,7 +782,7 @@
   <span class="md-ellipsis">
 
 
-    Method support
+    Methods by type
 
 
 
@@ -1511,6 +1481,28 @@
     <span class="md-ellipsis">
 
         GT0005
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gt0044" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GT0044
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gt0045" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GT0045
 
     </span>
   </a>
@@ -2720,6 +2712,28 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#gt0044" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GT0044
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gt0045" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GT0045
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#gk0001" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -2967,6 +2981,16 @@ version. This page is auto-generated from the catalogue in
 <td>non-primitive cast</td>
 </tr>
 <tr>
+<td><a href="#gt0044"><code>GT0044</code></a></td>
+<td>Types</td>
+<td>generic return type not inferred</td>
+</tr>
+<tr>
+<td><a href="#gt0045"><code>GT0045</code></a></td>
+<td>Types</td>
+<td>question mark not supported here</td>
+</tr>
+<tr>
 <td><a href="#gk0001"><code>GK0001</code></a></td>
 <td>Package manager</td>
 <td>manifest parse error</td>
@@ -3093,6 +3117,12 @@ version. This page is auto-generated from the catalogue in
 <h2 id="gt0005"><code>GT0005</code> <a id="gt0005"></a><a class="headerlink" href="#gt0005" title="Permanent link">&para;</a></h2>
 <p><strong>Types</strong> - non-primitive cast</p>
 <p>The <code>as</code> cast is restricted to a whitelist: numeric ↔ numeric, <code>bool</code>/<code>char</code> → integer, <code>u8</code> → <code>char</code>, and same-type no-ops. Struct / enum / String sources are rejected. Use a conversion method when you need serialisation; <code>as</code> does not run code.</p>
+<h2 id="gt0044"><code>GT0044</code> <a id="gt0044"></a><a class="headerlink" href="#gt0044" title="Permanent link">&para;</a></h2>
+<p><strong>Types</strong> - generic return type not inferred</p>
+<p>A generic return payload cannot be inferred from call arguments alone. Add an explicit generic argument or assign the expression to an expected <code>Result</code> type.</p>
+<h2 id="gt0045"><code>GT0045</code> <a id="gt0045"></a><a class="headerlink" href="#gt0045" title="Permanent link">&para;</a></h2>
+<p><strong>Types</strong> - question mark not supported here</p>
+<p>The <code>?</code> operator can only unwrap <code>Result</code> inside a <code>Result</code>-returning function or <code>Option</code> inside an <code>Option</code>-returning function.</p>
 <h2 id="gk0001"><code>GK0001</code> <a id="gk0001"></a><a class="headerlink" href="#gk0001" title="Permanent link">&para;</a></h2>
 <p><strong>Package manager</strong> - manifest parse error</p>
 <p>The package manifest (<code>gos.toml</code>) could not be parsed. Check the TOML syntax and required fields.</p>

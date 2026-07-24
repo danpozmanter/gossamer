@@ -259,6 +259,7 @@ impl<'a> Lowerer<'a> {
         // the word out). Multi-slot aggregates (`slot_count = Some`) are always
         // by-pointer, so both memcpy.
         let is_closure = self.body.name.starts_with("__closure");
+        let is_runtime_handler = self.cabi_handlers.contains_key(&self.body.name);
         for i in 0..self.body.arity {
             let local = Local(i + 1);
             let local_ty = self.body.local_ty(local);
@@ -266,10 +267,13 @@ impl<'a> Lowerer<'a> {
                 continue;
             }
             let slot = local_slot(local);
-            let by_pointer = is_aggregate(self.tcx, local_ty)
-                && (slot_count(self.tcx, local_ty).is_some() || !is_closure);
+            let aggregate = is_aggregate(self.tcx, local_ty);
+            let slots = slot_count(self.tcx, local_ty);
+            let raw_runtime_handler_param = is_runtime_handler && aggregate && slots.is_none();
+            let by_pointer =
+                aggregate && !raw_runtime_handler_param && (slots.is_some() || !is_closure);
             if by_pointer {
-                let bytes = u64::from(slot_count(self.tcx, local_ty).unwrap_or(1).max(1)) * 8;
+                let bytes = u64::from(slots.unwrap_or(1).max(1)) * 8;
                 writeln!(
                     self.out,
                     "  call void @llvm.memcpy.p0.p0.i64(ptr {slot}, ptr %p{i}, i64 {bytes}, i1 false)"

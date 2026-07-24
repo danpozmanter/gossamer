@@ -814,6 +814,15 @@ impl<'a> Builder<'a> {
         })
     }
 
+    pub(crate) fn flag_set_ty(&mut self) -> Ty {
+        let def = gossamer_resolve::DefId::local(u32::MAX - 21);
+        self.tcx.register_def_name(def, "flag::Set");
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def,
+            substs: gossamer_types::Substs::new(),
+        })
+    }
+
     /// Element type of a `Vec<T>` / `[T]` receiver (peeling a leading
     /// `&` borrow), falling back to `i64` when the receiver is not a
     /// vec/slice. Lets the safe Vec helpers (`slice` / `insert` /

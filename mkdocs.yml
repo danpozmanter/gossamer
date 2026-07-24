@@ -75,8 +75,7 @@ nav:
       - stdlib/index.md
       - Overview: stdlib.md
       - Prelude (no imports): prelude.md
-      - Core method contract: core_method_contract.md
-      - Method support: method_support.md
+      - Methods by type: method_support.md
       - Coverage matrix: stdlib_coverage.md
   - Toolchain:
       - Overview: toolchain.md

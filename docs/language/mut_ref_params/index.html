@@ -663,8 +663,6 @@
 
 
 
-
-
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -773,34 +771,6 @@
 
 
     <li class="md-nav__item">
-      <a href="../../core_method_contract/" class="md-nav__link">
-
-
-
-  <span class="md-ellipsis">
-
-
-    Core method contract
-
-
-
-  </span>
-
-
-
-      </a>
-    </li>
-
-
-
-
-
-
-
-
-
-
-    <li class="md-nav__item">
       <a href="../../method_support/" class="md-nav__link">
 
 
@@ -808,7 +778,7 @@
   <span class="md-ellipsis">
 
 
-    Method support
+    Methods by type
 
 
 
@@ -1789,16 +1759,12 @@
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 <p><code>&amp;mut T</code> parameters write through to the caller's source place on every tier
-for scalar values, strings, vectors, slices, structs, and enums. <code>&amp;mut</code>
-references are aliases, not copied argument values. Gossamer does not impose
-Rust lifetime or non-lexical-borrow checking. It does reject a second simple
-named <code>&amp;mut</code> to the same root while the first remains in lexical scope, but it
-does not track every alias shape. Every permitted write is observed through
-the same source place.</p>
-<p>Fixed arrays are the ABI exception: a <code>[T; N]</code> argument is copied at a
-function-call boundary, so a mutable parameter observes and mutates that
-call-local copy. A local reference such as <code>let r = &amp;mut xs</code> still aliases
-its fixed-array source and writes through normally.</p>
+for scalar values, strings, vectors, slices, structs, enums, and fixed arrays.
+<code>&amp;mut</code> references are aliases, not copied argument values. Gossamer does not
+impose Rust lifetime or non-lexical-borrow checking. It does reject a second
+simple named <code>&amp;mut</code> to the same root while the first remains in lexical scope,
+but it does not track every alias shape. Every permitted write is observed
+through the same source place.</p>
 
 
 

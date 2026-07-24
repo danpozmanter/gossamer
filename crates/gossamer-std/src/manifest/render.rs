@@ -98,6 +98,10 @@ pub fn render_index_markdown() -> String {
 this index is regenerated from `manifest::ALL_MODULES` by \
 `gos doc --emit-stdlib`.\n\n",
     );
+    out.push_str(
+        "For receiver methods on built-in types, see \
+[`Methods by type`](../method_support.md).\n\n",
+    );
     out.push_str("| Module | Summary |\n");
     out.push_str("|---|---|\n");
     use std::collections::BTreeSet;

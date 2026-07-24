@@ -1459,25 +1459,12 @@ impl<'a> Builder<'a> {
                     Some("")
                 }
             }
-            // `result.ok_or(new_err)` on a Result receiver replaces
-            // the Err with `new_err`; passes Ok through. Mirrors
-            // Option's `.ok_or` shape so callers can write
-            // `s.parse().ok_or("not a number".to_string())?` and
-            // get a domain-meaningful message rather than the raw
-            // ParseError. The HIR `receiver_ty` is often a Var for
-            // chained calls (`parse().ok_or(...)`); detect the
-            // result-returning shape via the chained method's name.
+            // `option.ok_or(new_err)` converts None into Err and
+            // passes Some through.
             "ok_or" => {
-                let hir_is_result = matches!(&receiver_kind_flat, TyKind::Adt { .. })
-                    && self.is_result_or_option_adt(receiver_ty);
-                let chain_returns_result = matches!(
-                    &receiver.kind,
-                    HirExprKind::MethodCall { name, .. } if matches!(
-                        name.name.as_str(),
-                        "parse" | "parse_i64" | "parse_f64"
-                    )
-                );
-                if hir_is_result || chain_returns_result {
+                if matches!(&receiver_kind_flat, TyKind::Adt { .. })
+                    && self.is_option_adt(receiver_ty)
+                {
                     Some("gos_rt_result_ok_or")
                 } else {
                     Some("")
@@ -2621,10 +2608,11 @@ impl<'a> Builder<'a> {
             | "gos_rt_router_patch_fn"
             | "gos_rt_router_head_fn"
             | "gos_rt_router_options_fn" => self.locals[receiver_local.0 as usize].ty,
-            "gos_rt_regex_find_all" | "gos_rt_regex_split" | "gos_rt_flag_set_parse" => {
+            "gos_rt_regex_find_all" | "gos_rt_regex_split" => {
                 let s = self.tcx.string_ty();
                 self.tcx.intern(gossamer_types::TyKind::Vec(s))
             }
+            "gos_rt_flag_set_parse" => self.result_vec_string_error_ty(),
             "gos_rt_error_cause" => self.option_adt_ty(),
             "gos_rt_arr_iter_next" => {
                 // Recover element type from the iterator local's MIR
@@ -3576,7 +3564,7 @@ impl<'a> Builder<'a> {
         // of payload, which corrupted the resulting Result and
         // produced the askq round-2 strlen-on-bad-pointer crash.
         // See `~/dev/contexts/lang/fix_architecture_ownership.md`
-        // root-cause #3.
+        // for the closure-carrier root cause.
         if matches!(
             runtime_symbol,
             Some("gos_rt_result_map_err" | "gos_rt_result_map")

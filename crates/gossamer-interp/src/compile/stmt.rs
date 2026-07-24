@@ -133,6 +133,13 @@ impl<'tcx> FnBuilder<'tcx> {
                         // existing reg, so in that case copy
                         // into a fresh slot.
                         let tr = self.compile_expr_ex(init)?;
+                        if let Some(home) = self.returned_mut_ref_home(init) {
+                            self.flat_int_locals.remove(&home.reg);
+                            self.flat_float_locals.remove(&home.reg);
+                            self.reference_alias_regs.insert(home.reg);
+                            self.bind_reference_local(&name.name, home);
+                            return Ok(false);
+                        }
                         // Move-on-last-use: a `let y = x` aliasing a
                         // consumable local hands the aggregate over
                         // instead of cloning it into the fresh slot.
@@ -574,6 +581,46 @@ impl<'tcx> FnBuilder<'tcx> {
         Err(RuntimeError::Unsupported(
             "assignment to a place that is neither a local nor a mutable static",
         ))
+    }
+
+    fn returned_mut_ref_home(&self, init: &HirExpr) -> Option<TypedReg> {
+        if !self.is_mut_ref_ty(init.ty) {
+            return None;
+        }
+        let HirExprKind::Call { args, .. } = &init.kind else {
+            return None;
+        };
+        let [arg] = args.as_slice() else {
+            return None;
+        };
+        let name = Self::mut_ref_arg_local_name(arg)?;
+        self.lookup_local(name)
+    }
+
+    fn mut_ref_arg_local_name(arg: &HirExpr) -> Option<&str> {
+        let place = match &arg.kind {
+            HirExprKind::Unary {
+                op: HirUnaryOp::RefMut,
+                operand,
+            } => operand.as_ref(),
+            _ => arg,
+        };
+        if let HirExprKind::Path { segments, .. } = &place.kind
+            && let [segment] = segments.as_slice()
+        {
+            return Some(segment.name.as_str());
+        }
+        None
+    }
+
+    fn is_mut_ref_ty(&self, ty: gossamer_types::Ty) -> bool {
+        matches!(
+            self.tcx.kind(ty),
+            Some(TyKind::Ref {
+                mutability: gossamer_types::Mutbl::Mut,
+                ..
+            })
+        )
     }
 
     /// Lowers `place += rhs` for a `String` place to the in-place

@@ -616,6 +616,16 @@ impl Parser<'_> {
             } else {
                 args
             }
+        } else if self.bare_method_turbofish_call_ahead() {
+            let checkpoint = self.tokens.checkpoint();
+            self.bump();
+            let args = self.parse_generic_args_in_turbofish();
+            if args.is_empty() || !self.at_punct(Punct::LParen) {
+                self.tokens.rewind(checkpoint);
+                Vec::new()
+            } else {
+                args
+            }
         } else {
             Vec::new()
         };
@@ -923,6 +933,64 @@ impl Parser<'_> {
             },
             Condition::Chain(clauses) => self.desugar_if_chain(clauses, then_expr, else_branch),
         }
+    }
+
+    fn bare_method_turbofish_arg_start(&self) -> bool {
+        matches!(
+            self.peek_nth(1).kind,
+            TokenKind::Ident
+                | TokenKind::Keyword(
+                    Keyword::SelfUpper
+                        | Keyword::SelfLower
+                        | Keyword::Super
+                        | Keyword::Crate
+                        | Keyword::Fn
+                )
+                | TokenKind::Punct(Punct::LParen | Punct::LBracket | Punct::Amp | Punct::Bang)
+        )
+    }
+
+    fn bare_method_turbofish_call_ahead(&self) -> bool {
+        if !self.at_punct(Punct::Lt) || !self.bare_method_turbofish_arg_start() {
+            return false;
+        }
+        let mut depth = 0_i32;
+        for offset in 0..128 {
+            match self.peek_nth(offset).kind {
+                TokenKind::Punct(Punct::Lt) => depth += 1,
+                TokenKind::Punct(Punct::Gt) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return self.peek_nth(offset + 1).kind == TokenKind::Punct(Punct::LParen);
+                    }
+                    if depth < 0 {
+                        return false;
+                    }
+                }
+                TokenKind::Punct(Punct::ShiftR) => {
+                    depth -= 2;
+                    if depth == 0 {
+                        return self.peek_nth(offset + 1).kind == TokenKind::Punct(Punct::LParen);
+                    }
+                    if depth < 0 {
+                        return false;
+                    }
+                }
+                TokenKind::Punct(
+                    Punct::GtEq
+                    | Punct::ShiftREq
+                    | Punct::Dot
+                    | Punct::DotDot
+                    | Punct::DotDotEq
+                    | Punct::LBrace
+                    | Punct::RBrace
+                    | Punct::Semi,
+                )
+                | TokenKind::Eof => return false,
+                _ => {}
+            }
+        }
+        false
     }
 
     /// Parses an `if`/`while` condition, recognising `let`-chains.

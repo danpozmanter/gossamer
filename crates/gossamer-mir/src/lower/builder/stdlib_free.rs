@@ -827,7 +827,7 @@ impl<'a> Builder<'a> {
                 "gos_rt_io_copy",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            "io::ReadAll" => ("gos_rt_io_read_all", self.tcx.string_ty()),
+            "io::ReadAll" => ("gos_rt_io_read_all", self.result_string_error_adt_ty()),
             "net::lookup" => ("gos_rt_net_resolve", self.result_vec_string_error_ty()),
             "fs::open" | "fs::File::open" => {
                 ("gos_rt_fs_file_open", self.result_i64_error_adt_ty())
@@ -942,12 +942,7 @@ impl<'a> Builder<'a> {
                     self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty)),
                 )
             }
-            // 0.10.0 - crypto::rand::bytes(n) -> Vec<u8>.
-            "crypto::rand::bytes" => {
-                let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
-                let v = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
-                ("gos_rt_crypto_rand_bytes", v)
-            }
+            "crypto::rand::bytes" => ("gos_rt_crypto_rand_bytes", self.result_vec_u8_error_ty()),
             "crypto::password::hash" => (
                 "gos_rt_crypto_password_hash",
                 self.result_string_error_adt_ty(),
@@ -1778,6 +1773,7 @@ impl<'a> Builder<'a> {
             "strings::pad_right" => ("gos_rt_str_pad_right", self.tcx.string_ty()),
             "strings::contains_any" => ("gos_rt_str_contains_any", self.tcx.bool_ty()),
             "strings::equal_fold" => ("gos_rt_str_equal_fold", self.tcx.bool_ty()),
+            "strings::parse" => ("gos_rt_parse_i64_result", self.result_i64_error_adt_ty()),
             _ => return None,
         })
     }
@@ -3485,10 +3481,7 @@ impl<'a> Builder<'a> {
             | "Notifier::try_wait"
             | "signal::try_wait"
             | "os::signal::try_wait" => ("gos_rt_signal_try_wait", self.tcx.bool_ty()),
-            "flag::Set::new" => (
-                "gos_rt_flag_set_new",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
+            "flag::Set::new" => ("gos_rt_flag_set_new", self.flag_set_ty()),
             _ => return None,
         })
     }

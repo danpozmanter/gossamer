@@ -1,15 +1,21 @@
-# Method support reference
+# Methods by type
 
-This page lists every method dispatched by name through the
-compiler's MIR table at
+This page is the source-facing reference for inherent methods on core
+types such as `String`, `Vec`, `HashMap`, `HashSet`, `Option`, and
+`Result`.
+
+Items listed here resolve in `gos run` (interpreter), forced-JIT execution,
+and `gos build [--release]` (compiled) unless a row explicitly says
+otherwise. The implementation contract is that interpreter builtins, MIR
+lowering, compiled runtime ABI, docs, and parity tests all agree.
+
+Most methods below dispatch by name through the compiler's MIR table at
 [`crates/gossamer-mir/src/lower.rs`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-mir/src/lower.rs).
-Methods listed here resolve in `gos run` (interpreter) and in
-`gos build [--release]` (compiled).
 
 If a method you expect is not listed, the compiler will emit a
 `CallIntrinsic{name:"unsupported"}` MIR node and the codegen
-will refuse to emit it. File an issue with the call shape; most
-gaps are one-line additions to the dispatch table.
+will refuse to emit it. Report the call shape; most gaps are small
+dispatch-table additions.
 
 ## String
 
@@ -40,7 +46,7 @@ gaps are one-line additions to the dispatch table.
 | `s.clone()` | `String` | |
 | `s.as_bytes()` | `&[u8]` | Zero-copy borrow. |
 | `s.as_str()` | `&str` | Zero-copy borrow. |
-| `s.parse()` | `Result<T, errors::Error>` | Parses into the expected result type, such as `let n: i64 = s.parse()?`. |
+| `s.parse<T>()` / `s.parse::<T>()` | `Result<T, errors::Error>` | Parses into the expected result type, such as `let n: i64 = s.parse()?`. |
 | `s.to_i64()` | `Option<i64>` | Parses the string; `None` on malformed input. |
 | `s.to_f64()` | `Option<f64>` | |
 | `s.to_bool()` | `Option<bool>` | Accepts `true` / `false`. |
@@ -110,9 +116,25 @@ yields pairs in ascending key order.
 | `m.get(k)` | `Option<V>` | `None` when the key is absent. |
 | `m.get_or(k, default)` | `V` | Value for `k`, or `default` when absent. |
 | `m.contains(k)` / `m.contains_key(k)` | `bool` | Key-membership test. |
-| `m.remove(k)` | `()` | Deletes the key in place. |
 | `m.len()` | `i64` | |
 | `m.iter()` | `[(K, V)]` | Yields pairs in ascending key order. |
+
+## HashSet
+
+| Method | Returns | Notes |
+|---|---|---|
+| `s.insert(v)` | `()` | Inserts the value in place. |
+| `s.contains(v)` | `bool` | Membership test. |
+| `s.remove(v)` | `()` | Deletes the value in place. |
+| `s.len()` | `i64` | |
+| `s.clear()` | `()` | Removes all values. |
+| `s.to_vec()` | `[T]` | Materialises the set values. |
+| `s.union(other)` | `HashSet<T>` | Set union. |
+| `s.intersection(other)` | `HashSet<T>` | Shared values. |
+| `s.difference(other)` | `HashSet<T>` | Values present only in `s`. |
+| `s.symmetric_difference(other)` | `HashSet<T>` | Values present in exactly one set. |
+| `s.is_subset(other)` / `s.is_superset(other)` | `bool` | Inclusion checks. |
+| `s.is_disjoint(other)` | `bool` | True when the sets share no values. |
 
 ## VecDeque
 
@@ -129,6 +151,39 @@ constant-time. The pop / peek methods return `Option`.
 | `d.peek_front()` | `Option<T>` | Front element without removing it. |
 | `d.len()` | `i64` | |
 | `d.is_empty()` | `bool` | |
+
+## Option
+
+| Method | Returns | Notes |
+|---|---|---|
+| `o.is_some()` / `o.is_none()` | `bool` | Variant checks. |
+| `o.unwrap()` | `T` | Returns the payload or panics. |
+| `o.expect(message)` | `T` | Returns the payload or panics with `message`. |
+| `o.unwrap_or(default)` | `T` | Fallback value for `None`. |
+| `o.unwrap_or_else(f)` | `T` | Lazy fallback for `None`. |
+| `o.map(f)` | `Option<U>` | Maps the payload when present. |
+| `o.and_then(f)` | `Option<U>` | Flat-map over the payload. |
+| `o.filter(pred)` | `Option<T>` | Keeps `Some` only when the predicate accepts the payload. |
+| `o.or(other)` / `o.or_else(f)` | `Option<T>` | Fallback option. |
+| `o.ok_or(err)` / `o.ok_or_else(f)` | `Result<T, E>` | Converts absence into an error. |
+| `o.flatten()` | `Option<T>` | Collapses `Option<Option<T>>` one level. |
+| `o.zip(other)` | `Option<(T, U)>` | Pairs two present payloads. |
+
+## Result
+
+| Method | Returns | Notes |
+|---|---|---|
+| `r.is_ok()` / `r.is_err()` | `bool` | Variant checks. |
+| `r.unwrap()` | `T` | Returns `Ok` or panics. |
+| `r.expect(message)` | `T` | Returns `Ok` or panics with `message`. |
+| `r.unwrap_or(default)` | `T` | Fallback value for `Err`. |
+| `r.unwrap_or_else(f)` | `T` | Lazy fallback for `Err`. |
+| `r.map(f)` | `Result<U, E>` | Maps the `Ok` payload. |
+| `r.map_err(f)` | `Result<T, F>` | Maps the `Err` payload. |
+| `r.and_then(f)` | `Result<U, E>` | Flat-map over the `Ok` payload. |
+| `r.or_else(f)` | `Result<T, F>` | Recovers from `Err`. |
+| `r.ok()` / `r.err()` | `Option<_>` | Extracts one side as an option. |
+| `r.transpose()` | `Option<Result<T, E>>` | Converts `Result<Option<T>, E>`. |
 
 ## Channels
 
@@ -195,6 +250,13 @@ goroutine fan-out:
 Functions accessed through `use std::module` paths (not method
 calls) are listed in [`stdlib_coverage.md`](stdlib_coverage.md).
 
+## Compatibility APIs
+
+Some older container helpers still return sentinel values such as `0`,
+`-1`, or an empty string for absence or failure. New core APIs should
+prefer `Option<T>` or `Result<T, errors::Error>`. Existing sentinel helpers
+remain compatibility aliases until their callers have migrated.
+
 ## Adding a method to the dispatch table
 
 If you need a method that isn't listed:
@@ -222,7 +284,8 @@ builtins, is a bug.
 
 ## Cross-references
 
-- [`stdlib.md`](stdlib.md) - module index.
+- [`stdlib/index.md`](stdlib/index.md) - module landing page.
+- [`stdlib.md`](stdlib.md) - full generated stdlib overview.
 - [`stdlib_coverage.md`](stdlib_coverage.md) - auto-generated
   coverage matrix.
 - [`codegen_abi.md`](codegen_abi.md) - generic call ABI.

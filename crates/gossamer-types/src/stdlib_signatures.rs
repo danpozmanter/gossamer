@@ -2815,6 +2815,11 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::strings",
+        name: "parse",
+        signature: "fn parse<T>(text: String) -> Result<T, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::strings",
         name: "repeat",
         signature: "fn repeat(text: String, count: i64) -> String",
     },

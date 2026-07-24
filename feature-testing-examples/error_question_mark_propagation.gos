@@ -3,7 +3,7 @@
 // to verify automatic unwrapping and early-return semantics.
 
 fn parse_positive(s: String) -> Result<i64, String> {
-    let n = s.parse::<i64>().ok_or("not a number")?
+    let n = s.parse::<i64>().map_err(|_| "not a number")?
     if n <= 0 {
         Err(format!("{} is not positive", n))
     } else {

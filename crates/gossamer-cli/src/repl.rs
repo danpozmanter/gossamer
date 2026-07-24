@@ -1597,6 +1597,8 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
             } else {
                 format!("fn {name}(self, ...) -> ...")
             };
+            let doc = runtime_core_method_doc(&owner, &name)
+                .map_or_else(|| format!("Built-in {kind} on {owner}."), str::to_string);
             insert_core_method_entry(
                 &mut entries,
                 CoreMethodEntry {
@@ -1604,12 +1606,109 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
                     name: name.clone(),
                     kind,
                     signature,
-                    doc: format!("Runtime builtin registered as `{owner}::{name}`."),
+                    doc,
                 },
             );
         }
     }
     entries.into_values().collect()
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "flat metadata table keeps REPL core-method docs auditable"
+)]
+fn runtime_core_method_doc(owner: &str, name: &str) -> Option<&'static str> {
+    match (owner, name) {
+        ("String", "byte_at") => Some("Returns the byte at an index, or -1 when out of range."),
+        ("String", "byte_len") => Some("Returns the byte length of the string."),
+        ("String", "bytes") => Some("Returns the UTF-8 bytes of the string."),
+        ("String", "center") => Some("Pads both sides to the requested display width."),
+        ("String", "chars") => Some("Returns the Unicode scalar values of the string."),
+        ("String", "contains") => Some("Returns whether the string contains a substring."),
+        ("String", "contains_any") => Some("Returns whether any character in the set appears."),
+        ("String", "count") => Some("Counts non-overlapping substring occurrences."),
+        ("String", "ends_with") => Some("Returns whether the string ends with a suffix."),
+        ("String", "equal_fold") => Some("Compares strings with Unicode case folding."),
+        ("String", "find") => Some("Returns the first byte index of a match."),
+        ("String", "find_any") => Some("Returns the first byte index of any character in a set."),
+        ("String", "index_rune") => Some("Returns the first byte index of a character."),
+        ("String", "lines") => Some("Splits the string into lines."),
+        ("String", "pad_left") => Some("Left-pads to the requested display width."),
+        ("String", "pad_right") => Some("Right-pads to the requested display width."),
+        ("String", "repeat") => Some("Repeats the string count times."),
+        ("String", "replace") => Some("Replaces every occurrence of one pattern with another."),
+        ("String", "replacen") => Some("Replaces at most n occurrences of a pattern."),
+        ("String", "rfind") => Some("Returns the last byte index of a match."),
+        ("String", "rfind_any") => Some("Returns the last byte index of any character in a set."),
+        ("String", "rsplit_once") => Some("Splits once at the last matching separator."),
+        ("String", "slice") => Some("Returns a checked byte-range slice."),
+        ("String", "split") => Some("Splits on every matching separator."),
+        ("String", "split_once") => Some("Splits once at the first matching separator."),
+        ("String", "split_whitespace") => Some("Splits on runs of whitespace."),
+        ("String", "splitn") => Some("Splits into at most n parts."),
+        ("String", "starts_with") => Some("Returns whether the string starts with a prefix."),
+        ("String", "strip_prefix") => Some("Removes a prefix when present."),
+        ("String", "strip_suffix") => Some("Removes a suffix when present."),
+        ("String", "substring") => Some("Returns a checked byte-range substring."),
+        ("String", "to_bool") => Some("Parses exactly true or false to Option<bool>."),
+        ("String", "to_f64") => Some("Parses the full string to Option<f64>."),
+        ("String", "to_i64") => Some("Parses the full string to Option<i64>."),
+        ("String", "to_lowercase") => Some("Lowercases every character."),
+        ("String", "to_title") => Some("Title-cases the first letter of each word."),
+        ("String", "to_uppercase") => Some("Uppercases every character."),
+        ("String", "trim") => Some("Removes leading and trailing whitespace."),
+        ("String", "trim_end") => Some("Removes trailing whitespace."),
+        ("String", "trim_end_matches") => Some("Removes trailing characters from a set."),
+        ("String", "trim_matches") => Some("Removes characters from a set at both ends."),
+        ("String", "trim_start") => Some("Removes leading whitespace."),
+        ("String", "trim_start_matches") => Some("Removes leading characters from a set."),
+        ("Vec", "chain") => Some("Concatenates this sequence with another sequence."),
+        ("Vec", "chunks") => Some("Groups values into fixed-size chunks."),
+        ("Vec", "collect") => Some("Materializes the sequence as a vector."),
+        ("Vec", "count") => Some("Counts values, or values accepted by a predicate."),
+        ("Vec", "dedup") => Some("Removes adjacent duplicate values."),
+        ("Vec", "enumerate") => Some("Pairs each value with its index."),
+        ("Vec", "flatten") => Some("Flattens one level of nested vectors."),
+        ("Vec", "for_each") => Some("Runs a closure for each value."),
+        ("Vec", "max_by_key") => Some("Returns the maximum value by derived key."),
+        ("Vec", "min_by_key") => Some("Returns the minimum value by derived key."),
+        ("Vec", "pairwise") => Some("Returns adjacent value pairs."),
+        ("Vec", "skip") => Some("Drops the first n values."),
+        ("Vec", "step_by") => Some("Returns every nth value."),
+        ("Vec", "take") => Some("Returns the first n values."),
+        ("Vec", "windows") => Some("Returns overlapping fixed-size windows."),
+        ("Vec", "zip") => Some("Pairs values with another sequence."),
+        ("HashMap", "clear") => Some("Removes all entries."),
+        ("HashMap", "inc") => Some("Increments an i64 counter value."),
+        ("HashMap", "inc_at") => Some("Increments counters from a substring key range."),
+        ("HashMap", "inc_batch") => Some("Increments counters for a batch of keys."),
+        ("HashSet", "clear") => Some("Removes all values from the set."),
+        ("HashSet", "is_disjoint") => Some("Returns true when two sets share no values."),
+        ("HashSet", "is_empty") => Some("Returns true when the set has no values."),
+        ("HashSet", "is_subset") => Some("Returns true when every value is in the other set."),
+        ("HashSet", "is_superset") => Some("Returns true when the other set is a subset."),
+        ("HashSet", "iter") => Some("Returns the set values as a vector."),
+        ("HashSet", "len") => Some("Returns the number of values."),
+        ("HashSet", "to_vec") => Some("Returns the set values as a vector."),
+        ("VecDeque", "is_empty") => Some("Returns true when the deque has no values."),
+        ("VecDeque", "len") => Some("Returns the number of values."),
+        ("Option", "filter") => Some("Keeps Some only when a predicate accepts it."),
+        ("Option", "flatten") => Some("Flattens a nested Option."),
+        ("Option", "iter") => Some("Returns a zero-or-one element vector."),
+        ("Option", "or") => Some("Returns the receiver when Some, otherwise a fallback."),
+        ("Option", "or_else") => Some("Calls a fallback closure only when None."),
+        ("Option", "unwrap_or") => Some("Returns the payload or a fallback value."),
+        ("Option", "unwrap_or_else") => Some("Calls a fallback closure only when None."),
+        ("Option", "zip") => Some("Combines two Options when both are Some."),
+        ("Result", "and_then") => Some("Chains an Ok value through a Result-returning closure."),
+        ("Result", "err") => Some("Converts the Err payload to Option."),
+        ("Result", "ok") => Some("Converts the Ok payload to Option."),
+        ("Result", "or_else") => Some("Calls a fallback closure only when Err."),
+        ("Result", "unwrap_or") => Some("Returns the Ok payload or a fallback value."),
+        ("Result", "unwrap_or_else") => Some("Calls a fallback closure only when Err."),
+        _ => None,
+    }
 }
 
 fn insert_core_method_entry(
@@ -2043,6 +2142,25 @@ mod tests {
         assert!(
             missing.is_empty(),
             "missing REPL metadata for registered runtime type builtins: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn repl_metadata_does_not_leak_runtime_registration_text_for_core_types() {
+        let checked = [
+            "String", "Vec", "HashMap", "BTreeMap", "HashSet", "VecDeque", "Option", "Result",
+        ];
+        let mut leaked = Vec::new();
+        for entry in core_method_entries() {
+            if checked.contains(&entry.owner.as_str())
+                && entry.doc.contains("Runtime builtin registered")
+            {
+                leaked.push(format!("{}::{}", entry.owner, entry.name));
+            }
+        }
+        assert!(
+            leaked.is_empty(),
+            "core type methods should have user-facing REPL docs: {leaked:?}"
         );
     }
 

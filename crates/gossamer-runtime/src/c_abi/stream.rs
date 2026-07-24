@@ -94,16 +94,14 @@ pub unsafe extern "C" fn gos_rt_io_copy(dst: *const GosStream, src: *const GosSt
     })
 }
 
-/// `io::ReadAll(reader)` - drains `reader` (the stdin stream) to EOF
-/// and returns the accumulated bytes as a freshly-allocated
-/// GC-arena string. Mirrors Go's `io.ReadAll`. Non-stdin readers
-/// return an empty string, matching the interpreter builtin.
+/// `io::ReadAll(reader)` drains `reader` and returns `Result<String, Error>`.
+/// Non-stdin readers return an empty string, matching the interpreter builtin.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_io_read_all(reader: *const GosStream) -> *mut c_char {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_io_read_all(reader: *const GosStream) -> i128 {
+    ffi_entry!(unsafe { gos_rt_result_new(1, 0) }, {
         let fd = unsafe { stream_fd(reader) };
         if fd != 0 {
-            return alloc_cstring(b"");
+            return unsafe { gos_rt_result_new(0, alloc_cstring(b"") as i64) };
         }
         unsafe { gos_rt_flush_stdout() };
         let read = crate::sched_global::run_blocking("stdin-read-all", || {
@@ -112,10 +110,18 @@ pub unsafe extern "C" fn gos_rt_io_read_all(reader: *const GosStream) -> *mut c_
             stdin.lock().read_to_string(&mut buf).map(|_| buf)
         });
         match read {
-            Ok(Ok(buf)) => alloc_cstring(buf.as_bytes()),
-            Ok(Err(_)) | Err(_) => alloc_cstring(b""),
+            Ok(Ok(buf)) => unsafe { gos_rt_result_new(0, alloc_cstring(buf.as_bytes()) as i64) },
+            Ok(Err(e)) => read_all_error(e.to_string()),
+            Err(e) => read_all_error(e.clone()),
         }
     })
+}
+
+fn read_all_error(message: String) -> i128 {
+    let msg = CString::new(format!("io::ReadAll: {message}"))
+        .unwrap_or_else(|_| c"io::ReadAll failed".to_owned());
+    let err = unsafe { gos_rt_error_new(msg.as_ptr()) };
+    unsafe { gos_rt_result_new(1, err as i64) }
 }
 
 unsafe fn stream_fd(s: *const GosStream) -> i32 {

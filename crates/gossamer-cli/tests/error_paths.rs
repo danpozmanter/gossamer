@@ -166,7 +166,7 @@ fn question_mark_propagation_through_nested_callers() {
     // surfaces.
     let src = r#"
 fn parse_positive(s: String) -> Result<i64, String> {
-    let n = s.parse::<i64>().ok_or("not a number".to_string())?
+    let n = s.parse::<i64>().map_err(|_| "not a number".to_string())?
     if n <= 0 { Err(format!("{} is not positive", n)) } else { Ok(n) }
 }
 

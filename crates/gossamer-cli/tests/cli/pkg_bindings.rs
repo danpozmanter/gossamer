@@ -146,7 +146,7 @@ fn tidy_canonicalises_existing_manifest() {
 #[test]
 fn run_refuses_type_invalid_program_with_diagnostic() {
     // The VM must not execute programs that fail static checks
-    // (error_handling.md invariant #2). The CLI should print a
+    // (error_handling.md type-safety invariant). The CLI should print a
     // typed diagnostic and exit non-zero.
     let fixture = write_fixture(
         "type-fail",

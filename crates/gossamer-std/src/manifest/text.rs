@@ -415,6 +415,11 @@ pub const STRINGS: StdModule = StdModule {
             doc: "Right-pads to `width` with the given character.",
         },
         StdItem {
+            name: "parse",
+            kind: StdItemKind::Function,
+            doc: "Parses the string into the expected Result payload type.",
+        },
+        StdItem {
             name: "contains_any",
             kind: StdItemKind::Function,
             doc: "Reports whether the string contains any rune in a set.",

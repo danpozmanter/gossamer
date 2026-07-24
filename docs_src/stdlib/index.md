@@ -2,6 +2,8 @@
 
 One page per module. Source is `crates/gossamer-std/src/`; this index is regenerated from `manifest::ALL_MODULES` by `gos doc --emit-stdlib`.
 
+For receiver methods on built-in types, see [`Methods by type`](../method_support.md).
+
 | Module | Summary |
 |---|---|
 | [`std::archive::tar`](archive_tar.md) | Unix tar reader and writer (USTAR / PAX-aware decode). |

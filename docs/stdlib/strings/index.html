@@ -663,8 +663,6 @@
 
 
 
-
-
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -773,34 +771,6 @@
 
 
     <li class="md-nav__item">
-      <a href="../../core_method_contract/" class="md-nav__link">
-
-
-
-  <span class="md-ellipsis">
-
-
-    Core method contract
-
-
-
-  </span>
-
-
-
-      </a>
-    </li>
-
-
-
-
-
-
-
-
-
-
-    <li class="md-nav__item">
       <a href="../../method_support/" class="md-nav__link">
 
 
@@ -808,7 +778,7 @@
   <span class="md-ellipsis">
 
 
-    Method support
+    Methods by type
 
 
 
@@ -1888,6 +1858,11 @@
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>pad_right</code></a></td>
 <td><code>fn pad_right(text: String, width: i64, fill: char) -&gt; String</code></td>
 <td>Right-pads to <code>width</code> with the given character.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>parse</code></a></td>
+<td><code>fn parse&lt;T&gt;(text: String) -&gt; Result&lt;T, errors::Error&gt;</code></td>
+<td>Parses the string into the expected Result payload type.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/strings.rs"><code>repeat</code></a></td>

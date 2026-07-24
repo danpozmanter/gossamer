@@ -110,6 +110,18 @@ enum Expectation {
     Coerce(Ty),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BuiltinPatternFamily {
+    Option,
+    Result,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TryFamily {
+    Option,
+    Result,
+}
+
 impl Expectation {
     /// The expected type, if any.
     fn ty(self) -> Option<Ty> {
@@ -2375,9 +2387,10 @@ impl<'a> TypeChecker<'a> {
             ExprKind::MethodCall {
                 receiver,
                 name,
+                generics,
                 args,
                 ..
-            } => self.check_method_call(expr.id, &name.name, receiver, args),
+            } => self.check_method_call(expr.id, &name.name, generics, receiver, args, expected),
             ExprKind::FieldAccess { receiver, field } => {
                 let receiver_ty = self.check_expr(receiver);
                 match field {
@@ -2627,9 +2640,15 @@ impl<'a> TypeChecker<'a> {
                 self.tcx.iterator_ty(elem)
             }
             ExprKind::Try(inner) => {
-                let inner_ty = self.check_expr(inner);
-                self.unwrap_result_like(inner_ty)
-                    .unwrap_or_else(|| self.fresh())
+                let inner_expectation = match self.expectation_target(expected) {
+                    Some(ok) => {
+                        let err = self.tcx.dyn_error_ty();
+                        Expectation::HasType(self.result_adt_ty(ok, err))
+                    }
+                    None => Expectation::None,
+                };
+                let inner_ty = self.check_expr_expecting(inner, inner_expectation);
+                self.check_question_mark(inner_ty, inner.span)
             }
             ExprKind::Go(inner) => {
                 self.check_expr(inner);
@@ -2861,7 +2880,7 @@ impl<'a> TypeChecker<'a> {
             })
             .collect();
         self.check_mutating_qualified_call(callee, args);
-        self.check_call_inner(callee, args, callee_ty, &arg_tys)
+        self.check_call_inner(callee, args, callee_ty, &arg_tys, expected)
     }
 
     /// Per-argument expectations for a call, derived (in priority
@@ -3073,6 +3092,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     #[allow(
+        clippy::cognitive_complexity,
         clippy::too_many_lines,
         reason = "sequential callee-shape dispatch: signature, variant constructor, then stdlib fallbacks"
     )]
@@ -3082,6 +3102,7 @@ impl<'a> TypeChecker<'a> {
         args: &[Expr],
         callee_ty: Ty,
         arg_tys: &[Ty],
+        expected: Expectation,
     ) -> Ty {
         let resolved = self.infer.resolve(self.tcx, callee_ty);
         let kind = self.tcx.kind(resolved).cloned();
@@ -3229,6 +3250,30 @@ impl<'a> TypeChecker<'a> {
                 && !self.pipe_stage_callees.contains(&callee.id)
             {
                 self.check_strings_free_call_args(last, args, arg_tys, callee.span);
+            }
+            if is_strings_call
+                && last == "parse"
+                && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+            {
+                let generics = path
+                    .segments
+                    .last()
+                    .map_or(&[][..], |segment| segment.generics.as_slice());
+                return self.string_parse_ret("strings::parse", generics, expected, callee.span);
+            }
+            if matches!(module, ["String"] | ["std", "String"])
+                && last == "slice"
+                && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+            {
+                let s = self.tcx.string_ty();
+                let err = self.tcx.dyn_error_ty();
+                return self.result_adt_ty(s, err);
+            }
+            if module.is_empty()
+                && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+                && let Some(ret) = self.raw_stdlib_helper_ret(last)
+            {
+                return ret;
             }
             // Data-last std combinators (`result::map_err(f, r)`,
             // `iter::map(f, xs)`, ...): the signature table pins
@@ -3856,6 +3901,110 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    fn flag_set_ty(&mut self) -> Ty {
+        let def = gossamer_resolve::DefId::local(u32::MAX - 21);
+        self.tcx.register_def_name(def, "flag::Set");
+        self.tcx.intern(TyKind::Adt {
+            def,
+            substs: crate::Substs::new(),
+        })
+    }
+
+    fn flag_set_method_ret(&mut self, method: &str, resolved: Ty) -> Option<Ty> {
+        let is_flag_set = match self.tcx.kind(resolved) {
+            Some(TyKind::Adt { def, .. }) => {
+                def.local == u32::MAX - 21 || self.tcx.def_name(*def) == Some("flag::Set")
+            }
+            _ => false,
+        };
+        if !is_flag_set || method != "parse" {
+            return None;
+        }
+        let s = self.tcx.string_ty();
+        let vec = self.tcx.intern(TyKind::Vec(s));
+        let err = self.tcx.dyn_error_ty();
+        Some(self.result_adt_ty(vec, err))
+    }
+
+    fn stdlib_handle_ty(&mut self, offset: u32, name: &str) -> Ty {
+        let def = gossamer_resolve::DefId::local(u32::MAX - offset);
+        self.tcx.register_def_name(def, name);
+        self.tcx.intern(TyKind::Adt {
+            def,
+            substs: crate::Substs::new(),
+        })
+    }
+
+    fn http_response_ty(&mut self) -> Ty {
+        self.stdlib_handle_ty(5, "http::Response")
+    }
+
+    fn http_client_ty(&mut self) -> Ty {
+        self.stdlib_handle_ty(22, "http::Client")
+    }
+
+    fn http_client_builder_ty(&mut self) -> Ty {
+        self.stdlib_handle_ty(23, "http::ClientBuilder")
+    }
+
+    fn http_request_ty(&mut self) -> Ty {
+        self.stdlib_handle_ty(24, "http::Request")
+    }
+
+    fn result_response_error_ty(&mut self) -> Ty {
+        let resp = self.http_response_ty();
+        let err = self.tcx.dyn_error_ty();
+        self.result_adt_ty(resp, err)
+    }
+
+    fn http_client_method_ret(&mut self, method: &str, resolved: Ty) -> Option<Ty> {
+        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
+            return None;
+        };
+        match self.tcx.def_name(*def) {
+            Some("http::Client") => match method {
+                "get" | "post" | "put" | "options" | "delete" | "head" => {
+                    Some(self.http_request_ty())
+                }
+                "request" | "request_bytes" => Some(self.result_response_error_ty()),
+                _ => None,
+            },
+            Some("http::ClientBuilder") => match method {
+                "max_redirects" | "timeout_ms" | "cookie_jar" | "proxy" => {
+                    Some(self.http_client_builder_ty())
+                }
+                "build" => Some(self.http_client_ty()),
+                _ => None,
+            },
+            Some("http::Request") => match method {
+                "header" | "body" | "set_value" => Some(self.http_request_ty()),
+                "send" => Some(self.result_response_error_ty()),
+                "path" | "path_value" | "method" | "value" | "form_value" => {
+                    Some(self.tcx.string_ty())
+                }
+                "path_int" => {
+                    let i = self.tcx.int_ty(IntTy::I64);
+                    Some(self.option_adt_ty(i))
+                }
+                "path_float" => {
+                    let f = self.tcx.float_ty(FloatTy::F64);
+                    Some(self.option_adt_ty(f))
+                }
+                "basic_auth" => {
+                    let s = self.tcx.string_ty();
+                    let pair = self.tcx.intern(TyKind::Tuple(vec![s, s]));
+                    Some(self.option_adt_ty(pair))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    #[allow(
+        clippy::cognitive_complexity,
+        reason = "flat stdlib module dispatch table keeps call typing local"
+    )]
     fn check_stdlib_module_ret_ty(
         &mut self,
         module: &[&str],
@@ -3946,6 +4095,16 @@ impl<'a> TypeChecker<'a> {
         if matches!(module, ["errors"] | ["std", "errors"]) {
             return match last {
                 "new" | "wrap" => Some(self.tcx.dyn_error_ty()),
+                _ => None,
+            };
+        }
+        if matches!(module, ["flag", "Set"] | ["std", "flag", "Set"]) && last == "new" {
+            return Some(self.flag_set_ty());
+        }
+        if matches!(module, ["http", "Client"] | ["std", "http", "Client"]) {
+            return match last {
+                "new" => Some(self.http_client_ty()),
+                "builder" => Some(self.http_client_builder_ty()),
                 _ => None,
             };
         }
@@ -4682,36 +4841,25 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "receiver dispatch is intentionally kept in source order"
+    )]
     fn check_method_call(
         &mut self,
         call_id: NodeId,
         method: &str,
+        generics: &[AstGenericArg],
         receiver: &Expr,
         args: &[Expr],
+        expected: Expectation,
     ) -> Ty {
-        let receiver_ty = self.check_expr(receiver);
+        let receiver_expected = self.method_receiver_expectation(method, receiver, expected);
+        let receiver_ty = self.check_expr_expecting(receiver, receiver_expected);
         self.check_mutating_method_receiver(receiver, receiver_ty, method);
-        // A method on a bound type-parameter receiver (`s.area()` where
-        // `s: &T`, `T: Shape`) resolves to the trait method's declared
-        // return type, so a `String`-returning trait method is not left to
-        // default to i64 and render its pointer bits on the compiled tiers.
-        if let Some((ret, params)) = self.param_method_sig(receiver_ty, method) {
-            let arg_tys: Vec<Ty> = args.iter().map(|arg| self.check_expr(arg)).collect();
-            if params.len() == args.len() {
-                for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
-                    self.check_sig_param_arg(*param, *arg_ty, arg.span);
-                }
-            } else {
-                self.emit(
-                    TypeError::CallArityMismatch {
-                        callee: method.to_string(),
-                        expected: params.len(),
-                        found: args.len(),
-                    },
-                    receiver.span,
-                );
-            }
-            return ret;
+        if let Some(ty) = self.check_param_receiver_method(receiver_ty, method, args, receiver.span)
+        {
+            return ty;
         }
         if self.reject_supertrait_method_through_bound(receiver_ty, method, receiver.span) {
             for arg in args {
@@ -4794,6 +4942,12 @@ impl<'a> TypeChecker<'a> {
         if let Some(ty) = self.map_method_ret(method, args, &arg_tys, resolved, receiver.span) {
             return ty;
         }
+        if let Some(ty) = self.flag_set_method_ret(method, resolved) {
+            return ty;
+        }
+        if let Some(ty) = self.http_client_method_ret(method, resolved) {
+            return ty;
+        }
         // `v.set(k, val)` on a `json::Value` returns the updated value;
         // a fresh var here would strip the JsonValue tag and leave a
         // chained `.set(..).set(..)` receiver untagged, so the compiled
@@ -4805,19 +4959,119 @@ impl<'a> TypeChecker<'a> {
             return self.tcx.json_value_ty();
         }
         if matches!(self.tcx.kind(resolved), Some(TyKind::String)) {
-            // `s.contains(x)` dispatches to the same `strings::` shim as
-            // the free function with the receiver as the implicit first
-            // argument; validate the explicit args so an integer in a
-            // string slot is rejected here too. Skipped under `|>`,
-            // which appends the piped value as a trailing argument.
-            if !self.pipe_stage_callees.contains(&call_id) {
-                self.check_strings_method_call_args(method, args, &arg_tys, receiver.span);
-            }
-            return self.string_method_ret(method, receiver.span);
+            self.check_string_method_args_if_needed(call_id, method, receiver.span, args, &arg_tys);
+            return self.string_method_ret(method, generics, expected, receiver.span);
+        }
+        if let Some(name) = self.payload_adt_method_owner(resolved)
+            && !matches!(method, "clone")
+        {
+            self.emit(
+                TypeError::UnresolvedMethod {
+                    ty: name.to_string(),
+                    name: method.to_string(),
+                },
+                receiver.span,
+            );
+            return self.tcx.error_ty();
         }
         self.check_method_arity(call_id, resolved, method, args, receiver.span);
         self.maybe_reject_unknown_adt_method(resolved, method, receiver.span);
         self.fresh()
+    }
+
+    fn check_param_receiver_method(
+        &mut self,
+        receiver_ty: Ty,
+        method: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Option<Ty> {
+        // A method on a bound type-parameter receiver (`s.area()` where
+        // `s: &T`, `T: Shape`) resolves to the trait method's declared
+        // return type, so a `String`-returning trait method is not left to
+        // default to i64 and render its pointer bits on the compiled tiers.
+        let (ret, params) = self.param_method_sig(receiver_ty, method)?;
+        let arg_tys: Vec<Ty> = args.iter().map(|arg| self.check_expr(arg)).collect();
+        if params.len() == args.len() {
+            for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
+                self.check_sig_param_arg(*param, *arg_ty, arg.span);
+            }
+        } else {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: method.to_string(),
+                    expected: params.len(),
+                    found: args.len(),
+                },
+                span,
+            );
+        }
+        Some(ret)
+    }
+
+    fn check_string_method_args_if_needed(
+        &mut self,
+        call_id: NodeId,
+        method: &str,
+        span: Span,
+        args: &[Expr],
+        arg_tys: &[Ty],
+    ) {
+        // `s.contains(x)` dispatches to the same `strings::` shim as
+        // the free function with the receiver as the implicit first
+        // argument; validate the explicit args so an integer in a
+        // string slot is rejected here too. Skipped under `|>`,
+        // which appends the piped value as a trailing argument.
+        if !self.pipe_stage_callees.contains(&call_id) {
+            self.check_strings_method_call_args(method, args, arg_tys, span);
+        }
+    }
+
+    fn method_receiver_expectation(
+        &mut self,
+        method: &str,
+        receiver: &Expr,
+        expected: Expectation,
+    ) -> Expectation {
+        if !Self::is_string_parse_expr(receiver) {
+            return Expectation::None;
+        }
+        match method {
+            "map" | "map_err" | "and_then" | "or_else" => {
+                if let Some((ok, _)) = self.result_payload_expectation(expected) {
+                    let err = self.fresh();
+                    return Expectation::HasType(self.result_adt_ty(ok, err));
+                }
+            }
+            "ok" => {
+                if let Some(payload) = self.option_payload_expectation(expected) {
+                    let err = self.fresh();
+                    return Expectation::HasType(self.result_adt_ty(payload, err));
+                }
+            }
+            "unwrap_or" | "unwrap_or_else" => {
+                if let Some(payload) = self.non_result_expectation_target(expected) {
+                    let err = self.fresh();
+                    return Expectation::HasType(self.result_adt_ty(payload, err));
+                }
+            }
+            _ => {}
+        }
+        Expectation::None
+    }
+
+    fn is_string_parse_expr(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::MethodCall { name, .. } => name.name == "parse",
+            ExprKind::Call { callee, .. } => match &callee.kind {
+                ExprKind::Path(path) => path
+                    .segments
+                    .last()
+                    .is_some_and(|segment| segment.name.name == "parse"),
+                _ => false,
+            },
+            _ => false,
+        }
     }
 
     /// Enforces writable receivers for user `&mut self` methods and built-in
@@ -5400,7 +5654,13 @@ impl<'a> TypeChecker<'a> {
     /// leak (a `unicode::*` char predicate like `"abc".is_letter()`, or a
     /// typo like `"abc".bogus()`): it runs the wrong global body on the
     /// VM and fails to lower native, so it is rejected (P0-6).
-    fn string_method_ret(&mut self, method: &str, span: Span) -> Ty {
+    fn string_method_ret(
+        &mut self,
+        method: &str,
+        generics: &[AstGenericArg],
+        expected: Expectation,
+        span: Span,
+    ) -> Ty {
         match method {
             "split" | "splitn" | "split_whitespace" | "lines" => {
                 let s = self.tcx.string_ty();
@@ -5471,11 +5731,7 @@ impl<'a> TypeChecker<'a> {
             // inferred from the binding, but the error pins to the concrete
             // error type so `{}` Display of an `Err` lowers correctly on the
             // compiled tier (an unresolved error var rendered a garbage char).
-            "parse" => {
-                let t = self.fresh();
-                let e = self.tcx.dyn_error_ty();
-                self.result_adt_ty(t, e)
-            }
+            "parse" => self.string_parse_ret("String::parse", generics, expected, span),
             _ if is_string_method(method) => self.fresh(),
             _ => {
                 self.emit(
@@ -5487,6 +5743,89 @@ impl<'a> TypeChecker<'a> {
                 );
                 self.tcx.error_ty()
             }
+        }
+    }
+
+    fn first_type_generic_arg(&mut self, generics: &[AstGenericArg]) -> Option<Ty> {
+        generics.iter().find_map(|arg| match arg {
+            AstGenericArg::Type(ty) => Some(self.type_from_ast(ty)),
+            AstGenericArg::Const(_) => None,
+        })
+    }
+
+    fn string_parse_ret(
+        &mut self,
+        callable: &str,
+        generics: &[AstGenericArg],
+        expected: Expectation,
+        span: Span,
+    ) -> Ty {
+        let payload = if let Some(ty) = self.first_type_generic_arg(generics) {
+            Some(ty)
+        } else if let Some(ty) = self.result_ok_expectation(expected) {
+            Some(ty)
+        } else if let Some(target) = self.non_result_expectation_target(expected) {
+            Some(target)
+        } else {
+            self.emit(
+                TypeError::GenericReturnTypeUninferred {
+                    callable: callable.to_string(),
+                    param: "T".to_string(),
+                },
+                span,
+            );
+            None
+        };
+        let Some(payload) = payload else {
+            return self.tcx.error_ty();
+        };
+        let e = self.tcx.dyn_error_ty();
+        self.result_adt_ty(payload, e)
+    }
+
+    fn result_ok_expectation(&mut self, expected: Expectation) -> Option<Ty> {
+        self.result_payload_expectation(expected).map(|(ok, _)| ok)
+    }
+
+    fn result_payload_expectation(&mut self, expected: Expectation) -> Option<(Ty, Ty)> {
+        let ty = self.expectation_target(expected)?;
+        let TyKind::Adt { def, substs } = self.tcx.kind(ty)? else {
+            return None;
+        };
+        if def.local != u32::MAX && self.tcx.def_name(*def) != Some("Result") {
+            return None;
+        }
+        let args = substs.as_slice();
+        match (args.first()?, args.get(1)?) {
+            (crate::GenericArg::Type(ok), crate::GenericArg::Type(err)) => Some((*ok, *err)),
+            _ => None,
+        }
+    }
+
+    fn option_payload_expectation(&mut self, expected: Expectation) -> Option<Ty> {
+        let ty = self.expectation_target(expected)?;
+        let TyKind::Adt { def, substs } = self.tcx.kind(ty)? else {
+            return None;
+        };
+        if def.local != u32::MAX - 1 && self.tcx.def_name(*def) != Some("Option") {
+            return None;
+        }
+        match substs.as_slice().first()? {
+            crate::GenericArg::Type(payload) => Some(*payload),
+            crate::GenericArg::Const(_) => None,
+        }
+    }
+
+    fn non_result_expectation_target(&mut self, expected: Expectation) -> Option<Ty> {
+        let target = self.expectation_target(expected)?;
+        match self.tcx.kind(target)? {
+            TyKind::Adt { def, .. }
+                if def.local == u32::MAX || self.tcx.def_name(*def) == Some("Result") =>
+            {
+                None
+            }
+            TyKind::Var(_) | TyKind::Error => None,
+            _ => Some(target),
         }
     }
 
@@ -5665,24 +6004,84 @@ impl<'a> TypeChecker<'a> {
         found.map(|(ty, _)| ty)
     }
 
-    fn unwrap_result_like(&mut self, ty: Ty) -> Option<Ty> {
-        let resolved = self.infer.resolve(self.tcx, ty);
-        match self.tcx.kind(resolved) {
-            Some(TyKind::Ref { inner, .. }) => self.unwrap_result_like(*inner),
-            Some(TyKind::Adt { def, substs })
-                if def.local == u32::MAX || def.local == u32::MAX - 1 =>
-            {
-                substs.types().first().copied()
-            }
-            _ => None,
-        }
-    }
-
     fn result_adt_ty(&mut self, ok: Ty, err: Ty) -> Ty {
         let substs = crate::Substs::from_types([ok, err]);
         let def = gossamer_resolve::DefId::local(u32::MAX);
         self.tcx.register_def_name(def, "Result");
         self.tcx.intern(TyKind::Adt { def, substs })
+    }
+
+    fn raw_stdlib_helper_ret(&mut self, name: &str) -> Option<Ty> {
+        let ok = match name {
+            "__gos_pem_decode_raw" => self.tuple_str_bytes_ty(),
+            "__gos_pem_decode_all_raw" => {
+                let entry = self.tuple_str_bytes_ty();
+                self.tcx.intern(TyKind::Vec(entry))
+            }
+            "__gos_fs_metadata_raw" => self.tuple_fs_metadata_ty(),
+            "__gos_x509_parse_pem_raw" => self.tuple_cert_info_ty(),
+            "__gos_tar_read_raw" | "__gos_zip_read_raw" => {
+                let entry = self.tuple_archive_entry_ty();
+                self.tcx.intern(TyKind::Vec(entry))
+            }
+            "__gos_time_location_raw" | "__gos_time_fixed_location_raw" => self.tcx.string_ty(),
+            "__gos_time_civil_raw" => {
+                let i = self.tcx.int_ty(IntTy::I64);
+                self.tcx.intern(TyKind::Tuple(vec![i; 9]))
+            }
+            "__gos_time_resolve_raw" => {
+                let i = self.tcx.int_ty(IntTy::I64);
+                self.tcx.intern(TyKind::Tuple(vec![i; 3]))
+            }
+            "__gos_time_format_in_raw" => self.tcx.string_ty(),
+            "__gos_time_add_date_raw" => self.tcx.int_ty(IntTy::I64),
+            _ => return None,
+        };
+        let err = self.tcx.dyn_error_ty();
+        Some(self.result_adt_ty(ok, err))
+    }
+
+    fn tuple_cert_info_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let i = self.tcx.int_ty(IntTy::I64);
+        let u8_ty = self.tcx.int_ty(IntTy::U8);
+        let vec_u8 = self.tcx.intern(TyKind::Vec(u8_ty));
+        let vec_str = self.tcx.intern(TyKind::Vec(s));
+        self.tcx
+            .intern(TyKind::Tuple(vec![s, s, vec_u8, i, i, vec_str, vec_u8]))
+    }
+
+    fn tuple_fs_metadata_ty(&mut self) -> Ty {
+        let i = self.tcx.int_ty(IntTy::I64);
+        let b = self.tcx.bool_ty();
+        self.tcx.intern(TyKind::Tuple(vec![i, b, b, b, b, i]))
+    }
+
+    fn tuple_archive_entry_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let u8_ty = self.tcx.int_ty(IntTy::U8);
+        let vec_u8 = self.tcx.intern(TyKind::Vec(u8_ty));
+        let b = self.tcx.bool_ty();
+        self.tcx.intern(TyKind::Tuple(vec![s, vec_u8, b]))
+    }
+
+    fn tuple_str_bytes_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let u8_ty = self.tcx.int_ty(IntTy::U8);
+        let vec_u8 = self.tcx.intern(TyKind::Vec(u8_ty));
+        self.tcx.intern(TyKind::Tuple(vec![s, vec_u8]))
+    }
+
+    fn payload_adt_method_owner(&mut self, ty: Ty) -> Option<&'static str> {
+        let mut resolved = self.infer.resolve(self.tcx, ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
+            resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        match self.tcx.kind(resolved) {
+            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX => Some("Result"),
+            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 1 => Some("Option"),
+            _ => None,
+        }
     }
 
     /// Full argument arity (closure/seed args plus the trailing data
@@ -5699,13 +6098,15 @@ impl<'a> TypeChecker<'a> {
                 "result",
                 "map" | "map_err" | "and_then" | "or_else" | "unwrap_or" | "unwrap_or_else",
             ) => 2,
-            ("result", "ok" | "err" | "is_ok" | "is_err") => 1,
+            ("result", "expect") => 2,
+            ("result", "ok" | "err" | "is_ok" | "is_err" | "unwrap") => 1,
             (
                 "option",
                 "map" | "and_then" | "filter" | "or" | "or_else" | "unwrap_or" | "unwrap_or_else"
                 | "zip" | "ok_or" | "ok_or_else",
             ) => 2,
-            ("option", "flatten" | "is_some" | "is_none" | "iter") => 1,
+            ("option", "expect") => 2,
+            ("option", "flatten" | "is_some" | "is_none" | "iter" | "unwrap") => 1,
             (
                 "iter",
                 "collect" | "count" | "sum" | "product" | "min" | "max" | "once" | "range"
@@ -5737,6 +6138,74 @@ impl<'a> TypeChecker<'a> {
             self.tcx.iterator_ty(item)
         } else {
             self.tcx.intern(TyKind::Vec(item))
+        }
+    }
+
+    fn check_question_mark(&mut self, ty: Ty, span: Span) -> Ty {
+        let Some((inner_family, payload)) = self.try_family_and_payload(ty) else {
+            let ty = render_ty(self.tcx, self.infer.resolve(self.tcx, ty));
+            self.emit(
+                TypeError::QuestionMarkUnsupported {
+                    ty,
+                    reason: "the operand is not a `Result` or `Option`".to_string(),
+                },
+                span,
+            );
+            return self.tcx.error_ty();
+        };
+        let Some(ret) = self.current_fn_ret else {
+            self.emit(
+                TypeError::QuestionMarkUnsupported {
+                    ty: render_ty(self.tcx, self.infer.resolve(self.tcx, ty)),
+                    reason: "`?` is only valid inside a function with a compatible return type"
+                        .to_string(),
+                },
+                span,
+            );
+            return self.tcx.error_ty();
+        };
+        let Some((ret_family, _)) = self.try_family_and_payload(ret) else {
+            self.emit(
+                TypeError::QuestionMarkUnsupported {
+                    ty: render_ty(self.tcx, self.infer.resolve(self.tcx, ret)),
+                    reason: "the enclosing function does not return `Result` or `Option`"
+                        .to_string(),
+                },
+                span,
+            );
+            return self.tcx.error_ty();
+        };
+        if inner_family != ret_family {
+            self.emit(
+                TypeError::QuestionMarkUnsupported {
+                    ty: render_ty(self.tcx, self.infer.resolve(self.tcx, ty)),
+                    reason: "the operand and enclosing function use different propagation types"
+                        .to_string(),
+                },
+                span,
+            );
+            return self.tcx.error_ty();
+        }
+        payload
+    }
+
+    fn try_family_and_payload(&mut self, ty: Ty) -> Option<(TryFamily, Ty)> {
+        let mut resolved = self.infer.resolve(self.tcx, ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
+            resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        let TyKind::Adt { def, substs } = self.tcx.kind(resolved)? else {
+            return None;
+        };
+        let payload = substs.types().first().copied()?;
+        match def.local {
+            u32::MAX => Some((TryFamily::Result, payload)),
+            n if n == u32::MAX - 1 => Some((TryFamily::Option, payload)),
+            _ => match self.tcx.def_name(*def)? {
+                "Result" => Some((TryFamily::Result, payload)),
+                "Option" => Some((TryFamily::Option, payload)),
+                _ => None,
+            },
         }
     }
 
@@ -5964,6 +6433,13 @@ impl<'a> TypeChecker<'a> {
                         self.unify(ok, lead_tys[0], span);
                         ok
                     }
+                    "unwrap" => ok,
+                    "expect" => {
+                        let s = self.tcx.string_ty();
+                        let message = self.peel_refs(lead_tys[0]);
+                        self.unify(s, message, span);
+                        ok
+                    }
                     // The Ok payload and the handler's return mix at
                     // runtime (`Ok(v)` yields `v`, `Err(e)` yields
                     // `f(e)`), and the dominant shape is a discarded
@@ -6019,6 +6495,13 @@ impl<'a> TypeChecker<'a> {
                     }
                     "unwrap_or" => {
                         self.unify(payload, lead_tys[0], span);
+                        payload
+                    }
+                    "unwrap" => payload,
+                    "expect" => {
+                        let s = self.tcx.string_ty();
+                        let message = self.peel_refs(lead_tys[0]);
+                        self.unify(s, message, span);
                         payload
                     }
                     // Same mixed-type rationale as the Result row.
@@ -7154,7 +7637,8 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_match(&mut self, scrutinee: &Expr, arms: &[MatchArm], expected: Expectation) -> Ty {
-        let scrut_ty = self.check_expr(scrutinee);
+        let scrut_expectation = self.match_scrutinee_expectation(arms);
+        let scrut_ty = self.check_expr_expecting(scrutinee, scrut_expectation);
         self.reject_constructor_scrutinee_mismatch(scrut_ty, arms);
         self.reject_json_value_variant_patterns(arms);
         let mut result_ty = self.fresh();
@@ -7199,6 +7683,59 @@ impl<'a> TypeChecker<'a> {
             self.adjust_literal_to_join(&arm.body, result_ty);
         }
         result_ty
+    }
+
+    fn match_scrutinee_expectation(&mut self, arms: &[MatchArm]) -> Expectation {
+        let mut wants_result = false;
+        let mut wants_option = false;
+        for arm in arms {
+            match Self::builtin_enum_pattern_family(&arm.pattern) {
+                Some(BuiltinPatternFamily::Result) => wants_result = true,
+                Some(BuiltinPatternFamily::Option) => wants_option = true,
+                None => {}
+            }
+        }
+        match (wants_result, wants_option) {
+            (true, false) => {
+                let ok_ty = self.fresh();
+                let err_ty = self.fresh();
+                Expectation::HasType(self.result_adt_ty(ok_ty, err_ty))
+            }
+            (false, true) => {
+                let payload = self.fresh();
+                Expectation::HasType(self.option_adt_ty(payload))
+            }
+            _ => Expectation::None,
+        }
+    }
+
+    fn builtin_enum_pattern_family(pattern: &Pattern) -> Option<BuiltinPatternFamily> {
+        match &pattern.kind {
+            PatternKind::TupleStruct { path, .. } | PatternKind::Path(path) => {
+                match Self::bare_result_option_ctor(path)? {
+                    "Ok" | "Err" => Some(BuiltinPatternFamily::Result),
+                    "Some" | "None" => Some(BuiltinPatternFamily::Option),
+                    _ => None,
+                }
+            }
+            PatternKind::Or(alts) => {
+                let mut family = None;
+                for alt in alts {
+                    let Some(next) = Self::builtin_enum_pattern_family(alt) else {
+                        continue;
+                    };
+                    if let Some(prev) = family
+                        && prev != next
+                    {
+                        return None;
+                    }
+                    family = Some(next);
+                }
+                family
+            }
+            PatternKind::Ref { inner, .. } => Self::builtin_enum_pattern_family(inner),
+            _ => None,
+        }
     }
 
     /// Rejects `Ok` / `Err` / `Some` / `None` arms whose scrutinee's
@@ -8203,6 +8740,18 @@ impl<'a> TypeChecker<'a> {
         ) {
             return self.tcx.instant_ty();
         }
+        if matches!(segs.as_slice(), ["flag", "Set"] | ["std", "flag", "Set"]) {
+            return self.flag_set_ty();
+        }
+        match segs.as_slice() {
+            ["http", "Client"] | ["std", "http", "Client"] => return self.http_client_ty(),
+            ["http", "ClientBuilder"] | ["std", "http", "ClientBuilder"] => {
+                return self.http_client_builder_ty();
+            }
+            ["http", "Request"] | ["std", "http", "Request"] => return self.http_request_ty(),
+            ["http", "Response"] | ["std", "http", "Response"] => return self.http_response_ty(),
+            _ => {}
+        }
         // Recognise stdlib struct types by their last path segment
         // so parameter annotations like `entry: &fs::DirInfo` resolve
         // to the sentinel Adt rather than a fresh inference variable.
@@ -9006,6 +9555,12 @@ fn seed_checker_stdlib_struct_fields(
     let str_pair = tcx.intern(TyKind::Tuple(vec![str_ty, str_ty]));
     let vec_str_pair = tcx.intern(TyKind::Vec(str_pair));
     let bool_ty = tcx.bool_ty();
+    let context_def = gossamer_resolve::DefId::local(u32::MAX - 11);
+    tcx.register_def_name(context_def, "context::Context");
+    let context_ty = tcx.intern(TyKind::Adt {
+        def: context_def,
+        substs: crate::Substs::new(),
+    });
     let entries: &[(u32, &[(&str, Ty)])] = &[
         (
             2,
@@ -9040,6 +9595,19 @@ fn seed_checker_stdlib_struct_fields(
                 ("content_type", str_ty),
                 ("location", str_ty),
                 ("headers", vec_str_pair),
+            ],
+        ),
+        (
+            24,
+            &[
+                ("method", str_ty),
+                ("path", str_ty),
+                ("query", str_ty),
+                ("query_pairs", vec_str_pair),
+                ("headers", vec_str_pair),
+                ("body", str_ty),
+                ("raw_body", vec_u8),
+                ("context", context_ty),
             ],
         ),
     ];

@@ -71,11 +71,8 @@ fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "Stream::read_to_string",
         builtin("Stream::read_to_string", builtin_stream_read_to_string),
     ));
-    // io::ReadAll(reader) / io::Copy(dst, src) - Go-shaped helpers
-    // for moving bytes around. Drain the source stream to a String,
-    // or shovel from src to dst returning the byte count. Both work
-    // on the fd-shaped `Stream` value the existing io::stdout / stdin
-    // helpers return.
+    // io::ReadAll(reader) / io::Copy(dst, src) helpers for moving
+    // bytes around the fd-shaped stream values.
     globals.push(("io::ReadAll", builtin("io::ReadAll", builtin_io_read_all)));
     globals.push(("io::Copy", builtin("io::Copy", builtin_io_copy)));
     globals.push(("eprintln", builtin("eprintln", builtin_eprintln)));

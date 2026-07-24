@@ -180,40 +180,46 @@ fn nibble_char(n: u8) -> char {
     }
 }
 
-/// `crypto::rand::bytes(n) -> Vec<u8>` - fill a fresh Vec with
-/// `n` cryptographically-strong random bytes from the OS RNG.
-/// On RNG failure (extremely rare; usually only on early-boot
-/// systems with no entropy source) the returned Vec is zero-
-/// filled, mirroring the interp's failure mode.
+fn crypto_err(msg: &str, fallback: &str) -> i128 {
+    let cs = std::ffi::CString::new(msg)
+        .unwrap_or_else(|_| std::ffi::CString::new(fallback).expect("static"));
+    let err = unsafe { super::errors::gos_rt_error_new(cs.as_ptr()) };
+    super::vec::gos_rt_result_new(1, err as i64)
+}
+
+/// `crypto::rand::bytes(n) -> Result<Vec<u8>, errors::Error>`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_crypto_rand_bytes(n: i64) -> *mut GosVec {
-    let len = n.max(0);
+pub unsafe extern "C" fn gos_rt_crypto_rand_bytes(n: i64) -> i128 {
+    if n < 0 {
+        return crypto_err(
+            "crypto::rand::bytes: count must be non-negative",
+            "crypto::rand error",
+        );
+    }
+    let len = n;
     let v = unsafe { super::vec::gos_rt_vec_with_capacity(1, len) };
     if len == 0 {
-        return v;
+        return super::vec::gos_rt_result_new(0, v as i64);
     }
     // Fill the freshly-allocated buffer with OS randomness and pin
-    // `len` so `b.len()` reads `n`. Unsafe is justified - GosVec
+    // `len` so `b.len()` reads `n`. Unsafe is justified because GosVec
     // exposes its backing buffer as a raw pointer at the C ABI
     // boundary, and there is no safe Rust way to fill it.
     let vref = unsafe { &mut *v };
     if !vref.ptr.is_null() {
         let slice = unsafe { std::slice::from_raw_parts_mut(vref.ptr.as_ptr(), len as usize) };
         if getrandom::fill(slice).is_err() {
-            slice.fill(0);
+            return crypto_err("crypto::rand: rng failure", "crypto::rand error");
         }
     }
     vref.len = len;
-    v
+    super::vec::gos_rt_result_new(0, v as i64)
 }
 
 /// Packs an `Err(errors::Error)` for the `crypto::password` Result-
 /// returning shims.
 fn password_err(msg: &str) -> i128 {
-    let cs = std::ffi::CString::new(msg)
-        .unwrap_or_else(|_| std::ffi::CString::new("crypto::password error").expect("static"));
-    let err = unsafe { super::errors::gos_rt_error_new(cs.as_ptr()) };
-    super::vec::gos_rt_result_new(1, err as i64)
+    crypto_err(msg, "crypto::password error")
 }
 
 /// `crypto::password::hash(plaintext) -> Result<String, errors::Error>` -
