@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.34.1 - Stream read_line match parity
+
+- Make `io::stdin().read_line()` return `Option<String>` consistently across
+  interpreter and native tiers, including EOF handling and trailing line-ending
+  trimming.
+- Preserve `read_line(&mut String)` as the buffer-appending
+  `Result<i64, errors::Error>` overload.
+- Tag `io::Reader` and `io::Writer` as opaque stream handles so match lowering
+  sees the correct enum shape, and gate stream method fallback to stream
+  receivers.
+
 ## 0.34.0 - Explicit standard library imports, filesystem fixes, &mut fixes, MCP & CI improvements
 
 - Require `use` for every standard library module, including qualified calls

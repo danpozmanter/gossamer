@@ -237,7 +237,7 @@ impl<'a> Builder<'a> {
             .and_then(|l| self.local_runtime_kind.get(&l).copied())
             .or_else(|| self.expr_runtime_kind(receiver))
             .or_else(|| self.runtime_kind_from_ty(receiver.ty));
-        if let Some(rt) = self.kind_dispatch_symbol(receiver_runtime_kind, method) {
+        if let Some(rt) = self.kind_dispatch_symbol(receiver_runtime_kind, method, args) {
             return self.lower_kind_dispatch_call(rt, receiver, args, ty, span);
         }
 
@@ -255,7 +255,7 @@ impl<'a> Builder<'a> {
         // Stage 6 - dispatch on the lowered receiver's runtime kind.
         let receiver_local = self.lower_expr(receiver)?;
         let lowered_runtime_kind = self.local_runtime_kind.get(&receiver_local).copied();
-        if let Some(rt) = self.lowered_kind_dispatch_symbol(lowered_runtime_kind, method) {
+        if let Some(rt) = self.lowered_kind_dispatch_symbol(lowered_runtime_kind, method, args) {
             return self.lower_lowered_kind_dispatch_call(
                 rt,
                 receiver,
@@ -1901,12 +1901,32 @@ impl<'a> Builder<'a> {
             // Stream methods (on `io::stdout()` / `io::stderr()`
             // / `io::stdin()` handles). Mirrors Rust's `Write` /
             // `BufRead` trait surface.
-            "write_byte" => Some("gos_rt_stream_write_byte"),
-            "write_byte_array" | "write_bytes" => Some("gos_rt_stream_write_byte_array"),
-            "write" | "write_str" => Some("gos_rt_stream_write_str"),
-            "flush" => Some("gos_rt_stream_flush"),
-            "read_line" => Some("gos_rt_stream_read_line"),
-            "read_to_string" => Some("gos_rt_stream_read_to_string"),
+            "write_byte" if self.runtime_kind_from_ty(receiver_ty) == Some("io::Stream") => {
+                Some("gos_rt_stream_write_byte")
+            }
+            "write_byte_array" | "write_bytes"
+                if self.runtime_kind_from_ty(receiver_ty) == Some("io::Stream") =>
+            {
+                Some("gos_rt_stream_write_byte_array")
+            }
+            "write" | "write_str"
+                if self.runtime_kind_from_ty(receiver_ty) == Some("io::Stream") =>
+            {
+                Some("gos_rt_stream_write_str")
+            }
+            "flush" if self.runtime_kind_from_ty(receiver_ty) == Some("io::Stream") => {
+                Some("gos_rt_stream_flush")
+            }
+            "read_line" if self.runtime_kind_from_ty(receiver_ty) == Some("io::Stream") => {
+                Some(if args.is_empty() {
+                    "gos_rt_stream_next_line"
+                } else {
+                    "gos_rt_stream_read_line"
+                })
+            }
+            "read_to_string" if self.runtime_kind_from_ty(receiver_ty) == Some("io::Stream") => {
+                Some("gos_rt_stream_read_to_string")
+            }
             // HashMap method dispatch - gated on the receiver
             // actually being a `HashMap`, not just on having a
             // matching method name. Without the gate, a user
@@ -2081,9 +2101,10 @@ impl<'a> Builder<'a> {
         &self,
         rk: Option<&'static str>,
         method: &Ident,
+        args: &[HirExpr],
     ) -> Option<&'static str> {
-        self.kind_dispatch_symbol_a(rk, method)
-            .or_else(|| self.kind_dispatch_symbol_b(rk, method))
+        self.kind_dispatch_symbol_a(rk, method, args)
+            .or_else(|| self.kind_dispatch_symbol_b(rk, method, args))
     }
 
     /// First half of the receiver-runtime-kind dispatch table.
@@ -2091,6 +2112,7 @@ impl<'a> Builder<'a> {
         &self,
         rk: Option<&'static str>,
         method: &Ident,
+        _args: &[HirExpr],
     ) -> Option<&'static str> {
         match (rk, method.name.as_str()) {
             (Some("flag::Set"), "string") => Some("gos_rt_flag_set_string"),
@@ -2201,6 +2223,7 @@ impl<'a> Builder<'a> {
         &self,
         rk: Option<&'static str>,
         method: &Ident,
+        args: &[HirExpr],
     ) -> Option<&'static str> {
         match (rk, method.name.as_str()) {
             (Some("sync::Map"), "insert") => Some("gos_rt_sync_map_set"),
@@ -2312,6 +2335,18 @@ impl<'a> Builder<'a> {
             (Some("process::Child"), "read_stdout") => Some("gos_rt_child_read_stdout"),
             (Some("process::Child"), "wait") => Some("gos_rt_child_wait"),
             (Some("process::Child"), "kill") => Some("gos_rt_child_kill"),
+            (Some("io::Stream"), "write_byte") => Some("gos_rt_stream_write_byte"),
+            (Some("io::Stream"), "write_byte_array" | "write_bytes") => {
+                Some("gos_rt_stream_write_byte_array")
+            }
+            (Some("io::Stream"), "write" | "write_str") => Some("gos_rt_stream_write_str"),
+            (Some("io::Stream"), "flush") => Some("gos_rt_stream_flush"),
+            (Some("io::Stream"), "read_line") => Some(if args.is_empty() {
+                "gos_rt_stream_next_line"
+            } else {
+                "gos_rt_stream_read_line"
+            }),
+            (Some("io::Stream"), "read_to_string") => Some("gos_rt_stream_read_to_string"),
             (Some("signal::Notifier"), "wait") => Some("gos_rt_signal_wait"),
             (Some("signal::Notifier"), "try_wait") => Some("gos_rt_signal_try_wait"),
             _ => None,
@@ -2555,7 +2590,7 @@ impl<'a> Builder<'a> {
             // `Child::read_line() -> Option<String>`; `wait` returns
             // `Result<i64, errors::Error>`. Pinned so the while-let /
             // match extraction reads the packed enum correctly.
-            "gos_rt_child_read_line" => self.option_string_adt_ty(),
+            "gos_rt_child_read_line" | "gos_rt_stream_next_line" => self.option_string_adt_ty(),
             "gos_rt_stream_read_line" => self.result_i64_error_adt_ty(),
             "gos_rt_child_read_stdout" => self.tcx.string_ty(),
             "gos_rt_child_write_stdin" | "gos_rt_child_kill" => self.tcx.bool_ty(),
@@ -2871,9 +2906,10 @@ impl<'a> Builder<'a> {
         &self,
         rk: Option<&'static str>,
         method: &Ident,
+        args: &[HirExpr],
     ) -> Option<&'static str> {
-        self.lowered_kind_dispatch_symbol_a(rk, method)
-            .or_else(|| self.lowered_kind_dispatch_symbol_b(rk, method))
+        self.lowered_kind_dispatch_symbol_a(rk, method, args)
+            .or_else(|| self.lowered_kind_dispatch_symbol_b(rk, method, args))
     }
 
     /// First half of the lowered-receiver-runtime-kind dispatch table.
@@ -2881,6 +2917,7 @@ impl<'a> Builder<'a> {
         &self,
         rk: Option<&'static str>,
         method: &Ident,
+        _args: &[HirExpr],
     ) -> Option<&'static str> {
         match (rk, method.name.as_str()) {
             (Some("flag::Set"), "string") => Some("gos_rt_flag_set_string"),
@@ -2989,6 +3026,7 @@ impl<'a> Builder<'a> {
         &self,
         rk: Option<&'static str>,
         method: &Ident,
+        args: &[HirExpr],
     ) -> Option<&'static str> {
         match (rk, method.name.as_str()) {
             (Some("sync::Map"), "insert") => Some("gos_rt_sync_map_set"),
@@ -3097,6 +3135,18 @@ impl<'a> Builder<'a> {
             (Some("process::Child"), "read_stdout") => Some("gos_rt_child_read_stdout"),
             (Some("process::Child"), "wait") => Some("gos_rt_child_wait"),
             (Some("process::Child"), "kill") => Some("gos_rt_child_kill"),
+            (Some("io::Stream"), "write_byte") => Some("gos_rt_stream_write_byte"),
+            (Some("io::Stream"), "write_byte_array" | "write_bytes") => {
+                Some("gos_rt_stream_write_byte_array")
+            }
+            (Some("io::Stream"), "write" | "write_str") => Some("gos_rt_stream_write_str"),
+            (Some("io::Stream"), "flush") => Some("gos_rt_stream_flush"),
+            (Some("io::Stream"), "read_line") => Some(if args.is_empty() {
+                "gos_rt_stream_next_line"
+            } else {
+                "gos_rt_stream_read_line"
+            }),
+            (Some("io::Stream"), "read_to_string") => Some("gos_rt_stream_read_to_string"),
             (Some("signal::Notifier"), "wait") => Some("gos_rt_signal_wait"),
             (Some("signal::Notifier"), "try_wait") => Some("gos_rt_signal_try_wait"),
             (Some("vec::Iter"), "next") => Some("gos_rt_arr_iter_next"),

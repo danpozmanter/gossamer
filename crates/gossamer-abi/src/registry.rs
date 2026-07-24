@@ -1212,6 +1212,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_strconv_quote", (Ptr) -> Ptr, Cranelift, "strconv::quote(s) -> String."),
     rt!("gos_rt_strconv_unquote", (Ptr) -> I128, Cranelift, "strconv::unquote(s) -> Result<String, errors::Error>."),
     rt!("gos_rt_stream_flush", (Ptr) -> Void, Cranelift, "Flush a writable stream to the OS."),
+    rt!("gos_rt_stream_next_line", (Ptr) -> I128, Both, "Read one line from stdin as Option<String>, returning None at EOF."),
     rt!("gos_rt_stream_read_line", (Ptr, Ptr) -> I128, Cranelift, "Read one line from a stream into a &mut String slot, returning Result<i64, errors::Error>."),
     rt!("gos_rt_stream_read_to_string", (Ptr) -> Ptr, Cranelift, "Read all remaining bytes from a stream into a String."),
     rt!("gos_rt_stream_write_byte", (Ptr, I64) -> Void, Both, "Write a single byte to a stream."),

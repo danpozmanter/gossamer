@@ -824,6 +824,96 @@ fn main() {
 }
 
 #[test]
+fn stdin_read_line_no_arg_matches_option_in_vm_and_native() {
+    let fixture = write_fixture(
+        "stdin-read-line-option",
+        r#"use std::io
+
+fn main() {
+    let mut input = String::new()
+    io::stdin().read_line(&mut input).unwrap()
+    println!("first={}", input.trim())
+    match io::stdin().read_line() {
+        Some(name) => println!("second={}", name),
+        None => println!("EOF"),
+    }
+}
+"#,
+    );
+
+    let mut vm = Command::new(gos_bin())
+        .args(["run"])
+        .arg(&fixture)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn vm run");
+    vm.stdin
+        .as_mut()
+        .expect("vm stdin")
+        .write_all(b"Meow!\nDaniel\n")
+        .expect("write vm stdin");
+    let vm_out = vm.wait_with_output().expect("wait vm run");
+    assert!(
+        vm_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm_out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&vm_out.stdout),
+        "first=Meow!\nsecond=Daniel\n"
+    );
+
+    let out_dir = env::temp_dir().join(format!(
+        "gossamer-cli-stdin-read-line-option-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&out_dir).expect("create native out dir");
+    let build = Command::new(gos_bin())
+        .args(["build"])
+        .arg(&fixture)
+        .args(["--out-dir"])
+        .arg(&out_dir)
+        .output()
+        .expect("spawn build");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let mut bin = out_dir.join(fixture.file_stem().expect("fixture stem"));
+    if cfg!(windows) {
+        bin.set_extension("exe");
+    }
+    let mut native = Command::new(bin)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn native run");
+    native
+        .stdin
+        .as_mut()
+        .expect("native stdin")
+        .write_all(b"Meow!\nDaniel\n")
+        .expect("write native stdin");
+    let native_out = native.wait_with_output().expect("wait native run");
+    assert!(
+        native_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native_out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&native_out.stdout),
+        "first=Meow!\nsecond=Daniel\n"
+    );
+
+    let _ = std::fs::remove_file(&fixture);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
 fn run_subcommand_executes_via_vm_by_default() {
     let fixture = write_fixture("runvm", "fn main() { println(\"cli-vm\") }\n");
     let out = Command::new(gos_bin())

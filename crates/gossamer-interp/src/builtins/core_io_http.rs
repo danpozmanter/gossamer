@@ -129,6 +129,26 @@ fn builtin_stream_flush(_args: &[Value]) -> RuntimeResult<Value> {
 fn builtin_stream_read_line(args: &[Value]) -> RuntimeResult<Value> {
     use std::io::BufRead;
     let fd = args.first().map_or(0, stream_fd);
+    if args.len() == 1 {
+        if fd != 0 {
+            return Ok(none_variant());
+        }
+        let read = gossamer_runtime::sched_global::run_blocking("stdin-read-line", || {
+            let stdin = std::io::stdin();
+            let mut line = String::new();
+            stdin.lock().read_line(&mut line).map(|n| (n, line))
+        });
+        return match read {
+            Ok(Ok((0, _))) => Ok(none_variant()),
+            Ok(Ok((_, mut line))) => {
+                while line.ends_with('\n') || line.ends_with('\r') {
+                    line.pop();
+                }
+                Ok(some_variant(Value::String(SmolStr::from(line))))
+            }
+            Ok(Err(_)) | Err(_) => Ok(none_variant()),
+        };
+    }
     let Some(Value::MutCell(cell)) = args.get(1) else {
         return Ok(err_variant(
             "read_line: expected &mut String buffer".to_string(),

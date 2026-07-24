@@ -859,7 +859,7 @@ impl<'a> Builder<'a> {
             "gos_rt_http_stream_next_line" => self.option_string_adt_ty(),
             // `Child::read_line() -> Option<String>` - same pin as
             // the HTTP stream's line reader.
-            "gos_rt_child_read_line" => self.option_string_adt_ty(),
+            "gos_rt_child_read_line" | "gos_rt_stream_next_line" => self.option_string_adt_ty(),
             "gos_rt_stream_read_line" => self.result_i64_error_adt_ty(),
             "gos_rt_child_read_stdout" => self.tcx.string_ty(),
             "gos_rt_child_write_stdin" | "gos_rt_child_kill" => self.tcx.bool_ty(),

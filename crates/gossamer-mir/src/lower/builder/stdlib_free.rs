@@ -3732,6 +3732,7 @@ impl<'a> Builder<'a> {
             }
             "gos_rt_tcp_listener_bind" => Some("net::TcpListener"),
             "gos_rt_tcp_stream_connect" => Some("net::TcpStream"),
+            "gos_rt_io_stdin" | "gos_rt_io_stdout" | "gos_rt_io_stderr" => Some("io::Stream"),
             "gos_rt_fs_file_open" | "gos_rt_fs_file_create" => Some("fs::File"),
             "gos_rt_fs_temp_file" => Some("fs::temp_file_pair"),
             "gos_rt_fs_open_options_new" => Some("fs::OpenOptions"),

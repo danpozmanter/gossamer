@@ -3964,6 +3964,10 @@ impl<'a> TypeChecker<'a> {
         self.stdlib_handle_ty(24, "http::Request")
     }
 
+    fn io_stream_ty(&mut self) -> Ty {
+        self.stdlib_handle_ty(25, "io::Stream")
+    }
+
     fn result_response_error_ty(&mut self) -> Ty {
         let resp = self.http_response_ty();
         let err = self.tcx.dyn_error_ty();
@@ -4448,6 +4452,7 @@ impl<'a> TypeChecker<'a> {
             "()" => return Some(self.tcx.unit()),
             "!" => return Some(self.tcx.intern(TyKind::Never)),
             "json::Value" => return Some(self.tcx.json_value_ty()),
+            "io::Reader" | "io::Writer" => return Some(self.io_stream_ty()),
             "errors::Error" | "io::Error" => return Some(self.tcx.dyn_error_ty()),
             _ if src.ends_with("::Error") || src.ends_with("ParseError") => {
                 return Some(self.tcx.dyn_error_ty());

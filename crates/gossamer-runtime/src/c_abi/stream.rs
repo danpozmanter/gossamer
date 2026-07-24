@@ -39,7 +39,8 @@ use crate::c_abi::vec::gos_rt_result_new;
 // line-buffer; stderr writes go direct-to-syscall (it's error
 // output, we want it unbuffered). Read methods read from stdin:
 // `read_line(&mut String)` appends into the caller's buffer slot
-// and returns `Result<i64, errors::Error>`; `read_to_string`
+// and returns `Result<i64, errors::Error>`; `read_line()` returns
+// `Option<String>` without the trailing line ending; `read_to_string`
 // allocates a fresh String through the GC arena and returns it.
 
 #[repr(C)]
@@ -309,6 +310,35 @@ fn stream_read_line_err(message: &str) -> i128 {
     let msg = CString::new(message).unwrap_or_else(|_| c"read_line failed".to_owned());
     let err = unsafe { gos_rt_error_new(msg.as_ptr()) };
     gos_rt_result_new(1, err as i64)
+}
+
+/// Reads one line from `stream` (expected to be stdin) and returns
+/// `Some(line)` without the trailing line ending, or `None` at EOF or for
+/// non-stdin streams.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_stream_next_line(stream: *const GosStream) -> i128 {
+    ffi_entry!(1i128, {
+        let fd = unsafe { stream_fd(stream) };
+        if fd != 0 {
+            return gos_rt_result_new(1, 0);
+        }
+        unsafe { gos_rt_flush_stdout() };
+        let read = crate::sched_global::run_blocking("stdin-read-line", || {
+            let stdin = std::io::stdin();
+            let mut line = String::new();
+            stdin.lock().read_line(&mut line).map(|n| (n, line))
+        });
+        match read {
+            Ok(Ok((0, _))) | Ok(Err(_)) | Err(_) => gos_rt_result_new(1, 0),
+            Ok(Ok((_, mut line))) => {
+                while line.ends_with('\n') || line.ends_with('\r') {
+                    line.pop();
+                }
+                let ptr = alloc_cstring(line.as_bytes()) as i64;
+                gos_rt_result_new(0, ptr)
+            }
+        }
+    })
 }
 
 /// Reads one line from `stream` (expected to be stdin), appends the raw line

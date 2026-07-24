@@ -64,6 +64,10 @@ fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
         builtin("Stream::read_line", builtin_stream_read_line),
     ));
     globals.push((
+        "gos_rt_stream_next_line",
+        builtin("gos_rt_stream_next_line", builtin_stream_read_line),
+    ));
+    globals.push((
         "read_to_string",
         builtin("read_to_string", builtin_stream_read_to_string),
     ));

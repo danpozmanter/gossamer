@@ -331,6 +331,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_child_write_stdin" => Some("gos_rt_child_write_stdin"),
         "gos_rt_child_close_stdin" => Some("gos_rt_child_close_stdin"),
         "gos_rt_child_read_line" => Some("gos_rt_child_read_line"),
+        "gos_rt_stream_next_line" => Some("gos_rt_stream_next_line"),
         "gos_rt_child_read_stdout" => Some("gos_rt_child_read_stdout"),
         "gos_rt_child_wait" => Some("gos_rt_child_wait"),
         "gos_rt_child_kill" => Some("gos_rt_child_kill"),

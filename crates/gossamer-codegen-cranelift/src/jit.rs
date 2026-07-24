@@ -2520,6 +2520,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_stream_write_str"    => rt::gos_rt_stream_write_str,
         "gos_rt_stream_flush"        => rt::gos_rt_stream_flush,
         "gos_rt_stream_read_line"    => rt::gos_rt_stream_read_line,
+        "gos_rt_stream_next_line"    => rt::gos_rt_stream_next_line,
         "gos_rt_stream_read_to_string" => rt::gos_rt_stream_read_to_string,
         "gos_rt_println"             => rt::gos_rt_println,
         "gos_rt_stdout_acquire"      => rt::gos_rt_stdout_acquire,

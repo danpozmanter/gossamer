@@ -364,6 +364,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_child_write_stdin" => (&[types::I64, ptr_ty], Some(types::I64)),
         "gos_rt_child_close_stdin" => (&[types::I64], Some(types::I64)),
         "gos_rt_child_read_line" => (&[types::I64], Some(types::I128)),
+        "gos_rt_stream_next_line" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_child_read_stdout" => (&[types::I64], Some(ptr_ty)),
         "gos_rt_child_wait" => (&[types::I64], Some(types::I128)),
         "gos_rt_child_kill" => (&[types::I64], Some(types::I64)),

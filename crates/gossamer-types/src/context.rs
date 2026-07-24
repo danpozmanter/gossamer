@@ -624,11 +624,13 @@ impl TyCtxt {
         ) {
             return false;
         }
-        // HTTP client builder/request handles are runtime-owned opaque
-        // pointers, not reference-counted user aggregates.
+        // HTTP client builder/request handles and io stream handles are
+        // runtime-owned opaque pointers, not reference-counted user aggregates.
         if matches!(
             self.kind(ty),
-            Some(TyKind::Adt { def, .. }) if (u32::MAX - 24..=u32::MAX - 22).contains(&def.local)
+            Some(TyKind::Adt { def, .. })
+                if (u32::MAX - 24..=u32::MAX - 22).contains(&def.local)
+                    || def.local == u32::MAX - 25
         ) {
             return false;
         }
