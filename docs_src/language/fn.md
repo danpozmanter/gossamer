@@ -8,6 +8,10 @@ value (no `return` needed); `-> Ret` may be omitted when the function
 returns `()`. A parameter takes `name: Type`, `&Type` (read-shared), or
 `&mut Type` (writes through to the caller).
 
+Mutable-reference arguments must be explicit at the call site. A writable
+binding is passed as `&mut value`, while an existing `&mut Type` reference can
+be forwarded as-is. Passing a bare value never grants a callee mutable access.
+
 ```gossamer
 fn area(w: i64, h: i64) -> i64 { w * h }
 fn greet(name: &String) { println!("hi, {name}") }

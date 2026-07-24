@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.34.0 - Explicit standard library imports, filesystem fixes, mcp & CI improvements
+## 0.34.0 - Explicit standard library imports, filesystem fixes, &mut fixes, MCP & CI improvements
 
 - Require `use` for every standard library module, including qualified calls
   such as `env::args()` and `fs::read(...)`, while retaining the documented
@@ -9,7 +9,15 @@
 - Make resolver and LSP diagnostics, completions, import edits, and unused-import
   analysis accurate for missing, explicit, grouped, aliased, and top-level uses;
   suppress duplicate edits for modules already imported through a group.
+- Make lexer, parser, resolver, type, and REPL errors more actionable with
+  offending values, accepted forms, concrete fixes, and relevant constraints.
 - Traverse top-level statements in shared immutable and mutable AST visitors.
+- Require explicit `&mut` call arguments for mutable-reference parameters
+  across functions, closures, qualified methods, pipelines, and goroutines;
+  add a focused diagnostic and remove hidden VM and native auto-borrowing.
+- Expand mutability regression coverage and clarify mutable bindings,
+  reference forwarding, returned aliases, obvious overlapping mutable aliases,
+  and concurrency boundaries.
 - Preserve arbitrary OS names and paths returned by `fs::read_dir` across
   interpreter and native filesystem traversal.
 - Refresh examples, conformance and REPL fixtures, specifications, generated
@@ -18,6 +26,12 @@
   already returned by APIs.
 - Run independent Linux CI suites and release builds concurrently, and remove
   the redundant default-feature Clippy pass.
+- Name mutable call arguments in diagnostics and show the required `let mut`
+  and `&mut` forms directly in REPL output.
+- Verify explicit mutable references across VM, Cranelift, and strict LLVM
+  tiers, and keep raw-byte filename fixtures on supporting platforms.
+- Split native tier-parity CI into independent backend-group shards.
+- Link diagnostics to published documentation instead of repository paths.
 
 ## 0.33.6 - Methods and docs audit + fixes and mutability fixes
 
@@ -118,8 +132,8 @@
   parsing with validation, subcommands, environment fallback, and completions.
 - Bound Rust-binding runner caches, disable generated debug and incremental
   bloat, streamline CI, and align shared dependency versions.
-- Make `&mut` call arguments consistently write through, including fixed
-  arrays and accepted bare writable places passed to `&mut` parameters.
+- Make explicit `&mut` call arguments consistently write through, including
+  fixed arrays.
 - Restore release benchmark throughput by using host `-mcpu=native` for native
   builds and extending loop bounds versioning to invariant indices.
 

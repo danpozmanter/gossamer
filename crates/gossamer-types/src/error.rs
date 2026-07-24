@@ -275,7 +275,7 @@ pub enum TypeError {
     /// The `?` operator was applied to a value that is not a
     /// `Result` or `Option`, or appeared outside a function returning
     /// the same propagation family.
-    #[error("the `?` operator cannot be used in this context")]
+    #[error("the `?` operator cannot be used with `{ty}` here: {reason}")]
     QuestionMarkUnsupported {
         /// Rendered type of the operand or enclosing return type.
         ty: String,
@@ -287,7 +287,7 @@ pub enum TypeError {
     /// no 128-bit representation on any tier, so the checker
     /// rejects the types uniformly instead of letting the VM run
     /// them at silent 64-bit width.
-    #[error("`{ty}` is not supported yet")]
+    #[error("`{ty}` is unsupported because all integer tiers are limited to 64 bits")]
     Int128Unsupported {
         /// Which of the two 128-bit spellings appeared.
         ty: String,
@@ -307,7 +307,7 @@ pub enum TypeError {
     },
     /// A lazy iterator state was formatted or printed directly instead of
     /// being consumed by a terminal.
-    #[error("iterator state cannot be formatted directly")]
+    #[error("a lazy iterator cannot be formatted before it is collected or consumed")]
     IteratorStateFormatted,
     /// A lazy iterator state was used after an adapter or terminal consumed it.
     #[error("iterator `{name}` was already consumed by `{operation}`")]
@@ -469,6 +469,15 @@ pub enum TypeError {
         /// Earlier named mutable-reference binding.
         borrower: String,
     },
+    /// A call omitted `&mut` for a parameter that may modify its argument.
+    /// Mutable access must be visible at the call site as `&mut place`.
+    #[error(
+        "argument `{argument}` may be modified by this call; ensure its source uses `let mut` and pass it as `&mut {argument}`"
+    )]
+    MutableArgumentRequiresReference {
+        /// Source-like spelling of the argument place.
+        argument: String,
+    },
 }
 
 impl TypeError {
@@ -522,6 +531,7 @@ impl TypeError {
             Self::AssignThroughSharedReference { .. } => "assign-through-shared-reference",
             Self::MutableReferenceToImmutable { .. } => "mutable-reference-to-immutable",
             Self::MutableReferenceConflict { .. } => "mutable-reference-conflict",
+            Self::MutableArgumentRequiresReference { .. } => "mutable-argument-requires-reference",
         }
     }
 
@@ -572,6 +582,7 @@ impl TypeError {
             Self::AssignThroughSharedReference { .. } => "GT0031",
             Self::MutableReferenceToImmutable { .. } => "GT0032",
             Self::MutableReferenceConflict { .. } => "GT0043",
+            Self::MutableArgumentRequiresReference { .. } => "GT0046",
         }
     }
 }
@@ -953,6 +964,15 @@ impl TypeDiagnostic {
                         "end or narrow `{borrower}` before borrowing `{root}` mutably again"
                     ))
                     .with_note("named mutable references are exclusive for their lexical scope");
+            }
+            TypeError::MutableArgumentRequiresReference { argument } => {
+                out = out
+                    .with_help(format!(
+                        "change this argument to `&mut {argument}`; its binding must be declared `mut`"
+                    ))
+                    .with_note(
+                        "calls never create mutable references implicitly; `&mut` makes possible mutation visible",
+                    );
             }
         }
         out

@@ -265,12 +265,19 @@ impl ParseError {
             ParseError::PipeRhsInvalid => (
                 "GP0007",
                 "right-hand side of `|>` must be a callable".to_string(),
-                None,
+                Some(
+                    "pipe into a function name, method, closure, or call expression such as \
+                     `value |> parse` or `value |> clamp(0, 10)`"
+                        .to_string(),
+                ),
             ),
             ParseError::AssignmentNotAllowed => (
                 "GP0008",
                 "assignment is only valid at statement position".to_string(),
-                None,
+                Some(
+                    "move the assignment into its own statement before using the assigned value"
+                        .to_string(),
+                ),
             ),
             ParseError::ExpectedInt => ("GP0009", "expected an integer literal".to_string(), None),
             ParseError::ExpectedString => ("GP0010", "expected a string literal".to_string(), None),
@@ -279,20 +286,13 @@ impl ParseError {
                 "invalid tuple index".to_string(),
                 Some("tuple indices must be plain decimal integers".to_string()),
             ),
-            ParseError::MalformedLabel => (
-                "GP0012",
-                "expected a label identifier after `'`".to_string(),
-                None,
-            ),
-            ParseError::MalformedAttribute => ("GP0013", "malformed attribute".to_string(), None),
-            ParseError::MalformedUse => ("GP0014", "malformed `use` declaration".to_string(), None),
-            ParseError::UnexpectedConstruct => ("GP0015", "unexpected construct".to_string(), None),
             ParseError::ExternReserved => (
                 "GP0016",
                 "extern blocks are not supported".to_string(),
                 Some(
                     "FFI is expressed through the `[rust-bindings]` section of `project.toml` \
-                     plus the `gossamer-binding` crate (see `docs_src/libraries.md`). \
+                     plus the `gossamer-binding` crate (see \
+                     https://gossamer-lang.org/docs/libraries/). \
                      Remove the `extern \"C\" { ... }` block or rewrite the binding as a \
                      Rust crate consumed via `[rust-bindings]`."
                         .to_string(),
@@ -304,6 +304,42 @@ impl ParseError {
                 Some("split the expression into smaller helpers".to_string()),
             ),
             ParseError::Lex { message } => ("GP0018", message.clone(), None),
+            other => other.code_title_help_malformed(),
+        }
+    }
+
+    fn code_title_help_malformed(&self) -> (&'static str, String, Option<String>) {
+        match self {
+            ParseError::MalformedLabel => (
+                "GP0012",
+                "expected a label identifier after `'`".to_string(),
+                Some("write a label such as `'outer` before the loop".to_string()),
+            ),
+            ParseError::MalformedAttribute => (
+                "GP0013",
+                "malformed attribute".to_string(),
+                Some(
+                    "write an attribute as `#[name]` or `#[name(value)]` immediately before its item"
+                        .to_string(),
+                ),
+            ),
+            ParseError::MalformedUse => (
+                "GP0014",
+                "malformed `use` declaration".to_string(),
+                Some(
+                    "write `use std::module`, `use path::item`, or a grouped import such as \
+                     `use std::{env, fs}`"
+                        .to_string(),
+                ),
+            ),
+            ParseError::UnexpectedConstruct => (
+                "GP0015",
+                "these adjacent tokens do not form a valid expression or declaration".to_string(),
+                Some(
+                    "check for a missing operator, comma, delimiter, or statement separator"
+                        .to_string(),
+                ),
+            ),
             other => other.code_title_help_syntax(),
         }
     }

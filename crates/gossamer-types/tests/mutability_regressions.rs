@@ -15,6 +15,8 @@ enum ExpectedError {
     ImmutableBinding,
     SharedReference,
     MutableReferenceToImmutable,
+    ExplicitMutableArgument,
+    MutableReferenceConflict,
 }
 
 impl ExpectedError {
@@ -27,6 +29,12 @@ impl ExpectedError {
             Self::MutableReferenceToImmutable => {
                 matches!(error, TypeError::MutableReferenceToImmutable { .. })
             }
+            Self::ExplicitMutableArgument => {
+                matches!(error, TypeError::MutableArgumentRequiresReference { .. })
+            }
+            Self::MutableReferenceConflict => {
+                matches!(error, TypeError::MutableReferenceConflict { .. })
+            }
         }
     }
 
@@ -35,7 +43,119 @@ impl ExpectedError {
             Self::ImmutableBinding => "GT0030",
             Self::SharedReference => "GT0031",
             Self::MutableReferenceToImmutable => "GT0032",
+            Self::ExplicitMutableArgument => "GT0046",
+            Self::MutableReferenceConflict => "GT0043",
         }
+    }
+}
+
+#[test]
+fn mutable_reference_parameters_require_visible_mutable_arguments() {
+    let cases = [
+        (
+            "immutable fixed array",
+            "fn change(v: &mut [i64]) { v[0] = 0 }\nfn main() { let a = [1, 2]\n change(a) }",
+        ),
+        (
+            "mutable scalar",
+            "fn change(v: &mut i64) { *v = 0 }\nfn main() { let mut a = 1\n change(a) }",
+        ),
+        (
+            "mutable fixed array",
+            "fn change(v: &mut [i64]) { v[0] = 0 }\nfn main() { let mut a = [1, 2]\n change(a) }",
+        ),
+        (
+            "mutable vector",
+            "fn change(v: &mut Vec<i64>) { v[0] = 0 }\nfn main() { let mut a: Vec<i64> = [1, 2]\n change(a) }",
+        ),
+        (
+            "mutable field",
+            "struct S { value: i64 }\nfn change(v: &mut i64) { *v = 0 }\nfn main() { let mut s = S { value: 1 }\n change(s.value) }",
+        ),
+        (
+            "mutable index",
+            "fn change(v: &mut i64) { *v = 0 }\nfn main() { let mut a = [1, 2]\n change(a[0]) }",
+        ),
+        (
+            "generic mutable parameter",
+            "fn identity<T>(v: &mut T) -> &mut T { v }\nfn main() { let mut a = 1\n let _ = identity(a) }",
+        ),
+        (
+            "closure mutable parameter",
+            "fn main() { let change = |v: &mut i64| { *v = 0 }\n let mut a = 1\n change(a) }",
+        ),
+        (
+            "first-class mutable function",
+            "fn change(v: &mut i64) { *v = 0 }\nfn main() { let f = change\n let mut a = 1\n f(a) }",
+        ),
+        (
+            "qualified mutable receiver",
+            "struct S { value: i64 }\nimpl S { fn change(&mut self) { self.value = 0 } }\nfn main() { let mut s = S { value: 1 }\n S::change(s) }",
+        ),
+        (
+            "pipeline into mutable parameter",
+            "fn change(v: &mut i64) { *v = 0 }\nfn main() { let mut a = 1\n a |> change }",
+        ),
+        (
+            "goroutine bare mutable argument",
+            "fn change(v: &mut Vec<i64>) { v[0] = 0 }\nfn main() { let mut a: Vec<i64> = [1]\n go change(a) }",
+        ),
+    ];
+
+    for (name, source) in cases {
+        assert_rejected(name, source, ExpectedError::ExplicitMutableArgument);
+    }
+}
+
+#[test]
+fn explicit_and_forwarded_mutable_references_remain_usable() {
+    let cases = [
+        (
+            "explicit scalar reference",
+            "fn change(v: &mut i64) { *v = 0 }\nfn main() { let mut a = 1\n change(&mut a) }",
+        ),
+        (
+            "explicit field and index references",
+            "struct S { values: Vec<i64> }\nfn change(v: &mut i64) { *v = 0 }\nfn main() { let mut s = S { values: [1, 2] }\n change(&mut s.values[0]) }",
+        ),
+        (
+            "forward existing mutable reference",
+            "fn change(v: &mut i64) { *v = 0 }\nfn forward(v: &mut i64) { change(v) }\nfn main() { let mut a = 1\n forward(&mut a) }",
+        ),
+        (
+            "pipe existing mutable reference",
+            "fn change(v: &mut i64) { *v = 0 }\nfn main() { let mut a = 1\n let r = &mut a\n r |> change }",
+        ),
+        (
+            "returned mutable reference writes through immutable alias binding",
+            "fn change(v: &mut [i64]) -> &mut [i64] { v[0] = 0\n v }\nfn main() { let mut a = [1, 2]\n let b = change(&mut a)\n b[0] = 2 }",
+        ),
+    ];
+
+    for (name, source) in cases {
+        assert_accepted(name, source);
+    }
+}
+
+#[test]
+fn mutable_call_arguments_reject_obvious_overlapping_aliases() {
+    let cases = [
+        (
+            "same root in two call arguments",
+            "fn swap(a: &mut i64, b: &mut i64) { let t = *a\n *a = *b\n *b = t }\nfn main() { let mut value = 1\n swap(&mut value, &mut value) }",
+        ),
+        (
+            "call borrow overlaps named mutable reference",
+            "fn change(value: &mut i64) { *value = 0 }\nfn main() { let mut value = 1\n let reference = &mut value\n change(&mut value)\n println!(\"{}\", reference) }",
+        ),
+        (
+            "method arguments share one mutable root",
+            "struct S {}\nimpl S { fn use_two(&self, a: &mut i64, b: &mut i64) {} }\nfn main() { let s = S {}\n let mut value = 1\n s.use_two(&mut value, &mut value) }",
+        ),
+    ];
+
+    for (name, source) in cases {
+        assert_rejected(name, source, ExpectedError::MutableReferenceConflict);
     }
 }
 

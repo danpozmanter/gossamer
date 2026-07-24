@@ -720,22 +720,10 @@ impl<'a> Builder<'a> {
         // alloca (a harmless no-op). Recorded as (place_local, ref_local).
         let mut mut_ref_reloads: Vec<(Local, Local)> = Vec::new();
         for (idx, arg) in args.iter().enumerate() {
-            let expected_arg_ty = callee_param_tys
-                .as_ref()
-                .and_then(|params| params.get(idx))
-                .copied();
-            // Detect a `&mut <bare local>` of a writeback type before lowering;
+            // Detect an explicit `&mut <bare local>` of a writeback type;
             // the matching `Rvalue::Ref` emission lives in `lower_unary`.
-            let mut reload_target = self.mut_ref_reload_target(arg);
-            let local =
-                if let Some(local) = self.lower_implicit_mut_ref_arg(arg, expected_arg_ty, span) {
-                    if reload_target.is_none() {
-                        reload_target = self.implicit_mut_ref_reload_target(arg, expected_arg_ty);
-                    }
-                    local
-                } else {
-                    self.lower_expr(arg)?
-                };
+            let reload_target = self.mut_ref_reload_target(arg);
+            let local = self.lower_expr(arg)?;
             if let Some(place_local) = reload_target {
                 mut_ref_reloads.push((place_local, local));
             }
@@ -966,106 +954,5 @@ impl<'a> Builder<'a> {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String
         );
         writeback.then_some(local)
-    }
-
-    fn implicit_mut_ref_reload_target(
-        &self,
-        arg: &HirExpr,
-        expected_ty: Option<Ty>,
-    ) -> Option<Local> {
-        let expected = expected_ty?;
-        let TyKind::Ref {
-            mutability: gossamer_types::Mutbl::Mut,
-            inner,
-        } = self.tcx.kind_of(expected)
-        else {
-            return None;
-        };
-        if !matches!(
-            self.tcx.kind_of(*inner),
-            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String
-        ) {
-            return None;
-        }
-        let HirExprKind::Path { segments, .. } = &arg.kind else {
-            return None;
-        };
-        let [seg] = segments.as_slice() else {
-            return None;
-        };
-        let local = self.lookup_local(&seg.name)?;
-        if matches!(
-            self.tcx.kind_of(self.locals[local.0 as usize].ty),
-            TyKind::Ref { .. }
-        ) {
-            return None;
-        }
-        Some(local)
-    }
-
-    fn lower_implicit_mut_ref_arg(
-        &mut self,
-        arg: &HirExpr,
-        expected_ty: Option<Ty>,
-        span: Span,
-    ) -> Option<Local> {
-        if matches!(
-            arg.kind,
-            HirExprKind::Unary {
-                op: HirUnaryOp::RefMut,
-                ..
-            }
-        ) {
-            return None;
-        }
-        let expected = expected_ty?;
-        let TyKind::Ref {
-            mutability: gossamer_types::Mutbl::Mut,
-            inner,
-        } = self.tcx.kind_of(expected)
-        else {
-            return None;
-        };
-        if !matches!(
-            self.tcx.kind_of(*inner),
-            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String
-        ) {
-            return None;
-        }
-        if let HirExprKind::Path { segments, .. } = &arg.kind
-            && let [seg] = segments.as_slice()
-            && let Some(local) = self.lookup_local(&seg.name)
-            && matches!(
-                self.tcx.kind_of(self.locals[local.0 as usize].ty),
-                TyKind::Ref { .. }
-            )
-        {
-            return Some(local);
-        }
-        let is_place_expr = matches!(
-            arg.kind,
-            HirExprKind::Path { .. }
-                | HirExprKind::Field { .. }
-                | HirExprKind::TupleIndex { .. }
-                | HirExprKind::Index { .. }
-                | HirExprKind::Unary {
-                    op: HirUnaryOp::Deref,
-                    ..
-                }
-        );
-        if !is_place_expr {
-            return None;
-        }
-        let place = self.lower_place_expr(arg)?;
-        let dest = self.fresh(expected);
-        self.emit_assign(
-            Place::local(dest),
-            Rvalue::Ref {
-                mutable: true,
-                place,
-            },
-            span,
-        );
-        Some(dest)
     }
 }

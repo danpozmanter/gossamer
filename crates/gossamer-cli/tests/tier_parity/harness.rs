@@ -583,6 +583,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/nested_vec_ops.gos"),
     spec("feature-testing-examples/mut_ref_scalar_writeback.gos"),
     spec("feature-testing-examples/mut_ref_string_writeback.gos"),
+    spec("feature-testing-examples/mutability_explicit_parity.gos"),
     spec("feature-testing-examples/fixed_array_mut_param_copy.gos"),
     spec("feature-testing-examples/byte_vec_i64_model.gos"),
     spec("feature-testing-examples/map_iteration_order.gos"),

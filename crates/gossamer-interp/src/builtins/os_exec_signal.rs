@@ -1269,7 +1269,7 @@ mod blocking_file_tests {
         assert!(!nested.exists());
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn read_dir_path_field_reopens_non_utf8_directory() {
         use std::os::unix::ffi::OsStringExt;

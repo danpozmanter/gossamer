@@ -204,7 +204,9 @@ let n = 3 |> double |> add(10) |> clamp(0, 100)
   from the argument (not usable as a bare value or repeat count).
 - **References**: `&x` is shared and `&mut x` writes through to the same
   source place; both are aliases, never copies. There are no lifetimes or
-  borrow checker, so `&mut` is writable rather than exclusive.
+  borrow checker, so `&mut` is writable rather than fully exclusive.
+  Calls never create `&mut` implicitly: pass a writable place as
+  `change(&mut value)`. Forward an existing `&mut T` as `change(value)`.
 - **Types**: `bool char i8..i64 u8..u64 isize usize f32 f64 String
   [T] [T; N] (A, B) Option<T> Result<T, E> &T` + user types. `i128`
   / `u128` are rejected (GT0014). Transparent `type Id = i64` /

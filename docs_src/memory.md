@@ -83,6 +83,8 @@ referent writable. Its type remains `&T` after a rebind. Conversely,
 rebindable. The type checker rejects:
 
 - A `&mut` taken on a non-`mut` binding.
+- A bare value passed to an `&mut T` parameter. Write `call(&mut value)`;
+  only an existing `&mut T` reference may be forwarded without another `&mut`.
 - An assignment through a shared `&T` reference.
 - A mutating method call on an immutable place.
 - A projection that crosses any shared layer inside a nested reference chain.
@@ -94,8 +96,10 @@ mutable-reference chain can therefore observe and update the same value.
 
 Gossamer rejects a second simple named `&mut` taken directly from the same root
 while the first remains in lexical scope. This catches the common accidental
-sibling-alias case, but it is not a general uniqueness proof. Taking a mutable
-reference to an existing mutable-reference binding creates a chain:
+sibling-alias case. It also rejects a temporary `&mut` overlapping an active
+named reference and duplicate `&mut` roots in one call. These checks are not a
+general uniqueness proof. Taking a mutable reference to an existing
+mutable-reference binding creates a chain:
 
 ```gossamer
 let mut a = [1, 2]

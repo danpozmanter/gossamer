@@ -180,5 +180,6 @@ mod tests {
         assert!(SKILL_CARD.contains("Import every standard library module you use"));
         assert!(SKILL_CARD.contains("entry.is_symlink"));
         assert!(SKILL_CARD.contains("fs::is_symlink(&entry.path)"));
+        assert!(SKILL_CARD.contains("Calls never create `&mut` implicitly"));
     }
 }

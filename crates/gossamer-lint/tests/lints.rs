@@ -91,6 +91,15 @@ fn unused_mut_variable_silent_when_field_place_is_written() {
 }
 
 #[test]
+fn unused_mut_variable_silent_when_passed_by_mutable_reference() {
+    let diags = lint(
+        "fn change(value: &mut i64) { *value = 0 }\n\
+         fn main() { let mut value = 1\n change(&mut value) }\n",
+    );
+    assert!(!has_code(&diags, "GL0003"), "{:?}", diags_codes(&diags));
+}
+
+#[test]
 fn needless_return_fires_on_trailing_return_stmt() {
     let diags = lint("fn answer() -> i64 { return 42i64 }\n");
     assert!(has_code(&diags, "GL0004"), "{:?}", diags_codes(&diags));

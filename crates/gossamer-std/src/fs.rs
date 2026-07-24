@@ -1828,7 +1828,7 @@ mod tests {
         let _ = remove_all(&dir);
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn encoded_non_utf8_directory_path_round_trips() {
         use std::os::unix::ffi::OsStringExt;

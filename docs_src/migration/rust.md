@@ -40,9 +40,13 @@ println!("{} {}", a.len(), b.len())
 
 `&mut` still means the callee may write through the reference, but the
 compiler does not implement Rust's lifetime or non-lexical-borrow analysis.
+As in Rust, a writable place must be passed explicitly as `&mut value`;
+`function(value)` never creates a mutable reference. An existing `&mut T`
+reference can be forwarded directly.
 It rejects a second simple named `&mut` to the same root while the first is in
-lexical scope. More complex overlapping aliases remain a correctness hazard
-as they are in a language with shared mutable objects.
+lexical scope, overlapping temporary mutable references, and duplicate mutable
+roots in one call. More complex aliases remain a correctness hazard as they
+are in a language with shared mutable objects.
 
 ## Traits
 

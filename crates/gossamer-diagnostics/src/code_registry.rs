@@ -368,7 +368,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "The `extern` keyword is reserved but has no\n\
                      source-level item form. Gossamer's FFI surface is the\n\
                      `[rust-bindings]` section of `project.toml` plus the\n\
-                     `gossamer-binding` crate (see `docs_src/libraries.md`).\n\
+                     `gossamer-binding` crate (see https://gossamer-lang.org/docs/libraries/).\n\
                      Remove the `extern \"C\" { ... }` block or rewrite the\n\
                      binding as a Rust crate consumed via `[rust-bindings]`.",
     ),
@@ -686,6 +686,12 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      Named mutable references are exclusive for their lexical scope.\n\
                      End or narrow the earlier borrow before taking another `&mut` to the\n\
                      same root binding.",
+    ),
+    (
+        "GT0046",
+        "A call omitted `&mut` for a parameter that can modify its argument.\n\
+                     Ensure the source binding uses `let mut`, then pass its place as\n\
+                     `&mut value`. An existing `&mut T` value can be forwarded directly.",
     ),
     (
         "GX0001",

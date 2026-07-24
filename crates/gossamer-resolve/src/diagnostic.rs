@@ -129,6 +129,26 @@ impl ResolveDiagnostic {
                 ));
                 out = out.with_help(msg);
             }
+        } else {
+            out = match &self.error {
+                ResolveError::WrongNamespace {
+                    name,
+                    expected,
+                    found,
+                } => out.with_help(format!(
+                    "use a {expected} in this position; `{name}` resolves to a {found}"
+                )),
+                ResolveError::UnknownModulePath { path } => out.with_help(format!(
+                    "check `std::{path}` against the standard library module list or import the owning module"
+                )),
+                ResolveError::DuplicateItem { name } => out.with_help(format!(
+                    "rename or remove one `{name}` declaration in this module"
+                )),
+                ResolveError::DuplicateImport { name } => out.with_help(format!(
+                    "remove one import of `{name}`, or alias one with `as`"
+                )),
+                ResolveError::UnresolvedName { .. } => out,
+            };
         }
         out
     }

@@ -73,7 +73,7 @@ jobs:
             --exact --nocapture
 
   test-native:
-    name: Test native (${{ matrix.os }})
+    name: Test native (${{ matrix.os }}, ${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     strategy:
@@ -88,11 +88,12 @@ jobs:
         # runner that executes `gos run`, the Cranelift JIT, and `gos
         # build` on real ARM Linux - the Raspberry Pi target.
         os: [ubuntu-latest, macos-latest, windows-latest, ubuntu-24.04-arm]
+        suite: [general, parity-0-1, parity-2-3, parity-4-5]
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/rust-test-setup
         with:
-          cache-prefix: v2-test-native-stdio
+          cache-prefix: v3-test-native-${{ matrix.suite }}
       # `crates/gossamer-cli/build.rs` ensures the runtime
       # staticlib is emitted into `target/<profile>/` for both
       # debug and release; no explicit pre-build step needed.
@@ -134,10 +135,7 @@ jobs:
           logdir="$TMPDIR/test-logs"
           mkdir -p "$logdir"
           rc=0
-          # Build every native test binary up front, so each run below is
-          # execution-only and a build failure is its own clear, separate error.
-          "$CARGO_BIN" test --no-run -p gossamer-cli -p gossamer-codegen-cranelift \
-            2>&1 | tee "$logdir/00-build.log" || rc=1
+          suite="${{ matrix.suite }}"
           # Run each test binary in its OWN process, serially, streamed live AND
           # teed to a per-binary file. These crates fork llc/linkers and execute
           # freshly built native binaries, so a miscompile manifests as the test
@@ -212,24 +210,50 @@ jobs:
             for name in $linux_only; do [ "$name" = "$1" ] && return 0; done
             return 1
           }
-          for crate in gossamer-cli gossamer-codegen-cranelift; do
-            run_target "$crate" lib --lib
-            for f in crates/"$crate"/tests/*.rs; do
-              [ -e "$f" ] || continue
-              name="$(basename "$f" .rs)"
-              if skip_off_linux "$name"; then
-                echo "::notice::skip ${crate}::${name} on ${RUNNER_OS} (platform-invariant; covered on Linux)"
-                continue
-              fi
-              run_target "$crate" "$name" --test "$name"
+          if [ "$suite" = general ]; then
+            # Build every general native test binary up front, so each run below
+            # is execution-only and a build failure is separately attributed.
+            "$CARGO_BIN" test --no-run -p gossamer-cli -p gossamer-codegen-cranelift \
+              2>&1 | tee "$logdir/00-build.log" || rc=1
+            for crate in gossamer-cli gossamer-codegen-cranelift; do
+              run_target "$crate" lib --lib
+              for f in crates/"$crate"/tests/*.rs; do
+                [ -e "$f" ] || continue
+                name="$(basename "$f" .rs)"
+                # Tier parity has its own parallel shards below.
+                [ "$name" = tier_parity ] && continue
+                if skip_off_linux "$name"; then
+                  echo "::notice::skip ${crate}::${name} on ${RUNNER_OS} (platform-invariant; covered on Linux)"
+                  continue
+                fi
+                run_target "$crate" "$name" --test "$name"
+              done
             done
-          done
+          else
+            "$CARGO_BIN" test --no-run -p gossamer-cli --test tier_parity \
+              2>&1 | tee "$logdir/00-build.log" || rc=1
+            groups="${suite#parity-}"
+            first="${groups%-*}"
+            last="${groups#*-}"
+            if [ "$first" = 0 ]; then
+              run_target gossamer-cli tier_parity_vm --test tier_parity \
+                vm_runs_every_example_without_crashing
+            fi
+            for group in $(seq "$first" "$last"); do
+              run_target gossamer-cli "tier_parity_cranelift_${group}" \
+                --test tier_parity "cranelift_parity_group_${group}"
+              run_target gossamer-cli "tier_parity_llvm_${group}" \
+                --test tier_parity "llvm_parity_group_${group}"
+              run_target gossamer-cli "tier_parity_strict_${group}" \
+                --test tier_parity "llvm_strict_lower_group_${group}"
+            done
+          fi
           exit "$rc"
       - name: Upload native build artifacts
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: native-build-artifacts-${{ matrix.os }}
+          name: native-build-artifacts-${{ matrix.os }}-${{ matrix.suite }}
           path: ${{ github.workspace }}/native-build-artifacts
           retention-days: 7
           if-no-files-found: ignore

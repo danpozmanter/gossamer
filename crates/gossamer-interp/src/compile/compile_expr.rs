@@ -3363,9 +3363,8 @@ impl<'tcx> FnBuilder<'tcx> {
         })
     }
 
-    fn mut_ref_arg_home(&self, arg: &HirExpr, expected_ty: Option<Ty>) -> Option<Reg> {
-        let expects_mut_vec = crate::compile::is_mut_ref_vec(self.tcx, arg.ty)
-            || expected_ty.is_some_and(|ty| crate::compile::is_mut_ref_vec(self.tcx, ty));
+    fn mut_ref_arg_home(&self, arg: &HirExpr, _expected_ty: Option<Ty>) -> Option<Reg> {
+        let expects_mut_vec = crate::compile::is_mut_ref_vec(self.tcx, arg.ty);
         if !expects_mut_vec {
             return None;
         }
@@ -3398,10 +3397,9 @@ impl<'tcx> FnBuilder<'tcx> {
     fn mut_ref_writeback_place<'a>(
         tcx: &TyCtxt,
         arg: &'a HirExpr,
-        expected_ty: Option<Ty>,
+        _expected_ty: Option<Ty>,
     ) -> Option<&'a HirExpr> {
-        let typed_as_mut_ref = crate::compile::is_mut_ref_writeback(tcx, arg.ty)
-            || expected_ty.is_some_and(|ty| crate::compile::is_mut_ref_writeback(tcx, ty));
+        let typed_as_mut_ref = crate::compile::is_mut_ref_writeback(tcx, arg.ty);
         let (place, explicit_mut_place) = match &arg.kind {
             HirExprKind::Unary {
                 op: HirUnaryOp::RefMut,

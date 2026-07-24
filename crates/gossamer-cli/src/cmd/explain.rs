@@ -275,7 +275,7 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
             "The `extern` keyword is reserved but has no\n\
                      source-level item form. Gossamer's FFI surface is the\n\
                      `[rust-bindings]` section of `project.toml` plus the\n\
-                     `gossamer-binding` crate (see `docs_src/libraries.md`).\n\
+                     `gossamer-binding` crate (see https://gossamer-lang.org/docs/libraries/).\n\
                      Remove the `extern \"C\" { ... }` block or rewrite the\n\
                      binding as a Rust crate consumed via `[rust-bindings]`."
         }

@@ -1,0 +1,46 @@
+// Explicit mutable references must behave identically in every execution tier.
+
+struct Counter {
+    value: i64,
+}
+
+impl Counter {
+    fn add(&mut self, amount: i64) {
+        self.value += amount
+    }
+}
+
+fn add(value: &mut i64, amount: i64) -> &mut i64 {
+    *value += amount
+    value
+}
+
+fn forward(value: &mut i64) -> &mut i64 {
+    add(value, 2)
+}
+
+fn append_value(values: &mut Vec<i64>, value: i64) {
+    values.push(value)
+}
+
+fn main() {
+    let mut scalar = 1
+    let alias = forward(&mut scalar)
+    *alias += 4
+
+    let mut counter = Counter { value: 10 }
+    Counter::add(&mut counter, 3)
+    counter.add(5)
+    add(&mut counter.value, 7)
+
+    let mut values: Vec<i64> = [1]
+    append_value(&mut values, scalar)
+
+    println!(
+        "scalar={} counter={} values={} last={}",
+        scalar,
+        counter.value,
+        values.len(),
+        values[1]
+    )
+}

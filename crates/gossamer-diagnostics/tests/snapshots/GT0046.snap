@@ -1,0 +1,13 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+assertion_line: 86
+expression: rendered
+---
+--- plain ---
+error[GT0046]: A call omitted `&mut` for a parameter that can modify its argument. - here
+--- framed ---
+error[GT0046]: A call omitted `&mut` for a parameter that can modify its argument.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

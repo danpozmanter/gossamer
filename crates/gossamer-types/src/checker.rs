@@ -1130,11 +1130,7 @@ impl<'a> TypeChecker<'a> {
         let Some(root) = Self::place_root_name(operand) else {
             return;
         };
-        if let Some(borrower) = self.active_mutable_borrower(&root).map(str::to_string) {
-            self.emit(
-                TypeError::MutableReferenceConflict { root, borrower },
-                operand.span,
-            );
+        if self.active_mutable_borrower(&root).is_some() {
             return;
         }
         if let Some(scope) = self.mutable_borrows.last_mut() {
@@ -2863,6 +2859,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_call(&mut self, callee: &Expr, args: &[Expr], expected: Expectation) -> Ty {
+        self.check_overlapping_mutable_call_args(args);
         if matches!(callee.kind, ExprKind::Path(_)) {
             self.callee_path_nodes.insert(callee.id);
         }
@@ -3172,7 +3169,7 @@ impl<'a> TypeChecker<'a> {
             let effective = arg_tys.len() + pipe_extra;
             if effective == sig.inputs.len() {
                 for (param, (arg_ty, arg_expr)) in sig.inputs.iter().zip(arg_tys.iter().zip(args)) {
-                    self.check_sig_param_arg(*param, *arg_ty, arg_expr.span);
+                    self.check_sig_param_arg(*param, *arg_ty, arg_expr);
                 }
                 if let Some((def, vars, _)) = &inst {
                     self.check_trait_bounds(*def, vars, callee.span);
@@ -3365,7 +3362,7 @@ impl<'a> TypeChecker<'a> {
         if fields.len() == arg_tys.len() {
             for ((_, field_ty), (arg_ty, arg_expr)) in fields.iter().zip(arg_tys.iter().zip(args)) {
                 let field_ty = self.subst_params_in_ty(*field_ty, &substs);
-                self.check_sig_param_arg(field_ty, *arg_ty, arg_expr.span);
+                self.check_sig_param_arg(field_ty, *arg_ty, arg_expr);
             }
         } else {
             self.emit(
@@ -3445,7 +3442,7 @@ impl<'a> TypeChecker<'a> {
             .clone();
         if payloads.len() == arg_tys.len() {
             for (param, (arg_ty, arg)) in payloads.iter().zip(arg_tys.iter().zip(args)) {
-                self.check_sig_param_arg(*param, *arg_ty, arg.span);
+                self.check_sig_param_arg(*param, *arg_ty, arg);
             }
         } else {
             self.emit(
@@ -3564,25 +3561,41 @@ impl<'a> TypeChecker<'a> {
         self.check_strings_char_args(name, args, arg_tys, 0);
     }
 
-    /// Unifies one call argument against its declared parameter type,
-    /// peeling a single reference on either side. Native lowering treats
-    /// every value-vs-reference distinction as a no-op (the runtime owns
-    /// memory), so a `&Shape` parameter accepts a `Shape` argument and
-    /// vice versa.
-    fn check_sig_param_arg(&mut self, param: Ty, arg_ty: Ty, span: Span) {
+    /// Unifies one call argument against its declared parameter type.
+    /// Shared references retain the language's read-only convenience
+    /// coercion, but `&mut T` is never created implicitly: mutation must
+    /// be visible as `&mut place` or arrive through an existing `&mut T`.
+    fn check_sig_param_arg(&mut self, param: Ty, arg_ty: Ty, arg: &Expr) {
         let param = self.infer.resolve(self.tcx, param);
         let arg_ty = self.infer.resolve(self.tcx, arg_ty);
-        let param_inner = match self.tcx.kind(param) {
-            Some(TyKind::Ref { inner, .. }) => Some(*inner),
+        let param_ref = match self.tcx.kind(param) {
+            Some(TyKind::Ref { inner, mutability }) => Some((*inner, *mutability)),
             _ => None,
         };
-        let arg_inner = match self.tcx.kind(arg_ty) {
-            Some(TyKind::Ref { inner, .. }) => Some(*inner),
+        let arg_ref = match self.tcx.kind(arg_ty) {
+            Some(TyKind::Ref { inner, mutability }) => Some((*inner, *mutability)),
             _ => None,
         };
-        let (lhs, rhs) = match (param_inner, arg_inner) {
-            (Some(p), None) => (p, arg_ty),
-            (None, Some(a)) => (param, a),
+        let (lhs, rhs) = match (param_ref, arg_ref) {
+            (Some((p, Mutbl::Mut)), Some((a, Mutbl::Mut))) => (p, a),
+            (Some((_p, Mutbl::Mut)), Some((a, Mutbl::Not))) => (
+                param,
+                self.tcx.intern(TyKind::Ref {
+                    mutability: Mutbl::Not,
+                    inner: a,
+                }),
+            ),
+            (Some((p, Mutbl::Mut)), None) => {
+                self.emit(
+                    TypeError::MutableArgumentRequiresReference {
+                        argument: Self::place_display(arg),
+                    },
+                    arg.span,
+                );
+                (p, arg_ty)
+            }
+            (Some((p, Mutbl::Not)), None) => (p, arg_ty),
+            (None, Some((a, _))) => (param, a),
             _ => (param, arg_ty),
         };
         // Preserve the source-facing `{float}` diagnostic for an unsuffixed
@@ -3593,9 +3606,9 @@ impl<'a> TypeChecker<'a> {
             Some(TyKind::String)
         ) && self.infer.is_float_literal_var(self.tcx, rhs)
         {
-            self.emit_str_slot_mismatch("{float}", span);
+            self.emit_str_slot_mismatch("{float}", arg.span);
         } else {
-            self.unify(lhs, rhs, span);
+            self.unify(lhs, rhs, arg.span);
         }
     }
 
@@ -3683,7 +3696,7 @@ impl<'a> TypeChecker<'a> {
             let (Some(arg), Some(&arg_ty)) = (args.get(index), arg_tys.get(index)) else {
                 continue;
             };
-            self.check_sig_param_arg(i64_ty, arg_ty, arg.span);
+            self.check_sig_param_arg(i64_ty, arg_ty, arg);
         }
     }
 
@@ -3703,7 +3716,7 @@ impl<'a> TypeChecker<'a> {
             let (Some(arg), Some(&arg_ty)) = (args.get(index), arg_tys.get(index)) else {
                 continue;
             };
-            self.check_sig_param_arg(char_ty, arg_ty, arg.span);
+            self.check_sig_param_arg(char_ty, arg_ty, arg);
         }
     }
 
@@ -4380,7 +4393,7 @@ impl<'a> TypeChecker<'a> {
         }
         for (param, (arg, &arg_ty)) in shape.params.iter().zip(args.iter().zip(arg_tys)) {
             if let Some(param_ty) = self.stdlib_signature_arg_ty(param.ty) {
-                self.check_sig_param_arg(param_ty, arg_ty, arg.span);
+                self.check_sig_param_arg(param_ty, arg_ty, arg);
             }
         }
     }
@@ -4859,6 +4872,7 @@ impl<'a> TypeChecker<'a> {
         args: &[Expr],
         expected: Expectation,
     ) -> Ty {
+        self.check_overlapping_mutable_call_args(args);
         let receiver_expected = self.method_receiver_expectation(method, receiver, expected);
         let receiver_ty = self.check_expr_expecting(receiver, receiver_expected);
         self.check_mutating_method_receiver(receiver, receiver_ty, method);
@@ -4999,7 +5013,7 @@ impl<'a> TypeChecker<'a> {
         let arg_tys: Vec<Ty> = args.iter().map(|arg| self.check_expr(arg)).collect();
         if params.len() == args.len() {
             for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
-                self.check_sig_param_arg(*param, *arg_ty, arg.span);
+                self.check_sig_param_arg(*param, *arg_ty, arg);
             }
         } else {
             self.emit(
@@ -5136,7 +5150,20 @@ impl<'a> TypeChecker<'a> {
                 && matches!(method, "insert" | "remove" | "clear" | "pop")
         });
         if requires_mut && let Some(receiver) = args.first() {
-            self.check_mutating_receiver_place(receiver);
+            if user_requirement == Some(true) {
+                match self.expr_ref_mutbl(receiver) {
+                    Some(Mutbl::Mut) => {}
+                    Some(Mutbl::Not) => self.check_mutating_receiver_place(receiver),
+                    None => self.emit(
+                        TypeError::MutableArgumentRequiresReference {
+                            argument: Self::place_display(receiver),
+                        },
+                        receiver.span,
+                    ),
+                }
+            } else {
+                self.check_mutating_receiver_place(receiver);
+            }
         }
     }
 
@@ -5258,7 +5285,7 @@ impl<'a> TypeChecker<'a> {
         // explicit leading argument here; a pipeline supplies the final slot
         // later in `pipe_result_ty`.
         for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
-            self.check_sig_param_arg(*param, *arg_ty, arg.span);
+            self.check_sig_param_arg(*param, *arg_ty, arg);
         }
     }
 
@@ -6982,6 +7009,15 @@ impl<'a> TypeChecker<'a> {
             }),
             UnaryOp::RefMut => {
                 let name = Self::place_root_name(operand).unwrap_or_else(|| "value".to_string());
+                if let Some(borrower) = self.active_mutable_borrower(&name).map(str::to_string) {
+                    self.emit(
+                        TypeError::MutableReferenceConflict {
+                            root: name.clone(),
+                            borrower,
+                        },
+                        operand.span,
+                    );
+                }
                 match self.place_mutability(operand) {
                     PlaceMut::ImmutableBinding => self.emit(
                         TypeError::MutableReferenceToImmutable { name },
@@ -7207,7 +7243,7 @@ impl<'a> TypeChecker<'a> {
 
     fn check_direct_pipe_sig(&mut self, sig: &FnSig, lhs: &Expr, lhs_ty: Ty, rhs: &Expr) {
         if sig.inputs.len() == 1 {
-            self.unify(sig.inputs[0], lhs_ty, lhs.span);
+            self.check_sig_param_arg(sig.inputs[0], lhs_ty, lhs);
         } else {
             self.emit(
                 TypeError::CallArityMismatch {
@@ -7238,7 +7274,7 @@ impl<'a> TypeChecker<'a> {
             && args.len() + 1 == params.len()
             && let Some(last) = params.last().copied()
         {
-            self.unify(last, lhs_ty, lhs.span);
+            self.check_sig_param_arg(last, lhs_ty, lhs);
         }
     }
 
@@ -7334,7 +7370,7 @@ impl<'a> TypeChecker<'a> {
                     if args.len() + 1 == sig.inputs.len()
                         && let Some(last) = sig.inputs.last().copied()
                     {
-                        self.unify(last, lhs_ty, lhs.span);
+                        self.check_sig_param_arg(last, lhs_ty, lhs);
                     }
                     return self.infer.resolve(self.tcx, sig.output);
                 }
@@ -7343,7 +7379,7 @@ impl<'a> TypeChecker<'a> {
                         if args.len() + 1 == sig.inputs.len()
                             && let Some(last) = sig.inputs.last().copied()
                         {
-                            self.unify(last, lhs_ty, lhs.span);
+                            self.check_sig_param_arg(last, lhs_ty, lhs);
                         }
                         return sig.output;
                     }
@@ -7363,6 +7399,31 @@ impl<'a> TypeChecker<'a> {
         match self.tcx.kind(resolved) {
             Some(TyKind::Ref { mutability, .. }) => Some(*mutability),
             _ => None,
+        }
+    }
+
+    fn check_overlapping_mutable_call_args(&mut self, args: &[Expr]) {
+        let mut roots = HashSet::new();
+        for arg in args {
+            let ExprKind::Unary {
+                op: UnaryOp::RefMut,
+                operand,
+            } = &arg.kind
+            else {
+                continue;
+            };
+            let Some(root) = Self::place_root_name(operand) else {
+                continue;
+            };
+            if !roots.insert(root.clone()) {
+                self.emit(
+                    TypeError::MutableReferenceConflict {
+                        root,
+                        borrower: "an earlier call argument".to_string(),
+                    },
+                    arg.span,
+                );
+            }
         }
     }
 
@@ -7461,6 +7522,27 @@ impl<'a> TypeChecker<'a> {
             ExprKind::Index { base, .. } => Self::place_root_name(base),
             ExprKind::Unary { operand, .. } => Self::place_root_name(operand),
             _ => None,
+        }
+    }
+
+    fn place_display(place: &Expr) -> String {
+        match &place.kind {
+            ExprKind::Path(path) => path
+                .segments
+                .iter()
+                .map(|segment| segment.name.name.as_str())
+                .collect::<Vec<_>>()
+                .join("::"),
+            ExprKind::FieldAccess { receiver, field } => match field {
+                gossamer_ast::FieldSelector::Named(name) => {
+                    format!("{}.{}", Self::place_display(receiver), name.name)
+                }
+                gossamer_ast::FieldSelector::Index(index) => {
+                    format!("{}.{}", Self::place_display(receiver), index)
+                }
+            },
+            ExprKind::Index { base, .. } => format!("{}[...]", Self::place_display(base)),
+            _ => "value".to_string(),
         }
     }
 

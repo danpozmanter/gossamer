@@ -1,5 +1,5 @@
-//! Bytecode-VM regression tests for the two Task-23 divergences:
-//! write-through `&mut Vec<T>` / `&mut [T]` parameters (the
+//! Bytecode-VM regression tests for write-through `&mut Vec<T>` /
+//! `&mut [T]` parameters (the
 //! write-back cell protocol) and the full GT0005 cast whitelist
 //! (f32 / bool / char shapes that previously fell back to the
 //! walker's no-op). Expected outputs are byte-identical to the
@@ -61,7 +61,7 @@ fn main() {
 }
 
 #[test]
-fn implicit_mut_ref_args_write_through() {
+fn explicit_mut_ref_args_write_through() {
     let output = run_vm_main(
         r#"
 fn set_first(v: &mut Vec<i64>) {
@@ -74,14 +74,39 @@ fn inc(x: &mut i64) {
 
 fn main() {
     let mut v: Vec<i64> = [1, 2]
-    set_first(v)
+    set_first(&mut v)
     let mut n = 1
-    inc(n)
+    inc(&mut n)
     println!("{} {}", v[0], n)
 }
 "#,
     );
     assert_eq!(output, "0 2\n");
+}
+
+#[test]
+fn explicit_qualified_mut_receiver_writes_through() {
+    let output = run_vm_main(
+        r#"
+struct Counter { value: i64 }
+
+impl Counter {
+    fn clear(&mut self) {
+        self.value = 0
+    }
+}
+
+fn main() {
+    let mut counter = Counter { value: 7 }
+    Counter::clear(&mut counter)
+    println!("{}", counter.value)
+    counter.value = 9
+    counter.clear()
+    println!("{}", counter.value)
+}
+"#,
+    );
+    assert_eq!(output, "0\n0\n");
 }
 
 #[test]

@@ -906,7 +906,7 @@ mod args_tests {
         assert_eq!(after, b"Qwen3.6-35B");
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn encoded_non_utf8_directory_path_can_be_listed_again() {
         use std::os::unix::ffi::OsStringExt;

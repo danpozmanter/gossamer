@@ -463,14 +463,12 @@ vectors, slices, structs, enums, and fixed-size `[T; N]` arrays. Element
 writes, growth via `push` for growable vectors, `swap`, forwarding the
 reference into a nested call, early-return paths, a struct field as the
 argument place, and writes from a closure taking the parameter are all
-visible in the caller's binding after the call returns. Passing the same
-place twice as `&mut` in a single call
-(`f(&mut v, &mut v)`) is accepted (no argument-level exclusivity check, §7.5) and the
-resulting write order is unspecified - do not rely on it. A `&mut`
-argument in a `go` expression does not extend
-write-through across the goroutine boundary: `go f(&mut v)` hands the
-spawned call a copy, and programs must not rely on the goroutine's
-writes being visible in the caller.
+visible in the caller's binding after the call returns. Calls do not create
+mutable references implicitly. A writable place must appear as `&mut place`
+at the call site; an expression already typed as `&mut T` can be forwarded
+directly. Passing the same root twice as `&mut` in one call
+(`f(&mut v, &mut v)`) is rejected. References cannot cross a goroutine
+boundary, so `go f(&mut v)` is rejected.
 
 ### 3.5 Function types
 
@@ -1586,11 +1584,13 @@ itself is `mut`. Every reference layer crossed by implicit field, index, or
 method auto-dereferencing must permit mutation, so an outer `&mut` cannot make
 an inner `&T` writable.
 
-The checker also has a conservative lexical exclusivity rule for simple named
-mutable references. A second named `&mut` to the same root is rejected while
-the first reference binding remains in scope. This check does not infer
-lifetimes, end a borrow at its last use, or track every temporary, projection,
-shared reference, closure capture, or cross-function alias.
+The checker also has conservative exclusivity rules for simple mutable
+references. A second named `&mut` to the same root is rejected while the first
+reference binding remains in scope. So is a temporary `&mut` that overlaps an
+active named reference, or two `&mut` arguments rooted at the same binding in
+one call. These checks do not infer lifetimes, end a borrow at its last use, or
+track every projection, shared reference, closure capture, or cross-function
+alias.
 
 Liveness is enforced by automatic memory
 management, at runtime, not by a static check. No reference dangles
@@ -1605,6 +1605,9 @@ they are not diagnosed.
   through this." These markers gate writes and mutable-reference
   creation, and select the mutating versus non-mutating method where
   dispatch distinguishes them.
+- Calls never infer mutable access from a parameter type. Pass a writable
+  place as `&mut place`. A value already typed as `&mut T` can be forwarded
+  directly to another `&mut T` parameter.
 - `let mut reference = &value` permits rebinding `reference`; it does not
   make the shared referent writable. Its type remains `&T` after every
   rebind. Conversely, `let reference = &mut value` permits writing through

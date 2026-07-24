@@ -204,8 +204,8 @@ pub(crate) struct InlinableFn {
 pub(crate) type InlinableFns = std::collections::HashMap<String, InlinableFn>;
 
 /// User-function parameter types keyed by the source path used at call sites.
-/// The bytecode compiler uses this to honor implicit mutable-reference
-/// arguments accepted by the type checker (`f(x)` for `f(p: &mut T)`).
+/// The bytecode compiler uses these to select the explicit mutable-reference
+/// write-back protocol consistently with the callee signature.
 pub(crate) type FnParamTypes = std::collections::HashMap<String, Vec<Ty>>;
 
 /// Top-level `const` items, keyed by name, with their already-
@@ -435,8 +435,8 @@ pub(crate) struct FnBuilder<'tcx> {
     /// [`InlinableFns`]). Borrowed from the VM load frame for the
     /// duration of the compile, like `wrappers`.
     pub(crate) inline_fns: &'tcx InlinableFns,
-    /// Parameter types for user functions, used to lower accepted implicit
-    /// `&mut` call arguments through the write-back protocol.
+    /// Parameter types for user functions, used to lower explicit `&mut`
+    /// call arguments through the write-back protocol.
     pub(crate) fn_param_tys: &'tcx FnParamTypes,
     /// Names of the functions whose bodies are currently being inlined
     /// into this builder, innermost last. Consulted before each inline to

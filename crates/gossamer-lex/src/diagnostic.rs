@@ -43,25 +43,25 @@ pub enum LexError {
         span: Span,
     },
     /// An escape sequence like `\q` or a truncated `\x` was encountered.
-    #[error("invalid escape sequence")]
+    #[error("invalid escape sequence; use a supported escape or escape the backslash as `\\\\`")]
     BadEscape {
         /// Span of the offending escape, starting at the backslash.
         span: Span,
     },
     /// A `\u{...}` escape named a value that is not a Unicode scalar.
-    #[error("invalid unicode escape")]
+    #[error("invalid Unicode escape; expected `\\u{{HEX}}` containing a Unicode scalar value")]
     BadUnicodeEscape {
         /// Span of the full `\u{...}` sequence.
         span: Span,
     },
     /// A numeric literal used a digit outside its declared base.
-    #[error("invalid digit for numeric base")]
+    #[error("numeric literal contains a digit that is invalid for its base prefix")]
     BadNumericDigit {
         /// Span of the offending digit.
         span: Span,
     },
     /// A numeric literal had no digits after its base prefix or `_` placeholder.
-    #[error("numeric literal has no digits")]
+    #[error("numeric literal requires at least one digit after its base prefix")]
     EmptyNumericLiteral {
         /// Span of the partial literal.
         span: Span,

@@ -586,6 +586,22 @@ mod tests {
     }
 
     #[test]
+    fn bare_mutable_argument_reports_explicit_reference_diagnostic() {
+        let doc = analyse(
+            "file:///mut-arg.gos",
+            "fn change(value: &mut i64) { *value = 0 }\n\
+             fn main() { let mut value = 1\n change(value) }\n",
+        );
+        assert!(
+            doc.diagnostics
+                .iter()
+                .any(|diag| diag.code.as_str() == "GT0046"),
+            "expected explicit mutable-reference diagnostic: {:?}",
+            doc.diagnostics
+        );
+    }
+
+    #[test]
     fn mixing_top_level_statements_with_explicit_main_is_reported() {
         let doc = analyse("file:///t.gos", "println!(\"hi\")\nfn main() { }\n");
         assert!(

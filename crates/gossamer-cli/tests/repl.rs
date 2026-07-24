@@ -1110,7 +1110,7 @@ fn repl_question_mark_rejects_invalid_contexts_before_execution() {
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr
-            .matches("the `?` operator cannot be used in this context")
+            .matches("the `?` operator cannot be used with")
             .count()
             >= 2,
         "invalid question-mark uses must be type errors; stderr: {}",
