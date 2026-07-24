@@ -109,6 +109,15 @@ Pre-stable. `gos feature-status` distinguishes available Shipped surface from
 compatibility-protected Stable surface. Until entries are explicitly promoted
 to Stable, treat them as may-change-with-notice.
 
+### On Mutability and Ownership
+
+The broad goal is be inspired by Rust, but not as strict.
+There is no powerful borrow checker. That said, there is some local borrow checking.
+Additionally:
+    
+* Immutable by default.
+* A function can only mutate data it receives through a mutable reference.
+
 ## Gossamer's Syntax
 
 For scripts and examples, the entry file may skip the `fn main` wrapper:
