@@ -329,7 +329,7 @@ pub unsafe extern "C" fn gos_rt_stream_next_line(stream: *const GosStream) -> i1
             stdin.lock().read_line(&mut line).map(|n| (n, line))
         });
         match read {
-            Ok(Ok((0, _))) | Ok(Err(_)) | Err(_) => gos_rt_result_new(1, 0),
+            Ok(Ok((0, _)) | Err(_)) | Err(_) => gos_rt_result_new(1, 0),
             Ok(Ok((_, mut line))) => {
                 while line.ends_with('\n') || line.ends_with('\r') {
                     line.pop();
