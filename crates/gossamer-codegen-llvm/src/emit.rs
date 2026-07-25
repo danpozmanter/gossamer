@@ -32,7 +32,7 @@ const LLVM_SPECIAL_DECLS: &[&str] = &[
 /// Parallel to `gossamer-codegen-cranelift::NativeObject`.
 #[derive(Debug, Clone)]
 pub struct NativeObject {
-    /// Target triple `llc` was configured for (host by default).
+    /// Requested target triple (host by default).
     pub triple: String,
     /// Linker-ready object bytes (ELF / Mach-O depending on host).
     pub bytes: Vec<u8>,
@@ -156,11 +156,12 @@ pub fn compile_to_object(bodies: &[Body], tcx: &TyCtxt) -> Result<NativeObject> 
         dump_mir(bodies, tcx);
     }
     let triple = host_triple();
+    let llvm_triple = llvm_target_triple_for(&triple);
     let tmp_dir = pipeline_tmp_dir()?;
     let ll_path = tmp_dir.join("unit.ll");
     let _ = render_module_to_path(bodies, tcx, &ll_path, /*allow_fallback=*/ false)?;
     let obj_path = tmp_dir.join("unit.o");
-    invoke_llc_pipeline(&ll_path, &obj_path, &triple, /*announce=*/ true)?;
+    invoke_llc_pipeline(&ll_path, &obj_path, &llvm_triple, /*announce=*/ true)?;
     let bytes =
         std::fs::read(&obj_path).with_context(|| format!("reading {}", obj_path.display()))?;
     if std::env::var("GOS_LLVM_DUMP").is_err() {
@@ -182,10 +183,11 @@ pub fn compile_to_object_at_path(
         dump_mir(bodies, tcx);
     }
     let triple = host_triple();
+    let llvm_triple = llvm_target_triple_for(&triple);
     let tmp_dir = pipeline_tmp_dir()?;
     let ll_path = tmp_dir.join("unit.ll");
     let _ = render_module_to_path(bodies, tcx, &ll_path, /*allow_fallback=*/ false)?;
-    invoke_llc_pipeline(&ll_path, obj_out, &triple, /*announce=*/ true)?;
+    invoke_llc_pipeline(&ll_path, obj_out, &llvm_triple, /*announce=*/ true)?;
     if std::env::var("GOS_LLVM_DUMP").is_err() {
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }
@@ -533,20 +535,15 @@ struct ModuleCtx<'a> {
     allow_fallback: bool,
 }
 
-/// Mixes precomputed per-body cache keys into one versioned chunk digest.
-/// Module data layout for x86-64 targets: the LLVM defaults with one
+/// Module data layout for 64-bit native targets: the LLVM defaults with one
 /// deviation - `i128` ABI alignment is 8, not 16. The runtime stores
 /// every value in flat 8-byte slots, so a by-value `{disc, payload}`
 /// Option/Result living at an odd word offset inside a struct is only
 /// ever 8-aligned; without an explicit layout, opt assumes the target's
 /// 16-byte i128 alignment and expands copies of such fields into
-/// *aligned* vector ops (`vmovaps`) that fault at run time. Only x86
-/// faults on unaligned vector ops, and the aarch64 default strings vary
-/// by LLVM version, so non-x86_64 triples keep the implicit layout.
+/// over-aligned operations that can fault or let the optimizer assume an
+/// alignment Gossamer does not provide.
 fn module_datalayout(triple: &str) -> Option<String> {
-    if !triple.starts_with("x86_64") {
-        return None;
-    }
     let mangling = if triple.contains("apple") || triple.contains("darwin") {
         "m:o"
     } else if triple.contains("windows") {
@@ -554,9 +551,13 @@ fn module_datalayout(triple: &str) -> Option<String> {
     } else {
         "m:e"
     };
-    Some(format!(
-        "e-{mangling}-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:64-f80:128-n8:16:32:64-S128"
-    ))
+    match target_arch_from_triple(triple) {
+        "x86_64" => Some(format!(
+            "e-{mangling}-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:64-f80:128-n8:16:32:64-S128"
+        )),
+        "aarch64" => Some(format!("e-{mangling}-i64:64-i128:64-n32:64-S128")),
+        _ => None,
+    }
 }
 
 fn chunk_cache_key(chunk_indices: &[usize], body_cache_keys: &[String]) -> String {
@@ -909,11 +910,12 @@ fn compile_bodies_parallel_incremental(
     allow_fallback: bool,
 ) -> Result<(Vec<PathBuf>, String, Vec<String>)> {
     let triple = host_triple();
+    let llvm_triple = llvm_target_triple_for(&triple);
     let profile = opt_profile();
     let dump = std::env::var("GOS_LLVM_DUMP").is_ok();
     let body_cache_keys: Vec<String> = bodies
         .iter()
-        .map(|body| body_cache_key(body, &triple, profile))
+        .map(|body| body_cache_key(body, &llvm_triple, profile))
         .collect();
 
     // Precompute program-wide lookup tables shared across all lowerers.
@@ -943,7 +945,7 @@ fn compile_bodies_parallel_incremental(
         fn_name_by_def: &fn_name_by_def,
         param_tys_by_name: &param_tys_by_name,
         capture_summary: &capture_summary,
-        triple: &triple,
+        triple: &llvm_triple,
         allow_fallback,
     };
 
@@ -1033,7 +1035,7 @@ fn compile_bodies_parallel_incremental(
 
     let err_ref = &err_slot;
     let compiled_ref = &compiled;
-    let triple_ref: &str = &triple;
+    let triple_ref: &str = &llvm_triple;
     let cache_ref = &cache_dir;
 
     std::thread::scope(|scope| {
@@ -1101,12 +1103,13 @@ pub fn compile_with_fallback(bodies: &[Body], tcx: &TyCtxt) -> Result<CompileOut
         dump_mir(bodies, tcx);
     }
     let triple = host_triple();
+    let llvm_triple = llvm_target_triple_for(&triple);
     let tmp_dir = pipeline_tmp_dir()?;
     let ll_path = tmp_dir.join("unit.ll");
     let fallback_bodies =
         render_module_to_path(bodies, tcx, &ll_path, /*allow_fallback=*/ true)?;
     let obj_path = tmp_dir.join("unit.o");
-    invoke_llc_pipeline(&ll_path, &obj_path, &triple, /*announce=*/ true)?;
+    invoke_llc_pipeline(&ll_path, &obj_path, &llvm_triple, /*announce=*/ true)?;
     let bytes =
         std::fs::read(&obj_path).with_context(|| format!("reading {}", obj_path.display()))?;
     if std::env::var("GOS_LLVM_DUMP").is_err() {
@@ -1146,11 +1149,12 @@ pub fn compile_with_fallback_at_path(
     // and single-body programs gain nothing from parallelism.
     if want_dwarf() || bodies.len() < 2 {
         let triple = host_triple();
+        let llvm_triple = llvm_target_triple_for(&triple);
         let ll_path = obj_dir.join("unit.ll");
         let obj_path = obj_dir.join("unit.o");
         let fallback_bodies =
             render_module_to_path(bodies, tcx, &ll_path, /*allow_fallback=*/ true)?;
-        invoke_llc_pipeline(&ll_path, &obj_path, &triple, /*announce=*/ true)?;
+        invoke_llc_pipeline(&ll_path, &obj_path, &llvm_triple, /*announce=*/ true)?;
         if std::env::var("GOS_LLVM_DUMP").is_err() {
             let _ = std::fs::remove_file(&ll_path);
         }
@@ -1352,11 +1356,12 @@ fn render_module_to_path(
     let ll_file = std::fs::File::create(ll_path)
         .with_context(|| format!("creating {}", ll_path.display()))?;
     let mut ll_w = BufWriter::with_capacity(64 * 1024, ll_file);
+    let triple = llvm_target_triple_for(&host_triple());
     writeln!(ll_w, "; ModuleID = \"gossamer\"")?;
-    if let Some(dl) = module_datalayout(&host_triple()) {
+    if let Some(dl) = module_datalayout(&triple) {
         writeln!(ll_w, "target datalayout = \"{dl}\"")?;
     }
-    writeln!(ll_w, "target triple = \"{}\"", host_triple())?;
+    writeln!(ll_w, "target triple = \"{triple}\"")?;
     if want_reproducible() {
         writeln!(ll_w, "; reproducible-build = true")?;
     }
@@ -2386,6 +2391,51 @@ fn target_arch_from_triple(triple: &str) -> &'static str {
     }
 }
 
+fn llvm_target_triple_for(triple: &str) -> String {
+    llvm_target_triple_for_with_deployment(
+        triple,
+        std::env::var("MACOSX_DEPLOYMENT_TARGET").ok().as_deref(),
+    )
+}
+
+fn llvm_target_triple_for_with_deployment(triple: &str, configured: Option<&str>) -> String {
+    if !triple.ends_with("-apple-darwin") {
+        return triple.to_string();
+    }
+    let arch = triple.split('-').next().unwrap_or("");
+    if arch.is_empty() {
+        return triple.to_string();
+    }
+    let deployment = normalized_macos_deployment_target(configured);
+    format!("{arch}-apple-macosx{deployment}")
+}
+
+fn normalized_macos_deployment_target(configured: Option<&str>) -> String {
+    const DEFAULT: &str = "15.0";
+
+    let value = configured
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT);
+    let mut parts = value.split('.');
+    let Some(major) = parts.next().filter(|part| is_decimal_component(part)) else {
+        return value.to_string();
+    };
+    let minor = parts
+        .next()
+        .filter(|part| is_decimal_component(part))
+        .unwrap_or("0");
+    let patch = parts
+        .next()
+        .filter(|part| is_decimal_component(part))
+        .unwrap_or("0");
+    format!("{major}.{minor}.{patch}")
+}
+
+fn is_decimal_component(part: &str) -> bool {
+    !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 /// `-mcpu` for `triple`. `is_cross` is true when an explicit `--target`
 /// override is active. A cross or reproducible build must never use `native`,
 /// which names the host CPU.
@@ -2821,7 +2871,10 @@ mod shape_validation_tests {
 
 #[cfg(test)]
 mod host_triple_tests {
-    use super::{detect_host_triple, mcpu_for, target_arch_from_triple};
+    use super::{
+        detect_host_triple, llvm_target_triple_for_with_deployment, mcpu_for, module_datalayout,
+        normalized_macos_deployment_target, target_arch_from_triple,
+    };
 
     /// `llc` selects the object-file format from the OS portion of
     /// the triple - ELF on a Linux triple, Mach-O on `apple-darwin`,
@@ -2912,6 +2965,40 @@ mod host_triple_tests {
             target_arch_from_triple("x86_64-unknown-linux-gnu"),
             "x86_64"
         );
+    }
+
+    #[test]
+    fn darwin_llvm_triple_pins_deployment_target() {
+        assert_eq!(
+            llvm_target_triple_for_with_deployment("aarch64-apple-darwin", None),
+            "aarch64-apple-macosx15.0.0"
+        );
+        assert_eq!(
+            llvm_target_triple_for_with_deployment("x86_64-apple-darwin", Some("14.2")),
+            "x86_64-apple-macosx14.2.0"
+        );
+        assert_eq!(
+            llvm_target_triple_for_with_deployment("aarch64-unknown-linux-gnu", Some("14.2")),
+            "aarch64-unknown-linux-gnu"
+        );
+    }
+
+    #[test]
+    fn macos_deployment_target_normalizes_for_llvm() {
+        assert_eq!(normalized_macos_deployment_target(None), "15.0.0");
+        assert_eq!(normalized_macos_deployment_target(Some("15")), "15.0.0");
+        assert_eq!(normalized_macos_deployment_target(Some("15.1")), "15.1.0");
+        assert_eq!(normalized_macos_deployment_target(Some("15.1.2")), "15.1.2");
+    }
+
+    #[test]
+    fn datalayout_keeps_i128_at_flat_slot_alignment() {
+        let x86 = module_datalayout("x86_64-unknown-linux-gnu").expect("x86_64 layout");
+        assert!(x86.contains("i128:64"), "{x86}");
+        let arm = module_datalayout("aarch64-apple-macosx15.0.0").expect("aarch64 layout");
+        assert!(arm.contains("m:o"), "{arm}");
+        assert!(arm.contains("i128:64"), "{arm}");
+        assert!(arm.contains("n32:64"), "{arm}");
     }
 }
 

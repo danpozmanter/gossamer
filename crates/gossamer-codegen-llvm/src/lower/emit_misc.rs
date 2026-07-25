@@ -757,7 +757,7 @@ impl<'a> Lowerer<'a> {
                     // helpers return that carrier by value, so store it into the
                     // aggregate slot directly instead of treating it as a heap
                     // pointer and memcpying through the packed integer.
-                    writeln!(self.out, "  store i128 {tmp}, ptr {slot}, align 16").unwrap();
+                    writeln!(self.out, "  store i128 {tmp}, ptr {slot}, align 8").unwrap();
                 } else if let Some(slots) = slot_count(self.tcx, dest_ty_mir) {
                     // Inline aggregate (struct / tuple / array with a
                     // known field layout): the callee handed us a heap

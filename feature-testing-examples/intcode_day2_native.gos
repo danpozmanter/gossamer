@@ -1,0 +1,43 @@
+fn program_step(mut program: [i64], offset: i64) -> [i64] {
+    let opcode = program[offset]
+    if opcode == 99 {
+        return program
+    }
+    let lhs_pos = program[offset + 1]
+    let rhs_pos = program[offset + 2]
+    let out_pos = program[offset + 3]
+    if opcode == 1 {
+        program[out_pos] = program[lhs_pos] + program[rhs_pos]
+    } else if opcode == 2 {
+        program[out_pos] = program[lhs_pos] * program[rhs_pos]
+    } else {
+        panic!("Unknown opcode encountered!")
+    }
+    program
+}
+
+fn run_program(mut program: [i64]) -> [i64] {
+    let mut offset = 0
+    while program[offset] != 99 {
+        program = program_step(program, offset)
+        offset += 4
+    }
+    program
+}
+
+fn with_inputs(program: &[i64], noun: i64, verb: i64) -> [i64] {
+    let mut copy = program.to_vec()
+    copy[1] = noun
+    copy[2] = verb
+    copy
+}
+
+fn main() {
+    let input: [i64] = [1, 9, 10, 3, 2, 3, 11, 0, 99, 30, 40, 50]
+    let part1 = run_program(with_inputs(&input, 9, 10))
+    println!("pos0={}", part1[0])
+
+    let sample: [i64] = [1, 1, 1, 4, 99, 5, 6, 0, 99]
+    let out = run_program(sample)
+    println!("sample={} {}", out[0], out[4])
+}

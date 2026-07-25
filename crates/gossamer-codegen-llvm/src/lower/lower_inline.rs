@@ -1906,7 +1906,7 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
         let slot = local_slot(destination.local);
-        writeln!(self.out, "  store i128 {packed}, ptr {slot}, align 16").unwrap();
+        writeln!(self.out, "  store i128 {packed}, ptr {slot}, align 8").unwrap();
         emit_terminator_branch(&mut self.out, target);
         Ok(())
     }

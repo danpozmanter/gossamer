@@ -914,6 +914,56 @@ fn main() {
 }
 
 #[test]
+fn intcode_day2_native_matches_vm() {
+    let fixture = workspace_root()
+        .join("feature-testing-examples")
+        .join("intcode_day2_native.gos");
+    let expected = "pos0=3500\nsample=30 2\n";
+
+    let vm = Command::new(gos_bin())
+        .args(["run"])
+        .arg(&fixture)
+        .output()
+        .expect("spawn vm run");
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&vm.stdout), expected);
+
+    let out_dir = env::temp_dir().join(format!(
+        "gossamer-cli-intcode-day2-native-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&out_dir).expect("create native out dir");
+    let build = Command::new(gos_bin())
+        .args(["build"])
+        .arg(&fixture)
+        .args(["--out-dir"])
+        .arg(&out_dir)
+        .output()
+        .expect("spawn build");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let mut bin = out_dir.join("intcode_day2_native");
+    if cfg!(windows) {
+        bin.set_extension("exe");
+    }
+    let native = Command::new(&bin).output().expect("run native");
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&native.stdout), expected);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
 fn run_subcommand_executes_via_vm_by_default() {
     let fixture = write_fixture("runvm", "fn main() { println(\"cli-vm\") }\n");
     let out = Command::new(gos_bin())

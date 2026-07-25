@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.34.2 - macOS native Intcode parity
+
+- Pin macOS LLVM object triples to the effective deployment target so native
+  objects and linker settings agree.
+- Emit an explicit aarch64 data layout matching Gossamer's 8-byte slot model
+  and keep packed Result/Option stores at 8-byte aggregate alignment.
+- Add an Intcode-style native parity regression for vector clone, indexed
+  mutation, and opcode loops.
+
 ## 0.34.1 - Stream read_line match parity
 
 - Make `io::stdin().read_line()` return `Option<String>` consistently across
