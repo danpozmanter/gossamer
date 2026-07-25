@@ -1,11 +1,13 @@
 # Changelog
 
-## 0.34.3 - Match binding native parity
+## 0.34.3 - Intcode native parity
 
 - Fix native lowering for `match` binding arms such as `op => ...`, so the
   binding receives the matched value instead of the binding name string.
+- Fix additional native panics by cloning vector let-copies before mutating a
+  reused input program.
 - Add an Intcode regression covering interpreter, debug native, and release
-  native parity for mutable-slice opcode execution.
+  native parity for mutable-slice opcode execution and Part 2-style searches.
 
 ## 0.34.2 - macOS native Intcode parity
 

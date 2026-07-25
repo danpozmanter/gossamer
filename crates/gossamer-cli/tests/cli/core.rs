@@ -968,7 +968,7 @@ fn intcode_day2_mut_slice_matches_vm_debug_and_release() {
     let fixture = workspace_root()
         .join("feature-testing-examples")
         .join("intcode_day2_mut_slice_native.gos");
-    let expected = "sample=30\npos0=3500\n";
+    let expected = "sample=30\npos0=3500\ncopy=99, base=1\npart2=22\npart2_base=1\n";
 
     let vm = Command::new(gos_bin())
         .args(["run"])

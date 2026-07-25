@@ -183,6 +183,24 @@ impl<'a> Builder<'a> {
         false
     }
 
+    fn is_vec_like_ty(&self, ty: gossamer_types::Ty) -> bool {
+        matches!(
+            self.tcx.kind_of(ty),
+            gossamer_types::TyKind::Vec(_) | gossamer_types::TyKind::Slice(_)
+        )
+    }
+
+    fn emit_vec_clone_binding(&mut self, value: Local, binding: Local, span: Span) {
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_clone".to_string())),
+            args: vec![Operand::Copy(Place::local(value))],
+            destination: Place::local(binding),
+            target: Some(next),
+        });
+        self.set_current(next);
+    }
+
     pub(crate) fn lower_stmt(&mut self, stmt: &HirStmt) {
         match &stmt.kind {
             HirStmtKind::Let { pattern, ty, init } => {
@@ -491,11 +509,17 @@ impl<'a> Builder<'a> {
                         // freshly-lowered init, used only by this copy, so this
                         // is sound and leaves the result un-aliased.
                         if !self.try_rebind_ctor_call(value, local) {
-                            self.emit_assign(
-                                Place::local(local),
-                                Rvalue::Use(Operand::Copy(Place::local(value))),
-                                stmt.span,
-                            );
+                            let init_ty = self.locals[value.0 as usize].ty;
+                            let binding_ty = self.locals[local.0 as usize].ty;
+                            if self.is_vec_like_ty(init_ty) && self.is_vec_like_ty(binding_ty) {
+                                self.emit_vec_clone_binding(value, local, stmt.span);
+                            } else {
+                                self.emit_assign(
+                                    Place::local(local),
+                                    Rvalue::Use(Operand::Copy(Place::local(value))),
+                                    stmt.span,
+                                );
+                            }
                         }
                         match &pattern.kind {
                             HirPatKind::Tuple(sub_patterns) => {
@@ -620,7 +644,14 @@ impl<'a> Builder<'a> {
 fn is_container_ctor(name: &str) -> bool {
     matches!(
         name,
-        "HashMap::new"
+        "Vec::new"
+            | "Vec::with_capacity"
+            | "gos_rt_vec_new"
+            | "gos_rt_vec_new_typed"
+            | "gos_rt_vec_with_capacity"
+            | "gos_rt_vec_with_capacity_typed"
+            | "gos_rt_vec_clone"
+            | "HashMap::new"
             | "HashMap::with_capacity"
             | "collections::HashMap::new"
             | "HashSet::new"

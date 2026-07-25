@@ -26,10 +26,39 @@ fn run_intcode(program: [i64], v1: i64, v2: i64) -> i64 {
     prog[0]
 }
 
+fn mutate_copy(program: [i64]) -> i64 {
+    let mut copy = program
+    copy[0] = 99
+    copy[0]
+}
+
+fn solve_part2(program: [i64], target: i64) -> Option<i64> {
+    for noun in 0..=2 {
+        for verb in 0..=2 {
+            let code = run_intcode(program, noun, verb)
+            if code == target {
+                return Some(10 * noun + verb)
+            }
+        }
+    }
+
+    None
+}
+
 fn main() {
     let sample: [i64] = [1, 1, 1, 4, 99, 5, 6, 0, 99]
     println!("sample={}", run_intcode(sample, 1, 1))
 
     let input: [i64] = [1, 9, 10, 3, 2, 3, 11, 0, 99, 30, 40, 50]
     println!("pos0={}", run_intcode(input, 9, 10))
+
+    let value_copy: [i64] = [1, 2, 3]
+    println!("copy={}, base={}", mutate_copy(value_copy), value_copy[0])
+
+    let part2: [i64] = [1, 0, 0, 0, 99]
+    match solve_part2(part2, 4) {
+        Some(answer) => println!("part2={}", answer),
+        None => println!("part2=none")
+    }
+    println!("part2_base={}", part2[0])
 }
