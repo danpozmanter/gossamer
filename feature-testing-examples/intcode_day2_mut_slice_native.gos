@@ -1,0 +1,35 @@
+fn program_step(program: &mut [i64], pos: i64, op: i64) {
+    let p1 = program[pos + 1]
+    let p2 = program[pos + 2]
+    let tg = program[pos + 3]
+    match op {
+        1 => program[tg] = program[p1] + program[p2]
+        2 => program[tg] = program[p1] * program[p2]
+        _ => panic!("Unknown opcode encountered!")
+    }
+}
+
+fn run_intcode(program: [i64], v1: i64, v2: i64) -> i64 {
+    let mut prog = program
+    prog[1] = v1
+    prog[2] = v2
+
+    let mut pos = 0
+    while pos < prog.len() {
+        match prog[pos] {
+            99 => break,
+            op => program_step(&mut prog, pos, op)
+        }
+        pos += 4
+    }
+
+    prog[0]
+}
+
+fn main() {
+    let sample: [i64] = [1, 1, 1, 4, 99, 5, 6, 0, 99]
+    println!("sample={}", run_intcode(sample, 1, 1))
+
+    let input: [i64] = [1, 9, 10, 3, 2, 3, 11, 0, 99, 30, 40, 50]
+    println!("pos0={}", run_intcode(input, 9, 10))
+}

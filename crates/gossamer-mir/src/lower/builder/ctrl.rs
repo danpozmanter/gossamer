@@ -183,13 +183,22 @@ impl<'a> Builder<'a> {
                 HirPatKind::Literal(HirLiteral::Bool(b)) => {
                     switch_arms.push((i128::from(*b), arm_block));
                 }
-                HirPatKind::Wildcard | HirPatKind::Binding { .. } => {
+                HirPatKind::Wildcard => {
                     // Multiple wildcard arms are accepted; only the
                     // first is reachable. Subsequent wildcard bodies
                     // are emitted into dead blocks the SwitchInt
                     // never targets.
                     if default_block.is_none() {
                         default_block = Some(arm_block);
+                    }
+                }
+                HirPatKind::Binding { name, mutable } => {
+                    // A binding arm is the default arm plus a local alias
+                    // for the matched scrutinee value.
+                    if default_block.is_none() {
+                        default_block = Some(arm_block);
+                        *arm_bindings.last_mut().expect("arm tracked") =
+                            Some((name.clone(), *mutable, None));
                     }
                 }
                 // Variant patterns (`Ok(x)`, `Err(e)`, `Some(v)`, …)

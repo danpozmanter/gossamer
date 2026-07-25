@@ -964,6 +964,69 @@ fn intcode_day2_native_matches_vm() {
 }
 
 #[test]
+fn intcode_day2_mut_slice_matches_vm_debug_and_release() {
+    let fixture = workspace_root()
+        .join("feature-testing-examples")
+        .join("intcode_day2_mut_slice_native.gos");
+    let expected = "sample=30\npos0=3500\n";
+
+    let vm = Command::new(gos_bin())
+        .args(["run"])
+        .arg(&fixture)
+        .output()
+        .expect("spawn vm run");
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&vm.stdout), expected);
+
+    for release in [false, true] {
+        let out_dir = env::temp_dir().join(format!(
+            "gossamer-cli-intcode-day2-mut-slice-{}-{}",
+            if release { "release" } else { "debug" },
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&out_dir).expect("create native out dir");
+        let mut build = Command::new(gos_bin());
+        build.arg("build");
+        if release {
+            build.arg("--release");
+        }
+        let build = build
+            .arg(&fixture)
+            .args(["--out-dir"])
+            .arg(&out_dir)
+            .output()
+            .expect("spawn build");
+        assert!(
+            build.status.success(),
+            "{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+
+        let mut bin = out_dir.join("intcode_day2_mut_slice_native");
+        if cfg!(windows) {
+            bin.set_extension("exe");
+        }
+        let native = Command::new(&bin).output().expect("run native");
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&native.stdout),
+            expected,
+            "{} build output drifted",
+            if release { "release" } else { "debug" }
+        );
+        let _ = std::fs::remove_dir_all(&out_dir);
+    }
+}
+
+#[test]
 fn run_subcommand_executes_via_vm_by_default() {
     let fixture = write_fixture("runvm", "fn main() { println(\"cli-vm\") }\n");
     let out = Command::new(gos_bin())

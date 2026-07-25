@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.34.3 - Match binding native parity
+
+- Fix native lowering for `match` binding arms such as `op => ...`, so the
+  binding receives the matched value instead of the binding name string.
+- Add an Intcode regression covering interpreter, debug native, and release
+  native parity for mutable-slice opcode execution.
+
 ## 0.34.2 - macOS native Intcode parity
 
 - Pin macOS LLVM object triples to the effective deployment target so native
