@@ -1386,15 +1386,11 @@ impl<'a> Builder<'a> {
                 _ => Some(""),
             },
             "extend" | "extend_from_slice" if args.len() == 1 => match &receiver_kind_flat {
-                TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => {
-                    Some("gos_rt_vec_extend")
-                }
+                TyKind::Vec(_) | TyKind::Slice(_) => Some("gos_rt_vec_extend"),
                 _ => None,
             },
             "truncate" if args.len() == 1 => match &receiver_kind_flat {
-                TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => {
-                    Some("gos_rt_vec_truncate")
-                }
+                TyKind::Vec(_) | TyKind::Slice(_) => Some("gos_rt_vec_truncate"),
                 _ => None,
             },
             "reserve" if args.len() == 1 => match &receiver_kind_flat {
@@ -1812,8 +1808,14 @@ impl<'a> Builder<'a> {
             }
             "to_lowercase" => Some("gos_rt_str_to_lower"),
             "to_uppercase" => Some("gos_rt_str_to_upper"),
-            "push" => Some("gos_rt_vec_push"),
-            "pop" => Some("gos_rt_vec_pop_opt"),
+            "push" => match &receiver_kind_flat {
+                TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Var(_) => Some("gos_rt_vec_push"),
+                _ => None,
+            },
+            "pop" => match &receiver_kind_flat {
+                TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Var(_) => Some("gos_rt_vec_pop_opt"),
+                _ => None,
+            },
             "sort" => Some(
                 if vec_element_kind(self.tcx, receiver_ty) == VecElemKind::Str {
                     "gos_rt_vec_sort_str"

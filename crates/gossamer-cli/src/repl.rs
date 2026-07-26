@@ -1076,12 +1076,15 @@ fn render_repl_bindings(
                 lets = let_body,
                 name = var.name,
             );
-            let value = match build_and_call(&source, &entry) {
-                Ok(value) => render_repl_value(&value),
-                Err(msg) => format!("<error: {}>", msg.lines().next().unwrap_or("unknown")),
+            let (value, ty) = match build_and_call_with_type(&source, &entry) {
+                Ok((value, ty)) => (render_repl_value(&value), ty),
+                Err(msg) => (
+                    format!("<error: {}>", msg.lines().next().unwrap_or("unknown")),
+                    "<unknown>".to_string(),
+                ),
             };
             let prefix = if var.mutable { "mut " } else { "" };
-            lines.push(format!("{prefix}{} = {value}", var.name));
+            lines.push(format!("{prefix}{}: {ty} = {value}", var.name));
         }
     }
     lines

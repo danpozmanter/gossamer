@@ -2680,7 +2680,16 @@ impl<'a> Builder<'a> {
         } = &index.kind
         {
             let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-            let base_local = self.lower_expr(base)?;
+            let mut base_local = self.lower_expr(base)?;
+            let mut base_kind = self.locals[base_local.0 as usize].ty;
+            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(base_kind) {
+                base_kind = *inner;
+            }
+            let base_is_string = matches!(self.tcx.kind_of(base_kind), TyKind::String);
+            let base_array = match self.tcx.kind_of(base_kind).clone() {
+                TyKind::Array { elem, len } => Some((elem, len)),
+                _ => None,
+            };
             let lo_local = if let Some(s) = start {
                 self.lower_expr(s)?
             } else {
@@ -2695,19 +2704,32 @@ impl<'a> Builder<'a> {
             let hi_local = if let Some(e) = end {
                 self.lower_expr(e)?
             } else {
-                // `arr[lo..]` - substitute `arr.len()` as the
-                // upper bound by calling `gos_rt_len` on the
-                // base. Works for both arrays and Vecs since
-                // `gos_rt_len` reads the leading length word.
+                // `arr[lo..]` / `s[lo..]` - substitute `.len()` as
+                // the upper bound. Fixed arrays carry a static length;
+                // strings need their c-string helper; Vecs and slices use
+                // the len-prefixed sequence helper.
                 let l = self.fresh(i64_ty);
-                let next = self.new_block(span);
-                self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_len".to_string())),
-                    args: vec![Operand::Copy(Place::local(base_local))],
-                    destination: Place::local(l),
-                    target: Some(next),
-                });
-                self.set_current(next);
+                if let Some((_, len)) = base_array {
+                    self.emit_assign(
+                        Place::local(l),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(len.to_usize() as i128))),
+                        span,
+                    );
+                } else {
+                    let next = self.new_block(span);
+                    let len_callee = if base_is_string {
+                        "gos_rt_str_len"
+                    } else {
+                        "gos_rt_len"
+                    };
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(len_callee.to_string())),
+                        args: vec![Operand::Copy(Place::local(base_local))],
+                        destination: Place::local(l),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                }
                 l
             };
             let hi_local = if *inclusive {
@@ -2731,11 +2753,19 @@ impl<'a> Builder<'a> {
             } else {
                 hi_local
             };
+            if let Some((elem, len)) = base_array {
+                base_local = self.coerce_array_to_vec(base_local, elem, len, span);
+            }
             let dest_ty = ty;
             let dest = self.fresh(dest_ty);
             let next = self.new_block(span);
+            let callee = if base_is_string {
+                "gos_rt_str_substring"
+            } else {
+                "gos_rt_vec_slice"
+            };
             self.terminate(Terminator::Call {
-                callee: Operand::Const(ConstValue::Str("gos_rt_vec_slice".to_string())),
+                callee: Operand::Const(ConstValue::Str(callee.to_string())),
                 args: vec![
                     Operand::Copy(Place::local(base_local)),
                     Operand::Copy(Place::local(lo_local)),

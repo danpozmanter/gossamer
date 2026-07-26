@@ -11,6 +11,11 @@ fn main() -> Result<(), errors::Error> {
     println!("head: {head}")
     let tail = s.slice(6, 11)?
     println!("tail: {tail}")
+    println!("range mid: {}", s[6..11])
+    println!("range clamp: {}", s[6..99])
+    println!("range negative: {}", s[-10..5])
+    println!("range open: {}", s[6..])
+    println!("range inclusive: {}", s[6..=10])
 
     let bad = String::slice(&s, 5, 2)
     println!("bad is err: {}", bad.is_err())
@@ -19,11 +24,21 @@ fn main() -> Result<(), errors::Error> {
     let chunk = xs.slice(0, 2)?
     println!("vec slice len: {}", chunk.len())
     println!("vec slice first: {}", chunk[0])
+    let range_chunk = xs[1..4]
+    println!("vec range len: {}", range_chunk.len())
+    println!("vec range first: {}", range_chunk[0])
 
     let arr = [100, 200, 300]
     let mid = arr.slice(1, 3)?
     println!("arr slice len: {}", mid.len())
     println!("arr slice first: {}", mid[0])
+    let arr_range = arr[1..]
+    println!("arr range len: {}", arr_range.len())
+    println!("arr range first: {}", arr_range[0])
+    let slice: [i64] = [7, 8, 9, 10]
+    let slice_range = slice[1..3]
+    println!("slice range len: {}", slice_range.len())
+    println!("slice range first: {}", slice_range[0])
 
     // A `Vec<String>` slice must carry the element type through its
     // Result, so the sub-vec indexes strings instead of rendering the

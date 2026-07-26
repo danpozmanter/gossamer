@@ -1899,6 +1899,65 @@ fn string_slice_rejects_missing_or_non_integer_bounds() {
 }
 
 #[test]
+fn string_range_index_has_string_type() {
+    let checked = run("fn main() { let piece = \"abcd\"[1..3] }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+    let init = let_init(&checked, "main", 0);
+    let ty = checked.table.get(init.id).expect("range index typed");
+    assert!(
+        matches!(checked.tcx.kind(ty), Some(TyKind::String)),
+        "String range index should produce String, got {:?}",
+        checked.tcx.kind(ty)
+    );
+}
+
+#[test]
+fn fixed_array_range_index_has_vec_type() {
+    let checked = run("fn main() { let piece = [1, 2, 3, 4][1..3] }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+    let init = let_init(&checked, "main", 0);
+    let ty = checked.table.get(init.id).expect("range index typed");
+    let Some(TyKind::Vec(elem)) = checked.tcx.kind(ty) else {
+        panic!(
+            "fixed array range index should produce Vec, got {:?}",
+            checked.tcx.kind(ty)
+        );
+    };
+    assert!(
+        matches!(
+            checked.tcx.kind(*elem),
+            Some(TyKind::Int(gossamer_types::IntTy::I64))
+        ),
+        "fixed array range element should be i64, got {:?}",
+        checked.tcx.kind(*elem)
+    );
+}
+
+#[test]
+fn fixed_array_rejects_vec_only_methods() {
+    let d = diagnostics_for(
+        "fn main() {\n\
+         let mut a = [1; 3]\n\
+         a.push(4)\n\
+         let _ = a.pop()\n\
+         a.insert(1, 9)\n\
+         a.truncate(1)\n\
+         a.reserve(8)\n\
+         }\n",
+    );
+    for name in ["push", "pop", "insert", "truncate", "reserve"] {
+        assert!(
+            d.iter().any(|diagnostic| matches!(
+                &diagnostic.error,
+                TypeError::UnresolvedMethod { ty, name: method }
+                    if ty == "[i64; 3]" && method == name
+            )),
+            "expected fixed-array `{name}` rejection, got {d:?}"
+        );
+    }
+}
+
+#[test]
 fn string_slice_rejects_a_duplicate_receiver_argument() {
     let d = diagnostics_for(
         "fn main() {\n\

@@ -2828,7 +2828,12 @@ impl<'a> TypeChecker<'a> {
                     }
                     return elem;
                 }
-                TyKind::String => return self.tcx.int_ty(IntTy::I64),
+                TyKind::String => {
+                    if range_index {
+                        return self.tcx.string_ty();
+                    }
+                    return self.tcx.int_ty(IntTy::I64);
+                }
                 TyKind::Var(_) => {
                     self.deferred_structural.push(DeferredStructural {
                         ty: cur,
@@ -4880,6 +4885,9 @@ impl<'a> TypeChecker<'a> {
         self.check_overlapping_mutable_call_args(args);
         let receiver_expected = self.method_receiver_expectation(method, receiver, expected);
         let receiver_ty = self.check_expr_expecting(receiver, receiver_expected);
+        if self.reject_fixed_array_vec_only_method(receiver_ty, method, args, receiver.span) {
+            return self.tcx.error_ty();
+        }
         self.check_mutating_method_receiver(receiver, receiver_ty, method);
         if let Some(ty) = self.check_param_receiver_method(receiver_ty, method, args, receiver.span)
         {
@@ -5121,6 +5129,75 @@ impl<'a> TypeChecker<'a> {
             return;
         }
         self.check_mutating_receiver_place(receiver);
+    }
+
+    fn reject_fixed_array_vec_only_method(
+        &mut self,
+        receiver_ty: Ty,
+        method: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> bool {
+        let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
+            resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        if !matches!(self.tcx.kind(resolved), Some(TyKind::Array { .. }))
+            || !is_vec_only_fixed_array_method(method)
+        {
+            return false;
+        }
+        for arg in args {
+            self.check_expr(arg);
+        }
+        let ty = self.render_public_receiver_ty(resolved);
+        self.emit(
+            TypeError::UnresolvedMethod {
+                ty,
+                name: method.to_string(),
+            },
+            span,
+        );
+        true
+    }
+
+    fn render_public_receiver_ty(&mut self, ty: Ty) -> String {
+        let resolved = self.infer.resolve(self.tcx, ty);
+        match self.tcx.kind(resolved).cloned() {
+            Some(TyKind::Array { elem, len }) => {
+                format!(
+                    "[{}; {}]",
+                    self.render_public_receiver_ty(elem),
+                    match len {
+                        crate::ArrayLen::Concrete(n) => n.to_string(),
+                        crate::ArrayLen::Param(idx) => format!("N{}", idx.as_u32()),
+                    }
+                )
+            }
+            Some(TyKind::Slice(elem)) => {
+                format!("[{}]", self.render_public_receiver_ty(elem))
+            }
+            Some(TyKind::Vec(elem)) => {
+                format!("Vec<{}>", self.render_public_receiver_ty(elem))
+            }
+            Some(TyKind::Tuple(parts)) => {
+                let rendered = parts
+                    .iter()
+                    .map(|part| self.render_public_receiver_ty(*part))
+                    .collect::<Vec<_>>();
+                if rendered.len() == 1 {
+                    format!("({},)", rendered[0])
+                } else {
+                    format!("({})", rendered.join(", "))
+                }
+            }
+            Some(TyKind::Var(vid)) if self.infer.is_unresolved_integer_var(vid) => {
+                "i64".to_string()
+            }
+            Some(TyKind::Var(vid)) if self.infer.is_unresolved_float_var(vid) => "f64".to_string(),
+            Some(TyKind::Var(_)) => "_".to_string(),
+            _ => render_ty(self.tcx, resolved),
+        }
     }
 
     /// Qualified user-method calls (`Type::method(receiver, ...)`) and the
@@ -10270,6 +10347,29 @@ fn is_string_method(name: &str) -> bool {
             | "push_char"
             | "push_byte"
             | "parse"
+    )
+}
+
+fn is_vec_only_fixed_array_method(name: &str) -> bool {
+    matches!(
+        name,
+        "push"
+            | "pop"
+            | "insert"
+            | "remove"
+            | "clear"
+            | "extend"
+            | "extend_from_slice"
+            | "truncate"
+            | "retain"
+            | "drain"
+            | "reserve"
+            | "reserve_exact"
+            | "capacity"
+            | "append"
+            | "resize"
+            | "resize_with"
+            | "split_off"
     )
 }
 

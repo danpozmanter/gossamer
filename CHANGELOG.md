@@ -1,9 +1,16 @@
 # Changelog
 
-## 0.34.4 - Public diagnostics
+## 0.34.4 - Public diagnostics, range indexing, fixed array fix.
 
 - Render type-checker diagnostics with public type descriptions instead of
   internal inference names.
+- Support range indexing on `String`, `Vec<T>`, `[T]`, and fixed `[T; N]`
+  consistently across interpreter and native builds, including clamped and
+  open-ended ranges.
+- Show full inferred types for active REPL bindings in `%bindings`.
+- Reject Vec-only methods such as `push`, `pop`, `insert`, `truncate`, and
+  `reserve` on fixed `[T; N]` arrays so fixed-size bindings cannot appear to
+  grow at runtime.
 
 ## 0.34.3 - Intcode native parity
 

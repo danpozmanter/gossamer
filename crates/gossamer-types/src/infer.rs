@@ -162,6 +162,32 @@ impl InferCtxt {
         }
     }
 
+    /// Returns true when `vid` is still unresolved and belongs to an
+    /// unsuffixed integer literal that will default to `i64`.
+    #[must_use]
+    pub fn is_unresolved_integer_var(&mut self, vid: TyVid) -> bool {
+        let root = self.root_of(vid);
+        matches!(self.slots[root as usize], VarSlot::Parent(_))
+            && self
+                .integer_constrained
+                .get(root as usize)
+                .copied()
+                .unwrap_or(false)
+    }
+
+    /// Returns true when `vid` is still unresolved and belongs to an
+    /// unsuffixed float literal that will default to `f64`.
+    #[must_use]
+    pub fn is_unresolved_float_var(&mut self, vid: TyVid) -> bool {
+        let root = self.root_of(vid);
+        matches!(self.slots[root as usize], VarSlot::Parent(_))
+            && self
+                .float_literal
+                .get(root as usize)
+                .copied()
+                .unwrap_or(false)
+    }
+
     /// Returns the current representative of a type handle. Inference
     /// variables are walked transitively to a non-variable type (or to
     /// the root variable if still unresolved).

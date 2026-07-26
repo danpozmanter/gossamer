@@ -203,37 +203,38 @@ fn repl_reference_rebind_to_temporary_does_not_mutate_old_referent() {
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("a = [1, 2]"),
+        out.stdout.contains("a: [i64; 2] = [1, 2]"),
         "immutable original binding changed or disappeared: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("b = [3, 4]"),
+        out.stdout.contains("b: [i64; 2] = [3, 4]"),
         "immutable referent binding was overwritten by reference rebind: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("mut c = [5, 6]"),
+        out.stdout.contains("mut c: &[i64; 2] = [5, 6]"),
         "reference binding did not move to the new temporary referent: {}",
         out.stdout
     );
     assert!(
-        !out.stdout.contains("b = [5, 6]"),
+        !out.stdout.contains("b: [i64; 2] = [5, 6]"),
         "reference rebind leaked through and mutated immutable `b`: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("mut x = [10, 20]") && out.stdout.contains("mut y = [30, 40]"),
+        out.stdout.contains("mut x: [i64; 2] = [10, 20]")
+            && out.stdout.contains("mut y: [i64; 2] = [30, 40]"),
         "mutable reference rebind changed an old named referent: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("mut r = [50, 60]"),
+        out.stdout.contains("mut r: &mut [i64; 2] = [50, 60]"),
         "mutable reference binding did not move to the new temporary referent: {}",
         out.stdout
     );
     assert!(
-        !out.stdout.contains("mut y = [50, 60]"),
+        !out.stdout.contains("mut y: [i64; 2] = [50, 60]"),
         "mutable reference rebind leaked through and mutated old `y`: {}",
         out.stdout
     );
@@ -256,12 +257,12 @@ fn repl_cannot_mutate_immutable_value_through_mutable_reference_chain() {
         out.stderr
     );
     assert!(
-        out.stdout.contains("a = [1, 2]"),
+        out.stdout.contains("a: [i64; 2] = [1, 2]"),
         "immutable source changed through the rejected alias chain: {}",
         out.stdout
     );
     assert!(
-        !out.stdout.contains("a = [0, 2]"),
+        !out.stdout.contains("a: [i64; 2] = [0, 2]"),
         "immutable source was modified despite GT0031: {}",
         out.stdout
     );
@@ -311,12 +312,12 @@ fn repl_bindings_show_current_shadowed_lets_only() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("  1: mut i = 2"),
+        out.stdout.contains("  1: mut i: i64 = 2"),
         "visible binding should show the current shadowing value; stdout: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("  1: mut i = 3"),
+        out.stdout.contains("  1: mut i: i64 = 3"),
         "assignment should update the displayed current value; stdout: {}",
         out.stdout
     );
@@ -337,7 +338,7 @@ fn repl_bindings_show_immutable_values_without_let_prefix() {
     let out = run_repl("let i = 3\n%bindings\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("  1: i = 3"),
+        out.stdout.contains("  1: i: i64 = 3"),
         "immutable binding should render as `name = value`; stdout: {}",
         out.stdout
     );
@@ -349,18 +350,57 @@ fn repl_bindings_show_immutable_values_without_let_prefix() {
 }
 
 #[test]
+fn repl_bindings_show_full_inferred_types() {
+    let out = run_repl("let x = [1,2,3]\nlet words: Vec<String> = [\"a\", \"b\"]\n%bindings\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("  1: x: [i64; 3] = [1, 2, 3]"),
+        "fixed array binding should show full inferred type; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout
+            .contains("  2: words: Vec<String> = [\"a\", \"b\"]"),
+        "Vec<String> binding should show full annotated type; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_rejects_push_on_fixed_array_binding() {
+    let out = run_repl("let mut a = [1;3]\na.push(3)\n%bindings\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("no method named `push` found for type `[i64; 3]`"),
+        "fixed array push should be rejected; stderr: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("  1: mut a: [i64; 3] = [1, 1, 1]"),
+        "fixed array binding should remain fixed-size; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("Out[2]: [1, 1, 1, 3]"),
+        "fixed array push should not produce a grown array; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_bindings_and_declarations_accept_regex_filters() {
     let out = run_repl(
         "let alpha_value = 11\n\
          let beta_value = 22\n\
          fn AlphaFn(value: i64) -> i64 { value }\n\
          fn BetaFn(value: String) -> String { value }\n\
-         %bindings ^alpha.*11$\n\
+         %bindings ^alpha.*i64.*11$\n\
          %declarations Alpha.*i64\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("  1: alpha_value = 11"),
+        out.stdout.contains("  1: alpha_value: i64 = 11"),
         "binding regex should match anywhere in rendered bindings: {}",
         out.stdout
     );
@@ -656,7 +696,7 @@ fn repl_meta_command_shortcuts_match_their_long_forms() {
     );
     assert!(out.success, "shortcut session failed: {}", out.stderr);
     assert!(
-        out.stdout.contains("answer = 42"),
+        out.stdout.contains("answer: i64 = 42"),
         "%b did not render bindings: {}",
         out.stdout
     );

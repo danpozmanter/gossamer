@@ -1185,6 +1185,7 @@ fn index_range_get(
         Value::Tuple(items) => items.len(),
         Value::IntArray(d) => d.len(),
         Value::FloatVec(d) => d.len(),
+        Value::String(s) => s.len(),
         Value::FloatArray(fa) if fa.stride > 0 => fa.data.len() / fa.stride as usize,
         Value::FloatArray(_) => 0,
         _ => {
@@ -1209,6 +1210,10 @@ fn index_range_get(
         Value::Tuple(items) => Ok(Value::Array(Arc::new(items[lo..hi].to_vec()))),
         Value::IntArray(data) => Ok(Value::IntArray(Arc::new(data[lo..hi].to_vec()))),
         Value::FloatVec(data) => Ok(Value::FloatVec(Arc::new(data[lo..hi].to_vec()))),
+        Value::String(s) => {
+            let piece = crate::builtins::str_substring_inline(s.as_str(), lo as i64, hi as i64);
+            Ok(Value::String(piece))
+        }
         Value::FloatArray(rx) => {
             let Value::Array(view) = Value::FloatArray(rx.clone()).float_array_to_value_array()
             else {

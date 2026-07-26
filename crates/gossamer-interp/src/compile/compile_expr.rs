@@ -2095,9 +2095,12 @@ impl<'tcx> FnBuilder<'tcx> {
         // storage, and an unresolved `Var` receiver (e.g. `String::new()`)
         // can be any of them - those keep the generic dispatch, which
         // selects the right builtin by the runtime value's type.
+        if matches!(self.tcx.kind(receiver.ty), Some(TyKind::Array { .. })) {
+            return Ok(false);
+        }
         let is_concrete_vec = matches!(
             self.tcx.kind(receiver.ty),
-            Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. })
+            Some(TyKind::Vec(_) | TyKind::Slice(_))
         );
         let target_reg = match self.lookup_local(&seg.name) {
             Some(target) if target.kind == RegKind::Value => target.reg,
@@ -2485,9 +2488,7 @@ impl<'tcx> FnBuilder<'tcx> {
             && args.is_empty()
             && matches!(
                 self.tcx.kind(receiver.ty),
-                None | Some(
-                    TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } | TyKind::Var(_)
-                )
+                None | Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Var(_))
             )
         {
             let opt_dst = self.alloc_reg();
@@ -2929,12 +2930,15 @@ impl<'tcx> FnBuilder<'tcx> {
                     && target.kind == RegKind::Value
                 {
                     let reg = target.reg;
-                    let is_vec = matches!(
-                        self.tcx.kind(args[0].ty),
-                        Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. })
-                    ) || self.flat_int_locals.contains(&reg)
-                        || self.flat_float_locals.contains(&reg)
-                        || self.collection_locals.contains(&reg);
+                    let is_fixed_array =
+                        matches!(self.tcx.kind(args[0].ty), Some(TyKind::Array { .. }));
+                    let is_vec = !is_fixed_array
+                        && (matches!(
+                            self.tcx.kind(args[0].ty),
+                            Some(TyKind::Vec(_) | TyKind::Slice(_))
+                        ) || self.flat_int_locals.contains(&reg)
+                            || self.flat_float_locals.contains(&reg)
+                            || self.collection_locals.contains(&reg));
                     if is_vec {
                         let index = self.compile_expr(&args[1])?;
                         let dst = self.alloc_reg();
