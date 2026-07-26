@@ -45,7 +45,6 @@ dispatch-table additions.
 | `s.to_string()` | `String` | No-op clone for `&str`/`String`. |
 | `s.clone()` | `String` | |
 | `s.as_bytes()` | `&[u8]` | Zero-copy borrow. |
-| `s.as_str()` | `&str` | Zero-copy borrow. |
 | `s.parse<T>()` / `s.parse::<T>()` | `Result<T, errors::Error>` | Parses into the expected result type, such as `let n: i64 = s.parse()?`. |
 | `s.to_i64()` | `Option<i64>` | Parses the string; `None` on malformed input. |
 | `s.to_f64()` | `Option<f64>` | |

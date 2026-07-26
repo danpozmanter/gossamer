@@ -620,13 +620,12 @@ fn main() {
 }
 
 #[test]
-fn mut_scalar_array_with_push_still_promotes_to_vec() {
-    // Companion to the fixed-array regression: a `let mut xs =
-    // [literal]` that *does* call a growth method must still promote to
-    // a heap Vec so `push` / `sort` work.
+fn explicit_vec_from_array_supports_push_and_sort() {
+    // Fixed arrays never grow. Convert explicitly when the value needs
+    // length-changing Vec methods.
     let src = r#"
 fn main() {
-    let mut xs = [3, 1, 2]
+    let mut xs = Vec::from([3, 1, 2])
     xs.push(4)
     xs.sort()
     for x in &xs { print!("{} ", x) }

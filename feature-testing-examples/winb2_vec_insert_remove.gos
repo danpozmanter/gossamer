@@ -1,5 +1,5 @@
 fn main() {
-    let mut xs = [1, 2, 3, 4]
+    let mut xs = Vec::from([1, 2, 3, 4])
     xs.insert(0, 10)
     xs.insert(5, 50)
     println!("{:?}", xs)

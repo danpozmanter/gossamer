@@ -586,6 +586,48 @@ fn vec_constructors_have_public_container_types() {
 }
 
 #[test]
+fn contextual_integer_literals_must_fit_their_declared_width() {
+    let checked = run("struct ByteHolder { value: i8 }\n\
+         fn takes_byte(value: i8) {}\n\
+         fn byte() -> i8 { 567 }\n\
+         fn main() {\n\
+             let scalar: i8 = 567\n\
+             let values: Vec<i8> = [1, 567]\n\
+             let holder = ByteHolder { value: 567 }\n\
+             takes_byte(567)\n\
+             let negative: i8 = -129\n\
+             let unsigned: u8 = 256\n\
+             let signed_minimum: i8 = -128\n\
+         }\n");
+    let overflows = checked
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            matches!(
+                &diagnostic.error,
+                TypeError::IntLiteralOverflow { literal, ty }
+                    if literal == "567" && ty == "i8"
+            )
+        })
+        .count();
+    assert_eq!(
+        overflows, 5,
+        "every contextual i8 literal should be checked: {:#?}",
+        checked.diagnostics
+    );
+    assert!(checked.diagnostics.iter().any(|diagnostic| matches!(
+        &diagnostic.error,
+        TypeError::IntLiteralOverflow { literal, ty }
+            if literal == "-129" && ty == "i8"
+    )));
+    assert!(checked.diagnostics.iter().any(|diagnostic| matches!(
+        &diagnostic.error,
+        TypeError::IntLiteralOverflow { literal, ty }
+            if literal == "256" && ty == "u8"
+    )));
+}
+
+#[test]
 fn mutable_reference_binding_can_be_rebound_with_a_reference() {
     let checked = run("fn main() { let mut x = &[1, 2]\n x = &[2, 3] }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);

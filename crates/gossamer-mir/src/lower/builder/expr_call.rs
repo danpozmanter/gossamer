@@ -263,7 +263,7 @@ impl<'a> Builder<'a> {
                 if let TyKind::Array { elem, len } =
                     self.tcx.kind_of(self.locals[source.0 as usize].ty).clone()
                 {
-                    return Some(self.coerce_array_to_vec(source, elem, len, span));
+                    return Some(self.fixed_array_to_vec(source, elem, len, span));
                 }
                 return Some(source);
             }

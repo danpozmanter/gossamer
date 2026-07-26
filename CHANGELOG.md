@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.34.4 - Public diagnostics, range indexing, fixed arrays
+## 0.34.4 - Public diagnostics, fixed arrays, and container type safety
 
 - Render type-checker diagnostics with public type descriptions instead of
   internal inference names, including references and generic payloads such as
@@ -14,6 +14,10 @@
   `Vec` and `HashMap` constructors.
 - Support `Vec::from([value; N])` and `Vec::from([a, b, ...])` as explicit
   fixed-array to growable-vector conversions.
+- Enforce integer-width bounds for contextually typed literals, including
+  elements of `Vec<i8>` and other narrow integer containers.
+- Keep REPL String help aligned with implemented methods and restore type
+  checking for the supported `String::clear` and `String::truncate` mutators.
 - Reject Vec-only methods such as `push`, `pop`, `insert`, `truncate`, and
   `reserve` on fixed `[T; N]` arrays so fixed-size bindings cannot appear to
   grow at runtime.

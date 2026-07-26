@@ -1,6 +1,6 @@
 // Reading multi-slot inline elements ([T; N], tuples, structs) back
 // out of a growable Vec must agree across every tier. The element
-// type of an unannotated `let mut v = []` is recovered from the
+// type of an unannotated `let mut v = Vec::new()` is recovered from the
 // push sites; a recovered element with unresolved field types would
 // otherwise lower its field/index loads as pointers and mis-dispatch
 // the value (e.g. concatenated as a string), so this fixture exercises
@@ -9,7 +9,7 @@
 struct Point { a: i64, b: i64 }
 
 fn array_for_loop() -> i64 {
-    let mut v = []
+    let mut v = Vec::new()
     let mut i = 0
     while i < 30 {
         v.push([i, i + 1])
@@ -23,14 +23,14 @@ fn array_for_loop() -> i64 {
 }
 
 fn array_index() -> i64 {
-    let mut v = []
+    let mut v = Vec::new()
     v.push([10, 20])
     v.push([30, 40])
     v[0][0] + v[0][1] + v[1][0] + v[1][1]
 }
 
 fn tuple_for_loop() -> i64 {
-    let mut v = []
+    let mut v = Vec::new()
     let mut i = 0
     while i < 5 {
         v.push((i, i + 1))
@@ -44,7 +44,7 @@ fn tuple_for_loop() -> i64 {
 }
 
 fn tuple_destructure() -> i64 {
-    let mut v = []
+    let mut v = Vec::new()
     v.push((1, 2))
     v.push((3, 4))
     let mut sum = 0
@@ -55,22 +55,21 @@ fn tuple_destructure() -> i64 {
 }
 
 fn tuple_index() -> i64 {
-    let mut v = []
+    let mut v = Vec::new()
     v.push((10, 20))
     v.push((30, 40))
     v[0].0 + v[0].1 + v[1].0 + v[1].1
 }
 
 fn struct_index() -> i64 {
-    let mut v = []
+    let mut v = Vec::new()
     v.push(Point { a: 10, b: 20 })
     v.push(Point { a: 30, b: 40 })
     v[0].a + v[0].b + v[1].a + v[1].b
 }
 
 fn nested_literal_start() -> i64 {
-    let mut v = [[0, 0]]
-    v.pop()
+    let mut v: Vec<[i64; 2]> = Vec::new()
     let mut i = 0
     while i < 30 {
         v.push([i, i + 1])

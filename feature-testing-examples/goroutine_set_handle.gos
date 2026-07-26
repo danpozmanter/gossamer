@@ -36,7 +36,7 @@ fn main() {
     go worker(gate_rx, tx)
     gate_tx.send(1)
     gate_tx.close()
-    let mut vals = []
+    let mut vals = Vec::new()
     while let Some(v) = rx.recv() {
         vals.push(v)
     }

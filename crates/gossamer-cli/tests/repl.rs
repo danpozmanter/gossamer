@@ -154,6 +154,23 @@ fn repl_vec_from_fixed_array_creates_growable_vec() {
 }
 
 #[test]
+fn repl_rejects_out_of_range_vec_elements() {
+    let out = run_repl("let mut v: Vec<i8> = [1, 567]\n%b\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("integer literal `567` does not fit in `i8`"),
+        "out-of-range Vec element was accepted: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("no `let` bindings yet"),
+        "rejected binding was retained: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_uses_repr_for_results_and_display_for_explicit_printing() {
     let out = run_repl(
         "let x = \"wow\"\n\
@@ -1019,6 +1036,32 @@ fn repl_meta_help_finds_stdlib_symbol() {
             .contains("Removes leading and trailing whitespace."),
         "expected manifest doc text; stdout: {}",
         out.stdout
+    );
+}
+
+#[test]
+fn repl_string_listing_contains_only_supported_core_methods() {
+    let out = run_repl(
+        "%ls String\n\
+         let mut s = String::from(\"hello\")\n\
+         s.truncate(3)\n\
+         s.clear()\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("String::clear") && out.stdout.contains("String::truncate"),
+        "supported String mutators were missing from help: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("String::as_str"),
+        "phantom String::as_str remained in help: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stderr.contains("no method named"),
+        "advertised String method was rejected: {}",
+        out.stderr
     );
 }
 

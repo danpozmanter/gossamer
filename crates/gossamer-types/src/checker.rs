@@ -2289,8 +2289,56 @@ impl<'a> TypeChecker<'a> {
             return self.record(expr.id, err);
         }
         let ty = self.check_expr_kind(expr, expected);
+        self.check_expected_integer_literal_range(expr, expected, ty);
         self.leave_recursion();
         self.record(expr.id, ty)
+    }
+
+    fn check_expected_integer_literal_range(
+        &mut self,
+        expr: &Expr,
+        expected: Expectation,
+        actual: Ty,
+    ) {
+        let (text, has_suffix) = match &expr.kind {
+            ExprKind::Literal(Literal::Int(text)) => (
+                text.clone(),
+                INT_SUFFIXES
+                    .iter()
+                    .any(|(suffix, _)| text.ends_with(suffix)),
+            ),
+            ExprKind::Unary {
+                op: UnaryOp::Neg,
+                operand,
+            } => match &operand.kind {
+                ExprKind::Literal(Literal::Int(text)) => (
+                    format!("-{text}"),
+                    INT_SUFFIXES
+                        .iter()
+                        .any(|(suffix, _)| text.ends_with(suffix)),
+                ),
+                _ => return,
+            },
+            _ => return,
+        };
+        if matches!(self.tcx.kind(actual), Some(TyKind::Error)) || has_suffix {
+            return;
+        }
+        let Some(expected) = self.expectation_target(expected) else {
+            return;
+        };
+        let Some(TyKind::Int(int_ty)) = self.tcx.kind(expected).cloned() else {
+            return;
+        };
+        if !int_literal_fits(&text, int_ty) {
+            self.emit(
+                TypeError::IntLiteralOverflow {
+                    literal: text,
+                    ty: int_ty.as_str().to_string(),
+                },
+                expr.span,
+            );
+        }
     }
 
     /// Resolves the expectation to the structural type it imposes,
@@ -3929,6 +3977,34 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    fn collection_from_ty(&mut self, module: &[&str], source: Ty) -> Option<Ty> {
+        if !matches!(
+            module,
+            ["Vec"] | ["collections", "Vec"] | ["std", "collections", "Vec"]
+        ) {
+            return None;
+        }
+        let source = self.infer.resolve(self.tcx, source);
+        let elem = match self.tcx.kind(source) {
+            Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => *elem,
+            _ => return None,
+        };
+        Some(self.tcx.intern(TyKind::Vec(elem)))
+    }
+
+    fn collection_call_ret_ty(
+        &mut self,
+        module: &[&str],
+        method: &str,
+        arg_tys: &[Ty],
+    ) -> Option<Ty> {
+        match method {
+            "new" | "with_capacity" => self.collection_ctor_ty(module),
+            "from" => self.collection_from_ty(module, *arg_tys.first()?),
+            _ => None,
+        }
+    }
+
     fn flag_set_ty(&mut self) -> Ty {
         let def = gossamer_resolve::DefId::local(u32::MAX - 21);
         self.tcx.register_def_name(def, "flag::Set");
@@ -4140,24 +4216,8 @@ impl<'a> TypeChecker<'a> {
                 _ => None,
             };
         }
-        if matches!(last, "new" | "with_capacity")
-            && let Some(ty) = self.collection_ctor_ty(module)
-        {
+        if let Some(ty) = self.collection_call_ret_ty(module, last, arg_tys) {
             return Some(ty);
-        }
-        if last == "from"
-            && matches!(
-                module,
-                ["Vec"] | ["collections", "Vec"] | ["std", "collections", "Vec"]
-            )
-            && let Some(source) = arg_tys.first().copied()
-        {
-            let source = self.infer.resolve(self.tcx, source);
-            let elem = match self.tcx.kind(source) {
-                Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => *elem,
-                _ => return None,
-            };
-            return Some(self.tcx.intern(TyKind::Vec(elem)));
         }
         if matches!(module, ["fs" | "os"] | ["std", "fs" | "os"]) {
             return self.fs_call_ret_ty(last);
@@ -10454,6 +10514,8 @@ fn is_string_method(name: &str) -> bool {
             | "center"
             | "slice"
             | "substring"
+            | "clear"
+            | "truncate"
             | "push"
             | "push_str"
             | "push_char"
@@ -10598,6 +10660,7 @@ mod string_method_tests {
             "bytes",
             "center",
             "chars",
+            "clear",
             "contains",
             "contains_any",
             "count",
@@ -10634,6 +10697,7 @@ mod string_method_tests {
             "trim_matches",
             "trim_start",
             "trim_start_matches",
+            "truncate",
         ] {
             assert!(is_string_method(name), "{name} should be a String method");
         }

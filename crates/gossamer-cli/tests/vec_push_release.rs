@@ -219,6 +219,27 @@ fn main() {
 }
 
 #[test]
+fn vec_from_preserves_nested_fixed_array_elements_in_all_tiers() {
+    let src = r#"
+fn main() {
+    let mut values = Vec::from([[0, 0]])
+    values.pop()
+    let mut i = 0
+    while i < 30 {
+        values.push([i, i + 1])
+        i += 1
+    }
+    let mut sum = 0
+    for value in values {
+        sum += value[0] + value[1]
+    }
+    println!("{}", sum)
+}
+"#;
+    assert_three_tier_stdout("vec_from_nested_fixed_arrays", src, "900");
+}
+
+#[test]
 fn vec_push_string_then_index_works_in_all_tiers() {
     // String elements take the same dispatch - the runtime's
     // `gos_rt_vec_push` writes the i64-shaped pointer through

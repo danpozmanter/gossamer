@@ -173,13 +173,6 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         doc: "Returns the UTF-8 bytes of the string.",
     },
     CoreMethodHelp {
-        owner: "String",
-        name: "as_str",
-        kind: "method",
-        signature: "fn as_str(self: String) -> String",
-        doc: "Returns the string view as a string value.",
-    },
-    CoreMethodHelp {
         owner: "Vec",
         name: "new",
         kind: "assoc",

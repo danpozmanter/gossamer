@@ -278,6 +278,47 @@ impl<'a> Builder<'a> {
         dest
     }
 
+    /// Converts only the outer fixed array to a Vec. Nested fixed-array
+    /// elements retain their inline `[T; N]` layout.
+    pub(crate) fn fixed_array_to_vec(
+        &mut self,
+        raw: Local,
+        elem_ty: Ty,
+        len: gossamer_types::ArrayLen,
+        span: Span,
+    ) -> Local {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let elem_bytes_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(elem_bytes_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(
+                self.elem_bytes_of(elem_ty),
+            )))),
+            span,
+        );
+        let len_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(len_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(len.to_usize() as i128))),
+            span,
+        );
+        let vec_ty = self.tcx.intern(gossamer_types::TyKind::Vec(elem_ty));
+        let dest = self.fresh(vec_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_from_arr".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(elem_bytes_local)),
+                Operand::Copy(Place::local(raw)),
+                Operand::Copy(Place::local(len_local)),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        dest
+    }
+
     /// Coerces a borrowed array (`&[T; N]` reaching a `&[T]` / `&Vec<T>`
     /// parameter) into a borrowing GosVec view. Identical buffer to
     /// `coerce_array_to_vec`, but built via `gos_rt_vec_borrow_arr` so the

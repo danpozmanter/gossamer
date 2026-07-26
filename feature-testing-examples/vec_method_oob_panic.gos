@@ -3,7 +3,7 @@
 // free functions when recoverable `Result` behavior is wanted.
 
 fn main() {
-    let mut xs = [1, 2, 3]
+    let mut xs = Vec::from([1, 2, 3])
     xs.insert(3, 4)
     println!("before {}", xs.len())
     xs.insert(5, 99)

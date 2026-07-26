@@ -757,7 +757,7 @@ fn aot_vec_push_runtime() {
         "vec_push_runtime",
         r#"
 fn main() {
-    let mut xs = [1, 2, 3]
+    let mut xs = Vec::from([1, 2, 3])
     xs.push(4)
     println!("len={} last={}", xs.len(), xs[3])
 }
