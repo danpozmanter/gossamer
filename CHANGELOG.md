@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.34.4 - Public diagnostics
+
+- Render type-checker diagnostics with public type descriptions instead of
+  internal inference names.
+
 ## 0.34.3 - Intcode native parity
 
 - Support real `const` items in nested block scopes across VM, Cranelift, and
