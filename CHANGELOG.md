@@ -9,6 +9,11 @@
   consistently across interpreter and native builds, including clamped and
   open-ended ranges.
 - Show full inferred types for active REPL bindings in `%bindings`.
+- Keep internal inference IDs out of REPL binding types, accept meta commands
+  with leading whitespace, and preserve container type identities for empty
+  `Vec` and `HashMap` constructors.
+- Support `Vec::from([value; N])` and `Vec::from([a, b, ...])` as explicit
+  fixed-array to growable-vector conversions.
 - Reject Vec-only methods such as `push`, `pop`, `insert`, `truncate`, and
   `reserve` on fixed `[T; N]` arrays so fixed-size bindings cannot appear to
   grow at runtime.

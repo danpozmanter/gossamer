@@ -164,7 +164,7 @@ fn incomplete_reason(input: &str) -> Option<&'static str> {
     // Meta-command arguments may themselves be incomplete Gossamer syntax,
     // especially regexes such as `[` or `foo(`. Submit them immediately so
     // the command can either use the pattern or report its regex error.
-    if input.starts_with('%') {
+    if input.trim_start().starts_with('%') {
         return None;
     }
     let mut map = SourceMap::new();

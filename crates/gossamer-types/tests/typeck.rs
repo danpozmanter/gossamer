@@ -555,6 +555,37 @@ fn return_reference_mismatch_renders_public_referent_type() {
 }
 
 #[test]
+fn vec_constructors_have_public_container_types() {
+    let checked = run("fn main() {\n\
+             let empty = Vec::new()\n\
+             let reserved = Vec::with_capacity(4)\n\
+             let values = Vec::from([1, 2])\n\
+             let map = HashMap::with_capacity(4)\n\
+         }\n");
+    assert!(checked.diagnostics.is_empty(), "{:#?}", checked.diagnostics);
+
+    let gossamer_ast::ItemKind::Fn(main) = &checked.source.items[0].kind else {
+        panic!("expected main function");
+    };
+    let body = main.body.as_ref().expect("main body");
+    let gossamer_ast::ExprKind::Block(body) = &body.kind else {
+        panic!("expected main block");
+    };
+    let types = body
+        .stmts
+        .iter()
+        .filter_map(|stmt| match &stmt.kind {
+            gossamer_ast::StmtKind::Let {
+                init: Some(expr), ..
+            } => checked.table.get(expr.id),
+            _ => None,
+        })
+        .map(|ty| gossamer_types::render_public_ty(&checked.tcx, ty))
+        .collect::<Vec<_>>();
+    assert_eq!(types, ["Vec<_>", "Vec<_>", "Vec<i64>", "HashMap<_, _>"]);
+}
+
+#[test]
 fn mutable_reference_binding_can_be_rebound_with_a_reference() {
     let checked = run("fn main() { let mut x = &[1, 2]\n x = &[2, 3] }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);

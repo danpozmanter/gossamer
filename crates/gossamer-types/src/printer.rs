@@ -19,6 +19,30 @@ pub fn render_ty(tcx: &TyCtxt, ty: Ty) -> String {
     out
 }
 
+/// Renders a type for user-facing output without exposing compiler inference
+/// variable identifiers.
+#[must_use]
+pub fn render_public_ty(tcx: &TyCtxt, ty: Ty) -> String {
+    render_ty(tcx, ty)
+        .split_inclusive(|c: char| !c.is_ascii_alphanumeric() && c != '?')
+        .map(|part| {
+            if part.starts_with('?')
+                && part
+                    .trim_end_matches(|c: char| !c.is_ascii_alphanumeric())
+                    .get(1..)
+                    .is_some_and(|digits| {
+                        !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+                    })
+            {
+                let suffix = part.trim_start_matches(|c: char| c == '?' || c.is_ascii_digit());
+                format!("_{suffix}")
+            } else {
+                part.to_string()
+            }
+        })
+        .collect()
+}
+
 fn write_ty(tcx: &TyCtxt, ty: Ty, out: &mut String) {
     let Some(kind) = tcx.kind(ty) else {
         let _ = write!(out, "<ty:{}>", ty.as_u32());

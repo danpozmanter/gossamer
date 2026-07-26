@@ -254,6 +254,19 @@ impl<'a> Builder<'a> {
             if joined == "String::from" && args.len() == 1 {
                 return self.lower_expr(&args[0]);
             }
+            if matches!(
+                joined.as_str(),
+                "Vec::from" | "collections::Vec::from" | "std::collections::Vec::from"
+            ) && args.len() == 1
+            {
+                let source = self.lower_expr(&args[0])?;
+                if let TyKind::Array { elem, len } =
+                    self.tcx.kind_of(self.locals[source.0 as usize].ty).clone()
+                {
+                    return Some(self.coerce_array_to_vec(source, elem, len, span));
+                }
+                return Some(source);
+            }
             if joined == "String::from_utf8" && args.len() == 1 {
                 let mut bytes_local = self.lower_expr(&args[0])?;
                 if let TyKind::Array { elem, len } = self

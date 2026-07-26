@@ -1618,6 +1618,11 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
     // which means `let mut v: Vec<i64> = Vec::new(); v.push(1)`
     // silently builds an empty `HashMap` and the push is a no-op.
     globals.push(("Vec::new", builtin("Vec::new", builtin_vec_new)));
+    globals.push(("Vec::from", builtin("Vec::from", builtin_vec_from)));
+    globals.push((
+        "collections::Vec::from",
+        builtin("collections::Vec::from", builtin_vec_from),
+    ));
     // `Vec::with_capacity(n)` produces the same empty growable array as
     // `Vec::new()`; the count is a preallocation hint the VM's dynamically
     // grown array needs no separate reservation for. Registered so the

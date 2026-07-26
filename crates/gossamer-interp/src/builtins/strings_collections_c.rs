@@ -765,6 +765,14 @@ fn builtin_vec_new(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::empty_array())
 }
 
+/// `Vec::from(array)` converts the fixed-size array value to its growable
+/// representation. Both share the VM's array value representation.
+fn builtin_vec_from(args: &[Value]) -> RuntimeResult<Value> {
+    args.first()
+        .cloned()
+        .ok_or_else(|| RuntimeError::Type("Vec::from: missing array".to_string()))
+}
+
 /// `Vec::with_capacity(n)` - an empty growable array. The capacity is a
 /// preallocation hint; the VM's array grows on demand, so it maps to the
 /// same empty value as `Vec::new()` (len 0), leaving the compiled tiers to

@@ -91,6 +91,69 @@ fn repl_persists_bindings_across_lines() {
 }
 
 #[test]
+fn repl_bindings_hide_inference_ids_for_empty_vec() {
+    let out = run_repl(
+        "let v = Vec::new()\n\
+         let reserved = Vec::with_capacity(4)\n\
+         let map = HashMap::with_capacity(4)\n\
+         %b\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("v: Vec<_> = []"),
+        "empty Vec binding should have a public generic type: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("reserved: Vec<_> = []")
+            && out.stdout.contains("map: HashMap<_, _> = {}"),
+        "capacity constructors should preserve container identity: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains('?'),
+        "REPL binding output leaked an inference variable: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_commands_accept_leading_whitespace() {
+    let out = run_repl("let x = 1\n  %b\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("x: i64 = 1"),
+        "leading whitespace prevented meta-command dispatch: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stderr.contains("cannot find"),
+        "meta-command was parsed as source: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn repl_vec_from_fixed_array_creates_growable_vec() {
+    let out = run_repl(
+        "let mut v = Vec::from([1, 2])\n\
+         %b\n\
+         v.push(3)\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("mut v: Vec<i64> = [1, 2]"),
+        "Vec::from should infer its element type: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stderr.contains("unresolved") && !out.stderr.contains("type mismatch"),
+        "Vec::from or Vec::push failed: {}",
+        out.stderr
+    );
+}
+
+#[test]
 fn repl_uses_repr_for_results_and_display_for_explicit_printing() {
     let out = run_repl(
         "let x = \"wow\"\n\

@@ -800,7 +800,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
                 return Ok(());
             }
         };
-        let trimmed = line.trim_end_matches(['\n', '\r']);
+        let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
@@ -2027,7 +2027,7 @@ fn build_and_call_with_type(
         .and_then(|expr| tbl.get(expr.id))
         .map_or_else(
             || "<unknown>".to_string(),
-            |ty| gossamer_types::render_ty(&tcx, ty),
+            |ty| gossamer_types::render_public_ty(&tcx, ty),
         );
     let program = gossamer_hir::lower_source_file(&sf, &res, &tbl, &mut tcx);
     let mut vm = gossamer_interp::Vm::new();

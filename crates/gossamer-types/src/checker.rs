@@ -3902,6 +3902,10 @@ impl<'a> TypeChecker<'a> {
             _ => return None,
         };
         match tail {
+            "Vec" => {
+                let elem = self.fresh();
+                Some(self.tcx.intern(TyKind::Vec(elem)))
+            }
             "VecDeque" => {
                 let elem = self.fresh();
                 let substs = crate::Substs::from_types([elem]);
@@ -4136,10 +4140,24 @@ impl<'a> TypeChecker<'a> {
                 _ => None,
             };
         }
-        if last == "new"
+        if matches!(last, "new" | "with_capacity")
             && let Some(ty) = self.collection_ctor_ty(module)
         {
             return Some(ty);
+        }
+        if last == "from"
+            && matches!(
+                module,
+                ["Vec"] | ["collections", "Vec"] | ["std", "collections", "Vec"]
+            )
+            && let Some(source) = arg_tys.first().copied()
+        {
+            let source = self.infer.resolve(self.tcx, source);
+            let elem = match self.tcx.kind(source) {
+                Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => *elem,
+                _ => return None,
+            };
+            return Some(self.tcx.intern(TyKind::Vec(elem)));
         }
         if matches!(module, ["fs" | "os"] | ["std", "fs" | "os"]) {
             return self.fs_call_ret_ty(last);
