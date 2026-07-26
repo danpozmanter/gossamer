@@ -90,11 +90,11 @@ impl<'tcx> FnBuilder<'tcx> {
             // Single-segment paths resolve to locals; the local
             // already carries its `TypedReg`, so we return it
             // as-is without boxing.
-            HirExprKind::Path { segments, .. } if segments.len() == 1 => {
+            HirExprKind::Path { segments, def, .. } if segments.len() == 1 => {
                 if let Some(tr) = self.lookup_local(&segments[0].name) {
                     return Ok(tr);
                 }
-                let reg = self.compile_path(segments)?;
+                let reg = self.compile_path(segments, *def)?;
                 Ok(TypedReg {
                     reg,
                     kind: RegKind::Value,
@@ -352,7 +352,7 @@ impl<'tcx> FnBuilder<'tcx> {
     pub(crate) fn compile_expr(&mut self, expr: &HirExpr) -> RuntimeResult<Reg> {
         match &expr.kind {
             HirExprKind::Literal(lit) => self.compile_literal(lit),
-            HirExprKind::Path { segments, .. } => self.compile_path(segments),
+            HirExprKind::Path { segments, def, .. } => self.compile_path(segments, *def),
             HirExprKind::Unary { op, operand } => self.compile_unary(*op, operand),
             HirExprKind::Binary { op, lhs, rhs } => self.compile_binary(*op, lhs, rhs),
             HirExprKind::Assign { place, value } => self.compile_assign(place, value),

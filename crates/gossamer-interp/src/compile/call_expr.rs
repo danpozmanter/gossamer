@@ -2,7 +2,11 @@
 use super::*;
 
 impl<'tcx> FnBuilder<'tcx> {
-    pub(crate) fn compile_path(&mut self, segments: &[Ident]) -> RuntimeResult<Reg> {
+    pub(crate) fn compile_path(
+        &mut self,
+        segments: &[Ident],
+        def: Option<gossamer_resolve::DefId>,
+    ) -> RuntimeResult<Reg> {
         let Some(first) = segments.first() else {
             return Err(RuntimeError::UnresolvedName(String::new()));
         };
@@ -10,12 +14,14 @@ impl<'tcx> FnBuilder<'tcx> {
             if let Some(tr) = self.lookup_local(&first.name) {
                 return Ok(self.as_value(tr));
             }
-            // Top-level `const` items inline through the constant
+            // Const items inline through the constant
             // pool (single-index fetch) instead of `LoadGlobal`
-            // (string-keyed HashMap lookup). Hot loops that close
-            // over module-level consts pay only a register move
-            // per access.
-            if let Some(value) = self.module_consts.get(first.name.as_str()) {
+            // (string-keyed HashMap lookup). This is keyed by
+            // `DefId`, so block-scoped consts do not collapse into
+            // same-named constants from an outer scope.
+            if let Some(def) = def
+                && let Some(value) = self.module_consts.get(&def)
+            {
                 let key = const_key_for_value(value);
                 let idx = self.const_idx(key, value.clone());
                 let dst = self.alloc_reg();

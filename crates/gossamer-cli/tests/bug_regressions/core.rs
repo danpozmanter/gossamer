@@ -139,6 +139,49 @@ fn write_source(dir: &Path, tag: &str, source: &str) -> PathBuf {
 }
 
 #[test]
+fn nested_consts_run_in_vm_and_native() {
+    let src = r#"
+const OUTER: i64 = 5
+
+fn main() {
+    println!("top={}", OUTER)
+    const OUTER: i64 = 40
+    const STEP: i64 = OUTER + 2
+    {
+        const OUTER: String = "answer"
+        println!("{}={}", OUTER, STEP)
+    }
+    println!("again={}", OUTER)
+}
+"#;
+    let dir = fresh_dir("nested_consts");
+    let path = write_source(&dir, "nested_consts", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let release_scratch = dir.join("bin-release");
+    std::fs::create_dir_all(&release_scratch).unwrap();
+
+    let vm = run_vm(&path);
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let release_bin = build_native_release(&path, &release_scratch).expect("release build");
+    let release_native = run_native(&release_bin);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(
+        release_native.2,
+        Some(0),
+        "release native stderr: {}",
+        release_native.1
+    );
+    assert_eq!(vm.0, "top=5\nanswer=42\nagain=40\n");
+    assert_eq!(native.0, vm.0);
+    assert_eq!(release_native.0, vm.0);
+}
+
+#[test]
 fn generic_struct_f64_field_prints_as_float() {
     // Bug fixed in 0.10.0: a generic struct field whose concrete type
     // is `f64` (`Triple<A, B, C> { third: C }` with `C = f64`) printed

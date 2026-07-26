@@ -217,7 +217,10 @@ impl<'tcx> FnBuilder<'tcx> {
                 }
                 Ok(false)
             }
-            HirStmtKind::Item(_) => Err(RuntimeError::Unsupported("nested items")),
+            HirStmtKind::Item(item) => match &item.kind {
+                gossamer_hir::HirItemKind::Const(_) => Ok(false),
+                _ => Err(RuntimeError::Unsupported("nested items")),
+            },
         }
     }
 

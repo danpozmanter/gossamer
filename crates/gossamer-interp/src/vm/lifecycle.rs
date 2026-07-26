@@ -438,12 +438,12 @@ impl Vm {
         // synthesized methods are real Gossamer code and need no
         // VM-side bookkeeping.)
         //
-        // Pre-evaluated values for top-level `const` items (and immutable
-        // `static`s). A path that resolves to one of these inlines as a
-        // `LoadConst` instead of a string-keyed `LoadGlobal` lookup.
-        // Filled by pass B below and consumed when compiling functions in
-        // pass C.
-        let mut module_consts: HashMap<String, Value> = HashMap::new();
+        // Pre-evaluated values for `const` items (and immutable `static`s),
+        // keyed by resolver `DefId`. A path that resolves to one of these
+        // inlines as a `LoadConst` instead of a string-keyed `LoadGlobal`
+        // lookup. DefId keys preserve lexical scope for same-named nested
+        // consts.
+        let mut module_consts = crate::compile::ConstValues::new();
 
         // Pass A: register ADT constructors so const/static initializers
         // and function bodies can resolve enum variants.
@@ -479,6 +479,17 @@ impl Vm {
             };
             match &item.kind {
                 HirItemKind::Const(decl) => {
+                    self.collect_nested_const_values_in_expr(
+                        &decl.value,
+                        &tcx,
+                        &def_layouts,
+                        &wrappers,
+                        &inline_fns,
+                        &fn_param_tys,
+                        &mut module_consts,
+                        &method_muts,
+                        &mut_statics,
+                    )?;
                     let value = match self.eval_initializer(
                         &decl.value,
                         &tcx,
@@ -504,9 +515,22 @@ impl Vm {
                         &decl.name.name,
                         Global::Value(value.clone()),
                     );
-                    module_consts.insert(decl.name.name.clone(), value);
+                    if let Some(def) = item.def {
+                        module_consts.insert(def, value);
+                    }
                 }
                 HirItemKind::Static(decl) => {
+                    self.collect_nested_const_values_in_expr(
+                        &decl.value,
+                        &tcx,
+                        &def_layouts,
+                        &wrappers,
+                        &inline_fns,
+                        &fn_param_tys,
+                        &mut module_consts,
+                        &method_muts,
+                        &mut_statics,
+                    )?;
                     let value = match self.eval_initializer(
                         &decl.value,
                         &tcx,
@@ -529,11 +553,27 @@ impl Vm {
                     };
                     self.register_item_value(module_prefix.as_deref(), &decl.name.name, global);
                     if !decl.mutable {
-                        module_consts.insert(decl.name.name.clone(), value);
+                        if let Some(def) = item.def {
+                            module_consts.insert(def, value);
+                        }
                     }
                 }
                 _ => {}
             }
+        }
+
+        for item in &program.items {
+            self.collect_nested_const_values_in_item(
+                item,
+                &tcx,
+                &def_layouts,
+                &wrappers,
+                &inline_fns,
+                &fn_param_tys,
+                &mut module_consts,
+                &method_muts,
+                &mut_statics,
+            )?;
         }
 
         // Pass C: compile and register every function / impl / trait
@@ -1003,7 +1043,7 @@ impl Vm {
         wrappers: &HashMap<String, Vec<String>>,
         inline_fns: &crate::compile::InlinableFns,
         fn_param_tys: &crate::compile::FnParamTypes,
-        module_consts: &HashMap<String, Value>,
+        module_consts: &crate::compile::ConstValues,
         method_muts: &crate::compile::MutSelfMethods,
         mut_statics: &crate::compile::MutStatics,
     ) -> RuntimeResult<Value> {
@@ -1040,6 +1080,687 @@ impl Vm {
         self.run_local(Arc::clone(&chunk), &state, Vec::new())
     }
 
+    fn collect_nested_const_values_in_item(
+        &self,
+        item: &HirItem,
+        tcx: &TyCtxt,
+        layouts: &HashMap<gossamer_resolve::DefId, Vec<String>>,
+        wrappers: &HashMap<String, Vec<String>>,
+        inline_fns: &crate::compile::InlinableFns,
+        fn_param_tys: &crate::compile::FnParamTypes,
+        module_consts: &mut crate::compile::ConstValues,
+        method_muts: &crate::compile::MutSelfMethods,
+        mut_statics: &crate::compile::MutStatics,
+    ) -> RuntimeResult<()> {
+        match &item.kind {
+            HirItemKind::Fn(decl) => {
+                if let Some(body) = &decl.body {
+                    self.collect_nested_const_values_in_block(
+                        &body.block,
+                        tcx,
+                        layouts,
+                        wrappers,
+                        inline_fns,
+                        fn_param_tys,
+                        module_consts,
+                        method_muts,
+                        mut_statics,
+                    )?;
+                }
+            }
+            HirItemKind::Impl(decl) => {
+                for method in &decl.methods {
+                    if let Some(body) = &method.body {
+                        self.collect_nested_const_values_in_block(
+                            &body.block,
+                            tcx,
+                            layouts,
+                            wrappers,
+                            inline_fns,
+                            fn_param_tys,
+                            module_consts,
+                            method_muts,
+                            mut_statics,
+                        )?;
+                    }
+                }
+            }
+            HirItemKind::Trait(decl) => {
+                for method in &decl.methods {
+                    if let Some(body) = &method.body {
+                        self.collect_nested_const_values_in_block(
+                            &body.block,
+                            tcx,
+                            layouts,
+                            wrappers,
+                            inline_fns,
+                            fn_param_tys,
+                            module_consts,
+                            method_muts,
+                            mut_statics,
+                        )?;
+                    }
+                }
+            }
+            HirItemKind::Const(decl) => {
+                self.collect_nested_const_values_in_expr(
+                    &decl.value,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+            }
+            HirItemKind::Static(decl) => {
+                self.collect_nested_const_values_in_expr(
+                    &decl.value,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+            }
+            HirItemKind::Adt(_) => {}
+        }
+        Ok(())
+    }
+
+    fn collect_const_item_value(
+        &self,
+        item: &HirItem,
+        decl: &gossamer_hir::HirConst,
+        tcx: &TyCtxt,
+        layouts: &HashMap<gossamer_resolve::DefId, Vec<String>>,
+        wrappers: &HashMap<String, Vec<String>>,
+        inline_fns: &crate::compile::InlinableFns,
+        fn_param_tys: &crate::compile::FnParamTypes,
+        module_consts: &mut crate::compile::ConstValues,
+        method_muts: &crate::compile::MutSelfMethods,
+        mut_statics: &crate::compile::MutStatics,
+    ) -> RuntimeResult<()> {
+        self.collect_nested_const_values_in_expr(
+            &decl.value,
+            tcx,
+            layouts,
+            wrappers,
+            inline_fns,
+            fn_param_tys,
+            module_consts,
+            method_muts,
+            mut_statics,
+        )?;
+        let value = self.eval_initializer(
+            &decl.value,
+            tcx,
+            layouts,
+            wrappers,
+            inline_fns,
+            fn_param_tys,
+            module_consts,
+            method_muts,
+            mut_statics,
+        )?;
+        if let Some(def) = item.def {
+            module_consts.insert(def, value);
+        }
+        Ok(())
+    }
+
+    fn collect_nested_const_values_in_block(
+        &self,
+        block: &gossamer_hir::HirBlock,
+        tcx: &TyCtxt,
+        layouts: &HashMap<gossamer_resolve::DefId, Vec<String>>,
+        wrappers: &HashMap<String, Vec<String>>,
+        inline_fns: &crate::compile::InlinableFns,
+        fn_param_tys: &crate::compile::FnParamTypes,
+        module_consts: &mut crate::compile::ConstValues,
+        method_muts: &crate::compile::MutSelfMethods,
+        mut_statics: &crate::compile::MutStatics,
+    ) -> RuntimeResult<()> {
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                gossamer_hir::HirStmtKind::Let { init, .. } => {
+                    if let Some(init) = init {
+                        self.collect_nested_const_values_in_expr(
+                            init,
+                            tcx,
+                            layouts,
+                            wrappers,
+                            inline_fns,
+                            fn_param_tys,
+                            module_consts,
+                            method_muts,
+                            mut_statics,
+                        )?;
+                    }
+                }
+                gossamer_hir::HirStmtKind::Expr { expr, .. }
+                | gossamer_hir::HirStmtKind::Defer(expr)
+                | gossamer_hir::HirStmtKind::Go(expr) => {
+                    self.collect_nested_const_values_in_expr(
+                        expr,
+                        tcx,
+                        layouts,
+                        wrappers,
+                        inline_fns,
+                        fn_param_tys,
+                        module_consts,
+                        method_muts,
+                        mut_statics,
+                    )?;
+                }
+                gossamer_hir::HirStmtKind::Item(item) => {
+                    if let HirItemKind::Const(decl) = &item.kind {
+                        self.collect_const_item_value(
+                            item,
+                            decl,
+                            tcx,
+                            layouts,
+                            wrappers,
+                            inline_fns,
+                            fn_param_tys,
+                            module_consts,
+                            method_muts,
+                            mut_statics,
+                        )?;
+                    }
+                }
+            }
+        }
+        if let Some(tail) = &block.tail {
+            self.collect_nested_const_values_in_expr(
+                tail,
+                tcx,
+                layouts,
+                wrappers,
+                inline_fns,
+                fn_param_tys,
+                module_consts,
+                method_muts,
+                mut_statics,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn collect_nested_const_values_in_expr(
+        &self,
+        expr: &gossamer_hir::HirExpr,
+        tcx: &TyCtxt,
+        layouts: &HashMap<gossamer_resolve::DefId, Vec<String>>,
+        wrappers: &HashMap<String, Vec<String>>,
+        inline_fns: &crate::compile::InlinableFns,
+        fn_param_tys: &crate::compile::FnParamTypes,
+        module_consts: &mut crate::compile::ConstValues,
+        method_muts: &crate::compile::MutSelfMethods,
+        mut_statics: &crate::compile::MutStatics,
+    ) -> RuntimeResult<()> {
+        use gossamer_hir::HirExprKind as K;
+        match &expr.kind {
+            K::Block(block) => self.collect_nested_const_values_in_block(
+                block,
+                tcx,
+                layouts,
+                wrappers,
+                inline_fns,
+                fn_param_tys,
+                module_consts,
+                method_muts,
+                mut_statics,
+            )?,
+            K::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.collect_nested_const_values_in_expr(
+                    condition,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+                self.collect_nested_const_values_in_expr(
+                    then_branch,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+                if let Some(else_branch) = else_branch {
+                    self.collect_nested_const_values_in_expr(
+                        else_branch,
+                        tcx,
+                        layouts,
+                        wrappers,
+                        inline_fns,
+                        fn_param_tys,
+                        module_consts,
+                        method_muts,
+                        mut_statics,
+                    )?;
+                }
+            }
+            K::Loop { body, .. } => self.collect_nested_const_values_in_expr(
+                body,
+                tcx,
+                layouts,
+                wrappers,
+                inline_fns,
+                fn_param_tys,
+                module_consts,
+                method_muts,
+                mut_statics,
+            )?,
+            K::While {
+                condition, body, ..
+            } => {
+                self.collect_nested_const_values_in_expr(
+                    condition,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+                self.collect_nested_const_values_in_expr(
+                    body,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+            }
+            K::Match { scrutinee, arms } => {
+                self.collect_nested_const_values_in_expr(
+                    scrutinee,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.collect_nested_const_values_in_expr(
+                            guard,
+                            tcx,
+                            layouts,
+                            wrappers,
+                            inline_fns,
+                            fn_param_tys,
+                            module_consts,
+                            method_muts,
+                            mut_statics,
+                        )?;
+                    }
+                    self.collect_nested_const_values_in_expr(
+                        &arm.body,
+                        tcx,
+                        layouts,
+                        wrappers,
+                        inline_fns,
+                        fn_param_tys,
+                        module_consts,
+                        method_muts,
+                        mut_statics,
+                    )?;
+                }
+            }
+            K::Closure { body, .. } | K::Go(body) => self.collect_nested_const_values_in_expr(
+                body,
+                tcx,
+                layouts,
+                wrappers,
+                inline_fns,
+                fn_param_tys,
+                module_consts,
+                method_muts,
+                mut_statics,
+            )?,
+            K::Call { callee, args } => {
+                self.collect_nested_const_values_in_expr(
+                    callee,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+                for arg in args {
+                    self.collect_nested_const_values_in_expr(
+                        arg,
+                        tcx,
+                        layouts,
+                        wrappers,
+                        inline_fns,
+                        fn_param_tys,
+                        module_consts,
+                        method_muts,
+                        mut_statics,
+                    )?;
+                }
+            }
+            K::MethodCall { receiver, args, .. } => {
+                self.collect_nested_const_values_in_expr(
+                    receiver,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+                for arg in args {
+                    self.collect_nested_const_values_in_expr(
+                        arg,
+                        tcx,
+                        layouts,
+                        wrappers,
+                        inline_fns,
+                        fn_param_tys,
+                        module_consts,
+                        method_muts,
+                        mut_statics,
+                    )?;
+                }
+            }
+            K::Unary { operand, .. } | K::Cast { value: operand, .. } => {
+                self.collect_nested_const_values_in_expr(
+                    operand,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+            }
+            K::Binary { lhs, rhs, .. } => {
+                self.collect_nested_const_values_in_expr(
+                    lhs,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+                self.collect_nested_const_values_in_expr(
+                    rhs,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+            }
+            K::Assign { place, value } => {
+                self.collect_nested_const_values_in_expr(
+                    place,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+                self.collect_nested_const_values_in_expr(
+                    value,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+            }
+            K::Field { receiver, .. } | K::TupleIndex { receiver, .. } => {
+                self.collect_nested_const_values_in_expr(
+                    receiver,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+            }
+            K::Index { base, index } => {
+                self.collect_nested_const_values_in_expr(
+                    base,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+                self.collect_nested_const_values_in_expr(
+                    index,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+            }
+            K::Tuple(elems) => {
+                for elem in elems {
+                    self.collect_nested_const_values_in_expr(
+                        elem,
+                        tcx,
+                        layouts,
+                        wrappers,
+                        inline_fns,
+                        fn_param_tys,
+                        module_consts,
+                        method_muts,
+                        mut_statics,
+                    )?;
+                }
+            }
+            K::Array(array) => match array {
+                gossamer_hir::HirArrayExpr::List(elems) => {
+                    for elem in elems {
+                        self.collect_nested_const_values_in_expr(
+                            elem,
+                            tcx,
+                            layouts,
+                            wrappers,
+                            inline_fns,
+                            fn_param_tys,
+                            module_consts,
+                            method_muts,
+                            mut_statics,
+                        )?;
+                    }
+                }
+                gossamer_hir::HirArrayExpr::Repeat { value, count } => {
+                    self.collect_nested_const_values_in_expr(
+                        value,
+                        tcx,
+                        layouts,
+                        wrappers,
+                        inline_fns,
+                        fn_param_tys,
+                        module_consts,
+                        method_muts,
+                        mut_statics,
+                    )?;
+                    self.collect_nested_const_values_in_expr(
+                        count,
+                        tcx,
+                        layouts,
+                        wrappers,
+                        inline_fns,
+                        fn_param_tys,
+                        module_consts,
+                        method_muts,
+                        mut_statics,
+                    )?;
+                }
+            },
+            K::Return(Some(value))
+            | K::Break {
+                value: Some(value), ..
+            } => {
+                self.collect_nested_const_values_in_expr(
+                    value,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    inline_fns,
+                    fn_param_tys,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                )?;
+            }
+            K::Range { start, end, .. } => {
+                if let Some(start) = start {
+                    self.collect_nested_const_values_in_expr(
+                        start,
+                        tcx,
+                        layouts,
+                        wrappers,
+                        inline_fns,
+                        fn_param_tys,
+                        module_consts,
+                        method_muts,
+                        mut_statics,
+                    )?;
+                }
+                if let Some(end) = end {
+                    self.collect_nested_const_values_in_expr(
+                        end,
+                        tcx,
+                        layouts,
+                        wrappers,
+                        inline_fns,
+                        fn_param_tys,
+                        module_consts,
+                        method_muts,
+                        mut_statics,
+                    )?;
+                }
+            }
+            K::Select { arms } => {
+                for arm in arms {
+                    match &arm.op {
+                        gossamer_hir::HirSelectOp::Recv { channel, .. } => {
+                            self.collect_nested_const_values_in_expr(
+                                channel,
+                                tcx,
+                                layouts,
+                                wrappers,
+                                inline_fns,
+                                fn_param_tys,
+                                module_consts,
+                                method_muts,
+                                mut_statics,
+                            )?;
+                        }
+                        gossamer_hir::HirSelectOp::Send { channel, value } => {
+                            self.collect_nested_const_values_in_expr(
+                                channel,
+                                tcx,
+                                layouts,
+                                wrappers,
+                                inline_fns,
+                                fn_param_tys,
+                                module_consts,
+                                method_muts,
+                                mut_statics,
+                            )?;
+                            self.collect_nested_const_values_in_expr(
+                                value,
+                                tcx,
+                                layouts,
+                                wrappers,
+                                inline_fns,
+                                fn_param_tys,
+                                module_consts,
+                                method_muts,
+                                mut_statics,
+                            )?;
+                        }
+                        gossamer_hir::HirSelectOp::Default => {}
+                    }
+                    self.collect_nested_const_values_in_expr(
+                        &arm.body,
+                        tcx,
+                        layouts,
+                        wrappers,
+                        inline_fns,
+                        fn_param_tys,
+                        module_consts,
+                        method_muts,
+                        mut_statics,
+                    )?;
+                }
+            }
+            K::Path { .. }
+            | K::Literal(_)
+            | K::LiftedClosure { .. }
+            | K::Return(None)
+            | K::Break { value: None, .. }
+            | K::Continue { .. }
+            | K::Placeholder => {}
+        }
+        Ok(())
+    }
+
     /// Registers a `const`/`static` value in `globals` under both its
     /// bare name and (if the item lives in a module) its qualified name.
     /// Bumps the globals generation so any inline cache stamped against
@@ -1062,7 +1783,7 @@ impl Vm {
         wrappers: &HashMap<String, Vec<String>>,
         inline_fns: &crate::compile::InlinableFns,
         fn_param_tys: &crate::compile::FnParamTypes,
-        module_consts: &HashMap<String, Value>,
+        module_consts: &crate::compile::ConstValues,
         method_muts: &crate::compile::MutSelfMethods,
         mut_statics: &crate::compile::MutStatics,
     ) -> RuntimeResult<()> {

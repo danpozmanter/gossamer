@@ -215,7 +215,7 @@ pub(crate) type FnParamTypes = std::collections::HashMap<String, Vec<Ty>>;
 /// `HashMap` lookup). The win shows up on hot loops that close
 /// over constants - fasta's `(state*IA+IC) % IM` LCG step would
 /// otherwise pay three name lookups per iteration.
-pub(crate) type ConstValues = std::collections::HashMap<String, Value>;
+pub(crate) type ConstValues = std::collections::HashMap<gossamer_resolve::DefId, Value>;
 
 /// Qualified names (`Type::method`) of every user `impl` method whose
 /// receiver is `&mut self`. A method call on a writeback place
@@ -447,7 +447,7 @@ pub(crate) struct FnBuilder<'tcx> {
     /// Once it would exceed the per-caller budget, further calls stay
     /// real `Op::Call`s, bounding code growth.
     pub(crate) inlined_nodes: usize,
-    /// Pre-evaluated values for top-level `const` items. A path
+    /// Pre-evaluated values for `const` items. A path
     /// expression that resolves to one of these inlines as a
     /// `LoadConst` instead of a `LoadGlobal` so the bytecode VM
     /// fetches it via constant-pool index instead of a runtime

@@ -632,9 +632,7 @@ impl<'a> Builder<'a> {
                     let _ = self.lower_go_spawn_closure(expr, stmt.span);
                 }
             }
-            HirStmtKind::Item(_) => {
-                // Nested items are not supported in the MIR yet.
-            }
+            HirStmtKind::Item(_) => {}
         }
     }
 }

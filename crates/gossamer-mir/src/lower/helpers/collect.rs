@@ -53,33 +53,179 @@ pub(crate) fn collect_const_values(
     program: &HirProgram,
 ) -> HashMap<gossamer_resolve::DefId, ConstValue> {
     let mut out = HashMap::new();
-    // One forward pass per item: consts written as `4.0 * PI * PI`
-    // resolve their `PI` reference against the partial map of
-    // already-folded entries, so item-order matters. The frontend
-    // emits `const` / `static` items in source order, which is what
-    // we want here. Without this, downstream expressions silently
-    // default to 0 (the zero-value for their declared type) and
-    // benchmarks like nbody print NaN because `4.0 * PI * PI` → 0.
     for item in &program.items {
-        let Some(def) = item.def else { continue };
-        let init = match &item.kind {
-            HirItemKind::Const(decl) => &decl.value,
-            // Fold every static's initializer here so references to one
-            // static from another (`static B = A * 2`) resolve. A scalar
-            // `static mut` is then promoted to a real mutable global by
-            // `collect_mut_static_defs` and removed from this inline map
-            // (its reads load the live cell); the entries that remain
-            // here are `const`s, immutable statics, and any mutable
-            // static whose initializer is not a foldable scalar (those
-            // keep the inline-the-initial-value fallback).
-            HirItemKind::Static(decl) => &decl.value,
-            _ => continue,
-        };
-        if let Some(value) = const_value_of_expr(init, &out) {
-            out.insert(def, value);
-        }
+        collect_item_const_values(item, &mut out);
     }
     out
+}
+
+fn collect_item_const_values(
+    item: &HirItem,
+    out: &mut HashMap<gossamer_resolve::DefId, ConstValue>,
+) {
+    if let Some(def) = item.def {
+        let init = match &item.kind {
+            HirItemKind::Const(decl) => Some(&decl.value),
+            HirItemKind::Static(decl) => Some(&decl.value),
+            _ => None,
+        };
+        if let Some(init) = init {
+            collect_expr_const_values(init, out);
+            if let Some(value) = const_value_of_expr(init, out) {
+                out.insert(def, value);
+            }
+        }
+    }
+    match &item.kind {
+        HirItemKind::Fn(decl) => {
+            if let Some(body) = &decl.body {
+                collect_block_const_values(&body.block, out);
+            }
+        }
+        HirItemKind::Impl(decl) => {
+            for method in &decl.methods {
+                if let Some(body) = &method.body {
+                    collect_block_const_values(&body.block, out);
+                }
+            }
+        }
+        HirItemKind::Trait(decl) => {
+            for method in &decl.methods {
+                if let Some(body) = &method.body {
+                    collect_block_const_values(&body.block, out);
+                }
+            }
+        }
+        HirItemKind::Const(decl) => collect_expr_const_values(&decl.value, out),
+        HirItemKind::Static(decl) => collect_expr_const_values(&decl.value, out),
+        HirItemKind::Adt(_) => {}
+    }
+}
+
+fn collect_block_const_values(
+    block: &HirBlock,
+    out: &mut HashMap<gossamer_resolve::DefId, ConstValue>,
+) {
+    for stmt in &block.stmts {
+        match &stmt.kind {
+            HirStmtKind::Let { init, .. } => {
+                if let Some(init) = init {
+                    collect_expr_const_values(init, out);
+                }
+            }
+            HirStmtKind::Expr { expr, .. } | HirStmtKind::Defer(expr) | HirStmtKind::Go(expr) => {
+                collect_expr_const_values(expr, out);
+            }
+            HirStmtKind::Item(item) => collect_item_const_values(item, out),
+        }
+    }
+    if let Some(tail) = &block.tail {
+        collect_expr_const_values(tail, out);
+    }
+}
+
+fn collect_expr_const_values(
+    expr: &HirExpr,
+    out: &mut HashMap<gossamer_resolve::DefId, ConstValue>,
+) {
+    match &expr.kind {
+        HirExprKind::Block(block) => collect_block_const_values(block, out),
+        HirExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_expr_const_values(condition, out);
+            collect_expr_const_values(then_branch, out);
+            if let Some(else_branch) = else_branch {
+                collect_expr_const_values(else_branch, out);
+            }
+        }
+        HirExprKind::Loop { body, .. } | HirExprKind::While { body, .. } => {
+            collect_expr_const_values(body, out);
+        }
+        HirExprKind::Match { scrutinee, arms } => {
+            collect_expr_const_values(scrutinee, out);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    collect_expr_const_values(guard, out);
+                }
+                collect_expr_const_values(&arm.body, out);
+            }
+        }
+        HirExprKind::Closure { body, .. } => collect_expr_const_values(body, out),
+        HirExprKind::Select { arms } => {
+            for arm in arms {
+                collect_expr_const_values(&arm.body, out);
+            }
+        }
+        HirExprKind::Call { callee, args } => {
+            collect_expr_const_values(callee, out);
+            for arg in args {
+                collect_expr_const_values(arg, out);
+            }
+        }
+        HirExprKind::MethodCall { receiver, args, .. } => {
+            collect_expr_const_values(receiver, out);
+            for arg in args {
+                collect_expr_const_values(arg, out);
+            }
+        }
+        HirExprKind::Unary { operand, .. } | HirExprKind::Cast { value: operand, .. } => {
+            collect_expr_const_values(operand, out);
+        }
+        HirExprKind::Binary { lhs, rhs, .. } => {
+            collect_expr_const_values(lhs, out);
+            collect_expr_const_values(rhs, out);
+        }
+        HirExprKind::Assign { place, value } => {
+            collect_expr_const_values(place, out);
+            collect_expr_const_values(value, out);
+        }
+        HirExprKind::Field { receiver, .. } | HirExprKind::TupleIndex { receiver, .. } => {
+            collect_expr_const_values(receiver, out);
+        }
+        HirExprKind::Index { base, index } => {
+            collect_expr_const_values(base, out);
+            collect_expr_const_values(index, out);
+        }
+        HirExprKind::Tuple(elems) => {
+            for elem in elems {
+                collect_expr_const_values(elem, out);
+            }
+        }
+        HirExprKind::Array(array) => match array {
+            gossamer_hir::HirArrayExpr::List(elems) => {
+                for elem in elems {
+                    collect_expr_const_values(elem, out);
+                }
+            }
+            gossamer_hir::HirArrayExpr::Repeat { value, count } => {
+                collect_expr_const_values(value, out);
+                collect_expr_const_values(count, out);
+            }
+        },
+        HirExprKind::Go(inner)
+        | HirExprKind::Return(Some(inner))
+        | HirExprKind::Break {
+            value: Some(inner), ..
+        } => collect_expr_const_values(inner, out),
+        HirExprKind::Range { start, end, .. } => {
+            if let Some(start) = start {
+                collect_expr_const_values(start, out);
+            }
+            if let Some(end) = end {
+                collect_expr_const_values(end, out);
+            }
+        }
+        HirExprKind::Path { .. }
+        | HirExprKind::Literal(_)
+        | HirExprKind::LiftedClosure { .. }
+        | HirExprKind::Return(None)
+        | HirExprKind::Break { value: None, .. }
+        | HirExprKind::Continue { .. }
+        | HirExprKind::Placeholder => {}
+    }
 }
 
 /// Collects the `static mut` items that become real mutable module

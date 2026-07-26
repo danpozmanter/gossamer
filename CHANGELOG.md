@@ -2,6 +2,8 @@
 
 ## 0.34.3 - Intcode native parity
 
+- Support real `const` items in nested block scopes across VM, Cranelift, and
+  LLVM lowering, keyed by lexical definition rather than stored as locals.
 - Fix native lowering for `match` binding arms such as `op => ...`, so the
   binding receives the matched value instead of the binding name string.
 - Fix additional native panics by cloning vector let-copies before mutating a
