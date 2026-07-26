@@ -1260,8 +1260,8 @@ impl<'a> TypeChecker<'a> {
                     self.deferred_type_mismatches.push((lhs, rhs, span));
                     return;
                 }
-                let expected = render_ty(self.tcx, lhs);
-                let found = render_ty(self.tcx, rhs);
+                let expected = self.render_public_ty(lhs);
+                let found = self.render_public_ty(rhs);
                 self.emit(TypeError::TypeMismatch { expected, found }, span);
             }
             UnifyError::IntegerConstraint => {
@@ -1649,7 +1649,7 @@ impl<'a> TypeChecker<'a> {
             match self.tcx.kind_of(cur).clone() {
                 TyKind::Ref { inner, .. } => cur = inner,
                 TyKind::Adt { def, substs } => {
-                    let ty_name = crate::printer::render_ty(self.tcx, resolved);
+                    let ty_name = self.render_public_ty(resolved);
                     let Some(fields) = self.struct_fields.get(&def).cloned() else {
                         return Err(TypeError::UnknownField {
                             ty: ty_name,
@@ -2777,7 +2777,7 @@ impl<'a> TypeChecker<'a> {
         }
         match self.tcx.kind_of(resolved).clone() {
             TyKind::Tuple(elems) => elems.get(idx as usize).copied().unwrap_or_else(|| {
-                let ty = render_ty(self.tcx, resolved);
+                let ty = self.render_public_ty(resolved);
                 self.emit(
                     TypeError::NoTupleField {
                         ty,
@@ -2797,7 +2797,7 @@ impl<'a> TypeChecker<'a> {
             }
             other => {
                 if !is_soft_for_structural_use(&other) {
-                    let ty = render_ty(self.tcx, resolved);
+                    let ty = self.render_public_ty(resolved);
                     self.emit(
                         TypeError::NoTupleField {
                             ty,
@@ -2854,7 +2854,7 @@ impl<'a> TypeChecker<'a> {
                         }
                     }
                     if !is_soft_for_structural_use(&other) {
-                        let ty = render_ty(self.tcx, cur);
+                        let ty = self.render_public_ty(cur);
                         self.emit(TypeError::NotIndexable { ty }, span);
                     }
                     return self.fresh();
@@ -3001,7 +3001,7 @@ impl<'a> TypeChecker<'a> {
             && self.tcx.struct_field_tys(def).is_none()
         {
             let span = args.first().map_or(callee.span, |a| a.span);
-            let ty = crate::printer::render_ty(self.tcx, peeled);
+            let ty = self.render_public_ty(peeled);
             self.emit(
                 TypeError::JsonNotSerializable {
                     op: op.to_string(),
@@ -3271,6 +3271,12 @@ impl<'a> TypeChecker<'a> {
                 let err = self.tcx.dyn_error_ty();
                 return self.result_adt_ty(s, err);
             }
+            if matches!(module, ["String"] | ["std", "String"])
+                && matches!(last, "from" | "new" | "with_capacity")
+                && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+            {
+                return self.tcx.string_ty();
+            }
             if module.is_empty()
                 && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
                 && let Some(ret) = self.raw_stdlib_helper_ret(last)
@@ -3486,7 +3492,7 @@ impl<'a> TypeChecker<'a> {
                 kind: DeferredStructuralKind::Call,
             });
         } else if is_definitely_not_callable_value(&callee_kind) && !qualified_path_callee {
-            let ty = render_ty(self.tcx, resolved_callee);
+            let ty = self.render_public_ty(resolved_callee);
             self.emit(TypeError::NotCallable { ty }, callee.span);
         }
     }
@@ -4744,12 +4750,8 @@ impl<'a> TypeChecker<'a> {
             // unresolved receiver (`Var`) carries no decision - leave it for
             // normal dispatch so a later-inferred aggregate still works.
             if self.downgrade_receiver_is_non_rc(resolved) {
-                self.emit(
-                    TypeError::WeakDowngradeNonRc {
-                        ty: render_ty(self.tcx, resolved),
-                    },
-                    receiver_span,
-                );
+                let ty = self.render_public_ty(resolved);
+                self.emit(TypeError::WeakDowngradeNonRc { ty }, receiver_span);
                 return Some(self.tcx.error_ty());
             }
             if matches!(self.tcx.kind(resolved), Some(TyKind::Adt { .. })) {
@@ -5150,7 +5152,7 @@ impl<'a> TypeChecker<'a> {
         for arg in args {
             self.check_expr(arg);
         }
-        let ty = self.render_public_receiver_ty(resolved);
+        let ty = self.render_public_ty(resolved);
         self.emit(
             TypeError::UnresolvedMethod {
                 ty,
@@ -5161,13 +5163,20 @@ impl<'a> TypeChecker<'a> {
         true
     }
 
-    fn render_public_receiver_ty(&mut self, ty: Ty) -> String {
+    fn render_public_ty(&mut self, ty: Ty) -> String {
         let resolved = self.infer.resolve(self.tcx, ty);
         match self.tcx.kind(resolved).cloned() {
+            Some(TyKind::Bool) => "bool".to_string(),
+            Some(TyKind::Char) => "char".to_string(),
+            Some(TyKind::String) => "String".to_string(),
+            Some(TyKind::Int(int)) => int.as_str().to_string(),
+            Some(TyKind::Float(float)) => float.as_str().to_string(),
+            Some(TyKind::Unit) => "()".to_string(),
+            Some(TyKind::Never) => "!".to_string(),
             Some(TyKind::Array { elem, len }) => {
                 format!(
                     "[{}; {}]",
-                    self.render_public_receiver_ty(elem),
+                    self.render_public_ty(elem),
                     match len {
                         crate::ArrayLen::Concrete(n) => n.to_string(),
                         crate::ArrayLen::Param(idx) => format!("N{}", idx.as_u32()),
@@ -5175,15 +5184,34 @@ impl<'a> TypeChecker<'a> {
                 )
             }
             Some(TyKind::Slice(elem)) => {
-                format!("[{}]", self.render_public_receiver_ty(elem))
+                format!("[{}]", self.render_public_ty(elem))
             }
             Some(TyKind::Vec(elem)) => {
-                format!("Vec<{}>", self.render_public_receiver_ty(elem))
+                format!("Vec<{}>", self.render_public_ty(elem))
+            }
+            Some(TyKind::Iterator(elem)) => {
+                format!("Iterator<{}>", self.render_public_ty(elem))
+            }
+            Some(TyKind::HashMap { key, value }) => {
+                format!(
+                    "HashMap<{}, {}>",
+                    self.render_public_ty(key),
+                    self.render_public_ty(value)
+                )
+            }
+            Some(TyKind::Sender(elem)) => {
+                format!("Sender<{}>", self.render_public_ty(elem))
+            }
+            Some(TyKind::Receiver(elem)) => {
+                format!("Receiver<{}>", self.render_public_ty(elem))
+            }
+            Some(TyKind::JoinHandle(elem)) => {
+                format!("JoinHandle<{}>", self.render_public_ty(elem))
             }
             Some(TyKind::Tuple(parts)) => {
                 let rendered = parts
                     .iter()
-                    .map(|part| self.render_public_receiver_ty(*part))
+                    .map(|part| self.render_public_ty(*part))
                     .collect::<Vec<_>>();
                 if rendered.len() == 1 {
                     format!("({},)", rendered[0])
@@ -5191,13 +5219,78 @@ impl<'a> TypeChecker<'a> {
                     format!("({})", rendered.join(", "))
                 }
             }
+            Some(TyKind::Ref { mutability, inner }) => {
+                format!("{}{}", mutability.prefix(), self.render_public_ty(inner))
+            }
+            Some(TyKind::FnPtr(sig)) => self.render_public_fn_sig("fn", &sig),
+            Some(TyKind::FnTrait(sig)) => self.render_public_fn_sig("Fn", &sig),
+            Some(TyKind::FnDef { def, substs }) => {
+                self.render_public_def("fn", def.local, substs.as_slice())
+            }
+            Some(TyKind::Closure { def, .. }) => format!("<closure #{}>", def.local),
+            Some(TyKind::Adt { def, substs }) => {
+                self.render_public_def("adt", def.local, substs.as_slice())
+            }
+            Some(TyKind::Alias { def, substs }) => {
+                self.render_public_def("alias", def.local, substs.as_slice())
+            }
+            Some(TyKind::Dyn(trait_ref)) => {
+                self.render_public_def("trait", trait_ref.def.local, trait_ref.substs.as_slice())
+            }
+            Some(TyKind::Duration) => "time::Duration".to_string(),
+            Some(TyKind::Instant) => "time::Instant".to_string(),
+            Some(TyKind::JsonValue) => "json::Value".to_string(),
+            Some(TyKind::DynError) => "errors::Error".to_string(),
             Some(TyKind::Var(vid)) if self.infer.is_unresolved_integer_var(vid) => {
                 "i64".to_string()
             }
             Some(TyKind::Var(vid)) if self.infer.is_unresolved_float_var(vid) => "f64".to_string(),
             Some(TyKind::Var(_)) => "_".to_string(),
-            _ => render_ty(self.tcx, resolved),
+            Some(TyKind::Param { name, .. }) => name.to_string(),
+            Some(TyKind::Error) => "<error>".to_string(),
+            None => format!("<ty:{}>", resolved.as_u32()),
         }
+    }
+
+    fn render_public_fn_sig(&mut self, prefix: &str, sig: &FnSig) -> String {
+        let inputs = sig
+            .inputs
+            .iter()
+            .map(|ty| self.render_public_ty(*ty))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let output = self.infer.resolve(self.tcx, sig.output);
+        if matches!(self.tcx.kind(output), Some(TyKind::Unit)) {
+            format!("{prefix}({inputs})")
+        } else {
+            format!("{prefix}({inputs}) -> {}", self.render_public_ty(output))
+        }
+    }
+
+    fn render_public_def(
+        &mut self,
+        fallback: &str,
+        local: u32,
+        substs: &[crate::GenericArg],
+    ) -> String {
+        let mut out = self
+            .tcx
+            .def_name(gossamer_resolve::DefId::local(local))
+            .map_or_else(|| format!("{fallback}#{local}"), ToString::to_string);
+        if !substs.is_empty() {
+            let args = substs
+                .iter()
+                .map(|arg| match arg {
+                    crate::GenericArg::Type(ty) => self.render_public_ty(*ty),
+                    crate::GenericArg::Const(value) => value.to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push('<');
+            out.push_str(&args);
+            out.push('>');
+        }
+        out
     }
 
     /// Qualified user-method calls (`Type::method(receiver, ...)`) and the
@@ -5551,7 +5644,7 @@ impl<'a> TypeChecker<'a> {
         // vanish (VM) or the symbol would not link (native), so reject
         // it uniformly here.
         if method == "set" {
-            let ty = render_ty(self.tcx, resolved);
+            let ty = self.render_public_ty(resolved);
             self.emit(
                 TypeError::UnresolvedMethod {
                     ty,
@@ -5606,7 +5699,7 @@ impl<'a> TypeChecker<'a> {
                     self.tcx.kind_of(key),
                     TyKind::Adt { .. } | TyKind::Tuple(_) | TyKind::Array { .. }
                 ) {
-                    let ty = render_ty(self.tcx, resolved);
+                    let ty = self.render_public_ty(resolved);
                     self.emit(
                         TypeError::UnresolvedMethod {
                             ty,
@@ -5734,7 +5827,7 @@ impl<'a> TypeChecker<'a> {
                         | TyKind::Char
                         | TyKind::Var(_)
                 ) {
-                    let ty = render_ty(self.tcx, resolved);
+                    let ty = self.render_public_ty(resolved);
                     self.emit(
                         TypeError::UnresolvedMethod {
                             ty,
@@ -5973,20 +6066,20 @@ impl<'a> TypeChecker<'a> {
                         TyKind::Array { .. } | TyKind::Slice(_) | TyKind::Vec(_) | TyKind::String
                     );
                     if !indexable && !is_soft_for_structural_use(&kind) {
-                        let ty = render_ty(self.tcx, resolved);
+                        let ty = self.render_public_ty(resolved);
                         self.emit(TypeError::NotIndexable { ty }, d.span);
                     }
                 }
                 DeferredStructuralKind::Call => {
                     if is_definitely_not_callable_value(&kind) {
-                        let ty = render_ty(self.tcx, resolved);
+                        let ty = self.render_public_ty(resolved);
                         self.emit(TypeError::NotCallable { ty }, d.span);
                     }
                 }
                 DeferredStructuralKind::TupleField(idx) => match &kind {
                     TyKind::Tuple(elems) => {
                         if idx as usize >= elems.len() {
-                            let ty = render_ty(self.tcx, resolved);
+                            let ty = self.render_public_ty(resolved);
                             self.emit(TypeError::NoTupleField { ty, index: idx }, d.span);
                         }
                     }
@@ -5995,14 +6088,14 @@ impl<'a> TypeChecker<'a> {
                             .ok()
                             .is_some_and(|i| self.tuple_struct_field_ty(resolved, i).is_some());
                         if !is_tuple_struct && !is_soft_for_structural_use(other) {
-                            let ty = render_ty(self.tcx, resolved);
+                            let ty = self.render_public_ty(resolved);
                             self.emit(TypeError::NoTupleField { ty, index: idx }, d.span);
                         }
                     }
                 },
                 DeferredStructuralKind::Downgrade => {
                     if self.downgrade_receiver_is_non_rc(resolved) {
-                        let ty = render_ty(self.tcx, resolved);
+                        let ty = self.render_public_ty(resolved);
                         self.emit(TypeError::WeakDowngradeNonRc { ty }, d.span);
                     }
                 }
@@ -6027,13 +6120,9 @@ impl<'a> TypeChecker<'a> {
         for (expected, found, span) in deferred {
             let expected = self.deep_resolve(expected);
             let found = self.deep_resolve(found);
-            self.emit(
-                TypeError::TypeMismatch {
-                    expected: render_ty(self.tcx, expected),
-                    found: render_ty(self.tcx, found),
-                },
-                span,
-            );
+            let expected = self.render_public_ty(expected);
+            let found = self.render_public_ty(found);
+            self.emit(TypeError::TypeMismatch { expected, found }, span);
         }
     }
 
@@ -6044,9 +6133,10 @@ impl<'a> TypeChecker<'a> {
         let deferred = std::mem::take(&mut self.deferred_literal_type_mismatches);
         for (expected, found, span) in deferred {
             let expected = self.deep_resolve(expected);
+            let expected = self.render_public_ty(expected);
             self.emit(
                 TypeError::TypeMismatch {
-                    expected: render_ty(self.tcx, expected),
+                    expected,
                     found: found.to_string(),
                 },
                 span,
@@ -6257,7 +6347,7 @@ impl<'a> TypeChecker<'a> {
 
     fn check_question_mark(&mut self, ty: Ty, span: Span) -> Ty {
         let Some((inner_family, payload)) = self.try_family_and_payload(ty) else {
-            let ty = render_ty(self.tcx, self.infer.resolve(self.tcx, ty));
+            let ty = self.render_public_ty(ty);
             self.emit(
                 TypeError::QuestionMarkUnsupported {
                     ty,
@@ -6268,9 +6358,10 @@ impl<'a> TypeChecker<'a> {
             return self.tcx.error_ty();
         };
         let Some(ret) = self.current_fn_ret else {
+            let ty = self.render_public_ty(ty);
             self.emit(
                 TypeError::QuestionMarkUnsupported {
-                    ty: render_ty(self.tcx, self.infer.resolve(self.tcx, ty)),
+                    ty,
                     reason: "`?` is only valid inside a function with a compatible return type"
                         .to_string(),
                 },
@@ -6279,9 +6370,10 @@ impl<'a> TypeChecker<'a> {
             return self.tcx.error_ty();
         };
         let Some((ret_family, _)) = self.try_family_and_payload(ret) else {
+            let ty = self.render_public_ty(ret);
             self.emit(
                 TypeError::QuestionMarkUnsupported {
-                    ty: render_ty(self.tcx, self.infer.resolve(self.tcx, ret)),
+                    ty,
                     reason: "the enclosing function does not return `Result` or `Option`"
                         .to_string(),
                 },
@@ -6290,9 +6382,10 @@ impl<'a> TypeChecker<'a> {
             return self.tcx.error_ty();
         };
         if inner_family != ret_family {
+            let ty = self.render_public_ty(ty);
             self.emit(
                 TypeError::QuestionMarkUnsupported {
-                    ty: render_ty(self.tcx, self.infer.resolve(self.tcx, ty)),
+                    ty,
                     reason: "the operand and enclosing function use different propagation types"
                         .to_string(),
                 },
@@ -6714,20 +6807,22 @@ impl<'a> TypeChecker<'a> {
                     && iterator_terminal
                     && !data_is_iterator
                 {
+                    let found = self.render_public_ty(data_ty);
                     self.emit(
                         TypeError::TypeMismatch {
                             expected: "Iterator<T>".to_string(),
-                            found: render_ty(self.tcx, data_ty),
+                            found,
                         },
                         span,
                     );
                     return Some(self.tcx.error_ty());
                 }
                 if data_is_iterator && (eager_alias || !all_tier_iterator_input) {
+                    let found = self.render_public_ty(data_ty);
                     self.emit(
                         TypeError::TypeMismatch {
                             expected: "Vec<T>".to_string(),
-                            found: render_ty(self.tcx, data_ty),
+                            found,
                         },
                         span,
                     );
@@ -7044,10 +7139,11 @@ impl<'a> TypeChecker<'a> {
                 if matches!(self.tcx.kind(resolved), Some(TyKind::Bool)) {
                     self.tcx.bool_ty()
                 } else if self.is_concrete(resolved) && !self.is_integer(resolved) {
+                    let lhs = self.render_public_ty(resolved);
                     self.emit(
                         TypeError::UnresolvedOp {
                             op: "!".to_string(),
-                            lhs: render_ty(self.tcx, resolved),
+                            lhs,
                             rhs: String::new(),
                         },
                         span,
@@ -7070,12 +7166,13 @@ impl<'a> TypeChecker<'a> {
                     if let Some(ret) = self.adt_op_method_ret(resolved, "neg", 0) {
                         ret
                     } else {
+                        let ty = self.render_public_ty(resolved);
                         self.emit(
                             TypeError::UnresolvedOpImpl {
                                 op: "-".to_string(),
                                 trait_name: "Neg".to_string(),
                                 method: "neg".to_string(),
-                                ty: render_ty(self.tcx, resolved),
+                                ty,
                             },
                             span,
                         );
@@ -7274,12 +7371,13 @@ impl<'a> TypeChecker<'a> {
                             return ret;
                         }
                         let ty = if lhs_adt.is_some() { lhs_res } else { rhs_res };
+                        let ty = self.render_public_ty(ty);
                         self.emit(
                             TypeError::UnresolvedOpImpl {
                                 op: op.as_str().to_string(),
                                 trait_name: op_trait_name(method).to_string(),
                                 method: method.to_string(),
-                                ty: render_ty(self.tcx, ty),
+                                ty,
                             },
                             span,
                         );
@@ -7700,12 +7798,13 @@ impl<'a> TypeChecker<'a> {
                 if let Some(ret) = self.adt_op_method_ret(pr, method, 1) {
                     self.unify(place_ty, ret, place.span);
                 } else {
+                    let ty = self.render_public_ty(pr);
                     self.emit(
                         TypeError::UnresolvedOpImpl {
                             op: op.as_str().to_string(),
                             trait_name: op_trait_name(method).to_string(),
                             method: method.to_string(),
-                            ty: render_ty(self.tcx, pr),
+                            ty,
                         },
                         place.span,
                     );
@@ -7741,11 +7840,10 @@ impl<'a> TypeChecker<'a> {
         if cast_allowed(&from_kind, &to_kind) {
             return;
         }
+        let from = self.render_public_ty(resolved_from);
+        let to = self.render_public_ty(resolved_to);
         self.diagnostics.push(TypeDiagnostic::new(
-            TypeError::InvalidCast {
-                from: render_ty(self.tcx, resolved_from),
-                to: render_ty(self.tcx, resolved_to),
-            },
+            TypeError::InvalidCast { from, to },
             span,
         ));
     }
@@ -7957,8 +8055,8 @@ impl<'a> TypeChecker<'a> {
                 let fresh = self.fresh();
                 self.option_adt_ty(fresh)
             };
-            let expected = render_ty(self.tcx, expected);
-            let found = render_ty(self.tcx, resolved);
+            let expected = self.render_public_ty(expected);
+            let found = self.render_public_ty(resolved);
             self.emit(
                 TypeError::TypeMismatch { expected, found },
                 arm.pattern.span,
@@ -9191,12 +9289,8 @@ impl<'a> TypeChecker<'a> {
             PatternKind::Tuple(parts) => {
                 let resolved = self.infer.resolve(self.tcx, ty);
                 if matches!(self.tcx.kind(resolved), Some(TyKind::Adt { .. })) {
-                    self.emit(
-                        TypeError::StructPatternNameRequired {
-                            ty: render_ty(self.tcx, resolved),
-                        },
-                        pattern.span,
-                    );
+                    let ty = self.render_public_ty(resolved);
+                    self.emit(TypeError::StructPatternNameRequired { ty }, pattern.span);
                 }
                 let element_tys: Vec<Ty> =
                     if let Some(TyKind::Tuple(elems)) = self.tcx.kind(resolved).cloned() {

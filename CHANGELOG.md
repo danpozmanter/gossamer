@@ -1,9 +1,10 @@
 # Changelog
 
-## 0.34.4 - Public diagnostics, range indexing, fixed array fix.
+## 0.34.4 - Public diagnostics, range indexing, fixed arrays
 
 - Render type-checker diagnostics with public type descriptions instead of
-  internal inference names.
+  internal inference names, including references and generic payloads such as
+  `&String` instead of `&?N`.
 - Support range indexing on `String`, `Vec<T>`, `[T]`, and fixed `[T; N]`
   consistently across interpreter and native builds, including clamped and
   open-ended ranges.

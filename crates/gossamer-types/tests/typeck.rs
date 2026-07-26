@@ -526,6 +526,35 @@ fn mutable_reference_mismatch_renders_resolved_referent_type() {
 }
 
 #[test]
+fn return_reference_mismatch_renders_public_referent_type() {
+    let checked = run("fn main() {\n\
+         let value = no_dangle()\n\
+         println!(\"{}\", value)\n\
+         }\n\
+         fn no_dangle() -> String {\n\
+         let s = String::from(\"hello\")\n\
+         &s\n\
+         }\n");
+    assert!(
+        checked.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.error,
+            TypeError::TypeMismatch { expected, found }
+                if expected == "String" && found == "&String"
+        )),
+        "expected String/&String mismatch, got {:?}",
+        checked.diagnostics
+    );
+    assert!(
+        checked
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.to_string().contains('?')),
+        "inference variables leaked into diagnostics: {:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
 fn mutable_reference_binding_can_be_rebound_with_a_reference() {
     let checked = run("fn main() { let mut x = &[1, 2]\n x = &[2, 3] }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
