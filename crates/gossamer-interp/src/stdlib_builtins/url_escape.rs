@@ -222,17 +222,16 @@ mod tests {
     fn set_supports_full_lifecycle() {
         let s = call(builtin_set_new, vec![]);
         assert!(matches!(s, Value::Struct(_)));
-        // insert returns the handle (for VM writeback idempotency).
         let after_insert = call(builtin_set_insert, vec![s.clone(), Value::Int(1)]);
-        assert!(matches!(after_insert, Value::Struct(_)));
-        let _ = call(builtin_set_insert, vec![s.clone(), Value::Int(1)]);
+        assert!(matches!(after_insert, Value::Bool(true)));
+        let duplicate = call(builtin_set_insert, vec![s.clone(), Value::Int(1)]);
+        assert!(matches!(duplicate, Value::Bool(false)));
         let n = call(builtin_set_len, vec![s.clone()]);
         assert!(matches!(n, Value::Int(1)));
         let has = call(builtin_set_contains, vec![s.clone(), Value::Int(1)]);
         assert!(matches!(has, Value::Bool(true)));
-        // remove returns the handle (for VM writeback idempotency).
         let after_remove = call(builtin_set_remove, vec![s.clone(), Value::Int(1)]);
-        assert!(matches!(after_remove, Value::Struct(_)));
+        assert!(matches!(after_remove, Value::Bool(true)));
         let empty = call(builtin_set_is_empty, vec![s]);
         assert!(matches!(empty, Value::Bool(true)));
     }

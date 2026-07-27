@@ -2720,9 +2720,6 @@ impl<'tcx> FnBuilder<'tcx> {
                             | "pop_front"
                             | "peek_back"
                             | "peek_front"
-                            | "len"
-                            | "is_empty"
-                            | "clear"
                     ) =>
             {
                 Some(format!("VecDeque::{}", name.name))
@@ -2762,10 +2759,14 @@ impl<'tcx> FnBuilder<'tcx> {
         // the result back through the place-store protocol so the
         // mutation persists - matching the compiled tiers, which mutate
         // the backing storage in place.
-        let replacement_writeback = matches!(
-            self.tcx.kind(resolved_receiver_ty),
-            Some(TyKind::String | TyKind::Vec(_) | TyKind::Slice(_))
-        );
+        let replacement_writeback = match self.tcx.kind(resolved_receiver_ty) {
+            Some(TyKind::String | TyKind::Vec(_) | TyKind::Slice(_)) => true,
+            Some(TyKind::Array { .. }) => matches!(
+                name.name.as_str(),
+                "sort" | "sort_by" | "sort_by_key" | "reverse" | "swap"
+            ),
+            _ => false,
+        };
         if !is_map_pop && replacement_writeback && Self::is_mutating_method_name(name.name.as_str())
         {
             match &receiver.kind {
@@ -2807,6 +2808,10 @@ impl<'tcx> FnBuilder<'tcx> {
                     | "retain"
                     | "drain"
                     | "swap"
+            ),
+            Some(TyKind::Array { .. }) => matches!(
+                name.name.as_str(),
+                "sort" | "sort_by" | "sort_by_key" | "reverse" | "swap"
             ),
             Some(TyKind::HashMap { .. }) => {
                 matches!(name.name.as_str(), "insert" | "remove" | "clear")
