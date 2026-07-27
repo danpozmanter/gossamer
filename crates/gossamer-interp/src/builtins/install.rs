@@ -1156,7 +1156,7 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     ));
     globals.push(("byte_at", builtin("byte_at", builtin_str_byte_at)));
     // `String::substring(s, a, b) -> String` - clamping, infallible
-    // byte-range substring (out-of-range bounds clamp; inverted bounds
+    // character-range substring (out-of-range bounds clamp; inverted bounds
     // yield ""). Mirrors the compiled tier's `gos_rt_str_substring`.
     // Registered qualified + bare so `s.substring(a, b)` dispatches by
     // type and `substring(s, a, b)` resolves too.
@@ -1166,7 +1166,7 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     ));
     globals.push(("substring", builtin("substring", builtin_str_substring)));
     // `String::slice(s, a, b) -> Result<String, errors::Error>` -
-    // the non-panicking byte-range slice. Inverted or out-of-range
+    // the non-panicking character-range slice. Inverted or out-of-range
     // bounds return Err, not a truncated string. Registered under
     // both the qualified and bare names so `String::slice(s, a, b)?`
     // and `s.slice(a, b)?` both dispatch here.

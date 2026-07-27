@@ -94,6 +94,18 @@ fn string_literal_has_string_type() {
 }
 
 #[test]
+fn integer_comparisons_accept_different_declared_widths() {
+    let checked = run("fn main() {\n\
+         let i: usize = 0usize\n\
+         let n: i64 = 1i64\n\
+         let _ = i < n\n\
+         let _ = n == i\n\
+         }\n");
+
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
 fn range_values_are_lazy_iterators_in_every_edition() {
     for lazy_iterators in [false, true] {
         let checked = run_with_lazy_iterators("fn main() { let r = 10.. }\n", lazy_iterators);
@@ -757,9 +769,8 @@ fn cast_same_type_is_a_noop_and_passes() {
 
 #[test]
 fn int_to_char_casts_allowed_float_rejected() {
-    // Every int width casts to char by reading its low byte (the
-    // masking `u8 as char` always applied), so `s[i] as char` works
-    // without an `as u8` intermediate.
+    // Every int width casts to char by reading its low byte. String indexing
+    // already has type char, and a same-type cast remains a no-op.
     for src in [
         "fn main() { let b: u8 = 65u8; let _: char = b as char }\n",
         "fn main() { let i: i32 = 65i32; let _: char = i as char }\n",
@@ -2676,4 +2687,25 @@ fn flag_set_parse_supports_question_mark() {
          }\n",
     );
     assert!(!has_code(&d, "GT0045"), "{d:?}");
+}
+
+#[test]
+fn map_binding_cannot_be_retyped_to_or_insert_result() {
+    let diagnostics = diagnostics_for(
+        "fn main() {\n\
+         let mut h = HashMap::new()\n\
+         h.insert(\"a\", 1)\n\
+         h = h.or_insert(\"c\", 0)\n\
+         }\n",
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            matches!(
+                &diagnostic.error,
+                TypeError::TypeMismatch { expected, found }
+                    if expected == "HashMap<String, i64>" && found == "i64"
+            )
+        }),
+        "map assignment should preserve the established map type: {diagnostics:?}"
+    );
 }

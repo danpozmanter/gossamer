@@ -118,7 +118,7 @@ fn iterate_vec_of_enums_from_enum_payload() {
         r#"
 enum J { Int(i64), Arr(Vec<J>) }
 fn sz(j: &J) -> i64 {
-    match j { J::Int(n) => *n, J::Arr(xs) => { let mut t = 0; for x in xs { t += sz(&x) }; t } }
+    match j { J::Int(n) => *n, J::Arr(xs) => { let mut t = 0; for x in xs { t += sz(x) }; t } }
 }
 fn mkarr() -> J { let mut v: Vec<J> = []; v.push(J::Int(1)); v.push(J::Int(2)); v.push(J::Int(3)); J::Arr(v) }
 fn main() {
@@ -142,7 +142,7 @@ enum J { Int(i64), Arr(Vec<J>), Obj(Vec<(String, J)>) }
 fn sumj(j: &J) -> i64 {
     match j {
         J::Int(n) => *n,
-        J::Arr(xs) => { let mut t = 0; for x in xs { t += sumj(&x) }; t }
+        J::Arr(xs) => { let mut t = 0; for x in xs { t += sumj(x) }; t }
         J::Obj(ps) => { let mut t = 0; for p in ps { t += sumj(&p.1) }; t }
     }
 }
@@ -171,7 +171,7 @@ fn deeply_nested_enum_in_vec_in_enum() {
         r#"
 enum J { Int(i64), Arr(Vec<J>) }
 fn cnt(j: &J) -> i64 {
-    match j { J::Int(_) => 1, J::Arr(xs) => { let mut t = 0; for x in xs { t += cnt(&x) }; t } }
+    match j { J::Int(_) => 1, J::Arr(xs) => { let mut t = 0; for x in xs { t += cnt(x) }; t } }
 }
 fn build() -> J {
     let mut inner: Vec<J> = []
@@ -309,7 +309,7 @@ impl P {
 fn cnt(j: &J) -> i64 {
     match j {
         J::Int(n) => *n,
-        J::Arr(xs) => { let mut t = 0; for x in xs { t += cnt(&x) }; t }
+        J::Arr(xs) => { let mut t = 0; for x in xs { t += cnt(x) }; t }
         J::Obj(ps) => { let mut t = 0; for p in ps { t += cnt(&p.1) }; t }
     }
 }
@@ -339,7 +339,7 @@ fn transform(v: J) -> J {
     }
 }
 fn cnt(j: &J) -> i64 {
-    match j { J::Int(n) => *n, J::Arr(xs) => { let mut t = 0; for x in xs { t += cnt(&x) }; t } }
+    match j { J::Int(n) => *n, J::Arr(xs) => { let mut t = 0; for x in xs { t += cnt(x) }; t } }
 }
 fn build() -> J { let mut a: Vec<J> = []; a.push(J::Int(1)); a.push(J::Int(2)); J::Arr(a) }
 fn main() {

@@ -33,11 +33,12 @@ pub fn contains(text: &str, needle: &str) -> bool {
     text.contains(needle)
 }
 
-/// Byte offset of the first occurrence of `needle` in `text`, or
+/// Unicode scalar offset of the first occurrence of `needle` in `text`, or
 /// `None` if absent.
 #[must_use]
 pub fn find(text: &str, needle: &str) -> Option<usize> {
     text.find(needle)
+        .map(|byte_index| text[..byte_index].chars().count())
 }
 
 /// Replaces every occurrence of `from` with `to`.
@@ -143,11 +144,12 @@ pub fn pad_right(text: &str, width: usize, pad_char: char) -> String {
     out
 }
 
-/// Returns the byte offset of the last occurrence of `needle` in
+/// Returns the Unicode scalar offset of the last occurrence of `needle` in
 /// `text`, or `None` if absent.
 #[must_use]
 pub fn rfind(text: &str, needle: &str) -> Option<usize> {
     text.rfind(needle)
+        .map(|byte_index| text[..byte_index].chars().count())
 }
 
 /// Replaces at most `n` occurrences of `from` with `to`.

@@ -4194,6 +4194,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_str_byte_at as *const u8,
         ),
         (
+            "gos_rt_str_char_at",
+            crate::c_abi::gos_rt_str_char_at as *const u8,
+        ),
+        (
             "gos_rt_str_center",
             crate::c_abi::gos_rt_str_center as *const u8,
         ),

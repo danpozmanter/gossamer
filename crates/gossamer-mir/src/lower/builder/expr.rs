@@ -2784,7 +2784,7 @@ impl<'a> Builder<'a> {
         // type as an unresolved inference variable for receivers
         // produced by runtime helpers (e.g. `read_to_string`),
         // and the indexing path needs the concrete `String` to
-        // route to `gos_rt_str_byte_at` instead of falling
+        // route to the Unicode scalar helper instead of falling
         // through to the array-projection helper.
         let mut base_kind = self
             .receiver_local_from_path(base)
@@ -2796,18 +2796,11 @@ impl<'a> Builder<'a> {
         if base_is_string {
             let base_local = self.lower_expr(base)?;
             let index_local = self.lower_expr(index)?;
-            // `gos_rt_str_byte_at` returns a zero-extended byte -
-            // pin the MIR destination to `i64` so downstream
-            // print/format dispatch routes to the integer helper
-            // instead of mis-treating the byte as a string ptr.
-            let dest_ty = match self.tcx.kind_of(ty) {
-                TyKind::Int(_) => ty,
-                _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
-            };
+            let dest_ty = self.tcx.char_ty();
             let dest = self.fresh(dest_ty);
             let next = self.new_block(span);
             self.terminate(Terminator::Call {
-                callee: Operand::Const(ConstValue::Str("gos_rt_str_byte_at".to_string())),
+                callee: Operand::Const(ConstValue::Str("gos_rt_str_char_at".to_string())),
                 args: vec![
                     Operand::Copy(Place::local(base_local)),
                     Operand::Copy(Place::local(index_local)),

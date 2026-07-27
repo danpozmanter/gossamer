@@ -428,16 +428,6 @@ impl<'a> Lowerer<'a> {
             self.lower_stream_write_byte_array_inline(args, destination, target)?;
             return Ok(());
         }
-        // Hot path inlining for `s[i]` byte reads. Strings are
-        // null-terminated `*const u8` in the runtime; the
-        // out-of-bounds case (which would need `strlen`) costs
-        // O(strlen) per access for fasta-style `alu[idx %
-        // alu_len]` loops, so we inline the simple `addr+i`
-        // load assuming the user's modulus keeps `i` in range.
-        if name == "gos_rt_str_byte_at" && args.len() == 2 {
-            self.lower_str_byte_at_inline(args, destination, target)?;
-            return Ok(());
-        }
         // Hot path inlining for `*acc += <literal>` (the fused
         // `gos_rt_str_append_bytes`): a sole-owner growable builder
         // with spare capacity appends via an inline capacity-check +
@@ -450,17 +440,6 @@ impl<'a> Lowerer<'a> {
             && matches!(&args[0], Operand::Copy(place) if place.projection.is_empty())
         {
             self.lower_str_append_bytes_inline(args, destination, target)?;
-            return Ok(());
-        }
-        // Hot path inlining for `s.len()` on strings. Lowers
-        // to `i64 @strlen(ptr s)` (a libc call LLVM
-        // constant-folds for compile-time-known string
-        // constants). With the constant in hand, modulus
-        // operations like `idx % alu_len` reduce to
-        // multiply-by-magic instead of `idiv`, which dominates
-        // the fasta inner loop.
-        if name == "gos_rt_str_len" && args.len() == 1 {
-            self.lower_str_len_inline(&args[0], destination, target)?;
             return Ok(());
         }
         // `vec.len()` reads the `len: i64` field at offset 0 of the

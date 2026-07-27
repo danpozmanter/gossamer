@@ -15,9 +15,14 @@
 - Fix tuple literal `for` loops and `&mut Vec<T>` loop element mutation across
   REPL, VM, JIT, and native execution.
 - Reject malformed REPL `let` inputs without creating phantom bindings, and
-  preserve byte-vector `push` results on the VM fallback path.
+  preserve byte-vector mutation and length semantics on the VM.
+- Restore sequence `.iter()` and mixed-width integer length comparisons.
 - Expand type-guarantee coverage across mutable, immutable, constant, nominal,
   nested, enum, collection, and standard-library handle values.
+- Index and slice strings by Unicode scalar position without lossy UTF-8
+  repair; use `as_bytes()`, `bytes()`, or `byte_at()` for byte access.
+- Persist HashMap entry mutations in the REPL and reject assignments that
+  replace a map with an `or_insert` result.
 
 ## 0.35.0 - Collection semantics and public diagnostics
 

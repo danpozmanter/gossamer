@@ -1168,7 +1168,10 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
                 Arc::unwrap_or_clone(Arc::new(fields)),
             ))
         }
-        Value::String(s) => Ok(Value::Int(i64::from(s.as_bytes()[i]))),
+        Value::String(s) => Ok(Value::Char(
+            s.char_at(i)
+                .expect("string index was checked against scalar length"),
+        )),
         Value::IntArray(data) => Ok(Value::Int(data[i])),
         Value::ByteArray(data) => Ok(Value::Int(i64::from(data[i]))),
         Value::InlineByteArray(data) => Ok(Value::Int(i64::from(data[i]))),
@@ -1225,7 +1228,7 @@ fn index_range_get(
         Value::ByteVec(data) => Ok(Value::ByteVec(Arc::new(data[lo..hi].to_vec()))),
         Value::FloatVec(data) => Ok(Value::FloatVec(Arc::new(data[lo..hi].to_vec()))),
         Value::String(s) => {
-            let piece = crate::builtins::str_substring_inline(s.as_str(), lo as i64, hi as i64);
+            let piece = crate::builtins::str_substring_inline(s, lo as i64, hi as i64);
             Ok(Value::String(piece))
         }
         Value::FloatArray(rx) => {
@@ -2351,6 +2354,21 @@ mod tests {
         ));
         assert!(index_get(&fixed, &Value::Int(3)).is_err());
         assert!(index_get(&growable, &Value::Int(-1)).is_err());
+    }
+
+    #[test]
+    fn vec_push_promotes_inline_byte_storage_without_dropping_values() {
+        let mut receiver =
+            Value::InlineByteArray(Arc::new(smallvec::SmallVec::<[u8; 1024]>::default()));
+
+        for value in [3, 43, 83, 123, 163, 203] {
+            run::vec_push_value(&mut receiver, Value::Int(value));
+        }
+
+        assert!(matches!(
+            receiver,
+            Value::ByteVec(values) if values.as_slice() == [3, 43, 83, 123, 163, 203]
+        ));
     }
 
     #[test]

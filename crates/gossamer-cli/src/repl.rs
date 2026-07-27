@@ -1954,7 +1954,7 @@ fn runtime_core_method_doc(owner: &str, name: &str) -> Option<&'static str> {
         ("String", "starts_with") => Some("Returns whether the string starts with a prefix."),
         ("String", "strip_prefix") => Some("Removes a prefix when present."),
         ("String", "strip_suffix") => Some("Removes a suffix when present."),
-        ("String", "substring") => Some("Returns a checked byte-range substring."),
+        ("String", "substring") => Some("Returns a clamped character-range substring."),
         ("String", "to_bool") => Some("Parses exactly true or false to Option<bool>."),
         ("String", "to_f64") => Some("Parses the full string to Option<f64>."),
         ("String", "to_i64") => Some("Parses the full string to Option<i64>."),

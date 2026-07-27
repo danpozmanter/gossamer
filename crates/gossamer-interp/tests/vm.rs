@@ -63,6 +63,23 @@ fn vm_evaluates_arithmetic_expression() {
 }
 
 #[test]
+fn vm_persists_statement_position_byte_vector_pushes() {
+    let source = r#"
+fn main() {
+    let mut values: [u8] = []
+    let mut i = 0
+    while i < 6 {
+        values.push((i * 40 + 3) as u8)
+        i += 1
+    }
+    println!("{} {} {} {} {} {} len {}", values[0], values[1], values[2], values[3], values[4], values[5], values.len())
+}
+"#;
+
+    assert_eq!(run_vm_main(source), "3 43 83 123 163 203 len 6\n");
+}
+
+#[test]
 fn vm_if_else_picks_correct_branch() {
     let source = r"
 fn pick(n: i64) -> i64 {

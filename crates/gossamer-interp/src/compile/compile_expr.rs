@@ -2121,30 +2121,27 @@ impl<'tcx> FnBuilder<'tcx> {
         }
         match (name.name.as_str(), args.len()) {
             ("push", 1) => {
-                let recv = self.compile_expr(receiver)?;
                 let value = self.compile_expr(&args[0])?;
                 self.emit(Op::VecPush {
-                    receiver: recv,
+                    receiver: target_reg,
                     value,
                 });
                 Ok(true)
             }
             ("insert", 2) => {
-                let recv = self.compile_expr(receiver)?;
                 let index = self.compile_expr(&args[0])?;
                 let value = self.compile_expr(&args[1])?;
                 self.emit(Op::VecInsert {
-                    receiver: recv,
+                    receiver: target_reg,
                     index,
                     value,
                 });
                 Ok(true)
             }
             ("remove", 1) => {
-                let recv = self.compile_expr(receiver)?;
                 let index = self.compile_expr(&args[0])?;
                 self.emit(Op::VecRemove {
-                    receiver: recv,
+                    receiver: target_reg,
                     index,
                 });
                 Ok(true)

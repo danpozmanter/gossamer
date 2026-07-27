@@ -1289,7 +1289,16 @@ impl<'a> TypeChecker<'a> {
                         .push((lhs, "{float}", span));
                 }
             }
-            UnifyError::Occurs { .. } => {}
+            UnifyError::Occurs { .. } => {
+                // Recursive inference equations such as
+                // `HashMap<K, V> = V` are real type mismatches. Deferring lets
+                // unresolved key/value literals default before rendering the
+                // diagnostic, while still preventing the binding from being
+                // silently retyped.
+                let lhs = self.infer.resolve(self.tcx, lhs);
+                let rhs = self.infer.resolve(self.tcx, rhs);
+                self.deferred_type_mismatches.push((lhs, rhs, span));
+            }
         }
     }
 
@@ -2876,7 +2885,7 @@ impl<'a> TypeChecker<'a> {
                     if range_index {
                         return self.tcx.string_ty();
                     }
-                    return self.tcx.int_ty(IntTy::I64);
+                    return self.tcx.char_ty();
                 }
                 TyKind::Var(_) => {
                     self.deferred_structural.push(DeferredStructural {
@@ -5751,8 +5760,7 @@ impl<'a> TypeChecker<'a> {
             {
                 return false;
             }
-            matches!(owner, "HashMap" | "HashSet")
-                && matches!(method, "insert" | "remove" | "clear" | "pop")
+            matches!(owner, "HashMap" | "HashSet") && crate::is_mutating_method_name(method)
         });
         if requires_mut && let Some(receiver) = args.first() {
             if user_requirement == Some(true) {
@@ -6179,7 +6187,7 @@ impl<'a> TypeChecker<'a> {
             "push" | "remove" | "truncate" | "extend" | "extend_from_slice" | "reserve"
             | "reserve_exact" | "get" => Some(1),
             "insert" | "swap" => Some(2),
-            "pop" | "clear" | "sort" | "reverse" | "capacity" => Some(0),
+            "pop" | "clear" | "sort" | "reverse" | "capacity" | "iter" => Some(0),
             "sort_by" | "sort_by_key" => Some(1),
             _ => None,
         };
@@ -6216,6 +6224,13 @@ impl<'a> TypeChecker<'a> {
                 _,
             ) => Some(self.tcx.unit()),
             ("capacity" | "len", 0) => Some(self.tcx.int_ty(IntTy::I64)),
+            ("iter", 0) => {
+                let item = self.tcx.intern(TyKind::Ref {
+                    mutability: Mutbl::Not,
+                    inner: elem,
+                });
+                Some(self.tcx.intern(TyKind::Iterator(item)))
+            }
             ("is_empty", 0) => Some(self.tcx.bool_ty()),
             ("pop", 0) => Some(self.option_adt_ty(elem)),
             ("remove", 1) => Some(elem),
@@ -6350,7 +6365,7 @@ impl<'a> TypeChecker<'a> {
                 let u8_ty = self.tcx.int_ty(IntTy::U8);
                 self.tcx.intern(TyKind::Vec(u8_ty))
             }
-            // `Option<i64>` byte offsets - the P0-4 shape.
+            // `Option<i64>` Unicode scalar offsets.
             "find" | "rfind" | "find_any" | "rfind_any" | "index_rune" => {
                 let i = self.tcx.int_ty(IntTy::I64);
                 self.option_adt_ty(i)
@@ -7733,6 +7748,15 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    fn both_integer_types(&mut self, lhs: Ty, rhs: Ty) -> bool {
+        let lhs = self.infer.resolve(self.tcx, lhs);
+        let rhs = self.infer.resolve(self.tcx, rhs);
+        matches!(
+            (self.tcx.kind(lhs), self.tcx.kind(rhs)),
+            (Some(TyKind::Int(_)), Some(TyKind::Int(_)))
+        )
+    }
+
     fn check_binary(&mut self, op: BinaryOp, lhs: &Expr, rhs: &Expr, span: Span) -> Ty {
         // The rhs of `|>` is a callee position: a bare std path there
         // (`x |> strings::to_uppercase`) is the partial-application call
@@ -7785,7 +7809,9 @@ impl<'a> TypeChecker<'a> {
                 // an explicit `as i64`: `s[i] == b'>'`. A byte literal is an
                 // `Int` value on every tier, so re-typing its node to the
                 // integer operand's type lets the comparison flow unchanged.
-                if !self.coerce_byte_literal_cmp(lhs, lhs_ty, rhs, rhs_ty) {
+                if !self.both_integer_types(lhs_ty, rhs_ty)
+                    && !self.coerce_byte_literal_cmp(lhs, lhs_ty, rhs, rhs_ty)
+                {
                     self.unify(lhs_ty, rhs_ty, span);
                 }
                 self.tcx.bool_ty()
@@ -8217,11 +8243,50 @@ impl<'a> TypeChecker<'a> {
         // would allow `let mut r = &value; r = value` to discard the `&`.
         // Other assignment destinations retain the expected-type flow that
         // shapes `[2, 3]` as a Vec for a `Vec<i64>` slot.
-        let value_ty = if place_is_reference {
+        let mut value_ty = if place_is_reference {
             self.check_expr(value)
         } else {
             self.check_expr_expecting(value, Expectation::HasType(place_ty))
         };
+        // A map lookup-like method returns V, independently of the assignment
+        // destination. When V is still inferred, feeding the destination
+        // HashMap<K, V> expectation into `h = h.or_insert(k, default)` could
+        // recursively bind V to the map itself and silently retype `h`.
+        // Re-read the authoritative value type from the receiver after its
+        // key/default arguments have grounded the map generics.
+        if let ExprKind::MethodCall {
+            receiver,
+            name,
+            args,
+            ..
+        } = &value.kind
+            && matches!(name.name.as_str(), "get_or" | "or_insert")
+        {
+            if let Some(default) = args.get(1)
+                && let Some(default_ty) = self.table.get(default.id)
+            {
+                value_ty = self.infer.resolve(self.tcx, default_ty);
+                self.record(value.id, value_ty);
+            }
+            let receiver_ty = self
+                .table
+                .get(receiver.id)
+                .unwrap_or_else(|| self.check_expr(receiver));
+            let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
+            while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
+                resolved = self.infer.resolve(self.tcx, *inner);
+            }
+            if let Some(TyKind::HashMap {
+                value: map_value, ..
+            }) = self.tcx.kind(resolved)
+            {
+                let map_value = self.infer.resolve(self.tcx, *map_value);
+                if matches!(self.tcx.kind(value_ty), Some(TyKind::Var(_))) {
+                    value_ty = map_value;
+                    self.record(value.id, value_ty);
+                }
+            }
+        }
         if place_is_reference {
             self.rebind_named_mutable_borrow(place, value);
         }

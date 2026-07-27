@@ -436,32 +436,32 @@ fn llvm_acyclic_backward_numbered_edge_has_no_preemption_poll() {
 }
 
 #[test]
-fn llvm_string_len_of_literal_local_folds_to_constant() {
+fn llvm_string_len_of_literal_uses_scalar_length_helper() {
     let (body, tcx) = string_len_main();
     let ir = gossamer_codegen_llvm::render_ir_to_string(&[body], &tcx, false)
         .expect("string length MIR must render to LLVM IR");
     assert!(
-        ir.contains("store i64 5"),
-        "literal string length must fold before the fasta-style modulus path: {ir}"
+        ir.contains("[2 x i32] [i32 5, i32 0]"),
+        "literal carrier must store its Unicode scalar length and first block: {ir}"
     );
     assert!(
-        !ir.contains("i64 -5") && !ir.contains("call i64 @gos_rt_str_len"),
-        "literal string length must not load a dynamic header or call runtime: {ir}"
+        ir.contains("call i64 @\"gos_rt_str_len\""),
+        "literal string length must use the scalar-aware runtime helper: {ir}"
     );
 }
 
 #[test]
-fn llvm_dynamic_string_len_calls_strlen() {
+fn llvm_dynamic_string_len_calls_scalar_length_helper() {
     let (body, tcx) = dynamic_string_len_main();
     let ir = gossamer_codegen_llvm::render_ir_to_string(&[body], &tcx, false)
         .expect("string length MIR must render to LLVM IR");
     assert!(
-        ir.contains("declare i64 @strlen(ptr)") && ir.contains("call i64 @strlen"),
-        "dynamic string length must lower through strlen: {ir}"
+        ir.contains("call i64 @\"gos_rt_str_len\""),
+        "dynamic string length must call the scalar-aware helper: {ir}"
     );
     assert!(
-        !ir.contains("call i64 @gos_rt_str_len"),
-        "dynamic string length must not call the runtime helper: {ir}"
+        !ir.contains("call i64 @strlen"),
+        "dynamic string length must not use byte-counting strlen: {ir}"
     );
     assert!(
         !ir.contains("%%"),

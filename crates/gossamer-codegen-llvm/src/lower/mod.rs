@@ -202,12 +202,27 @@ impl StringPool {
         for (text, (name, size)) in &self.entries {
             let escaped = escape_c_string(text);
             let content_len = text.len();
+            let index_slots = content_len / 32 + 2;
+            let mut index = vec![0u32; index_slots];
+            index[0] = text.chars().count() as u32;
+            for (char_index, (byte_index, _)) in text.char_indices().enumerate() {
+                if char_index % 32 == 0 {
+                    index[1 + char_index / 32] = byte_index as u32;
+                }
+            }
+            let index_values = index
+                .iter()
+                .map(|offset| format!("i32 {offset}"))
+                .collect::<Vec<_>>()
+                .join(", ");
             let data = format!("{name}.data");
-            let ty = format!("<{{ [16 x i8], i32, i32, i32, i8, [{size} x i8] }}>");
+            let ty = format!(
+                "<{{ [16 x i8], i32, i32, i32, i8, [{size} x i8], [{index_slots} x i32] }}>"
+            );
             let _ = writeln!(
                 out,
                 "{data} = private constant {ty} \
-                 <{{ [16 x i8] [i8 1, i8 0, i8 2, i8 0, i8 3, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0], i32 0, i32 {content_len}, i32 {content_len}, i8 -88, [{size} x i8] c\"{escaped}\\00\" }}>"
+                 <{{ [16 x i8] [i8 1, i8 0, i8 2, i8 0, i8 3, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0], i32 0, i32 {content_len}, i32 {content_len}, i8 -88, [{size} x i8] c\"{escaped}\\00\", [{index_slots} x i32] [{index_values}] }}>"
             );
             // `-88` is `0xA8` (STR_STATIC_TAG) as a signed i8.
             let _ = writeln!(

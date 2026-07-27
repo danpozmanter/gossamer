@@ -1,15 +1,19 @@
 // A byte literal participates in integer arithmetic without an explicit
-// `as i64`, mirroring the comparison coercion: `s[i] - b'0'` types to the
+// `as i64`, mirroring the comparison coercion. String indexing returns a
+// Unicode scalar, so byte-oriented parsing uses the explicit byte view.
 // integer operand's type. Covers literal-left and literal-right operands
 // and the accumulate-digits shape, bit-identical on every tier.
 fn main() {
     let s = "7a42"
-    println!("{}", s[0] - b'0')
+    let bytes = s.as_bytes()
+    println!("{}", bytes[0] - b'0')
     println!("{}", b'a' + 1)
-    println!("{}", b'0' + s[0])
+    println!("{}", b'0' + bytes[0])
     let mut n = 0
-    for i in 0..s.len() {
-        if s[i] >= b'0' && s[i] <= b'9' { n = n * 10 + s[i] - b'0' }
+    for i in 0..bytes.len() {
+        if bytes[i] >= b'0' && bytes[i] <= b'9' {
+            n = n * 10 + (bytes[i] - b'0') as i64
+        }
     }
     println!("{}", n)
 }

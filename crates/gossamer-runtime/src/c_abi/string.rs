@@ -143,6 +143,58 @@ unsafe fn typed_str_bytes<'a>(s: *const c_char) -> &'a [u8] {
     unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) }
 }
 
+#[inline]
+unsafe fn typed_str_text<'a>(s: *const c_char) -> &'a str {
+    std::str::from_utf8(unsafe { typed_str_bytes(s) }).unwrap_or("")
+}
+
+#[inline]
+unsafe fn typed_str_char_len(s: *const c_char) -> usize {
+    if let Some(cap) = unsafe { typed_str_cap(s) } {
+        let footer = unsafe { s.cast::<u8>().add(cap + 1).cast::<u32>() };
+        let char_len = unsafe { footer.read_unaligned() };
+        return if char_len == u32::MAX {
+            0
+        } else {
+            char_len as usize
+        };
+    }
+    unsafe { typed_str_text(s) }.chars().count()
+}
+
+#[inline]
+unsafe fn typed_str_char_boundary(s: *const c_char, index: usize) -> Option<usize> {
+    if let Some(cap) = unsafe { typed_str_cap(s) } {
+        let footer = unsafe { s.cast::<u8>().add(cap + 1).cast::<u32>() };
+        let char_len = unsafe { footer.read_unaligned() } as usize;
+        if char_len == u32::MAX as usize {
+            return None;
+        }
+        let text = unsafe { typed_str_text(s) };
+        if index > char_len {
+            return None;
+        }
+        if index == char_len {
+            return Some(text.len());
+        }
+        let block = index / STR_INDEX_STRIDE;
+        let block_char = block * STR_INDEX_STRIDE;
+        let byte = unsafe { footer.add(1 + block).read_unaligned() } as usize;
+        return text[byte..]
+            .char_indices()
+            .nth(index - block_char)
+            .map(|(offset, _)| byte + offset);
+    }
+    let text = unsafe { typed_str_text(s) };
+    if index == 0 {
+        return Some(0);
+    }
+    text.char_indices()
+        .nth(index)
+        .map(|(offset, _)| offset)
+        .or_else(|| (index == text.chars().count()).then_some(text.len()))
+}
+
 /// Tests the private builder tag on a compiler-typed string.
 #[inline]
 unsafe fn is_typed_builder(s: *const c_char) -> bool {
@@ -177,6 +229,52 @@ const STR_STATIC_TAG: u8 = 0xA8;
 /// length reads and in-place append work identically), but the bytes are
 /// freed wholesale at `arena_pop`, so `gos_rt_str_free` skips them.
 const STR_REGION_TAG: u8 = 0xAA;
+const STR_INDEX_STRIDE: usize = 32;
+
+#[inline]
+const fn str_index_slots(cap: usize) -> usize {
+    cap / STR_INDEX_STRIDE + 2
+}
+
+#[inline]
+const fn str_index_bytes(cap: usize) -> usize {
+    str_index_slots(cap) * std::mem::size_of::<u32>()
+}
+
+unsafe fn rebuild_str_index(s: *mut c_char, len: usize, cap: usize) {
+    let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
+    let footer = unsafe { s.cast::<u8>().add(cap + 1).cast::<u32>() };
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        unsafe { footer.write_unaligned(u32::MAX) };
+        return;
+    };
+    let mut chars = 0usize;
+    unsafe { footer.write_unaligned(0) };
+    for (offset, _) in text.char_indices() {
+        if chars % STR_INDEX_STRIDE == 0 {
+            unsafe {
+                footer
+                    .add(1 + chars / STR_INDEX_STRIDE)
+                    .write_unaligned(offset as u32);
+            }
+        }
+        chars += 1;
+    }
+    unsafe { footer.write_unaligned(chars as u32) };
+}
+
+#[inline]
+unsafe fn typed_str_cap(s: *const c_char) -> Option<usize> {
+    if s.is_null() {
+        return None;
+    }
+    let tag = unsafe { *s.cast::<u8>().sub(1) };
+    if !matches!(tag, STR_BUILDER_TAG | STR_STATIC_TAG | STR_REGION_TAG) {
+        return None;
+    }
+    let p = unsafe { s.cast::<u8>().sub(9) };
+    Some(u32::from_le_bytes(unsafe { [*p, *p.add(1), *p.add(2), *p.add(3)] }) as usize)
+}
 
 #[inline]
 fn is_managed_string(s: *const c_char) -> bool {
@@ -341,7 +439,7 @@ where
     }
     // owner(16) + rc(4) + cap(4) + len(4) + tag(1) + content(cap) + NUL(1).
     // Refcount at the FRONT keeps cap(-9)/len(-5)/tag(-1) offsets unchanged.
-    let total = STRING_BODY_OFFSET + cap + 1;
+    let total = STRING_BODY_OFFSET + cap + 1 + str_index_bytes(cap);
     crate::c_abi::ledger::benchmark_allocation(total);
     // Inside an arena region, allocate fresh builders from the region. A copy
     // whose source is already region-backed must be promoted to the heap so a
@@ -390,6 +488,7 @@ where
             // spare capacity and trailing NUL initialized explicitly.
             std::ptr::write_bytes(content.add(content_len), 0, cap - content_len + 1);
         }
+        rebuild_str_index(content.cast::<c_char>(), content_len, cap);
         if tag != STR_REGION_TAG {
             crate::c_abi::ledger::str_inc();
         }
@@ -441,7 +540,7 @@ pub unsafe extern "C" fn gos_rt_str_free(s: *mut c_char) {
         let cap =
             u32::from_le_bytes(unsafe { [*hdr.add(4), *hdr.add(5), *hdr.add(6), *hdr.add(7)] })
                 as usize;
-        let total = STRING_BODY_OFFSET + cap + 1;
+        let total = STRING_BODY_OFFSET + cap + 1 + str_index_bytes(cap);
         let layout = Layout::from_size_align(total, 8).expect("string layout is valid");
         // SAFETY: builder allocation uses this exact layout, and this is the
         // last strong reference after the count logic above. The carrier owns
@@ -578,12 +677,7 @@ fn alloc_ascii_upper_cstring(src: &[u8]) -> *mut c_char {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_len(s: *const c_char) -> i64 {
-    ffi_entry!(-1, {
-        match unsafe { str_header_len(s) } {
-            Some(len) => len as i64,
-            None => unsafe { c_str_len(s) as i64 },
-        }
-    })
+    ffi_entry!(-1, { unsafe { typed_str_char_len(s) as i64 } })
 }
 
 #[unsafe(no_mangle)]
@@ -822,6 +916,21 @@ pub unsafe extern "C" fn gos_rt_str_byte_at(s: *const c_char, i: i64) -> i64 {
     i64::from(byte)
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_char_at(s: *const c_char, i: i64) -> i64 {
+    if s.is_null() || i < 0 {
+        return 0;
+    }
+    let Some(byte) = (unsafe { typed_str_char_boundary(s, i as usize) }) else {
+        return 0;
+    };
+    let text = unsafe { typed_str_text(s) };
+    text[byte..]
+        .chars()
+        .next()
+        .map_or(0, |ch| i64::from(u32::from(ch)))
+}
+
 /// `os::read_dir(path) -> Result<Vec<String>, errors::Error>` -
 /// returns the entry names under `path` as a `*mut GosVec` of
 /// `*const c_char`. Gossamer programs treat the call as
@@ -887,23 +996,14 @@ pub unsafe extern "C" fn gos_rt_str_substring(
         // strlen. Sizing the slice from the header keeps `substring`
         // proportional to the slice length, not the source length, so a
         // sliding-window scan over one string stays linear.
-        let len = unsafe { str_header_len(s) }.unwrap_or_else(|| unsafe { c_str_len(s) });
-        let len_i = len as i64;
+        let byte_len = unsafe { typed_str_len(s) };
+        let len_i = unsafe { typed_str_char_len(s) } as i64;
         let lo = start.clamp(0, len_i) as usize;
         let hi = end.clamp(0, len_i).max(start.clamp(0, len_i)) as usize;
-        let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
-        let slice = &bytes[lo..hi];
-        // Every Gossamer string is valid UTF-8, an invariant consumers rely on
-        // (`from_utf8_unchecked` in the set shims). A clamped byte range can
-        // land mid-codepoint, so validate and repair with the same lossy
-        // U+FFFD substitution the interpreter builtin (`str_substring_inline`)
-        // uses, keeping the result well-formed and the tiers identical. The
-        // valid path skips `alloc_cstring`'s first-NUL scan (the slice length
-        // is authoritative).
-        match std::str::from_utf8(slice) {
-            Ok(_) => alloc_cstring_from_slices(&[slice]),
-            Err(_) => alloc_cstring(String::from_utf8_lossy(slice).as_bytes()),
-        }
+        let lo_byte = unsafe { typed_str_char_boundary(s, lo) }.unwrap_or(byte_len);
+        let hi_byte = unsafe { typed_str_char_boundary(s, hi) }.unwrap_or(byte_len);
+        let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), byte_len) };
+        alloc_cstring_from_slices(&[&bytes[lo_byte..hi_byte]])
     })
 }
 
@@ -1006,6 +1106,7 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
                         hdr_mut.add(8),
                         4,
                     );
+                    rebuild_str_index(a.cast_mut(), new_len, cap);
                 }
                 return a.cast_mut();
             }
@@ -1075,6 +1176,7 @@ pub unsafe extern "C" fn gos_rt_str_append_bytes(
                     hdr_mut.add(8),
                     4,
                 );
+                rebuild_str_index(acc.cast_mut(), new_len, cap);
             }
             return acc.cast_mut();
         }
@@ -1126,6 +1228,14 @@ pub(crate) unsafe fn str_builder_write_reserved(acc: *mut c_char, offset: usize,
         *dst.add(bytes.len()) = 0;
         let len_header = acc.cast::<u8>().sub(5);
         std::ptr::copy_nonoverlapping((new_len as u32).to_le_bytes().as_ptr(), len_header, 4);
+        let cap_header = acc.cast::<u8>().sub(9);
+        let cap = u32::from_le_bytes([
+            *cap_header,
+            *cap_header.add(1),
+            *cap_header.add(2),
+            *cap_header.add(3),
+        ]) as usize;
+        rebuild_str_index(acc, new_len, cap);
     }
 }
 
@@ -1297,7 +1407,8 @@ pub unsafe extern "C" fn gos_rt_str_find(s: *const c_char, needle: *const c_char
         }
         for i in 0..=(s.len() - n.len()) {
             if &s[i..i + n.len()] == n {
-                return i as i64;
+                let prefix = unsafe { std::str::from_utf8_unchecked(&s[..i]) };
+                return prefix.chars().count() as i64;
             }
         }
         -1
@@ -1372,8 +1483,8 @@ pub unsafe extern "C" fn gos_rt_str_to_bool_opt(s: *const c_char) -> i128 {
 }
 
 /// `s.rfind(needle) -> Option<i64>` packed as a `*mut GosResult`
-/// (`disc 0 = Some(idx)`, `disc 1 = None`). Byte-level scan from
-/// the right; empty needle returns `Some(s.len())` to mirror Rust's
+/// (`disc 0 = Some(idx)`, `disc 1 = None`). UTF-8 bytes are searched from
+/// the right, then the match is reported as a Unicode scalar offset.
 /// `str::rfind` semantics.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_rfind_opt(s: *const c_char, needle: *const c_char) -> i128 {
@@ -1384,7 +1495,7 @@ pub unsafe extern "C" fn gos_rt_str_rfind_opt(s: *const c_char, needle: *const c
         let hay = unsafe { CStr::from_ptr(s).to_bytes() };
         let n = unsafe { CStr::from_ptr(needle).to_bytes() };
         if n.is_empty() {
-            return unsafe { gos_rt_result_new(0, hay.len() as i64) };
+            return unsafe { gos_rt_result_new(0, typed_str_char_len(s) as i64) };
         }
         if hay.len() < n.len() {
             return unsafe { gos_rt_result_new(1, 0) };
@@ -1392,7 +1503,8 @@ pub unsafe extern "C" fn gos_rt_str_rfind_opt(s: *const c_char, needle: *const c
         let upper = hay.len() - n.len();
         for i in (0..=upper).rev() {
             if &hay[i..i + n.len()] == n {
-                return unsafe { gos_rt_result_new(0, i as i64) };
+                let prefix = unsafe { std::str::from_utf8_unchecked(&hay[..i]) };
+                return unsafe { gos_rt_result_new(0, prefix.chars().count() as i64) };
             }
         }
         unsafe { gos_rt_result_new(1, 0) }
@@ -1695,8 +1807,8 @@ pub unsafe extern "C" fn gos_rt_str_center(
     })
 }
 
-/// `s.slice(start, end) -> Result<String, errors::Error>`. Errors on
-/// out-of-range, inverted ranges, or non-UTF-8 boundary cuts. Result
+/// `s.slice(start, end) -> Result<String, errors::Error>`. Character offsets
+/// are used, so a successful result is always valid UTF-8. Result
 /// payload pointers: `disc=0` → owned `*mut c_char`, `disc=1` →
 /// `*mut GosError`.
 #[unsafe(no_mangle)]
@@ -1708,10 +1820,7 @@ pub unsafe extern "C" fn gos_rt_str_slice(s: *const c_char, start: i64, end: i64
         let len = if s.is_null() {
             0i64
         } else {
-            match unsafe { str_header_len(s) } {
-                Some(l) => l as i64,
-                None => unsafe { c_str_len(s) as i64 },
-            }
+            unsafe { typed_str_char_len(s) as i64 }
         };
         if start < 0 || end < 0 || start > end || end > len {
             let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
@@ -1719,24 +1828,15 @@ pub unsafe extern "C" fn gos_rt_str_slice(s: *const c_char, start: i64, end: i64
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let lo = start as usize;
-        let hi = end as usize;
-        // SAFETY: `0 <= lo <= hi <= len`, and the string body holds `len`
-        // valid bytes; the range is within the allocation.
+        let byte_len = unsafe { typed_str_len(s) };
         let bytes: &[u8] = if s.is_null() {
             &[]
         } else {
-            unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len as usize) }
+            unsafe { std::slice::from_raw_parts(s.cast::<u8>(), byte_len) }
         };
-        let slice = &bytes[lo..hi];
-        if std::str::from_utf8(slice).is_ok() {
-            unsafe { gos_rt_result_new(0, alloc_cstring(slice) as i64) }
-        } else {
-            let msg = format!("slice: range [{start}, {end}) does not fall on UTF-8 boundaries");
-            let cs = std::ffi::CString::new(msg).unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
-            unsafe { gos_rt_result_new(1, err as i64) }
-        }
+        let lo = unsafe { typed_str_char_boundary(s, start as usize) }.unwrap_or(byte_len);
+        let hi = unsafe { typed_str_char_boundary(s, end as usize) }.unwrap_or(byte_len);
+        unsafe { gos_rt_result_new(0, alloc_cstring(&bytes[lo..hi]) as i64) }
     })
 }
 

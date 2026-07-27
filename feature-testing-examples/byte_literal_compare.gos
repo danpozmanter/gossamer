@@ -1,13 +1,12 @@
-// Byte literals compare against the integer byte index without `as i64`:
-// `s[i] == b'>'`. A byte literal is an `Int` value on every tier, so the
-// comparison is bit-identical across VM and the compiled tiers.
+// Byte literals compare against an explicit byte view without casts.
 fn main() {
     let s = "Hello, World>123"
+    let bytes = s.as_bytes()
     let mut upper = 0
     let mut digits = 0
     let mut gt = 0
-    for i in 0..s.len() {
-        let b = s[i]
+    for i in 0..bytes.len() {
+        let b = bytes[i]
         if b >= b'A' && b <= b'Z' { upper += 1 }
         if b >= b'0' && b <= b'9' { digits += 1 }
         if b == b'>' { gt += 1 }

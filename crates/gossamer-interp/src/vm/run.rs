@@ -1134,7 +1134,7 @@ impl Vm {
                         };
                     let fast = match (&registers[recv_reg as usize], bounds) {
                         (Value::String(s), Some((a, b))) => {
-                            Some(crate::builtins::str_substring_inline(s.as_str(), a, b))
+                            Some(crate::builtins::str_substring_inline(s, a, b))
                         }
                         _ => None,
                     };
@@ -1644,36 +1644,7 @@ impl Vm {
                         &registers[receiver as usize],
                     );
                     let recv = &mut registers[receiver as usize];
-                    if let Some(promoted) = promote_scalar_push(recv, &new_value) {
-                        *recv = promoted;
-                    } else {
-                        match recv {
-                            Value::Array(items) => Arc::make_mut(items).push(new_value),
-                            Value::IntArray(data) => {
-                                if let Value::Int(n) = new_value {
-                                    Arc::make_mut(data).push(n);
-                                }
-                            }
-                            Value::ByteArray(data) => {
-                                if let Value::Int(n) = new_value {
-                                    let mut values = data.to_vec();
-                                    values.push(n as u8);
-                                    *recv = Value::ByteVec(Arc::new(values));
-                                }
-                            }
-                            Value::ByteVec(data) => {
-                                if let Value::Int(n) = new_value {
-                                    Arc::make_mut(data).push(n as u8);
-                                }
-                            }
-                            Value::FloatVec(data) => match new_value {
-                                Value::Float(f) => Arc::make_mut(data).push(f),
-                                Value::Int(n) => Arc::make_mut(data).push(n as f64),
-                                _ => {}
-                            },
-                            _ => {}
-                        }
-                    }
+                    vec_push_value(recv, new_value);
                 }
                 Op::StrAppend { receiver, value } => {
                     // Read the RHS first (a cheap SmolStr clone: an Arc
@@ -3928,6 +3899,46 @@ fn promote_scalar_push(recv: &Value, new_value: &Value) -> Option<Value> {
             Some(Value::FloatVec(Arc::new(wide)))
         }
         _ => None,
+    }
+}
+
+pub(super) fn vec_push_value(recv: &mut Value, new_value: Value) {
+    if let Some(promoted) = promote_scalar_push(recv, &new_value) {
+        *recv = promoted;
+        return;
+    }
+    match recv {
+        Value::Array(items) => Arc::make_mut(items).push(new_value),
+        Value::IntArray(data) => {
+            if let Value::Int(n) = new_value {
+                Arc::make_mut(data).push(n);
+            }
+        }
+        Value::ByteArray(data) => {
+            if let Value::Int(n) = new_value {
+                let mut values = data.to_vec();
+                values.push(n as u8);
+                *recv = Value::ByteVec(Arc::new(values));
+            }
+        }
+        Value::InlineByteArray(data) => {
+            if let Value::Int(n) = new_value {
+                let mut values = data.to_vec();
+                values.push(n as u8);
+                *recv = Value::ByteVec(Arc::new(values));
+            }
+        }
+        Value::ByteVec(data) => {
+            if let Value::Int(n) = new_value {
+                Arc::make_mut(data).push(n as u8);
+            }
+        }
+        Value::FloatVec(data) => match new_value {
+            Value::Float(f) => Arc::make_mut(data).push(f),
+            Value::Int(n) => Arc::make_mut(data).push(n as f64),
+            _ => {}
+        },
+        _ => {}
     }
 }
 

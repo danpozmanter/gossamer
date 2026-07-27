@@ -1828,3 +1828,32 @@ fn repl_persists_map_set_and_deque_mutations() {
         out.stdout
     );
 }
+
+#[test]
+fn repl_or_insert_persists_and_cannot_retype_the_map() {
+    let out = run_repl(
+        "let mut h = HashMap::new()\n\
+         h.insert(\"a\", 1)\n\
+         h.or_insert(\"c\", 0)\n\
+         h.get_or(\"c\", 5)\n\
+         h = h.or_insert(\"d\", 2)\n\
+         h\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Out[4]: 0"),
+        "or_insert mutation did not persist: {}",
+        out.stdout
+    );
+    assert!(
+        out.stderr
+            .contains("expected `HashMap<String, i64>`, found `i64`"),
+        "invalid map assignment was not rejected: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains(r#"Out[6]: {"a": 1, "c": 0}"#),
+        "failed assignment corrupted the map: {}",
+        out.stdout
+    );
+}

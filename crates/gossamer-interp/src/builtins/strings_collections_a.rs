@@ -1,13 +1,15 @@
 fn builtin_len(args: &[Value]) -> RuntimeResult<Value> {
     let count = match args.first() {
-        // Byte length, matching the compiled `gos_rt_str_len` shim and
-        // Rust/Go `len(string)`. Codepoint counts live in
-        // `utf8::count_runes` / `unicode::grapheme_count`.
+        // String indexing and length use Unicode scalar positions. Explicit
+        // byte access remains available through `as_bytes`, `bytes`, and
+        // `byte_at`.
         Some(Value::String(s)) => s.len(),
         Some(Value::Array(parts)) => parts.len(),
         Some(Value::Tuple(parts)) => parts.len(),
         Some(Value::IntArray(data)) => data.len(),
         Some(Value::ByteArray(data)) => data.len(),
+        Some(Value::InlineByteArray(data)) => data.len(),
+        Some(Value::ByteVec(data)) => data.len(),
         Some(Value::FloatVec(data)) => data.len(),
         Some(Value::Map(m)) => m.lock().len(),
         Some(Value::IntMap(m)) => m.lock().len(),
@@ -28,6 +30,8 @@ fn builtin_is_empty(args: &[Value]) -> RuntimeResult<Value> {
         Some(Value::Tuple(parts)) => parts.is_empty(),
         Some(Value::IntArray(data)) => data.is_empty(),
         Some(Value::ByteArray(data)) => data.is_empty(),
+        Some(Value::InlineByteArray(data)) => data.is_empty(),
+        Some(Value::ByteVec(data)) => data.is_empty(),
         Some(Value::FloatVec(data)) => data.is_empty(),
         Some(Value::Map(m)) => m.lock().is_empty(),
         Some(Value::IntMap(m)) => m.lock().is_empty(),
@@ -484,8 +488,8 @@ fn builtin_ends_with(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 /// `String::slice(s, a, b) -> Result<String, errors::Error>` - the
-/// non-panicking byte-range slice contract: `a > b` or `b > len`
-/// returns Err; valid ranges return the UTF-8-validated substring.
+/// non-panicking character-range slice contract: `a > b` or `b > len`
+/// returns Err.
 fn builtin_str_slice(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::String(s)) = args.first() else {
         return Ok(slice_err(
@@ -494,8 +498,7 @@ fn builtin_str_slice(args: &[Value]) -> RuntimeResult<Value> {
     };
     let start = args.get(1).and_then(value_to_int).unwrap_or(0);
     let end = args.get(2).and_then(value_to_int).unwrap_or(0);
-    let bytes = s.as_str().as_bytes();
-    let len = bytes.len() as i64;
+    let len = s.len() as i64;
     // Match the compiled `gos_rt_str_slice` bounds policy + message
     // verbatim so `gos run` and `gos build` agree byte-for-byte.
     if start < 0 || end < 0 || start > end || end > len {
@@ -503,12 +506,9 @@ fn builtin_str_slice(args: &[Value]) -> RuntimeResult<Value> {
             "slice: range [{start}, {end}) out of bounds for length {len}"
         )));
     }
-    match std::str::from_utf8(&bytes[start as usize..end as usize]) {
-        Ok(piece) => Ok(ok_variant(Value::String(SmolStr::from(piece)))),
-        Err(_) => Ok(slice_err(format!(
-            "slice: range [{start}, {end}) does not fall on UTF-8 boundaries"
-        ))),
-    }
+    Ok(ok_variant(Value::String(str_substring_inline(
+        s, start, end,
+    ))))
 }
 
 /// Dual entry for bare `slice` reaching method dispatch when the
@@ -624,22 +624,20 @@ fn builtin_vec_slice(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// Clamping byte-range substring shared by the `substring` builtin and the
+/// Clamping character-range substring shared by the `substring` builtin and the
 /// VM's fused `Op::StrSubstring`. Out-of-range bounds clamp and inverted
 /// bounds yield "", mirroring the compiled tier's `gos_rt_str_substring`.
 /// Builds the `SmolStr` directly from the validated slice: substrings within
 /// the inline capacity carry no heap allocation, so materialising an
 /// intermediate owned `String` first would add a redundant heap alloc + free
 /// per call - the dominant cost when slicing many short substrings.
-pub(crate) fn str_substring_inline(s: &str, start: i64, end: i64) -> SmolStr {
-    let bytes = s.as_bytes();
-    let lo = (start.max(0) as usize).min(bytes.len());
-    let hi = (end.max(0) as usize).min(bytes.len()).max(lo);
-    let slice = &bytes[lo..hi];
-    match std::str::from_utf8(slice) {
-        Ok(valid) => SmolStr::from_str(valid),
-        Err(_) => SmolStr::from_string(String::from_utf8_lossy(slice).into_owned()),
-    }
+pub(crate) fn str_substring_inline(s: &SmolStr, start: i64, end: i64) -> SmolStr {
+    let char_len = s.len();
+    let lo = (start.max(0) as usize).min(char_len);
+    let hi = (end.max(0) as usize).min(char_len).max(lo);
+    let lo_byte = s.char_boundary(lo).unwrap_or(s.byte_len());
+    let hi_byte = s.char_boundary(hi).unwrap_or(s.byte_len());
+    SmolStr::from_str(&s.as_str()[lo_byte..hi_byte])
 }
 
 fn builtin_str_substring(args: &[Value]) -> RuntimeResult<Value> {
@@ -652,9 +650,9 @@ fn builtin_str_substring(args: &[Value]) -> RuntimeResult<Value> {
     };
     let end = match args.get(2) {
         Some(Value::Int(n)) => *n,
-        _ => s.as_str().len() as i64,
+        _ => s.len() as i64,
     };
-    Ok(Value::String(str_substring_inline(s.as_str(), start, end)))
+    Ok(Value::String(str_substring_inline(s, start, end)))
 }
 
 /// `String::byte_at(s, i) -> i64` - the UTF-8 byte at index `i`, or 0
@@ -701,7 +699,9 @@ fn builtin_str_find(args: &[Value]) -> RuntimeResult<Value> {
         _ => return Ok(Value::Int(-1)),
     };
     match s.find(needle) {
-        Some(idx) => Ok(Value::Int(i64::try_from(idx).unwrap_or(-1))),
+        Some(idx) => Ok(Value::Int(
+            i64::try_from(s[..idx].chars().count()).unwrap_or(-1),
+        )),
         None => Ok(Value::Int(-1)),
     }
 }

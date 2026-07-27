@@ -980,6 +980,19 @@ struct HeapSmolStr {
     strong: AtomicU32,
     len: u32,
     cap: u32,
+    char_len: u32,
+    char_index: Box<[u32]>,
+}
+
+const SMOL_CHAR_INDEX_STRIDE: usize = 32;
+
+fn smol_char_index(s: &str) -> Box<[u32]> {
+    s.char_indices()
+        .enumerate()
+        .filter_map(|(char_index, (byte_index, _))| {
+            (char_index % SMOL_CHAR_INDEX_STRIDE == 0).then_some(byte_index as u32)
+        })
+        .collect()
 }
 
 impl HeapSmolStr {
@@ -1046,8 +1059,16 @@ impl HeapSmolStr {
                 strong: AtomicU32::new(1),
                 len: len_u32,
                 cap: cap_u32,
+                char_len: 0,
+                char_index: Box::new([]),
             });
             fill(Self::bytes_mut(header));
+            let text = std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                Self::bytes_ptr(header),
+                len,
+            ));
+            (*header).char_len = text.chars().count() as u32;
+            (*header).char_index = smol_char_index(text);
         }
         header
     }
@@ -1094,6 +1115,17 @@ impl HeapSmolStr {
             );
             (*header).len =
                 u32::try_from(len + bytes.len()).expect("SmolStr heap string too large");
+            (*header).char_len = (*header)
+                .char_len
+                .checked_add(
+                    std::str::from_utf8_unchecked(bytes)
+                        .chars()
+                        .count()
+                        .try_into()
+                        .expect("SmolStr heap string too large"),
+                )
+                .expect("SmolStr heap string too large");
+            (*header).char_index = smol_char_index(Self::as_str(header));
         }
     }
 
@@ -1342,14 +1374,64 @@ impl SmolStr {
         self.push_str(ch.encode_utf8(&mut encoded));
     }
 
-    /// Returns the length in bytes (UTF-8 code units).
+    /// Returns the number of Unicode scalar values.
     #[must_use]
     pub fn len(&self) -> usize {
         if self.raw & SMOL_HEAP_TAG == 0 {
-            (self.raw.to_le_bytes()[7]) as usize
+            self.as_str().chars().count()
         } else {
-            self.as_str().len()
+            let ptr = (self.raw & SMOL_PTR_MASK) as *const HeapSmolStr;
+            // SAFETY: a heap-tagged SmolStr always owns a live HeapSmolStr.
+            unsafe { (*ptr).char_len as usize }
         }
+    }
+
+    /// Returns the UTF-8 byte length.
+    #[must_use]
+    pub fn byte_len(&self) -> usize {
+        self.as_str().len()
+    }
+
+    /// Returns the Unicode scalar at `index`.
+    #[must_use]
+    pub fn char_at(&self, index: usize) -> Option<char> {
+        if self.raw & SMOL_HEAP_TAG == 0 {
+            return self.as_str().chars().nth(index);
+        }
+        let ptr = (self.raw & SMOL_PTR_MASK) as *const HeapSmolStr;
+        // SAFETY: a heap-tagged SmolStr always owns a live HeapSmolStr.
+        let header = unsafe { &*ptr };
+        if index >= header.char_len as usize {
+            return None;
+        }
+        let block = index / SMOL_CHAR_INDEX_STRIDE;
+        let block_char = block * SMOL_CHAR_INDEX_STRIDE;
+        let byte = header.char_index[block] as usize;
+        self.as_str()[byte..].chars().nth(index - block_char)
+    }
+
+    /// Maps a Unicode scalar position to its UTF-8 byte boundary.
+    #[must_use]
+    pub fn char_boundary(&self, index: usize) -> Option<usize> {
+        if index > self.len() {
+            return None;
+        }
+        if index == self.len() {
+            return Some(self.byte_len());
+        }
+        if self.raw & SMOL_HEAP_TAG == 0 {
+            return self.as_str().char_indices().nth(index).map(|(i, _)| i);
+        }
+        let ptr = (self.raw & SMOL_PTR_MASK) as *const HeapSmolStr;
+        // SAFETY: a heap-tagged SmolStr always owns a live HeapSmolStr.
+        let header = unsafe { &*ptr };
+        let block = index / SMOL_CHAR_INDEX_STRIDE;
+        let block_char = block * SMOL_CHAR_INDEX_STRIDE;
+        let byte = header.char_index[block] as usize;
+        self.as_str()[byte..]
+            .char_indices()
+            .nth(index - block_char)
+            .map(|(offset, _)| byte + offset)
     }
 
     #[cfg(test)]

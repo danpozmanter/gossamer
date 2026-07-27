@@ -285,6 +285,16 @@ impl IntrinsicContext {
         bytes.push(0xA8);
         bytes.extend_from_slice(text.as_bytes());
         bytes.push(0);
+        let mut index = vec![0u32; text.len() / 32 + 2];
+        index[0] = text.chars().count() as u32;
+        for (char_index, (byte_index, _)) in text.char_indices().enumerate() {
+            if char_index % 32 == 0 {
+                index[1 + char_index / 32] = byte_index as u32;
+            }
+        }
+        for offset in index {
+            bytes.extend_from_slice(&offset.to_le_bytes());
+        }
         let mut description = DataDescription::new();
         description.define(bytes.into_boxed_slice());
         // Align the blob so its base is even: the body pointer the runtime

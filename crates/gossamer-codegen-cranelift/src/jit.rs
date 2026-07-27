@@ -1905,6 +1905,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_str_len"             => rt::gos_rt_str_len,
         "gos_rt_str_with_capacity"   => rt::gos_rt_str_with_capacity,
         "gos_rt_str_byte_at"         => rt::gos_rt_str_byte_at,
+        "gos_rt_str_char_at"         => rt::gos_rt_str_char_at,
         "gos_rt_str_substring"       => rt::gos_rt_str_substring,
         "gos_rt_os_read_dir"         => rt::gos_rt_os_read_dir,
         "gos_rt_str_concat"          => rt::gos_rt_str_concat,
