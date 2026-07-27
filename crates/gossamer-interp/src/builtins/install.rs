@@ -1193,9 +1193,8 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("Vec::sort_by", native("Vec::sort_by", native_sort_by)));
     globals.push(("Vec::reverse", builtin("Vec::reverse", builtin_reverse)));
     globals.push(("Vec::swap", builtin("Vec::swap", builtin_swap)));
-    // 0.7.0 Result-returning Vec free-fn forms + HashMap::pop, matching
-    // the compiled `gos_rt_vec_insert_safe` / `_remove_safe` /
-    // `gos_rt_map_pop_*` surface.
+    // Legacy Vec fallback symbols remain installed for ABI compatibility.
+    // Type-checked calls compile to the in-place Vec operations.
     globals.push((
         "Vec::insert",
         builtin("Vec::insert", builtin_vec_insert_safe),

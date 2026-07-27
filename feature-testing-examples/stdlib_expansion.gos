@@ -53,7 +53,7 @@ fn main() {
     }
 
     // ---- Vec method surface ----
-    let nums: Vec<i64> = [10, 20, 30, 20]
+    let mut nums: Vec<i64> = [10, 20, 30, 20]
     match nums.first() {
         Some(v) => println!("first = {}", v),
         None => println!("first = none"),
@@ -80,15 +80,11 @@ fn main() {
         Err(e) => println!("vec.slice wide: {}", e.message()),
     }
 
-    // ---- Vec::insert / Vec::remove free-fn forms ----
-    match Vec::insert(nums, 1, 99) {
-        Ok(out) => println!("after insert: len={} [0]={} [1]={}", out.len(), out[0], out[1]),
-        Err(e) => println!("insert err: {}", e.message()),
-    }
-    match Vec::remove(nums, 0) {
-        Ok(removed) => println!("removed = {}", removed),
-        Err(e) => println!("remove err: {}", e.message()),
-    }
+    // ---- Qualified in-place Vec::insert / Vec::remove forms ----
+    Vec::insert(&mut nums, 1, 99)
+    println!("after insert: len={} [0]={} [1]={}", nums.len(), nums[0], nums[1])
+    let removed = Vec::remove(&mut nums, 0)
+    println!("removed = {}", removed)
 
     // ---- Vec<String>.contains ----
     let langs: Vec<String> = ["text", "json"]

@@ -261,7 +261,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_vec_contains_str" => (&[ptr_ty, ptr_ty], Some(types::I8)),
         "gos_rt_vec_slice_result" => (&[ptr_ty, types::I64, types::I64], Some(ptr_ty)),
         "gos_rt_vec_insert_safe" => (&[ptr_ty, types::I64, types::I64], Some(ptr_ty)),
-        "gos_rt_vec_remove_at" => (&[ptr_ty, types::I64], None),
+        "gos_rt_vec_remove_at" => (&[ptr_ty, types::I64], Some(types::I64)),
         "gos_rt_vec_remove_safe" => (&[ptr_ty, types::I64], Some(ptr_ty)),
         "gos_rt_vec_clear" => (&[ptr_ty], None),
         "gos_rt_vec_capacity" => (&[ptr_ty], Some(types::I64)),

@@ -1,6 +1,5 @@
-// Method-form Vec insert/remove are invariant operations: invalid indices
-// panic on every tier. Use the qualified `Vec::insert` / `Vec::remove`
-// free functions when recoverable `Result` behavior is wanted.
+// Vec insert/remove are invariant operations in method and qualified form:
+// invalid indices panic on every tier.
 
 fn main() {
     let mut xs = Vec::from([1, 2, 3])

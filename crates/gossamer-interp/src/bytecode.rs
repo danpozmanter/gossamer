@@ -797,12 +797,11 @@ pub enum Op {
         /// Register holding the index to remove.
         index: Reg,
     },
-    /// `dst = Vec::remove(receiver, index)` - the Result-returning free-fn
-    /// form. Removes the element at `index` from the receiver's backing
-    /// storage in place and writes `Ok(element)` (or `Err` on out-of-range)
-    /// into `dst`. Emitted for `Vec::remove(xs, i)` over a bare-local Vec.
+    /// `dst = Vec::remove(&mut receiver, index)` - qualified in-place
+    /// removal. Writes the removed element into `dst` and panics when the
+    /// index is outside `0..len`.
     VecRemoveAt {
-        /// Register receiving `Result<T, errors::Error>`.
+        /// Register receiving the removed element.
         dst: Reg,
         /// Register holding the Vec, mutated in place.
         receiver: Reg,

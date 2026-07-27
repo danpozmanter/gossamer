@@ -412,10 +412,8 @@ const SPECS: &[Spec] = &[
         allow_nonzero: true,
         ..spec("feature-testing-examples/oob_index_aggregate_panic.gos")
     },
-    // Method-form Vec insert/remove are invariant mutators: invalid indices
-    // panic instead of clamping or silently no-oping. The Result-returning
-    // qualified `Vec::insert` / `Vec::remove` APIs remain the non-panicking
-    // access path.
+    // Vec insert/remove are invariant mutators in method and qualified forms:
+    // invalid indices panic instead of clamping or silently no-oping.
     Spec {
         allow_nonzero: true,
         ..spec("feature-testing-examples/vec_method_oob_panic.gos")

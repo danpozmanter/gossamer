@@ -1,8 +1,7 @@
 // Win B collections sweep: Vec / [T] method surface across tiers.
 // push/pop/len/contains/index_of/count_of/first/last/rev/sort/
-// sort_by/slice/swap and the Result-returning qualified
-// Vec::insert / Vec::remove, on representative + edge inputs (empty,
-// single, duplicate, out-of-range). Bit-identical VM vs compiled.
+// sort_by/slice/swap and the qualified in-place Vec::insert / Vec::remove,
+// on representative + edge inputs. Bit-identical VM vs compiled.
 
 use std::collections::Vec
 
@@ -87,25 +86,17 @@ fn main() {
         Err(_) => println!("slice oob err"),
     }
 
-    // Qualified Vec::insert (returns a fresh Vec) / Vec::remove
-    // (in place, returns the removed element). Both Result-returning.
+    // Qualified Vec::insert / Vec::remove mirror the Rust method contract:
+    // both mutate through &mut, insert returns (), and remove returns T.
     let mut iv: Vec<i64> = Vec::new()
     iv.push(1); iv.push(2); iv.push(3)
-    match Vec::insert(iv, 1, 99) {
-        Ok(nv) => { print!("insert "); for v in nv { print!("{} ", v) }; println!("") }
-        Err(e) => println!("insert err {}", e),
-    }
+    Vec::insert(&mut iv, 1, 99)
+    print!("insert "); for v in iv { print!("{} ", v) }; println!("")
     let mut rv: Vec<i64> = Vec::new()
     rv.push(1); rv.push(2); rv.push(3); rv.push(4)
-    match Vec::remove(rv, 0) {
-        Ok(x) => println!("removed {}", x),
-        Err(e) => println!("remove err {}", e),
-    }
+    let removed = Vec::remove(&mut rv, 0)
+    println!("removed {}", removed)
     print!("after remove "); for v in rv { print!("{} ", v) }; println!("")
-    match Vec::remove(rv, 99) {
-        Ok(x) => println!("removed-oob {}", x),
-        Err(_) => println!("remove-oob err"),
-    }
 
     // Vec of struct elements: contains / index_of by value equality.
     let items = [Item { id: 1, tag: "a" }, Item { id: 2, tag: "b" }, Item { id: 3, tag: "c" }]

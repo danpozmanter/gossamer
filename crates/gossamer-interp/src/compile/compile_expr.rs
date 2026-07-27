@@ -2102,6 +2102,9 @@ impl<'tcx> FnBuilder<'tcx> {
             self.tcx.kind(receiver.ty),
             Some(TyKind::Vec(_) | TyKind::Slice(_))
         );
+        if matches!(self.tcx.kind(receiver.ty), Some(TyKind::HashMap { .. })) {
+            return Ok(false);
+        }
         let target_reg = match self.lookup_local(&seg.name) {
             Some(target) if target.kind == RegKind::Value => target.reg,
             _ => return Ok(false),
@@ -2979,6 +2982,41 @@ impl<'tcx> FnBuilder<'tcx> {
         args: &[HirExpr],
         result_ty: Ty,
     ) -> RuntimeResult<Reg> {
+        // Qualified Vec mutators use the same in-place contract as method
+        // calls. Compile the referenced place directly so the legacy
+        // Result-returning builtins cannot leak through this Rust-style API.
+        if let HirExprKind::Path { segments, .. } = &callee.kind
+            && segments.len() >= 2
+            && let Some(method) = segments.last()
+            && let Some(owner) = segments.get(segments.len() - 2)
+            && owner.name == "Vec"
+            && matches!(
+                (method.name.as_str(), args.len()),
+                ("insert", 3) | ("remove", 2)
+            )
+        {
+            let place = peel_ref_wrappers_expr(&args[0]);
+            let receiver = self.compile_expr(place)?;
+            let index = self.compile_expr(&args[1])?;
+            if method.name == "insert" {
+                let value = self.compile_expr(&args[2])?;
+                self.emit(Op::VecInsert {
+                    receiver,
+                    index,
+                    value,
+                });
+                self.compile_place_store(place, receiver)?;
+                return Ok(self.load_unit());
+            }
+            let dst = self.alloc_reg();
+            self.emit(Op::VecRemoveAt {
+                dst,
+                receiver,
+                index,
+            });
+            self.compile_place_store(place, receiver)?;
+            return Ok(dst);
+        }
         // Rust UFCS syntax is semantically the same call as method syntax.
         // Route supported built-in mutators through the method compiler so
         // its receiver writeback and public return contract are identical.
@@ -3000,6 +3038,8 @@ impl<'tcx> FnBuilder<'tcx> {
                     | "sort_by_key"
                     | "reverse"
                     | "swap"
+                    | "insert"
+                    | "remove"
             )
             && let Some((receiver, method_args)) = args.split_first()
         {
@@ -3049,49 +3089,6 @@ impl<'tcx> FnBuilder<'tcx> {
                     let dst = self.alloc_reg();
                     self.emit(Op::BuildStrIntMap { dst_v: dst });
                     return Ok(dst);
-                }
-            }
-        }
-        // `Vec::remove(xs, i)` over a bare-local Vec: mutate the local in
-        // place and return `Ok(element)`, matching the compiled tier's
-        // in-place `gos_rt_vec_remove_safe`. Other receiver shapes keep the
-        // generic builtin (which reads the element without mutating - a
-        // tier divergence the in-place op avoids for the common case).
-        if args.len() == 2
-            && let HirExprKind::Path { segments, .. } = &callee.kind
-        {
-            let segs: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
-            if matches!(
-                segs.as_slice(),
-                ["Vec", "remove"] | ["collections", "Vec", "remove"]
-            ) && let HirExprKind::Path {
-                segments: arg_segs, ..
-            } = &args[0].kind
-                && let [seg] = arg_segs.as_slice()
-            {
-                if let Some(target) = self.lookup_local(&seg.name)
-                    && target.kind == RegKind::Value
-                {
-                    let reg = target.reg;
-                    let is_fixed_array =
-                        matches!(self.tcx.kind(args[0].ty), Some(TyKind::Array { .. }));
-                    let is_vec = !is_fixed_array
-                        && (matches!(
-                            self.tcx.kind(args[0].ty),
-                            Some(TyKind::Vec(_) | TyKind::Slice(_))
-                        ) || self.flat_int_locals.contains(&reg)
-                            || self.flat_float_locals.contains(&reg)
-                            || self.collection_locals.contains(&reg));
-                    if is_vec {
-                        let index = self.compile_expr(&args[1])?;
-                        let dst = self.alloc_reg();
-                        self.emit(Op::VecRemoveAt {
-                            dst,
-                            receiver: reg,
-                            index,
-                        });
-                        return Ok(dst);
-                    }
                 }
             }
         }

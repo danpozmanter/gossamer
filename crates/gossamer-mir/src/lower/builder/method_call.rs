@@ -1954,9 +1954,8 @@ impl<'a> Builder<'a> {
                         _ => Some("gos_rt_map_insert_i64_i64"),
                     },
                 },
-                // Method-form `xs.insert(i, v)` on a Vec mutates in place and
-                // panics on invalid indices. The qualified free function
-                // `Vec::insert` is the Result-returning non-panicking API.
+                // Vec insertion mutates in place and panics on invalid indices
+                // in both method and qualified form.
                 TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => {
                     Some("gos_rt_vec_insert_at")
                 }
@@ -2009,9 +2008,8 @@ impl<'a> Builder<'a> {
                     Some(MapKeyKind::String) => Some("gos_rt_map_remove_str"),
                     _ => Some("gos_rt_map_remove_i64"),
                 },
-                // Method-form `xs.remove(i)` on a Vec mutates in place and
-                // panics on invalid indices. The qualified free function
-                // `Vec::remove` is the Result-returning non-panicking API.
+                // Vec removal mutates in place and panics on invalid indices
+                // in both method and qualified form.
                 TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => {
                     Some("gos_rt_vec_remove_at")
                 }

@@ -1789,52 +1789,44 @@ impl Vm {
                 } => {
                     let idx = match &registers[index as usize] {
                         Value::Int(n) => *n,
-                        _ => -1,
+                        _ => {
+                            return Err(RuntimeError::Type("index must be integer".to_string()));
+                        }
                     };
-                    let valid = match &registers[receiver as usize] {
-                        Value::Array(items) => idx >= 0 && (idx as usize) < items.len(),
-                        Value::IntArray(data) => idx >= 0 && (idx as usize) < data.len(),
-                        Value::FloatVec(data) => idx >= 0 && (idx as usize) < data.len(),
-                        _ => false,
+                    let len = match &registers[receiver as usize] {
+                        Value::Array(items) => items.len() as i64,
+                        Value::IntArray(data) => data.len() as i64,
+                        Value::FloatVec(data) => data.len() as i64,
+                        _ => 0,
                     };
-                    if valid {
-                        crate::stdlib_builtins::iter::note_vec_structural_mutation(
-                            &registers[receiver as usize],
-                        );
+                    if idx < 0 || idx >= len {
+                        return Err(RuntimeError::Panic(format!(
+                            "remove: index {idx} out of bounds for length {len}"
+                        )));
                     }
+                    crate::stdlib_builtins::iter::note_vec_structural_mutation(
+                        &registers[receiver as usize],
+                    );
                     let removed = match &mut registers[receiver as usize] {
                         Value::Array(items) => {
                             let v = Arc::make_mut(items);
-                            if idx >= 0 && (idx as usize) < v.len() {
-                                Some(v.remove(idx as usize))
-                            } else {
-                                None
-                            }
+                            v.remove(idx as usize)
                         }
                         Value::IntArray(data) => {
                             let v = Arc::make_mut(data);
-                            if idx >= 0 && (idx as usize) < v.len() {
-                                Some(Value::Int(v.remove(idx as usize)))
-                            } else {
-                                None
-                            }
+                            Value::Int(v.remove(idx as usize))
                         }
                         Value::FloatVec(data) => {
                             let v = Arc::make_mut(data);
-                            if idx >= 0 && (idx as usize) < v.len() {
-                                Some(Value::Float(v.remove(idx as usize)))
-                            } else {
-                                None
-                            }
+                            Value::Float(v.remove(idx as usize))
                         }
-                        _ => None,
-                    };
-                    registers[dst as usize] = match removed {
-                        Some(elem) => Value::variant("Ok", vec![elem]),
-                        None => {
-                            crate::builtins::slice_err(format!("remove: index {idx} out of bounds"))
+                        _ => {
+                            return Err(RuntimeError::Type(
+                                "remove expects a Vec receiver".to_string(),
+                            ));
                         }
                     };
+                    registers[dst as usize] = removed;
                 }
                 Op::TupleIndex {
                     dst,

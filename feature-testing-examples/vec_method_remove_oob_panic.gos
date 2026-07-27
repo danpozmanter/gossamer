@@ -1,5 +1,4 @@
-// Method-form Vec remove panics on invalid indices. Use qualified
-// `Vec::remove(xs, i)` for recoverable `Result` behavior.
+// Vec remove panics on invalid indices in method and qualified forms.
 
 fn main() {
     let mut xs = Vec::from([1, 2, 3])

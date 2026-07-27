@@ -1113,11 +1113,8 @@ pub unsafe extern "C" fn gos_rt_floatarr_slice_result(
     })
 }
 
-/// `Vec::insert(xs, i, v) -> Result<Vec<T>, errors::Error>`. The
-/// new Vec is returned wrapped in Ok; out-of-range indices return
-/// Err. `value` is the raw 8-byte payload of the element being
-/// inserted (i64 for `Vec<i64>`, `*const c_char` cast to i64 for
-/// `Vec<String>` - matches the rest of the i64-erased Vec ABI).
+/// Legacy internal bounds-checked insert helper retained for ABI compatibility.
+/// Type-checked Gossamer calls use [`gos_rt_vec_insert_at`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_insert_safe(v: *const GosVec, idx: i64, value: i64) -> i128 {
     ffi_entry!(0i128, {
@@ -1155,11 +1152,8 @@ pub unsafe extern "C" fn gos_rt_vec_insert_safe(v: *const GosVec, idx: i64, valu
     })
 }
 
-/// `xs.insert(i, v)` - in-place insert at `idx`, shifting the tail up
-/// one slot. The method form panics on invalid indices; callers wanting
-/// recoverable failure use the `Result`-returning `gos_rt_vec_insert_safe`,
-/// which builds a fresh Vec. `value` is the raw 8-byte payload (i64 /
-/// `*const c_char` cast to i64), as elsewhere in the i64-erased Vec ABI.
+/// In-place insert at `idx`, shifting the tail up one slot and panicking on an
+/// invalid index. `value` is the raw 8-byte payload used by the erased Vec ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_insert_at(v: *mut GosVec, idx: i64, value: i64) {
     ffi_entry!((), {
@@ -1186,8 +1180,8 @@ pub unsafe extern "C" fn gos_rt_vec_insert_at(v: *mut GosVec, idx: i64, value: i
     });
 }
 
-/// `Vec::remove(xs, i) -> Result<T, errors::Error>` - returns the
-/// removed element as Ok or Err on out-of-range.
+/// Legacy internal bounds-checked remove helper retained for ABI compatibility.
+/// Type-checked Gossamer calls use [`gos_rt_vec_remove_at`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *mut GosVec, idx: i64) -> i128 {
     ffi_entry!(0i128, {
@@ -1217,21 +1211,21 @@ pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *mut GosVec, idx: i64) -> i12
     })
 }
 
-/// `xs.remove(i)` - in-place method-form removal. Invalid indices are
-/// invariant violations and panic; use `gos_rt_vec_remove_safe` for
-/// recoverable `Result` behavior.
+/// `xs.remove(i)` / `Vec::remove(&mut xs, i)` - removes and returns the
+/// element. Invalid indices are invariant violations and panic.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_remove_at(v: *mut GosVec, idx: i64) {
-    ffi_entry!((), {
+pub unsafe extern "C" fn gos_rt_vec_remove_at(v: *mut GosVec, idx: i64) -> i64 {
+    ffi_entry!(0, {
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if v.is_null() || idx < 0 || idx >= len {
             let msg = format!("remove: index {idx} out of bounds for length {len}");
             let cs = std::ffi::CString::new(msg).unwrap_or_default();
             unsafe { gos_rt_panic(cs.as_ptr()) };
-            return;
+            return 0;
         }
         let vec = unsafe { &mut *v };
         crate::c_abi::vec::bump_vec_mutation_generation(vec);
+        let removed = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, idx) };
         let stride = vec.elem_bytes as usize;
         if !vec.ptr.is_null() && idx + 1 < len {
             let base = vec.ptr.as_ptr();
@@ -1241,7 +1235,8 @@ pub unsafe extern "C" fn gos_rt_vec_remove_at(v: *mut GosVec, idx: i64) {
             unsafe { std::ptr::copy(src, dst, count) };
         }
         vec.len = len - 1;
-    });
+        removed
+    })
 }
 
 /// `xs.pop() -> Option<T>` - removes the last element and returns it

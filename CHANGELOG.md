@@ -16,9 +16,10 @@
 - Persist `String`, vector, map, set, and deque mutations across REPL inputs,
   with collection-specific mutability, arity, argument, and return checks.
 - Align collection methods with Rust where supported, including equivalent
-  method and type-checked qualified collection calls, unit-returning mutators,
-  boolean `HashSet::insert` and `HashSet::remove` results, and in-place growth
-  for uniquely owned `String` and `Vec` storage.
+  method and type-checked qualified collection calls, unit-returning inserts,
+  element-returning `Vec::remove`, boolean `HashSet::insert` and
+  `HashSet::remove` results, and in-place growth for uniquely owned `String`
+  and `Vec` storage.
 
 ## 0.34.3 - Intcode native parity
 

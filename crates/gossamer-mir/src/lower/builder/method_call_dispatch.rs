@@ -650,8 +650,8 @@ impl<'a> Builder<'a> {
                     substs,
                 })
             }
-            // In-place Vec mutators return nothing.
-            "gos_rt_vec_insert_at" | "gos_rt_vec_remove_at" => self.tcx.unit(),
+            "gos_rt_vec_insert_at" => self.tcx.unit(),
+            "gos_rt_vec_remove_at" => self.vec_receiver_elem_ty(receiver_ty),
             // `rev()` / `take(n)` / `step_by(s)` copy the receiver -
             // preserve its element type so byte-packed (`Vec<u8>`)
             // receivers keep their stride-1 indexing downstream.

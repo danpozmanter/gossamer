@@ -2948,29 +2948,13 @@ impl<'a> Builder<'a> {
         args: &[HirExpr],
     ) -> Option<(&'static str, gossamer_types::Ty)> {
         Some(match joined {
-            // 0.7.0 - `Vec::insert(xs, i, v)` / `Vec::remove(xs, i)` /
-            // `Vec::slice(xs, a, b)` - free-fn forms of the same
-            // Result-returning safe Vec helpers exposed as methods.
-            "Vec::insert" if args.len() == 3 => {
-                let elem = self.vec_receiver_elem_ty(args[0].ty);
-                let v = self.tcx.intern(gossamer_types::TyKind::Vec(elem));
-                let e = self.tcx.dyn_error_ty();
-                let substs = gossamer_types::Substs::from_types([v, e]);
-                let result_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
-                    def: gossamer_resolve::DefId::local(u32::MAX),
-                    substs,
-                });
-                ("gos_rt_vec_insert_safe", result_ty)
-            }
+            // Qualified Vec mutators use the same Rust-style in-place
+            // contract as method calls. `Vec::slice` remains the
+            // bounds-checked Result-returning operation.
+            "Vec::insert" if args.len() == 3 => ("gos_rt_vec_insert_at", self.tcx.unit()),
             "Vec::remove" if args.len() == 2 => {
                 let elem = self.vec_receiver_elem_ty(args[0].ty);
-                let e = self.tcx.dyn_error_ty();
-                let substs = gossamer_types::Substs::from_types([elem, e]);
-                let result_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
-                    def: gossamer_resolve::DefId::local(u32::MAX),
-                    substs,
-                });
-                ("gos_rt_vec_remove_safe", result_ty)
+                ("gos_rt_vec_remove_at", elem)
             }
             "Vec::slice" if args.len() == 3 => {
                 // The slice preserves the receiver's element type: a

@@ -362,9 +362,7 @@ fn builtin_count_of(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Int(0))
 }
 
-/// `Vec::insert(xs, idx, v) -> Result<[T], errors::Error>` - the
-/// non-mutating, bounds-checked insert. Mirrors the compiled
-/// `gos_rt_vec_insert_safe` message + policy.
+/// Legacy internal bounds-checked insert helper.
 fn builtin_vec_insert_safe(args: &[Value]) -> RuntimeResult<Value> {
     let idx = args.get(1).and_then(value_to_int).unwrap_or(0);
     let Some(mut items) = args.first().and_then(array_as_values) else {
@@ -380,9 +378,7 @@ fn builtin_vec_insert_safe(args: &[Value]) -> RuntimeResult<Value> {
     Ok(ok_variant(Value::Array(Arc::new(items))))
 }
 
-/// `Vec::remove(xs, idx) -> Result<T, errors::Error>` - bounds-checked
-/// remove returning the removed element. Mirrors the compiled
-/// `gos_rt_vec_remove_safe`.
+/// Legacy internal bounds-checked remove helper.
 fn builtin_vec_remove_safe(args: &[Value]) -> RuntimeResult<Value> {
     let idx = args.get(1).and_then(value_to_int).unwrap_or(0);
     let Some(mut items) = args.first().and_then(array_as_values) else {
