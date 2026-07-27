@@ -1959,12 +1959,14 @@ impl<'tcx> FnBuilder<'tcx> {
         // array / vec / slice the index-walk below can drive - a user
         // `impl Iterator` (Adt receiver) falls through to `None` so the
         // stateful `.next()` desugar keeps its own handling.
-        let (vec_expr, is_enumerate) = match &next_recv.kind {
+        let (vec_expr, is_enumerate, write_back_elem) = match &next_recv.kind {
             HirExprKind::MethodCall {
                 receiver: chain_recv,
                 name: chain_name,
                 args: chain_args,
-            } if chain_name.name == "iter" && chain_args.is_empty() => (chain_recv.as_ref(), false),
+            } if chain_name.name == "iter" && chain_args.is_empty() => {
+                (chain_recv.as_ref(), false, false)
+            }
             HirExprKind::MethodCall {
                 receiver: enum_recv,
                 name: enum_name,
@@ -1981,8 +1983,16 @@ impl<'tcx> FnBuilder<'tcx> {
                 if chain_name.name != "iter" || !chain_args.is_empty() {
                     return Ok(None);
                 }
-                (chain_recv.as_ref(), true)
+                (chain_recv.as_ref(), true, false)
             }
+            HirExprKind::Unary {
+                op: HirUnaryOp::RefMut,
+                operand,
+            } if self.receiver_is_collection(operand) => (operand.as_ref(), false, true),
+            HirExprKind::Unary {
+                op: HirUnaryOp::RefMut,
+                ..
+            } => return Ok(None),
             // Any other inline `for`-desugar receiver: a plain collection
             // (`for x in xs`), a method-result collection (`for (k, v) in
             // map.iter()`, `map.keys()`, `text.chars()`,
@@ -1994,17 +2004,7 @@ impl<'tcx> FnBuilder<'tcx> {
             // excluded - its `.next()` receiver is a `&mut __for_iter`
             // borrow, driven by the generic loop emitter's `&mut self`
             // write-back instead - so it falls through to `compile_loop`.
-            _ if !matches!(
-                &next_recv.kind,
-                HirExprKind::Unary {
-                    op: HirUnaryOp::RefMut,
-                    ..
-                }
-            ) =>
-            {
-                (next_recv.as_ref(), false)
-            }
-            _ => return Ok(None),
+            _ => (next_recv.as_ref(), false, false),
         };
 
         let some_arm = &arms[0];
@@ -2214,6 +2214,14 @@ impl<'tcx> FnBuilder<'tcx> {
             label: self.pending_loop_label.take(),
         });
         self.compile_loop_body(&some_arm.body)?;
+        if write_back_elem {
+            self.emit(Op::IndexSet {
+                base: vec_reg,
+                index: idx_v,
+                value: elem_reg,
+            });
+            self.compile_place_store(vec_expr, vec_reg)?;
+        }
         // `continue` jumps here so the counter still advances before
         // the bound is re-tested (routing it to `header` would re-check
         // without incrementing and livelock). The fused op's back-edge

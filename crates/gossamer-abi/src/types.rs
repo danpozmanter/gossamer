@@ -185,6 +185,7 @@ const PURE_ARGMEM_READ: &[&str] = &[
     "gos_rt_vec_get_i64",
     "gos_rt_vec_get_i64_unchecked",
     "gos_rt_vec_get_i128",
+    "gos_rt_vec_get_opt",
     "gos_rt_vec_get_ptr",
     "gos_rt_vec_len",
     "gos_rt_arr_len",

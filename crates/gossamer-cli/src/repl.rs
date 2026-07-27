@@ -293,6 +293,13 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
     },
     CoreMethodHelp {
         owner: "Vec",
+        name: "clone",
+        kind: "method",
+        signature: "fn clone<T>(self: Vec<T>) -> Vec<T>",
+        doc: "Returns a copy of the vector.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
         name: "push",
         kind: "method",
         signature: "fn push<T>(self: &mut Vec<T>, value: T) -> ()",
@@ -328,10 +335,52 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
     },
     CoreMethodHelp {
         owner: "Vec",
+        name: "extend",
+        kind: "method",
+        signature: "fn extend<T>(self: &mut Vec<T>, values: Vec<T>) -> ()",
+        doc: "Appends all values from another vector.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "extend_from_slice",
+        kind: "method",
+        signature: "fn extend_from_slice<T>(self: &mut Vec<T>, values: Vec<T>) -> ()",
+        doc: "Appends all values from another vector.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "truncate",
+        kind: "method",
+        signature: "fn truncate<T>(self: &mut Vec<T>, len: i64) -> ()",
+        doc: "Shortens the vector to at most len values.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "reserve",
+        kind: "method",
+        signature: "fn reserve<T>(self: &mut Vec<T>, capacity: i64) -> ()",
+        doc: "Ensures at least the requested total capacity.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "reserve_exact",
+        kind: "method",
+        signature: "fn reserve_exact<T>(self: &mut Vec<T>, capacity: i64) -> ()",
+        doc: "Ensures at least the requested total capacity without extra growth.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
         name: "len",
         kind: "method",
         signature: "fn len<T>(self: Vec<T>) -> i64",
         doc: "Returns the number of values.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "capacity",
+        kind: "method",
+        signature: "fn capacity<T>(self: Vec<T>) -> i64",
+        doc: "Returns the current vector capacity.",
     },
     CoreMethodHelp {
         owner: "Vec",
@@ -363,6 +412,13 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
     },
     CoreMethodHelp {
         owner: "Vec",
+        name: "get",
+        kind: "method",
+        signature: "fn get<T>(self: Vec<T>, index: i64) -> Option<T>",
+        doc: "Returns the value at an index when present.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
         name: "contains",
         kind: "method",
         signature: "fn contains<T>(self: Vec<T>, value: T) -> bool",
@@ -372,8 +428,8 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "Vec",
         name: "index_of",
         kind: "method",
-        signature: "fn index_of<T>(self: Vec<T>, value: T) -> i64",
-        doc: "Returns the first matching index or -1.",
+        signature: "fn index_of<T>(self: Vec<T>, value: T) -> Option<i64>",
+        doc: "Returns the first matching index when present.",
     },
     CoreMethodHelp {
         owner: "Vec",
@@ -419,6 +475,90 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
     },
     CoreMethodHelp {
         owner: "Vec",
+        name: "collect",
+        kind: "method",
+        signature: "fn collect<T>(self: Vec<T>) -> Vec<T>",
+        doc: "Materializes the sequence as a vector.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "to_vec",
+        kind: "method",
+        signature: "fn to_vec<T>(self: Vec<T>) -> Vec<T>",
+        doc: "Materializes the sequence as a vector.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "dedup",
+        kind: "method",
+        signature: "fn dedup<T>(self: Vec<T>) -> Vec<T>",
+        doc: "Removes adjacent duplicate values.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "take",
+        kind: "method",
+        signature: "fn take<T>(self: Vec<T>, n: i64) -> Vec<T>",
+        doc: "Returns the first n values.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "skip",
+        kind: "method",
+        signature: "fn skip<T>(self: Vec<T>, n: i64) -> Vec<T>",
+        doc: "Drops the first n values.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "step_by",
+        kind: "method",
+        signature: "fn step_by<T>(self: Vec<T>, step: i64) -> Vec<T>",
+        doc: "Returns every nth value.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "chain",
+        kind: "method",
+        signature: "fn chain<T>(self: Vec<T>, other: Vec<T>) -> Vec<T>",
+        doc: "Concatenates this sequence with another sequence.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "zip",
+        kind: "method",
+        signature: "fn zip<T, U>(self: Vec<T>, other: Vec<U>) -> Vec<(T, U)>",
+        doc: "Pairs values with another sequence.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "windows",
+        kind: "method",
+        signature: "fn windows<T>(self: Vec<T>, size: i64) -> Vec<Vec<T>>",
+        doc: "Returns overlapping fixed-size windows.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "chunks",
+        kind: "method",
+        signature: "fn chunks<T>(self: Vec<T>, size: i64) -> Vec<Vec<T>>",
+        doc: "Groups values into fixed-size chunks.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "pairwise",
+        kind: "method",
+        signature: "fn pairwise<T>(self: Vec<T>) -> Vec<(T, T)>",
+        doc: "Returns adjacent value pairs.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "flatten",
+        kind: "method",
+        signature: "fn flatten<T>(self: Vec<Vec<T>>) -> Vec<T>",
+        doc: "Flattens one level of nested vectors.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
         name: "swap",
         kind: "method",
         signature: "fn swap<T>(self: &mut Vec<T>, a: i64, b: i64) -> Result<(), errors::Error>",
@@ -454,6 +594,13 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
     },
     CoreMethodHelp {
         owner: "Vec",
+        name: "for_each",
+        kind: "method",
+        signature: "fn for_each<T>(self: Vec<T>, f: fn(T) -> ()) -> ()",
+        doc: "Runs a closure for each value.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
         name: "any",
         kind: "method",
         signature: "fn any<T>(self: Vec<T>, f: fn(T) -> bool) -> bool",
@@ -482,6 +629,20 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
     },
     CoreMethodHelp {
         owner: "Vec",
+        name: "count",
+        kind: "method",
+        signature: "fn count<T>(self: Vec<T>) -> i64",
+        doc: "Counts values.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "enumerate",
+        kind: "method",
+        signature: "fn enumerate<T>(self: Vec<T>) -> Vec<(i64, T)>",
+        doc: "Pairs each value with its index.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
         name: "sum",
         kind: "method",
         signature: "fn sum<T>(self: Vec<T>) -> T",
@@ -500,6 +661,20 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         kind: "method",
         signature: "fn max<T>(self: Vec<T>) -> Option<T>",
         doc: "Returns the maximum value when present.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "min_by_key",
+        kind: "method",
+        signature: "fn min_by_key<T, K>(self: Vec<T>, f: fn(T) -> K) -> Option<T>",
+        doc: "Returns the minimum value by derived key.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "max_by_key",
+        kind: "method",
+        signature: "fn max_by_key<T, K>(self: Vec<T>, f: fn(T) -> K) -> Option<T>",
+        doc: "Returns the maximum value by derived key.",
     },
     CoreMethodHelp {
         owner: "HashMap",
@@ -2032,11 +2207,14 @@ fn item_kind_label(kind: StdItemKind) -> &'static str {
     }
 }
 
-/// True for an assignment or a built-in mutating collection method call.
+/// True for assignment, built-in mutating collection calls, or loop forms that
+/// can mutate through a mutable reference.
 /// Type checking remains authoritative for receiver mutability and whether
 /// the method exists. This parser-only classification only controls replay.
 fn input_mutates_binding(input: &str) -> bool {
-    use gossamer_ast::{ExprKind, ItemKind, StmtKind};
+    use gossamer_ast::common::UnaryOp;
+    use gossamer_ast::expr::SelectOp;
+    use gossamer_ast::{Expr, ExprKind, ItemKind, Stmt, StmtKind};
     let source = format!("fn __irepl_classify() {{ {input} }}\n");
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file("irepl-classify".to_string(), source.clone());
@@ -2063,20 +2241,210 @@ fn input_mutates_binding(input: &str) -> bool {
         },
         None => None,
     });
-    match target.map(|expr| &expr.kind) {
-        Some(ExprKind::Assign { .. }) => true,
-        Some(ExprKind::MethodCall { name, .. }) => {
-            gossamer_types::is_mutating_method_name(&name.name)
+    fn stmt_mutates_binding(stmt: &Stmt) -> bool {
+        match &stmt.kind {
+            StmtKind::Let { init, .. } => init.as_deref().is_some_and(expr_mutates_binding),
+            StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
+                expr_mutates_binding(expr)
+            }
+            StmtKind::Item(_) => false,
         }
-        Some(ExprKind::Call { callee, .. }) => match &callee.kind {
-            ExprKind::Path(path) => path
-                .segments
-                .last()
-                .is_some_and(|segment| gossamer_types::is_mutating_method_name(&segment.name.name)),
-            _ => false,
-        },
-        _ => false,
     }
+
+    fn select_op_contains_ref_mut(op: &SelectOp) -> bool {
+        match op {
+            SelectOp::Recv { channel, .. } => expr_contains_ref_mut(channel),
+            SelectOp::Send { channel, value } => {
+                expr_contains_ref_mut(channel) || expr_contains_ref_mut(value)
+            }
+            SelectOp::Default => false,
+        }
+    }
+
+    fn expr_contains_ref_mut(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Unary {
+                op: UnaryOp::RefMut,
+                ..
+            } => true,
+            ExprKind::Call { callee, args } => {
+                expr_contains_ref_mut(callee) || args.iter().any(expr_contains_ref_mut)
+            }
+            ExprKind::MethodCall { receiver, args, .. } => {
+                expr_contains_ref_mut(receiver) || args.iter().any(expr_contains_ref_mut)
+            }
+            ExprKind::FieldAccess { receiver, .. } => expr_contains_ref_mut(receiver),
+            ExprKind::Index { base, index } => {
+                expr_contains_ref_mut(base) || expr_contains_ref_mut(index)
+            }
+            ExprKind::Unary { operand, .. } => expr_contains_ref_mut(operand),
+            ExprKind::Binary { lhs, rhs, .. } => {
+                expr_contains_ref_mut(lhs) || expr_contains_ref_mut(rhs)
+            }
+            ExprKind::Assign { place, value, .. } => {
+                expr_contains_ref_mut(place) || expr_contains_ref_mut(value)
+            }
+            ExprKind::Cast { value, .. } | ExprKind::Try(value) | ExprKind::Go(value) => {
+                expr_contains_ref_mut(value)
+            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                expr_contains_ref_mut(condition)
+                    || expr_contains_ref_mut(then_branch)
+                    || else_branch.as_deref().is_some_and(expr_contains_ref_mut)
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                expr_contains_ref_mut(scrutinee)
+                    || arms.iter().any(|arm| {
+                        arm.guard.as_ref().is_some_and(expr_contains_ref_mut)
+                            || expr_contains_ref_mut(&arm.body)
+                    })
+            }
+            ExprKind::Loop { body, .. } => expr_contains_ref_mut(body),
+            ExprKind::While {
+                condition, body, ..
+            } => expr_contains_ref_mut(condition) || expr_contains_ref_mut(body),
+            ExprKind::For { iter, body, .. } => {
+                expr_contains_ref_mut(iter) || expr_contains_ref_mut(body)
+            }
+            ExprKind::Block(block) | ExprKind::Unsafe(block) => {
+                block.stmts.iter().any(stmt_contains_ref_mut)
+                    || block.tail.as_deref().is_some_and(expr_contains_ref_mut)
+            }
+            ExprKind::Closure { body, .. } => expr_contains_ref_mut(body),
+            ExprKind::Return(value) => value.as_deref().is_some_and(expr_contains_ref_mut),
+            ExprKind::Break { value, .. } => value.as_deref().is_some_and(expr_contains_ref_mut),
+            ExprKind::Tuple(elems) => elems.iter().any(expr_contains_ref_mut),
+            ExprKind::Struct { fields, base, .. } => {
+                fields
+                    .iter()
+                    .any(|field| field.value.as_ref().is_some_and(expr_contains_ref_mut))
+                    || base.as_deref().is_some_and(expr_contains_ref_mut)
+            }
+            ExprKind::Array(array) => match array {
+                gossamer_ast::expr::ArrayExpr::List(elems) => {
+                    elems.iter().any(expr_contains_ref_mut)
+                }
+                gossamer_ast::expr::ArrayExpr::Repeat { value, count } => {
+                    expr_contains_ref_mut(value) || expr_contains_ref_mut(count)
+                }
+            },
+            ExprKind::Range { start, end, .. } => {
+                start.as_deref().is_some_and(expr_contains_ref_mut)
+                    || end.as_deref().is_some_and(expr_contains_ref_mut)
+            }
+            ExprKind::Select(arms) => arms
+                .iter()
+                .any(|arm| select_op_contains_ref_mut(&arm.op) || expr_contains_ref_mut(&arm.body)),
+            ExprKind::MacroCall(_)
+            | ExprKind::Literal(_)
+            | ExprKind::Path(_)
+            | ExprKind::Continue { .. }
+            | ExprKind::Error => false,
+        }
+    }
+
+    fn stmt_contains_ref_mut(stmt: &Stmt) -> bool {
+        match &stmt.kind {
+            StmtKind::Let { init, .. } => init.as_deref().is_some_and(expr_contains_ref_mut),
+            StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
+                expr_contains_ref_mut(expr)
+            }
+            StmtKind::Item(_) => false,
+        }
+    }
+
+    fn expr_mutates_binding(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Assign { .. } => true,
+            ExprKind::MethodCall {
+                receiver,
+                name,
+                args,
+                ..
+            } => {
+                gossamer_types::is_mutating_method_name(&name.name)
+                    || expr_mutates_binding(receiver)
+                    || args.iter().any(expr_mutates_binding)
+            }
+            ExprKind::Call { callee, args } => {
+                matches!(&callee.kind, ExprKind::Path(path) if path.segments.last().is_some_and(|segment| gossamer_types::is_mutating_method_name(&segment.name.name)))
+                    || expr_mutates_binding(callee)
+                    || args.iter().any(expr_mutates_binding)
+            }
+            ExprKind::For { iter, body, .. } => {
+                expr_contains_ref_mut(iter) || expr_mutates_binding(body)
+            }
+            ExprKind::Block(block) | ExprKind::Unsafe(block) => {
+                block.stmts.iter().any(stmt_mutates_binding)
+                    || block.tail.as_deref().is_some_and(expr_mutates_binding)
+            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                expr_mutates_binding(condition)
+                    || expr_mutates_binding(then_branch)
+                    || else_branch.as_deref().is_some_and(expr_mutates_binding)
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                expr_mutates_binding(scrutinee)
+                    || arms.iter().any(|arm| {
+                        arm.guard.as_ref().is_some_and(expr_mutates_binding)
+                            || expr_mutates_binding(&arm.body)
+                    })
+            }
+            ExprKind::Loop { body, .. } => expr_mutates_binding(body),
+            ExprKind::While {
+                condition, body, ..
+            } => expr_mutates_binding(condition) || expr_mutates_binding(body),
+            ExprKind::FieldAccess { receiver, .. } => expr_mutates_binding(receiver),
+            ExprKind::Index { base, index } => {
+                expr_mutates_binding(base) || expr_mutates_binding(index)
+            }
+            ExprKind::Unary { operand, .. } => expr_mutates_binding(operand),
+            ExprKind::Binary { lhs, rhs, .. } => {
+                expr_mutates_binding(lhs) || expr_mutates_binding(rhs)
+            }
+            ExprKind::Cast { value, .. } | ExprKind::Try(value) | ExprKind::Go(value) => {
+                expr_mutates_binding(value)
+            }
+            ExprKind::Closure { body, .. } => expr_mutates_binding(body),
+            ExprKind::Return(value) => value.as_deref().is_some_and(expr_mutates_binding),
+            ExprKind::Break { value, .. } => value.as_deref().is_some_and(expr_mutates_binding),
+            ExprKind::Tuple(elems) => elems.iter().any(expr_mutates_binding),
+            ExprKind::Struct { fields, base, .. } => {
+                fields
+                    .iter()
+                    .any(|field| field.value.as_ref().is_some_and(expr_mutates_binding))
+                    || base.as_deref().is_some_and(expr_mutates_binding)
+            }
+            ExprKind::Array(array) => match array {
+                gossamer_ast::expr::ArrayExpr::List(elems) => {
+                    elems.iter().any(expr_mutates_binding)
+                }
+                gossamer_ast::expr::ArrayExpr::Repeat { value, count } => {
+                    expr_mutates_binding(value) || expr_mutates_binding(count)
+                }
+            },
+            ExprKind::Range { start, end, .. } => {
+                start.as_deref().is_some_and(expr_mutates_binding)
+                    || end.as_deref().is_some_and(expr_mutates_binding)
+            }
+            ExprKind::Select(arms) => arms.iter().any(|arm| expr_mutates_binding(&arm.body)),
+            ExprKind::Literal(_)
+            | ExprKind::Path(_)
+            | ExprKind::Continue { .. }
+            | ExprKind::MacroCall(_)
+            | ExprKind::Error => false,
+        }
+    }
+
+    target.is_some_and(expr_mutates_binding)
 }
 
 /// Validates that the accumulated declarations parse, resolve, and
@@ -2307,6 +2675,10 @@ mod tests {
         for query in [
             "String::parse",
             "Vec::push",
+            "Vec::get",
+            "Vec::capacity",
+            "Vec::reserve",
+            "Vec::truncate",
             "HashMap::insert",
             "BTreeMap::insert",
             "HashSet::union",
@@ -2319,5 +2691,77 @@ mod tests {
                 "missing REPL metadata for {query}"
             );
         }
+    }
+
+    #[test]
+    fn repl_metadata_covers_typechecked_vec_method_surface() {
+        let checked_vec_methods = [
+            "clone",
+            "push",
+            "pop",
+            "insert",
+            "remove",
+            "clear",
+            "extend",
+            "extend_from_slice",
+            "truncate",
+            "reserve",
+            "reserve_exact",
+            "capacity",
+            "len",
+            "is_empty",
+            "slice",
+            "first",
+            "last",
+            "get",
+            "rev",
+            "collect",
+            "to_vec",
+            "dedup",
+            "take",
+            "skip",
+            "step_by",
+            "chain",
+            "zip",
+            "windows",
+            "chunks",
+            "pairwise",
+            "flatten",
+            "join",
+            "contains",
+            "index_of",
+            "count_of",
+            "sort",
+            "sort_by",
+            "sort_by_key",
+            "reverse",
+            "swap",
+            "map",
+            "filter",
+            "fold",
+            "for_each",
+            "any",
+            "all",
+            "find",
+            "position",
+            "count",
+            "enumerate",
+            "sum",
+            "min",
+            "max",
+            "min_by_key",
+            "max_by_key",
+        ];
+        let mut missing = Vec::new();
+        for name in checked_vec_methods {
+            let query = format!("Vec::{name}");
+            if matching_core_methods(&query).is_empty() {
+                missing.push(query);
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "missing REPL metadata for typechecked Vec methods: {missing:?}"
+        );
     }
 }

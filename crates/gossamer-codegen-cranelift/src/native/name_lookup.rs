@@ -207,6 +207,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_vec_first" => Some("gos_rt_vec_first"),
         "gos_rt_vec_pop_opt" => Some("gos_rt_vec_pop_opt"),
         "gos_rt_vec_last" => Some("gos_rt_vec_last"),
+        "gos_rt_vec_get_opt" => Some("gos_rt_vec_get_opt"),
         "gos_rt_vec_reversed" => Some("gos_rt_vec_reversed"),
         "gos_rt_vec_index_of_i64" => Some("gos_rt_vec_index_of_i64"),
         "gos_rt_vec_index_of_str" => Some("gos_rt_vec_index_of_str"),

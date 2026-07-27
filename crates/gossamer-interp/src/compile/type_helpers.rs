@@ -123,14 +123,14 @@ impl<'tcx> FnBuilder<'tcx> {
     }
 
     /// `true` when `ty` (through `&` / `&mut` layers) is an array, vec,
-    /// or slice - a collection the for-loop fast path can drive by index
-    /// via `len()` + `IndexGet`. User `impl Iterator` types (`Adt`) are
-    /// excluded so their stateful `next()` keeps its own desugar.
+    /// slice, or tuple - a collection the for-loop fast path can drive by
+    /// index via `len()` + `IndexGet`. User `impl Iterator` types (`Adt`)
+    /// are excluded so their stateful `next()` keeps its own desugar.
     pub(crate) fn is_indexable_collection_ty(&self, ty: gossamer_types::Ty) -> bool {
         let ty = self.unwrap_ref(ty);
         matches!(
             self.tcx.kind(ty),
-            Some(TyKind::Array { .. } | TyKind::Vec(_) | TyKind::Slice(_))
+            Some(TyKind::Array { .. } | TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Tuple(_))
         )
     }
 
@@ -293,7 +293,7 @@ impl<'tcx> FnBuilder<'tcx> {
         false
     }
 
-    /// Returns the element type of an array / vec / slice,
+    /// Returns the element type of an array / vec / slice / tuple,
     /// peeling reference layers first.
     pub(crate) fn array_elem_ty(&self, ty: gossamer_types::Ty) -> Option<gossamer_types::Ty> {
         let ty = self.unwrap_ref(ty);
@@ -301,6 +301,7 @@ impl<'tcx> FnBuilder<'tcx> {
             Some(TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem)) => {
                 Some(*elem)
             }
+            Some(TyKind::Tuple(elems)) => elems.first().copied(),
             _ => None,
         }
     }

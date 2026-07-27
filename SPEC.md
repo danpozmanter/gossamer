@@ -491,8 +491,8 @@ retained for readability and forward compatibility.
 ### 3.6 Structs
 
 ```
-StructDecl = [ "pub" ] "struct" Ident [ Generics ] StructBody [ WhereClause ]
-StructBody = "{" [ FieldList ] "}"
+StructDecl = [ "pub" ] "struct" Ident [ Generics ] [ StructBody ] [ WhereClause ]
+StructBody = "{" [ FieldList ] "}" | "(" [ TypeList ] ")" | ";"
 FieldList  = Field { "," Field } [ "," ]
 Field      = [ "pub" ] Ident ":" Type
 ```
@@ -507,21 +507,21 @@ Example:
 ```
 pub struct Point { pub x: f64, pub y: f64 }
 struct Wrapper { first: i32, second: i32 }
-struct Marker {}
+struct Marker
+struct Empty {}
+struct EmptyTuple()
 ```
 
-Structs always declare named fields in braces and construct values with
-declaration-order arguments: `Point(1.0, 2.0)`, `Wrapper(1, 2)`, and
-`Marker()`. Tuple and unit struct declarations are rejected. Legacy braced
-construction remains accepted during the migration but is not the canonical
-constructor syntax.
+Struct declarations follow Rust's three shapes. A missing body declares a unit
+struct, braces declare a named-field struct, and parentheses declare a tuple
+struct. Empty named structs use `struct Empty {}` and empty tuple structs use
+`struct EmptyTuple()`.
 
 **Functional record update.** A struct literal may spread a base value
 with `..base` and override individual fields:
 
 ```
-Struct construction always uses declaration-order arguments: `Point(10.0,
-p1.y)`. Field-update literals are not part of the language.
+Struct construction uses braced literals: `Point { x: 10.0, y: p1.y }`.
 ```
 
 Explicit fields win over the base for the same name; exactly one `..base`

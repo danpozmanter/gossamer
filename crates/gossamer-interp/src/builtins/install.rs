@@ -1100,6 +1100,9 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
         builtin("extend_from_slice", builtin_extend),
     ));
     globals.push(("truncate", builtin("truncate", builtin_truncate)));
+    globals.push(("reserve", builtin("reserve", builtin_vec_reserve)));
+    globals.push(("reserve_exact", builtin("reserve_exact", builtin_vec_reserve_exact)));
+    globals.push(("capacity", builtin("capacity", builtin_vec_capacity)));
     globals.push(("sort", builtin("sort", builtin_sort)));
     globals.push(("sort_by", native("sort_by", native_sort_by)));
     globals.push(("reverse", builtin("reverse", builtin_reverse)));
@@ -1176,6 +1179,8 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("Vec::first", builtin("Vec::first", builtin_first)));
     globals.push(("last", builtin("last", builtin_last)));
     globals.push(("Vec::last", builtin("Vec::last", builtin_last)));
+    globals.push(("get", builtin("get", builtin_get)));
+    globals.push(("Vec::get", builtin("Vec::get", builtin_get)));
     globals.push(("rev", builtin("rev", builtin_reversed)));
     globals.push(("Vec::rev", builtin("Vec::rev", builtin_reversed)));
     globals.push(("index_of", builtin("index_of", builtin_index_of)));

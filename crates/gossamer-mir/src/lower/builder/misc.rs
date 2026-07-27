@@ -423,8 +423,20 @@ impl<'a> Builder<'a> {
         body: &HirExpr,
         span: Span,
     ) -> Option<Local> {
+        let yields_mut_refs = matches!(
+            self.tcx.kind_of(iter_expr.ty),
+            gossamer_types::TyKind::Ref {
+                mutability: gossamer_types::Mutbl::Mut,
+                inner,
+            } if matches!(
+                self.tcx.kind_of(*inner),
+                gossamer_types::TyKind::Vec(_)
+                    | gossamer_types::TyKind::Slice(_)
+                    | gossamer_types::TyKind::Array { .. }
+            )
+        );
         let iter_local = self.lower_expr(iter_expr)?;
-        self.lower_for_vec_over_local(iter_local, elem_ty, loop_pat, body, span)
+        self.lower_for_vec_over_local(iter_local, elem_ty, loop_pat, body, span, yields_mut_refs)
     }
 
     /// Iterates an already-lowered `GosVec` local (`iter_local`) by index,
@@ -438,6 +450,7 @@ impl<'a> Builder<'a> {
         loop_pat: &HirPat,
         body: &HirExpr,
         span: Span,
+        yields_mut_refs: bool,
     ) -> Option<Local> {
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
 
@@ -493,7 +506,25 @@ impl<'a> Builder<'a> {
         // directly into the loop var - not via `gos_rt_vec_get_ptr` (which
         // would bind the slot address and let `match` decode garbage) nor the
         // 8-byte `gos_load` (which drops the payload).
-        let elem_local = if matches!(
+        let elem_local = if yields_mut_refs {
+            let ref_ty = self.tcx.intern(gossamer_types::TyKind::Ref {
+                mutability: gossamer_types::Mutbl::Mut,
+                inner: elem_ty,
+            });
+            let ptr_local = self.fresh(ref_ty);
+            let after_ptr = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_ptr".to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(iter_local)),
+                    Operand::Copy(Place::local(counter)),
+                ],
+                destination: Place::local(ptr_local),
+                target: Some(after_ptr),
+            });
+            self.set_current(after_ptr);
+            ptr_local
+        } else if matches!(
             self.tcx.kind_of(elem_ty),
             gossamer_types::TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1
         ) {
@@ -792,7 +823,7 @@ impl<'a> Builder<'a> {
             target: Some(next),
         });
         self.set_current(next);
-        self.lower_for_vec_over_local(vec_local, elem_ty, loop_pat, body, span)
+        self.lower_for_vec_over_local(vec_local, elem_ty, loop_pat, body, span, false)
     }
 
     pub(crate) fn lower_for_range(

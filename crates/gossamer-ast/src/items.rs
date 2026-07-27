@@ -56,7 +56,7 @@ impl PartialEq for Item {
 pub enum ItemKind {
     /// `fn name<G>(params) -> ret where ... { body }`.
     Fn(FnDecl),
-    /// `struct Name { ... }`, `struct Name(T, U);`, or `struct Name;`.
+    /// `struct Name`, `struct Name { ... }`, or `struct Name(T, U)`.
     Struct(StructDecl),
     /// `enum Name<G> { V1, V2(T), V3 { x: T } }`.
     Enum(EnumDecl),
@@ -245,7 +245,7 @@ impl Receiver {
     }
 }
 
-/// A struct declaration in one of its three syntactic forms.
+/// A struct declaration.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StructDecl {
     /// Struct name.
@@ -265,7 +265,7 @@ pub enum StructBody {
     Named(Vec<StructField>),
     /// Tuple fields `(T, U)`.
     Tuple(Vec<TupleField>),
-    /// Unit struct `;`.
+    /// Unit struct or enum variant.
     Unit,
 }
 

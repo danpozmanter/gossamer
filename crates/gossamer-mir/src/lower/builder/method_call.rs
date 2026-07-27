@@ -1620,6 +1620,15 @@ impl<'a> Builder<'a> {
             {
                 Some("gos_rt_vec_last")
             }
+            "get"
+                if args.len() == 1
+                    && matches!(
+                        &receiver_kind_flat,
+                        TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. }
+                    ) =>
+            {
+                Some("gos_rt_vec_get_opt")
+            }
             "rev"
                 if matches!(
                     &receiver_kind_flat,
@@ -3988,6 +3997,7 @@ impl<'a> Builder<'a> {
             }
             "first" if is_seq => Some("gos_rt_vec_first"),
             "last" if is_seq => Some("gos_rt_vec_last"),
+            "get" if args_len == 1 && is_seq => Some("gos_rt_vec_get_opt"),
             "rev" if is_seq => Some("gos_rt_vec_reversed"),
             "take" if args_len == 1 && is_seq => Some("gos_rt_vec_take"),
             "step_by" if args_len == 1 && is_seq => Some("gos_rt_vec_step_by"),

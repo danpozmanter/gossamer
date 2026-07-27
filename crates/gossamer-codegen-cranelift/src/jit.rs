@@ -1954,6 +1954,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_path_stem"           => rt::gos_rt_path_stem,
         "gos_rt_vec_first"           => rt::gos_rt_vec_first,
         "gos_rt_vec_last"            => rt::gos_rt_vec_last,
+        "gos_rt_vec_get_opt"         => rt::gos_rt_vec_get_opt,
         "gos_rt_vec_reversed"        => rt::gos_rt_vec_reversed,
         "gos_rt_vec_index_of_i64"    => rt::gos_rt_vec_index_of_i64,
         "gos_rt_vec_index_of_str"    => rt::gos_rt_vec_index_of_str,

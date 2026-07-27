@@ -912,6 +912,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/string_push_char.gos"),
     spec("feature-testing-examples/vec_deque.gos"),
     spec("feature-testing-examples/tuple_match_patterns.gos"),
+    spec("feature-testing-examples/for_tuple_and_mut_vec.gos"),
     spec("feature-testing-examples/clone_builtin_dispatch.gos"),
     spec("feature-testing-examples/nested_vec_mutation.gos"),
     spec("feature-testing-examples/deref_string_concat.gos"),

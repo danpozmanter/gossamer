@@ -165,6 +165,61 @@ fn nested_generics_closing_shift_right_parses() {
     assert_eq!(sf.items.len(), 1, "expected exactly one item (`fn f`)");
 }
 
+#[test]
+fn unit_struct_declaration_accepts_bare_form() {
+    let source = "struct Unit\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("unit_struct.gos", source.to_string());
+    let (sf, diags) = parse_source_file(source, file);
+    assert!(
+        diags.is_empty(),
+        "`struct Unit` must parse cleanly; got {diags:?}"
+    );
+    assert_eq!(sf.items.len(), 1);
+    let gossamer_ast::ItemKind::Struct(decl) = &sf.items[0].kind else {
+        panic!("expected a struct item");
+    };
+    assert!(matches!(decl.body, gossamer_ast::StructBody::Unit));
+}
+
+#[test]
+fn empty_named_struct_declaration_accepts_braces() {
+    let source = "struct Unit {}\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("empty_named_struct.gos", source.to_string());
+    let (sf, diags) = parse_source_file(source, file);
+    assert!(
+        diags.is_empty(),
+        "`struct Unit {{}}` must parse cleanly; got {diags:?}"
+    );
+    let gossamer_ast::ItemKind::Struct(decl) = &sf.items[0].kind else {
+        panic!("expected a struct item");
+    };
+    assert!(matches!(
+        &decl.body,
+        gossamer_ast::StructBody::Named(fields) if fields.is_empty()
+    ));
+}
+
+#[test]
+fn empty_tuple_struct_declaration_accepts_parentheses() {
+    let source = "struct Unit()\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("empty_tuple_struct.gos", source.to_string());
+    let (sf, diags) = parse_source_file(source, file);
+    assert!(
+        diags.is_empty(),
+        "`struct Unit()` must parse cleanly; got {diags:?}"
+    );
+    let gossamer_ast::ItemKind::Struct(decl) = &sf.items[0].kind else {
+        panic!("expected a struct item");
+    };
+    assert!(matches!(
+        &decl.body,
+        gossamer_ast::StructBody::Tuple(fields) if fields.is_empty()
+    ));
+}
+
 /// Regression: the match-scrutinee / loop-condition struct-literal
 /// restriction must be suspended inside delimited sub-expressions -
 /// call arguments, parentheses, index brackets, array literals, and

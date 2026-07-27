@@ -786,6 +786,22 @@ pub unsafe extern "C" fn gos_rt_vec_last(v: *const GosVec) -> i128 {
     })
 }
 
+/// `xs.get(i) -> Option<T>`. Out-of-range and negative indices return None.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_get_opt(v: *const GosVec, idx: i64) -> i128 {
+    ffi_entry!(0i128, {
+        if v.is_null() {
+            return unsafe { gos_rt_result_new(1, 0) };
+        }
+        let vec = unsafe { &*v };
+        if idx < 0 || idx >= vec.len {
+            return unsafe { gos_rt_result_new(1, 0) };
+        }
+        let value = unsafe { crate::c_abi::vec::vec_elem_payload_word(vec, idx) };
+        unsafe { gos_rt_result_new(0, value) }
+    })
+}
+
 /// `xs.rev() -> Vec<T>` - fresh Vec with the same elements in
 /// reverse order. Element bytes are copied through the i64-erased
 /// ABI matching the rest of the Vec surface.

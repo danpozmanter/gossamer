@@ -1626,6 +1626,19 @@ fn repl_persists_rust_style_string_and_vec_mutations() {
 }
 
 #[test]
+fn repl_mut_vec_for_loop_and_tuple_for_loop_work() {
+    let out = run_repl(
+        "let mut v = Vec::from([1, 2])\n\
+         for i in &mut v { *i += 1 }\n\
+         println(v)\n\
+         for i in (0, 1) { println(i) }\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(out.stdout.contains("\n[2, 3]\n"), "{}", out.stdout);
+    assert!(out.stdout.contains("\n0\n1\n"), "{}", out.stdout);
+}
+
+#[test]
 fn repl_rejects_invalid_qualified_string_push_without_mutating() {
     let out = run_repl(
         "let mut s = \"abc\"\n\

@@ -269,7 +269,6 @@ impl Printer {
             }
             StructBody::Unit => {
                 self.print_where_clause(&decl.where_clause);
-                self.write(";");
             }
         }
     }

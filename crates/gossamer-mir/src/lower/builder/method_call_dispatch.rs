@@ -554,6 +554,7 @@ impl<'a> Builder<'a> {
             // recovery only fires for path-bound receivers, leaving an inline
             // `match xs.first() { Some(s) => .. }` to render the pointer bits.
             "gos_rt_vec_first"
+            | "gos_rt_vec_get_opt"
             | "gos_rt_vec_last"
             | "gos_rt_vec_pop_opt"
             | "gos_rt_map_pop_i64"

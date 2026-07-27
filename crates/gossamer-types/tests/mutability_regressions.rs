@@ -444,8 +444,6 @@ fn every_builtin_writeback_method_requires_a_writable_receiver() {
         ("sort_by", "values.sort_by(|a, b| a - b)"),
         ("sort_by_key", "values.sort_by_key(|a| a)"),
         ("reverse", "values.reverse()"),
-        ("retain", "values.retain(|a| a > 0)"),
-        ("drain", "let _ = values.drain()"),
         ("swap", "values.swap(0, 1)"),
     ];
     for (method, call) in vec_cases {

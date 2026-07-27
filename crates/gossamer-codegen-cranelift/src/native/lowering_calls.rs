@@ -252,6 +252,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_vec_first" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_vec_pop_opt" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_vec_last" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_vec_get_opt" => (&[ptr_ty, types::I64], Some(types::I128)),
         "gos_rt_vec_reversed" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_vec_index_of_i64" => (&[ptr_ty, types::I64], Some(ptr_ty)),
         "gos_rt_vec_index_of_str" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),

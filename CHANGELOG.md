@@ -12,6 +12,8 @@
   reclaimed without invalidating live aliases.
 - Give byte buffers and builders concrete public types, strict method contracts,
   packed-value interoperability, and private runtime representations.
+- Fix tuple literal `for` loops and `&mut Vec<T>` loop element mutation across
+  REPL, VM, JIT, and native execution.
 - Expand type-guarantee coverage across mutable, immutable, constant, nominal,
   nested, enum, collection, and standard-library handle values.
 

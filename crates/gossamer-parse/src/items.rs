@@ -387,15 +387,6 @@ impl Parser<'_> {
         if self.eat_punct(Punct::Semi) {
             return StructBody::Unit;
         }
-        let span = self.peek_span();
-        self.record(
-            ParseError::Unexpected {
-                expected: "`{ field: Type }`, `(Type, ...)`, or `;` after a struct name"
-                    .to_string(),
-                found: self.peek_text(),
-            },
-            span,
-        );
         StructBody::Unit
     }
 

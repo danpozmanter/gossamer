@@ -200,17 +200,22 @@ impl StrBytesStorage {
         })
     }
 
-    fn insert(&mut self, key: Box<[u8]>, value: &[u8]) -> bool {
+    fn insert(&mut self, key: &[u8], value: &[u8]) -> bool {
         let start = self.data.len();
         self.data.extend_from_slice(value);
         let span = Self::span(start, value.len());
-        let previous = self.entries.insert(key, span);
-        if let Some(old) = previous {
-            self.live_bytes -= Self::bounds(old).1;
+        if let Some(old) = self.entries.get_mut(key) {
+            self.live_bytes -= Self::bounds(*old).1;
+            *old = span;
+            self.live_bytes += value.len();
+            self.compact_if_needed();
+            return false;
         }
+        self.entries
+            .insert(crate::c_abi::string::boxed_bytes(key), span);
         self.live_bytes += value.len();
         self.compact_if_needed();
-        previous.is_none()
+        true
     }
 
     fn remove(&mut self, key: &[u8]) -> Option<Vec<u8>> {
@@ -798,11 +803,9 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c
                 return;
             }
             let bytes = unsafe { crate::c_abi::vec::take_owned_byte_buffer(vec) };
-            let inserted = inner.insert(
-                crate::c_abi::string::boxed_bytes(key_bytes),
-                bytes.as_slice(),
-            );
+            let inserted = inner.insert(key_bytes, bytes.as_slice());
             if inserted {
+                crate::c_abi::ledger::map_str_key_copy(key_bytes.len());
                 map.len_cache += 1;
             }
             drop(storage);
@@ -815,13 +818,14 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c
         let MapStorage::StrI64(inner) = &mut *storage else {
             return;
         };
-        // `boxed_bytes` allocates before `HashMap::insert` can discover an
-        // overwrite, so every call pays this copy (not only fresh keys).
-        crate::c_abi::ledger::map_str_key_copy(key_bytes.len());
-        let prev = inner.insert(crate::c_abi::string::boxed_bytes(key_bytes), val);
-        if prev.is_none() {
+        let prev = if let Some(slot) = inner.get_mut(key_bytes) {
+            Some(std::mem::replace(slot, val))
+        } else {
+            crate::c_abi::ledger::map_str_key_copy(key_bytes.len());
+            inner.insert(crate::c_abi::string::boxed_bytes(key_bytes), val);
             map.len_cache += 1;
-        }
+            None
+        };
         // Overwriting a copy-blob value (e.g. a `Vec<i64>` handle in a
         // `HashMap<String, Vec<i64>>`): release the map's share of the
         // old word, mirroring the i64/i64 insert path. Gated on the
@@ -918,13 +922,13 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_str(
         let MapStorage::StrStr(inner) = &mut *storage else {
             return;
         };
-        if inner
-            .insert(
+        if let Some(slot) = inner.get_mut(key_bytes) {
+            *slot = crate::c_abi::string::boxed_bytes(val_bytes);
+        } else {
+            inner.insert(
                 crate::c_abi::string::boxed_bytes(key_bytes),
                 crate::c_abi::string::boxed_bytes(val_bytes),
-            )
-            .is_none()
-        {
+            );
             map.len_cache += 1;
         }
         drop(storage);

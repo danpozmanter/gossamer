@@ -20,13 +20,20 @@ let p2 = Point { x: 10, y: p1.y }
 
 ## Declaration and construction
 
-Named structs use braced declarations and braced construction. Tuple
-structs use tuple declarations and parenthesized construction:
+Struct declarations follow Rust's three shapes: unit structs, named-field
+structs, and tuple structs. Empty named structs use braces, and empty tuple
+structs use parentheses:
 
 ```gossamer
+struct Unit
+struct Empty {}
+struct EmptyTuple()
 struct Pt { x: i64, y: i64 }
 struct Pair(String, i64)
 
+let unit = Unit
+let empty = Empty {}
+let empty_tuple = EmptyTuple()
 let p = Pt { x: 3, y: 4 }     // keyed fields, any order
 let q = Pt { 3, 4 }           // positional values, declaration order
 let r = Pt { y: 4, 3 }        // mixed; positional fills the next unfilled field

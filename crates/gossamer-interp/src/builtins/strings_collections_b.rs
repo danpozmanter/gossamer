@@ -137,6 +137,137 @@ fn builtin_truncate(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
+fn builtin_vec_reserve(args: &[Value]) -> RuntimeResult<Value> {
+    let min_capacity = match args.get(1) {
+        Some(Value::Int(n)) if *n >= 0 => *n as usize,
+        Some(Value::Int(_)) => {
+            return Err(RuntimeError::Type(
+                "reserve: capacity must be non-negative".to_string(),
+            ));
+        }
+        _ => return Ok(args.first().cloned().unwrap_or(Value::Unit)),
+    };
+    match args.first() {
+        Some(Value::Array(parts)) => {
+            let mut owned = parts.as_ref().clone();
+            if min_capacity > owned.capacity() {
+                owned.reserve(min_capacity - owned.capacity());
+            }
+            Ok(Value::Array(Arc::new(owned)))
+        }
+        Some(Value::IntArray(data)) => {
+            let mut owned = data.as_ref().clone();
+            if min_capacity > owned.capacity() {
+                owned.reserve(min_capacity - owned.capacity());
+            }
+            Ok(Value::IntArray(Arc::new(owned)))
+        }
+        Some(Value::ByteArray(data)) => {
+            let mut owned = data.to_vec();
+            if min_capacity > owned.capacity() {
+                owned.reserve(min_capacity - owned.capacity());
+            }
+            Ok(Value::ByteVec(Arc::new(owned)))
+        }
+        Some(Value::InlineByteArray(data)) => {
+            let mut owned = data.to_vec();
+            if min_capacity > owned.capacity() {
+                owned.reserve(min_capacity - owned.capacity());
+            }
+            Ok(Value::ByteVec(Arc::new(owned)))
+        }
+        Some(Value::ByteVec(data)) => {
+            let mut owned = data.as_ref().clone();
+            if min_capacity > owned.capacity() {
+                owned.reserve(min_capacity - owned.capacity());
+            }
+            Ok(Value::ByteVec(Arc::new(owned)))
+        }
+        Some(Value::FloatVec(data)) => {
+            let mut owned = data.as_ref().clone();
+            if min_capacity > owned.capacity() {
+                owned.reserve(min_capacity - owned.capacity());
+            }
+            Ok(Value::FloatVec(Arc::new(owned)))
+        }
+        other => Ok(other.cloned().unwrap_or(Value::Unit)),
+    }
+}
+
+fn builtin_vec_reserve_exact(args: &[Value]) -> RuntimeResult<Value> {
+    let min_capacity = match args.get(1) {
+        Some(Value::Int(n)) if *n >= 0 => *n as usize,
+        Some(Value::Int(_)) => {
+            return Err(RuntimeError::Type(
+                "reserve_exact: capacity must be non-negative".to_string(),
+            ));
+        }
+        _ => return Ok(args.first().cloned().unwrap_or(Value::Unit)),
+    };
+    match args.first() {
+        Some(Value::Array(parts)) => {
+            let mut owned = parts.as_ref().clone();
+            if min_capacity > owned.capacity() {
+                owned.reserve_exact(min_capacity - owned.capacity());
+            }
+            Ok(Value::Array(Arc::new(owned)))
+        }
+        Some(Value::IntArray(data)) => {
+            let mut owned = data.as_ref().clone();
+            if min_capacity > owned.capacity() {
+                owned.reserve_exact(min_capacity - owned.capacity());
+            }
+            Ok(Value::IntArray(Arc::new(owned)))
+        }
+        Some(Value::ByteArray(data)) => {
+            let mut owned = data.to_vec();
+            if min_capacity > owned.capacity() {
+                owned.reserve_exact(min_capacity - owned.capacity());
+            }
+            Ok(Value::ByteVec(Arc::new(owned)))
+        }
+        Some(Value::InlineByteArray(data)) => {
+            let mut owned = data.to_vec();
+            if min_capacity > owned.capacity() {
+                owned.reserve_exact(min_capacity - owned.capacity());
+            }
+            Ok(Value::ByteVec(Arc::new(owned)))
+        }
+        Some(Value::ByteVec(data)) => {
+            let mut owned = data.as_ref().clone();
+            if min_capacity > owned.capacity() {
+                owned.reserve_exact(min_capacity - owned.capacity());
+            }
+            Ok(Value::ByteVec(Arc::new(owned)))
+        }
+        Some(Value::FloatVec(data)) => {
+            let mut owned = data.as_ref().clone();
+            if min_capacity > owned.capacity() {
+                owned.reserve_exact(min_capacity - owned.capacity());
+            }
+            Ok(Value::FloatVec(Arc::new(owned)))
+        }
+        other => Ok(other.cloned().unwrap_or(Value::Unit)),
+    }
+}
+
+fn builtin_vec_capacity(args: &[Value]) -> RuntimeResult<Value> {
+    let cap = match args.first() {
+        Some(Value::Array(parts)) => parts.capacity(),
+        Some(Value::IntArray(data)) => data.capacity(),
+        Some(Value::ByteArray(data)) => data.len(),
+        Some(Value::InlineByteArray(data)) => data.capacity(),
+        Some(Value::ByteVec(data)) => data.capacity(),
+        Some(Value::FloatVec(data)) => data.capacity(),
+        Some(rx @ Value::FloatArray(_)) => match rx.float_array_to_value_array() {
+            Value::Array(items) => items.capacity(),
+            _ => 0,
+        },
+        _ => 0,
+    };
+    Ok(Value::Int(i64::try_from(cap).unwrap_or(i64::MAX)))
+}
+
 fn builtin_sort(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
         Some(Value::Array(parts)) => {

@@ -6155,9 +6155,9 @@ impl<'a> TypeChecker<'a> {
         };
         let expected_arity = match method {
             "push" | "remove" | "truncate" | "extend" | "extend_from_slice" | "reserve"
-            | "reserve_exact" | "retain" | "drain" => Some(1),
+            | "reserve_exact" | "get" => Some(1),
             "insert" | "swap" => Some(2),
-            "pop" | "clear" | "sort" | "reverse" => Some(0),
+            "pop" | "clear" | "sort" | "reverse" | "capacity" => Some(0),
             "sort_by" | "sort_by_key" => Some(1),
             _ => None,
         };
@@ -6190,12 +6190,21 @@ impl<'a> TypeChecker<'a> {
             (
                 "push" | "insert" | "clear" | "truncate" | "extend" | "extend_from_slice"
                 | "reserve" | "reserve_exact" | "sort" | "sort_by" | "sort_by_key" | "reverse"
-                | "retain" | "drain" | "swap",
+                | "swap",
                 _,
             ) => Some(self.tcx.unit()),
+            ("capacity", 0) => Some(self.tcx.int_ty(IntTy::I64)),
             ("pop", 0) => Some(self.option_adt_ty(elem)),
             ("remove", 1) => Some(elem),
             ("first" | "last", 0) => Some(self.option_adt_ty(elem)),
+            ("get", 1) => {
+                if let Some(arg_ty) = arg_tys.first() {
+                    let i = self.tcx.int_ty(IntTy::I64);
+                    let arg_peeled = self.peel_refs(*arg_ty);
+                    self.unify(i, arg_peeled, span);
+                }
+                Some(self.option_adt_ty(elem))
+            }
             ("collect" | "rev" | "dedup" | "to_vec", 0) => Some(self.tcx.intern(TyKind::Vec(elem))),
             ("index_of", 1) => {
                 let i = self.tcx.int_ty(IntTy::I64);
@@ -8619,8 +8628,37 @@ impl<'a> TypeChecker<'a> {
             let mut cur = starting;
             loop {
                 match self.tcx.kind_of(cur).clone() {
-                    TyKind::Ref { inner, .. } => cur = inner,
+                    TyKind::Ref { inner, mutability } => match self.tcx.kind_of(inner).clone() {
+                        TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
+                            break Some(self.tcx.intern(TyKind::Ref {
+                                mutability,
+                                inner: elem,
+                            }));
+                        }
+                        TyKind::Tuple(elems) => {
+                            let Some(elem) = elems.first().copied() else {
+                                break None;
+                            };
+                            for other in elems.iter().copied().skip(1) {
+                                self.unify(elem, other, iter.span);
+                            }
+                            break Some(self.tcx.intern(TyKind::Ref {
+                                mutability,
+                                inner: elem,
+                            }));
+                        }
+                        _ => cur = inner,
+                    },
                     TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
+                        break Some(elem);
+                    }
+                    TyKind::Tuple(elems) => {
+                        let Some(elem) = elems.first().copied() else {
+                            break None;
+                        };
+                        for other in elems.iter().copied().skip(1) {
+                            self.unify(elem, other, iter.span);
+                        }
                         break Some(elem);
                     }
                     _ => break None,
@@ -10900,8 +10938,6 @@ fn is_vec_only_fixed_array_method(name: &str) -> bool {
             | "extend"
             | "extend_from_slice"
             | "truncate"
-            | "retain"
-            | "drain"
             | "reserve"
             | "reserve_exact"
             | "capacity"

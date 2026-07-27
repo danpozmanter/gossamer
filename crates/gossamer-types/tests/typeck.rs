@@ -1131,6 +1131,28 @@ fn option_map_method_closure_param_pins_to_payload_type() {
 }
 
 #[test]
+fn vec_get_returns_option_of_element_type() {
+    let checked = run("fn main() { let got: Option<i64> = Vec::from([1, 2]).get(0) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn vec_rejects_methods_without_lowering() {
+    for method in ["retain", "drain"] {
+        let source = format!("fn main() {{ let mut xs = Vec::from([1, 2]); xs.{method}(0) }}\n");
+        let checked = run(&source);
+        assert!(
+            checked.diagnostics.iter().any(|diag| matches!(
+                &diag.error,
+                TypeError::UnresolvedMethod { name, .. } if name == method
+            )),
+            "Vec::{method} should be rejected until it has VM and compiled lowering: {:?}",
+            checked.diagnostics
+        );
+    }
+}
+
+#[test]
 fn iter_map_free_fn_closure_param_pins_to_elem_type() {
     let checked = run("use std::iter\n\
          fn main() { let xs: Vec<String> = [\"a\"]\n\

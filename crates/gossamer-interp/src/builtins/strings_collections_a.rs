@@ -343,6 +343,22 @@ fn builtin_last(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
+fn builtin_get(args: &[Value]) -> RuntimeResult<Value> {
+    let (Some(recv), Some(idx)) = (args.first(), args.get(1)) else {
+        return Ok(Value::variant("None", vec![]));
+    };
+    let Some(idx) = value_to_int(idx) else {
+        return Ok(Value::variant("None", vec![]));
+    };
+    if idx < 0 {
+        return Ok(Value::variant("None", vec![]));
+    }
+    match array_as_values(recv).and_then(|items| items.get(idx as usize).cloned()) {
+        Some(value) => Ok(Value::variant("Some", vec![value])),
+        None => Ok(Value::variant("None", vec![])),
+    }
+}
+
 fn builtin_reversed(args: &[Value]) -> RuntimeResult<Value> {
     match args.first().and_then(array_as_values) {
         Some(mut items) => {
