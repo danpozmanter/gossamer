@@ -1184,6 +1184,11 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("Vec::count_of", builtin("Vec::count_of", builtin_count_of)));
     globals.push(("Vec::contains", builtin("Vec::contains", builtin_contains)));
     globals.push(("Vec::len", builtin("Vec::len", builtin_len)));
+    globals.push(("Vec::push", builtin("Vec::push", builtin_push)));
+    globals.push((
+        "collections::Vec::push",
+        builtin("collections::Vec::push", builtin_push),
+    ));
     globals.push(("Vec::sort", builtin("Vec::sort", builtin_sort)));
     globals.push(("Vec::sort_by", native("Vec::sort_by", native_sort_by)));
     globals.push(("Vec::reverse", builtin("Vec::reverse", builtin_reverse)));

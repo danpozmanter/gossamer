@@ -1521,3 +1521,103 @@ fn repl_rejects_unqualified_std_functions() {
         out.stderr
     );
 }
+
+#[test]
+fn repl_persists_rust_style_string_and_vec_mutations() {
+    let out = run_repl(
+        "let mut s = \"abc\"\n\
+         let mut v = Vec::from([1, 2])\n\
+         s.push('d')\n\
+         s\n\
+         v.push(3)\n\
+         v\n\
+         String::push(&mut s, 'e')\n\
+         s\n\
+         Vec::push(&mut v, 4)\n\
+         v\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert_eq!(
+        out.stdout.matches("Out[").count(),
+        4,
+        "unit-returning push calls must not print replacement collections: {}",
+        out.stdout
+    );
+    assert!(out.stdout.contains("Out[4]: \"abcd\""), "{}", out.stdout);
+    assert!(out.stdout.contains("Out[6]: [1, 2, 3]"), "{}", out.stdout);
+    assert!(out.stdout.contains("Out[8]: \"abcde\""), "{}", out.stdout);
+    assert!(
+        out.stdout.contains("Out[10]: [1, 2, 3, 4]"),
+        "{}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_checks_string_and_vec_push_contracts() {
+    let out = run_repl(
+        "let mut s = \"abc\"\n\
+         let mut v = Vec::from([1, 2])\n\
+         s.push(\"x\")\n\
+         v.push(3, 4, 5)\n\
+         v.push(\"x\")\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("expected `char`, found `String`"),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr
+            .contains("`Vec::push` takes 1 argument(s) but 3 were supplied"),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("expected `String`, found `{integer}`")
+            || out.stderr.contains("expected `i64`, found `String`"),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn repl_persists_map_set_and_deque_mutations() {
+    let out = run_repl(
+        "let mut m: HashMap<String, i64> = HashMap::new()\n\
+         m.insert(\"a\", 1)\n\
+         m.len()\n\
+         let mut set: HashSet<i64> = HashSet::new()\n\
+         set.insert(7)\n\
+         set.insert(7)\n\
+         set.remove(7)\n\
+         set.contains(7)\n\
+         let mut deque: VecDeque<i64> = VecDeque::new()\n\
+         deque.push_back(1)\n\
+         deque.push_front(2)\n\
+         deque.pop_back()\n\
+         deque.pop_front()\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for expected in [
+        "Out[3]: 1",
+        "Out[5]: true",
+        "Out[6]: false",
+        "Out[7]: true",
+        "Out[8]: false",
+        "Out[12]: Some(1)",
+        "Out[13]: Some(2)",
+    ] {
+        assert!(
+            out.stdout.contains(expected),
+            "missing {expected}: {}",
+            out.stdout
+        );
+    }
+    assert!(
+        !out.stdout.contains("HashSet {"),
+        "set mutators leaked the internal handle: {}",
+        out.stdout
+    );
+}

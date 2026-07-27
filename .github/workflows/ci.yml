@@ -422,6 +422,10 @@ jobs:
   deny:
     name: cargo-deny
     runs-on: ubuntu-latest
+    # The Docker action carries its own Rust toolchain. Do not pass the
+    # workspace-wide host override into that container.
+    env:
+      RUSTUP_TOOLCHAIN: 1.85.0
     steps:
       - uses: actions/checkout@v6
       - uses: EmbarkStudios/cargo-deny-action@v2

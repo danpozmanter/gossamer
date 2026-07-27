@@ -1,26 +1,22 @@
 # Changelog
 
-## 0.34.4 - Public diagnostics, fixed arrays, and container type safety
+## 0.35.0 - Collection semantics and public diagnostics
 
-- Render type-checker diagnostics with public type descriptions instead of
-  internal inference names, including references and generic payloads such as
-  `&String` instead of `&?N`.
-- Support range indexing on `String`, `Vec<T>`, `[T]`, and fixed `[T; N]`
-  consistently across interpreter and native builds, including clamped and
-  open-ended ranges.
-- Show full inferred types for active REPL bindings in `%bindings`.
-- Keep internal inference IDs out of REPL binding types, accept meta commands
-  with leading whitespace, and preserve container type identities for empty
-  `Vec` and `HashMap` constructors.
-- Support `Vec::from([value; N])` and `Vec::from([a, b, ...])` as explicit
-  fixed-array to growable-vector conversions.
-- Enforce integer-width bounds for contextually typed literals, including
-  elements of `Vec<i8>` and other narrow integer containers.
-- Keep REPL String help aligned with implemented methods and restore type
-  checking for the supported `String::clear` and `String::truncate` mutators.
-- Reject Vec-only methods such as `push`, `pop`, `insert`, `truncate`, and
-  `reserve` on fixed `[T; N]` arrays so fixed-size bindings cannot appear to
-  grow at runtime.
+- Show public, fully inferred types in diagnostics and REPL bindings without
+  exposing internal inference names, accept indented REPL meta commands, and
+  keep method help synchronized with the supported `String` surface.
+- Support clamped and open-ended range indexing consistently on `String`,
+  `Vec<T>`, `[T]`, and fixed `[T; N]` values across all execution tiers.
+- Distinguish fixed arrays from growable vectors, reject Vec-only mutations on
+  `[T; N]`, and support explicit conversion with `Vec::from([value; N])` or
+  `Vec::from([a, b, ...])`.
+- Preserve concrete types for empty collection constructors and enforce
+  contextual integer-width bounds within collection literals.
+- Persist `String`, vector, map, set, and deque mutations across REPL inputs,
+  with collection-specific mutability, arity, argument, and return checks.
+- Align collection methods with Rust where supported, including equivalent
+  method and qualified `String::push` and `Vec::push` calls, unit-returning
+  mutators, and boolean `HashSet::insert` and `HashSet::remove` results.
 
 ## 0.34.3 - Intcode native parity
 

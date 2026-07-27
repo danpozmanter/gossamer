@@ -51,7 +51,7 @@ fn main() {
 
     // --- math::bits over zero, negative (all-ones), max ---
     println!("count_ones 0={}", math::bits::count_ones(0))
-    println!("count_ones -1={}", math::bits::count_ones(-1))
+    println!("count_ones max={}", math::bits::count_ones(18446744073709551615))
     println!("leading_zeros 1={}", math::bits::leading_zeros(1))
     println!("trailing_zeros 8={}", math::bits::trailing_zeros(8))
     println!("rotate_left={}", math::bits::rotate_left(1, 4))

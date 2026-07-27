@@ -568,14 +568,14 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "HashSet",
         name: "insert",
         kind: "method",
-        signature: "fn insert<T>(self: &mut HashSet<T>, value: T) -> ()",
+        signature: "fn insert<T>(self: &mut HashSet<T>, value: T) -> bool",
         doc: "Adds a value to the set.",
     },
     CoreMethodHelp {
         owner: "HashSet",
         name: "remove",
         kind: "method",
-        signature: "fn remove<T>(self: &mut HashSet<T>, value: T) -> ()",
+        signature: "fn remove<T>(self: &mut HashSet<T>, value: T) -> bool",
         doc: "Removes a value from the set.",
     },
     CoreMethodHelp {
@@ -952,14 +952,16 @@ pub(crate) fn cmd_repl() -> Result<()> {
             continue;
         }
 
-        // An assignment (`name = "Mark"`, `count += 1`, ...) mutates a binding
-        // from an earlier input. Accumulate it in order with the `let`s so the
-        // mutation re-applies before every later input, and run it once now for
-        // its effect. A failure (unknown or immutable target) rolls it back and
-        // reports the error, leaving the session unchanged.
-        if input_is_assignment(trimmed) {
+        // Assignments and collection mutation calls must be replayed with the
+        // preceding bindings so their effects survive into later inputs.
+        if input_mutates_binding(trimmed) {
             lets.push(trimmed.to_string());
-            let probe_body = format!("{}\n    ()\n", lets.join("\n    "));
+            let prefix = lets[..lets.len() - 1].join("\n    ");
+            let probe_body = if prefix.is_empty() {
+                trimmed.to_string()
+            } else {
+                format!("{prefix}\n    {trimmed}")
+            };
             let probe = format!(
                 "{}\nfn __irepl_{n}() {{\n    {body}}}\n",
                 declarations.join("\n"),
@@ -967,7 +969,18 @@ pub(crate) fn cmd_repl() -> Result<()> {
                 body = probe_body,
             );
             match build_and_call(&probe, &format!("__irepl_{input_no}")) {
-                Ok(_) => {}
+                Ok(value) => {
+                    if !matches!(value, gossamer_interp::Value::Unit) {
+                        if tty {
+                            println!(
+                                "\x1b[31mOut[{input_no}]:\x1b[0m {}",
+                                render_repl_value(&value)
+                            );
+                        } else {
+                            println!("Out[{input_no}]: {}", render_repl_value(&value));
+                        }
+                    }
+                }
                 Err(msg) => {
                     lets.pop();
                     eprintln!("{}: {msg}", crate::style::error("error"));
@@ -1912,14 +1925,10 @@ fn item_kind_label(kind: StdItemKind) -> &'static str {
     }
 }
 
-/// True when `input` is a single assignment statement (`x = e`, `x += e`,
-/// `x.f = e`, `x[i] = e`, `*x = e`). Such a statement mutates a binding
-/// introduced by an earlier input; the REPL accumulates it alongside the
-/// `let`s so the write survives into later inputs, rather than applying it in a
-/// throwaway frame that is then discarded. Parsing (instead of scanning for an
-/// `=`) keeps `==` / `<=` comparisons and `let` initializers from being misread
-/// as assignments.
-fn input_is_assignment(input: &str) -> bool {
+/// True for an assignment or a built-in mutating collection method call.
+/// Type checking remains authoritative for receiver mutability and whether
+/// the method exists. This parser-only classification only controls replay.
+fn input_mutates_binding(input: &str) -> bool {
     use gossamer_ast::{ExprKind, ItemKind, StmtKind};
     let source = format!("fn __irepl_classify() {{ {input} }}\n");
     let mut map = gossamer_lex::SourceMap::new();
@@ -1940,8 +1949,6 @@ fn input_is_assignment(input: &str) -> bool {
     let ExprKind::Block(block) = &body.kind else {
         return false;
     };
-    // A bare `x = e` (no trailing `;`) parses as the block's tail expression;
-    // `x = e;` parses as the final statement. Check whichever carries the value.
     let target = block.tail.as_deref().or_else(|| match block.stmts.last() {
         Some(stmt) => match &stmt.kind {
             StmtKind::Expr { expr, .. } => Some(expr.as_ref()),
@@ -1949,7 +1956,20 @@ fn input_is_assignment(input: &str) -> bool {
         },
         None => None,
     });
-    matches!(target.map(|e| &e.kind), Some(ExprKind::Assign { .. }))
+    match target.map(|expr| &expr.kind) {
+        Some(ExprKind::Assign { .. }) => true,
+        Some(ExprKind::MethodCall { name, .. }) => {
+            gossamer_types::is_mutating_method_name(&name.name)
+        }
+        Some(ExprKind::Call { callee, .. }) => match &callee.kind {
+            ExprKind::Path(path) => path
+                .segments
+                .last()
+                .is_some_and(|segment| gossamer_types::is_mutating_method_name(&segment.name.name)),
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 /// Validates that the accumulated declarations parse, resolve, and

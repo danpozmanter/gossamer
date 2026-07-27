@@ -5014,6 +5014,9 @@ impl<'a> TypeChecker<'a> {
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = self.infer.resolve(self.tcx, *inner);
         }
+        if self.reject_collection_method_arity(resolved, method, args.len(), receiver.span) {
+            return self.tcx.error_ty();
+        }
         self.check_user_method_args(resolved, method, args, &arg_tys);
         if method == "where_eq"
             && args.len() == 2
@@ -5071,6 +5074,36 @@ impl<'a> TypeChecker<'a> {
             return self.tcx.json_value_ty();
         }
         if matches!(self.tcx.kind(resolved), Some(TyKind::String)) {
+            let expected_arity = match method {
+                "clear" => Some(0),
+                "truncate" | "push" | "push_str" | "push_char" | "push_byte" => Some(1),
+                _ => None,
+            };
+            if let Some(expected) = expected_arity
+                && args.len() != expected
+            {
+                self.emit(
+                    TypeError::CallArityMismatch {
+                        callee: format!("String::{method}"),
+                        expected,
+                        found: args.len(),
+                    },
+                    receiver.span,
+                );
+                return self.tcx.error_ty();
+            }
+            if let Some(arg_ty) = arg_tys.first().copied() {
+                let want = match method {
+                    "push" | "push_char" => Some(self.tcx.intern(TyKind::Char)),
+                    "push_str" => Some(self.tcx.string_ty()),
+                    "push_byte" | "truncate" => Some(self.tcx.int_ty(IntTy::I64)),
+                    _ => None,
+                };
+                if let Some(want) = want {
+                    let found = self.peel_refs(arg_ty);
+                    self.unify(want, found, args[0].span);
+                }
+            }
             self.check_string_method_args_if_needed(call_id, method, receiver.span, args, &arg_tys);
             return self.string_method_ret(method, generics, expected, receiver.span);
         }
@@ -5089,6 +5122,55 @@ impl<'a> TypeChecker<'a> {
         self.check_method_arity(call_id, resolved, method, args, receiver.span);
         self.maybe_reject_unknown_adt_method(resolved, method, receiver.span);
         self.fresh()
+    }
+
+    fn reject_collection_method_arity(
+        &mut self,
+        resolved: Ty,
+        method: &str,
+        found: usize,
+        span: Span,
+    ) -> bool {
+        let expected = match self.tcx.kind(resolved) {
+            Some(TyKind::HashMap { .. }) => match method {
+                "insert" | "get_or" | "or_insert" => Some(2),
+                "get" | "remove" | "pop" | "contains" | "contains_key" => Some(1),
+                "clear" | "len" | "is_empty" | "keys" | "values" | "iter" => Some(0),
+                _ => None,
+            },
+            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 7 => match method {
+                "insert" | "remove" | "contains" => Some(1),
+                "clear" | "len" | "is_empty" | "to_vec" | "iter" => Some(0),
+                "union"
+                | "intersection"
+                | "difference"
+                | "symmetric_difference"
+                | "is_subset"
+                | "is_superset"
+                | "is_disjoint" => Some(1),
+                _ => None,
+            },
+            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 9 => match method {
+                "push_back" | "push_front" => Some(1),
+                "pop_back" | "pop_front" | "peek_back" | "peek_front" | "len" | "is_empty"
+                | "clear" => Some(0),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(expected) = expected.filter(|expected| *expected != found) else {
+            return false;
+        };
+        let owner = self.render_public_ty(resolved);
+        self.emit(
+            TypeError::CallArityMismatch {
+                callee: format!("{owner}::{method}"),
+                expected,
+                found,
+            },
+            span,
+        );
+        true
     }
 
     fn check_param_receiver_method(
@@ -5823,6 +5905,27 @@ impl<'a> TypeChecker<'a> {
             Some(TyKind::Array { elem, .. }) => *elem,
             _ => return None,
         };
+        let expected_arity = match method {
+            "push" | "remove" | "truncate" | "extend" | "extend_from_slice" | "reserve"
+            | "reserve_exact" | "retain" | "drain" => Some(1),
+            "insert" | "swap" => Some(2),
+            "pop" | "clear" | "sort" | "reverse" => Some(0),
+            "sort_by" | "sort_by_key" => Some(1),
+            _ => None,
+        };
+        if let Some(expected) = expected_arity
+            && args.len() != expected
+        {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: format!("Vec::{method}"),
+                    expected,
+                    found: args.len(),
+                },
+                span,
+            );
+            return Some(self.tcx.error_ty());
+        }
         // References are layout-transparent (the runtime owns memory), so
         // peel them before comparing the pushed element to the slot type.
         let push_arg = match (method, args.len()) {
@@ -5836,6 +5939,14 @@ impl<'a> TypeChecker<'a> {
             self.unify(elem_peeled, arg_peeled, span);
         }
         match (method, args.len()) {
+            (
+                "push" | "insert" | "clear" | "truncate" | "extend" | "extend_from_slice"
+                | "reserve" | "reserve_exact" | "sort" | "sort_by" | "sort_by_key" | "reverse"
+                | "retain" | "drain" | "swap",
+                _,
+            ) => Some(self.tcx.unit()),
+            ("pop", 0) => Some(self.option_adt_ty(elem)),
+            ("remove", 1) => Some(elem),
             ("first" | "last", 0) => Some(self.option_adt_ty(elem)),
             ("collect" | "rev" | "dedup" | "to_vec", 0) => Some(self.tcx.intern(TyKind::Vec(elem))),
             ("index_of", 1) => {
@@ -5981,6 +6092,9 @@ impl<'a> TypeChecker<'a> {
             | "equal_fold" | "is_empty" => self.tcx.bool_ty(),
             "len" | "count" | "byte_at" | "byte_len" => self.tcx.int_ty(IntTy::I64),
             "clone" | "to_string" => self.tcx.string_ty(),
+            "clear" | "truncate" | "push" | "push_str" | "push_char" | "push_byte" => {
+                self.tcx.unit()
+            }
             // Methods that return a fresh `String` (runtime `*mut c_char`):
             // pinning the result type so chained calls (`s.trim().len()`) and
             // typed bindings lower from a known type instead of an inference

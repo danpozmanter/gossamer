@@ -173,39 +173,39 @@ pub(crate) fn builtin_set_new(_args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_set_insert(args: &[Value]) -> RuntimeResult<Value> {
-    let handle = args.first().cloned().unwrap_or(Value::Unit);
-    let Some(id) = set_id_of(&handle) else {
-        return Ok(handle);
+    let Some(id) = args.first().and_then(set_id_of) else {
+        return Ok(Value::Bool(false));
     };
     let Some(value) = args.get(1) else {
-        return Ok(handle);
+        return Ok(Value::Bool(false));
     };
     let key = MapKey::from_value(value);
-    SET_REGISTRY.with(|r| {
+    let inserted = SET_REGISTRY.with(|r| {
         if let Some(s) = r.borrow_mut().get_mut(&id) {
-            let _ = s.insert(key);
+            s.insert(key)
+        } else {
+            false
         }
     });
-    // Return the handle so the VM writeback-move is idempotent.
-    Ok(handle)
+    Ok(Value::Bool(inserted))
 }
 
 pub(crate) fn builtin_set_remove(args: &[Value]) -> RuntimeResult<Value> {
-    let handle = args.first().cloned().unwrap_or(Value::Unit);
-    let Some(id) = set_id_of(&handle) else {
-        return Ok(handle);
+    let Some(id) = args.first().and_then(set_id_of) else {
+        return Ok(Value::Bool(false));
     };
     let Some(value) = args.get(1) else {
-        return Ok(handle);
+        return Ok(Value::Bool(false));
     };
     let key = MapKey::from_value(value);
-    SET_REGISTRY.with(|r| {
+    let removed = SET_REGISTRY.with(|r| {
         if let Some(s) = r.borrow_mut().get_mut(&id) {
-            let _ = s.remove(&key);
+            s.remove(&key)
+        } else {
+            false
         }
     });
-    // Return the handle so the VM writeback-move is idempotent.
-    Ok(handle)
+    Ok(Value::Bool(removed))
 }
 
 pub(crate) fn builtin_set_contains(args: &[Value]) -> RuntimeResult<Value> {
@@ -252,8 +252,7 @@ pub(crate) fn builtin_set_clear(args: &[Value]) -> RuntimeResult<Value> {
             }
         });
     }
-    // Return the receiver so the VM writeback preserves the struct handle.
-    Ok(args.first().cloned().unwrap_or(Value::Unit))
+    Ok(Value::Unit)
 }
 
 pub(crate) fn builtin_set_to_vec(args: &[Value]) -> RuntimeResult<Value> {

@@ -2207,7 +2207,7 @@ impl<'tcx> FnBuilder<'tcx> {
                                     receiver: target.reg,
                                     value: suffix,
                                 });
-                                return Ok(target.reg);
+                                return Ok(self.load_unit());
                             }
                         }
                     }
@@ -2676,14 +2676,65 @@ impl<'tcx> FnBuilder<'tcx> {
         // resolves to the Vec pop builtin, and the mutating-writeback below
         // would then overwrite the map binding with that result; route to
         // the qualified map builtin and suppress the writeback instead.
+        let mut resolved_receiver_ty = receiver.ty;
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved_receiver_ty) {
+            resolved_receiver_ty = *inner;
+        }
         let is_map_pop = name.name == "pop"
             && args.len() == 1
-            && matches!(self.tcx.kind(receiver.ty), Some(TyKind::HashMap { .. }));
-        let name_idx = self.global_idx(if is_map_pop {
+            && matches!(
+                self.tcx.kind(resolved_receiver_ty),
+                Some(TyKind::HashMap { .. })
+            );
+        let qualified_collection_method = match self.tcx.kind(resolved_receiver_ty) {
+            Some(TyKind::Adt { def, .. })
+                if def.local == u32::MAX - 7
+                    && matches!(
+                        name.name.as_str(),
+                        "insert"
+                            | "remove"
+                            | "contains"
+                            | "len"
+                            | "is_empty"
+                            | "clear"
+                            | "to_vec"
+                            | "iter"
+                            | "union"
+                            | "intersection"
+                            | "difference"
+                            | "symmetric_difference"
+                            | "is_subset"
+                            | "is_superset"
+                            | "is_disjoint"
+                    ) =>
+            {
+                Some(format!("HashSet::{}", name.name))
+            }
+            Some(TyKind::Adt { def, .. })
+                if def.local == u32::MAX - 9
+                    && matches!(
+                        name.name.as_str(),
+                        "push_back"
+                            | "push_front"
+                            | "pop_back"
+                            | "pop_front"
+                            | "peek_back"
+                            | "peek_front"
+                            | "len"
+                            | "is_empty"
+                            | "clear"
+                    ) =>
+            {
+                Some(format!("VecDeque::{}", name.name))
+            }
+            _ => None,
+        };
+        let dispatch_name = if is_map_pop {
             "HashMap::pop"
         } else {
-            &name.name
-        });
+            qualified_collection_method.as_deref().unwrap_or(&name.name)
+        };
+        let name_idx = self.global_idx(dispatch_name);
         let dst = self.alloc_reg();
         let cache_idx = self.alloc_cache_idx();
         self.emit(Op::MethodCall {
@@ -2711,7 +2762,12 @@ impl<'tcx> FnBuilder<'tcx> {
         // the result back through the place-store protocol so the
         // mutation persists - matching the compiled tiers, which mutate
         // the backing storage in place.
-        if !is_map_pop && Self::is_mutating_method_name(name.name.as_str()) {
+        let replacement_writeback = matches!(
+            self.tcx.kind(resolved_receiver_ty),
+            Some(TyKind::String | TyKind::Vec(_) | TyKind::Slice(_))
+        );
+        if !is_map_pop && replacement_writeback && Self::is_mutating_method_name(name.name.as_str())
+        {
             match &receiver.kind {
                 HirExprKind::Path { segments, .. } if segments.len() == 1 => {
                     if let Some(target) = self.lookup_local(&segments[0].name) {
@@ -2731,7 +2787,40 @@ impl<'tcx> FnBuilder<'tcx> {
                 _ => {}
             }
         }
-        Ok(dst)
+        let returns_unit = match self.tcx.kind(resolved_receiver_ty) {
+            Some(TyKind::String) => matches!(
+                name.name.as_str(),
+                "push" | "push_str" | "push_char" | "push_byte" | "clear" | "truncate"
+            ),
+            Some(TyKind::Vec(_) | TyKind::Slice(_)) => matches!(
+                name.name.as_str(),
+                "push"
+                    | "insert"
+                    | "clear"
+                    | "extend"
+                    | "extend_from_slice"
+                    | "truncate"
+                    | "sort"
+                    | "sort_by"
+                    | "sort_by_key"
+                    | "reverse"
+                    | "retain"
+                    | "drain"
+                    | "swap"
+            ),
+            Some(TyKind::HashMap { .. }) => {
+                matches!(name.name.as_str(), "insert" | "remove" | "clear")
+            }
+            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 9 => {
+                matches!(name.name.as_str(), "push_back" | "push_front")
+            }
+            _ => false,
+        };
+        if returns_unit {
+            Ok(self.load_unit())
+        } else {
+            Ok(dst)
+        }
     }
 
     /// Lowers a `&mut self` user-method call (`obj.bump()`,
@@ -2862,6 +2951,32 @@ impl<'tcx> FnBuilder<'tcx> {
         args: &[HirExpr],
         result_ty: Ty,
     ) -> RuntimeResult<Reg> {
+        // Rust UFCS syntax is semantically the same call as method syntax.
+        // Route supported built-in mutators through the method compiler so
+        // its receiver writeback and public return contract are identical.
+        if let HirExprKind::Path { segments, .. } = &callee.kind
+            && segments.len() >= 2
+            && let Some(method) = segments.last()
+            && let Some(owner) = segments.get(segments.len() - 2)
+            && matches!(owner.name.as_str(), "String" | "Vec")
+            && matches!(
+                method.name.as_str(),
+                "push"
+                    | "push_str"
+                    | "push_char"
+                    | "push_byte"
+                    | "clear"
+                    | "truncate"
+                    | "sort"
+                    | "sort_by"
+                    | "sort_by_key"
+                    | "reverse"
+                    | "swap"
+            )
+            && let Some((receiver, method_args)) = args.split_first()
+        {
+            return self.compile_method_call(peel_ref_wrappers_expr(receiver), method, method_args);
+        }
         // A payload-less enum constructor is already represented by its
         // immutable global sentinel. Its HIR callee has the enum value type,
         // unlike a zero-argument function returning that enum, whose callee
