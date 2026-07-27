@@ -97,10 +97,9 @@ Write clear, low-complexity, concise code.
 - **`for x in xs`** over collections - no `.iter()`, no `*x`.
 - **Bare integer indices** - `arr[i]` takes `i64`, no `as usize`.
   Reads and writes outside `[0, len)` panic on every tier. Method-form
-  Vec `insert` accepts `0..=len`; method-form `remove` accepts
-  `0..len`; invalid indices panic. Use `len()` guards or the
-  Result-returning `Vec::insert` / `Vec::remove` APIs when absence is
-  recoverable.
+  Vec `insert` accepts `0..=len`; `remove` accepts `0..len`; invalid
+  indices panic in method and qualified forms. Use `len()` guards when
+  absence is recoverable.
 - **`m.inc(k)` / `m.inc(k, by)`** for counters; `m.or_insert(k,
   default)` for get-or-fill (`m.or_insert(k, d).method(args)` writes
   the mutation back into the stored value). `arr.swap(i, j)`.
@@ -318,8 +317,8 @@ are callable as methods/free functions and materialize results.
   `first`/`last`, `rev`, `slice(a, b) -> Result`); `[T; N]`
   fixed; tuples `.0`/`.1`; tuple structs fully usable. Method-call
   `xs.insert/remove` mutate in place and panic when the index is out of
-  bounds; the Result-returning forms are the qualified
-  `Vec::insert(xs, i, v)` / `Vec::remove(xs, i)`.
+  bounds. Qualified calls use the same contract:
+  `Vec::insert(&mut xs, i, v)` / `Vec::remove(&mut xs, i)`.
 - `std::collections`: `Vec`, `HashMap` (struct/tuple keys by value;
   aggregate-key maps use `iter()` rather than `keys()` until typed key
   snapshots are available;
