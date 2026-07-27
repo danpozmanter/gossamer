@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.35.1 - Compact collections and trustworthy types
+## 0.36.0 - Compact collections and trustworthy types
 
 - Pack narrow scalar collections in the VM and compact native vector and
   byte-valued map storage without changing collection semantics.
@@ -23,6 +23,7 @@
   repair; use `as_bytes()`, `bytes()`, or `byte_at()` for byte access.
 - Persist HashMap entry mutations in the REPL and reject assignments that
   replace a map with an `or_insert` result.
+- Reliably print arithmetic expression results in interactive REPL sessions.
 
 ## 0.35.0 - Collection semantics and public diagnostics
 

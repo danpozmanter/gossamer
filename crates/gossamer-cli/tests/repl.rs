@@ -75,6 +75,17 @@ fn repl_evaluates_simple_expression() {
 }
 
 #[test]
+fn repl_prints_integer_division_result() {
+    let out = run_repl("9600 / 60\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Out[1]: 160"),
+        "integer division result was not printed; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_persists_bindings_across_lines() {
     let out = run_repl("let x = 5\nx * 2\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);

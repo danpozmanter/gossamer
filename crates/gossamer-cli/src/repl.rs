@@ -4,6 +4,7 @@
 //! hard limit defined in `GUIDELINES.md`.
 
 use std::collections::BTreeMap;
+use std::io::Write as _;
 
 use anyhow::{Result, anyhow};
 use gossamer_parse::builtin_macros::{BUILTIN_MACROS, BuiltinMacro};
@@ -1259,14 +1260,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
             match build_and_call(&probe, &format!("__irepl_{input_no}")) {
                 Ok(value) => {
                     if !matches!(value, gossamer_interp::Value::Unit) {
-                        if tty {
-                            println!(
-                                "\x1b[31mOut[{input_no}]:\x1b[0m {}",
-                                render_repl_value(&value)
-                            );
-                        } else {
-                            println!("Out[{input_no}]: {}", render_repl_value(&value));
-                        }
+                        print_repl_result(input_no, &value, tty);
                     }
                 }
                 Err(msg) => {
@@ -1293,14 +1287,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
         match build_and_call(&program_source, &format!("__irepl_{input_no}")) {
             Ok(value) => {
                 if !matches!(value, gossamer_interp::Value::Unit) {
-                    if tty {
-                        println!(
-                            "\x1b[31mOut[{input_no}]:\x1b[0m {}",
-                            render_repl_value(&value)
-                        );
-                    } else {
-                        println!("Out[{input_no}]: {}", render_repl_value(&value));
-                    }
+                    print_repl_result(input_no, &value, tty);
                 }
             }
             Err(msg) => {
@@ -1316,6 +1303,20 @@ pub(crate) fn cmd_repl() -> Result<()> {
 /// from an identifier and applies recursively to aggregate values.
 fn render_repl_value(value: &gossamer_interp::Value) -> String {
     value.repr()
+}
+
+fn print_repl_result(input_no: u32, value: &gossamer_interp::Value, tty: bool) {
+    if tty {
+        println!(
+            "\x1b[31mOut[{input_no}]:\x1b[0m {}",
+            render_repl_value(value)
+        );
+    } else {
+        println!("Out[{input_no}]: {}", render_repl_value(value));
+    }
+    std::io::stdout()
+        .flush()
+        .expect("flush REPL expression result");
 }
 
 struct ReplBinding {

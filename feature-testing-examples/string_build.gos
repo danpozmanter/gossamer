@@ -3,7 +3,7 @@
 // deterministic and multibyte-aware (the cedilla 'ç' is two UTF-8
 // bytes, the euro 'EUR' sign three), so the tier-parity harness asserts
 // the rendered strings are bit-identical on VM, Cranelift, and LLVM.
-// The explicit asserts cover the integer byte lengths.
+// The explicit asserts distinguish Unicode scalar lengths from UTF-8 bytes.
 
 // Mirror of the escape-helper shape real code uses: walk a string's
 // chars, pushing each (or an escaped form) onto a freshly-built String.
@@ -55,5 +55,6 @@ fn main() {
     // Escape helper: markup chars expand, others pass through.
     let escaped = escape(&"a<b>&\"cç\"")
     println!("escaped={}", escaped)
-    assert_eq(escaped.len(), 20)
+    assert_eq(escaped.len(), 19)
+    assert_eq(escaped.as_bytes().len(), 20)
 }
