@@ -1009,6 +1009,14 @@ fn write_stderr_bytes(bytes: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use smallvec::smallvec;
+
+    fn expect_byte_vec(value: Value) -> Vec<u8> {
+        match value {
+            Value::ByteVec(bytes) => bytes.as_ref().clone(),
+            other => panic!("expected ByteVec, got {other:?}"),
+        }
+    }
 
     #[test]
     fn hashmap_with_capacity_preserves_string_key_semantics() {
@@ -1017,6 +1025,26 @@ mod tests {
         let map = builtin_map_insert(&[map, key.clone(), Value::Int(42)]).expect("insert");
         let value = builtin_map_get_or(&[map, key, Value::Int(-1)]).expect("get_or");
         assert!(matches!(value, Value::Int(42)));
+    }
+
+    #[test]
+    fn push_handles_byte_backed_vectors_on_generic_path() {
+        let fixed = Value::ByteArray(Arc::new(vec![3, 43].into()));
+        let inline = Value::InlineByteArray(Arc::new(smallvec![3, 43]));
+        let growable = Value::ByteVec(Arc::new(vec![3, 43]));
+
+        assert_eq!(
+            expect_byte_vec(builtin_push(&[fixed, Value::Int(83)]).unwrap()),
+            vec![3, 43, 83]
+        );
+        assert_eq!(
+            expect_byte_vec(builtin_push(&[inline, Value::Int(83)]).unwrap()),
+            vec![3, 43, 83]
+        );
+        assert_eq!(
+            expect_byte_vec(builtin_push(&[growable, Value::Int(83)]).unwrap()),
+            vec![3, 43, 83]
+        );
     }
 
     #[test]

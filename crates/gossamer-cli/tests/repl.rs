@@ -519,6 +519,45 @@ fn repl_bindings_show_full_inferred_types() {
 }
 
 #[test]
+fn repl_rejects_malformed_let_without_phantom_bindings() {
+    let out = run_repl(
+        "struct Point { x: i64, y: i64 }\n\
+         let a = 1\n\
+         let b = 3\n\
+         let Point {a, b}\n\
+         %bindings\n\
+         let p Point {a, b}\n\
+         p\n\
+         %bindings\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("malformed `let` input: missing `=` initializer; write `let PAT = EXPR`")
+            && out
+                .stderr
+                .contains("malformed `let` input: expected exactly `let PAT = EXPR`"),
+        "malformed let inputs should be rejected clearly; stderr: {}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("cannot find `p` in this scope"),
+        "`p` should not be registered after malformed let input; stderr: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("  1: a: i64 = 1") && out.stdout.contains("  2: b: i64 = 3"),
+        "valid bindings should remain visible; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("p:") && !out.stdout.contains("<void>"),
+        "malformed let inputs must not create phantom bindings; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_rejects_push_on_fixed_array_binding() {
     let out = run_repl("let mut a = [1;3]\na.push(3)\n%bindings\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -639,10 +678,9 @@ fn repl_struct_construction_and_display_match_source_shapes() {
 
     let legacy = run_repl("struct Marker\n");
     assert!(
-        legacy
-            .stderr
-            .contains("`{ field: Type }`, `(Type, ...)`, or `;` after a struct name"),
-        "bare unit declarations must be rejected; stderr: {}",
+        legacy.stdout.contains("added 1 declarations"),
+        "bare unit declarations should be accepted; stdout: {}; stderr: {}",
+        legacy.stdout,
         legacy.stderr
     );
 }

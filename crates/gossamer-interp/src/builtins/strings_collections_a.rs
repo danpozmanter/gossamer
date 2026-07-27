@@ -743,6 +743,27 @@ fn builtin_push(args: &[Value]) -> RuntimeResult<Value> {
             }
             Ok(Value::IntArray(Arc::new(owned)))
         }
+        Some(Value::ByteArray(parts)) => {
+            let mut owned = parts.to_vec();
+            if let Some(Value::Int(n)) = extra {
+                owned.push(*n as u8);
+            }
+            Ok(Value::ByteVec(Arc::new(owned)))
+        }
+        Some(Value::InlineByteArray(parts)) => {
+            let mut owned = parts.to_vec();
+            if let Some(Value::Int(n)) = extra {
+                owned.push(*n as u8);
+            }
+            Ok(Value::ByteVec(Arc::new(owned)))
+        }
+        Some(Value::ByteVec(parts)) => {
+            let mut owned = parts.as_ref().clone();
+            if let Some(Value::Int(n)) = extra {
+                owned.push(*n as u8);
+            }
+            Ok(Value::ByteVec(Arc::new(owned)))
+        }
         Some(Value::FloatVec(parts)) => {
             let mut owned = parts.as_ref().clone();
             if let Some(Value::Float(f)) = args.get(1) {

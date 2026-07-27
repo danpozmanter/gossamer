@@ -1210,6 +1210,14 @@ pub(crate) fn cmd_repl() -> Result<()> {
 
         if trimmed.starts_with("let ") {
             let candidate = trimmed.to_string();
+            let new_binding = match repl_binding_from_let_source(&candidate) {
+                Ok(binding) => binding,
+                Err(msg) => {
+                    eprintln!("    {msg}");
+                    input_no += 1;
+                    continue;
+                }
+            };
             lets.push(candidate.clone());
             let probe_body = format!("{}\n    ()\n", lets.join("\n    "));
             let probe = format!(
@@ -1220,7 +1228,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
             );
             match build_and_call(&probe, &format!("__irepl_{input_no}")) {
                 Ok(_) => {
-                    update_repl_bindings(&mut bindings, ReplBinding::from_let_source(&candidate));
+                    update_repl_bindings(&mut bindings, new_binding);
                     println!("    binding added ({} total)", bindings.len());
                 }
                 Err(msg) => {
@@ -1319,14 +1327,6 @@ struct ReplBindingVar {
     mutable: bool,
 }
 
-impl ReplBinding {
-    fn from_let_source(source: &str) -> Self {
-        Self {
-            vars: let_binding_vars(source),
-        }
-    }
-}
-
 fn update_repl_bindings(bindings: &mut Vec<ReplBinding>, new_binding: ReplBinding) {
     if !new_binding.vars.is_empty() {
         for binding in bindings.iter_mut() {
@@ -1376,7 +1376,7 @@ fn render_repl_bindings(
     lines
 }
 
-fn let_binding_vars(input: &str) -> Vec<ReplBindingVar> {
+fn repl_binding_from_let_source(input: &str) -> std::result::Result<ReplBinding, String> {
     use gossamer_ast::{ExprKind, ItemKind, StmtKind};
 
     let source = format!("fn __irepl_binding_names() {{ {input} }}\n");
@@ -1384,29 +1384,44 @@ fn let_binding_vars(input: &str) -> Vec<ReplBindingVar> {
     let file = map.add_file("irepl-binding-names".to_string(), source.clone());
     let (sf, diags) = gossamer_parse::parse_source_file(&source, file);
     if !diags.is_empty() {
-        return Vec::new();
+        return Err(format_parse_diags(&diags, &map, file));
     }
     let Some(item) = sf.items.first() else {
-        return Vec::new();
+        return Err(repl_let_shape_error());
     };
     let ItemKind::Fn(decl) = &item.kind else {
-        return Vec::new();
+        return Err(repl_let_shape_error());
     };
     let Some(body) = &decl.body else {
-        return Vec::new();
+        return Err(repl_let_shape_error());
     };
     let ExprKind::Block(block) = &body.kind else {
-        return Vec::new();
+        return Err(repl_let_shape_error());
     };
+    if block.stmts.len() != 1 || block.tail.is_some() {
+        return Err(repl_let_shape_error());
+    }
     let Some(stmt) = block.stmts.first() else {
-        return Vec::new();
+        return Err(repl_let_shape_error());
     };
-    let StmtKind::Let { pattern, .. } = &stmt.kind else {
-        return Vec::new();
+    let StmtKind::Let { pattern, init, .. } = &stmt.kind else {
+        return Err(repl_let_shape_error());
     };
+    if init.is_none() {
+        return Err(repl_let_initializer_error());
+    }
     let mut vars = Vec::new();
     collect_repl_pattern_bindings(pattern, &mut vars);
-    vars
+    Ok(ReplBinding { vars })
+}
+
+fn repl_let_shape_error() -> String {
+    "1 REPL input error:\n  malformed `let` input: expected exactly `let PAT = EXPR`".to_string()
+}
+
+fn repl_let_initializer_error() -> String {
+    "1 REPL input error:\n  malformed `let` input: missing `=` initializer; write `let PAT = EXPR`"
+        .to_string()
 }
 
 fn collect_repl_pattern_bindings(pattern: &gossamer_ast::Pattern, out: &mut Vec<ReplBindingVar>) {

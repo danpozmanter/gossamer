@@ -14,6 +14,8 @@
   packed-value interoperability, and private runtime representations.
 - Fix tuple literal `for` loops and `&mut Vec<T>` loop element mutation across
   REPL, VM, JIT, and native execution.
+- Reject malformed REPL `let` inputs without creating phantom bindings, and
+  preserve byte-vector `push` results on the VM fallback path.
 - Expand type-guarantee coverage across mutable, immutable, constant, nominal,
   nested, enum, collection, and standard-library handle values.
 
