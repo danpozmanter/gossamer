@@ -2212,9 +2212,8 @@ fn item_kind_label(kind: StdItemKind) -> &'static str {
 /// Type checking remains authoritative for receiver mutability and whether
 /// the method exists. This parser-only classification only controls replay.
 fn input_mutates_binding(input: &str) -> bool {
-    use gossamer_ast::common::UnaryOp;
-    use gossamer_ast::expr::SelectOp;
-    use gossamer_ast::{Expr, ExprKind, ItemKind, Stmt, StmtKind};
+    use gossamer_ast::{ExprKind, ItemKind, StmtKind};
+
     let source = format!("fn __irepl_classify() {{ {input} }}\n");
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file("irepl-classify".to_string(), source.clone());
@@ -2241,210 +2240,242 @@ fn input_mutates_binding(input: &str) -> bool {
         },
         None => None,
     });
-    fn stmt_mutates_binding(stmt: &Stmt) -> bool {
-        match &stmt.kind {
-            StmtKind::Let { init, .. } => init.as_deref().is_some_and(expr_mutates_binding),
-            StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
-                expr_mutates_binding(expr)
-            }
-            StmtKind::Item(_) => false,
-        }
-    }
 
-    fn select_op_contains_ref_mut(op: &SelectOp) -> bool {
-        match op {
-            SelectOp::Recv { channel, .. } => expr_contains_ref_mut(channel),
-            SelectOp::Send { channel, value } => {
-                expr_contains_ref_mut(channel) || expr_contains_ref_mut(value)
-            }
-            SelectOp::Default => false,
-        }
-    }
+    target.is_some_and(repl_expr_mutates_binding)
+}
 
-    fn expr_contains_ref_mut(expr: &Expr) -> bool {
-        match &expr.kind {
-            ExprKind::Unary {
-                op: UnaryOp::RefMut,
-                ..
-            } => true,
-            ExprKind::Call { callee, args } => {
-                expr_contains_ref_mut(callee) || args.iter().any(expr_contains_ref_mut)
-            }
-            ExprKind::MethodCall { receiver, args, .. } => {
-                expr_contains_ref_mut(receiver) || args.iter().any(expr_contains_ref_mut)
-            }
-            ExprKind::FieldAccess { receiver, .. } => expr_contains_ref_mut(receiver),
-            ExprKind::Index { base, index } => {
-                expr_contains_ref_mut(base) || expr_contains_ref_mut(index)
-            }
-            ExprKind::Unary { operand, .. } => expr_contains_ref_mut(operand),
-            ExprKind::Binary { lhs, rhs, .. } => {
-                expr_contains_ref_mut(lhs) || expr_contains_ref_mut(rhs)
-            }
-            ExprKind::Assign { place, value, .. } => {
-                expr_contains_ref_mut(place) || expr_contains_ref_mut(value)
-            }
-            ExprKind::Cast { value, .. } | ExprKind::Try(value) | ExprKind::Go(value) => {
-                expr_contains_ref_mut(value)
-            }
-            ExprKind::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                expr_contains_ref_mut(condition)
-                    || expr_contains_ref_mut(then_branch)
-                    || else_branch.as_deref().is_some_and(expr_contains_ref_mut)
-            }
-            ExprKind::Match { scrutinee, arms } => {
-                expr_contains_ref_mut(scrutinee)
-                    || arms.iter().any(|arm| {
-                        arm.guard.as_ref().is_some_and(expr_contains_ref_mut)
-                            || expr_contains_ref_mut(&arm.body)
-                    })
-            }
-            ExprKind::Loop { body, .. } => expr_contains_ref_mut(body),
-            ExprKind::While {
-                condition, body, ..
-            } => expr_contains_ref_mut(condition) || expr_contains_ref_mut(body),
-            ExprKind::For { iter, body, .. } => {
-                expr_contains_ref_mut(iter) || expr_contains_ref_mut(body)
-            }
-            ExprKind::Block(block) | ExprKind::Unsafe(block) => {
-                block.stmts.iter().any(stmt_contains_ref_mut)
-                    || block.tail.as_deref().is_some_and(expr_contains_ref_mut)
-            }
-            ExprKind::Closure { body, .. } => expr_contains_ref_mut(body),
-            ExprKind::Return(value) => value.as_deref().is_some_and(expr_contains_ref_mut),
-            ExprKind::Break { value, .. } => value.as_deref().is_some_and(expr_contains_ref_mut),
-            ExprKind::Tuple(elems) => elems.iter().any(expr_contains_ref_mut),
-            ExprKind::Struct { fields, base, .. } => {
-                fields
-                    .iter()
-                    .any(|field| field.value.as_ref().is_some_and(expr_contains_ref_mut))
-                    || base.as_deref().is_some_and(expr_contains_ref_mut)
-            }
-            ExprKind::Array(array) => match array {
-                gossamer_ast::expr::ArrayExpr::List(elems) => {
-                    elems.iter().any(expr_contains_ref_mut)
-                }
-                gossamer_ast::expr::ArrayExpr::Repeat { value, count } => {
-                    expr_contains_ref_mut(value) || expr_contains_ref_mut(count)
-                }
-            },
-            ExprKind::Range { start, end, .. } => {
-                start.as_deref().is_some_and(expr_contains_ref_mut)
-                    || end.as_deref().is_some_and(expr_contains_ref_mut)
-            }
-            ExprKind::Select(arms) => arms
+fn repl_stmt_mutates_binding(stmt: &gossamer_ast::Stmt) -> bool {
+    use gossamer_ast::StmtKind;
+
+    match &stmt.kind {
+        StmtKind::Let { init, .. } => init.as_deref().is_some_and(repl_expr_mutates_binding),
+        StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
+            repl_expr_mutates_binding(expr)
+        }
+        StmtKind::Item(_) => false,
+    }
+}
+
+fn repl_select_op_contains_ref_mut(op: &gossamer_ast::expr::SelectOp) -> bool {
+    use gossamer_ast::expr::SelectOp;
+
+    match op {
+        SelectOp::Recv { channel, .. } => repl_expr_contains_ref_mut(channel),
+        SelectOp::Send { channel, value } => {
+            repl_expr_contains_ref_mut(channel) || repl_expr_contains_ref_mut(value)
+        }
+        SelectOp::Default => false,
+    }
+}
+
+fn repl_stmt_contains_ref_mut(stmt: &gossamer_ast::Stmt) -> bool {
+    use gossamer_ast::StmtKind;
+
+    match &stmt.kind {
+        StmtKind::Let { init, .. } => init.as_deref().is_some_and(repl_expr_contains_ref_mut),
+        StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
+            repl_expr_contains_ref_mut(expr)
+        }
+        StmtKind::Item(_) => false,
+    }
+}
+
+fn repl_expr_contains_ref_mut(expr: &gossamer_ast::Expr) -> bool {
+    use gossamer_ast::ExprKind;
+    use gossamer_ast::common::UnaryOp;
+
+    match &expr.kind {
+        ExprKind::Unary {
+            op: UnaryOp::RefMut,
+            ..
+        } => true,
+        ExprKind::Call { callee, args } => {
+            repl_expr_contains_ref_mut(callee) || args.iter().any(repl_expr_contains_ref_mut)
+        }
+        ExprKind::MethodCall { receiver, args, .. } => {
+            repl_expr_contains_ref_mut(receiver) || args.iter().any(repl_expr_contains_ref_mut)
+        }
+        ExprKind::FieldAccess { receiver, .. } => repl_expr_contains_ref_mut(receiver),
+        ExprKind::Index { base, index } => {
+            repl_expr_contains_ref_mut(base) || repl_expr_contains_ref_mut(index)
+        }
+        ExprKind::Unary { operand, .. } => repl_expr_contains_ref_mut(operand),
+        ExprKind::Binary { lhs, rhs, .. } => {
+            repl_expr_contains_ref_mut(lhs) || repl_expr_contains_ref_mut(rhs)
+        }
+        ExprKind::Assign { place, value, .. } => {
+            repl_expr_contains_ref_mut(place) || repl_expr_contains_ref_mut(value)
+        }
+        ExprKind::Cast { value, .. } | ExprKind::Try(value) | ExprKind::Go(value) => {
+            repl_expr_contains_ref_mut(value)
+        }
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            repl_expr_contains_ref_mut(condition)
+                || repl_expr_contains_ref_mut(then_branch)
+                || else_branch
+                    .as_deref()
+                    .is_some_and(repl_expr_contains_ref_mut)
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            repl_expr_contains_ref_mut(scrutinee)
+                || arms.iter().any(|arm| {
+                    arm.guard.as_ref().is_some_and(repl_expr_contains_ref_mut)
+                        || repl_expr_contains_ref_mut(&arm.body)
+                })
+        }
+        ExprKind::Loop { body, .. } => repl_expr_contains_ref_mut(body),
+        ExprKind::While {
+            condition, body, ..
+        } => repl_expr_contains_ref_mut(condition) || repl_expr_contains_ref_mut(body),
+        ExprKind::For { iter, body, .. } => {
+            repl_expr_contains_ref_mut(iter) || repl_expr_contains_ref_mut(body)
+        }
+        ExprKind::Block(block) | ExprKind::Unsafe(block) => {
+            block.stmts.iter().any(repl_stmt_contains_ref_mut)
+                || block
+                    .tail
+                    .as_deref()
+                    .is_some_and(repl_expr_contains_ref_mut)
+        }
+        ExprKind::Closure { body, .. } => repl_expr_contains_ref_mut(body),
+        ExprKind::Return(value) => value.as_deref().is_some_and(repl_expr_contains_ref_mut),
+        ExprKind::Break { value, .. } => value.as_deref().is_some_and(repl_expr_contains_ref_mut),
+        ExprKind::Tuple(elems) => elems.iter().any(repl_expr_contains_ref_mut),
+        ExprKind::Struct { fields, base, .. } => {
+            fields
                 .iter()
-                .any(|arm| select_op_contains_ref_mut(&arm.op) || expr_contains_ref_mut(&arm.body)),
-            ExprKind::MacroCall(_)
-            | ExprKind::Literal(_)
-            | ExprKind::Path(_)
-            | ExprKind::Continue { .. }
-            | ExprKind::Error => false,
+                .any(|field| field.value.as_ref().is_some_and(repl_expr_contains_ref_mut))
+                || base.as_deref().is_some_and(repl_expr_contains_ref_mut)
+        }
+        ExprKind::Array(array) => repl_array_expr_contains_ref_mut(array),
+        ExprKind::Range { start, end, .. } => {
+            start.as_deref().is_some_and(repl_expr_contains_ref_mut)
+                || end.as_deref().is_some_and(repl_expr_contains_ref_mut)
+        }
+        ExprKind::Select(arms) => arms.iter().any(|arm| {
+            repl_select_op_contains_ref_mut(&arm.op) || repl_expr_contains_ref_mut(&arm.body)
+        }),
+        ExprKind::MacroCall(_)
+        | ExprKind::Literal(_)
+        | ExprKind::Path(_)
+        | ExprKind::Continue { .. }
+        | ExprKind::Error => false,
+    }
+}
+
+fn repl_array_expr_contains_ref_mut(array: &gossamer_ast::expr::ArrayExpr) -> bool {
+    match array {
+        gossamer_ast::expr::ArrayExpr::List(elems) => elems.iter().any(repl_expr_contains_ref_mut),
+        gossamer_ast::expr::ArrayExpr::Repeat { value, count } => {
+            repl_expr_contains_ref_mut(value) || repl_expr_contains_ref_mut(count)
         }
     }
+}
 
-    fn stmt_contains_ref_mut(stmt: &Stmt) -> bool {
-        match &stmt.kind {
-            StmtKind::Let { init, .. } => init.as_deref().is_some_and(expr_contains_ref_mut),
-            StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
-                expr_contains_ref_mut(expr)
-            }
-            StmtKind::Item(_) => false,
+fn repl_expr_mutates_binding(expr: &gossamer_ast::Expr) -> bool {
+    use gossamer_ast::ExprKind;
+
+    match &expr.kind {
+        ExprKind::Assign { .. } => true,
+        ExprKind::MethodCall {
+            receiver,
+            name,
+            args,
+            ..
+        } => {
+            gossamer_types::is_mutating_method_name(&name.name)
+                || repl_expr_mutates_binding(receiver)
+                || args.iter().any(repl_expr_mutates_binding)
+        }
+        ExprKind::Call { callee, args } => {
+            repl_callee_is_mutating_name(callee)
+                || repl_expr_mutates_binding(callee)
+                || args.iter().any(repl_expr_mutates_binding)
+        }
+        ExprKind::For { iter, body, .. } => {
+            repl_expr_contains_ref_mut(iter) || repl_expr_mutates_binding(body)
+        }
+        ExprKind::Block(block) | ExprKind::Unsafe(block) => {
+            block.stmts.iter().any(repl_stmt_mutates_binding)
+                || block.tail.as_deref().is_some_and(repl_expr_mutates_binding)
+        }
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            repl_expr_mutates_binding(condition)
+                || repl_expr_mutates_binding(then_branch)
+                || else_branch
+                    .as_deref()
+                    .is_some_and(repl_expr_mutates_binding)
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            repl_expr_mutates_binding(scrutinee)
+                || arms.iter().any(|arm| {
+                    arm.guard.as_ref().is_some_and(repl_expr_mutates_binding)
+                        || repl_expr_mutates_binding(&arm.body)
+                })
+        }
+        ExprKind::Loop { body, .. } => repl_expr_mutates_binding(body),
+        ExprKind::While {
+            condition, body, ..
+        } => repl_expr_mutates_binding(condition) || repl_expr_mutates_binding(body),
+        ExprKind::FieldAccess { receiver, .. } => repl_expr_mutates_binding(receiver),
+        ExprKind::Index { base, index } => {
+            repl_expr_mutates_binding(base) || repl_expr_mutates_binding(index)
+        }
+        ExprKind::Unary { operand, .. } => repl_expr_mutates_binding(operand),
+        ExprKind::Binary { lhs, rhs, .. } => {
+            repl_expr_mutates_binding(lhs) || repl_expr_mutates_binding(rhs)
+        }
+        ExprKind::Cast { value, .. } | ExprKind::Try(value) | ExprKind::Go(value) => {
+            repl_expr_mutates_binding(value)
+        }
+        ExprKind::Closure { body, .. } => repl_expr_mutates_binding(body),
+        ExprKind::Return(value) => value.as_deref().is_some_and(repl_expr_mutates_binding),
+        ExprKind::Break { value, .. } => value.as_deref().is_some_and(repl_expr_mutates_binding),
+        ExprKind::Tuple(elems) => elems.iter().any(repl_expr_mutates_binding),
+        ExprKind::Struct { fields, base, .. } => {
+            fields
+                .iter()
+                .any(|field| field.value.as_ref().is_some_and(repl_expr_mutates_binding))
+                || base.as_deref().is_some_and(repl_expr_mutates_binding)
+        }
+        ExprKind::Array(array) => repl_array_expr_mutates_binding(array),
+        ExprKind::Range { start, end, .. } => {
+            start.as_deref().is_some_and(repl_expr_mutates_binding)
+                || end.as_deref().is_some_and(repl_expr_mutates_binding)
+        }
+        ExprKind::Select(arms) => arms.iter().any(|arm| repl_expr_mutates_binding(&arm.body)),
+        ExprKind::Literal(_)
+        | ExprKind::Path(_)
+        | ExprKind::Continue { .. }
+        | ExprKind::MacroCall(_)
+        | ExprKind::Error => false,
+    }
+}
+
+fn repl_array_expr_mutates_binding(array: &gossamer_ast::expr::ArrayExpr) -> bool {
+    match array {
+        gossamer_ast::expr::ArrayExpr::List(elems) => elems.iter().any(repl_expr_mutates_binding),
+        gossamer_ast::expr::ArrayExpr::Repeat { value, count } => {
+            repl_expr_mutates_binding(value) || repl_expr_mutates_binding(count)
         }
     }
+}
 
-    fn expr_mutates_binding(expr: &Expr) -> bool {
-        match &expr.kind {
-            ExprKind::Assign { .. } => true,
-            ExprKind::MethodCall {
-                receiver,
-                name,
-                args,
-                ..
-            } => {
-                gossamer_types::is_mutating_method_name(&name.name)
-                    || expr_mutates_binding(receiver)
-                    || args.iter().any(expr_mutates_binding)
-            }
-            ExprKind::Call { callee, args } => {
-                matches!(&callee.kind, ExprKind::Path(path) if path.segments.last().is_some_and(|segment| gossamer_types::is_mutating_method_name(&segment.name.name)))
-                    || expr_mutates_binding(callee)
-                    || args.iter().any(expr_mutates_binding)
-            }
-            ExprKind::For { iter, body, .. } => {
-                expr_contains_ref_mut(iter) || expr_mutates_binding(body)
-            }
-            ExprKind::Block(block) | ExprKind::Unsafe(block) => {
-                block.stmts.iter().any(stmt_mutates_binding)
-                    || block.tail.as_deref().is_some_and(expr_mutates_binding)
-            }
-            ExprKind::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                expr_mutates_binding(condition)
-                    || expr_mutates_binding(then_branch)
-                    || else_branch.as_deref().is_some_and(expr_mutates_binding)
-            }
-            ExprKind::Match { scrutinee, arms } => {
-                expr_mutates_binding(scrutinee)
-                    || arms.iter().any(|arm| {
-                        arm.guard.as_ref().is_some_and(expr_mutates_binding)
-                            || expr_mutates_binding(&arm.body)
-                    })
-            }
-            ExprKind::Loop { body, .. } => expr_mutates_binding(body),
-            ExprKind::While {
-                condition, body, ..
-            } => expr_mutates_binding(condition) || expr_mutates_binding(body),
-            ExprKind::FieldAccess { receiver, .. } => expr_mutates_binding(receiver),
-            ExprKind::Index { base, index } => {
-                expr_mutates_binding(base) || expr_mutates_binding(index)
-            }
-            ExprKind::Unary { operand, .. } => expr_mutates_binding(operand),
-            ExprKind::Binary { lhs, rhs, .. } => {
-                expr_mutates_binding(lhs) || expr_mutates_binding(rhs)
-            }
-            ExprKind::Cast { value, .. } | ExprKind::Try(value) | ExprKind::Go(value) => {
-                expr_mutates_binding(value)
-            }
-            ExprKind::Closure { body, .. } => expr_mutates_binding(body),
-            ExprKind::Return(value) => value.as_deref().is_some_and(expr_mutates_binding),
-            ExprKind::Break { value, .. } => value.as_deref().is_some_and(expr_mutates_binding),
-            ExprKind::Tuple(elems) => elems.iter().any(expr_mutates_binding),
-            ExprKind::Struct { fields, base, .. } => {
-                fields
-                    .iter()
-                    .any(|field| field.value.as_ref().is_some_and(expr_mutates_binding))
-                    || base.as_deref().is_some_and(expr_mutates_binding)
-            }
-            ExprKind::Array(array) => match array {
-                gossamer_ast::expr::ArrayExpr::List(elems) => {
-                    elems.iter().any(expr_mutates_binding)
-                }
-                gossamer_ast::expr::ArrayExpr::Repeat { value, count } => {
-                    expr_mutates_binding(value) || expr_mutates_binding(count)
-                }
-            },
-            ExprKind::Range { start, end, .. } => {
-                start.as_deref().is_some_and(expr_mutates_binding)
-                    || end.as_deref().is_some_and(expr_mutates_binding)
-            }
-            ExprKind::Select(arms) => arms.iter().any(|arm| expr_mutates_binding(&arm.body)),
-            ExprKind::Literal(_)
-            | ExprKind::Path(_)
-            | ExprKind::Continue { .. }
-            | ExprKind::MacroCall(_)
-            | ExprKind::Error => false,
-        }
-    }
-
-    target.is_some_and(expr_mutates_binding)
+fn repl_callee_is_mutating_name(callee: &gossamer_ast::Expr) -> bool {
+    let gossamer_ast::ExprKind::Path(path) = &callee.kind else {
+        return false;
+    };
+    path.segments
+        .last()
+        .is_some_and(|segment| gossamer_types::is_mutating_method_name(&segment.name.name))
 }
 
 /// Validates that the accumulated declarations parse, resolve, and

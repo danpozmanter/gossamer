@@ -32,7 +32,7 @@ fn parse_leading_int(s: &String) -> Result<i64, errors::Error> {
 
 fn sum_ints(items: &Vec<String>) -> Result<i64, errors::Error> {
     let mut total = 0
-    for it in items { total += parse_leading_int(&it)? }
+    for it in items { total += parse_leading_int(it)? }
     Ok(total)
 }
 

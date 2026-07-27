@@ -766,6 +766,7 @@ impl Vm {
                     let argc_usz = argc as usize;
                     let total = argc_usz + 1;
                     let recv_token = type_token(&registers[receiver as usize]);
+                    let method_name = Some(SmolStr::from_str(name));
                     let live_generation = self.globals_generation();
                     // Two-tier IC probe. The hottest hit is the
                     // builtin fn-pointer fast path: the slot's
@@ -782,7 +783,10 @@ impl Vm {
                             // Miss-and-fill below takes borrow_mut.
                             let cache = state.call_caches.borrow();
                             let slot = &cache[cache_idx as usize];
-                            if slot.type_token == recv_token && slot.generation == live_generation {
+                            if slot.type_token == recv_token
+                                && slot.callee_name.as_ref() == method_name.as_ref()
+                                && slot.generation == live_generation
+                            {
                                 let general =
                                     slot.fn_chunk.as_ref().map(|c| Global::Fn(Arc::clone(c)));
                                 (slot.builtin_fn, general)
@@ -832,8 +836,12 @@ impl Vm {
                             if recv_token != 0 {
                                 if let Some(ref g) = r {
                                     let mut cache = state.call_caches.borrow_mut();
-                                    cache[cache_idx as usize] =
-                                        fill_cache_slot(recv_token, live_generation, None, g);
+                                    cache[cache_idx as usize] = fill_cache_slot(
+                                        recv_token,
+                                        live_generation,
+                                        method_name.clone(),
+                                        g,
+                                    );
                                 }
                             }
                             match r {
@@ -871,8 +879,12 @@ impl Vm {
                             if recv_token != 0 {
                                 if let Some(ref g) = r {
                                     let mut cache = state.call_caches.borrow_mut();
-                                    cache[cache_idx as usize] =
-                                        fill_cache_slot(recv_token, live_generation, None, g);
+                                    cache[cache_idx as usize] = fill_cache_slot(
+                                        recv_token,
+                                        live_generation,
+                                        method_name.clone(),
+                                        g,
+                                    );
                                 }
                             }
                             match r {

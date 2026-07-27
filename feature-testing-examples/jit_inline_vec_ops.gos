@@ -15,7 +15,7 @@ fn sum_first(xs: &[i64], k: i64) -> i64 {
 fn sum_for(xs: &[i64]) -> i64 {
     let mut acc = 0
     for x in xs {
-        acc += x
+        acc += *x
     }
     acc
 }

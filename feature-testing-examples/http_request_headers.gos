@@ -28,7 +28,7 @@ fn header_of(headers: &[(String, String)], want: String) -> String {
     let mut found = ""
     for (name, value) in headers {
         if name == want {
-            found = value
+            found = *value
         }
     }
     found

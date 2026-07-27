@@ -17,13 +17,13 @@ fn classify(xs: &[i64]) -> Vec<i64> {
     let mut odds: Vec<i64> = []
     for x in xs {
         // Tail-position push inside an `if` block.
-        if x % 2 == 0 {
-            evens.push(x)
+        if *x % 2 == 0 {
+            evens.push(*x)
         }
         // Tail-position push inside a `match` arm.
-        match x % 2 {
-            0 => odds.push(x * 0),
-            _ => odds.push(x),
+        match *x % 2 {
+            0 => odds.push(*x * 0),
+            _ => odds.push(*x),
         }
     }
     let mut out: Vec<i64> = []

@@ -21,7 +21,7 @@ fn main() {
     let tags = http::form::get_all(&form, &"tag")
     let mut joined = ""
     for t in tags {
-        joined = joined + "/" + &t
+        joined = joined + "/" + t
     }
     println!("tag_values={}", joined)
 }

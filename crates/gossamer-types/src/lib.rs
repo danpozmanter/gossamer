@@ -79,8 +79,6 @@ pub fn is_mutating_method_name(name: &str) -> bool {
             | "sort_by"
             | "sort_by_key"
             | "reverse"
-            | "retain"
-            | "drain"
             | "swap"
     )
 }

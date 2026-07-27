@@ -14,7 +14,7 @@ use std::http
 fn byte_sum(data: &[u8]) -> i64 {
     let mut sum: i64 = 0
     for b in data {
-        sum += b as i64
+        sum += *b as i64
     }
     sum
 }

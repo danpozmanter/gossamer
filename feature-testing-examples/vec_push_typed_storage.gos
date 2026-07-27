@@ -7,7 +7,7 @@
 fn sum(xs: &[i64]) -> i64 {
     let mut acc = 0
     for n in xs {
-        acc += n
+        acc += *n
     }
     acc
 }

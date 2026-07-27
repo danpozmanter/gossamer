@@ -631,7 +631,7 @@ fn __gos_http_header_lookup(headers: &[(String, String)], name: &String) -> Stri
     let target = name.to_lowercase()
     let mut found = ""
     for (k, v) in headers {
-        if k.to_lowercase() == target { found = v }
+        if k.to_lowercase() == target { found = *v }
     }
     found
 }

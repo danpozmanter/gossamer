@@ -695,9 +695,14 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("get_or", builtin("get_or", builtin_map_get_or)));
     globals.push(("inc", builtin("inc", builtin_map_inc)));
     globals.push(("or_insert", builtin("or_insert", builtin_map_or_insert)));
-    // `get` and `insert` and `remove` and `len` and `clear` already
-    // exist as bare names for other types; the builtin already
-    // routes by receiver so we don't double-register.
+    // Re-register `get` as the receiver router after the qualified
+    // module entries. Later stdlib modules also expose bare `get`, so
+    // leaving the first registration in place lets JSON/http surfaces
+    // shadow HashMap::get and makes map lookups silently return None.
+    globals.push(("get", builtin("get", builtin_get_router)));
+    // `insert` and `remove` and `len` and `clear` already exist as bare
+    // names for other types; the builtin already routes by receiver so
+    // we don't double-register.
 
     install_module(
         "json",
@@ -1179,7 +1184,7 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("Vec::first", builtin("Vec::first", builtin_first)));
     globals.push(("last", builtin("last", builtin_last)));
     globals.push(("Vec::last", builtin("Vec::last", builtin_last)));
-    globals.push(("get", builtin("get", builtin_get)));
+    globals.push(("get", builtin("get", builtin_get_router)));
     globals.push(("Vec::get", builtin("Vec::get", builtin_get)));
     globals.push(("rev", builtin("rev", builtin_reversed)));
     globals.push(("Vec::rev", builtin("Vec::rev", builtin_reversed)));

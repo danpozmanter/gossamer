@@ -35,7 +35,7 @@ fn make_box(n: i64) -> Box2 {
 fn sum_of(xs: &[i64]) -> i64 {
     let mut acc = 0
     for x in xs {
-        acc += x
+        acc += *x
     }
     acc
 }

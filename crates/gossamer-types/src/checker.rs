@@ -5321,6 +5321,10 @@ impl<'a> TypeChecker<'a> {
         {
             return self.tcx.json_value_ty();
         }
+        if method != "clone" && self.reject_unknown_sequence_method(resolved, method, receiver.span)
+        {
+            return self.tcx.error_ty();
+        }
         if matches!(self.tcx.kind(resolved), Some(TyKind::String)) {
             let expected_arity = match method {
                 "clear" => Some(0),
@@ -5370,6 +5374,24 @@ impl<'a> TypeChecker<'a> {
         self.check_method_arity(call_id, resolved, method, args, receiver.span);
         self.maybe_reject_unknown_adt_method(resolved, method, receiver.span);
         self.fresh()
+    }
+
+    fn reject_unknown_sequence_method(&mut self, resolved: Ty, method: &str, span: Span) -> bool {
+        if !matches!(
+            self.tcx.kind(resolved),
+            Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. })
+        ) {
+            return false;
+        }
+        let ty = self.render_public_ty(resolved);
+        self.emit(
+            TypeError::UnresolvedMethod {
+                ty,
+                name: method.to_string(),
+            },
+            span,
+        );
+        true
     }
 
     fn reject_collection_method_arity(
@@ -6193,7 +6215,8 @@ impl<'a> TypeChecker<'a> {
                 | "swap",
                 _,
             ) => Some(self.tcx.unit()),
-            ("capacity", 0) => Some(self.tcx.int_ty(IntTy::I64)),
+            ("capacity" | "len", 0) => Some(self.tcx.int_ty(IntTy::I64)),
+            ("is_empty", 0) => Some(self.tcx.bool_ty()),
             ("pop", 0) => Some(self.option_adt_ty(elem)),
             ("remove", 1) => Some(elem),
             ("first" | "last", 0) => Some(self.option_adt_ty(elem)),
@@ -8668,7 +8691,13 @@ impl<'a> TypeChecker<'a> {
         let pat_ty = match derived {
             Some(t) => {
                 let p = self.type_of_pattern(pattern);
-                self.unify(p, t, pattern.span);
+                let pattern_target = match (&pattern.kind, self.tcx.kind_of(t).clone()) {
+                    (PatternKind::Tuple(_), TyKind::Ref { inner, .. }) => {
+                        self.infer.resolve(self.tcx, inner)
+                    }
+                    _ => t,
+                };
+                self.unify(p, pattern_target, pattern.span);
                 t
             }
             None => self.type_of_pattern(pattern),
@@ -9768,21 +9797,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             PatternKind::Tuple(parts) => {
-                let resolved = self.infer.resolve(self.tcx, ty);
-                if matches!(self.tcx.kind(resolved), Some(TyKind::Adt { .. })) {
-                    let ty = self.render_public_ty(resolved);
-                    self.emit(TypeError::StructPatternNameRequired { ty }, pattern.span);
-                }
-                let element_tys: Vec<Ty> =
-                    if let Some(TyKind::Tuple(elems)) = self.tcx.kind(resolved).cloned() {
-                        elems
-                    } else {
-                        (0..parts.len()).map(|_| self.fresh()).collect()
-                    };
-                for (i, part) in parts.iter().enumerate() {
-                    let elem_ty = element_tys.get(i).copied().unwrap_or_else(|| self.fresh());
-                    self.bind_pattern(part, elem_ty);
-                }
+                self.bind_tuple_pattern(pattern, parts, ty);
             }
             PatternKind::Slice {
                 prefix,
@@ -9854,6 +9869,42 @@ impl<'a> TypeChecker<'a> {
             | PatternKind::Range { .. }
             | PatternKind::Rest
             | PatternKind::Error => {}
+        }
+    }
+
+    fn bind_tuple_pattern(&mut self, pattern: &Pattern, parts: &[Pattern], ty: Ty) {
+        let mut resolved = self.infer.resolve(self.tcx, ty);
+        let mut ref_mutability = None;
+        if let Some(TyKind::Ref { inner, mutability }) = self.tcx.kind(resolved).cloned() {
+            resolved = self.infer.resolve(self.tcx, inner);
+            ref_mutability = Some(mutability);
+        }
+        if matches!(self.tcx.kind(resolved), Some(TyKind::Adt { .. })) {
+            let ty = self.render_public_ty(resolved);
+            self.emit(TypeError::StructPatternNameRequired { ty }, pattern.span);
+        }
+        let element_tys = self.tuple_pattern_element_tys(resolved, ref_mutability, parts.len());
+        for (i, part) in parts.iter().enumerate() {
+            let elem_ty = element_tys.get(i).copied().unwrap_or_else(|| self.fresh());
+            self.bind_pattern(part, elem_ty);
+        }
+    }
+
+    fn tuple_pattern_element_tys(
+        &mut self,
+        resolved: Ty,
+        ref_mutability: Option<Mutbl>,
+        count: usize,
+    ) -> Vec<Ty> {
+        match self.tcx.kind(resolved).cloned() {
+            Some(TyKind::Tuple(elems)) => match ref_mutability {
+                Some(mutability) => elems
+                    .into_iter()
+                    .map(|inner| self.tcx.intern(TyKind::Ref { mutability, inner }))
+                    .collect(),
+                None => elems,
+            },
+            _ => (0..count).map(|_| self.fresh()).collect(),
         }
     }
 
