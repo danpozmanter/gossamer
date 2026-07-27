@@ -3266,6 +3266,19 @@ impl<'a> TypeChecker<'a> {
             let Some(last) = last.first().copied() else {
                 return self.fresh();
             };
+            if matches!(module, ["Vec"] | ["std", "Vec"])
+                && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+                && let Some(ret) = self.check_qualified_vec_call(last, args, arg_tys, callee.span)
+            {
+                return ret;
+            }
+            if matches!(module, ["String"] | ["std", "String"])
+                && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+                && let Some(ret) =
+                    self.check_qualified_string_call(last, args, arg_tys, callee.span)
+            {
+                return ret;
+            }
             let is_strings_call = matches!(module, ["strings"] | ["std", "strings"]);
             let has_specialized_combinator_sig = combinator_module_name(module)
                 .is_some_and(|m| Self::std_combinator_arity(m, last).is_some());
@@ -3386,6 +3399,119 @@ impl<'a> TypeChecker<'a> {
         }
         self.reject_noncallable_callee(callee, callee_ty);
         self.fresh()
+    }
+
+    /// Validates Rust-style associated String mutators such as
+    /// `String::push(&mut s, ch)`. These calls do not pass through method-call
+    /// checking and are not stdlib module functions, so without this table a
+    /// malformed argument can reach a permissive runtime builtin and become a
+    /// silent no-op.
+    fn check_qualified_string_call(
+        &mut self,
+        method: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        span: Span,
+    ) -> Option<Ty> {
+        let string = self.tcx.string_ty();
+        let receiver = self.tcx.intern(TyKind::Ref {
+            mutability: Mutbl::Mut,
+            inner: string,
+        });
+        let params = match method {
+            "clear" => vec![receiver],
+            "push" | "push_char" => {
+                vec![receiver, self.tcx.intern(TyKind::Char)]
+            }
+            "push_str" => vec![receiver, string],
+            "push_byte" | "truncate" => {
+                vec![receiver, self.tcx.int_ty(IntTy::I64)]
+            }
+            _ => return None,
+        };
+        if args.len() != params.len() {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: format!("String::{method}"),
+                    expected: params.len(),
+                    found: args.len(),
+                },
+                span,
+            );
+            return Some(self.tcx.error_ty());
+        }
+        for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
+            self.check_sig_param_arg(*param, *arg_ty, arg);
+        }
+        Some(self.tcx.unit())
+    }
+
+    /// Qualified Vec counterpart of method-call checking. Rust-style UFCS
+    /// calls bypass `vec_method_ret`, so validate the complete receiver and
+    /// argument contract here instead of allowing runtime builtins to accept
+    /// mixed element types.
+    fn check_qualified_vec_call(
+        &mut self,
+        method: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        span: Span,
+    ) -> Option<Ty> {
+        let actual_receiver = arg_tys.first().copied();
+        let elem = actual_receiver
+            .map(|ty| self.infer.resolve(self.tcx, ty))
+            .map(|ty| self.peel_refs(ty))
+            .and_then(|ty| match self.tcx.kind(ty) {
+                Some(TyKind::Vec(elem) | TyKind::Slice(elem)) => Some(*elem),
+                _ => None,
+            })
+            .unwrap_or_else(|| self.fresh());
+        let vec_ty = self.tcx.intern(TyKind::Vec(elem));
+        let shared = self.tcx.intern(TyKind::Ref {
+            mutability: Mutbl::Not,
+            inner: vec_ty,
+        });
+        let mutable = self.tcx.intern(TyKind::Ref {
+            mutability: Mutbl::Mut,
+            inner: vec_ty,
+        });
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        let (params, ret) = match method {
+            "push" => (vec![mutable, elem], self.tcx.unit()),
+            "insert" => (vec![mutable, i64_ty, elem], self.tcx.unit()),
+            "remove" => (vec![mutable, i64_ty], elem),
+            "sort" | "reverse" => (vec![mutable], self.tcx.unit()),
+            "swap" => (vec![mutable, i64_ty, i64_ty], self.tcx.unit()),
+            "slice" => (
+                vec![shared, i64_ty, i64_ty],
+                self.tcx.intern(TyKind::Vec(elem)),
+            ),
+            "first" | "last" => (vec![shared], self.option_adt_ty(elem)),
+            "rev" => (vec![shared], self.tcx.intern(TyKind::Vec(elem))),
+            "index_of" => (vec![shared, elem], self.option_adt_ty(i64_ty)),
+            "count_of" => (vec![shared, elem], i64_ty),
+            "contains" => (vec![shared, elem], self.tcx.bool_ty()),
+            "len" => (vec![shared], i64_ty),
+            // Closure typing is handled by the combinator path for method
+            // syntax. Still enforce the qualified form's receiver and arity.
+            "sort_by" => (vec![mutable, self.fresh()], self.tcx.unit()),
+            _ => return None,
+        };
+        if args.len() != params.len() {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: format!("Vec::{method}"),
+                    expected: params.len(),
+                    found: args.len(),
+                },
+                span,
+            );
+            return Some(self.tcx.error_ty());
+        }
+        for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
+            self.check_sig_param_arg(*param, *arg_ty, arg);
+        }
+        Some(ret)
     }
 
     fn check_tuple_struct_ctor_call(

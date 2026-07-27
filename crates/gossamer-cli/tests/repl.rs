@@ -1554,6 +1554,44 @@ fn repl_persists_rust_style_string_and_vec_mutations() {
 }
 
 #[test]
+fn repl_rejects_invalid_qualified_string_push_without_mutating() {
+    let out = run_repl(
+        "let mut s = \"abc\"\n\
+         String::push(&mut s, \"d\")\n\
+         s\n\
+         String::push(&mut s, 'd')\n\
+         s\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("expected `char`, found `String`"),
+        "{}",
+        out.stderr
+    );
+    assert!(out.stdout.contains("Out[3]: \"abc\""), "{}", out.stdout);
+    assert!(out.stdout.contains("Out[5]: \"abcd\""), "{}", out.stdout);
+}
+
+#[test]
+fn repl_rejects_invalid_qualified_vec_push_without_mutating() {
+    let out = run_repl(
+        "let mut v = Vec::from([1, 2])\n\
+         Vec::push(&mut v, \"x\")\n\
+         v\n\
+         Vec::push(&mut v, 3)\n\
+         v\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("expected `i64`, found `String`"),
+        "{}",
+        out.stderr
+    );
+    assert!(out.stdout.contains("Out[3]: [1, 2]"), "{}", out.stdout);
+    assert!(out.stdout.contains("Out[5]: [1, 2, 3]"), "{}", out.stdout);
+}
+
+#[test]
 fn repl_checks_string_and_vec_push_contracts() {
     let out = run_repl(
         "let mut s = \"abc\"\n\
