@@ -1265,33 +1265,29 @@ impl<'a> TypeChecker<'a> {
                 self.emit(TypeError::TypeMismatch { expected, found }, span);
             }
             UnifyError::IntegerConstraint => {
-                // The other side is concrete and non-integer (the
-                // unifier only raises this when it has a concrete
-                // target). Render the mismatch as a regular type
-                // error against `i64`, which is the shape the user
-                // would see if they had written `42i64`.
                 let lhs = self.infer.resolve(self.tcx, lhs);
                 let rhs = self.infer.resolve(self.tcx, rhs);
-                let (literal_side, target_side) =
-                    if matches!(self.tcx.kind(lhs), Some(TyKind::Var(_))) {
-                        (lhs, rhs)
-                    } else {
-                        (rhs, lhs)
-                    };
-                let _ = literal_side;
-                self.deferred_literal_type_mismatches
-                    .push((target_side, "{integer}", span));
+                if matches!(self.tcx.kind(lhs), Some(TyKind::Var(_))) {
+                    // The expected type was established by an integer
+                    // literal, as in `let v = [1]; v.push('a')`.
+                    // Preserve lhs/rhs orientation and let defaulting render
+                    // the expected literal type as i64.
+                    self.deferred_type_mismatches.push((lhs, rhs, span));
+                } else {
+                    // The supplied expression is the integer literal.
+                    self.deferred_literal_type_mismatches
+                        .push((lhs, "{integer}", span));
+                }
             }
             UnifyError::FloatConstraint => {
                 let lhs = self.infer.resolve(self.tcx, lhs);
                 let rhs = self.infer.resolve(self.tcx, rhs);
-                let target_side = if matches!(self.tcx.kind(lhs), Some(TyKind::Var(_))) {
-                    rhs
+                if matches!(self.tcx.kind(lhs), Some(TyKind::Var(_))) {
+                    self.deferred_type_mismatches.push((lhs, rhs, span));
                 } else {
-                    lhs
-                };
-                self.deferred_literal_type_mismatches
-                    .push((target_side, "{float}", span));
+                    self.deferred_literal_type_mismatches
+                        .push((lhs, "{float}", span));
+                }
             }
             UnifyError::Occurs { .. } => {}
         }

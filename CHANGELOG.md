@@ -3,8 +3,9 @@
 ## 0.35.0 - Collection semantics and public diagnostics
 
 - Show public, fully inferred types in diagnostics and REPL bindings without
-  exposing internal inference names, accept indented REPL meta commands, and
-  keep method help synchronized with the supported `String` surface.
+  exposing internal inference names, report expected and supplied types in the
+  correct order, accept indented REPL meta commands, and keep method help
+  synchronized with the supported `String` surface.
 - Support clamped and open-ended range indexing consistently on `String`,
   `Vec<T>`, `[T]`, and fixed `[T; N]` values across all execution tiers.
 - Distinguish fixed arrays from growable vectors, reject Vec-only mutations on

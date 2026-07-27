@@ -1575,8 +1575,54 @@ fn repl_checks_string_and_vec_push_contracts() {
         out.stderr
     );
     assert!(
-        out.stderr.contains("expected `String`, found `{integer}`")
-            || out.stderr.contains("expected `i64`, found `String`"),
+        out.stderr.contains("expected `i64`, found `String`"),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn repl_reports_collection_argument_mismatches_in_expected_found_order() {
+    let out = run_repl(
+        "let mut v = Vec::from([1, 2])\n\
+         v.push(\"x\")\n\
+         v.push('a')\n\
+         v.push([3, 4, 5])\n\
+         let mut strings = Vec::from([\"a\"])\n\
+         strings.push(1)\n\
+         let mut floats = Vec::from([1.0])\n\
+         floats.push('b')\n\
+         let mut chars = Vec::from(['a'])\n\
+         chars.push(2.0)\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("expected `i64`, found `String`"),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("expected `i64`, found `char`"),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("expected `i64`, found `[i64; 3]`"),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("expected `String`, found `{integer}`"),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("expected `f64`, found `char`"),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("expected `char`, found `{float}`"),
         "{}",
         out.stderr
     );
