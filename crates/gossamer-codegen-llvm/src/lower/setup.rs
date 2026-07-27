@@ -66,6 +66,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use crate::BuildError;
+use crate::ty::packed_byte_array_len;
 use anyhow::Result;
 use gossamer_abi as abi;
 use gossamer_mir::{
@@ -187,6 +188,10 @@ impl<'a> Lowerer<'a> {
             }
             let slot = local_slot(Local(i as u32));
             if is_aggregate(self.tcx, decl.ty) {
+                if let Some(bytes) = packed_byte_array_len(self.tcx, decl.ty) {
+                    writeln!(self.out, "  {slot} = alloca [{bytes} x i8]").unwrap();
+                    continue;
+                }
                 if let Some(bytes) = self.heap_spilled_local_bytes(Local(i as u32)) {
                     declare_rt(&mut self.runtime_refs, "gos_rt_aggr_alloc");
                     writeln!(
@@ -273,7 +278,8 @@ impl<'a> Lowerer<'a> {
             let by_pointer =
                 aggregate && !raw_runtime_handler_param && (slots.is_some() || !is_closure);
             if by_pointer {
-                let bytes = u64::from(slots.unwrap_or(1).max(1)) * 8;
+                let bytes = aggregate_storage_bytes(self.tcx, local_ty)
+                    .unwrap_or_else(|| u64::from(slots.unwrap_or(1).max(1)) * 8);
                 writeln!(
                     self.out,
                     "  call void @llvm.memcpy.p0.p0.i64(ptr {slot}, ptr %p{i}, i64 {bytes}, i1 false)"

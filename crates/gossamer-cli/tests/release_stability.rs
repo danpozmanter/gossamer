@@ -975,7 +975,7 @@ fn main() {
     let body: [u8] = [200, 200, 60, 4]
     let mut sum = 0
     for b in body {
-        sum += b
+        sum += b as i64
     }
     println!("sum: {}", sum)
     println!("idx: {} {} {}", body[0], body[1], body[3])
@@ -1014,7 +1014,7 @@ fn main() -> Result<(), errors::Error> {
     bytes[2] = 9
     let mut sum = 0
     for b in bytes {
-        sum += b
+        sum += b as i64
     }
     println!("sum: {}", sum)
     println!("idx: {} {} {} {}", bytes[0], bytes[1], bytes[2], bytes[3])

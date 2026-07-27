@@ -183,6 +183,9 @@ pub(crate) fn value_to_bytes(v: &Value) -> Vec<u8> {
         // arm `value_to_bytes` returned empty and every crypto helper
         // taking `[u8]` (kdf / aead / ed25519) silently hashed nothing.
         Value::IntArray(data) => data.iter().map(|n| *n as u8).collect(),
+        Value::ByteArray(data) => data.to_vec(),
+        Value::InlineByteArray(data) => data.to_vec(),
+        Value::ByteVec(data) => data.as_ref().clone(),
         Value::String(s) => s.as_str().as_bytes().to_vec(),
         _ => Vec::new(),
     }

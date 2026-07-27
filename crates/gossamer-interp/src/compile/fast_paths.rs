@@ -1095,6 +1095,14 @@ impl<'tcx> FnBuilder<'tcx> {
         }
         let dst = self.alloc_reg();
         match self.tcx.kind(elem) {
+            Some(TyKind::Int(IntTy::U8)) => {
+                self.emit(Op::BuildByteArray {
+                    dst_v: dst,
+                    first_i: 0,
+                    count: 0,
+                });
+                self.flat_int_locals.insert(dst);
+            }
             Some(TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize)) => {
                 self.emit(Op::BuildIntArray {
                     dst_v: dst,
@@ -1134,9 +1142,15 @@ impl<'tcx> FnBuilder<'tcx> {
         array_ty: Ty,
         elems: &[HirExpr],
     ) -> RuntimeResult<Option<TypedReg>> {
-        if !is_array_elem_kind(self.tcx, array_ty, elems.first().map(|e| e.ty), |k| {
-            matches!(k, TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize))
-        }) {
+        let elem_kind = self
+            .array_elem_ty(array_ty)
+            .and_then(|elem| self.tcx.kind(elem));
+        if !matches!(
+            elem_kind,
+            Some(TyKind::Int(
+                IntTy::U8 | IntTy::I64 | IntTy::Isize | IntTy::Usize
+            ))
+        ) {
             return Ok(None);
         }
         let Ok(count) = u16::try_from(elems.len()) else {
@@ -1160,11 +1174,19 @@ impl<'tcx> FnBuilder<'tcx> {
             });
         }
         let dst = self.alloc_reg();
-        self.emit(Op::BuildIntArray {
-            dst_v: dst,
-            first_i,
-            count,
-        });
+        if matches!(elem_kind, Some(TyKind::Int(IntTy::U8))) {
+            self.emit(Op::BuildByteArray {
+                dst_v: dst,
+                first_i,
+                count,
+            });
+        } else {
+            self.emit(Op::BuildIntArray {
+                dst_v: dst,
+                first_i,
+                count,
+            });
+        }
         // Track for the indexing fast path so subsequent
         // `arr[k]` reads route through `Op::IntArrayGetI64`.
         self.flat_int_locals.insert(dst);
@@ -1219,20 +1241,36 @@ impl<'tcx> FnBuilder<'tcx> {
         value: &HirExpr,
         count: &HirExpr,
     ) -> RuntimeResult<Option<TypedReg>> {
-        if !is_array_elem_kind(self.tcx, array_ty, Some(value.ty), |k| {
-            matches!(k, TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize))
-        }) {
+        let elem_kind = self
+            .array_elem_ty(array_ty)
+            .and_then(|elem| self.tcx.kind(elem));
+        if !matches!(
+            elem_kind,
+            Some(TyKind::Int(
+                IntTy::U8 | IntTy::I64 | IntTy::Isize | IntTy::Usize
+            ))
+        ) {
             return Ok(None);
         }
         let src_tr = self.compile_expr_ex(value)?;
-        let value_reg = self.as_value(src_tr);
-        let count_reg = self.compile_expr(count)?;
         let dst = self.alloc_reg();
-        self.emit(Op::BuildArrayRepeat {
-            dst,
-            value: value_reg,
-            count: count_reg,
-        });
+        if matches!(elem_kind, Some(TyKind::Int(IntTy::U8))) {
+            let value_i = self.as_i64(src_tr);
+            let count_v = self.compile_expr(count)?;
+            self.emit(Op::BuildByteArrayRepeat {
+                dst_v: dst,
+                value_i,
+                count_v,
+            });
+        } else {
+            let value_reg = self.as_value(src_tr);
+            let count_reg = self.compile_expr(count)?;
+            self.emit(Op::BuildArrayRepeat {
+                dst,
+                value: value_reg,
+                count: count_reg,
+            });
+        }
         self.flat_int_locals.insert(dst);
         Ok(Some(TypedReg {
             reg: dst,

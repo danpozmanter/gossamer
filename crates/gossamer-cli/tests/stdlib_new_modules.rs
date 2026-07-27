@@ -599,7 +599,7 @@ fn compress_gzip_roundtrip() {
         r#"
 use std::compress
 fn main() {
-    let data = [104, 101, 108, 108, 111]
+    let data: Vec<u8> = [104, 101, 108, 108, 111]
     match compress::gzip::encode(data, 6) {
         Ok(enc) => {
             match compress::gzip::decode(enc) {
@@ -622,7 +622,7 @@ fn compress_flate_roundtrip() {
         r#"
 use std::compress
 fn main() {
-    let data = [104, 101, 108, 108, 111]
+    let data: Vec<u8> = [104, 101, 108, 108, 111]
     match compress::flate::compress(data, 6) {
         Ok(enc) => {
             match compress::flate::decompress(enc) {
@@ -645,7 +645,7 @@ fn compress_zlib_roundtrip() {
         r#"
 use std::compress
 fn main() {
-    let data = [104, 101, 108, 108, 111]
+    let data: Vec<u8> = [104, 101, 108, 108, 111]
     match compress::zlib::compress(data, 6) {
         Ok(enc) => {
             match compress::zlib::decompress(enc) {
@@ -837,7 +837,7 @@ fn main() {
         Ok(key) => {
             match crypto::rand::bytes(12) {
                 Ok(nonce) => {
-                    let pt = [104, 101, 108, 108, 111, 32, 97, 101, 115]
+                    let pt: Vec<u8> = [104, 101, 108, 108, 111, 32, 97, 101, 115]
                     match crypto::aead::aes_256_gcm_seal(key, nonce, pt, []) {
                         Ok(ct) => {
                             match crypto::aead::aes_256_gcm_open(key, nonce, ct, []) {
@@ -870,7 +870,7 @@ fn main() {
         Ok(pair) => {
             let secret = pair.0
             let public = pair.1
-            let msg = [116, 101, 115, 116, 32, 109, 101, 115, 115, 97, 103, 101]
+            let msg: Vec<u8> = [116, 101, 115, 116, 32, 109, 101, 115, 115, 97, 103, 101]
             match crypto::ed25519::sign(secret, msg) {
                 Ok(sig) => {
                     match crypto::ed25519::verify(public, msg, sig) {
@@ -1401,7 +1401,7 @@ fn compress_bzip2_roundtrip() {
         r#"
 use std::compress
 fn main() {
-    let data = [104, 101, 108, 108, 111, 44, 32, 103, 111, 115, 115, 97, 109, 101, 114, 32, 108, 97, 110, 103, 33]
+    let data: Vec<u8> = [104, 101, 108, 108, 111, 44, 32, 103, 111, 115, 115, 97, 109, 101, 114, 32, 108, 97, 110, 103, 33]
     let enc = compress::bzip2::compress(data, 6)
     match enc {
         Ok(compressed) => {

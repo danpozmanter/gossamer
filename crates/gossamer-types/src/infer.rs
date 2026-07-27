@@ -162,6 +162,72 @@ impl InferCtxt {
         }
     }
 
+    /// Fixes unconstrained numeric literals reachable from an inferred
+    /// binding to their language defaults before later statements are checked.
+    pub fn default_numeric_vars_in_ty(&mut self, tcx: &mut TyCtxt, ty: Ty) {
+        let resolved = self.resolve(tcx, ty);
+        match tcx.kind_of(resolved).clone() {
+            TyKind::Var(vid) => {
+                let root = self.root_of(vid);
+                if !matches!(self.slots[root as usize], VarSlot::Parent(_)) {
+                    return;
+                }
+                if self
+                    .integer_constrained
+                    .get(root as usize)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    self.slots[root as usize] = VarSlot::Resolved(tcx.int_ty(IntTy::I64));
+                } else if self
+                    .float_literal
+                    .get(root as usize)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    self.slots[root as usize] = VarSlot::Resolved(tcx.float_ty(FloatTy::F64));
+                }
+            }
+            TyKind::Tuple(types) => {
+                for ty in types {
+                    self.default_numeric_vars_in_ty(tcx, ty);
+                }
+            }
+            TyKind::Array { elem, .. }
+            | TyKind::Slice(elem)
+            | TyKind::Vec(elem)
+            | TyKind::Iterator(elem)
+            | TyKind::Sender(elem)
+            | TyKind::Receiver(elem)
+            | TyKind::JoinHandle(elem)
+            | TyKind::Ref { inner: elem, .. } => self.default_numeric_vars_in_ty(tcx, elem),
+            TyKind::HashMap { key, value } => {
+                self.default_numeric_vars_in_ty(tcx, key);
+                self.default_numeric_vars_in_ty(tcx, value);
+            }
+            TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
+                for input in sig.inputs {
+                    self.default_numeric_vars_in_ty(tcx, input);
+                }
+                self.default_numeric_vars_in_ty(tcx, sig.output);
+            }
+            TyKind::FnDef { substs, .. }
+            | TyKind::Closure { substs, .. }
+            | TyKind::Adt { substs, .. }
+            | TyKind::Alias { substs, .. } => {
+                for ty in substs.types() {
+                    self.default_numeric_vars_in_ty(tcx, ty);
+                }
+            }
+            TyKind::Dyn(trait_ref) => {
+                for ty in trait_ref.substs.types() {
+                    self.default_numeric_vars_in_ty(tcx, ty);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Returns true when `vid` is still unresolved and belongs to an
     /// unsuffixed integer literal that will default to `i64`.
     #[must_use]

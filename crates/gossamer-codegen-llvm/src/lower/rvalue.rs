@@ -347,6 +347,11 @@ impl<'a> Lowerer<'a> {
         args: &[Operand],
         dest_local: Local,
     ) -> Result<String, BuildError> {
+        let name = if name == "gos_rt_bytearr_slice_result" {
+            "gos_rt_packed_bytearr_slice_result"
+        } else {
+            name
+        };
         let dest_ty = render_ty(self.tcx, self.body.local_ty(dest_local));
         // Inline the Result/Option i128 carrier bit-ops. The runtime encodes a
         // `Result<T, E>` / `Option<T>` as a 2-word by-value i128 with the

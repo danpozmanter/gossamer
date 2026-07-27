@@ -264,6 +264,8 @@ const VEC_SPLIT_FLAG: u8 = 2;
 /// header and initial payload from the descriptor; freeing an observed row is
 /// therefore a no-op and the descriptor releases all rows together.
 const VEC_PACKED_ROW_FLAG: u8 = 4;
+/// Header was allocated as `Box<GosVec>` without an unused inline buffer.
+const VEC_COMPACT_HEADER_FLAG: u8 = 8;
 
 /// Minimum row count at which replacing one allocation per row with a packed
 /// descriptor amortises the conversion. The eligibility checks below remain
@@ -364,6 +366,34 @@ pub(crate) unsafe fn alloc_box_vec(
         )
     };
     crate::c_abi::ledger::vec_inc();
+    if flag != 0 {
+        let boxed = Box::new(GosVec {
+            len,
+            cap: real_cap,
+            elem_bytes,
+            elem_kind,
+            region_flag: flag | VEC_COMPACT_HEADER_FLAG,
+            rc: std::sync::atomic::AtomicU16::new(1),
+            ptr: init_ptr,
+            generation: NEXT_VEC_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            mutation_generation: 0,
+            elem_meta: SyncRawPtr::NULL,
+            owner: SyncRawPtr::NULL,
+        });
+        let boxed_ptr = Box::into_raw(boxed);
+        crate::c_abi::ledger::vec_inline_alloc(
+            std::mem::size_of::<GosVec>(),
+            allocator_usable_bytes(boxed_ptr.cast(), std::mem::size_of::<GosVec>()),
+        );
+        crate::c_abi::ledger::vec_split_alloc(
+            checked_buffer_bytes(cap as usize, elem_bytes as usize),
+            allocator_usable_bytes(
+                init_ptr.as_const_ptr(),
+                checked_buffer_bytes(cap as usize, elem_bytes as usize),
+            ),
+        );
+        return boxed_ptr;
+    }
     let boxed = Box::new(InlineVec {
         header: GosVec {
             len,
@@ -417,6 +447,71 @@ pub(crate) unsafe fn alloc_box_vec(
 #[inline]
 pub(crate) fn vec_is_split(v: &GosVec) -> bool {
     v.region_flag & VEC_SPLIT_FLAG != 0
+}
+
+#[inline]
+pub(crate) fn vec_has_compact_header(v: &GosVec) -> bool {
+    v.region_flag & VEC_COMPACT_HEADER_FLAG != 0
+}
+
+pub(crate) struct OwnedByteBuffer {
+    ptr: SyncRawPtr<u8>,
+    len: u32,
+    cap: u32,
+}
+
+impl OwnedByteBuffer {
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
+    }
+}
+
+impl Drop for OwnedByteBuffer {
+    fn drop(&mut self) {
+        if self.cap != 0 {
+            unsafe { free_vec_buffer(self.ptr.as_ptr(), self.cap as usize) };
+        }
+    }
+}
+
+pub(crate) unsafe fn take_owned_byte_buffer(v: *mut GosVec) -> OwnedByteBuffer {
+    let vec = unsafe { &mut *v };
+    if vec.elem_bytes == 1
+        && vec.elem_kind == vec_elem_kind::PRIMITIVE
+        && vec_is_split(vec)
+        && !vec_is_region(vec)
+        && vec_rc(vec) <= 3
+        && let (Ok(len), Ok(cap)) = (u32::try_from(vec.len), u32::try_from(vec.cap))
+    {
+        let owned = OwnedByteBuffer {
+            ptr: vec.ptr,
+            len,
+            cap,
+        };
+        vec.ptr = SyncRawPtr::NULL;
+        vec.len = 0;
+        vec.cap = 0;
+        vec.region_flag &= !VEC_SPLIT_FLAG;
+        vec_set_rc(vec, 1);
+        unsafe { crate::c_abi::map::gos_rt_vec_free(v) };
+        return owned;
+    }
+
+    let bytes = if vec.elem_bytes == 1 && vec.len > 0 && !vec.ptr.is_null() {
+        unsafe { std::slice::from_raw_parts(vec.ptr.as_ptr(), vec.len as usize) }
+    } else {
+        &[]
+    };
+    let len = u32::try_from(bytes.len()).unwrap_or_else(|_| {
+        unsafe { gos_rt_panic(c"byte vector is too large to store".as_ptr()) };
+        0
+    });
+    let ptr = SyncRawPtr::new(alloc_vec_buffer(bytes.len()));
+    if !bytes.is_empty() {
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.as_ptr(), bytes.len()) };
+    }
+    unsafe { crate::c_abi::map::gos_rt_vec_free(v) };
+    OwnedByteBuffer { ptr, len, cap: len }
 }
 
 /// Replaces a large uniform `Vec<Vec<i64>>` with contiguous fixed-width row
@@ -594,6 +689,9 @@ unsafe fn alloc_vec_header(mut v: GosVec) -> *mut GosVec {
 unsafe fn alloc_vec_with_capacity(elem_bytes: u32, elem_kind: u8, cap: i64) -> *mut GosVec {
     if cap < 0 {
         unsafe { gos_rt_panic(c"Vec::with_capacity: capacity must be non-negative".as_ptr()) };
+    }
+    if !crate::c_abi::rc::region_is_active() {
+        return unsafe { alloc_box_vec(elem_bytes, elem_kind, cap, 0) };
     }
     let v = unsafe {
         alloc_vec_header(GosVec {

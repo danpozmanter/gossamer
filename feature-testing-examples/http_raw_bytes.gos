@@ -56,7 +56,7 @@ fn main() {
             println!("len={}", v.len())
             println!("v0={} vlast={}", v[0], v[v.len() - 1])
             let mut sum = 0
-            for b in v { sum += b }
+            for b in v { sum += b as i64 }
             println!("sum={}", sum)
             match v.first() {
                 Some(b) => println!("first={}", b),

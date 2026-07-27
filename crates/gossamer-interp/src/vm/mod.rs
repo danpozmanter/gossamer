@@ -1129,6 +1129,9 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
         Value::Array(items) => items.len(),
         Value::Tuple(items) => items.len(),
         Value::IntArray(d) => d.len(),
+        Value::ByteArray(d) => d.len(),
+        Value::InlineByteArray(d) => d.len(),
+        Value::ByteVec(d) => d.len(),
         Value::FloatVec(d) => d.len(),
         Value::String(s) => s.len(),
         Value::FloatArray(fa) if fa.stride > 0 => fa.data.len() / fa.stride as usize,
@@ -1167,6 +1170,9 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
         }
         Value::String(s) => Ok(Value::Int(i64::from(s.as_bytes()[i]))),
         Value::IntArray(data) => Ok(Value::Int(data[i])),
+        Value::ByteArray(data) => Ok(Value::Int(i64::from(data[i]))),
+        Value::InlineByteArray(data) => Ok(Value::Int(i64::from(data[i]))),
+        Value::ByteVec(data) => Ok(Value::Int(i64::from(data[i]))),
         Value::FloatVec(data) => Ok(Value::Float(data[i])),
         _ => unreachable!("len computed above for this variant"),
     }
@@ -1184,6 +1190,9 @@ fn index_range_get(
         Value::Array(items) => items.len(),
         Value::Tuple(items) => items.len(),
         Value::IntArray(d) => d.len(),
+        Value::ByteArray(d) => d.len(),
+        Value::InlineByteArray(d) => d.len(),
+        Value::ByteVec(d) => d.len(),
         Value::FloatVec(d) => d.len(),
         Value::String(s) => s.len(),
         Value::FloatArray(fa) if fa.stride > 0 => fa.data.len() / fa.stride as usize,
@@ -1209,6 +1218,11 @@ fn index_range_get(
         Value::Array(items) => Ok(Value::Array(Arc::new(items[lo..hi].to_vec()))),
         Value::Tuple(items) => Ok(Value::Array(Arc::new(items[lo..hi].to_vec()))),
         Value::IntArray(data) => Ok(Value::IntArray(Arc::new(data[lo..hi].to_vec()))),
+        Value::ByteArray(data) => Ok(Value::ByteArray(Arc::new(data[lo..hi].to_vec().into()))),
+        Value::InlineByteArray(data) => Ok(Value::InlineByteArray(Arc::new(
+            data[lo..hi].iter().copied().collect(),
+        ))),
+        Value::ByteVec(data) => Ok(Value::ByteVec(Arc::new(data[lo..hi].to_vec()))),
         Value::FloatVec(data) => Ok(Value::FloatVec(Arc::new(data[lo..hi].to_vec()))),
         Value::String(s) => {
             let piece = crate::builtins::str_substring_inline(s.as_str(), lo as i64, hi as i64);
@@ -1266,9 +1280,13 @@ impl Vm {
             Value::String(_) => Some(self.intern_qualified("String", method)),
             // `Vec`-receiver methods resolve by type so a bare name shared
             // with another module's free function cannot override the builtin.
-            Value::Array(_) | Value::IntArray(_) | Value::FloatVec(_) | Value::FloatArray(_) => {
-                Some(self.intern_qualified("Vec", method))
-            }
+            Value::Array(_)
+            | Value::IntArray(_)
+            | Value::ByteArray(_)
+            | Value::InlineByteArray(_)
+            | Value::ByteVec(_)
+            | Value::FloatVec(_)
+            | Value::FloatArray(_) => Some(self.intern_qualified("Vec", method)),
             Value::LazyIter(_) => Some(self.intern_qualified("Iterator", method)),
             _ => None,
         }
@@ -2308,6 +2326,31 @@ mod tests {
             RuntimeError::Type(msg) => assert!(msg.contains("invalid bytecode")),
             other => panic!("unexpected error variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn packed_byte_arrays_and_vectors_keep_index_and_slice_semantics() {
+        let fixed = Value::ByteArray(Arc::new(vec![1, 2, 3].into()));
+        let growable = Value::ByteVec(Arc::new(vec![4, 5, 6]));
+
+        assert!(matches!(
+            index_get(&fixed, &Value::Int(1)),
+            Ok(Value::Int(2))
+        ));
+        assert!(matches!(
+            index_get(&growable, &Value::Int(2)),
+            Ok(Value::Int(6))
+        ));
+        assert!(matches!(
+            index_range_get(&fixed, 1, 3, false, false, false),
+            Ok(Value::ByteArray(values)) if values[..] == [2, 3]
+        ));
+        assert!(matches!(
+            index_range_get(&growable, 0, 2, false, false, false),
+            Ok(Value::ByteVec(values)) if values.as_slice() == [4, 5]
+        ));
+        assert!(index_get(&fixed, &Value::Int(3)).is_err());
+        assert!(index_get(&growable, &Value::Int(-1)).is_err());
     }
 
     #[test]

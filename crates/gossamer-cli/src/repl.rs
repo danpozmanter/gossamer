@@ -61,6 +61,111 @@ const PRELUDE_BUILTINS: &[PreludeBuiltinHelp] = &[
 // `"123".parse()` are not hidden from `%help`, `%ls`, and `%find`.
 const CORE_METHODS: &[CoreMethodHelp] = &[
     CoreMethodHelp {
+        owner: "Buffer",
+        name: "new",
+        kind: "assoc",
+        signature: "fn new() -> bytes::Buffer",
+        doc: "Creates an empty byte buffer.",
+    },
+    CoreMethodHelp {
+        owner: "Buffer",
+        name: "with_capacity",
+        kind: "assoc",
+        signature: "fn with_capacity(capacity: i64) -> bytes::Buffer",
+        doc: "Creates an empty byte buffer with capacity reserved.",
+    },
+    CoreMethodHelp {
+        owner: "Buffer",
+        name: "push",
+        kind: "method",
+        signature: "fn push(&mut self, byte: u8) -> ()",
+        doc: "Appends one byte.",
+    },
+    CoreMethodHelp {
+        owner: "Buffer",
+        name: "write_str",
+        kind: "method",
+        signature: "fn write_str(&mut self, text: String) -> ()",
+        doc: "Appends a string's UTF-8 bytes.",
+    },
+    CoreMethodHelp {
+        owner: "Buffer",
+        name: "clear",
+        kind: "method",
+        signature: "fn clear(&mut self) -> ()",
+        doc: "Clears the buffer in place.",
+    },
+    CoreMethodHelp {
+        owner: "Buffer",
+        name: "len",
+        kind: "method",
+        signature: "fn len(&self) -> i64",
+        doc: "Returns the number of buffered bytes.",
+    },
+    CoreMethodHelp {
+        owner: "Buffer",
+        name: "is_empty",
+        kind: "method",
+        signature: "fn is_empty(&self) -> bool",
+        doc: "Returns true when the buffer has no bytes.",
+    },
+    CoreMethodHelp {
+        owner: "Buffer",
+        name: "to_string",
+        kind: "method",
+        signature: "fn to_string(&self) -> String",
+        doc: "Decodes the buffered bytes with lossy UTF-8 replacement.",
+    },
+    CoreMethodHelp {
+        owner: "Builder",
+        name: "new",
+        kind: "assoc",
+        signature: "fn new() -> bytes::Builder",
+        doc: "Creates an empty string builder.",
+    },
+    CoreMethodHelp {
+        owner: "Builder",
+        name: "with_capacity",
+        kind: "assoc",
+        signature: "fn with_capacity(capacity: i64) -> bytes::Builder",
+        doc: "Creates an empty string builder with capacity reserved.",
+    },
+    CoreMethodHelp {
+        owner: "Builder",
+        name: "write",
+        kind: "method",
+        signature: "fn write(&mut self, text: String) -> ()",
+        doc: "Appends text.",
+    },
+    CoreMethodHelp {
+        owner: "Builder",
+        name: "write_char",
+        kind: "method",
+        signature: "fn write_char(&mut self, ch: char) -> ()",
+        doc: "Appends one Unicode scalar.",
+    },
+    CoreMethodHelp {
+        owner: "Builder",
+        name: "len",
+        kind: "method",
+        signature: "fn len(&self) -> i64",
+        doc: "Returns the accumulated byte length.",
+    },
+    CoreMethodHelp {
+        owner: "Builder",
+        name: "as_str",
+        kind: "method",
+        signature: "fn as_str(&self) -> String",
+        doc: "Returns the accumulated text.",
+    },
+    CoreMethodHelp {
+        owner: "Builder",
+        name: "build",
+        kind: "method",
+        signature: "fn build(&self) -> String",
+        doc: "Returns the accumulated text.",
+    },
+    CoreMethodHelp {
         owner: "String",
         name: "new",
         kind: "assoc",
@@ -1743,6 +1848,8 @@ fn canonical_runtime_owner(owner: &str) -> Option<String> {
     let owner = match owner {
         "option" => "Option",
         "result" => "Result",
+        "bytes::Buffer" => "Buffer",
+        "bytes::Builder" => "Builder",
         other => other,
     };
     let last = owner.rsplit("::").next().unwrap_or(owner);
@@ -2158,6 +2265,21 @@ mod tests {
         assert!(
             missing.is_empty(),
             "missing REPL metadata for registered runtime type builtins: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn audited_byte_handle_builtins_have_concrete_public_contracts() {
+        let mut incomplete = core_method_entries()
+            .into_iter()
+            .filter(|entry| matches!(entry.owner.as_str(), "Buffer" | "Builder"))
+            .filter(|entry| entry.signature.contains("..."))
+            .map(|entry| format!("{}::{}", entry.owner, entry.name))
+            .collect::<Vec<_>>();
+        incomplete.sort();
+        assert!(
+            incomplete.is_empty(),
+            "runtime type builtins without concrete public signatures: {incomplete:?}"
         );
     }
 

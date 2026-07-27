@@ -147,6 +147,7 @@ enum MapStorage {
     /// the `Bytes` byte-erased fallback.
     StrI64(FxHashMap<Box<[u8]>, i64>),
     StrStr(FxHashMap<Box<[u8]>, Box<[u8]>>),
+    StrBytes(StrBytesStorage),
     I64Str(FxHashMap<i64, Box<[u8]>>),
     Bytes(FxHashMap<Box<[u8]>, Box<[u8]>>),
     /// Struct / aggregate keys: the key is the flat content bytes of the
@@ -154,6 +155,97 @@ enum MapStorage {
     /// compare equal, matching the VM), the value is an 8-byte word - an
     /// `i64`, or a heap pointer for `String` / struct values.
     SkeyVal(FxHashMap<Box<[u8]>, i64>),
+}
+
+struct StrBytesStorage {
+    entries: FxHashMap<Box<[u8]>, u64>,
+    data: Vec<u8>,
+    live_bytes: usize,
+}
+
+impl StrBytesStorage {
+    fn with_capacity(cap: usize) -> Self {
+        Self {
+            entries: FxHashMap::with_capacity_and_hasher(cap, rustc_hash::FxBuildHasher),
+            data: Vec::new(),
+            live_bytes: 0,
+        }
+    }
+
+    fn span(start: usize, len: usize) -> u64 {
+        ((start as u64) << 32) | len as u64
+    }
+
+    fn bounds(span: u64) -> (usize, usize) {
+        ((span >> 32) as usize, span as u32 as usize)
+    }
+
+    fn get(&self, key: &[u8]) -> Option<&[u8]> {
+        let (start, len) = Self::bounds(*self.entries.get(key)?);
+        self.data.get(start..start + len)
+    }
+
+    fn contains_key(&self, key: &[u8]) -> bool {
+        self.entries.contains_key(key)
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
+        self.entries.iter().map(|(key, span)| {
+            let (start, len) = Self::bounds(*span);
+            (key.as_ref(), &self.data[start..start + len])
+        })
+    }
+
+    fn insert(&mut self, key: Box<[u8]>, value: &[u8]) -> bool {
+        let start = self.data.len();
+        self.data.extend_from_slice(value);
+        let span = Self::span(start, value.len());
+        let previous = self.entries.insert(key, span);
+        if let Some(old) = previous {
+            self.live_bytes -= Self::bounds(old).1;
+        }
+        self.live_bytes += value.len();
+        self.compact_if_needed();
+        previous.is_none()
+    }
+
+    fn remove(&mut self, key: &[u8]) -> Option<Vec<u8>> {
+        let span = self.entries.remove(key)?;
+        let (start, len) = Self::bounds(span);
+        let value = self.data[start..start + len].to_vec();
+        self.live_bytes -= len;
+        self.compact_if_needed();
+        Some(value)
+    }
+
+    fn compact_if_needed(&mut self) {
+        if self.data.len() <= self.live_bytes.saturating_mul(2).max(4096) {
+            return;
+        }
+        let mut compact = Vec::with_capacity(self.live_bytes);
+        for span in self.entries.values_mut() {
+            let (start, len) = Self::bounds(*span);
+            let next = compact.len();
+            compact.extend_from_slice(&self.data[start..start + len]);
+            *span = Self::span(next, len);
+        }
+        self.data = compact;
+    }
+}
+
+unsafe fn byte_vec_from_slice(bytes: &[u8]) -> *mut GosVec {
+    let out = unsafe { crate::c_abi::vec::gos_rt_vec_with_capacity(1, bytes.len() as i64) };
+    if !bytes.is_empty() {
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), (*out).ptr.as_ptr(), bytes.len());
+            (*out).len = bytes.len() as i64;
+        }
+    }
+    out
 }
 
 #[unsafe(no_mangle)]
@@ -209,10 +301,8 @@ pub unsafe extern "C" fn gos_rt_map_new_with_capacity(
 }
 
 /// Typed pre-sized constructor for the source-visible map layouts. The older
-/// width-only constructor cannot distinguish an `i64` word from a `String`
-/// pointer, so using `(8, 8, cap)` for a string map would select `I64I64` and
-/// make subsequent typed insertion silently fail. Kinds are `0 = word`,
-/// `1 = String`; any other kind retains lazy generic storage.
+/// width-only constructor cannot distinguish scalar, string, and byte-vector
+/// values. Unknown kinds retain lazy generic storage.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_new_with_capacity_typed(
     key_kind: u32,
@@ -244,6 +334,7 @@ pub unsafe extern "C" fn gos_rt_map_new_with_capacity_typed(
                 cap,
                 rustc_hash::FxBuildHasher,
             )),
+            (1, 2) => MapStorage::StrBytes(StrBytesStorage::with_capacity(cap)),
             _ => MapStorage::Empty,
         };
         crate::c_abi::ledger::map_inc();
@@ -701,6 +792,23 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c
         crate::c_abi::ledger::map_str_probe();
         let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let mut storage = map.storage.lock();
+        if let MapStorage::StrBytes(inner) = &mut *storage {
+            let vec = val as usize as *mut GosVec;
+            if vec.is_null() {
+                return;
+            }
+            let bytes = unsafe { crate::c_abi::vec::take_owned_byte_buffer(vec) };
+            let inserted = inner.insert(
+                crate::c_abi::string::boxed_bytes(key_bytes),
+                bytes.as_slice(),
+            );
+            if inserted {
+                map.len_cache += 1;
+            }
+            drop(storage);
+            unsafe { crate::c_abi::string::consume_moved_string(key.cast_mut()) };
+            return;
+        }
         if matches!(*storage, MapStorage::Empty) {
             *storage = MapStorage::StrI64(FxHashMap::default());
         }
@@ -729,7 +837,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c
         }
         // Consuming insert copied the key bytes; release the moved-in gos-string
         // (rc-aware + tag-checked - safe for temps, shared, and literals).
-        unsafe { gos_rt_str_free(key.cast_mut()) };
+        unsafe { crate::c_abi::string::consume_moved_string(key.cast_mut()) };
     });
 }
 
@@ -767,6 +875,9 @@ pub unsafe extern "C" fn gos_rt_map_get_str_opt(m: *const GosMap, key: *const c_
             MapStorage::StrStr(inner) | MapStorage::Bytes(inner) => {
                 inner.get(key_bytes).map(|bs| alloc_cstring(bs) as i64)
             }
+            MapStorage::StrBytes(inner) => inner
+                .get(key_bytes)
+                .map(|bs| unsafe { byte_vec_from_slice(bs) } as i64),
             _ => None,
         };
         // Handing out a copy-blob value (Vec / struct handle) shares
@@ -825,8 +936,8 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_str(
         // literal / region string is skipped. Without this the inbound
         // `format!(...)` temporaries leaked once per insert.
         unsafe {
-            gos_rt_str_free(key.cast_mut());
-            gos_rt_str_free(val.cast_mut());
+            crate::c_abi::string::consume_moved_string(key.cast_mut());
+            crate::c_abi::string::consume_moved_string(val.cast_mut());
         }
     });
 }
@@ -866,6 +977,7 @@ pub unsafe extern "C" fn gos_rt_map_contains_key_str(m: *const GosMap, key: *con
         match &*storage {
             MapStorage::StrI64(inner) => inner.contains_key(key_bytes),
             MapStorage::StrStr(inner) => inner.contains_key(key_bytes),
+            MapStorage::StrBytes(inner) => inner.contains_key(key_bytes),
             _ => false,
         }
     })
@@ -892,6 +1004,7 @@ pub unsafe extern "C" fn gos_rt_map_remove_str(m: *mut GosMap, key: *const c_cha
                 None => false,
             },
             MapStorage::StrStr(inner) => inner.remove(key_bytes).is_some(),
+            MapStorage::StrBytes(inner) => inner.remove(key_bytes).is_some(),
             _ => false,
         };
         if removed {
@@ -1046,7 +1159,7 @@ pub unsafe extern "C" fn gos_rt_map_or_insert_str_i64(
             }
             // The key was retained as a consuming-call argument and copied
             // into the map's owned byte key, so release its source share.
-            unsafe { gos_rt_str_free(key.cast_mut()) };
+            unsafe { crate::c_abi::string::consume_moved_string(key.cast_mut()) };
             return v;
         }
         // Key absent: the compiler's consuming-call retain supplies the
@@ -1054,7 +1167,7 @@ pub unsafe extern "C" fn gos_rt_map_or_insert_str_i64(
         // that stored value and therefore does not create another share.
         inner.insert(crate::c_abi::string::boxed_bytes(key_bytes), default);
         map.len_cache += 1;
-        unsafe { gos_rt_str_free(key.cast_mut()) };
+        unsafe { crate::c_abi::string::consume_moved_string(key.cast_mut()) };
         default
     })
 }
@@ -1111,7 +1224,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_i64_str(m: *mut GosMap, key: i64, val
         }
         drop(storage);
         // Consuming insert copied the value bytes; release the moved-in gos-string.
-        unsafe { gos_rt_str_free(val.cast_mut()) };
+        unsafe { crate::c_abi::string::consume_moved_string(val.cast_mut()) };
     });
 }
 
@@ -1457,6 +1570,7 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
             MapStorage::I64I64(inner) => inner.len(),
             MapStorage::StrI64(inner) => inner.len(),
             MapStorage::StrStr(inner) => inner.len(),
+            MapStorage::StrBytes(inner) => inner.len(),
             MapStorage::I64Str(inner) => inner.len(),
             MapStorage::Bytes(inner) => inner.len(),
             MapStorage::SkeyVal(inner) => inner.len(),
@@ -1526,6 +1640,17 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
                         &crate::builtins::format_int(k),
                         &String::from_utf8_lossy(v),
                     );
+                }
+            }
+            MapStorage::StrBytes(inner) => {
+                let mut entries: Vec<(&[u8], &[u8])> = inner.iter().collect();
+                entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
+                for (k, v) in entries {
+                    let value = format!(
+                        "[{}]",
+                        v.iter().map(u8::to_string).collect::<Vec<_>>().join(", ")
+                    );
+                    push_entry(&mut out, &mut first, &String::from_utf8_lossy(k), &value);
                 }
             }
             MapStorage::Empty | MapStorage::Bytes(_) | MapStorage::SkeyVal(_) => {}
@@ -1781,11 +1906,16 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
         // the header block, including any inline buffer); a separately
         // allocated (split) buffer is reclaimed explicitly via
         // `free_vec_buffer`.
+        let compact_header = crate::c_abi::vec::vec_has_compact_header(unsafe { &*v });
         let inline_ptr = v.cast::<crate::c_abi::vec::InlineVec>();
-        let boxed = unsafe { &(*inline_ptr).header };
+        let boxed = unsafe { &*v };
         if boxed.elem_kind == vec_elem_kind::PACKED_ROWS {
             unsafe { crate::c_abi::vec::free_packed_rows(boxed) };
-            drop(unsafe { Box::from_raw(inline_ptr) });
+            if compact_header {
+                drop(unsafe { Box::from_raw(v) });
+            } else {
+                drop(unsafe { Box::from_raw(inline_ptr) });
+            }
             return;
         }
         if !boxed.ptr.is_null() && boxed.cap > 0 {
@@ -1872,7 +2002,11 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
         unsafe { crate::c_abi::vec::drop_vec_owner(&mut *v) };
         // Reconstruct the owning box now that the self-referential walk is
         // done, so its drop reclaims the header block (and any inline buffer).
-        drop(unsafe { Box::from_raw(inline_ptr) });
+        if compact_header {
+            drop(unsafe { Box::from_raw(v) });
+        } else {
+            drop(unsafe { Box::from_raw(inline_ptr) });
+        }
     });
 }
 
@@ -2068,7 +2202,10 @@ pub unsafe extern "C" fn gos_rt_map_keys_vec(m: *const GosMap) -> *mut GosVec {
                 drop(storage);
                 unsafe { gos_rt_map_keys_i64(m) }
             }
-            MapStorage::StrI64(_) | MapStorage::StrStr(_) | MapStorage::Bytes(_) => {
+            MapStorage::StrI64(_)
+            | MapStorage::StrStr(_)
+            | MapStorage::StrBytes(_)
+            | MapStorage::Bytes(_) => {
                 drop(storage);
                 unsafe { gos_rt_map_keys_str(m) }
             }
@@ -2098,6 +2235,26 @@ pub unsafe extern "C" fn gos_rt_map_values_vec(m: *const GosMap) -> *mut GosVec 
             MapStorage::StrStr(_) | MapStorage::I64Str(_) | MapStorage::Bytes(_) => {
                 drop(storage);
                 unsafe { gos_rt_map_values_str(m) }
+            }
+            MapStorage::StrBytes(inner) => {
+                let mut entries: Vec<(&[u8], &[u8])> = inner.iter().collect();
+                entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
+                let values: Vec<*mut GosVec> = entries
+                    .into_iter()
+                    .map(|(_, value)| unsafe { byte_vec_from_slice(value) })
+                    .collect();
+                drop(storage);
+                let out = unsafe {
+                    crate::c_abi::vec::gos_rt_vec_with_capacity_typed(
+                        8,
+                        values.len() as i64,
+                        vec_elem_kind::VEC,
+                    )
+                };
+                for value in values {
+                    unsafe { gos_rt_vec_push(out, (&raw const value).cast()) };
+                }
+                out
             }
             // Struct/tuple-keyed maps store i64 values just like `I64I64`;
             // route them through the i64 snapshot so `m.values()` / `for v in
@@ -2161,6 +2318,9 @@ pub unsafe extern "C" fn gos_rt_map_pop_str(m: *mut GosMap, key: *const c_char) 
                     cstr as i64
                 })
             }
+            MapStorage::StrBytes(inner) => inner
+                .remove(key_bytes)
+                .map(|bs| unsafe { byte_vec_from_slice(bs.as_slice()) } as i64),
             _ => None,
         };
         if popped.is_some() {
@@ -2263,6 +2423,41 @@ mod map_iter_tests {
             gos_rt_map_insert_str_i64(m, key, 7);
             assert_eq!(gos_rt_map_len(m), 1);
             assert_eq!(gos_rt_map_get_or_str_i64(m, key, -1), 7);
+            gos_rt_map_free(m);
+        }
+    }
+
+    #[test]
+    fn typed_byte_values_use_compact_storage_across_map_operations() {
+        unsafe {
+            let m = gos_rt_map_new_with_capacity_typed(1, 2, 4);
+            let first = byte_vec_from_slice(&[1, 2, 3]);
+            gos_rt_map_insert_str_i64(m, c"alpha".as_ptr(), first as i64);
+            let replacement = byte_vec_from_slice(&[4, 5]);
+            gos_rt_map_insert_str_i64(m, c"alpha".as_ptr(), replacement as i64);
+
+            assert_eq!(gos_rt_map_len(m), 1);
+            assert!(gos_rt_map_contains_key_str(m, c"alpha".as_ptr()));
+            {
+                let storage = (*m).storage.lock();
+                let MapStorage::StrBytes(inner) = &*storage else {
+                    panic!("expected compact byte-vector map storage");
+                };
+                assert_eq!(inner.get(b"alpha".as_slice()), Some(&[4, 5][..]));
+            }
+
+            let values = gos_rt_map_values_vec(m);
+            assert_eq!(gos_rt_vec_len(values), 1);
+            let value = *(gos_rt_vec_get_ptr(values, 0) as *const *mut GosVec);
+            assert_eq!(gos_rt_vec_len(value), 2);
+            assert_eq!(
+                std::slice::from_raw_parts((*value).ptr.as_ptr(), 2),
+                &[4, 5]
+            );
+            gos_rt_vec_free(values);
+
+            assert!(gos_rt_map_remove_str(m, c"alpha".as_ptr()));
+            assert_eq!(gos_rt_map_len(m), 0);
             gos_rt_map_free(m);
         }
     }

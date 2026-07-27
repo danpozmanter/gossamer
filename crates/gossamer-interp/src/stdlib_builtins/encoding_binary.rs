@@ -184,6 +184,9 @@ pub(crate) fn bytes_from_value(v: &Value) -> Vec<u8> {
             .collect(),
         // Fast-path for typed integer arrays produced by literal [n, ...] with i64 elements.
         Value::IntArray(arr) => arr.iter().filter_map(|&n| u8::try_from(n).ok()).collect(),
+        Value::ByteArray(arr) => arr.to_vec(),
+        Value::InlineByteArray(arr) => arr.to_vec(),
+        Value::ByteVec(arr) => arr.as_ref().clone(),
         Value::String(s) => s.as_str().as_bytes().to_vec(),
         _ => Vec::new(),
     }

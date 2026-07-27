@@ -1068,12 +1068,39 @@ pub unsafe extern "C" fn gos_rt_bytearr_slice_result(
         let count = end - start;
         let out = unsafe { gos_rt_vec_with_capacity(1, count) };
         if !out.is_null() && count > 0 {
-            for i in 0..count {
-                let element_index = (start + i) as usize;
+            let dst = unsafe { (*out).ptr.as_ptr() };
+            for i in 0..(count as usize) {
                 unsafe {
-                    let src_ptr = p.add(element_index) as *const u8;
-                    gos_rt_vec_push(out, src_ptr);
+                    *dst.add(i) = *p.add(start as usize + i) as u8;
                 }
+            }
+            unsafe { (*out).len = count };
+        }
+        unsafe { gos_rt_result_new(0, out as i64) }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_packed_bytearr_slice_result(
+    p: *const u8,
+    len: i64,
+    start: i64,
+    end: i64,
+) -> i128 {
+    ffi_entry!(0i128, {
+        if p.is_null() || start < 0 || end < 0 || start > end || end > len {
+            let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
+            let cs = std::ffi::CString::new(msg).unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            return unsafe { gos_rt_result_new(1, err as i64) };
+        }
+        let count = end - start;
+        let out = unsafe { gos_rt_vec_with_capacity(1, count) };
+        if !out.is_null() && count > 0 {
+            let dst = unsafe { (*out).ptr.as_ptr() };
+            unsafe {
+                std::ptr::copy_nonoverlapping(p.add(start as usize), dst, count as usize);
+                (*out).len = count;
             }
         }
         unsafe { gos_rt_result_new(0, out as i64) }

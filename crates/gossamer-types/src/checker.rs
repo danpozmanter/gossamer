@@ -3279,6 +3279,12 @@ impl<'a> TypeChecker<'a> {
             {
                 return ret;
             }
+            if !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+                && let Some(ret) =
+                    self.check_qualified_bytes_handle_call(module, last, args, arg_tys, callee.span)
+            {
+                return ret;
+            }
             let is_strings_call = matches!(module, ["strings"] | ["std", "strings"]);
             let has_specialized_combinator_sig = combinator_module_name(module)
                 .is_some_and(|m| Self::std_combinator_arity(m, last).is_some());
@@ -3441,6 +3447,7 @@ impl<'a> TypeChecker<'a> {
             return Some(self.tcx.error_ty());
         }
         for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
+            self.check_expected_integer_literal_range(arg, Expectation::HasType(*param), *arg_ty);
             self.check_sig_param_arg(*param, *arg_ty, arg);
         }
         Some(self.tcx.unit())
@@ -3509,6 +3516,68 @@ impl<'a> TypeChecker<'a> {
             return Some(self.tcx.error_ty());
         }
         for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
+            self.check_expected_integer_literal_range(arg, Expectation::HasType(*param), *arg_ty);
+            self.check_sig_param_arg(*param, *arg_ty, arg);
+        }
+        Some(ret)
+    }
+
+    fn check_qualified_bytes_handle_call(
+        &mut self,
+        module: &[&str],
+        method: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        span: Span,
+    ) -> Option<Ty> {
+        let owner = match module {
+            ["Buffer"] | ["bytes", "Buffer"] | ["std", "bytes", "Buffer"] => "bytes::Buffer",
+            ["Builder"] | ["bytes", "Builder"] | ["std", "bytes", "Builder"] => "bytes::Builder",
+            _ => return None,
+        };
+        let handle = self.bytes_handle_ty(owner);
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        let u8_ty = self.tcx.int_ty(IntTy::U8);
+        let string = self.tcx.string_ty();
+        let mutable = self.tcx.intern(TyKind::Ref {
+            mutability: Mutbl::Mut,
+            inner: handle,
+        });
+        let shared = self.tcx.intern(TyKind::Ref {
+            mutability: Mutbl::Not,
+            inner: handle,
+        });
+        let (params, ret) = match (owner, method) {
+            (_, "new") => (vec![], handle),
+            (_, "with_capacity") => (vec![i64_ty], handle),
+            ("bytes::Buffer", "push") => (vec![mutable, u8_ty], self.tcx.unit()),
+            ("bytes::Buffer", "write_str") => (vec![mutable, string], self.tcx.unit()),
+            ("bytes::Buffer", "clear") => (vec![mutable], self.tcx.unit()),
+            ("bytes::Buffer", "len") => (vec![shared], i64_ty),
+            ("bytes::Buffer", "is_empty") => (vec![shared], self.tcx.bool_ty()),
+            ("bytes::Buffer", "to_string") => (vec![shared], string),
+            ("bytes::Builder", "write") => (vec![mutable, string], self.tcx.unit()),
+            ("bytes::Builder", "write_char") => (
+                vec![mutable, self.tcx.intern(TyKind::Char)],
+                self.tcx.unit(),
+            ),
+            ("bytes::Builder", "len") => (vec![shared], i64_ty),
+            ("bytes::Builder", "build" | "as_str") => (vec![shared], string),
+            _ => return None,
+        };
+        if args.len() != params.len() {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: format!("{owner}::{method}"),
+                    expected: params.len(),
+                    found: args.len(),
+                },
+                span,
+            );
+            return Some(self.tcx.error_ty());
+        }
+        for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
+            self.check_expected_integer_literal_range(arg, Expectation::HasType(*param), *arg_ty);
             self.check_sig_param_arg(*param, *arg_ty, arg);
         }
         Some(ret)
@@ -4179,6 +4248,58 @@ impl<'a> TypeChecker<'a> {
 
     fn io_stream_ty(&mut self) -> Ty {
         self.stdlib_handle_ty(25, "io::Stream")
+    }
+
+    fn bytes_handle_ty(&mut self, name: &str) -> Ty {
+        let offset = if name == "bytes::Buffer" { 26 } else { 27 };
+        self.stdlib_handle_ty(offset, name)
+    }
+
+    fn bytes_handle_method_ret(
+        &mut self,
+        method: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        resolved: Ty,
+        span: Span,
+    ) -> Option<Ty> {
+        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
+            return None;
+        };
+        let owner = self.tcx.def_name(*def)?.to_string();
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        let string = self.tcx.string_ty();
+        let (params, ret) = match (owner.as_str(), method) {
+            ("bytes::Buffer", "push") => (vec![self.tcx.int_ty(IntTy::U8)], self.tcx.unit()),
+            ("bytes::Buffer", "write_str") => (vec![string], self.tcx.unit()),
+            ("bytes::Buffer", "clear") => (vec![], self.tcx.unit()),
+            ("bytes::Buffer", "len") => (vec![], i64_ty),
+            ("bytes::Buffer", "is_empty") => (vec![], self.tcx.bool_ty()),
+            ("bytes::Buffer", "to_string") => (vec![], string),
+            ("bytes::Builder", "write") => (vec![string], self.tcx.unit()),
+            ("bytes::Builder", "write_char") => {
+                (vec![self.tcx.intern(TyKind::Char)], self.tcx.unit())
+            }
+            ("bytes::Builder", "len") => (vec![], i64_ty),
+            ("bytes::Builder", "build" | "as_str") => (vec![], string),
+            _ => return None,
+        };
+        if args.len() != params.len() {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: format!("{owner}::{method}"),
+                    expected: params.len(),
+                    found: args.len(),
+                },
+                span,
+            );
+            return Some(self.tcx.error_ty());
+        }
+        for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
+            self.check_expected_integer_literal_range(arg, Expectation::HasType(*param), *arg_ty);
+            self.check_sig_param_arg(*param, *arg_ty, arg);
+        }
+        Some(ret)
     }
 
     fn result_response_error_ty(&mut self) -> Ty {
@@ -5183,6 +5304,11 @@ impl<'a> TypeChecker<'a> {
             return ty;
         }
         if let Some(ty) = self.http_client_method_ret(method, resolved) {
+            return ty;
+        }
+        if let Some(ty) =
+            self.bytes_handle_method_ret(method, args, &arg_tys, resolved, receiver.span)
+        {
             return ty;
         }
         // `v.set(k, val)` on a `json::Value` returns the updated value;
@@ -8563,6 +8689,9 @@ impl<'a> TypeChecker<'a> {
                     };
                     let init_ty = self.check_expr_expecting(init, init_expected);
                     self.unify(binding_ty, init_ty, init.span);
+                }
+                if ty.is_none() && forced.is_none() {
+                    self.infer.default_numeric_vars_in_ty(self.tcx, binding_ty);
                 }
                 self.bind_pattern(pattern, binding_ty);
                 if let Some(init) = init {

@@ -617,9 +617,23 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 dst_v,
                 first_i,
                 count,
+            }
+            | Op::BuildByteArray {
+                dst_v,
+                first_i,
+                count,
             } => {
                 check_v(op_idx, dst_v)?;
                 check_i_span(op_idx, first_i, count)?;
+            }
+            Op::BuildByteArrayRepeat {
+                dst_v,
+                value_i,
+                count_v,
+            } => {
+                check_v(op_idx, dst_v)?;
+                check_i(op_idx, value_i)?;
+                check_v(op_idx, count_v)?;
             }
             Op::CheckNonNegativeCapacity { capacity_i } => {
                 check_i(op_idx, capacity_i)?;
@@ -1690,6 +1704,8 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
         | Op::Gt { dst, .. }
         | Op::Ge { dst, .. } => effect.v_writes.push(dst),
         Op::BuildIntArray { dst_v, .. }
+        | Op::BuildByteArray { dst_v, .. }
+        | Op::BuildByteArrayRepeat { dst_v, .. }
         | Op::BuildFloatVec { dst_v, .. }
         | Op::BuildIntMap { dst_v }
         | Op::BuildStrIntMap { dst_v }
@@ -1934,7 +1950,15 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
             effect.v_reads.push(receiver);
             add_v_span(&mut effect.v_reads, args, argc);
         }
-        Op::BuildIntArray { first_i, count, .. } => add_i_span(&mut effect.i_reads, first_i, count),
+        Op::BuildIntArray { first_i, count, .. } | Op::BuildByteArray { first_i, count, .. } => {
+            add_i_span(&mut effect.i_reads, first_i, count);
+        }
+        Op::BuildByteArrayRepeat {
+            value_i, count_v, ..
+        } => {
+            effect.i_reads.push(value_i);
+            effect.v_reads.push(count_v);
+        }
         Op::CheckNonNegativeCapacity { capacity_i } => effect.i_reads.push(capacity_i),
         Op::BuildFloatVec { first_f, count, .. } => {
             add_f_span(&mut effect.f_reads, first_f, u32::from(count));

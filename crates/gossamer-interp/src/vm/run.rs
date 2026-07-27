@@ -1463,6 +1463,53 @@ impl Vm {
                                 }
                             }
                         }
+                        Value::ByteArray(data) => {
+                            if raw < 0 || (raw as usize) >= data.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                            match new_value {
+                                Value::Int(n) => Arc::make_mut(data)[raw as usize] = n as u8,
+                                _ => {
+                                    return Err(RuntimeError::Type(
+                                        "IndexSet on ByteArray expects u8 value".to_string(),
+                                    ));
+                                }
+                            }
+                        }
+                        Value::InlineByteArray(data) => {
+                            if raw < 0 || (raw as usize) >= data.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                            match new_value {
+                                Value::Int(n) => Arc::make_mut(data)[raw as usize] = n as u8,
+                                _ => {
+                                    return Err(RuntimeError::Type(
+                                        "IndexSet on byte array expects u8 value".to_string(),
+                                    ));
+                                }
+                            }
+                        }
+                        Value::ByteVec(data) => {
+                            if raw < 0 || (raw as usize) >= data.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                            match new_value {
+                                Value::Int(n) => {
+                                    Arc::make_mut(data)[raw as usize] =
+                                        u8::try_from(n).map_err(|_| {
+                                            RuntimeError::Type(
+                                                "IndexSet on byte vector expects u8 value"
+                                                    .to_string(),
+                                            )
+                                        })?;
+                                }
+                                _ => {
+                                    return Err(RuntimeError::Type(
+                                        "IndexSet on byte vector expects u8 value".to_string(),
+                                    ));
+                                }
+                            }
+                        }
                         Value::FloatVec(data) => {
                             if raw < 0 || (raw as usize) >= data.len() {
                                 return Err(RuntimeError::Panic("index out of bounds".to_string()));
@@ -1595,6 +1642,18 @@ impl Vm {
                                     Arc::make_mut(data).push(n);
                                 }
                             }
+                            Value::ByteArray(data) => {
+                                if let Value::Int(n) = new_value {
+                                    let mut values = data.to_vec();
+                                    values.push(n as u8);
+                                    *recv = Value::ByteVec(Arc::new(values));
+                                }
+                            }
+                            Value::ByteVec(data) => {
+                                if let Value::Int(n) = new_value {
+                                    Arc::make_mut(data).push(n as u8);
+                                }
+                            }
                             Value::FloatVec(data) => match new_value {
                                 Value::Float(f) => Arc::make_mut(data).push(f),
                                 Value::Int(n) => Arc::make_mut(data).push(n as f64),
@@ -1660,6 +1719,9 @@ impl Vm {
                     let has_item = match &registers[receiver as usize] {
                         Value::Array(items) => !items.is_empty(),
                         Value::IntArray(data) => !data.is_empty(),
+                        Value::ByteArray(data) => !data.is_empty(),
+                        Value::InlineByteArray(data) => !data.is_empty(),
+                        Value::ByteVec(data) => !data.is_empty(),
                         Value::FloatVec(data) => !data.is_empty(),
                         _ => false,
                     };
@@ -1671,6 +1733,21 @@ impl Vm {
                     let popped = match &mut registers[receiver as usize] {
                         Value::Array(items) => Arc::make_mut(items).pop(),
                         Value::IntArray(data) => Arc::make_mut(data).pop().map(Value::Int),
+                        Value::ByteArray(data) => {
+                            let mut values = data.to_vec();
+                            let popped = values.pop().map(|value| Value::Int(i64::from(value)));
+                            registers[receiver as usize] = Value::ByteVec(Arc::new(values));
+                            popped
+                        }
+                        Value::InlineByteArray(data) => {
+                            let mut values = data.to_vec();
+                            let popped = values.pop().map(|value| Value::Int(i64::from(value)));
+                            registers[receiver as usize] = Value::ByteVec(Arc::new(values));
+                            popped
+                        }
+                        Value::ByteVec(data) => Arc::make_mut(data)
+                            .pop()
+                            .map(|value| Value::Int(i64::from(value))),
                         Value::FloatVec(data) => Arc::make_mut(data).pop().map(Value::Float),
                         _ => None,
                     };
@@ -1691,6 +1768,9 @@ impl Vm {
                     let len = match &registers[receiver as usize] {
                         Value::Array(items) => items.len() as i64,
                         Value::IntArray(data) => data.len() as i64,
+                        Value::ByteArray(data) => data.len() as i64,
+                        Value::InlineByteArray(data) => data.len() as i64,
+                        Value::ByteVec(data) => data.len() as i64,
                         Value::FloatVec(data) => data.len() as i64,
                         _ => 0,
                     };
@@ -1732,6 +1812,25 @@ impl Vm {
                                 v.insert(idx as usize, n);
                             }
                         }
+                        Value::ByteArray(data) => {
+                            if let Value::Int(n) = new_value {
+                                let mut values = data.to_vec();
+                                values.insert(idx as usize, n as u8);
+                                *recv = Value::ByteVec(Arc::new(values));
+                            }
+                        }
+                        Value::InlineByteArray(data) => {
+                            if let Value::Int(n) = new_value {
+                                let mut values = data.to_vec();
+                                values.insert(idx as usize, n as u8);
+                                *recv = Value::ByteVec(Arc::new(values));
+                            }
+                        }
+                        Value::ByteVec(data) => {
+                            if let Value::Int(n) = new_value {
+                                Arc::make_mut(data).insert(idx as usize, n as u8);
+                            }
+                        }
                         Value::FloatVec(data) => {
                             let f = match new_value {
                                 Value::Float(f) => Some(f),
@@ -1754,6 +1853,9 @@ impl Vm {
                     let len = match &registers[receiver as usize] {
                         Value::Array(items) => items.len() as i64,
                         Value::IntArray(data) => data.len() as i64,
+                        Value::ByteArray(data) => data.len() as i64,
+                        Value::InlineByteArray(data) => data.len() as i64,
+                        Value::ByteVec(data) => data.len() as i64,
                         Value::FloatVec(data) => data.len() as i64,
                         _ => 0,
                     };
@@ -1774,6 +1876,19 @@ impl Vm {
                         Value::IntArray(data) => {
                             let v = Arc::make_mut(data);
                             v.remove(idx);
+                        }
+                        Value::ByteArray(data) => {
+                            let mut values = data.to_vec();
+                            values.remove(idx);
+                            registers[receiver as usize] = Value::ByteVec(Arc::new(values));
+                        }
+                        Value::InlineByteArray(data) => {
+                            let mut values = data.to_vec();
+                            values.remove(idx);
+                            registers[receiver as usize] = Value::ByteVec(Arc::new(values));
+                        }
+                        Value::ByteVec(data) => {
+                            Arc::make_mut(data).remove(idx);
                         }
                         Value::FloatVec(data) => {
                             let v = Arc::make_mut(data);
@@ -1796,6 +1911,9 @@ impl Vm {
                     let len = match &registers[receiver as usize] {
                         Value::Array(items) => items.len() as i64,
                         Value::IntArray(data) => data.len() as i64,
+                        Value::ByteArray(data) => data.len() as i64,
+                        Value::InlineByteArray(data) => data.len() as i64,
+                        Value::ByteVec(data) => data.len() as i64,
                         Value::FloatVec(data) => data.len() as i64,
                         _ => 0,
                     };
@@ -1815,6 +1933,22 @@ impl Vm {
                         Value::IntArray(data) => {
                             let v = Arc::make_mut(data);
                             Value::Int(v.remove(idx as usize))
+                        }
+                        Value::ByteArray(data) => {
+                            let mut values = data.to_vec();
+                            let value = values.remove(idx as usize);
+                            registers[receiver as usize] = Value::ByteVec(Arc::new(values));
+                            Value::Int(i64::from(value))
+                        }
+                        Value::InlineByteArray(data) => {
+                            let mut values = data.to_vec();
+                            let value = values.remove(idx as usize);
+                            registers[receiver as usize] = Value::ByteVec(Arc::new(values));
+                            Value::Int(i64::from(value))
+                        }
+                        Value::ByteVec(data) => {
+                            let value = Arc::make_mut(data).remove(idx as usize);
+                            Value::Int(i64::from(value))
                         }
                         Value::FloatVec(data) => {
                             let v = Arc::make_mut(data);
@@ -3092,6 +3226,38 @@ impl Vm {
                     let data: Vec<i64> = ints[start..end].to_vec();
                     registers[dst_v as usize] = Value::IntArray(Arc::new(data));
                 }
+                Op::BuildByteArray {
+                    dst_v,
+                    first_i,
+                    count,
+                } => {
+                    let start = first_i as usize;
+                    let end = start + count as usize;
+                    let data: Vec<u8> = ints[start..end].iter().map(|value| *value as u8).collect();
+                    registers[dst_v as usize] =
+                        Value::ByteArray(Arc::new(crate::value::PackedBytes::from(data)));
+                }
+                Op::BuildByteArrayRepeat {
+                    dst_v,
+                    value_i,
+                    count_v,
+                } => {
+                    let count = match &registers[count_v as usize] {
+                        Value::Int(count) if *count >= 0 => *count as usize,
+                        Value::Int(_) => {
+                            return Err(RuntimeError::Type("negative repeat count".to_string()));
+                        }
+                        _ => {
+                            return Err(RuntimeError::Type("repeat count must be int".to_string()));
+                        }
+                    };
+                    let value = ints[value_i as usize] as u8;
+                    registers[dst_v as usize] =
+                        Value::ByteArray(Arc::new(crate::value::PackedBytes::from(vec![
+                            value;
+                            count
+                        ])));
+                }
                 Op::CheckNonNegativeCapacity { capacity_i } => unsafe {
                     if *ints.get_unchecked(capacity_i as usize) < 0 {
                         return Err(RuntimeError::Type(
@@ -3361,6 +3527,21 @@ impl Vm {
                         Value::IntArray(data) => data.get(i).copied().ok_or_else(|| {
                             RuntimeError::Panic("index out of bounds".to_string())
                         })?,
+                        Value::ByteArray(data) => {
+                            data.get(i).copied().map(i64::from).ok_or_else(|| {
+                                RuntimeError::Panic("index out of bounds".to_string())
+                            })?
+                        }
+                        Value::InlineByteArray(data) => {
+                            data.get(i).copied().map(i64::from).ok_or_else(|| {
+                                RuntimeError::Panic("index out of bounds".to_string())
+                            })?
+                        }
+                        Value::ByteVec(data) => {
+                            data.get(i).copied().map(i64::from).ok_or_else(|| {
+                                RuntimeError::Panic("index out of bounds".to_string())
+                            })?
+                        }
                         Value::Array(data) => match data.get(i) {
                             Some(Value::Int(value)) => *value,
                             Some(other) => {
@@ -3406,6 +3587,24 @@ impl Vm {
                                 return Err(RuntimeError::Panic("index out of bounds".to_string()));
                             }
                             *Arc::make_mut(data).get_unchecked_mut(i) = new_val;
+                        }
+                        Value::ByteArray(data) => {
+                            if i >= data.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                            *Arc::make_mut(data).get_unchecked_mut(i) = new_val as u8;
+                        }
+                        Value::InlineByteArray(data) => {
+                            if i >= data.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                            *Arc::make_mut(data).get_unchecked_mut(i) = new_val as u8;
+                        }
+                        Value::ByteVec(data) => {
+                            if i >= data.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                            *Arc::make_mut(data).get_unchecked_mut(i) = new_val as u8;
                         }
                         Value::Array(data) => {
                             if i >= data.len() {

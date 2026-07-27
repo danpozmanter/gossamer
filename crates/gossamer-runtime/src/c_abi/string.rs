@@ -451,6 +451,30 @@ pub unsafe extern "C" fn gos_rt_str_free(s: *mut c_char) {
     });
 }
 
+pub(crate) unsafe fn consume_moved_string(s: *mut c_char) {
+    if s.is_null() || !is_managed_string(s) {
+        return;
+    }
+    let hdr = unsafe { s.cast::<u8>().sub(13) };
+    let rc = u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] });
+    if rc & STR_SHARED != 0 {
+        let cell = unsafe { AtomicU32::from_ptr(hdr.cast::<u32>()) };
+        let mut current = rc;
+        loop {
+            let live = current & !STR_SHARED;
+            let next = STR_SHARED | live.saturating_sub(2).max(1);
+            match cell.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
+    } else {
+        let next = rc.saturating_sub(2).max(1);
+        unsafe { std::ptr::copy_nonoverlapping(next.to_le_bytes().as_ptr(), hdr, 4) };
+    }
+    unsafe { gos_rt_str_free(s) };
+}
+
 /// True when `s` is a string value inside a compiler-typed Gossamer object.
 ///
 /// SAFETY: unlike public raw C-string entry points, this internal RC dispatch

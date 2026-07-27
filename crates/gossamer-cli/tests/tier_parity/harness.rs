@@ -683,6 +683,8 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/http_serve_err_binding.gos"),
     spec("feature-testing-examples/http3_serve_err_binding.gos"),
     spec("feature-testing-examples/integer_overflow_edges.gos"),
+    spec("feature-testing-examples/intcode_day2_mut_slice_native.gos"),
+    spec("feature-testing-examples/intcode_day2_native.gos"),
     spec("feature-testing-examples/iter_combinator_chain.gos"),
     spec("feature-testing-examples/iter_extra.gos"),
     spec("feature-testing-examples/sync_extra.gos"),

@@ -250,7 +250,19 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
 
 /// Byte footprint for an inline aggregate's flat-slot representation.
 pub(crate) fn aggregate_storage_bytes(tcx: &TyCtxt, ty: Ty) -> Option<u64> {
+    if let Some(len) = packed_byte_array_len(tcx, ty) {
+        return Some(len.max(1));
+    }
     slot_count(tcx, ty).map(|slots| u64::from(slots.max(1)) * 8)
+}
+
+/// Direct fixed arrays of bytes use their declared element width in native
+/// stack storage. Integer arithmetic still uses the canonical i64 value model.
+pub(crate) fn packed_byte_array_len(tcx: &TyCtxt, ty: Ty) -> Option<u64> {
+    let TyKind::Array { elem, len } = tcx.kind(ty)? else {
+        return None;
+    };
+    matches!(tcx.kind(*elem), Some(TyKind::Int(IntTy::U8))).then(|| len.to_usize() as u64)
 }
 
 /// Size in slots of a *single element* of an aggregate type -

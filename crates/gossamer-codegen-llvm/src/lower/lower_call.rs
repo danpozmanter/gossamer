@@ -340,6 +340,11 @@ impl<'a> Lowerer<'a> {
                 .into_boxed_str(),
             )));
         };
+        let name = if name == "gos_rt_bytearr_slice_result" {
+            "gos_rt_packed_bytearr_slice_result".to_string()
+        } else {
+            name
+        };
         // `__concat` is the parser's lowering of `println!`-style
         // formatted output: it takes a heterogeneous arg list,
         // prints each piece directly to stdout, and produces an
@@ -930,6 +935,14 @@ impl<'a> Lowerer<'a> {
                         let kind = |ty| match self.tcx.kind_of(ty) {
                             TyKind::Int(_) => Some(0),
                             TyKind::String => Some(1),
+                            TyKind::Vec(elem) | TyKind::Slice(elem)
+                                if matches!(
+                                    self.tcx.kind_of(*elem),
+                                    TyKind::Int(gossamer_types::IntTy::U8)
+                                ) =>
+                            {
+                                Some(2)
+                            }
                             _ => None,
                         };
                         Some((kind(*key)?, kind(*value)?))

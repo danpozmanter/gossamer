@@ -66,6 +66,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use crate::BuildError;
+use crate::ty::packed_byte_array_len;
 use anyhow::Result;
 use gossamer_abi as abi;
 use gossamer_mir::{
@@ -179,9 +180,17 @@ impl<'a> Lowerer<'a> {
         if is_aggregate(self.tcx, leaf_ty) && slot_count(self.tcx, leaf_ty).unwrap_or(1) > 1 {
             return addr;
         }
-        let tmp = self.fresh();
-        writeln!(self.out, "  {tmp} = load {leaf_llvm}, ptr {addr}").unwrap();
-        tmp
+        if self.place_is_packed_byte_element(place) {
+            let byte = self.fresh();
+            writeln!(self.out, "  {byte} = load i8, ptr {addr}").unwrap();
+            let tmp = self.fresh();
+            writeln!(self.out, "  {tmp} = zext i8 {byte} to i64").unwrap();
+            tmp
+        } else {
+            let tmp = self.fresh();
+            writeln!(self.out, "  {tmp} = load {leaf_llvm}, ptr {addr}").unwrap();
+            tmp
+        }
     }
 
     /// Computes the pointer address for a projected place.
@@ -259,7 +268,13 @@ impl<'a> Lowerer<'a> {
                     // array elements; APIs that intend a non-panicking probe
                     // must name that operation explicitly.
                     self.emit_array_bounds_check(current_ty, &idx_raw);
-                    if stride_slots == 1 {
+                    if packed_byte_array_len(self.tcx, current_ty).is_some() {
+                        writeln!(
+                            self.out,
+                            "  {next} = getelementptr i8, ptr {current}, i64 {idx_raw}"
+                        )
+                        .unwrap();
+                    } else if stride_slots == 1 {
                         writeln!(
                             self.out,
                             "  {next} = getelementptr i64, ptr {current}, i64 {idx_raw}"
@@ -318,5 +333,24 @@ impl<'a> Lowerer<'a> {
             }
         }
         current
+    }
+
+    pub(crate) fn place_is_packed_byte_element(&self, place: &Place) -> bool {
+        let mut ty = self.body.local_ty(place.local);
+        for projection in &place.projection {
+            match projection {
+                Projection::Index(_) => {
+                    if packed_byte_array_len(self.tcx, ty).is_some() {
+                        return true;
+                    }
+                    ty = match self.tcx.kind(ty) {
+                        Some(TyKind::Array { elem, .. }) => *elem,
+                        _ => ty,
+                    };
+                }
+                _ => {}
+            }
+        }
+        false
     }
 }

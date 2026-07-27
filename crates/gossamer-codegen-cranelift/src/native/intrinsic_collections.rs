@@ -944,6 +944,14 @@ pub(super) fn lower_intrinsic_call_collections(
                         let kind = |ty| match tcx.kind_of(ty) {
                             TyKind::Int(_) => Some(0),
                             TyKind::String => Some(1),
+                            TyKind::Vec(elem) | TyKind::Slice(elem)
+                                if matches!(
+                                    tcx.kind_of(*elem),
+                                    TyKind::Int(gossamer_types::IntTy::U8)
+                                ) =>
+                            {
+                                Some(2)
+                            }
                             _ => None,
                         };
                         Some((kind(*key)?, kind(*value)?))

@@ -173,6 +173,9 @@ fn builtin_os_write_file(args: &[Value]) -> RuntimeResult<Value> {
         Some(Value::IntArray(parts)) => {
             parts.iter().filter_map(|n| u8::try_from(*n).ok()).collect()
         }
+        Some(Value::ByteArray(parts)) => parts.to_vec(),
+        Some(Value::InlineByteArray(parts)) => parts.to_vec(),
+        Some(Value::ByteVec(parts)) => parts.as_ref().clone(),
         _ => {
             return Ok(err_variant(
                 "write_file: contents must be string or byte array",

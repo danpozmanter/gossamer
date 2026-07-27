@@ -592,3 +592,57 @@ fn large_fixed_array_local_spills_to_heap_storage() {
         "IR was:\n{ir}"
     );
 }
+
+#[test]
+fn fixed_u8_array_uses_packed_native_storage() {
+    let mut tcx = TyCtxt::new();
+    let unit_ty = tcx.intern(TyKind::Unit);
+    let u8_ty = tcx.intern(TyKind::Int(IntTy::U8));
+    let arr_ty = tcx.intern(TyKind::Array {
+        elem: u8_ty,
+        len: ArrayLen::Concrete(64),
+    });
+    let body = Body {
+        name: "main".to_string(),
+        def: None,
+        arity: 0,
+        locals: vec![
+            LocalDecl {
+                ty: unit_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+            LocalDecl {
+                ty: arr_ty,
+                debug_name: None,
+                mutable: true,
+                region: false,
+            },
+        ],
+        blocks: vec![BasicBlock {
+            id: BlockId(0),
+            stmts: vec![Statement {
+                span: dummy_span(),
+                kind: StatementKind::Assign {
+                    place: place(1),
+                    rvalue: Rvalue::Repeat {
+                        value: Operand::Const(ConstValue::Int(0)),
+                        count: 64,
+                    },
+                },
+            }],
+            terminator: Terminator::Return,
+            span: dummy_span(),
+        }],
+        span: dummy_span(),
+    };
+
+    let ir = render_ir_to_string(&[body], &tcx, false).unwrap();
+    assert!(ir.contains("alloca [64 x i8]"), "IR was:\n{ir}");
+    assert!(
+        ir.contains("@llvm.memset.p0.i64(ptr %l1, i8 0, i64 64"),
+        "IR was:\n{ir}"
+    );
+    assert!(!ir.contains("alloca [64 x i64]"), "IR was:\n{ir}");
+}

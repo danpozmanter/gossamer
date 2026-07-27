@@ -357,6 +357,24 @@ pub enum Op {
         /// Number of elements.
         count: u16,
     },
+    /// Builds a packed `Value::ByteArray` from consecutive `i64` registers.
+    BuildByteArray {
+        /// Destination value register.
+        dst_v: Reg,
+        /// First register holding zero-extended byte values.
+        first_i: Reg,
+        /// Number of elements.
+        count: u16,
+    },
+    /// Builds a packed repeated byte array without an intermediate wide array.
+    BuildByteArrayRepeat {
+        /// Destination value register.
+        dst_v: Reg,
+        /// Register holding the repeated byte value.
+        value_i: Reg,
+        /// Register holding the non-negative repeat count.
+        count_v: Reg,
+    },
     /// Rejects a negative `i64` before using it as a collection capacity.
     CheckNonNegativeCapacity {
         /// Capacity in the typed integer register file.

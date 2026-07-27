@@ -66,6 +66,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use crate::BuildError;
+use crate::ty::packed_byte_array_len;
 use anyhow::Result;
 use gossamer_abi as abi;
 use gossamer_mir::{
@@ -90,6 +91,8 @@ impl<'a> Lowerer<'a> {
             ));
         }
         let base = local_slot(place.local);
+        let packed_bytes =
+            packed_byte_array_len(self.tcx, self.body.local_ty(place.local)).is_some();
         let mut slot_idx = 0u32;
         for operand in operands {
             let op_ty = self.operand_ty(operand);
@@ -126,12 +129,23 @@ impl<'a> Lowerer<'a> {
                 let v = self.lower_operand(operand)?;
                 let op_llvm = self.operand_llvm_ty(operand);
                 let dst = self.fresh();
-                writeln!(
-                    self.out,
-                    "  {dst} = getelementptr i64, ptr {base}, i64 {slot_idx}"
-                )
-                .unwrap();
-                writeln!(self.out, "  store {op_llvm} {v}, ptr {dst}").unwrap();
+                if packed_bytes {
+                    writeln!(
+                        self.out,
+                        "  {dst} = getelementptr i8, ptr {base}, i64 {slot_idx}"
+                    )
+                    .unwrap();
+                    let byte = self.fresh();
+                    writeln!(self.out, "  {byte} = trunc {op_llvm} {v} to i8").unwrap();
+                    writeln!(self.out, "  store i8 {byte}, ptr {dst}").unwrap();
+                } else {
+                    writeln!(
+                        self.out,
+                        "  {dst} = getelementptr i64, ptr {base}, i64 {slot_idx}"
+                    )
+                    .unwrap();
+                    writeln!(self.out, "  store {op_llvm} {v}, ptr {dst}").unwrap();
+                }
             } else {
                 // Nested aggregate. The operand may be either a
                 // bare-local copy (`Operand::Copy(p)` with empty
@@ -198,6 +212,8 @@ impl<'a> Lowerer<'a> {
             ));
         }
         let base = local_slot(place.local);
+        let packed_bytes =
+            packed_byte_array_len(self.tcx, self.body.local_ty(place.local)).is_some();
         let op_ty = self.operand_ty(value);
         let mut op_slots = slot_count(self.tcx, op_ty).unwrap_or(1);
         if matches!(value, Operand::Const(_) | Operand::FnRef { .. }) {
@@ -281,6 +297,48 @@ impl<'a> Lowerer<'a> {
         }
         let v = self.lower_operand(value)?;
         let v_llvm = self.operand_llvm_ty(value);
+        if packed_bytes {
+            let byte = self.fresh();
+            writeln!(self.out, "  {byte} = trunc {v_llvm} {v} to i8").unwrap();
+            if count == 0 {
+                return Ok(());
+            }
+            if matches!(value, Operand::Const(ConstValue::Int(0))) {
+                writeln!(
+                    self.out,
+                    "  call void @llvm.memset.p0.i64(ptr {base}, i8 0, i64 {count}, i1 false)"
+                )
+                .unwrap();
+            } else {
+                let head = self.fresh_label("repeat_byte_head");
+                let body = self.fresh_label("repeat_byte_body");
+                let done = self.fresh_label("repeat_byte_done");
+                let counter = self.fresh();
+                writeln!(self.out, "  {counter} = alloca i64").unwrap();
+                writeln!(self.out, "  store i64 0, ptr {counter}").unwrap();
+                writeln!(self.out, "  br label %{head}").unwrap();
+                writeln!(self.out, "{head}:").unwrap();
+                let cur = self.fresh();
+                writeln!(self.out, "  {cur} = load i64, ptr {counter}").unwrap();
+                let cond = self.fresh();
+                writeln!(self.out, "  {cond} = icmp ult i64 {cur}, {count}").unwrap();
+                writeln!(self.out, "  br i1 {cond}, label %{body}, label %{done}").unwrap();
+                writeln!(self.out, "{body}:").unwrap();
+                let dst = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {dst} = getelementptr i8, ptr {base}, i64 {cur}"
+                )
+                .unwrap();
+                writeln!(self.out, "  store i8 {byte}, ptr {dst}").unwrap();
+                let next = self.fresh();
+                writeln!(self.out, "  {next} = add i64 {cur}, 1").unwrap();
+                writeln!(self.out, "  store i64 {next}, ptr {counter}").unwrap();
+                writeln!(self.out, "  br label %{head}").unwrap();
+                writeln!(self.out, "{done}:").unwrap();
+            }
+            return Ok(());
+        }
         if count <= 16 {
             for i in 0..count {
                 let dst = self.fresh();

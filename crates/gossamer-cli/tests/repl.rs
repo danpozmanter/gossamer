@@ -171,6 +171,78 @@ fn repl_rejects_out_of_range_vec_elements() {
 }
 
 #[test]
+fn repl_later_assignment_cannot_retype_an_immutable_binding() {
+    let out = run_repl(
+        "let a = 256\n\
+         let mut b: i8 = 1\n\
+         let mut v: Vec<i8> = [1, 2]\n\
+         b = a\n\
+         v[0] = a\n\
+         %b\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    let diagnostics = format!("{}\n{}", out.stdout, out.stderr);
+    assert!(
+        diagnostics.matches("expected `i8`, found `i64`").count() >= 2,
+        "both invalid assignments must preserve a's type: {diagnostics}"
+    );
+    assert!(
+        out.stdout.contains("a: i64 = 256"),
+        "immutable source binding was retyped: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("mut b: i8 = 1") && out.stdout.contains("mut v: Vec<i8> = [1, 2]"),
+        "failed assignments must not mutate destinations: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_byte_buffer_has_a_public_type_and_strict_mutation_contract() {
+    let out = run_repl(
+        "use Buffer\n\
+         let mut b = Buffer::new()\n\
+         b.push(65)\n\
+         b.push(\"A\")\n\
+         b.push(Vec::from([1, 2]))\n\
+         b.push(256)\n\
+         b.len()\n\
+         b.to_string()\n\
+         %b\n\
+         %h push\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    let diagnostics = format!("{}\n{}", out.stdout, out.stderr);
+    assert!(
+        diagnostics.matches("type mismatch").count() >= 2,
+        "Buffer::push accepted non-byte values: {diagnostics}"
+    );
+    assert!(
+        diagnostics.contains("integer literal `256` does not fit in `u8`"),
+        "Buffer::push did not range-check its byte argument: {diagnostics}"
+    );
+    assert!(
+        out.stdout.contains("Out[7]: 1") && out.stdout.contains("Out[8]: \"A\""),
+        "rejected pushes changed the buffer: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("mut b: bytes::Buffer")
+            && !out.stdout.contains("__buffer")
+            && !out.stdout.contains("mut b: _"),
+        "Buffer leaked an internal or inferred representation: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("fn push(&mut self, byte: u8) -> ()")
+            && !out.stdout.contains("fn push(self, ...) -> ..."),
+        "Buffer help lacks its public method contract: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_uses_repr_for_results_and_display_for_explicit_printing() {
     let out = run_repl(
         "let x = \"wow\"\n\

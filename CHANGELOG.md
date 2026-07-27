@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.35.1 - Compact collections and trustworthy types
+
+- Pack narrow scalar collections in the VM and compact native vector and
+  byte-valued map storage without changing collection semantics.
+- Store native fixed byte arrays at their declared element width while
+  preserving fixed-array value semantics.
+- Preserve established numeric binding types across later assignments, calls,
+  returns, indexing, and collection operations.
+- Correct consuming collection ownership so moved strings and vectors are
+  reclaimed without invalidating live aliases.
+- Give byte buffers and builders concrete public types, strict method contracts,
+  packed-value interoperability, and private runtime representations.
+- Expand type-guarantee coverage across mutable, immutable, constant, nominal,
+  nested, enum, collection, and standard-library handle values.
+
 ## 0.35.0 - Collection semantics and public diagnostics
 
 - Show public, fully inferred types in diagnostics and REPL bindings without

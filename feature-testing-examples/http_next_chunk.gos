@@ -63,7 +63,7 @@ fn main() {
                     encoding::hex::encode(chunk)
                 )
                 total += chunk.len()
-                for b in chunk { sum += b }
+                for b in chunk { sum += b as i64 }
             }
             println!("total={} sum={}", total, sum)
         }

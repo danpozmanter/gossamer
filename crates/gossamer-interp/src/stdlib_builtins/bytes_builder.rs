@@ -28,7 +28,7 @@ use gossamer_std::bytes::{index_of, replace, split};
 
 use super::string_array;
 use crate::builtins::{BuiltinFnPub, as_str, none_variant, some_variant, value_to_int};
-use crate::value::{RuntimeResult, Value};
+use crate::value::{RuntimeError, RuntimeResult, Value};
 
 static BUILDER_REGISTRY: LazyLock<parking_lot::ReentrantMutex<RefCell<StdHashMap<i64, String>>>> =
     LazyLock::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
@@ -123,7 +123,11 @@ pub(crate) fn builtin_builder_write(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(builder_id_of) else {
         return Ok(Value::Unit);
     };
-    let text = args.get(1).and_then(as_str).unwrap_or("").to_string();
+    let text = args
+        .get(1)
+        .and_then(as_str)
+        .ok_or_else(|| RuntimeError::Type("Builder::write expects a String".to_string()))?
+        .to_string();
     with_builders(|r| {
         if let Some(s) = r.borrow_mut().get_mut(&id) {
             s.push_str(&text);
@@ -136,16 +140,14 @@ pub(crate) fn builtin_builder_write_char(args: &[Value]) -> RuntimeResult<Value>
     let Some(id) = args.first().and_then(builder_id_of) else {
         return Ok(Value::Unit);
     };
-    let ch = match args.get(1) {
-        Some(Value::Char(c)) => *c,
-        other => other
-            .and_then(value_to_int)
-            .and_then(|n| char::from_u32(n as u32))
-            .unwrap_or('\u{FFFD}'),
+    let Some(Value::Char(ch)) = args.get(1) else {
+        return Err(RuntimeError::Type(
+            "Builder::write_char expects a char".to_string(),
+        ));
     };
     with_builders(|r| {
         if let Some(s) = r.borrow_mut().get_mut(&id) {
-            s.push(ch);
+            s.push(*ch);
         }
     });
     Ok(Value::Unit)
@@ -202,7 +204,11 @@ pub(crate) fn builtin_buffer_write_str(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(buffer_id_of) else {
         return Ok(Value::Unit);
     };
-    let text = args.get(1).and_then(as_str).unwrap_or("").to_string();
+    let text = args
+        .get(1)
+        .and_then(as_str)
+        .ok_or_else(|| RuntimeError::Type("Buffer::write_str expects a String".to_string()))?
+        .to_string();
     with_buffers(|r| {
         if let Some(b) = r.borrow_mut().get_mut(&id) {
             b.extend_from_slice(text.as_bytes());
@@ -213,18 +219,19 @@ pub(crate) fn builtin_buffer_write_str(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_buffer_push(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(buffer_id_of) else {
-        return Ok(args.first().cloned().unwrap_or(Value::Unit));
+        return Ok(Value::Unit);
     };
-    let byte = args.get(1).and_then(value_to_int).unwrap_or(0) as u8;
+    let byte = args
+        .get(1)
+        .and_then(value_to_int)
+        .and_then(|value| u8::try_from(value).ok())
+        .ok_or_else(|| RuntimeError::Type("Buffer::push expects a u8".to_string()))?;
     with_buffers(|r| {
         if let Some(b) = r.borrow_mut().get_mut(&id) {
             b.push(byte);
         }
     });
-    // `push` is in the VM's mutating-method writeback list, so return the
-    // receiver handle (not Unit) to keep the writeback-move idempotent -
-    // returning Unit would clobber the handle local. Mirrors `HashSet`.
-    Ok(args.first().cloned().unwrap_or(Value::Unit))
+    Ok(Value::Unit)
 }
 
 pub(crate) fn builtin_buffer_len(args: &[Value]) -> RuntimeResult<Value> {
@@ -245,16 +252,14 @@ pub(crate) fn builtin_buffer_is_empty(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_buffer_clear(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(buffer_id_of) else {
-        return Ok(args.first().cloned().unwrap_or(Value::Unit));
+        return Ok(Value::Unit);
     };
     with_buffers(|r| {
         if let Some(b) = r.borrow_mut().get_mut(&id) {
             b.clear();
         }
     });
-    // `clear` is in the VM mutating-method writeback list; return the
-    // receiver handle so the writeback preserves it (see `push`).
-    Ok(args.first().cloned().unwrap_or(Value::Unit))
+    Ok(Value::Unit)
 }
 
 pub(crate) fn builtin_buffer_to_string(args: &[Value]) -> RuntimeResult<Value> {

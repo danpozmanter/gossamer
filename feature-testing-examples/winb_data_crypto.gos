@@ -8,7 +8,7 @@ use std::hash
 
 fn main() {
     let empty: [u8] = []
-    let abc = [97, 98, 99]
+    let abc: Vec<u8> = [97, 98, 99]
 
     // --- SHA-256 (digest bytes + hex) on empty and known vectors ---
     println!("sha256(empty) = {}", crypto::sha256::hex(""))
@@ -57,19 +57,19 @@ fn main() {
     println!("adler32 chained = {}", hash::adler32::update(hash::adler32::update(1, [104]), [105]))
 
     // --- KDF: PBKDF2-HMAC-SHA256 deterministic vectors ---
-    let pw = [112, 97, 115, 115, 119, 111, 114, 100]
-    let salt = [115, 97, 108, 116]
+    let pw: Vec<u8> = [112, 97, 115, 115, 119, 111, 114, 100]
+    let salt: Vec<u8> = [115, 97, 108, 116]
     println!("pbkdf2 c1 = {}", encoding::hex::encode(crypto::kdf::pbkdf2_sha256(pw, salt, 1, 32)))
     println!("pbkdf2 c2 = {}", encoding::hex::encode(crypto::kdf::pbkdf2_sha256(pw, salt, 2, 20)))
 
     // --- AEAD deterministic seal (fixed key + nonce) ---
-    let key = [
+    let key: Vec<u8> = [
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
         17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
     ]
-    let nonce = [9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9]
-    let pt = [104, 101, 108, 108, 111]
-    let aad = [109, 101, 116, 97]
+    let nonce: Vec<u8> = [9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9]
+    let pt: Vec<u8> = [104, 101, 108, 108, 111]
+    let aad: Vec<u8> = [109, 101, 116, 97]
     match crypto::aead::aes_256_gcm_seal(key, nonce, pt, aad) {
         Ok(ct) => println!("aes ct = {}", encoding::hex::encode(ct)),
         Err(e) => println!("aes seal err {}", e),

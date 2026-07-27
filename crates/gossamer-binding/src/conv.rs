@@ -45,7 +45,13 @@ fn describe(v: &Value) -> &'static str {
         Value::String(_) => "String",
         Value::Json(_) => "json",
         Value::Tuple(_) => "tuple",
-        Value::Array(_) | Value::IntArray(_) | Value::FloatVec(_) | Value::FloatArray(_) => "vec",
+        Value::Array(_)
+        | Value::IntArray(_)
+        | Value::ByteArray(_)
+        | Value::InlineByteArray(_)
+        | Value::ByteVec(_)
+        | Value::FloatVec(_)
+        | Value::FloatArray(_) => "vec",
         Value::Variant(_) => "enum variant",
         Value::Struct(_) => "struct",
         Value::Closure(_) | Value::Builtin(_) | Value::Native(_) => "callable",
@@ -386,6 +392,24 @@ impl<T: FromGos> FromGos for Vec<T> {
             Value::IntArray(arc) => {
                 return arc.iter().map(|i| T::from_gos(&Value::Int(*i))).collect();
             }
+            Value::ByteArray(arc) => {
+                return arc
+                    .iter()
+                    .map(|byte| T::from_gos(&Value::Int(i64::from(*byte))))
+                    .collect();
+            }
+            Value::InlineByteArray(arc) => {
+                return arc
+                    .iter()
+                    .map(|byte| T::from_gos(&Value::Int(i64::from(*byte))))
+                    .collect();
+            }
+            Value::ByteVec(arc) => {
+                return arc
+                    .iter()
+                    .map(|byte| T::from_gos(&Value::Int(i64::from(*byte))))
+                    .collect();
+            }
             other => return type_err("[T]", other),
         };
         items.iter().map(T::from_gos).collect()
@@ -491,6 +515,9 @@ impl std::ops::Deref for Bytes {
 impl FromGos for Bytes {
     fn from_gos(value: &Value) -> RuntimeResult<Self> {
         match value {
+            Value::ByteArray(arc) => Ok(Bytes(arc.to_vec())),
+            Value::InlineByteArray(arc) => Ok(Bytes(arc.to_vec())),
+            Value::ByteVec(arc) => Ok(Bytes(arc.as_ref().clone())),
             Value::IntArray(arc) => {
                 let mut out = Vec::with_capacity(arc.len());
                 for v in arc.iter() {
@@ -526,8 +553,7 @@ impl FromGos for Bytes {
 
 impl ToGos for Bytes {
     fn to_gos(self) -> Value {
-        let widened: Vec<i64> = self.0.into_iter().map(i64::from).collect();
-        Value::IntArray(Arc::new(widened))
+        Value::ByteVec(Arc::new(self.0))
     }
 }
 
@@ -729,6 +755,9 @@ fn value_to_dyn(value: &Value) -> DynValue {
                 DynValue::List(arc.iter().map(|v| DynValue::Int(*v)).collect())
             }
         }
+        Value::ByteArray(arc) => DynValue::Bytes(arc.to_vec()),
+        Value::InlineByteArray(arc) => DynValue::Bytes(arc.to_vec()),
+        Value::ByteVec(arc) => DynValue::Bytes(arc.as_ref().clone()),
         Value::FloatVec(arc) => DynValue::List(arc.iter().map(|v| DynValue::Float(*v)).collect()),
         Value::Array(arc) | Value::Tuple(arc) => {
             DynValue::List(arc.iter().map(value_to_dyn).collect())

@@ -501,6 +501,7 @@ fn json_child_to_lazy_value(parent: &JsonInner, child: &json_std::Value) -> Valu
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn gossamer_to_json_value(value: &Value) -> json_std::Value {
     match value {
         Value::Json(value) => value.to_owned_value(),
@@ -564,6 +565,27 @@ fn gossamer_to_json_value(value: &Value) -> json_std::Value {
                 .iter()
                 .copied()
                 .map(|n| json_std::Value::Number(n as f64))
+                .collect();
+            json_std::Value::Array(arr)
+        }
+        Value::ByteArray(data) => {
+            let arr = data
+                .iter()
+                .map(|value| json_std::Value::Number(f64::from(*value)))
+                .collect();
+            json_std::Value::Array(arr)
+        }
+        Value::InlineByteArray(data) => {
+            let arr = data
+                .iter()
+                .map(|value| json_std::Value::Number(f64::from(*value)))
+                .collect();
+            json_std::Value::Array(arr)
+        }
+        Value::ByteVec(data) => {
+            let arr = data
+                .iter()
+                .map(|value| json_std::Value::Number(f64::from(*value)))
                 .collect();
             json_std::Value::Array(arr)
         }

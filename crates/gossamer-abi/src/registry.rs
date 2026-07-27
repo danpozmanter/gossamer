@@ -869,6 +869,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_ovec_index_of_i64", (Ptr, I64) -> I64, Cranelift, "Return the index of `value` in a sorted Vec<i64>, or -1."),
     rt!("gos_rt_ovec_insert_i64", (Ptr, I64) -> Ptr, Cranelift, "Insert `value` into a sorted Vec<i64> at the unique sorted position."),
     rt!("gos_rt_ovec_remove_at_i64", (Ptr, I64) -> Ptr, Cranelift, "Remove element at index from a sorted Vec<i64>."),
+    rt!("gos_rt_packed_bytearr_slice_result", (Ptr, I64, I64, I64) -> I128, Llvm, "Slice a native packed fixed byte array into a Vec<u8>."),
     rt_nr_unwind!("gos_rt_panic", (Ptr) -> Void, Both, "Abort the current goroutine with a message string (unwinds on the goroutine path so spawn join handles observe Err)."),
     rt_nr!("gos_rt_panic_oob", (Ptr, I64, I64) -> Void, Both, "Abort with an out-of-bounds diagnostic naming the operation, the index, and the array length."),
     rt!("gos_rt_parse_f64", (Ptr, Ptr) -> F64, Cranelift, "Parse a string as an f64; second arg is the default on error."),

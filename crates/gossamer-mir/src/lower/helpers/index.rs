@@ -52,6 +52,7 @@ use super::*;
 pub(crate) enum MapValueKind {
     I64,
     String,
+    Bytes,
     Other,
 }
 
@@ -66,6 +67,11 @@ pub(crate) fn map_value_kind_from(tcx: &gossamer_types::TyCtxt, ty: Ty) -> MapVa
     match tcx.kind_of(ty) {
         TyKind::Int(_) | TyKind::Bool | TyKind::Char | TyKind::Float(_) => MapValueKind::I64,
         TyKind::String => MapValueKind::String,
+        TyKind::Vec(elem) | TyKind::Slice(elem)
+            if matches!(tcx.kind_of(*elem), TyKind::Int(gossamer_types::IntTy::U8)) =>
+        {
+            MapValueKind::Bytes
+        }
         _ => MapValueKind::Other,
     }
 }

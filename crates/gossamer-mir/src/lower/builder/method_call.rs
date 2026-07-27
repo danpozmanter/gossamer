@@ -1945,6 +1945,10 @@ impl<'a> Builder<'a> {
                         Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_str"),
                         _ => Some("gos_rt_map_insert_i64_str"),
                     },
+                    Some(MapValueKind::Bytes) => match self.hash_map_key_kind(receiver_ty) {
+                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_i64"),
+                        _ => Some("gos_rt_map_insert_i64_i64"),
+                    },
                     // Aggregate value (Vec / struct): stored as an
                     // 8-byte handle word, so route by KEY kind - a
                     // String key must still use the str path, not the
@@ -1983,6 +1987,10 @@ impl<'a> Builder<'a> {
                     Some(MapValueKind::String) => match self.hash_map_key_kind(receiver_ty) {
                         Some(MapKeyKind::String) => Some("gos_rt_map_get_or_str_str"),
                         _ => Some("gos_rt_map_get_or_i64_str"),
+                    },
+                    Some(MapValueKind::Bytes) => match self.hash_map_key_kind(receiver_ty) {
+                        Some(MapKeyKind::String) => Some("gos_rt_map_get_or_str_i64"),
+                        _ => Some("gos_rt_map_get_or_i64"),
                     },
                     _ => match self.hash_map_key_kind(receiver_ty) {
                         Some(MapKeyKind::String) => Some("gos_rt_map_get_or_str_i64"),
@@ -2057,6 +2065,7 @@ impl<'a> Builder<'a> {
             "values" => match &receiver_kind_flat {
                 TyKind::HashMap { .. } => match self.hash_map_value_kind(receiver_ty) {
                     Some(MapValueKind::String) => Some("gos_rt_map_values_str"),
+                    Some(MapValueKind::Bytes) => Some("gos_rt_map_values_vec"),
                     _ => Some("gos_rt_map_values_i64"),
                 },
                 _ => None,

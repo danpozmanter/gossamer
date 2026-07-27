@@ -715,13 +715,10 @@ impl Vm {
                 // bodies now, while they are still in hand: the deferred
                 // compile below releases `mir_bodies` for spawn-free
                 // programs, so this is the last point the set is derivable.
-                let mut eager_names: std::collections::HashSet<String> =
+                let eager_names: std::collections::HashSet<String> =
                     jit_backend::jit_eager_loop_bodies(&bodies, &jit_tcx, &shapes, &struct_shapes)
                         .into_iter()
                         .collect();
-                if !eager_names.is_empty() {
-                    eager_names.insert("main".to_string());
-                }
                 *self.jit_eager_names.borrow_mut() = Arc::new(eager_names);
                 // Keep the full, collision-free compiler description rather
                 // than a lossy hash: an accidental cache hit could dispatch a

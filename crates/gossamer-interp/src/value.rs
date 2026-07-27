@@ -21,6 +21,8 @@ use std::cell::{Cell, UnsafeCell};
 use std::collections::VecDeque;
 use std::fmt;
 use std::marker::PhantomData;
+use std::ops::{Deref, DerefMut};
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -47,6 +49,57 @@ pub fn dense_map<K, V>() -> DenseMap<K, V> {
 #[must_use]
 pub fn dense_map_with_capacity<K, V>(capacity: usize) -> DenseMap<K, V> {
     DenseMap::with_capacity_and_hasher(capacity, rustc_hash::FxBuildHasher)
+}
+
+/// Thin fixed-byte owner used by packed arrays.
+#[derive(Debug)]
+pub struct PackedBytes {
+    ptr: NonNull<u8>,
+    len: u32,
+}
+
+unsafe impl Send for PackedBytes {}
+unsafe impl Sync for PackedBytes {}
+
+impl From<Vec<u8>> for PackedBytes {
+    fn from(values: Vec<u8>) -> Self {
+        let boxed = values.into_boxed_slice();
+        let len = u32::try_from(boxed.len()).expect("packed byte array exceeds u32 length");
+        let ptr = if boxed.is_empty() {
+            NonNull::dangling()
+        } else {
+            NonNull::new(boxed.as_ptr().cast_mut()).expect("boxed byte pointer is non-null")
+        };
+        std::mem::forget(boxed);
+        Self { ptr, len }
+    }
+}
+
+impl Clone for PackedBytes {
+    fn clone(&self) -> Self {
+        self.to_vec().into()
+    }
+}
+
+impl Deref for PackedBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
+    }
+}
+
+impl DerefMut for PackedBytes {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
+    }
+}
+
+impl Drop for PackedBytes {
+    fn drop(&mut self) {
+        let raw = std::ptr::slice_from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize);
+        drop(unsafe { Box::from_raw(raw) });
+    }
 }
 
 /// Shared JSON tree plus a stable view into one node of that tree.
@@ -246,6 +299,12 @@ pub enum Value {
     FloatArray(Arc<FloatArrayInner>),
     /// Flat `i64` storage for a primitive integer array literal.
     IntArray(Arc<Vec<i64>>),
+    /// Packed storage for a `u8` array or vector.
+    ByteArray(Arc<PackedBytes>),
+    /// Single-allocation storage for large fixed byte arrays.
+    InlineByteArray(Arc<SmallVec<[u8; 1024]>>),
+    /// Growable packed storage for a `Vec<u8>`.
+    ByteVec(Arc<Vec<u8>>),
     /// Flat `f64` storage for a primitive float array literal /
     /// `Vec<f64>`. Avoids per-element `Value::Float` boxing on
     /// hot loops over numeric arrays (nbody's `dx`/`dy`/`dz`/`mag`
@@ -659,6 +718,18 @@ impl MapKey {
             Value::IntArray(ns) => Self::Agg(Box::new(AggKey {
                 name: intern_type_tag("[]"),
                 fields: ns.iter().map(|n| Self::Int(*n)).collect(),
+            })),
+            Value::ByteArray(bytes) => Self::Agg(Box::new(AggKey {
+                name: intern_type_tag("[]"),
+                fields: bytes.iter().map(|n| Self::Int(i64::from(*n))).collect(),
+            })),
+            Value::InlineByteArray(bytes) => Self::Agg(Box::new(AggKey {
+                name: intern_type_tag("[]"),
+                fields: bytes.iter().map(|n| Self::Int(i64::from(*n))).collect(),
+            })),
+            Value::ByteVec(bytes) => Self::Agg(Box::new(AggKey {
+                name: intern_type_tag("[]"),
+                fields: bytes.iter().map(|n| Self::Int(i64::from(*n))).collect(),
             })),
             Value::Struct(inner) => Self::Agg(Box::new(AggKey {
                 name: inner.name.clone(),
@@ -2267,6 +2338,18 @@ impl Value {
                 let id = register_heap(RegistryEntry::IntArray(Arc::clone(data)));
                 from_heap_handle(id)
             }
+            Self::ByteArray(data) => {
+                let id = register_heap(RegistryEntry::ByteArray(Arc::clone(data)));
+                from_heap_handle(id)
+            }
+            Self::InlineByteArray(data) => {
+                let id = register_heap(RegistryEntry::InlineByteArray(Arc::clone(data)));
+                from_heap_handle(id)
+            }
+            Self::ByteVec(data) => {
+                let id = register_heap(RegistryEntry::ByteVec(Arc::clone(data)));
+                from_heap_handle(id)
+            }
             Self::FloatVec(data) => {
                 // Keep the compact typed storage shared across the boundary.
                 let id = register_heap(RegistryEntry::FloatVec(Arc::clone(data)));
@@ -2345,6 +2428,9 @@ impl Value {
                     Some(RegistryEntry::Array(a)) => Self::Array(a),
                     Some(RegistryEntry::FloatArray(a)) => Self::FloatArray(a),
                     Some(RegistryEntry::IntArray(a)) => Self::IntArray(a),
+                    Some(RegistryEntry::ByteArray(a)) => Self::ByteArray(a),
+                    Some(RegistryEntry::InlineByteArray(a)) => Self::InlineByteArray(a),
+                    Some(RegistryEntry::ByteVec(a)) => Self::ByteVec(a),
                     Some(RegistryEntry::FloatVec(a)) => Self::FloatVec(a),
                     Some(RegistryEntry::Variant(inner)) => Self::Variant(inner),
                     Some(RegistryEntry::Struct(inner)) => Self::Struct(inner),
@@ -2359,6 +2445,7 @@ impl Value {
 }
 
 impl fmt::Display for Value {
+    #[allow(clippy::too_many_lines)]
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Primitive formatting delegates to the shared runtime
         // helpers so the interpreter and the native backend produce
@@ -2385,6 +2472,30 @@ impl fmt::Display for Value {
                 let elems: Vec<Value> = data.iter().copied().map(Value::Int).collect();
                 write_array(out, &elems)
             }
+            Self::ByteArray(data) => {
+                let elems: Vec<Value> = data
+                    .iter()
+                    .copied()
+                    .map(|value| Value::Int(i64::from(value)))
+                    .collect();
+                write_array(out, &elems)
+            }
+            Self::InlineByteArray(data) => {
+                let elems: Vec<Value> = data
+                    .iter()
+                    .copied()
+                    .map(|value| Value::Int(i64::from(value)))
+                    .collect();
+                write_array(out, &elems)
+            }
+            Self::ByteVec(data) => {
+                let elems: Vec<Value> = data
+                    .iter()
+                    .copied()
+                    .map(|value| Value::Int(i64::from(value)))
+                    .collect();
+                write_array(out, &elems)
+            }
             Self::FloatVec(data) => {
                 let elems: Vec<Value> = data.iter().copied().map(Value::Float).collect();
                 write_array(out, &elems)
@@ -2399,6 +2510,9 @@ impl fmt::Display for Value {
                 // the compiled tiers emit "<value>" for the same cases.
                 if inner.name == "<stub>" {
                     return out.write_str("<value>");
+                }
+                if matches!(inner.name.as_str(), "bytes::Buffer" | "bytes::Builder") {
+                    return out.write_str(inner.name.as_str());
                 }
                 // `errors::Error` prints Go-style as its colon-joined
                 // cause chain ("outer: mid: root") so `format!("{}", e)`
@@ -2477,6 +2591,9 @@ fn repr_value(value: &Value) -> String {
         ),
         Value::FloatArray(_) => repr_value(&Value::Array(Arc::new(value.float_array_elems()))),
         Value::IntArray(data) => format!("{:?}", data.as_slice()),
+        Value::ByteArray(data) => format!("{:?}", &data[..]),
+        Value::InlineByteArray(data) => format!("{:?}", data.as_slice()),
+        Value::ByteVec(data) => format!("{:?}", data.as_slice()),
         Value::FloatVec(data) => format!("{:?}", data.as_slice()),
         Value::LazyIter(id) => crate::stdlib_builtins::iter::lazy_iter_repr(*id)
             .unwrap_or_else(|| "<iterator>".to_string()),
@@ -2487,6 +2604,11 @@ fn repr_value(value: &Value) -> String {
             } else {
                 format!("{}({})", inner.name.as_str(), fields.join(", "))
             }
+        }
+        Value::Struct(inner)
+            if matches!(inner.name.as_str(), "bytes::Buffer" | "bytes::Builder") =>
+        {
+            inner.name.as_str().to_string()
         }
         Value::Struct(inner) => repr_struct(inner.name.as_str(), &inner.fields.to_vec()),
         Value::Map(map) => {
@@ -2796,6 +2918,12 @@ enum RegistryEntry {
     FloatArray(Arc<FloatArrayInner>),
     /// Flat i64 array storage.
     IntArray(Arc<Vec<i64>>),
+    /// Packed byte array storage.
+    ByteArray(Arc<PackedBytes>),
+    /// Single-allocation large fixed byte array storage.
+    InlineByteArray(Arc<SmallVec<[u8; 1024]>>),
+    /// Growable packed byte vector storage.
+    ByteVec(Arc<Vec<u8>>),
     /// Flat f64 vector storage.
     FloatVec(Arc<Vec<f64>>),
     /// Enum variant or tuple-struct constructor payload.

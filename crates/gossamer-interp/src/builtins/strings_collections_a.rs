@@ -7,6 +7,7 @@ fn builtin_len(args: &[Value]) -> RuntimeResult<Value> {
         Some(Value::Array(parts)) => parts.len(),
         Some(Value::Tuple(parts)) => parts.len(),
         Some(Value::IntArray(data)) => data.len(),
+        Some(Value::ByteArray(data)) => data.len(),
         Some(Value::FloatVec(data)) => data.len(),
         Some(Value::Map(m)) => m.lock().len(),
         Some(Value::IntMap(m)) => m.lock().len(),
@@ -26,6 +27,7 @@ fn builtin_is_empty(args: &[Value]) -> RuntimeResult<Value> {
         Some(Value::Array(parts)) => parts.is_empty(),
         Some(Value::Tuple(parts)) => parts.is_empty(),
         Some(Value::IntArray(data)) => data.is_empty(),
+        Some(Value::ByteArray(data)) => data.is_empty(),
         Some(Value::FloatVec(data)) => data.is_empty(),
         Some(Value::Map(m)) => m.lock().is_empty(),
         Some(Value::IntMap(m)) => m.lock().is_empty(),
@@ -298,6 +300,24 @@ fn array_as_values(recv: &Value) -> Option<Vec<Value>> {
     match recv {
         Value::Array(items) => Some(items.as_ref().clone()),
         Value::IntArray(items) => Some(items.iter().map(|n| Value::Int(*n)).collect()),
+        Value::ByteArray(items) => Some(
+            items
+                .iter()
+                .map(|n| Value::Int(i64::from(*n)))
+                .collect(),
+        ),
+        Value::InlineByteArray(items) => Some(
+            items
+                .iter()
+                .map(|n| Value::Int(i64::from(*n)))
+                .collect(),
+        ),
+        Value::ByteVec(items) => Some(
+            items
+                .iter()
+                .map(|n| Value::Int(i64::from(*n)))
+                .collect(),
+        ),
         Value::FloatVec(items) => Some(items.iter().map(|x| Value::Float(*x)).collect()),
         rx @ Value::FloatArray(_) => match rx.float_array_to_value_array() {
             Value::Array(items) => Some(items.as_ref().clone()),
@@ -482,7 +502,15 @@ fn builtin_str_slice(args: &[Value]) -> RuntimeResult<Value> {
 pub(crate) fn builtin_str_or_vec_slice(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
         Some(Value::String(_)) => builtin_str_slice(args),
-        Some(Value::Array(_) | Value::IntArray(_) | Value::FloatArray(_) | Value::FloatVec(_)) => {
+        Some(
+            Value::Array(_)
+            | Value::IntArray(_)
+            | Value::ByteArray(_)
+            | Value::InlineByteArray(_)
+            | Value::ByteVec(_)
+            | Value::FloatArray(_)
+            | Value::FloatVec(_),
+        ) => {
             builtin_vec_slice(args)
         }
         _ => Ok(slice_err(
@@ -528,6 +556,9 @@ fn builtin_vec_slice(args: &[Value]) -> RuntimeResult<Value> {
     let len = match args.first() {
         Some(Value::Array(arr)) => arr.len() as i64,
         Some(Value::IntArray(arr)) => arr.len() as i64,
+        Some(Value::ByteArray(arr)) => arr.len() as i64,
+        Some(Value::InlineByteArray(arr)) => arr.len() as i64,
+        Some(Value::ByteVec(arr)) => arr.len() as i64,
         Some(Value::FloatVec(arr)) => arr.len() as i64,
         Some(rx @ Value::FloatArray(_)) => match rx.float_array_to_value_array() {
             Value::Array(v) => v.len() as i64,
@@ -545,6 +576,24 @@ fn builtin_vec_slice(args: &[Value]) -> RuntimeResult<Value> {
         Some(Value::Array(arr)) => Ok(ok_variant(Value::Array(Arc::new(arr[lo..hi].to_vec())))),
         Some(Value::IntArray(arr)) => {
             Ok(ok_variant(Value::IntArray(Arc::new(arr[lo..hi].to_vec()))))
+        }
+        Some(Value::ByteArray(arr)) => {
+            Ok(ok_variant(Value::ByteArray(Arc::new(
+                crate::value::PackedBytes::from(arr[lo..hi].to_vec()),
+            ))))
+        }
+        Some(Value::InlineByteArray(arr)) if lo == 0 && hi == arr.len() => {
+            Ok(ok_variant(Value::InlineByteArray(Arc::clone(arr))))
+        }
+        Some(Value::InlineByteArray(arr)) => {
+            Ok(ok_variant(Value::ByteArray(Arc::new(
+                crate::value::PackedBytes::from(arr[lo..hi].to_vec()),
+            ))))
+        }
+        Some(Value::ByteVec(arr)) => {
+            Ok(ok_variant(Value::ByteArray(Arc::new(
+                crate::value::PackedBytes::from(arr[lo..hi].to_vec()),
+            ))))
         }
         Some(Value::FloatVec(arr)) => {
             Ok(ok_variant(Value::FloatVec(Arc::new(arr[lo..hi].to_vec()))))

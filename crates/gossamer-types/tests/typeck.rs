@@ -5,7 +5,7 @@ use gossamer_lex::SourceMap;
 use gossamer_parse::parse_source_file;
 use gossamer_resolve::resolve_source_file;
 use gossamer_types::{
-    TyCtxt, TyKind, TypeError, TypeTable, typecheck_source_file,
+    IntTy, TyCtxt, TyKind, TypeError, TypeTable, typecheck_source_file,
     typecheck_source_file_with_lazy_iterators,
 };
 
@@ -925,6 +925,85 @@ fn assignment_value_array_literal_adopts_vec_shape() {
         matches!(checked.tcx.kind(ty), Some(TyKind::Vec(_))),
         "assign-value literal must adopt the place's Vec shape, got {:?}",
         checked.tcx.kind(ty)
+    );
+}
+
+#[test]
+fn later_narrow_assignments_do_not_retype_an_inferred_source_binding() {
+    let checked = run("fn main() {
+            let a = 256
+            let mut b: i8 = 1
+            let mut v: Vec<i8> = [1, 2]
+            b = a
+            v[0] = a
+        }\n");
+
+    let mismatches: Vec<_> = checked
+        .diagnostics
+        .iter()
+        .filter_map(|diag| match &diag.error {
+            TypeError::TypeMismatch { expected, found } => {
+                Some((expected.as_str(), found.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(mismatches, vec![("i8", "i64"), ("i8", "i64")]);
+
+    let ItemKind::Fn(decl) = &checked.source.items[0].kind else {
+        panic!("expected fn");
+    };
+    let ExprKind::Block(block) = &decl.body.as_ref().expect("body").kind else {
+        panic!("expected block");
+    };
+    let StmtKind::Let { pattern, .. } = &block.stmts[0].kind else {
+        panic!("expected source binding");
+    };
+    let source_ty = checked.table.get(pattern.id).expect("source binding typed");
+    assert_eq!(checked.tcx.kind(source_ty), Some(&TyKind::Int(IntTy::I64)));
+}
+
+#[test]
+fn later_use_sites_cannot_narrow_established_numeric_bindings() {
+    let checked = run("use std::collections::HashMap
+        fn takes_i8(value: i8) {}
+        fn bad_return() -> i8 {
+            let value = 256
+            value
+        }
+        fn main() {
+            let value = 256
+            let values = [256, 257]
+            let optional = Some(256)
+            let mut bytes: Vec<i8> = []
+            let mut map: HashMap<String, i8> = HashMap::new()
+            takes_i8(value)
+            bytes.push(value)
+            map.insert(\"key\", value)
+            let narrowed: [i8; 2] = values
+            let narrowed_option: Option<i8> = optional
+        }\n");
+
+    let mismatches: Vec<_> = checked
+        .diagnostics
+        .iter()
+        .filter_map(|diag| match &diag.error {
+            TypeError::TypeMismatch { expected, found } => {
+                Some((expected.as_str(), found.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(
+        mismatches.len() >= 6,
+        "every later narrowing use must fail: {:?}",
+        checked.diagnostics
+    );
+    assert!(
+        mismatches
+            .iter()
+            .all(|(expected, found)| expected.contains("i8") && found.contains("i64")),
+        "narrowing diagnostics must preserve established types: {mismatches:?}"
     );
 }
 

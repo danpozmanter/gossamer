@@ -44,8 +44,8 @@ but closer to Go when compiled?
 
 I built Gossamer because I wanted that language for myself.
 
-My goal is for Gossamer to replace Rust, Go, F#, Kotlin, and Python for most of
- my own projects and use cases.
+My goal is for Gossamer to replace Go, Python, F#/C#, Kotlin/Java, and 
+(some) Rust for most of my own projects and use cases.
 
 ## Features inspired by multiple languages:
 

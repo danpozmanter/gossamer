@@ -417,7 +417,9 @@ impl<'a> Lowerer<'a> {
                 let src_leaf_ty = self.place_leaf_ty(src_place);
                 if is_aggregate(self.tcx, src_leaf_ty) {
                     let bytes =
-                        u64::from(slot_count(self.tcx, dest_ty_mir).unwrap_or(1).max(1)) * 8;
+                        aggregate_storage_bytes(self.tcx, dest_ty_mir).unwrap_or_else(|| {
+                            u64::from(slot_count(self.tcx, dest_ty_mir).unwrap_or(1).max(1)) * 8
+                        });
                     let src_addr = if src_place.projection.is_empty() {
                         local_slot(src_place.local)
                     } else {
@@ -518,6 +520,10 @@ impl<'a> Lowerer<'a> {
                 "  call void @llvm.memcpy.p0.p0.i64(ptr {addr}, ptr {src_ptr}, i64 {bytes}, i1 false)"
             )
             .unwrap();
+        } else if self.place_is_packed_byte_element(place) {
+            let byte = self.fresh();
+            writeln!(self.out, "  {byte} = trunc {leaf_llvm} {value} to i8").unwrap();
+            writeln!(self.out, "  store i8 {byte}, ptr {addr}").unwrap();
         } else {
             writeln!(self.out, "  store {leaf_llvm} {value}, ptr {addr}").unwrap();
         }
