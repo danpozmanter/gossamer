@@ -2187,6 +2187,29 @@ impl<'tcx> FnBuilder<'tcx> {
                 return Ok(dst);
             }
         }
+        // Character pushes on a local String mutate its SmolStr directly.
+        // SmolStr uses copy-on-write for shared heap strings, preserving value
+        // semantics while reusing unique storage whenever possible.
+        if matches!(name.name.as_str(), "push" | "push_char" | "push_byte") && args.len() == 1 {
+            let mut k = self.tcx.kind(receiver.ty).cloned();
+            while let Some(TyKind::Ref { inner, .. }) = k {
+                k = self.tcx.kind(inner).cloned();
+            }
+            if matches!(k, Some(TyKind::String))
+                && let HirExprKind::Path { segments, .. } = &receiver.kind
+                && let [seg] = segments.as_slice()
+                && let Some(target) = self.lookup_local(&seg.name)
+                && target.kind == RegKind::Value
+            {
+                let value = self.compile_expr(&args[0])?;
+                self.emit(Op::StrPush {
+                    receiver: target.reg,
+                    value,
+                    byte: name.name.as_str() == "push_byte",
+                });
+                return Ok(self.load_unit());
+            }
+        }
         // `s.push_str(x)` on a local String can use the same in-place append
         // op as `s += x`. The generic mutating-method route clones the
         // receiver into the builtin argument list and then writes the returned

@@ -1943,38 +1943,29 @@ pub unsafe extern "C" fn gos_rt_str_lines(s: *const c_char) -> *mut GosVec {
     })
 }
 
-/// Append a Unicode codepoint to `s`, returning the new string.
+/// Append a Unicode codepoint to `s`, consuming the caller's reference and
+/// returning the updated string. A uniquely owned growable string is mutated
+/// in place when it has capacity; otherwise the shared or exhausted buffer is
+/// replaced through the same copy-on-write growth path as `push_str`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_push_char(s: *const c_char, c: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let base = if s.is_null() {
-            ""
-        } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
-        };
         let ch = char::from_u32(c as u32).unwrap_or('\u{FFFD}');
-        let mut out = String::with_capacity(base.len() + 4);
-        out.push_str(base);
-        out.push(ch);
-        alloc_cstring(out.as_bytes())
+        let mut encoded = [0u8; 4];
+        let bytes = ch.encode_utf8(&mut encoded).as_bytes();
+        unsafe { gos_rt_str_append_bytes(s, bytes.as_ptr(), bytes.len() as i64) }
     })
 }
 
-/// Append a byte (its Unicode codepoint, identical to ASCII for 0-127)
-/// to `s`, returning the new string.
+/// Append a byte as its Unicode codepoint, consuming the caller's reference
+/// with the same in-place/copy-on-write contract as [`gos_rt_str_push_char`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_push_byte(s: *const c_char, b: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let base = if s.is_null() {
-            ""
-        } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
-        };
         let ch = char::from(b as u8);
-        let mut out = String::with_capacity(base.len() + 4);
-        out.push_str(base);
-        out.push(ch);
-        alloc_cstring(out.as_bytes())
+        let mut encoded = [0u8; 2];
+        let bytes = ch.encode_utf8(&mut encoded).as_bytes();
+        unsafe { gos_rt_str_append_bytes(s, bytes.as_ptr(), bytes.len() as i64) }
     })
 }
 

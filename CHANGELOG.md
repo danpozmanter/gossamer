@@ -17,7 +17,8 @@
   with collection-specific mutability, arity, argument, and return checks.
 - Align collection methods with Rust where supported, including equivalent
   method and qualified `String::push` and `Vec::push` calls, unit-returning
-  mutators, and boolean `HashSet::insert` and `HashSet::remove` results.
+  mutators, boolean `HashSet::insert` and `HashSet::remove` results, and
+  in-place growth for uniquely owned `String` and `Vec` storage.
 
 ## 0.34.3 - Intcode native parity
 

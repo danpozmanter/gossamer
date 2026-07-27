@@ -480,4 +480,28 @@ fn step(a: f64, b: f64, c: f64) -> f64 {
             chunk.instrs
         );
     }
+
+    #[test]
+    fn local_string_character_pushes_use_in_place_opcode() {
+        let source = r"
+fn build() -> String {
+    let mut s = String::with_capacity(16)
+    s.push('a')
+    s.push_char('b')
+    s.push_byte(33)
+    s
+}
+";
+        let (chunk, _) = compile_named(source, "build");
+        assert_eq!(
+            chunk
+                .instrs
+                .iter()
+                .filter(|op| matches!(op, Op::StrPush { .. }))
+                .count(),
+            3,
+            "all local character pushes should mutate the receiver directly: {:?}",
+            chunk.instrs
+        );
+    }
 }

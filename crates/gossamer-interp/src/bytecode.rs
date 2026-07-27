@@ -744,6 +744,16 @@ pub enum Op {
         /// Register holding the value to append.
         value: Reg,
     },
+    /// `receiver.push(value)` for a local String. Mutates unique `SmolStr`
+    /// storage directly and falls back to copy-on-write when shared.
+    StrPush {
+        /// Register holding the String, mutated in place.
+        receiver: Reg,
+        /// Register holding the character or byte value.
+        value: Reg,
+        /// Interpret the integer argument as a byte when true.
+        byte: bool,
+    },
     /// `__concat(prefix, integer)` fast path used by two-piece `format!`
     /// expansions. Builds the result in one allocation without a builtin call
     /// frame or boxed integer argument.

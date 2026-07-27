@@ -828,7 +828,10 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, receiver)?;
                 check_v(op_idx, value)?;
             }
-            Op::StrAppend { receiver, value } => {
+            Op::StrAppend { receiver, value }
+            | Op::StrPush {
+                receiver, value, ..
+            } => {
                 check_v(op_idx, receiver)?;
                 check_v(op_idx, value)?;
             }
@@ -1896,7 +1899,10 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
             receiver, value, ..
         }
         | Op::VecPush { receiver, value }
-        | Op::StrAppend { receiver, value } => effect.v_reads.extend([receiver, value]),
+        | Op::StrAppend { receiver, value }
+        | Op::StrPush {
+            receiver, value, ..
+        } => effect.v_reads.extend([receiver, value]),
         Op::StrConcatI64 {
             dst,
             prefix,

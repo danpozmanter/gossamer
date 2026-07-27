@@ -923,12 +923,10 @@ impl<'a> Builder<'a> {
                 return MethodLowering::Handled(Some(self.lower_unit(span)));
             }
         }
-        // `s.push(ch)` on an owned `String` receiver. Gos `String` is
-        // the runtime's immutable C-string, so true in-place mutation
-        // isn't representable. Rewrite as `s = __concat(s, ch)`: the
-        // `__concat` lowerer appends the char's UTF-8 form (via
-        // `gos_rt_concat_char`) and the receiver local is updated in
-        // place. The unqualified `push` arm below routes Vec receivers
+        // `s.push(ch)` on an owned `String` receiver uses the growable-string
+        // mutation helper. It consumes the old receiver reference, mutates a
+        // unique buffer when capacity permits, and returns the pointer to
+        // write back. The unqualified `push` arm below routes Vec receivers
         // to `gos_rt_vec_push`; this block claims only String ones.
         if method.name.as_str() == "push"
             && args.len() == 1
@@ -943,21 +941,21 @@ impl<'a> Builder<'a> {
                 let Some(arg_local) = self.lower_expr(&args[0]) else {
                     return MethodLowering::Handled(None);
                 };
-                let concat_dest = self.fresh(recv_ty);
+                let dest = self.fresh(recv_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("__concat".to_string())),
+                    callee: Operand::Const(ConstValue::Str("gos_rt_str_push_char".to_string())),
                     args: vec![
                         Operand::Copy(Place::local(recv_local)),
                         Operand::Copy(Place::local(arg_local)),
                     ],
-                    destination: Place::local(concat_dest),
+                    destination: Place::local(dest),
                     target: Some(next),
                 });
                 self.set_current(next);
                 self.emit_assign(
                     Place::local(recv_local),
-                    Rvalue::Use(Operand::Copy(Place::local(concat_dest))),
+                    Rvalue::Use(Operand::Copy(Place::local(dest))),
                     span,
                 );
                 return MethodLowering::Handled(Some(self.lower_unit(span)));

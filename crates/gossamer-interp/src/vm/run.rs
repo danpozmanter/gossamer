@@ -1619,6 +1619,29 @@ impl Vm {
                         }
                     }
                 }
+                Op::StrPush {
+                    receiver,
+                    value,
+                    byte,
+                } => {
+                    let ch = if byte {
+                        match &registers[value as usize] {
+                            Value::Int(n) => Some(char::from(*n as u8)),
+                            _ => None,
+                        }
+                    } else {
+                        match &registers[value as usize] {
+                            Value::Char(ch) => Some(*ch),
+                            Value::Int(n) => char::from_u32(*n as u32),
+                            _ => None,
+                        }
+                    };
+                    if let Some(ch) = ch
+                        && let Value::String(dst) = &mut registers[receiver as usize]
+                    {
+                        dst.push(ch);
+                    }
+                }
                 Op::StrConcatI64 {
                     dst,
                     prefix,

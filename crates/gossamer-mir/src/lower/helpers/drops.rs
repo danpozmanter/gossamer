@@ -345,7 +345,9 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 if n == "gos_rt_str_concat_drop_a"
                     || n == "gos_rt_str_append_i64"
                     || n == "gos_rt_str_append_f64"
-                    || n == "gos_rt_str_append_bytes")
+                    || n == "gos_rt_str_append_bytes"
+                    || n == "gos_rt_str_push_char"
+                    || n == "gos_rt_str_push_byte")
             && destination.projection.is_empty()
             && let Some(Operand::Copy(arg0)) = args.first()
         {
