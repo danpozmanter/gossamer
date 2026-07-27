@@ -5849,6 +5849,21 @@ impl<'a> TypeChecker<'a> {
         }
         if let Some(owner) = self.receiver_method_owner_name(resolved) {
             let key = (owner.clone(), method.to_string());
+            // A user method named `push` or `remove` must follow its declared
+            // receiver, not inherit the built-in writeback policy by name.
+            if self.user_type_decls.contains(&owner) {
+                return self
+                    .inherent_method_requires_mut
+                    .get(&key)
+                    .or_else(|| self.trait_impl_method_requires_mut.get(&key))
+                    .copied()
+                    .unwrap_or(false);
+            }
+            // Counter-like `inc` methods use interior mutability. The
+            // write-back variants are specific to HashMap receivers.
+            if matches!(method, "inc" | "inc_at" | "inc_batch") {
+                return owner == "HashMap";
+            }
             if let Some(requires_mut) = self
                 .inherent_method_requires_mut
                 .get(&key)
@@ -5856,11 +5871,9 @@ impl<'a> TypeChecker<'a> {
             {
                 return *requires_mut;
             }
-            // A user method named `push` or `remove` must follow its declared
-            // receiver, not inherit the built-in writeback policy by name.
-            if self.user_type_decls.contains(&owner) {
-                return false;
-            }
+        }
+        if matches!(method, "inc" | "inc_at" | "inc_batch") {
+            return false;
         }
         crate::is_mutating_method_name(method)
     }
@@ -8224,6 +8237,46 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    fn correct_map_lookup_assignment_result(&mut self, value: &Expr, mut value_ty: Ty) -> Ty {
+        let ExprKind::MethodCall {
+            receiver,
+            name,
+            args,
+            ..
+        } = &value.kind
+        else {
+            return value_ty;
+        };
+        if !matches!(name.name.as_str(), "get_or" | "or_insert") {
+            return value_ty;
+        }
+        if let Some(default) = args.get(1)
+            && let Some(default_ty) = self.table.get(default.id)
+        {
+            value_ty = self.infer.resolve(self.tcx, default_ty);
+            self.record(value.id, value_ty);
+        }
+        let receiver_ty = self
+            .table
+            .get(receiver.id)
+            .unwrap_or_else(|| self.check_expr(receiver));
+        let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
+            resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        if let Some(TyKind::HashMap {
+            value: map_value, ..
+        }) = self.tcx.kind(resolved)
+        {
+            let map_value = self.infer.resolve(self.tcx, *map_value);
+            if matches!(self.tcx.kind(value_ty), Some(TyKind::Var(_))) {
+                value_ty = map_value;
+                self.record(value.id, value_ty);
+            }
+        }
+        value_ty
+    }
+
     fn check_assign(&mut self, place: &Expr, value: &Expr, op: gossamer_ast::AssignOp) -> Ty {
         let place_ty = self.check_expr(place);
         let name = Self::place_root_name(place).unwrap_or_else(|| "value".to_string());
@@ -8254,39 +8307,7 @@ impl<'a> TypeChecker<'a> {
         // recursively bind V to the map itself and silently retype `h`.
         // Re-read the authoritative value type from the receiver after its
         // key/default arguments have grounded the map generics.
-        if let ExprKind::MethodCall {
-            receiver,
-            name,
-            args,
-            ..
-        } = &value.kind
-            && matches!(name.name.as_str(), "get_or" | "or_insert")
-        {
-            if let Some(default) = args.get(1)
-                && let Some(default_ty) = self.table.get(default.id)
-            {
-                value_ty = self.infer.resolve(self.tcx, default_ty);
-                self.record(value.id, value_ty);
-            }
-            let receiver_ty = self
-                .table
-                .get(receiver.id)
-                .unwrap_or_else(|| self.check_expr(receiver));
-            let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
-            while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
-                resolved = self.infer.resolve(self.tcx, *inner);
-            }
-            if let Some(TyKind::HashMap {
-                value: map_value, ..
-            }) = self.tcx.kind(resolved)
-            {
-                let map_value = self.infer.resolve(self.tcx, *map_value);
-                if matches!(self.tcx.kind(value_ty), Some(TyKind::Var(_))) {
-                    value_ty = map_value;
-                    self.record(value.id, value_ty);
-                }
-            }
-        }
+        value_ty = self.correct_map_lookup_assignment_result(value, value_ty);
         if place_is_reference {
             self.rebind_named_mutable_borrow(place, value);
         }

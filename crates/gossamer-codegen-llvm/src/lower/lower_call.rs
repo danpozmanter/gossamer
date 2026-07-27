@@ -428,20 +428,8 @@ impl<'a> Lowerer<'a> {
             self.lower_stream_write_byte_array_inline(args, destination, target)?;
             return Ok(());
         }
-        // Hot path inlining for `*acc += <literal>` (the fused
-        // `gos_rt_str_append_bytes`): a sole-owner growable builder
-        // with spare capacity appends via an inline capacity-check +
-        // memcpy + length bump, skipping the per-fragment FFI call.
-        // Any other shape (null / non-builder / region / shared /
-        // capacity-exhausted) falls back to the runtime shim, which
-        // owns those paths.
-        if name == "gos_rt_str_append_bytes"
-            && args.len() == 3
-            && matches!(&args[0], Operand::Copy(place) if place.projection.is_empty())
-        {
-            self.lower_str_append_bytes_inline(args, destination, target)?;
-            return Ok(());
-        }
+        // String append must update both byte-length and Unicode-index
+        // metadata. Keep that ownership-aware operation in the runtime shim.
         // `vec.len()` reads the `len: i64` field at offset 0 of the
         // `GosVec` heap struct. One FFI call per loop iteration
         // would otherwise dominate any `for i in 0..xs.len() { … }`

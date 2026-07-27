@@ -413,6 +413,11 @@ fn immutable_bindings_cannot_reach_mutation_through_calls() {
             ExpectedError::SharedReference,
         ),
         (
+            "HashMap inc on immutable binding",
+            "fn main() { let map: HashMap<i64, i64> = HashMap::new()\n map.inc(1, 2) }",
+            ExpectedError::ImmutableBinding,
+        ),
+        (
             "qualified HashSet mutation on immutable binding",
             "fn main() { let set: HashSet<i64> = HashSet::new()\n HashSet::insert(set, 1) }",
             ExpectedError::ImmutableBinding,
@@ -618,6 +623,10 @@ fn mutable_places_and_reference_capabilities_remain_usable() {
         (
             "shared user method may use a built-in mutator name",
             "struct Reader { value: i64 }\nimpl Reader { fn pop(&self) -> i64 { self.value } }\nfn main() { let reader = Reader { value: 7 }\n let value = reader.pop() }",
+        ),
+        (
+            "metrics counters use interior mutability",
+            "use std::metrics\nfn main() { let counter = metrics::Counter::new(\"hits\", \"hits\")\n counter.inc()\n let gauge = metrics::Gauge::new(\"depth\", \"depth\")\n gauge.inc() }",
         ),
         (
             "inherent shared method takes precedence over mutable trait method",

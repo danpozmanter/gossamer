@@ -8,7 +8,7 @@
 use std::collections::HashMap
 use std::sync::channel
 
-fn bump(m: HashMap<i64, i64>, tx: Sender<i64>) {
+fn bump(mut m: HashMap<i64, i64>, tx: Sender<i64>) {
     let mut i = 0
     while i < 4000 {
         m.inc(i % 4, 1)
@@ -19,7 +19,7 @@ fn bump(m: HashMap<i64, i64>, tx: Sender<i64>) {
 }
 
 fn main() {
-    let m: HashMap<i64, i64> = HashMap::new()
+    let mut m: HashMap<i64, i64> = HashMap::new()
     let (tx, rx) = channel()
     go bump(m, tx)
     let mut i = 0

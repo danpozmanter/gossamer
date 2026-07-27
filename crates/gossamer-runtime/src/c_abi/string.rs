@@ -251,7 +251,7 @@ unsafe fn rebuild_str_index(s: *mut c_char, len: usize, cap: usize) {
     let mut chars = 0usize;
     unsafe { footer.write_unaligned(0) };
     for (offset, _) in text.char_indices() {
-        if chars % STR_INDEX_STRIDE == 0 {
+        if chars.is_multiple_of(STR_INDEX_STRIDE) {
             unsafe {
                 footer
                     .add(1 + chars / STR_INDEX_STRIDE)
