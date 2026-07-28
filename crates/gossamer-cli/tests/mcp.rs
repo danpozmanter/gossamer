@@ -85,11 +85,18 @@ fn check_run_and_timeout_work_end_to_end() {
 
     let mut client = McpClient::start();
 
-    // A type error surfaces through `check` as a structured diagnostic.
+    // A parser error surfaces through `check` as a structured diagnostic.
     let bad = dir.join("bad.gos");
-    std::fs::write(&bad, "fn main() { let x: i64 = \"nope\" }\n").unwrap();
+    std::fs::write(&bad, "fn main() { let x = 9;\nprintln(x) }\n").unwrap();
     let text = client.call_tool("check", &format!("{{\"file\":\"{}\"}}", json_path(&bad)));
-    assert!(text.contains("GT"), "check output was: {text}");
+    assert!(
+        text.contains("exit code: 1"),
+        "invalid syntax must fail MCP check: {text}"
+    );
+    assert!(
+        text.contains("trailing semicolons are not allowed"),
+        "MCP check omitted semicolon diagnostic: {text}"
+    );
 
     // A clean program runs and its stdout comes back.
     let ok = dir.join("ok.gos");

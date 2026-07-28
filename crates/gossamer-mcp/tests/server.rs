@@ -2,7 +2,6 @@
 
 use std::io::Cursor;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use gossamer_mcp::{ServerConfig, testing_run};
 use gossamer_std::json::{self, Value};
@@ -184,45 +183,6 @@ fn exec_runner_captures_output_of_a_real_process() {
     assert!(
         out.stdout
             .contains("exec_runner_captures_output_of_a_real_process")
-    );
-}
-
-#[test]
-fn check_tool_surfaces_trailing_semicolon_diagnostic() {
-    static COUNTER: AtomicU32 = AtomicU32::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!("gos-mcp-semicolon-{}-{n}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let source = dir.join("main.gos");
-    std::fs::write(&source, "fn main() { let x = 9;\nprintln(x) }\n").unwrap();
-
-    let binary_name = if cfg!(windows) { "gos.exe" } else { "gos" };
-    let gos_exe = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .and_then(std::path::Path::parent)
-        .unwrap()
-        .join(binary_name);
-    let mut out = Vec::new();
-    let config = ServerConfig { gos_exe };
-    let file = source.to_string_lossy().replace('\\', "\\\\");
-    let input = req(
-        11,
-        "tools/call",
-        &format!("{{\"name\":\"check\",\"arguments\":{{\"file\":\"{file}\"}}}}"),
-    );
-    testing_run(Cursor::new(input.into_bytes()), &mut out, &config).unwrap();
-    let reply = json::parse(String::from_utf8(out).unwrap().trim()).unwrap();
-    let (text, _) = tool_text(&reply);
-    let _ = std::fs::remove_dir_all(&dir);
-
-    assert!(
-        text.contains("exit code: 1"),
-        "invalid syntax must fail MCP check: {text}"
-    );
-    assert!(
-        text.contains("trailing semicolons are not allowed"),
-        "MCP check omitted semicolon diagnostic: {text}"
     );
 }
 

@@ -151,6 +151,28 @@ fn item_recovery_makes_forward_progress_on_item_start_keywords() {
     parse_does_not_panic("\0use");
     parse_does_not_panic("fn a(){} pub pub pub pub pub");
     parse_does_not_panic("fn maenum E enum E {\n{\n    A,\n    B    A,\n   in() {\n");
+    // Exact input from a fuzz OOM caused by `struct` inside an enum body.
+    parse_does_not_panic(concat!(
+        "struct Point { x: i64, y: i64 }\n\n",
+        "enum Shape {\n",
+        "    Circle(f64),\n",
+        "    Rect { w: f64, h: f64 },\n",
+        "   struct Point { x: i64, y: i64 }\n\n",
+        "enum Shape {\n",
+        "    Circle(f64),\n",
+        "    Rect { w: f64, h: f64 },\n",
+        "    Line,\n",
+        "}\n\n",
+        "trait Area {\n",
+        "    fn area(&self) -> f64\n",
+        "}\n\n",
+        "impl Area for Shape {\n",
+        "    fn area(&self) -> f64 {\n",
+        "        match self {\n",
+        "            Shape::Circle(r) => 3.141 Line,\n",
+        "}\n\n",
+        "trait Area {\n 5",
+    ));
     // The exact 173-byte input from the CI fuzz crash.
     parse_does_not_panic(concat!(
         "pub fn greet(name: &str) ->  2ng() + nam -> String {64 { a * b }\n",

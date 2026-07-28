@@ -398,6 +398,7 @@ impl Parser<'_> {
         self.expect_punct(Punct::LBrace, "to open enum body");
         let mut variants = Vec::new();
         while !self.at_punct(Punct::RBrace) && !self.at_eof() {
+            let before_variant = self.tokens.checkpoint();
             let attrs = self.parse_attrs();
             let variant_name = self.parse_ident_required("variant name");
             let body = if self.eat_punct(Punct::LBrace) {
@@ -464,6 +465,10 @@ impl Parser<'_> {
                 body,
                 discriminant,
             });
+            if self.tokens.checkpoint() == before_variant {
+                self.bump();
+                continue;
+            }
             if !self.eat_list_separator() {
                 break;
             }
