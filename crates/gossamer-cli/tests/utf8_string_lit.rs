@@ -189,6 +189,29 @@ fn main() {
 }
 
 #[test]
+fn bare_string_and_open_start_range_iteration_have_three_tier_parity() {
+    let src = r#"
+fn main() {
+    for c in "ąčęėšž" { println(c) }
+    for i in ..3 { println(i) }
+}
+"#;
+    let expected = "ą\nč\nę\nė\nš\nž\n0\n1\n2";
+    assert_three_tier_utf8("direct_iteration", src, expected);
+}
+
+#[test]
+fn range_binding_iteration_has_three_tier_parity() {
+    let src = r"
+fn main() {
+    let a = 0..3
+    for i in a { println(i) }
+}
+";
+    assert_three_tier_utf8("bound_range_iteration", src, "0\n1\n2");
+}
+
+#[test]
 fn ascii_only_format_template_round_trips_uncorrupted() {
     // Sanity check that the same dispatch path doesn't perturb
     // ASCII-only templates - the fix must not regress the

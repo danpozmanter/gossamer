@@ -2208,7 +2208,7 @@ card:</p>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="k">struct</span> <span class="nc">Pair</span><span class="p">(</span><span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="p">)</span>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="k">enum</span> <span class="nc">Shape</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Circle</span><span class="p">(</span><span class="kt">f64</span><span class="p">),</span><span class="w"> </span><span class="n">Rect</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">w</span>: <span class="kt">f64</span><span class="p">,</span><span class="w"> </span><span class="n">h</span>: <span class="kt">f64</span> <span class="p">}</span><span class="w"> </span><span class="p">}</span>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="k">trait</span><span class="w"> </span><span class="n">Area</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">fn</span> <span class="nf">area</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">f64</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="k">trait</span><span class="w"> </span><span class="n">Area</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">fn</span> <span class="nf">area</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">f64</span> <span class="p">}</span>
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="k">impl</span><span class="w"> </span><span class="n">Area</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">Shape</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">area</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">f64</span> <span class="p">{</span>
@@ -2233,6 +2233,11 @@ card:</p>
 <h2 id="4-idioms">4. Idioms<a class="headerlink" href="#4-idioms" title="Permanent link">&para;</a></h2>
 <p>Write clear, low-complexity, concise code.</p>
 <ul>
+<li><strong>Import every standard library module you use.</strong> Qualified access
+  does not implicitly import a module: write <code>use std::{env, fs}</code> before
+  <code>env::args()</code> or <code>fs::read(...)</code>. Primitive and core collection types,
+  variants, macros, and the documented prelude remain available without
+  imports.</li>
 <li><strong>Default to immutable.</strong> <code>let</code> first; <code>let mut</code> only for a binding
   that genuinely changes, kept near a single update site. <code>if</code> /
   <code>match</code> / <code>loop ... break v</code> are expressions - bind their result.</li>
@@ -2243,13 +2248,16 @@ card:</p>
   (<code>&amp;&amp;</code>-only; earlier binds visible later).</li>
 <li><strong>Tuple destructuring everywhere</strong>: <code>let (a, b) = pair</code>, <code>for (k, v)
   in m.iter()</code>, <code>let (tx, rx) = channel()</code>.</li>
-<li><strong><code>for x in xs</code></strong> over collections - no <code>.iter()</code>, no <code>*x</code>.</li>
+<li><strong><code>for x in xs</code></strong> over collections - no <code>.iter()</code>, no <code>*x</code>.
+  Bare <code>String</code> iteration yields Unicode <code>char</code> values; use <code>.bytes()</code>
+  for UTF-8 bytes. An omitted range start begins at zero (<code>..3</code> yields
+  <code>0</code>, <code>1</code>, <code>2</code>). A range can also be stored and consumed later:
+  <code>let a = 0..3</code>, then <code>for i in a { println(i) }</code>.</li>
 <li><strong>Bare integer indices</strong> - <code>arr[i]</code> takes <code>i64</code>, no <code>as usize</code>.
   Reads and writes outside <code>[0, len)</code> panic on every tier. Method-form
-  Vec <code>insert</code> accepts <code>0..=len</code>; method-form <code>remove</code> accepts
-  <code>0..len</code>; invalid indices panic. Use <code>len()</code> guards or the
-  Result-returning <code>Vec::insert</code> / <code>Vec::remove</code> APIs when absence is
-  recoverable.</li>
+  Vec <code>insert</code> accepts <code>0..=len</code>; <code>remove</code> accepts <code>0..len</code>; invalid
+  indices panic in method and qualified forms. Use <code>len()</code> guards when
+  absence is recoverable.</li>
 <li><strong><code>m.inc(k)</code> / <code>m.inc(k, by)</code></strong> for counters; <code>m.or_insert(k,
   default)</code> for get-or-fill (<code>m.or_insert(k, d).method(args)</code> writes
   the mutation back into the stored value). <code>arr.swap(i, j)</code>.</li>
@@ -2259,6 +2267,13 @@ card:</p>
   <code>take</code>, <code>step_by</code>; <code>(1..5).map(|i| i * i).sum()</code>. Data-last <code>iter::</code>
   free forms exist for <code>|&gt;</code> pipelines. <code>xs.join(sep)</code> Display-joins
   scalar/String sequences.</li>
+<li><strong>Use metadata already returned by an API.</strong> For entries from
+  <code>fs::read_dir</code> or <code>fs::walk_dir</code>, inspect <code>entry.is_file</code>,
+  <code>entry.is_dir</code>, <code>entry.is_symlink</code>, <code>entry.size</code>, <code>entry.path</code>, and
+  <code>entry.name</code> directly. Do not repeat the lookup with
+  <code>fs::is_symlink(&amp;entry.path)</code>, <code>fs::is_file</code>, <code>fs::is_dir</code>, or
+  <code>fs::file_size</code>; redundant filesystem calls are slower and can race
+  with changes after the directory read.</li>
 <li><strong><code>s.to_i64()</code> / <code>to_f64()</code> / <code>to_bool()</code></strong> - strict full-string
   parses returning <code>Option&lt;T&gt;</code>:
   <code>env::args().first().unwrap_or("8").to_i64().unwrap_or(8)</code>.</li>
@@ -2331,10 +2346,18 @@ Left-associative, very low precedence.</p>
   lines directly above an item is its documentation; <code>gos test</code> runs
   fenced code inside doc comments (mark non-runnable fences
   <code>```text</code>).</li>
-<li><strong>Semicolons optional</strong>; one statement per line. A newline followed
+<li><strong>Semicolons are invalid</strong>; use one statement per line. A newline followed
   by leading <code>&amp;</code>, <code>*</code>, or <code>-</code> starts a NEW statement - for multi-line
   continuation, end the previous line with the operator or
   parenthesize.</li>
+<li><strong>Delimited lists</strong> use commas on one line and newlines when multiline.
+  This covers function arguments and parameters, closure parameters,
+  struct fields and literals, and enum variants and payload fields.
+  Legacy multiline commas parse, and <code>gos fmt</code> removes them.</li>
+<li><strong>Struct construction follows declaration shape</strong>: unit structs use
+  <code>Unit</code> or <code>Unit {}</code>, tuple structs use <code>Pair(a, b)</code>, and named structs
+  require keyed <code>Point { x: 1, y: 2 }</code> fields. Positional or mixed
+  braced named-struct literals are rejected.</li>
 <li><strong>Imports</strong>: <code>use std::{iter, os, strings}</code>, alias via <code>{HashMap as
   Map}</code>; always spell the full path (<code>std::encoding::json</code>, not
   <code>std::json</code>) - paths validate against the std manifest (GR0005).
@@ -2349,7 +2372,9 @@ Left-associative, very low precedence.</p>
   from the argument (not usable as a bare value or repeat count).</li>
 <li><strong>References</strong>: <code>&amp;x</code> is shared and <code>&amp;mut x</code> writes through to the same
   source place; both are aliases, never copies. There are no lifetimes or
-  borrow checker, so <code>&amp;mut</code> is writable rather than exclusive.</li>
+  borrow checker, so <code>&amp;mut</code> is writable rather than fully exclusive.
+  Calls never create <code>&amp;mut</code> implicitly: pass a writable place as
+  <code>change(&amp;mut value)</code>. Forward an existing <code>&amp;mut T</code> as <code>change(value)</code>.</li>
 <li><strong>Types</strong>: <code>bool char i8..i64 u8..u64 isize usize f32 f64 String
   [T] [T; N] (A, B) Option&lt;T&gt; Result&lt;T, E&gt; &amp;T</code> + user types. <code>i128</code>
   / <code>u128</code> are rejected (GT0014). Transparent <code>type Id = i64</code> /
@@ -2440,8 +2465,8 @@ are callable as methods/free functions and materialize results.</p>
   <code>first</code>/<code>last</code>, <code>rev</code>, <code>slice(a, b) -&gt; Result</code>); <code>[T; N]</code>
   fixed; tuples <code>.0</code>/<code>.1</code>; tuple structs fully usable. Method-call
   <code>xs.insert/remove</code> mutate in place and panic when the index is out of
-  bounds; the Result-returning forms are the qualified
-  <code>Vec::insert(xs, i, v)</code> / <code>Vec::remove(xs, i)</code>.</li>
+  bounds. Qualified calls use the same contract:
+  <code>Vec::insert(&amp;mut xs, i, v)</code> / <code>Vec::remove(&amp;mut xs, i)</code>.</li>
 <li><code>std::collections</code>: <code>Vec</code>, <code>HashMap</code> (struct/tuple keys by value;
   aggregate-key maps use <code>iter()</code> rather than <code>keys()</code> until typed key
   snapshots are available;
@@ -2494,7 +2519,10 @@ test</code> also compiles and runs fenced code in doc comments.</p>
 <li>Text: <code>strings strconv utf8 unicode regex</code>. Prefer <code>to_lowercase</code> /
   <code>to_uppercase</code>; <code>split_once</code>, <code>substring(a, b)</code> clamps, <code>byte_at(i)</code>
   zero-fills OOB; Unicode 16 + UAX #31 identifiers (<code>let café = 1</code>);
-  dynamic regex captures are positional in Gossamer code.</li>
+  dynamic regex captures are positional in Gossamer code. Regex Unicode
+  mode supports Unicode properties, <code>\w</code>, case folding, captures,
+  replacement, and split. It does not normalize or group grapheme
+  clusters, and match positions are UTF-8 byte offsets.</li>
 <li>Collections: section 10. Prelude scalar <code>min</code>/<code>max</code>/<code>clamp</code>
   (vec-shaped <code>min(xs)</code>/<code>max(xs)</code> return <code>Option&lt;T&gt;</code>).</li>
 <li>Encoding: <code>encoding::{json, yaml, toml, xml, csv, base64, base32,
@@ -2564,6 +2592,10 @@ build</code>. Known sharp edges:</p>
 <h2 id="15-the-gos-toolchain">15. The <code>gos</code> toolchain<a class="headerlink" href="#15-the-gos-toolchain" title="Permanent link">&para;</a></h2>
 <p>Bare <code>gos</code> opens the REPL. In a project, <code>gos run</code> / <code>gos build</code>
 resolve the entry themselves.</p>
+<p>The REPL prompt is <code>gos&gt;</code>. Expression output is the value only, with no
+numbered markers. Binding and declaration progress is quiet unless <code>-v</code>
+is enabled. Meta-command output wraps to the terminal width, capped at
+80 columns.</p>
 <table>
 <thead>
 <tr>

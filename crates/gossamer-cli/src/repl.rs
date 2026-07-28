@@ -16,8 +16,66 @@ use crate::paths::repl_history_path;
 const REPL_HELP_TEXT: &str = "meta-commands: %quit (%q)  %history\n\
                          %bindings (%b) [regex]  %declarations (%d) [regex]\n\
                          %reset (%r)  %help (%h)  %ls (%l)  %find (%f) <regex>\n\
-                         plain expressions render as Out[N]; declarations and\n\
+                         plain expressions render their value; declarations and\n\
                          `let` bindings persist across inputs.";
+
+const REPL_MAX_COLUMNS: usize = 80;
+
+fn repl_output_width() -> usize {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .or_else(|| {
+            terminal_size::terminal_size()
+                .map(|(terminal_size::Width(width), _)| usize::from(width))
+        })
+        .unwrap_or(REPL_MAX_COLUMNS)
+        .clamp(24, REPL_MAX_COLUMNS)
+}
+
+fn wrap_repl_output(text: &str) -> String {
+    let width = repl_output_width();
+    text.lines()
+        .flat_map(|line| wrap_repl_line(line, width))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn wrap_repl_line(line: &str, width: usize) -> Vec<String> {
+    if line.chars().count() <= width {
+        return vec![line.to_string()];
+    }
+    let indent_len = line.chars().take_while(|ch| ch.is_whitespace()).count();
+    let indent = " ".repeat(indent_len.min(width.saturating_sub(1)));
+    let continuation = if indent_len == 0 {
+        String::new()
+    } else {
+        indent.clone()
+    };
+    let mut lines = Vec::new();
+    let mut current = indent;
+    for word in line.split_whitespace() {
+        let separator = usize::from(!current.trim().is_empty());
+        if current.chars().count() + separator + word.chars().count() > width
+            && !current.trim().is_empty()
+        {
+            lines.push(std::mem::take(&mut current));
+            current.push_str(&continuation);
+        }
+        if !current.trim().is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+fn print_repl_output(text: &str) {
+    println!("{}", wrap_repl_output(text));
+}
 
 struct PreludeBuiltinHelp {
     name: &'static str,
@@ -1006,7 +1064,7 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
     clippy::too_many_lines,
     reason = "REPL loop bundles input, completion, history, and graceful-exit handling"
 )]
-pub(crate) fn cmd_repl() -> Result<()> {
+pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
     use rustyline::error::ReadlineError;
     use rustyline::history::FileHistory;
     use rustyline::{ColorMode, CompletionType, Config, EditMode, Editor};
@@ -1052,9 +1110,9 @@ pub(crate) fn cmd_repl() -> Result<()> {
     }
     loop {
         let prompt = if tty {
-            format!("\x1b[32mIn [{input_no}]:\x1b[0m ")
+            "\x1b[32mgos>\x1b[0m ".to_string()
         } else {
-            format!("In [{input_no}]: ")
+            "gos> ".to_string()
         };
         let line = match editor.readline(&prompt) {
             Ok(line) => line,
@@ -1166,21 +1224,21 @@ pub(crate) fn cmd_repl() -> Result<()> {
                 }
                 "help" | "h" => {
                     match repl_help(arg) {
-                        Ok(text) => println!("{text}"),
+                        Ok(text) => print_repl_output(&text),
                         Err(msg) => eprintln!("{msg}"),
                     }
                     continue;
                 }
                 "ls" | "l" => {
                     match repl_ls(arg) {
-                        Ok(text) => println!("{text}"),
+                        Ok(text) => print_repl_output(&text),
                         Err(msg) => eprintln!("{msg}"),
                     }
                     continue;
                 }
                 "find" | "f" => {
                     match repl_find(arg) {
-                        Ok(text) => println!("{text}"),
+                        Ok(text) => print_repl_output(&text),
                         Err(msg) => eprintln!("{msg}"),
                     }
                     continue;
@@ -1198,7 +1256,9 @@ pub(crate) fn cmd_repl() -> Result<()> {
             declarations.push(trimmed.to_string());
             match rebuild_session(&declarations) {
                 Ok(()) => {
-                    println!("    added {} declarations", declarations.len());
+                    if verbose {
+                        println!("    added {} declarations", declarations.len());
+                    }
                 }
                 Err(msg) => {
                     declarations.pop();
@@ -1230,7 +1290,9 @@ pub(crate) fn cmd_repl() -> Result<()> {
             match build_and_call(&probe, &format!("__irepl_{input_no}")) {
                 Ok(_) => {
                     update_repl_bindings(&mut bindings, new_binding);
-                    println!("    binding added ({} total)", bindings.len());
+                    if verbose {
+                        println!("    binding added ({} total)", bindings.len());
+                    }
                 }
                 Err(msg) => {
                     lets.pop();
@@ -1260,7 +1322,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
             match build_and_call(&probe, &format!("__irepl_{input_no}")) {
                 Ok(value) => {
                     if !matches!(value, gossamer_interp::Value::Unit) {
-                        print_repl_result(input_no, &value, tty);
+                        print_repl_result(&value);
                     }
                 }
                 Err(msg) => {
@@ -1287,7 +1349,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
         match build_and_call(&program_source, &format!("__irepl_{input_no}")) {
             Ok(value) => {
                 if !matches!(value, gossamer_interp::Value::Unit) {
-                    print_repl_result(input_no, &value, tty);
+                    print_repl_result(&value);
                 }
             }
             Err(msg) => {
@@ -1305,15 +1367,8 @@ fn render_repl_value(value: &gossamer_interp::Value) -> String {
     value.repr()
 }
 
-fn print_repl_result(input_no: u32, value: &gossamer_interp::Value, tty: bool) {
-    if tty {
-        println!(
-            "\x1b[31mOut[{input_no}]:\x1b[0m {}",
-            render_repl_value(value)
-        );
-    } else {
-        println!("Out[{input_no}]: {}", render_repl_value(value));
-    }
+fn print_repl_result(value: &gossamer_interp::Value) {
+    println!("{}", render_repl_value(value));
     std::io::stdout()
         .flush()
         .expect("flush REPL expression result");
@@ -2600,7 +2655,7 @@ fn build_and_call_with_type(
     let (tbl, type_diags) = gossamer_types::typecheck_source_file(&sf, &res, &mut tcx);
     // REPL expressions are installed as the tail of a generated function with
     // no written return annotation. The REPL deliberately returns that value
-    // for `Out[N]`, so its tail is neither discarded nor a user error.
+    // as REPL output, so its tail is neither discarded nor a user error.
     // Suppress only that exact generated-body diagnostic, never one from the
     // submitted expression's children or declarations.
     let tail_span = repl_generated_body_span(&sf);
@@ -2611,13 +2666,26 @@ fn build_and_call_with_type(
     if !user_type_diags.is_empty() {
         return Err(format_semantic_diags("type", &user_type_diags));
     }
-    let tail_ty = repl_generated_tail_expr(&sf)
-        .and_then(|expr| tbl.get(expr.id))
-        .map_or_else(
-            || "<unknown>".to_string(),
-            |ty| gossamer_types::render_public_ty(&tcx, ty),
-        );
-    let program = gossamer_hir::lower_source_file(&sf, &res, &tbl, &mut tcx);
+    let tail_ty_id = repl_generated_tail_expr(&sf).and_then(|expr| tbl.get(expr.id));
+    let tail_ty = tail_ty_id.map_or_else(
+        || "<unknown>".to_string(),
+        |ty| gossamer_types::render_public_ty(&tcx, ty),
+    );
+    let mut program = gossamer_hir::lower_source_file(&sf, &res, &tbl, &mut tcx);
+    // Generated REPL functions intentionally return their tail even though
+    // the user did not write a return annotation. Keep the HIR signature in
+    // sync with that inferred tail type so non-inlined calls return aggregate
+    // values instead of applying the ordinary implicit-unit ABI.
+    if let Some(tail_ty_id) = tail_ty_id {
+        for item in &mut program.items {
+            if let gossamer_hir::HirItemKind::Fn(function) = &mut item.kind
+                && function.name.name == entry
+            {
+                function.ret = Some(tail_ty_id);
+                break;
+            }
+        }
+    }
     let mut vm = gossamer_interp::Vm::new();
     vm.load(&program, tcx, true).map_err(|e| format!("{e}"))?;
     vm.call(entry, Vec::new())
@@ -2715,6 +2783,17 @@ fn format_parse_diags(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repl_output_wraps_to_narrow_columns_and_keeps_indent() {
+        let wrapped = wrap_repl_line(
+            "    This description is intentionally long enough to wrap cleanly.",
+            32,
+        );
+        assert!(wrapped.len() > 1);
+        assert!(wrapped.iter().all(|line| line.chars().count() <= 32));
+        assert!(wrapped.iter().skip(1).all(|line| line.starts_with("    ")));
+    }
 
     #[test]
     fn repl_metadata_covers_registered_runtime_type_builtins() {

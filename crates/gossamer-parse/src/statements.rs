@@ -29,7 +29,7 @@ impl Parser<'_> {
         if self.at_keyword(Keyword::Defer) {
             self.bump();
             let body = self.parse_expr();
-            self.eat_punct(Punct::Semi);
+            self.eat_statement_semicolon();
             return StmtKind::Defer(Box::new(body));
         }
         // `arena { ... }` - contextual keyword (an identifier `arena` not
@@ -45,7 +45,7 @@ impl Parser<'_> {
         if self.at_keyword(Keyword::Go) {
             self.bump();
             let value = self.parse_expr();
-            self.eat_punct(Punct::Semi);
+            self.eat_statement_semicolon();
             return StmtKind::Go(Box::new(value));
         }
         if is_item_start(self) {
@@ -57,7 +57,7 @@ impl Parser<'_> {
         if self.tokens.checkpoint() == before && !is_stmt_start(self) {
             self.recover_in_block();
         }
-        let has_semi = self.eat_punct(Punct::Semi);
+        let has_semi = self.eat_statement_semicolon();
         StmtKind::Expr {
             expr: Box::new(expression),
             has_semi,
@@ -162,7 +162,7 @@ impl Parser<'_> {
         match (self.at_keyword(Keyword::Else), init) {
             (true, Some(init)) => self.desugar_let_else(pattern, init),
             (_, init) => {
-                self.eat_punct(Punct::Semi);
+                self.eat_statement_semicolon();
                 StmtKind::Let { pattern, ty, init }
             }
         }
@@ -175,7 +175,7 @@ impl Parser<'_> {
         let block = self.parse_block_body();
         let else_span = self.join(start, self.last_span());
         let else_expr = Expr::new(self.alloc_id(), else_span, ExprKind::Block(block));
-        self.eat_punct(Punct::Semi);
+        self.eat_statement_semicolon();
 
         let mut binds: Vec<Ident> = Vec::new();
         collect_pattern_bindings(&pattern, &mut binds);

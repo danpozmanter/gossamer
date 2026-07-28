@@ -70,7 +70,7 @@ fn inliner_is_behaviour_neutral_smoke() {
     // lives in tier_parity (every feature-testing-examples fixture runs
     // with the inliner on); this in-crate test guards the MIR layer.
     let src = "fn add(a: i64, b: i64) -> i64 { a + b }\n\
-               fn main() { let _ = add(2, 3); }\n";
+               fn main() { let _ = add(2, 3)\n }\n";
     let (mut on, tcx) = lower(src);
     let (off, _) = lower(src);
     inline_small_callees(&mut on);
@@ -131,7 +131,7 @@ fn aggregate_returning_callee_inlines_and_keeps_field_types() {
     let (mut bodies, tcx) = lower(
         "struct P { x: i64, y: i64 }\n\
          fn mk(a: i64, b: i64) -> P { P { x: a, y: b } }\n\
-         fn use_p(n: i64) -> i64 { let p = mk(n, n + 1); p.x + p.y }\n",
+         fn use_p(n: i64) -> i64 { let p = mk(n, n + 1)\n p.x + p.y }\n",
     );
     gossamer_mir::inline_general(&mut bodies);
     for b in &mut bodies {

@@ -2721,6 +2721,52 @@ impl<'a> Builder<'a> {
                 span,
             );
         }
+        // A lazy iterator stored in a binding is represented by a runtime
+        // iterator handle, not a GosVec. Materialise that single-pass state
+        // before entering the existing Vec loop. Sending the handle directly
+        // to `gos_rt_vec_len` reads an iterator object as a Vec header and can
+        // either skip the loop or hard-fault.
+        let mut stored_iter_ty = self
+            .receiver_local_from_path(probe_expr)
+            .map_or(probe_expr.ty, |local| self.locals[local.0 as usize].ty);
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(stored_iter_ty) {
+            stored_iter_ty = *inner;
+        }
+        let collection_iter_method = matches!(
+            &for_loop.iter_expr.kind,
+            HirExprKind::MethodCall { name, args, .. }
+                if name.name == "iter" && args.is_empty()
+        );
+        if let TyKind::Iterator(elem_ty) = self.tcx.kind_of(stored_iter_ty).clone()
+            && !matches!(for_loop.iter_expr.kind, HirExprKind::Range { .. })
+            && !collection_iter_method
+        {
+            let iter_local = self.lower_expr(for_loop.iter_expr)?;
+            let vec_ty = self.tcx.intern(TyKind::Vec(elem_ty));
+            let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+            let helper = match self.tcx.kind_of(elem_ty) {
+                TyKind::Tuple(fields)
+                    if fields.len() == 2 && fields.iter().all(|field| *field == i64_ty) =>
+                {
+                    "gos_rt_lazy_iter_collect_pair_i64"
+                }
+                _ => "gos_rt_lazy_iter_collect_i64",
+            };
+            let vec_local = self.emit_combinator_call(
+                helper,
+                vec![Operand::Copy(Place::local(iter_local))],
+                vec_ty,
+                span,
+            );
+            return self.lower_for_vec_over_local(
+                vec_local,
+                elem_ty,
+                for_loop.loop_pat,
+                for_loop.body,
+                span,
+                false,
+            );
+        }
         match &for_loop.iter_expr.kind {
             HirExprKind::Range {
                 start: Some(start),

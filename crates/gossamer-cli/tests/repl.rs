@@ -29,8 +29,13 @@ struct ReplOutput {
 /// stdin terminates the loop cleanly via rustyline's `ReadlineError::Eof`
 /// branch, so explicit `%quit` is optional.
 fn run_repl(input: &str) -> ReplOutput {
+    run_repl_args(input, &[])
+}
+
+fn run_repl_args(input: &str, args: &[&str]) -> ReplOutput {
     let mut child = Command::new(gos_bin())
         .arg("repl")
+        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -68,8 +73,8 @@ fn repl_evaluates_simple_expression() {
     let out = run_repl("1 + 2\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("Out[1]: 3"),
-        "expected `Out[1]: 3` in stdout; got: {}",
+        out.stdout.contains('3'),
+        "expected `3` in stdout; got: {}",
         out.stdout
     );
 }
@@ -79,7 +84,7 @@ fn repl_prints_integer_division_result() {
     let out = run_repl("9600 / 60\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("Out[1]: 160"),
+        out.stdout.contains("160"),
         "integer division result was not printed; stdout: {}",
         out.stdout
     );
@@ -90,12 +95,12 @@ fn repl_persists_bindings_across_lines() {
     let out = run_repl("let x = 5\nx * 2\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("binding added"),
-        "expected binding-added confirmation; stdout: {}",
+        !out.stdout.contains("binding added"),
+        "default REPL output should be quiet; stdout: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("Out[2]: 10"),
+        out.stdout.contains("10"),
         "binding `x` did not persist; stdout: {}",
         out.stdout
     );
@@ -234,7 +239,7 @@ fn repl_byte_buffer_has_a_public_type_and_strict_mutation_contract() {
         "Buffer::push did not range-check its byte argument: {diagnostics}"
     );
     assert!(
-        out.stdout.contains("Out[7]: 1") && out.stdout.contains("Out[8]: \"A\""),
+        out.stdout.contains('1') && out.stdout.contains("\"A\""),
         "rejected pushes changed the buffer: {}",
         out.stdout
     );
@@ -265,7 +270,7 @@ fn repl_uses_repr_for_results_and_display_for_explicit_printing() {
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("Out[2]: \"wow\""),
+        out.stdout.contains("\"wow\""),
         "bare string must be quoted: {}",
         out.stdout
     );
@@ -275,17 +280,17 @@ fn repl_uses_repr_for_results_and_display_for_explicit_printing() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("Out[4]: [\"wow\", \"ok\"]"),
+        out.stdout.contains("[\"wow\", \"ok\"]"),
         "nested string repr is wrong: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("Out[5]: ['a', 'b']"),
+        out.stdout.contains("['a', 'b']"),
         "char vectors must use char literals: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("Out[6]: [97, 98]"),
+        out.stdout.contains("[97, 98]"),
         "String::bytes method must execute: {}",
         out.stdout
     );
@@ -296,17 +301,17 @@ fn repl_decodes_byte_string_literals_without_prefix_or_quotes() {
     let out = run_repl("b'b'\nb\"b\"\nb\"a\\n\"\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("Out[1]: 98"),
+        out.stdout.contains("98"),
         "byte literal should render as its u8 value; stdout: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("Out[2]: [98]"),
+        out.stdout.contains("[98]"),
         "byte string should contain only body bytes; stdout: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("Out[3]: [97, 10]"),
+        out.stdout.contains("[97, 10]"),
         "byte string escapes should decode before vector output; stdout: {}",
         out.stdout
     );
@@ -319,7 +324,7 @@ fn repl_mutable_assignment_persists_across_lines() {
     let out = run_repl("let mut name = \"Steven\"\nname = \"Mark\"\nname\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("Out[3]: \"Mark\""),
+        out.stdout.contains("\"Mark\""),
         "reassignment to `name` did not persist; stdout: {}",
         out.stdout
     );
@@ -454,7 +459,7 @@ fn repl_compound_assignment_accumulates_across_lines() {
     let out = run_repl("let mut c = 0\nc += 5\nc += 3\nc\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("Out[4]: 8"),
+        out.stdout.contains('8'),
         "compound assignment did not accumulate; stdout: {}",
         out.stdout
     );
@@ -462,7 +467,10 @@ fn repl_compound_assignment_accumulates_across_lines() {
 
 #[test]
 fn repl_bindings_show_current_shadowed_lets_only() {
-    let out = run_repl("let i = 1\nlet mut i = 2\n%bindings\ni = 3\n%bindings\ni\n");
+    let out = run_repl_args(
+        "let i = 1\nlet mut i = 2\n%bindings\ni = 3\n%bindings\ni\n",
+        &["-v"],
+    );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("binding added (1 total)"),
@@ -490,7 +498,7 @@ fn repl_bindings_show_current_shadowed_lets_only() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("Out[4]: 3"),
+        out.stdout.contains('3'),
         "assignment must still apply to the active shadowing binding; stdout: {}",
         out.stdout
     );
@@ -584,7 +592,7 @@ fn repl_rejects_push_on_fixed_array_binding() {
         out.stdout
     );
     assert!(
-        !out.stdout.contains("Out[2]: [1, 1, 1, 3]"),
+        !out.stdout.contains("[1, 1, 1, 3]"),
         "fixed array push should not produce a grown array; stdout: {}",
         out.stdout
     );
@@ -648,31 +656,24 @@ fn repl_struct_construction_and_display_match_source_shapes() {
          struct Tup(String, i64)\n\
          let p = Pair { x: 0, y: 0 }\n\
          p\n\
-         let q = Pair { y: 4, 3 }\n\
-         q\n\
          let t = Tup(\"row\", 7)\n\
          t\n\
          %declarations\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("binding added (1 total)"),
-        "named struct literal should bind; stdout: {}; stderr: {}",
+        !out.stdout.contains("binding added"),
+        "default REPL output should omit binding chatter; stdout: {}; stderr: {}",
         out.stdout,
         out.stderr
     );
     assert!(
-        out.stdout.contains("Out[4]: Pair { x: 0, y: 0 }"),
+        out.stdout.contains("Pair { x: 0, y: 0 }"),
         "named struct value should render with fields; stdout: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("Out[6]: Pair { x: 3, y: 4 }"),
-        "mixed named struct literal should render in declaration order; stdout: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout.contains("Out[8]: Tup(\"row\", 7)"),
+        out.stdout.contains("Tup(\"row\", 7)"),
         "tuple struct value should render with parentheses; stdout: {}",
         out.stdout
     );
@@ -687,12 +688,44 @@ fn repl_struct_construction_and_display_match_source_shapes() {
         out.stdout
     );
 
-    let legacy = run_repl("struct Marker\n");
+    let legacy = run_repl_args("struct Marker\n", &["-v"]);
     assert!(
         legacy.stdout.contains("added 1 declarations"),
         "bare unit declarations should be accepted; stdout: {}; stderr: {}",
         legacy.stdout,
         legacy.stderr
+    );
+}
+
+#[test]
+fn repl_constructs_unit_and_empty_named_structs_with_distinct_syntax() {
+    let out = run_repl(
+        "struct Unit\n\
+         struct Empty {}\n\
+         let unit = Unit\n\
+         unit\n\
+         let also_unit = Unit {}\n\
+         also_unit\n\
+         let empty = Empty {}\n\
+         empty\n\
+         let bad_unit = Unit()\n\
+         let bad_empty = Empty\n",
+    );
+    assert!(out.success, "REPL should remain live: {}", out.stderr);
+    assert!(out.stdout.contains("Unit {  }"), "{}", out.stdout);
+    assert!(out.stdout.contains("Unit {  }"), "{}", out.stdout);
+    assert!(out.stdout.contains("Empty {  }"), "{}", out.stdout);
+    assert!(
+        out.stderr
+            .contains("struct `Unit` must be constructed with braces"),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr
+            .contains("struct `Empty` must be constructed with braces"),
+        "{}",
+        out.stderr
     );
 }
 
@@ -734,12 +767,7 @@ fn repl_open_ranges_are_lazy_and_printable() {
     let out =
         run_repl("use std::iter\n10..\n..10\n..=10\n(10..).take(5) |> iter::collect()\n10..=\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    for expected in [
-        "Out[2]: 10..",
-        "Out[3]: ..10",
-        "Out[4]: ..=10",
-        "Out[5]: [10, 11, 12, 13, 14]",
-    ] {
+    for expected in ["10..", "..10", "..=10", "[10, 11, 12, 13, 14]"] {
         assert!(
             out.stdout.contains(expected),
             "missing `{expected}`; stdout: {}",
@@ -770,7 +798,7 @@ fn repl_prints_runtime_error_without_crashing() {
         out.stderr
     );
     assert!(
-        out.stdout.contains("Out[2]: 2"),
+        out.stdout.contains('2'),
         "REPL did not recover after the panic; stdout: {}",
         out.stdout
     );
@@ -784,9 +812,8 @@ fn repl_handles_empty_input() {
         "empty stdin should close cleanly with exit 0; stderr: {}",
         out.stderr
     );
-    // Banner is the only stdout we expect; no `Out[` lines.
     assert!(
-        !out.stdout.contains("Out["),
+        !out.stdout.lines().any(|line| line == "1"),
         "no expression should have been evaluated; stdout: {}",
         out.stdout
     );
@@ -800,9 +827,9 @@ fn repl_handles_syntax_error_recovery() {
         "repl must survive a syntax error and exit zero; stderr: {}",
         out.stderr
     );
-    // The bad line should not appear as a successful `Out[N]`.
+    // The bad line should not prevent the following successful value.
     assert!(
-        out.stdout.contains("Out[2]: 3"),
+        out.stdout.contains('3'),
         "good input after a syntax error did not evaluate; stdout: {}\nstderr: {}",
         out.stdout,
         out.stderr
@@ -810,8 +837,27 @@ fn repl_handles_syntax_error_recovery() {
 }
 
 #[test]
+fn repl_rejects_line_ending_semicolons() {
+    let out = run_repl("let x = 9;\n%b\n");
+    assert!(out.success, "repl should recover; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("trailing semicolons are not allowed"),
+        "missing semicolon diagnostic:\n{}",
+        out.stderr
+    );
+    assert!(
+        !out.stdout.contains("x:"),
+        "invalid semicolon input created a binding:\n{}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_evaluates_function_definition() {
-    let out = run_repl("fn add(a: i64, b: i64) -> i64 { a + b }\nadd(1, 2)\n");
+    let out = run_repl_args(
+        "fn add(a: i64, b: i64) -> i64 { a + b }\nadd(1, 2)\n",
+        &["-v"],
+    );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("added 1 declarations"),
@@ -819,7 +865,7 @@ fn repl_evaluates_function_definition() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("Out[2]: 3"),
+        out.stdout.contains('3'),
         "user-defined fn was not callable from the next input; stdout: {}",
         out.stdout
     );
@@ -827,11 +873,12 @@ fn repl_evaluates_function_definition() {
 
 #[test]
 fn repl_accepts_derived_struct_declaration() {
-    let out = run_repl(
+    let out = run_repl_args(
         "#[derive(PartialEq)] struct Point { x: i64, y: i64 }\n\
          let p1 = Point { x: 1, y: 2 }\n\
          let p2 = Point { x: 1, y: 2 }\n\
          println(p1 == p2)\n",
+        &["-v"],
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
@@ -861,7 +908,7 @@ fn repl_executes_nested_function_items() {
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("Out[2]: 42"),
+        out.stdout.contains("42"),
         "nested function did not execute in the REPL; stdout: {}; stderr: {}",
         out.stdout,
         out.stderr
@@ -876,7 +923,7 @@ fn repl_constructs_nested_struct_items() {
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("Out[2]: 42"),
+        out.stdout.contains("42"),
         "nested struct did not execute in the REPL; stdout: {}; stderr: {}",
         out.stdout,
         out.stderr
@@ -898,7 +945,7 @@ fn repl_meta_quit_terminates_with_exit_zero() {
         out.stderr
     );
     assert!(
-        !out.stdout.contains("Out["),
+        !out.stdout.lines().any(|line| line == "2"),
         "no expression should evaluate before %quit; stdout: {}",
         out.stdout
     );
@@ -914,7 +961,7 @@ fn repl_only_accepts_documented_quit_commands() {
         out.stderr
     );
     assert!(
-        out.stdout.contains("Out[1]: 3"),
+        out.stdout.contains('3'),
         "the REPL did not continue after %exit; stdout: {}",
         out.stdout
     );
@@ -984,7 +1031,7 @@ fn repl_meta_command_shortcuts_match_their_long_forms() {
         out.stdout
     );
     assert!(
-        !out.stdout.contains("Out["),
+        !out.stdout.lines().any(|line| line == "2"),
         "%q did not stop before the trailing expression: {}",
         out.stdout
     );
@@ -1079,17 +1126,17 @@ fn repl_iter_receiver_methods_pipe_dotdot_and_range_index_work() {
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
-        "Out[3]: [3, 4, 5]",
-        "Out[4]: [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]",
-        "Out[5]: [(1, 0), (2, 1), (3, 2), (4, 3), (5, 4)]",
-        "Out[6]: [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]",
-        "Out[7]: [1, 2]",
-        "Out[8]: [1, 2]",
-        "Out[9]: [[1, 2], [2, 3], [3, 4], [4, 5]]",
-        "Out[10]: [[1, 2], [3, 4], [5]]",
-        "Out[11]: [(1, 2), (2, 3), (3, 4), (4, 5)]",
-        "Out[12]: [1, 2, 3]",
-        "Out[13]: [5, 4, 3, 2, 1]",
+        "[3, 4, 5]",
+        "[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]",
+        "[(1, 0), (2, 1), (3, 2), (4, 3), (5, 4)]",
+        "[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]",
+        "[1, 2]",
+        "[1, 2]",
+        "[[1, 2], [2, 3], [3, 4], [4, 5]]",
+        "[[1, 2], [3, 4], [5]]",
+        "[(1, 2), (2, 3), (3, 4), (4, 5)]",
+        "[1, 2, 3]",
+        "[5, 4, 3, 2, 1]",
     ] {
         assert!(
             out.stdout.contains(expected),
@@ -1109,7 +1156,7 @@ fn repl_iter_take_rejects_negative_counts() {
         out.stderr
     );
     assert!(
-        !out.stdout.contains("Out[2]: []"),
+        !out.stdout.contains("[]"),
         "negative take must not silently return an empty Vec: {}",
         out.stdout
     );
@@ -1156,14 +1203,7 @@ fn repl_rejects_negative_size_arguments_across_stdlib() {
             out.stderr
         );
     }
-    for forbidden in [
-        "Out[2]: \"\"",
-        "Out[3]: []",
-        "Out[7]: []",
-        "Out[10]: []",
-        "Out[11]: []",
-        "Out[12]: \"\"",
-    ] {
+    for forbidden in ["\"\"", "[]", "[]", "[]", "[]", "\"\""] {
         assert!(
             !out.stdout.contains(forbidden),
             "negative size argument was silently accepted: {}",
@@ -1186,7 +1226,7 @@ fn repl_vec_slice_rejects_bad_arity_and_argument_types() {
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("Out[2]: Ok([2, 3])"),
+        out.stdout.contains("Ok([2, 3])"),
         "valid Vec::slice call should still work: {}",
         out.stdout
     );
@@ -1289,7 +1329,7 @@ fn repl_meta_help_ls_and_find_cover_core_string_parse() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("Out[1]: Ok(123)"),
+        out.stdout.contains("Ok(123)"),
         "existing String::parse execution must still work; stdout: {}",
         out.stdout
     );
@@ -1314,9 +1354,9 @@ fn repl_string_parse_turbofish_forms_typecheck_without_bool_diagnostics() {
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("Out[6]: Ok(12)")
-            && out.stdout.contains("Out[7]: Ok(34)")
-            && out.stdout.contains("Out[8]: Ok(56)"),
+        out.stdout.contains("Ok(12)")
+            && out.stdout.contains("Ok(34)")
+            && out.stdout.contains("Ok(56)"),
         "parse turbofish forms did not evaluate as Result values; stdout: {}",
         out.stdout
     );
@@ -1641,7 +1681,7 @@ fn repl_rejects_invalid_string_call_arguments_before_execution() {
         out.stderr
     );
     assert!(
-        out.stdout.contains("Out[5]: Ok(\"bc\")"),
+        out.stdout.contains("Ok(\"bc\")"),
         "valid slice call should still run: {}",
         out.stdout
     );
@@ -1722,20 +1762,10 @@ fn repl_persists_rust_style_string_and_vec_mutations() {
          v\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    assert_eq!(
-        out.stdout.matches("Out[").count(),
-        4,
-        "unit-returning push calls must not print replacement collections: {}",
-        out.stdout
-    );
-    assert!(out.stdout.contains("Out[4]: \"abcd\""), "{}", out.stdout);
-    assert!(out.stdout.contains("Out[6]: [1, 2, 3]"), "{}", out.stdout);
-    assert!(out.stdout.contains("Out[8]: \"abcde\""), "{}", out.stdout);
-    assert!(
-        out.stdout.contains("Out[10]: [1, 2, 3, 4]"),
-        "{}",
-        out.stdout
-    );
+    assert!(out.stdout.contains("\"abcd\""), "{}", out.stdout);
+    assert!(out.stdout.contains("[1, 2, 3]"), "{}", out.stdout);
+    assert!(out.stdout.contains("\"abcde\""), "{}", out.stdout);
+    assert!(out.stdout.contains("[1, 2, 3, 4]"), "{}", out.stdout);
 }
 
 #[test]
@@ -1749,6 +1779,70 @@ fn repl_mut_vec_for_loop_and_tuple_for_loop_work() {
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(out.stdout.contains("\n[2, 3]\n"), "{}", out.stdout);
     assert!(out.stdout.contains("\n0\n1\n"), "{}", out.stdout);
+}
+
+#[test]
+fn repl_iterates_open_start_ranges_from_zero() {
+    let out = run_repl("for i in ..3 { println(i) }\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("\n0\n1\n2\n"),
+        "open-start range silently produced no values:\n{}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_iterates_a_range_stored_in_a_binding() {
+    let out = run_repl("let a = 0..3\nfor i in a { println(i) }\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("\n0\n1\n2\n"),
+        "stored range silently produced no values:\n{}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_iterates_bare_strings_as_unicode_chars() {
+    let out = run_repl("for c in \"ąčęėšž\" { println(c) }\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("\ną\nč\nę\nė\nš\nž\n"),
+        "bare String iteration did not yield Unicode characters:\n{}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_preserves_vec_bindings_across_all_supported_mutating_loops() {
+    let out = run_repl(
+        "let mut by_ref = Vec::from([1, 2])\n\
+         for value in &mut by_ref { *value += 1 }\n\
+         let mut by_enumerate = Vec::from([1, 2])\n\
+         for (i, _) in by_enumerate.enumerate() { by_enumerate[i] += 1 }\n\
+         let mut by_range = Vec::from([1, 2])\n\
+         for i in 0..by_range.len() { by_range[i] += 1 }\n\
+         let mut by_array = Vec::from([1, 2])\n\
+         for i in [0, 1] { by_array[i] += 1 }\n\
+         %b\n\
+         let mut by_ref = Vec::from([4, 5])\n\
+         by_ref\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for name in ["by_ref", "by_enumerate", "by_range", "by_array"] {
+        assert!(
+            out.stdout
+                .contains(&format!("mut {name}: Vec<i64> = [2, 3]")),
+            "{name} was not preserved after its loop:\n{}",
+            out.stdout
+        );
+    }
+    assert!(
+        out.stdout.contains("[4, 5]"),
+        "redefining a loop-mutated binding did not replace it:\n{}",
+        out.stdout
+    );
 }
 
 #[test]
@@ -1766,8 +1860,8 @@ fn repl_rejects_invalid_qualified_string_push_without_mutating() {
         "{}",
         out.stderr
     );
-    assert!(out.stdout.contains("Out[3]: \"abc\""), "{}", out.stdout);
-    assert!(out.stdout.contains("Out[5]: \"abcd\""), "{}", out.stdout);
+    assert!(out.stdout.contains("\"abc\""), "{}", out.stdout);
+    assert!(out.stdout.contains("\"abcd\""), "{}", out.stdout);
 }
 
 #[test]
@@ -1785,8 +1879,8 @@ fn repl_rejects_invalid_qualified_vec_push_without_mutating() {
         "{}",
         out.stderr
     );
-    assert!(out.stdout.contains("Out[3]: [1, 2]"), "{}", out.stdout);
-    assert!(out.stdout.contains("Out[5]: [1, 2, 3]"), "{}", out.stdout);
+    assert!(out.stdout.contains("[1, 2]"), "{}", out.stdout);
+    assert!(out.stdout.contains("[1, 2, 3]"), "{}", out.stdout);
 }
 
 #[test]
@@ -1882,15 +1976,7 @@ fn repl_persists_map_set_and_deque_mutations() {
          deque.pop_front()\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    for expected in [
-        "Out[3]: 1",
-        "Out[5]: true",
-        "Out[6]: false",
-        "Out[7]: true",
-        "Out[8]: false",
-        "Out[12]: Some(1)",
-        "Out[13]: Some(2)",
-    ] {
+    for expected in ["1", "true", "false", "true", "false", "Some(1)", "Some(2)"] {
         assert!(
             out.stdout.contains(expected),
             "missing {expected}: {}",
@@ -1916,7 +2002,7 @@ fn repl_or_insert_persists_and_cannot_retype_the_map() {
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("Out[4]: 0"),
+        out.stdout.contains('0'),
         "or_insert mutation did not persist: {}",
         out.stdout
     );
@@ -1927,7 +2013,7 @@ fn repl_or_insert_persists_and_cannot_retype_the_map() {
         out.stderr
     );
     assert!(
-        out.stdout.contains(r#"Out[6]: {"a": 1, "c": 0}"#),
+        out.stdout.contains(r#"{"a": 1, "c": 0}"#),
         "failed assignment corrupted the map: {}",
         out.stdout
     );
@@ -1950,11 +2036,6 @@ fn repl_bare_map_iteration_formats_keys_and_returns_unit() {
         out.stdout
     );
     assert!(out.stdout.contains("a: 1\nb: 2\n"), "{}", out.stdout);
-    assert!(
-        !out.stdout.contains("Out[5]:"),
-        "unit-valued for loop leaked a stale result: {}",
-        out.stdout
-    );
     assert!(
         !out.stderr.contains("not indexable"),
         "bare map iteration attempted numeric map indexing: {}",

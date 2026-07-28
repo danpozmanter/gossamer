@@ -73,8 +73,10 @@ mod tests {
     fn parse_positive_ok() {
         let r = super::parse_positive("42")
         match r {
-            Ok(v) => { let _ = testing::check_eq(&v, &42, "parse_positive 42"); },
-            Err(e) => { let _ = testing::check(false, e); },
+            Ok(v) => { let _ = testing::check_eq(&v, &42, "parse_positive 42")
+            },
+            Err(e) => { let _ = testing::check(false, e)
+            },
         }
     }
 
@@ -82,8 +84,10 @@ mod tests {
     fn parse_positive_rejects_zero() {
         let r = super::parse_positive("0")
         match r {
-            Ok(_) => { let _ = testing::check(false, "expected error for 0"); },
-            Err(_) => { let _ = testing::check(true, "zero rejected"); },
+            Ok(_) => { let _ = testing::check(false, "expected error for 0")
+            },
+            Err(_) => { let _ = testing::check(true, "zero rejected")
+            },
         }
     }
 
@@ -91,8 +95,10 @@ mod tests {
     fn question_mark_short_circuits() {
         let r = super::sum_positives(["1", "-1", "2"])
         match r {
-            Ok(_) => { let _ = testing::check(false, "expected early exit"); },
-            Err(_) => { let _ = testing::check(true, "short-circuited on -1"); },
+            Ok(_) => { let _ = testing::check(false, "expected early exit")
+            },
+            Err(_) => { let _ = testing::check(true, "short-circuited on -1")
+            },
         }
     }
 }

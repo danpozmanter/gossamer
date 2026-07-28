@@ -118,13 +118,21 @@ fn iterate_vec_of_enums_from_enum_payload() {
         r#"
 enum J { Int(i64), Arr(Vec<J>) }
 fn sz(j: &J) -> i64 {
-    match j { J::Int(n) => *n, J::Arr(xs) => { let mut t = 0; for x in xs { t += sz(x) }; t } }
+    match j { J::Int(n) => *n, J::Arr(xs) => { let mut t = 0
+ for x in xs { t += sz(x) }
+ t } }
 }
-fn mkarr() -> J { let mut v: Vec<J> = []; v.push(J::Int(1)); v.push(J::Int(2)); v.push(J::Int(3)); J::Arr(v) }
+fn mkarr() -> J { let mut v: Vec<J> = []
+ v.push(J::Int(1))
+ v.push(J::Int(2))
+ v.push(J::Int(3))
+ J::Arr(v) }
 fn main() {
     let mut i = 0
     let mut total = 0
-    while i < 100 { let a = mkarr(); total += sz(&a); i += 1 }
+    while i < 100 { let a = mkarr()
+ total += sz(&a)
+ i += 1 }
     println!("{}", total)
 }
 "#,
@@ -142,8 +150,12 @@ enum J { Int(i64), Arr(Vec<J>), Obj(Vec<(String, J)>) }
 fn sumj(j: &J) -> i64 {
     match j {
         J::Int(n) => *n,
-        J::Arr(xs) => { let mut t = 0; for x in xs { t += sumj(x) }; t }
-        J::Obj(ps) => { let mut t = 0; for p in ps { t += sumj(&p.1) }; t }
+        J::Arr(xs) => { let mut t = 0
+ for x in xs { t += sumj(x) }
+ t }
+        J::Obj(ps) => { let mut t = 0
+ for p in ps { t += sumj(&p.1) }
+ t }
     }
 }
 fn mkobj(i: i64) -> J {
@@ -154,7 +166,9 @@ fn mkobj(i: i64) -> J {
 fn main() {
     let mut i = 0
     let mut total = 0
-    while i < 100 { let o = mkobj(i); total += sumj(&o); i += 1 }
+    while i < 100 { let o = mkobj(i)
+ total += sumj(&o)
+ i += 1 }
     println!("{}", total)
 }
 "#,
@@ -171,7 +185,9 @@ fn deeply_nested_enum_in_vec_in_enum() {
         r#"
 enum J { Int(i64), Arr(Vec<J>) }
 fn cnt(j: &J) -> i64 {
-    match j { J::Int(_) => 1, J::Arr(xs) => { let mut t = 0; for x in xs { t += cnt(x) }; t } }
+    match j { J::Int(_) => 1, J::Arr(xs) => { let mut t = 0
+ for x in xs { t += cnt(x) }
+ t } }
 }
 fn build() -> J {
     let mut inner: Vec<J> = []
@@ -183,7 +199,9 @@ fn build() -> J {
 fn main() {
     let mut i = 0
     let mut total = 0
-    while i < 100 { let v = build(); total += cnt(&v); i += 1 }
+    while i < 100 { let v = build()
+ total += cnt(&v)
+ i += 1 }
     println!("{}", total)
 }
 "#,
@@ -291,7 +309,9 @@ impl P {
     }
     fn parr(&mut self) -> Result<J, errors::Error> {
         let mut xs: Vec<J> = []
-        xs.push(J::Int(1)); xs.push(J::Int(1)); xs.push(J::Int(1))
+        xs.push(J::Int(1))
+ xs.push(J::Int(1))
+ xs.push(J::Int(1))
         Ok(J::Arr(xs))
     }
     fn pobj(&mut self) -> Result<J, errors::Error> {
@@ -302,21 +322,32 @@ impl P {
     fn top(&mut self) -> Result<J, errors::Error> {
         let mut ps: Vec<(String, J)> = []
         let mut i = 0
-        loop { let k = format!("k{}", i); let v = self.pval()?; ps.push((k, v)); i += 1; if i >= 3 { break } }
+        loop { let k = format!("k{}", i)
+ let v = self.pval()?
+ ps.push((k, v))
+ i += 1
+ if i >= 3 { break } }
         Ok(J::Obj(ps))
     }
 }
 fn cnt(j: &J) -> i64 {
     match j {
         J::Int(n) => *n,
-        J::Arr(xs) => { let mut t = 0; for x in xs { t += cnt(x) }; t }
-        J::Obj(ps) => { let mut t = 0; for p in ps { t += cnt(&p.1) }; t }
+        J::Arr(xs) => { let mut t = 0
+ for x in xs { t += cnt(x) }
+ t }
+        J::Obj(ps) => { let mut t = 0
+ for p in ps { t += cnt(&p.1) }
+ t }
     }
 }
 fn main() -> Result<(), errors::Error> {
     let mut total = 0
     let mut i = 0
-    while i < 50 { let mut p = P { step: 0 }; let r = p.top()?; total += cnt(&r); i += 1 }
+    while i < 50 { let mut p = P { step: 0 }
+ let r = p.top()?
+ total += cnt(&r)
+ i += 1 }
     println!("{}", total)
     Ok(())
 }
@@ -335,17 +366,27 @@ enum J { Int(i64), Arr(Vec<J>) }
 fn transform(v: J) -> J {
     match v {
         J::Int(n) => J::Int(n + 1),
-        J::Arr(xs) => { let mut out: Vec<J> = []; for x in xs { out.push(transform(x)) }; J::Arr(out) }
+        J::Arr(xs) => { let mut out: Vec<J> = []
+ for x in xs { out.push(transform(x)) }
+ J::Arr(out) }
     }
 }
 fn cnt(j: &J) -> i64 {
-    match j { J::Int(n) => *n, J::Arr(xs) => { let mut t = 0; for x in xs { t += cnt(x) }; t } }
+    match j { J::Int(n) => *n, J::Arr(xs) => { let mut t = 0
+ for x in xs { t += cnt(x) }
+ t } }
 }
-fn build() -> J { let mut a: Vec<J> = []; a.push(J::Int(1)); a.push(J::Int(2)); J::Arr(a) }
+fn build() -> J { let mut a: Vec<J> = []
+ a.push(J::Int(1))
+ a.push(J::Int(2))
+ J::Arr(a) }
 fn main() {
     let mut i = 0
     let mut total = 0
-    while i < 100 { let p = build(); let t = transform(p); total += cnt(&t); i += 1 }
+    while i < 100 { let p = build()
+ let t = transform(p)
+ total += cnt(&t)
+ i += 1 }
     println!("{}", total)
 }
 "#,

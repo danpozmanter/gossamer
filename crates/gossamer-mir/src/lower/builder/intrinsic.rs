@@ -2293,7 +2293,7 @@ impl<'a> Builder<'a> {
     }
 
     /// Emits a call to `helper` and returns the destination local.
-    fn emit_combinator_call(
+    pub(crate) fn emit_combinator_call(
         &mut self,
         helper: &str,
         args: Vec<Operand>,

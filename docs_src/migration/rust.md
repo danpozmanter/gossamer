@@ -13,7 +13,7 @@ concurrency, and which Rust features are intentionally absent.
 | `struct Point { x: i64, y: i64 }` | Same declaration. |
 | `Point { x: 1, y: 2 }` | Same named literal. |
 | tuple structs and enum variants use `Name(...)` | Same. |
-| named struct positional shorthand is unavailable | `Point { 1, 2 }` is allowed. |
+| named struct positional shorthand is unavailable | Same. Use keyed fields. |
 | `Option<T>` and `Result<T, E>` | Same core shape. |
 | `?` | Same propagation model. |
 | `async fn` and `.await` | Use `go expr` plus channels or blocking calls. |
@@ -54,7 +54,7 @@ Traits are nominal and implemented explicitly:
 
 ```gos
 trait Area {
-    fn area(&self) -> f64;
+    fn area(&self) -> f64
 }
 
 struct Circle { r: f64 }

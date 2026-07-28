@@ -13,10 +13,10 @@ more explicit types and errors.
 | `x := 5` | `let x = 5` | Use `let mut` when rebinding. |
 | `type Point struct { X int; Y int }` | `struct Point { x: i64, y: i64 }` | Named structs are constructed with braces. |
 | `Point{X: 1, Y: 2}` | `Point { x: 1, y: 2 }` | Named fields. |
-| `Point{1, 2}` | `Point { 1, 2 }` | Positional struct literals also use braces. |
+| `Point{1, 2}` | `Point { x: 1, y: 2 }` | Named structs require keyed fields. |
 | tuple-like constructor | `enum Msg { Data(String) }` then `Msg::Data("x")` | Parentheses are for enum variants and tuple structs, not named structs. |
 | `func (p Point) Norm() int` | `impl Point { fn norm(&self) -> i64 { ... } }` | Methods live in `impl` blocks. |
-| `type Reader interface { Read([]byte) int }` | `trait Reader { fn read(&self, buf: &mut [u8]) -> i64; }` | Traits are nominal. |
+| `type Reader interface { Read([]byte) int }` | `trait Reader { fn read(&self, buf: &mut [u8]) -> i64 }` | Traits are nominal. |
 | `if err != nil { return err }` | `let v = f()?` | `?` propagates `Err`. |
 | `go work()` | `go work()` | Same idea. |
 | `defer cleanup()` | `defer cleanup()` | Same idea. |
@@ -60,7 +60,7 @@ explicit:
 
 ```gos
 trait Writer {
-    fn write(&mut self, data: &[u8]) -> Result<i64, errors::Error>;
+    fn write(&mut self, data: &[u8]) -> Result<i64, errors::Error>
 }
 
 struct Buffer { data: [u8] }

@@ -1768,6 +1768,10 @@
 </code></pre></div>
 <p>An immutable binding cannot be used as the source of <code>&amp;mut</code>, because that
 would create a write path around its immutability.</p>
+<p>Declaring a binding <code>mut</code> does not let a call infer mutable access. Pass the
+place explicitly as <code>change(&amp;mut value)</code>. <code>change(value)</code> is rejected when the
+parameter is <code>&amp;mut T</code>. A value already typed as <code>&amp;mut T</code> can be forwarded
+directly.</p>
 <p>Implicit dereferencing does not weaken this rule. If an access path contains
 any shared <code>&amp;T</code> layer, indexing, field assignment, and mutating method calls
 through that path are rejected even when every outer reference is <code>&amp;mut</code>.</p>

@@ -44,7 +44,10 @@ fn while_let_drains_channel() {
     let src = r#"
 use std::sync::channel
 fn produce(tx: Sender<i64>) {
-    tx.send(1); tx.send(2); tx.send(3); tx.close()
+    tx.send(1)
+ tx.send(2)
+ tx.send(3)
+ tx.close()
 }
 fn main() {
     let (tx, rx) = channel()

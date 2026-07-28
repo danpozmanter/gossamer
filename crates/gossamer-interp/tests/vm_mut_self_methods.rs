@@ -65,7 +65,8 @@ fn mut_self_method_with_args_and_return() {
     let src = r#"
 struct Acc { total: i64 }
 impl Acc {
-    fn add(&mut self, by: i64) -> i64 { self.total = self.total + by; self.total }
+    fn add(&mut self, by: i64) -> i64 { self.total = self.total + by
+ self.total }
     fn get(&self) -> i64 { self.total }
 }
 fn main() {
@@ -84,7 +85,8 @@ fn immutable_self_method_is_not_regressed() {
 struct Point { x: i64, y: i64 }
 impl Point {
     fn sum(&self) -> i64 { self.x + self.y }
-    fn shift(&mut self, d: i64) { self.x = self.x + d; self.y = self.y + d }
+    fn shift(&mut self, d: i64) { self.x = self.x + d
+ self.y = self.y + d }
 }
 fn main() {
     let mut p = Point { x: 1, y: 2 }

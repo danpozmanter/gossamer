@@ -72,31 +72,38 @@ mod tests {
                 let _ = testing::check_eq(&out.code, &0, "exit code 0")
                 let _ = testing::check(out.stdout.contains("gossamer"), "stdout contains gossamer")
             }
-            Err(e) => { let _ = testing::check(false, e); },
+            Err(e) => { let _ = testing::check(false, e)
+            },
         }
     }
 
     #[test]
     fn true_exits_zero() {
         match exec::run("true", []) {
-            Ok(out) => { let _ = testing::check_eq(&out.code, &0, "true exits 0"); },
-            Err(e) => { let _ = testing::check(false, e); },
+            Ok(out) => { let _ = testing::check_eq(&out.code, &0, "true exits 0")
+            },
+            Err(e) => { let _ = testing::check(false, e)
+            },
         }
     }
 
     #[test]
     fn false_exits_nonzero() {
         match exec::run("false", []) {
-            Ok(out) => { let _ = testing::check(out.code != 0, "false exits non-zero"); },
-            Err(e) => { let _ = testing::check(false, e); },
+            Ok(out) => { let _ = testing::check(out.code != 0, "false exits non-zero")
+            },
+            Err(e) => { let _ = testing::check(false, e)
+            },
         }
     }
 
     #[test]
     fn sh_pipeline() {
         match exec::run("sh", ["-c", "echo hello"]) {
-            Ok(out) => { let _ = testing::check(out.stdout.contains("hello"), "sh -c echo"); },
-            Err(e) => { let _ = testing::check(false, e); },
+            Ok(out) => { let _ = testing::check(out.stdout.contains("hello"), "sh -c echo")
+            },
+            Err(e) => { let _ = testing::check(false, e)
+            },
         }
     }
 }

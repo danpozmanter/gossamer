@@ -114,6 +114,12 @@ pub enum TypeError {
         /// The nominal struct name.
         name: String,
     },
+    /// A named struct was initialized with positional braced entries.
+    #[error("named struct `{name}` requires field names in its initializer")]
+    NamedStructFieldsRequired {
+        /// Struct name.
+        name: String,
+    },
     /// A struct literal omitted a required field.
     #[error("missing field `{field}` in initializer of `{name}`")]
     MissingStructField {
@@ -496,6 +502,7 @@ impl TypeError {
             Self::TupleStructConstructorParenthesesRequired { .. } => {
                 "tuple-struct-constructor-parentheses-required"
             }
+            Self::NamedStructFieldsRequired { .. } => "named-struct-fields-required",
             Self::MissingStructField { .. } => "missing-struct-field",
             Self::DuplicateStructField { .. } => "duplicate-struct-field",
             Self::TooManyStructFields { .. } => "too-many-struct-fields",
@@ -546,7 +553,8 @@ impl TypeError {
             Self::NonExhaustiveMatch { .. } => "GT0004",
             Self::StructPatternNameRequired { .. } => "GT0033",
             Self::StructConstructorBracesRequired { .. }
-            | Self::TupleStructConstructorParenthesesRequired { .. } => "GT0034",
+            | Self::TupleStructConstructorParenthesesRequired { .. }
+            | Self::NamedStructFieldsRequired { .. } => "GT0034",
             Self::MissingStructField { .. } => "GT0035",
             Self::DuplicateStructField { .. } => "GT0036",
             Self::TooManyStructFields { .. } => "GT0037",
@@ -768,6 +776,11 @@ impl TypeDiagnostic {
                     .with_note(
                         "tuple structs use parenthesized construction; named structs use braces",
                     );
+            }
+            TypeError::NamedStructFieldsRequired { name } => {
+                out = out
+                    .with_help(format!("write `{name} {{ field: value, ... }}`"))
+                    .with_note("named structs do not accept positional initializers");
             }
             TypeError::MissingStructField { name, field } => {
                 out = out.with_help(format!("add `{field}: ...` to the `{name}` initializer"));

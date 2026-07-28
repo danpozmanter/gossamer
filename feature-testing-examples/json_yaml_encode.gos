@@ -7,14 +7,16 @@ use std::encoding
 fn main() {
     let arr = match encoding::json::parse(&"[1, 2, 3]") {
         Ok(v) => v,
-        Err(e) => { println!("parse err: {}", e); return }
+        Err(e) => { println!("parse err: {}", e)
+            return }
     }
     println!("--- json pretty array ---")
     println!("{}", encoding::json::encode_pretty(&arr))
 
     let obj = match encoding::json::parse(&"{\"x\": 42}") {
         Ok(v) => v,
-        Err(e) => { println!("parse err: {}", e); return }
+        Err(e) => { println!("parse err: {}", e)
+            return }
     }
     println!("--- json pretty object ---")
     println!("{}", encoding::json::encode_pretty(&obj))

@@ -22,7 +22,7 @@ fn action_titles(response: &Value) -> Vec<String> {
 
 #[test]
 fn code_action_on_clean_doc_returns_empty() {
-    let server = server_with("file:///clean.gos", "fn main() { let _ = 1; }\n");
+    let server = server_with("file:///clean.gos", "fn main() { let _ = 1 }\n");
     let params = code_action_params("file:///clean.gos", range_value(0, 0, 0, 5), Vec::new());
     let response = server.code_actions(&params);
     assert!(
@@ -49,7 +49,7 @@ fn code_action_for_typo_suggests_correction() {
     let uri = "file:///typo.gos";
     let server = server_with(
         uri,
-        "fn really_long_name() -> i64 { 0 }\nfn main() { really_lng_name(); }\n",
+        "fn really_long_name() -> i64 { 0 }\nfn main() { really_lng_name() }\n",
     );
     // First confirm the diagnostic was emitted, then trigger
     // codeAction over its range.
@@ -80,7 +80,7 @@ fn code_action_for_import_suggestion() {
     // should yield a resolver suggestion if the auto-import path is
     // wired.
     let uri = "file:///import.gos";
-    let server = server_with(uri, "fn main() { let _: Pattern; }\n");
+    let server = server_with(uri, "fn main() { let _: Pattern }\n");
     let notifs = server.publish_diagnostics(uri);
     let diags = diagnostics_from(&notifs);
     let diag = diags
@@ -102,7 +102,7 @@ fn code_action_for_import_suggestion() {
 #[test]
 fn lint_diagnostics_offer_safe_quickfixes() {
     let uri = "file:///lint.gos";
-    let server = server_with(uri, "fn main() { let unused = 1; }\n");
+    let server = server_with(uri, "fn main() { let unused = 1 }\n");
     let diags = diagnostics_from(&server.publish_diagnostics(uri));
     let diag = diags
         .iter()
@@ -121,7 +121,7 @@ fn lint_diagnostics_offer_safe_quickfixes() {
 #[test]
 fn unused_mutable_variable_fix_prefixes_the_identifier() {
     let uri = "file:///unused-mut.gos";
-    let source = "fn main() { let mut unused = 1; }\n";
+    let source = "fn main() { let mut unused = 1 }\n";
     let server = server_with(uri, source);
     let diags = diagnostics_from(&server.publish_diagnostics(uri));
     let diag = diags
@@ -152,7 +152,7 @@ fn unused_mutable_variable_fix_prefixes_the_identifier() {
 #[test]
 fn source_fix_all_combines_safe_edits_and_honours_only() {
     let uri = "file:///fix-all.gos";
-    let server = server_with(uri, "fn main() { let first = 1; let second = 2; }\n");
+    let server = server_with(uri, "fn main() {\nlet first = 1\nlet second = 2\n}\n");
     let mut params = code_action_params(uri, range_value(0, 0, 0, 1), Vec::new());
     let Value::Object(fields) = &mut params else {
         unreachable!()
@@ -180,7 +180,7 @@ fn source_fix_all_combines_safe_edits_and_honours_only() {
 #[test]
 fn code_action_entries_have_workspace_edits() {
     let uri = "file:///e.gos";
-    let server = server_with(uri, "fn alpha() {}\nfn main() { alphat(); }\n");
+    let server = server_with(uri, "fn alpha() {}\nfn main() { alphat() }\n");
     let notifs = server.publish_diagnostics(uri);
     let diags = diagnostics_from(&notifs);
     if diags.is_empty() {
@@ -208,7 +208,7 @@ fn code_action_kind_is_quickfix() {
     let uri = "file:///q.gos";
     let server = server_with(
         uri,
-        "fn long_named_function() {}\nfn main() { long_named_funct(); }\n",
+        "fn long_named_function() {}\nfn main() { long_named_funct() }\n",
     );
     let notifs = server.publish_diagnostics(uri);
     let diags = diagnostics_from(&notifs);

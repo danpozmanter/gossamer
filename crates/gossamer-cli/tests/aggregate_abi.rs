@@ -492,18 +492,30 @@ fn parallel_lowering_many_functions_share_string_literal() {
     // (DataId assigned) in the N9-B pre-declaration pass so none of the
     // workers hits OfflineModule::declare_data_in_func with an unknown id.
     let src = r#"
-fn f1() -> i64 { println!("ok"); 1 }
-fn f2() -> i64 { println!("ok"); 2 }
-fn f3() -> i64 { println!("ok"); 3 }
-fn f4() -> i64 { println!("ok"); 4 }
-fn f5() -> i64 { println!("ok"); 5 }
-fn f6() -> i64 { println!("ok"); 6 }
-fn f7() -> i64 { println!("ok"); 7 }
-fn f8() -> i64 { println!("ok"); 8 }
-fn f9() -> i64 { println!("ok"); 9 }
-fn f10() -> i64 { println!("ok"); 10 }
-fn f11() -> i64 { println!("ok"); 11 }
-fn f12() -> i64 { println!("ok"); 12 }
+fn f1() -> i64 { println!("ok")
+ 1 }
+fn f2() -> i64 { println!("ok")
+ 2 }
+fn f3() -> i64 { println!("ok")
+ 3 }
+fn f4() -> i64 { println!("ok")
+ 4 }
+fn f5() -> i64 { println!("ok")
+ 5 }
+fn f6() -> i64 { println!("ok")
+ 6 }
+fn f7() -> i64 { println!("ok")
+ 7 }
+fn f8() -> i64 { println!("ok")
+ 8 }
+fn f9() -> i64 { println!("ok")
+ 9 }
+fn f10() -> i64 { println!("ok")
+ 10 }
+fn f11() -> i64 { println!("ok")
+ 11 }
+fn f12() -> i64 { println!("ok")
+ 12 }
 
 fn main() {
     let sum = f1() + f2() + f3() + f4() + f5() + f6()

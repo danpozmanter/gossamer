@@ -183,6 +183,51 @@ fn unit_struct_declaration_accepts_bare_form() {
 }
 
 #[test]
+fn multiline_lists_use_newlines_and_tolerate_legacy_commas() {
+    for source in [
+        "struct Point {\n    x: i64\n    y: i64\n}\n",
+        "struct Point {\n    x: i64,\n    y: i64,\n}\n",
+        "enum Choice {\n    One\n    Two(i64)\n}\n",
+        "fn add(\n    x: i64\n    y: i64\n) -> i64 { x + y }\nfn main() { add(\n    1\n    2\n) }\n",
+    ] {
+        let mut map = SourceMap::new();
+        let file = map.add_file("newline_lists.gos", source.to_string());
+        let (_, diags) = parse_source_file(source, file);
+        assert!(diags.is_empty(), "`{source}` produced {diags:?}");
+    }
+}
+
+#[test]
+fn same_line_lists_require_commas() {
+    for source in [
+        "struct Point { x: i64 y: i64 }\n",
+        "enum Choice { One Two }\n",
+        "fn add(x: i64 y: i64) { }\n",
+        "fn main() { add(1 2) }\n",
+    ] {
+        let mut map = SourceMap::new();
+        let file = map.add_file("comma_lists.gos", source.to_string());
+        let (_, diags) = parse_source_file(source, file);
+        assert!(!diags.is_empty(), "`{source}` unexpectedly parsed");
+    }
+}
+
+#[test]
+fn statement_semicolons_are_always_rejected() {
+    for source in [
+        "use example;\n",
+        "let x = 1;\n",
+        "fn main() { let x = 9;\nprintln(x) }\n",
+        "fn main() { println(1); println(2) }\n",
+    ] {
+        let mut map = SourceMap::new();
+        let file = map.add_file("semicolon.gos", source.to_string());
+        let (_, diags) = parse_source_file(source, file);
+        assert!(!diags.is_empty(), "`{source}` unexpectedly parsed");
+    }
+}
+
+#[test]
 fn empty_named_struct_declaration_accepts_braces() {
     let source = "struct Unit {}\n";
     let mut map = SourceMap::new();

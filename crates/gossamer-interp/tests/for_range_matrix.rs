@@ -43,11 +43,11 @@ fn run_vm(source: &str) -> String {
 fn exclusive_for_range_sums_to_expected_total() {
     let source = r"
 fn main() {
-    let mut total = 0i64;
+    let mut total = 0i64
     for i in 0i64..5i64 {
-        total = total + i;
+        total = total + i
     }
-    println(total);
+    println(total)
 }
 ";
     assert_eq!(run_vm(source), "10\n");
@@ -57,11 +57,11 @@ fn main() {
 fn inclusive_for_range_includes_endpoint() {
     let source = r"
 fn main() {
-    let mut total = 0i64;
+    let mut total = 0i64
     for i in 0i64..=5i64 {
-        total = total + i;
+        total = total + i
     }
-    println(total);
+    println(total)
 }
 ";
     assert_eq!(run_vm(source), "15\n");
@@ -71,11 +71,11 @@ fn main() {
 fn inclusive_range_with_negative_start_works() {
     let source = r"
 fn main() {
-    let mut total = 0i64;
+    let mut total = 0i64
     for i in (-2i64)..=2i64 {
-        total = total + i;
+        total = total + i
     }
-    println(total);
+    println(total)
 }
 ";
     assert_eq!(run_vm(source), "0\n");
@@ -85,11 +85,11 @@ fn main() {
 fn empty_inclusive_range_runs_zero_iterations() {
     let source = r"
 fn main() {
-    let mut count = 0i64;
+    let mut count = 0i64
     for _ in 5i64..=4i64 {
-        count = count + 1i64;
+        count = count + 1i64
     }
-    println(count);
+    println(count)
 }
 ";
     assert_eq!(run_vm(source), "0\n");
@@ -99,14 +99,14 @@ fn main() {
 fn for_range_break_exits_loop_at_first_match() {
     let source = r"
 fn main() {
-    let mut found = -1i64;
+    let mut found = -1i64
     for i in 0i64..100i64 {
         if i == 7i64 {
-            found = i;
-            break;
+            found = i
+            break
         }
     }
-    println(found);
+    println(found)
 }
 ";
     assert_eq!(run_vm(source), "7\n");

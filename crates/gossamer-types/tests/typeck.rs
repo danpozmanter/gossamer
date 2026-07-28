@@ -169,7 +169,7 @@ fn obvious_concrete_mismatch_is_reported() {
 fn function_argument_rejects_plain_tuple_for_tuple_struct() {
     let checked = run("struct RGB(i64, i64, i64)\n\
          fn print_color(color: RGB) { println!(\"{}\", color) }\n\
-         fn main() { let three = (1, 500, -200); print_color(three) }\n");
+         fn main() { let three = (1, 500, -200)\n print_color(three) }\n");
     assert!(
         checked.diagnostics.iter().any(|d| matches!(
             &d.error,
@@ -221,7 +221,7 @@ fn function_boundaries_preserve_nominal_struct_identity() {
          fn take_tuple(v: (i64, i64)) {}\n\
          fn id<T>(v: T) -> T { v }\n\
          fn take_fn(f: Fn(i64) -> i64) { let _ = f(1) }\n\
-         fn main() { take_struct(A(1, 2)); take_tuple((1, 2)); take_fn(id) }\n");
+         fn main() { take_struct(A(1, 2))\n take_tuple((1, 2))\n take_fn(id) }\n");
     assert!(
         accepted.diagnostics.is_empty(),
         "{:?}",
@@ -234,7 +234,7 @@ fn string_values_coerce_to_borrowed_str_at_typed_boundaries() {
     let checked = run("static GREETING: &str = \"hello\"\n\
          fn classify(value: bool) -> &str { if value { \"yes\" } else { \"no\" } }\n\
          fn take(value: &str) {}\n\
-         fn main() { take(\"text\"); let _ = classify(true) }\n");
+         fn main() { take(\"text\")\n let _ = classify(true) }\n");
     assert!(
         checked.diagnostics.is_empty(),
         "String to &str coercions must remain valid: {:?}",
@@ -269,7 +269,7 @@ fn methods_and_enum_constructors_check_declared_payload_types() {
     let method = run("struct A(i64)\n\
          struct B(i64)\n\
          impl A { fn take(&self, value: A) {} }\n\
-         fn main() { let a = A(1); a.take(B(2)) }\n");
+         fn main() { let a = A(1)\n a.take(B(2)) }\n");
     assert!(
         method
             .diagnostics
@@ -296,7 +296,7 @@ fn methods_and_enum_constructors_check_declared_payload_types() {
          struct B(i64)\n\
          struct Boxed<T> { value: T }\n\
          impl<T> Boxed<T> { fn take(&self, value: T) {} }\n\
-         fn main() { let boxed = Boxed { value: A(1) }; boxed.take(B(2)) }\n");
+         fn main() { let boxed = Boxed { value: A(1) }\n boxed.take(B(2)) }\n");
     assert!(
         generic_method
             .diagnostics
@@ -308,7 +308,7 @@ fn methods_and_enum_constructors_check_declared_payload_types() {
 
     let trait_method = run("struct A(i64)\n\
          struct B(i64)\n\
-         trait Takes { fn take(&self, value: A); }\n\
+         trait Takes { fn take(&self, value: A)\n }\n\
          impl Takes for A { fn take(&self, value: A) {} }\n\
          fn call<T: Takes>(value: &T) { value.take(B(2)) }\n\
          fn main() {}\n");
@@ -720,7 +720,7 @@ fn example_programs_typecheck_without_false_positives() {
 
 #[test]
 fn cast_allows_numeric_to_numeric() {
-    let src = "fn main() { let i: i32 = 1i32; let _ = i as i64; let _ = i as f64 }\n";
+    let src = "fn main() { let i: i32 = 1i32\n let _ = i as i64\n let _ = i as f64 }\n";
     let checked = run(src);
     assert!(
         checked.diagnostics.is_empty(),
@@ -731,7 +731,7 @@ fn cast_allows_numeric_to_numeric() {
 
 #[test]
 fn cast_allows_bool_and_char_to_integer_but_rejects_string() {
-    let src = "fn main() { let b: bool = true; let _ = b as i64; let s: String = \"x\".to_string(); let _ = s as i64 }\n";
+    let src = "fn main() { let b: bool = true\n let _ = b as i64\n let s: String = \"x\".to_string()\n let _ = s as i64 }\n";
     let checked = run(src);
     assert_eq!(checked.diagnostics.len(), 1);
     assert!(
@@ -747,7 +747,7 @@ fn cast_fails_soft_on_inference_variable_source() {
     // variable, so the cast check must stay soft on it. (A concrete
     // `String` source is correctly rejected - see
     // `cast_allows_bool_and_char_to_integer_but_rejects_string`.)
-    let src = "fn main() { let f = |x| x as i64; let _ = f }\n";
+    let src = "fn main() { let f = |x| x as i64\n let _ = f }\n";
     let checked = run(src);
     assert!(
         checked.diagnostics.is_empty(),
@@ -758,7 +758,7 @@ fn cast_fails_soft_on_inference_variable_source() {
 
 #[test]
 fn cast_same_type_is_a_noop_and_passes() {
-    let src = "fn main() { let i: i64 = 1i64; let _ = i as i64 }\n";
+    let src = "fn main() { let i: i64 = 1i64\n let _ = i as i64 }\n";
     let checked = run(src);
     assert!(
         checked.diagnostics.is_empty(),
@@ -772,9 +772,9 @@ fn int_to_char_casts_allowed_float_rejected() {
     // Every int width casts to char by reading its low byte. String indexing
     // already has type char, and a same-type cast remains a no-op.
     for src in [
-        "fn main() { let b: u8 = 65u8; let _: char = b as char }\n",
-        "fn main() { let i: i32 = 65i32; let _: char = i as char }\n",
-        "fn main() { let s = \"hi\"; let _: char = s[0] as char }\n",
+        "fn main() { let b: u8 = 65u8\n let _: char = b as char }\n",
+        "fn main() { let i: i32 = 65i32\n let _: char = i as char }\n",
+        "fn main() { let s = \"hi\"\n let _: char = s[0] as char }\n",
     ] {
         let ok = run(src);
         assert!(
@@ -783,7 +783,7 @@ fn int_to_char_casts_allowed_float_rejected() {
             ok.diagnostics,
         );
     }
-    let src = "fn main() { let f: f64 = 65.0; let _: char = f as char }\n";
+    let src = "fn main() { let f: f64 = 65.0\n let _: char = f as char }\n";
     let bad = run(src);
     assert_eq!(bad.diagnostics.len(), 1);
     assert!(
@@ -885,7 +885,7 @@ fn repeat_literal_coerces_to_vec_annotation() {
 
 #[test]
 fn array_literal_return_coerces_to_vec() {
-    let checked = run("fn make() -> Vec<String> { [\"x\", \"y\"] }\nfn main() { make(); }\n");
+    let checked = run("fn make() -> Vec<String> { [\"x\", \"y\"] }\nfn main() { make()\n }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
@@ -1150,7 +1150,7 @@ fn vec_get_returns_option_of_element_type() {
 #[test]
 fn vec_rejects_methods_without_lowering() {
     for method in ["retain", "drain"] {
-        let source = format!("fn main() {{ let mut xs = Vec::from([1, 2]); xs.{method}(0) }}\n");
+        let source = format!("fn main() {{ let mut xs = Vec::from([1, 2])\n xs.{method}(0) }}\n");
         let checked = run(&source);
         assert!(
             checked.diagnostics.iter().any(|diag| matches!(
@@ -1575,14 +1575,14 @@ fn has_code(diags: &[gossamer_types::TypeDiagnostic], code: &str) -> bool {
 #[test]
 fn index_on_scalar_is_rejected() {
     // 0.18.0: compiled tier read through the i64 as a pointer (SIGSEGV).
-    let d = diagnostics_for("fn main() { let x = 5; let y = x[0]; println!(\"{}\", y) }\n");
+    let d = diagnostics_for("fn main() { let x = 5\n let y = x[0]\n println!(\"{}\", y) }\n");
     assert!(has_code(&d, "GT0021"), "{d:?}");
 }
 
 #[test]
 fn index_on_lazy_iterator_is_rejected() {
     let d = diagnostics_for_with_lazy_iterators(
-        "use std::iter\nfn main() { let xs = iter::range(0, 3); let y = xs[0]; let _ = y }\n",
+        "use std::iter\nfn main() { let xs = iter::range(0, 3)\n let y = xs[0]\n let _ = y }\n",
         true,
     );
     assert!(has_code(&d, "GT0021"), "{d:?}");
@@ -1591,7 +1591,7 @@ fn index_on_lazy_iterator_is_rejected() {
 #[test]
 fn formatting_lazy_iterator_is_rejected() {
     let d = diagnostics_for_with_lazy_iterators(
-        "use std::iter\nfn main() { let xs = iter::range(0, 3); println!(\"{}\", xs) }\n",
+        "use std::iter\nfn main() { let xs = iter::range(0, 3)\n println!(\"{}\", xs) }\n",
         true,
     );
     assert!(has_code(&d, "GT0041"), "{d:?}");
@@ -1600,7 +1600,7 @@ fn formatting_lazy_iterator_is_rejected() {
 #[test]
 fn unsupported_lazy_iterator_input_adapter_is_rejected() {
     let d = diagnostics_for_with_lazy_iterators(
-        "use std::iter\nfn main() { let xs = iter::range(0, 9) |> iter::step_by(2); let _ = xs }\n",
+        "use std::iter\nfn main() { let xs = iter::range(0, 9) |> iter::step_by(2)\n let _ = xs }\n",
         true,
     );
     assert!(has_code(&d, "GT0001"), "{d:?}");
@@ -1609,7 +1609,7 @@ fn unsupported_lazy_iterator_input_adapter_is_rejected() {
 #[test]
 fn lazy_terminal_rejects_materialized_vec_without_eager_alias() {
     let d = diagnostics_for_with_lazy_iterators(
-        "use std::iter\nfn main() { let xs = [1, 2, 3]; let n = iter::sum(xs); let _ = n }\n",
+        "use std::iter\nfn main() { let xs = [1, 2, 3]\n let n = iter::sum(xs)\n let _ = n }\n",
         true,
     );
     assert!(has_code(&d, "GT0001"), "{d:?}");
@@ -1618,7 +1618,7 @@ fn lazy_terminal_rejects_materialized_vec_without_eager_alias() {
 #[test]
 fn reusing_consumed_lazy_iterator_is_rejected() {
     let d = diagnostics_for_with_lazy_iterators(
-        "use std::iter\nfn main() { let xs = iter::range(0, 3); let out = iter::collect(xs); let _ = xs; let _ = out }\n",
+        "use std::iter\nfn main() { let xs = iter::range(0, 3)\n let out = iter::collect(xs)\n let _ = xs\n let _ = out }\n",
         true,
     );
     assert!(has_code(&d, "GT0042"), "{d:?}");
@@ -1627,7 +1627,7 @@ fn reusing_consumed_lazy_iterator_is_rejected() {
 #[test]
 fn reusing_pipe_consumed_lazy_iterator_is_rejected() {
     let d = diagnostics_for_with_lazy_iterators(
-        "use std::iter\nfn main() { let xs = iter::range(0, 3); let out = xs |> iter::take(1); let _ = xs; let _ = out }\n",
+        "use std::iter\nfn main() { let xs = iter::range(0, 3)\n let out = xs |> iter::take(1)\n let _ = xs\n let _ = out }\n",
         true,
     );
     assert!(has_code(&d, "GT0042"), "{d:?}");
@@ -1636,54 +1636,54 @@ fn reusing_pipe_consumed_lazy_iterator_is_rejected() {
 #[test]
 fn index_on_vec_and_string_is_accepted() {
     let d = diagnostics_for(
-        "fn main() { let xs = [1, 2, 3]; let s = \"hi\"; println!(\"{} {}\", xs[0], s.byte_at(0)) }\n",
+        "fn main() { let xs = [1, 2, 3]\n let s = \"hi\"\n println!(\"{} {}\", xs[0], s.byte_at(0)) }\n",
     );
     assert!(!has_code(&d, "GT0021"), "{d:?}");
 }
 
 #[test]
 fn reasonable_fixed_array_is_accepted() {
-    let d = diagnostics_for("fn main() { let a: [i64; 16] = [0; 16]; println!(\"{}\", a[0]) }\n");
+    let d = diagnostics_for("fn main() { let a: [i64; 16] = [0; 16]\n println!(\"{}\", a[0]) }\n");
     assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]
 fn benchmark_sized_fixed_array_is_accepted() {
     let d = diagnostics_for(
-        "fn main() { let a: [f64; 40000] = [0.0; 40000]; println!(\"{}\", a[0]) }\n",
+        "fn main() { let a: [f64; 40000] = [0.0; 40000]\n println!(\"{}\", a[0]) }\n",
     );
     assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]
 fn very_large_fixed_array_is_accepted() {
-    let d = diagnostics_for("fn main() { let a: [i64; 100000000] = [0; 100000000]; let _ = a }\n");
+    let d = diagnostics_for("fn main() { let a: [i64; 100000000] = [0; 100000000]\n let _ = a }\n");
     assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]
 fn oversized_repeat_into_vec_is_accepted() {
-    let d = diagnostics_for("fn main() { let v: [i64] = [0; 100000000]; let _ = v.len() }\n");
+    let d = diagnostics_for("fn main() { let v: [i64] = [0; 100000000]\n let _ = v.len() }\n");
     assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]
 fn call_of_scalar_value_is_rejected() {
     // 0.18.0: compiled tier emitted a call through a non-function symbol.
-    let d = diagnostics_for("fn main() { let x = 5; let y = x(3); println!(\"{}\", y) }\n");
+    let d = diagnostics_for("fn main() { let x = 5\n let y = x(3)\n println!(\"{}\", y) }\n");
     assert!(has_code(&d, "GT0022"), "{d:?}");
 }
 
 #[test]
 fn qualified_associated_call_is_not_flagged_as_non_callable() {
     // `String::new()` types its callee as `String`; it must not trip GT0022.
-    let d = diagnostics_for("fn main() { let s = String::new(); println!(\"{}\", s) }\n");
+    let d = diagnostics_for("fn main() { let s = String::new()\n println!(\"{}\", s) }\n");
     assert!(!has_code(&d, "GT0022"), "{d:?}");
 }
 
 #[test]
 fn constructor_calls_are_not_flagged_as_non_callable() {
-    let d = diagnostics_for("fn main() { let o = Some(5); let r = Ok(1); println!(\"ok\") }\n");
+    let d = diagnostics_for("fn main() { let o = Some(5)\n let r = Ok(1)\n println!(\"ok\") }\n");
     assert!(!has_code(&d, "GT0022"), "{d:?}");
 }
 
@@ -1698,11 +1698,11 @@ fn named_struct_associated_function_is_not_checked_as_constructor() {
 #[test]
 fn struct_destructuring_requires_the_nominal_name() {
     let d = diagnostics_for(
-        "struct Point { x: i64, y: i64 }\nfn main() { let p = Point { x: 1, y: 2 }; let (x, y) = p }\n",
+        "struct Point { x: i64, y: i64 }\nfn main() { let p = Point { x: 1, y: 2 }\n let (x, y) = p }\n",
     );
     assert!(has_code(&d, "GT0033"), "{d:?}");
 
-    let d = diagnostics_for("fn main() { let pair = (1, 2); let (x, y) = pair }\n");
+    let d = diagnostics_for("fn main() { let pair = (1, 2)\n let (x, y) = pair }\n");
     assert!(!has_code(&d, "GT0033"), "{d:?}");
 }
 
@@ -1718,15 +1718,25 @@ fn named_struct_construction_requires_braces() {
 
     let d =
         diagnostics_for("struct Point { x: i64, y: i64 }\nfn main() { let _ = Point { 1, 2 } }\n");
-    assert!(!has_code(&d, "GT0034"), "{d:?}");
+    assert!(has_code(&d, "GT0034"), "{d:?}");
 
     let d = diagnostics_for(
         "struct Point { x: i64, y: i64 }\nfn main() { let _ = Point { y: 2, 1 } }\n",
     );
-    assert!(
-        !has_code(&d, "GT0034") && !has_code(&d, "GT0035") && !has_code(&d, "GT0037"),
-        "{d:?}"
+    assert!(has_code(&d, "GT0034"), "{d:?}");
+}
+
+#[test]
+fn unit_and_empty_named_struct_construction_are_distinct() {
+    let d = diagnostics_for(
+        "struct Unit\nstruct Empty {}\nfn main() { let _ = Unit\nlet _ = Unit {}\nlet _ = Empty {} }\n",
     );
+    assert!(!has_code(&d, "GT0034"), "{d:?}");
+
+    let d = diagnostics_for(
+        "struct Unit\nstruct Empty {}\nfn main() { let _ = Unit()\nlet _ = Empty }\n",
+    );
+    assert!(has_code(&d, "GT0034"), "{d:?}");
 }
 
 #[test]
@@ -1771,21 +1781,21 @@ fn named_struct_literal_fields_are_checked() {
 #[test]
 fn out_of_range_tuple_index_is_rejected() {
     // 0.18.0: compiled tier read out-of-object memory (garbage / leak).
-    let d = diagnostics_for("fn main() { let t = (1, 2); let x = t.5; println!(\"{}\", x) }\n");
+    let d = diagnostics_for("fn main() { let t = (1, 2)\n let x = t.5\n println!(\"{}\", x) }\n");
     assert!(has_code(&d, "GT0023"), "{d:?}");
 }
 
 #[test]
 fn positional_index_on_struct_is_rejected() {
     let d = diagnostics_for(
-        "struct P { x: i64, y: i64 }\nfn main() { let p = P { x: 1, y: 2 }; let v = p.0; println!(\"{}\", v) }\n",
+        "struct P { x: i64, y: i64 }\nfn main() { let p = P { x: 1, y: 2 }\n let v = p.0\n println!(\"{}\", v) }\n",
     );
     assert!(has_code(&d, "GT0023"), "{d:?}");
 }
 
 #[test]
 fn in_range_tuple_index_is_accepted() {
-    let d = diagnostics_for("fn main() { let t = (1, 2, 3); println!(\"{} {}\", t.0, t.2) }\n");
+    let d = diagnostics_for("fn main() { let t = (1, 2, 3)\n println!(\"{} {}\", t.0, t.2) }\n");
     assert!(!has_code(&d, "GT0023"), "{d:?}");
 }
 
@@ -1794,7 +1804,7 @@ fn method_call_with_wrong_arity_is_rejected() {
     // 0.18.0: VM aborted (GX0003) but the compiled tier zero-filled the
     // missing argument and returned a wrong result (tier divergence).
     let d = diagnostics_for(
-        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }; println!(\"{}\", a.add(2)) }\n",
+        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }\n println!(\"{}\", a.add(2)) }\n",
     );
     assert!(has_code(&d, "GT0018"), "{d:?}");
 }
@@ -1802,7 +1812,7 @@ fn method_call_with_wrong_arity_is_rejected() {
 #[test]
 fn method_call_with_correct_arity_is_accepted() {
     let d = diagnostics_for(
-        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }; println!(\"{}\", a.add(2, 3)) }\n",
+        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }\n println!(\"{}\", a.add(2, 3)) }\n",
     );
     assert!(!has_code(&d, "GT0018"), "{d:?}");
 }
@@ -1811,7 +1821,7 @@ fn method_call_with_correct_arity_is_accepted() {
 fn piped_method_call_counts_the_implicit_argument() {
     // `5 |> a.add(2)` desugars to `a.add(2, 5)`: arity is satisfied.
     let d = diagnostics_for(
-        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }; println!(\"{}\", 5 |> a.add(2)) }\n",
+        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }\n println!(\"{}\", 5 |> a.add(2)) }\n",
     );
     assert!(!has_code(&d, "GT0018"), "{d:?}");
 }
@@ -1821,7 +1831,7 @@ fn nonexistent_method_on_user_struct_is_rejected() {
     // 0.18.0: a typo passed check; the compiled build failed on an
     // undefined `@A::bogus` symbol.
     let d = diagnostics_for(
-        "struct A { x: i64 }\nfn main() { let a = A { x: 1 }; let y = a.bogus(); println!(\"{}\", y) }\n",
+        "struct A { x: i64 }\nfn main() { let a = A { x: 1 }\n let y = a.bogus()\n println!(\"{}\", y) }\n",
     );
     assert!(has_code(&d, "GT0002"), "{d:?}");
 }
@@ -1829,7 +1839,7 @@ fn nonexistent_method_on_user_struct_is_rejected() {
 #[test]
 fn real_method_on_user_struct_is_accepted() {
     let d = diagnostics_for(
-        "struct A { x: i64 }\nimpl A { fn get(&self) -> i64 { self.x } }\nfn main() { let a = A { x: 1 }; println!(\"{}\", a.get()) }\n",
+        "struct A { x: i64 }\nimpl A { fn get(&self) -> i64 { self.x } }\nfn main() { let a = A { x: 1 }\n println!(\"{}\", a.get()) }\n",
     );
     assert!(!has_code(&d, "GT0002"), "{d:?}");
 }
@@ -1840,7 +1850,7 @@ fn hashmap_keys_with_aggregate_key_is_rejected_before_lowering() {
     // `Vec<K>` snapshot. This used to pass checking and return Unit-shaped
     // values in the compiled runtime.
     let d = diagnostics_for(
-        "use std::collections::HashMap\nstruct Point { x: i64, y: i64 }\nfn main() { let m: HashMap<Point, i64> = HashMap::new(); let _ = m.keys(); }\n",
+        "use std::collections::HashMap\nstruct Point { x: i64, y: i64 }\nfn main() { let m: HashMap<Point, i64> = HashMap::new()\n let _ = m.keys()\n }\n",
     );
     assert!(
         d.iter().any(|diagnostic| matches!(
@@ -1855,7 +1865,7 @@ fn hashmap_keys_with_aggregate_key_is_rejected_before_lowering() {
 #[test]
 fn hashmap_keys_with_scalar_key_remains_available() {
     let d = diagnostics_for(
-        "use std::collections::HashMap\nfn main() { let m: HashMap<i64, i64> = HashMap::new(); let _ = m.keys(); }\n",
+        "use std::collections::HashMap\nfn main() { let m: HashMap<i64, i64> = HashMap::new()\n let _ = m.keys()\n }\n",
     );
     assert!(d.is_empty(), "scalar HashMap keys should typecheck: {d:?}");
 }
@@ -2437,7 +2447,7 @@ fn named_string_argument_mismatch_uses_a_user_facing_container_type() {
 #[test]
 fn string_bytes_method_is_typed_as_byte_vector() {
     let d =
-        diagnostics_for("fn main() { let bytes: Vec<u8> = \"ab\".bytes(); let _ = bytes[1] }\n");
+        diagnostics_for("fn main() { let bytes: Vec<u8> = \"ab\".bytes()\n let _ = bytes[1] }\n");
     assert!(
         d.is_empty(),
         "String::bytes must typecheck as Vec<u8>: {d:?}"

@@ -1916,6 +1916,10 @@
 </tr>
 </tbody>
 </table>
+<p><code>DirInfo.path</code> is safe to pass back to <code>fs::read_dir</code> and <code>fs::walk_dir</code>
+even when the operating-system path is not valid UTF-8. Such paths use an
+internal reversible string encoding; applications should treat the field as
+an opaque filesystem path rather than user-facing display text.</p>
 
 
 

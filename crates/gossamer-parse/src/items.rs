@@ -249,7 +249,7 @@ impl Parser<'_> {
         if self.at_receiver_start() {
             if let Some(receiver) = self.parse_receiver() {
                 params.push(FnParam::Receiver(receiver));
-                if !self.eat_punct(Punct::Comma) {
+                if !self.eat_list_separator() {
                     return params;
                 }
             }
@@ -264,7 +264,7 @@ impl Parser<'_> {
                 ty,
                 is_comptime,
             });
-            if !self.eat_punct(Punct::Comma) {
+            if !self.eat_list_separator() {
                 break;
             }
         }
@@ -355,7 +355,7 @@ impl Parser<'_> {
                     name,
                     ty,
                 });
-                if !self.eat_punct(Punct::Comma) {
+                if !self.eat_list_separator() {
                     break;
                 }
             }
@@ -377,7 +377,7 @@ impl Parser<'_> {
                     visibility,
                     ty,
                 });
-                if !self.eat_punct(Punct::Comma) {
+                if !self.eat_list_separator() {
                     break;
                 }
             }
@@ -418,7 +418,7 @@ impl Parser<'_> {
                         name: field_name,
                         ty,
                     });
-                    if !self.eat_punct(Punct::Comma) {
+                    if !self.eat_list_separator() {
                         break;
                     }
                 }
@@ -439,7 +439,7 @@ impl Parser<'_> {
                         visibility,
                         ty,
                     });
-                    if !self.eat_punct(Punct::Comma) {
+                    if !self.eat_list_separator() {
                         break;
                     }
                 }
@@ -459,7 +459,7 @@ impl Parser<'_> {
                 body,
                 discriminant,
             });
-            if !self.eat_punct(Punct::Comma) {
+            if !self.eat_list_separator() {
                 break;
             }
         }

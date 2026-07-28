@@ -94,7 +94,7 @@ fn generic_pair_two_distinct_params() {
     let src = r#"
 struct Pair<A, B> { fst: A, snd: B }
 fn main() {
-    let p = Pair { 42, "answer" }
+    let p = Pair { fst: 42, snd: "answer" }
     println!("{} = {}", p.fst, p.snd)
 }
 "#;
@@ -106,9 +106,9 @@ fn generic_struct_multiple_instantiations_in_one_program() {
     let src = r#"
 struct Pair<A, B> { fst: A, snd: B }
 fn main() {
-    let a = Pair { 1, 2 }
-    let b = Pair { "x", "y" }
-    let c = Pair { 7, "seven" }
+    let a = Pair { fst: 1, snd: 2 }
+    let b = Pair { fst: "x", snd: "y" }
+    let c = Pair { fst: 7, snd: "seven" }
     println!("{}/{}", a.fst, a.snd)
     println!("{}/{}", b.fst, b.snd)
     println!("{}/{}", c.fst, c.snd)
@@ -128,7 +128,7 @@ fn field_arithmetic_on_concrete_instance() {
     let src = r#"
 struct Pair<A, B> { fst: A, snd: B }
 fn main() {
-    let p = Pair { 10, 32 }
+    let p = Pair { fst: 10, snd: 32 }
     println!("{}", p.fst + p.snd)
 }
 "#;
@@ -141,8 +141,8 @@ fn single_param_generic_box() {
     let src = r#"
 struct Cell<T> { value: T }
 fn main() {
-    let c = Cell { 99 }
-    let s = Cell { "ninety-nine" }
+    let c = Cell { value: 99 }
+    let s = Cell { value: "ninety-nine" }
     println!("{} {}", c.value, s.value)
 }
 "#;
@@ -156,7 +156,7 @@ fn triple_param_generic_struct() {
     let src = r#"
 struct Triple<A, B, C> { a: A, b: B, c: C }
 fn main() {
-    let t = Triple { 1, "two", 3 }
+    let t = Triple { a: 1, b: "two", c: 3 }
     println!("{} {} {}", t.a, t.b, t.c)
 }
 "#;
@@ -172,7 +172,7 @@ fn same_param_twice_in_struct() {
     let src = r#"
 struct SameType<A> { left: A, right: A }
 fn main() {
-    let pair = SameType { 7, 13 }
+    let pair = SameType { left: 7, right: 13 }
     println!("{} + {} = {}", pair.left, pair.right, pair.left + pair.right)
 }
 "#;

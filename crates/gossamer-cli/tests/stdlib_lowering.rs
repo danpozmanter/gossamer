@@ -299,7 +299,8 @@ fn parse(s: &String) -> Result<i64, errors::Error> {
     Err(errors::new("nope"))
 }
 fn main() {
-    let v = parse(&"x".to_string()) |> result::unwrap_or_else(|e| { let _ = e; -1 })
+    let v = parse(&"x".to_string()) |> result::unwrap_or_else(|e| { let _ = e
+ -1 })
     println!("{}", v)
 }
 "#,

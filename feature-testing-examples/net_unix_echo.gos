@@ -22,12 +22,14 @@ const READ_FAILED: i64 = -2
 fn client(path: String, tx: Sender<i64>) {
     let stream = match net::UnixStream::connect(&path) {
         Ok(s) => s,
-        Err(_) => { tx.send(CONNECT_FAILED); return }
+        Err(_) => { tx.send(CONNECT_FAILED)
+            return }
     }
     let _ = stream.write([80, 73, 78, 71])
     let echo = match stream.read(64) {
         Ok(b) => b,
-        Err(_) => { tx.send(READ_FAILED); return }
+        Err(_) => { tx.send(READ_FAILED)
+            return }
     }
     let _ = stream.close()
     let ok = echo.len() == 4 && echo[0] == 80 && echo[1] == 73 && echo[2] == 78 && echo[3] == 71
@@ -39,24 +41,28 @@ fn main() {
     let _ = fs::remove_file(&path)
     let listener = match net::UnixListener::bind(&path) {
         Ok(l) => l,
-        Err(e) => { println!("bind failed: {}", e); return }
+        Err(e) => { println!("bind failed: {}", e)
+            return }
     }
     let (tx, rx) = channel()
     go client(path, tx)
     let (stream, _peer) = match listener.accept() {
         Ok(p) => p,
-        Err(e) => { println!("accept failed: {}", e); return }
+        Err(e) => { println!("accept failed: {}", e)
+            return }
     }
     let req = match stream.read(64) {
         Ok(b) => b,
-        Err(e) => { println!("server read failed: {}", e); return }
+        Err(e) => { println!("server read failed: {}", e)
+            return }
     }
     let _ = stream.write(&req)
     let _ = stream.close()
     let _ = listener.close()
     let code = match rx.recv() {
         Some(c) => c,
-        None => { println!("no client result"); return }
+        None => { println!("no client result")
+            return }
     }
     let _ = fs::remove_file(&path)
     if code == OK {

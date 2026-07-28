@@ -8,7 +8,7 @@ for Type`. A generic function bounds a parameter by a trait and calls its
 methods (`fn report<T: Shape>(s: &T)`) - see [generics](generics.md).
 
 ```gossamer
-trait Area { fn area(&self) -> f64; }
+trait Area { fn area(&self) -> f64 }
 
 impl Area for Shape {
     fn area(&self) -> f64 {

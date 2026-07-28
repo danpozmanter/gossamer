@@ -371,6 +371,46 @@ impl<'src> Parser<'src> {
         }
         self.source[last_end..peek_start].contains('\n')
     }
+
+    /// Consumes a comma separator, or accepts an authored newline as the
+    /// separator for a multi-line delimited list.
+    pub(crate) fn eat_list_separator(&mut self) -> bool {
+        self.eat_punct(Punct::Comma) || self.newline_before_peek()
+    }
+
+    /// Consumes and diagnoses a statement-style trailing semicolon.
+    pub(crate) fn reject_trailing_semicolon(&mut self) -> bool {
+        if !self.at_punct(Punct::Semi) {
+            return false;
+        }
+        let span = self.peek_span();
+        self.bump();
+        self.record(
+            ParseError::Unexpected {
+                expected: "a newline; trailing semicolons are not allowed".to_string(),
+                found: "`;`".to_string(),
+            },
+            span,
+        );
+        true
+    }
+
+    /// Consumes and rejects the legacy statement terminator.
+    pub(crate) fn eat_statement_semicolon(&mut self) -> bool {
+        if !self.at_punct(Punct::Semi) {
+            return false;
+        }
+        let span = self.peek_span();
+        self.bump();
+        self.record(
+            ParseError::Unexpected {
+                expected: "a newline; trailing semicolons are not allowed".to_string(),
+                found: "`;`".to_string(),
+            },
+            span,
+        );
+        true
+    }
 }
 
 /// Returns a short human-readable rendering of a token for diagnostics.

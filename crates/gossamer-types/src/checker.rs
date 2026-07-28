@@ -2621,6 +2621,17 @@ impl<'a> TypeChecker<'a> {
                     false
                 };
                 let require_all_fields = !http_response_literal;
+                if !tuple_struct_literal
+                    && fields
+                        .iter()
+                        .any(|field| struct_literal_positional_index(&field.name.name).is_some())
+                {
+                    let name = path.segments.last().map_or_else(
+                        || "<struct>".to_string(),
+                        |segment| segment.name.name.clone(),
+                    );
+                    self.emit(TypeError::NamedStructFieldsRequired { name }, expr.span);
+                }
                 let resolved_literal_fields =
                     if !tuple_struct_literal && let Some(declared_fields) = declared.as_ref() {
                         Some(self.resolve_struct_literal_fields(
@@ -8761,6 +8772,7 @@ impl<'a> TypeChecker<'a> {
                     TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
                         break Some(elem);
                     }
+                    TyKind::String => break Some(self.tcx.char_ty()),
                     TyKind::Tuple(elems) => {
                         let Some(elem) = elems.first().copied() else {
                             break None;
@@ -9075,12 +9087,25 @@ impl<'a> TypeChecker<'a> {
             }
             Resolution::Primitive(prim) => self.type_from_primitive(prim),
             Resolution::Def { def, kind } => match kind {
-                gossamer_resolve::DefKind::Enum | gossamer_resolve::DefKind::Struct => {
+                gossamer_resolve::DefKind::Struct => {
+                    if self.struct_fields.contains_key(&def)
+                        && !self.callee_path_nodes.contains(&node)
+                    {
+                        let name = self
+                            .tcx
+                            .def_name(def)
+                            .map_or_else(|| "<struct>".to_string(), ToString::to_string);
+                        self.emit(TypeError::StructConstructorBracesRequired { name }, span);
+                    }
                     self.tcx.intern(TyKind::Adt {
                         def,
                         substs: crate::Substs::new(),
                     })
                 }
+                gossamer_resolve::DefKind::Enum => self.tcx.intern(TyKind::Adt {
+                    def,
+                    substs: crate::Substs::new(),
+                }),
                 gossamer_resolve::DefKind::Fn => {
                     // Pull turbofish args (`ident::<i64, bool>`) off
                     // the last path segment, resolve each to a

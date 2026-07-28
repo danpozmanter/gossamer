@@ -194,7 +194,7 @@ fn generic_struct_f64_field_prints_as_float() {
     let src = r#"
 struct Triple<A, B, C> { first: A, second: B, third: C }
 fn main() {
-    let r = Triple { 1, "two", 3.0 }
+    let r = Triple { first: 1, second: "two", third: 3.0 }
     println!("{} {} {}", r.first, r.second, r.third)
 }
 "#;

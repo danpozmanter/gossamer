@@ -76,8 +76,10 @@ mod tests {
     fn find_returns_byte_offset() {
         let s = "hello world"
         match s.find("world") {
-            Some(i) => { let _ = testing::check_eq(&i, &6, "find offset"); },
-            None => { let _ = testing::check(false, "expected Some"); },
+            Some(i) => { let _ = testing::check_eq(&i, &6, "find offset")
+            },
+            None => { let _ = testing::check(false, "expected Some")
+            },
         }
     }
 

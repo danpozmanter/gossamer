@@ -25,7 +25,8 @@ fn main() {
 
     let digits = match regex::compile("\\d+") {
         Ok(p) => p,
-        Err(e) => { println!("bad: {}", e); return }
+        Err(e) => { println!("bad: {}", e)
+            return }
     }
 
     // --- is_match / find / find_all ---
@@ -44,7 +45,8 @@ fn main() {
     // --- anchors + alternation ---
     let anchored = match regex::compile("^(cat|dog)$") {
         Ok(p) => p,
-        Err(_) => { println!("anchor bad"); return }
+        Err(_) => { println!("anchor bad")
+            return }
     }
     println!("anchor cat = {}", regex::is_match(&anchored, &"cat"))
     println!("anchor cats = {}", regex::is_match(&anchored, &"cats"))
@@ -52,7 +54,8 @@ fn main() {
     // --- unicode classes (UTF-8 byte offsets vs char offsets) ---
     let letters = match regex::compile("\\p{L}+") {
         Ok(p) => p,
-        Err(_) => { println!("uni bad"); return }
+        Err(_) => { println!("uni bad")
+            return }
     }
     match regex::find(&letters, &"  café ") {
         Some((s, e, t)) => println!("uni find = {} [{},{})", t, s, e),
@@ -62,7 +65,8 @@ fn main() {
     // --- captures with optional + multiple groups ---
     let date = match regex::compile("(\\d{4})-(\\d{2})(-(\\d{2}))?") {
         Ok(p) => p,
-        Err(_) => { println!("date bad"); return }
+        Err(_) => { println!("date bad")
+            return }
     }
     match regex::captures(&date, &"2024-03-15") {
         Some(caps) => println!("caps full: {}", cap_line(caps)),
@@ -78,7 +82,8 @@ fn main() {
     // --- replace / replace_all with $N ---
     let kv = match regex::compile("(\\w+)=(\\d+)") {
         Ok(p) => p,
-        Err(_) => { println!("kv bad"); return }
+        Err(_) => { println!("kv bad")
+            return }
     }
     println!("replace = {}", regex::replace(&kv, &"a=1 b=2", &"$2:$1"))
     println!("replace_all = {}", regex::replace_all(&kv, &"a=1 b=2", &"$2:$1"))
@@ -86,7 +91,8 @@ fn main() {
     // --- split: empty matches, leading/trailing separators ---
     let ws = match regex::compile("\\s+") {
         Ok(p) => p,
-        Err(_) => { println!("ws bad"); return }
+        Err(_) => { println!("ws bad")
+            return }
     }
     let parts = regex::split(&ws, &" a  b   c ")
     println!("split count = {}", parts.len())
@@ -99,7 +105,8 @@ fn main() {
     // --- zero-width pattern split ---
     let empty_pat = match regex::compile("") {
         Ok(p) => p,
-        Err(_) => { println!("empty bad"); return }
+        Err(_) => { println!("empty bad")
+            return }
     }
     println!("empty split count = {}", regex::split(&empty_pat, &"ab").len())
 }

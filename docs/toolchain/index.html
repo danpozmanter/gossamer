@@ -2280,8 +2280,10 @@ the implementation by a rev.</p>
 <p><code>gos</code> with no arguments - or <code>gos repl</code> - drops into an
 interactive session. The first-slice supports:</p>
 <ul>
-<li>Numbered <code>In [N]:</code> / <code>Out[N]:</code> prompts, coloured green / red
-  when stdout is a TTY (ipython-style).</li>
+<li>A <code>gos&gt;</code> input prompt; successful expressions print only their value, with
+  no numbered input or output markers.</li>
+<li>Quiet declaration and binding updates by default. Pass <code>gos -v repl</code> or
+  <code>gos repl -v</code> to show progress messages.</li>
 <li>Declarations persisting across inputs (<code>fn</code> / <code>struct</code> / <code>enum</code>
   / <code>use</code> / <code>const</code> / <code>type</code>).</li>
 <li><code>let</code> bindings persisting across inputs; every subsequent
@@ -2297,6 +2299,9 @@ interactive session. The first-slice supports:</p>
   modules/items.</li>
 <li>Ctrl-D exits cleanly.</li>
 </ul>
+<p>Meta-command output adapts to the current terminal width and is capped at 80
+columns, so <code>%help</code>, <code>%ls</code>, <code>%find</code>, <code>%bindings</code>, and <code>%declarations</code> remain
+readable in narrow terminals.</p>
 <p>Stream K grows this to IPython parity (syntax highlighting, tab
 completion, persistent history file, <code>%time</code> / <code>%timeit</code> /
 <code>%load</code> / <code>%save</code> / <code>%edit</code> / <code>%debug</code>).</p>

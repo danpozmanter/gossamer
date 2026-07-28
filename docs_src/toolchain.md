@@ -70,8 +70,10 @@ the implementation by a rev.
 `gos` with no arguments - or `gos repl` - drops into an
 interactive session. The first-slice supports:
 
-- Numbered `In [N]:` / `Out[N]:` prompts, coloured green / red
-  when stdout is a TTY (ipython-style).
+- A `gos>` input prompt; successful expressions print only their value, with
+  no numbered input or output markers.
+- Quiet declaration and binding updates by default. Pass `gos -v repl` or
+  `gos repl -v` to show progress messages.
 - Declarations persisting across inputs (`fn` / `struct` / `enum`
   / `use` / `const` / `type`).
 - `let` bindings persisting across inputs; every subsequent
@@ -86,6 +88,10 @@ interactive session. The first-slice supports:
   module's items or matching symbols; `%ls /regex/` filters stdlib
   modules/items.
 - Ctrl-D exits cleanly.
+
+Meta-command output adapts to the current terminal width and is capped at 80
+columns, so `%help`, `%ls`, `%find`, `%bindings`, and `%declarations` remain
+readable in narrow terminals.
 
 Stream K grows this to IPython parity (syntax highlighting, tab
 completion, persistent history file, `%time` / `%timeit` /

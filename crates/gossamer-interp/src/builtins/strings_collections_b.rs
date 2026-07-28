@@ -415,6 +415,12 @@ fn builtin_next(args: &[Value]) -> RuntimeResult<Value> {
                 Ok(none)
             }
         }
+        Some(value @ Value::LazyIter(_)) => {
+            Ok(crate::stdlib_builtins::iter::lazy_iter_next_value(value)?.map_or_else(
+                || none.clone(),
+                some,
+            ))
+        }
         _ => Ok(none),
     }
 }

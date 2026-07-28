@@ -506,7 +506,7 @@ fn main() {
 /// `Result::map`. Pre-fix the lift pass emitted non-capturing
 /// closures as `extern "C" fn(payload) -> ret` (no env slot)
 /// while the runtime helper `gos_rt_result_map` invoked them as
-/// `f(closure_ptr, payload)`; on x86_64 the closure's `v` param
+/// `f(closure_ptr, payload)`\n on x86_64 the closure's `v` param
 /// shadowed RDI = closure_ptr while the actual payload sat unread
 /// in RSI. The closure body then transformed the env-pointer
 /// instead of the payload, corrupting the resulting Result.
@@ -593,7 +593,7 @@ fn main() {
 /// `json::as_i64(v).unwrap_or(0)` - both pieces were broken in
 /// compiled mode:
 /// 1. `Vec<String>[idx] = s` assignment was a no-op (the projection
-///    machinery treated the Vec as a flat array; the data lives at
+///    machinery treated the Vec as a flat array\n the data lives at
 ///    `header.ptr`, not in the slot directly). Now routes through
 ///    `gos_rt_vec_set_i64`.
 /// 2. `json::as_i64(v).unwrap_or(0)` returned a multi-trillion
@@ -634,7 +634,7 @@ fn main() {
 /// `["a", "b", "c"].to_vec()` literal-array `.to_vec()`
 /// crashes. These shapes lowered to `gos_rt_vec_clone(arr)`,
 /// but the runtime helper expects a real `GosVec` header
-/// rather than a stack `[T; N]` aggregate; reading element
+/// rather than a stack `[T; N]` aggregate\n reading element
 /// 0/1 as `len`/`cap` produced terabyte-scale allocations
 /// and aborted with `memory allocation of <huge> bytes
 /// failed` or a plain segfault. Both `i64` and `String`
@@ -738,7 +738,7 @@ fn main() {
 fn slice_of_tuples_indexing_works_in_native_build() {
     // `&[(String, String)]` callees would receive the address of
     // a flat-array aggregate before the unified `coerce_to_vec_arg`
-    // landed; the callee's `gos_rt_vec_len` then read the first
+    // landed\n the callee's `gos_rt_vec_len` then read the first
     // tuple element as the length and segfaulted on the
     // subsequent index dispatch. Asserting on both `gos run` and
     // a native build guards the path against future regressions.
@@ -1165,7 +1165,7 @@ fn test_runner_isolates_jit_state_across_json_iteration() {
     // regressed in askq: a chain of ~14 short tests warmed the
     // JIT, the next test's `for msg in arr.iter()` loop produced
     // zero items, and downstream `keep` was empty. The fix is
-    // per-test Vm reset in the runner; this test pins that.
+    // per-test Vm reset in the runner\n this test pins that.
     let src = r#"
 use std::encoding::json
 use std::testing
@@ -1354,7 +1354,7 @@ fn main() {}
 
 #[test]
 fn cross_module_struct_field_access_resolves_on_all_tiers() {
-    // `pub struct Rec` lives in src/util.gos; src/main.gos uses `&util::Rec`
+    // `pub struct Rec` lives in src/util.gos\n src/main.gos uses `&util::Rec`
     // as a param annotation and `&mut util::Rec` for a writeback. Both are
     // type-path annotations that must resolve to the struct's Adt so that
     // field access lowers to a real Field projection on every tier.
@@ -1498,7 +1498,7 @@ fn cross_file_to_json_derive_and_typeinfo_on_sibling_struct() {
                  \x20   let a = Rec { id: 1, name: \"x\" }\n\
                  \x20   let b = Rec { id: 1, name: \"x\" }\n\
                  \x20   let mut fields = \"\"\n\
-                 \x20   for (n, t) in typeInfo::<Rec>() { fields += n; fields += \":\"; fields += t; fields += \";\" }\n\
+                 \x20   for (n, t) in typeInfo::<Rec>() { fields += n\n fields += \":\"\n fields += t\n fields += \";\" }\n\
                  \x20   format!(\"{:?} eq={} fields={}\", a, a == b, fields)\n\
                  }\n",
             ),

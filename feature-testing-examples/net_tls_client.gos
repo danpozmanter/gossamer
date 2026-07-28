@@ -22,13 +22,15 @@ const CONNECT_FAILED: i64 = -1
 fn client(addr: String, tx: Sender<i64>) {
     let stream = match net::TcpStream::connect(&addr) {
         Ok(s) => s,
-        Err(_) => { tx.send(CONNECT_FAILED); return }
+        Err(_) => { tx.send(CONNECT_FAILED)
+            return }
     }
     // `start_tls` sets up the rustls client session; the TLS handshake
     // itself is driven lazily by the first read on the upgraded stream.
     let tls = match stream.start_tls("localhost") {
         Ok(s) => s,
-        Err(_) => { tx.send(REJECTED); return }
+        Err(_) => { tx.send(REJECTED)
+            return }
     }
     match tls.read_to_string() {
         Ok(_) => tx.send(UNEXPECTED_OK),
@@ -39,17 +41,20 @@ fn client(addr: String, tx: Sender<i64>) {
 fn main() {
     let listener = match net::TcpListener::bind("127.0.0.1:0") {
         Ok(l) => l,
-        Err(e) => { println!("bind failed: {}", e); return }
+        Err(e) => { println!("bind failed: {}", e)
+            return }
     }
     let addr = match listener.local_addr() {
         Ok(a) => a,
-        Err(e) => { println!("addr failed: {}", e); return }
+        Err(e) => { println!("addr failed: {}", e)
+            return }
     }
     let (tx, rx) = channel()
     go client(addr, tx)
     let (stream, _peer) = match listener.accept() {
         Ok(p) => p,
-        Err(e) => { println!("accept failed: {}", e); return }
+        Err(e) => { println!("accept failed: {}", e)
+            return }
     }
     let _ = stream.read(512)
     let _ = stream.write([1, 2, 3, 4, 5])
@@ -57,7 +62,8 @@ fn main() {
     let _ = listener.close()
     let code = match rx.recv() {
         Some(c) => c,
-        None => { println!("no client result"); return }
+        None => { println!("no client result")
+            return }
     }
     if code == REJECTED {
         println!("tls handshake rejected")

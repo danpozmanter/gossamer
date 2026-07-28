@@ -60,23 +60,28 @@ mod tests {
     #[test]
     fn low_level_is_error() {
         match super::low_level() {
-            Ok(_) => { let _ = testing::check(false, "should be Err"); },
-            Err(e) => { let _ = testing::check(e.message().contains("disk full"), "disk full message"); },
+            Ok(_) => { let _ = testing::check(false, "should be Err")
+            },
+            Err(e) => { let _ = testing::check(e.message().contains("disk full"), "disk full message")
+            },
         }
     }
 
     #[test]
     fn high_level_message() {
         match super::high_level() {
-            Ok(_) => { let _ = testing::check(false, "should be Err"); },
-            Err(e) => { let _ = testing::check(e.message().contains("start server"), "top-level message"); },
+            Ok(_) => { let _ = testing::check(false, "should be Err")
+            },
+            Err(e) => { let _ = testing::check(e.message().contains("start server"), "top-level message")
+            },
         }
     }
 
     #[test]
     fn chain_traversal() {
         match super::high_level() {
-            Ok(_) => { let _ = testing::check(false, "should be Err"); },
+            Ok(_) => { let _ = testing::check(false, "should be Err")
+            },
             Err(e) => {
                 let mut found_disk_full = false
                 let mut cursor = e.cause()

@@ -22,7 +22,7 @@ enum Token { Num(i64), Pair(i64, i64), #[default] End }
 
 fn unit_x() -> Point { Point { x: 1, y: 0 } }
 fn diag() -> Line { Line { from: Point { x: 0, y: 0 }, to: Point { x: 2, y: 2 }, label: "d" } }
-fn wrapped() -> Wrap<i64> { Wrap { 7, 1 } }
+fn wrapped() -> Wrap<i64> { Wrap { value: 7, tag: 1 } }
 fn zero_line() -> Line { Line::default() }
 fn pair() -> Token { Token::Pair(3, 4) }
 
@@ -44,8 +44,8 @@ fn main() {
     println!("{:?}", wrapped())
 
     // Generic PartialEq.
-    println!("{}", wrapped() == Wrap { 7, 1 })
-    println!("{}", wrapped() != Wrap { 8, 1 })
+    println!("{}", wrapped() == Wrap { value: 7, tag: 1 })
+    println!("{}", wrapped() != Wrap { value: 8, tag: 1 })
 
     // Enum: Clone, PartialEq, Debug, Default.
     println!("{}", pair() == pair().clone())

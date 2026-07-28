@@ -807,6 +807,11 @@ fn lazy_next(
     result
 }
 
+pub(crate) fn lazy_iter_next_value(source: &Value) -> RuntimeResult<Option<Value>> {
+    let mut dispatch = None;
+    lazy_next(source, &mut dispatch)
+}
+
 pub(crate) fn drain_lazy_iter(value: &Value) -> Option<Vec<Value>> {
     drain_lazy_iter_result(value).ok().flatten()
 }
@@ -994,6 +999,7 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
     // method form here so a lazy range cannot fall through to a missing
     // bare-name lookup or an eager Vec-only implementation.
     for (short, call) in [
+        ("next", native_iterator_next_method as NativeCall),
         ("map", native_vec_map_method as NativeCall),
         ("filter", native_vec_filter_method as NativeCall),
         ("fold", native_vec_fold_method as NativeCall),
@@ -1033,6 +1039,15 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         let qualified: &'static str = Box::leak(format!("Iterator::{short}").into_boxed_str());
         globals.push((qualified, crate::builtins::builtin_pub(qualified, call)));
     }
+}
+
+fn native_iterator_next_method(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let receiver = args.first().unwrap_or(&Value::Unit);
+    let mut dispatch = Some(dispatch);
+    Ok(lazy_next(receiver, &mut dispatch)?.map_or_else(none_variant, some_variant))
 }
 
 /// Rotates a method call's `(receiver, rest…)` argument list into the

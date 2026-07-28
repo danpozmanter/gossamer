@@ -1792,6 +1792,9 @@
 value (no <code>return</code> needed); <code>-&gt; Ret</code> may be omitted when the function
 returns <code>()</code>. A parameter takes <code>name: Type</code>, <code>&amp;Type</code> (read-shared), or
 <code>&amp;mut Type</code> (writes through to the caller).</p>
+<p>Mutable-reference arguments must be explicit at the call site. A writable
+binding is passed as <code>&amp;mut value</code>, while an existing <code>&amp;mut Type</code> reference can
+be forwarded as-is. Passing a bare value never grants a callee mutable access.</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">fn</span> <span class="nf">area</span><span class="p">(</span><span class="n">w</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">h</span>: <span class="kt">i64</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="n">w</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">h</span><span class="w"> </span><span class="p">}</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="k">fn</span> <span class="nf">greet</span><span class="p">(</span><span class="n">name</span>: <span class="kp">&amp;</span><span class="nb">String</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;hi, {name}&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>

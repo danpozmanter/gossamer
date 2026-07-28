@@ -10,14 +10,14 @@
 // the returned pointer never dangles.
 
 struct Point {
-    x: i64,
-    y: i64,
+    x: i64
+    y: i64
 }
 
 struct Trip<T> {
-    a: T,
-    b: T,
-    c: T,
+    a: T
+    b: T
+    c: T
 }
 
 impl<T> Trip<T> {
@@ -52,7 +52,11 @@ fn run(rounds: i64) -> i64 {
         let arr = quad(i)
         total += arr[0] + arr[1] + arr[2] + arr[3]
 
-        let t = Trip { Point { x: i, y: i * 3 }, Point { x: 0, y: 0 }, Point { x: 0, y: 0 } }
+        let t = Trip {
+            a: Point { x: i, y: i * 3 }
+            b: Point { x: 0, y: 0 }
+            c: Point { x: 0, y: 0 }
+        }
         let h = t.head()
         total += h.x + h.y
 

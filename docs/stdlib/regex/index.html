@@ -1746,6 +1746,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
 
         <li class="md-nav__item">
+  <a href="#unicode-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Unicode behavior
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#api-details-and-source" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -1778,6 +1789,14 @@
 <p>Compiled regular expressions (Rust <code>regex</code> crate syntax; no backreferences or look-around).</p>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
+<h2 id="unicode-behavior">Unicode behavior<a class="headerlink" href="#unicode-behavior" title="Permanent link">&para;</a></h2>
+<p>Unicode mode is enabled by default. UTF-8 literals, <code>.</code>, <code>\w</code>, <code>\s</code>, Unicode
+property classes such as <code>\p{Greek}</code>, case-insensitive matching, captures,
+split, and replacement operate on Unicode scalar values.</p>
+<p>Regex does not normalize text and does not treat an extended grapheme cluster
+as one character. Normalize input explicitly when canonical equivalence is
+required. <code>find</code> and <code>find_all</code> return UTF-8 byte offsets, matching the
+underlying Rust regex API, while the matched text remains valid UTF-8.</p>
 <h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
 <p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/regex.rs">implementation source</a> contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
 <table>

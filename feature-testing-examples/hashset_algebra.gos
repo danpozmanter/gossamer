@@ -46,9 +46,13 @@ mod tests {
 
     fn pair() -> (HashSet<String>, HashSet<String>) {
         let mut a = HashSet::new()
-        a.insert("a"); a.insert("b"); a.insert("c")
+        a.insert("a")
+        a.insert("b")
+        a.insert("c")
         let mut b = HashSet::new()
-        b.insert("b"); b.insert("c"); b.insert("d")
+        b.insert("b")
+        b.insert("c")
+        b.insert("d")
         (a, b)
     }
 

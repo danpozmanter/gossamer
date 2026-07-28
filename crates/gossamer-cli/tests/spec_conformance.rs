@@ -208,12 +208,18 @@ fn spec_14_format_macro_subset_accepted() {
     // macro: the array literal `[...]` coerces to `Vec<T>` instead.
     let src = r#"
 fn main() {
-    println!("p");
-    print!("p");
-    eprintln!("e");
-    eprint!("e");
-    let s = format!("f {}", 1);
-    let v = [1, 2, 3];
+    println!("p")
+
+    print!("p")
+
+    eprintln!("e")
+
+    eprint!("e")
+
+    let s = format!("f {}", 1)
+
+    let v = [1, 2, 3]
+
     if s.len() == 0 && v.len() == 0 {
         panic!("unreachable")
     }
@@ -232,13 +238,17 @@ fn maybe() -> i64 {
     if false { todo!() } else if false { unimplemented!() } else { 1 }
 }
 fn main() {
-    let m = matches!(Some(1), Some(_));
-    let n = maybe();
-    let d = dbg!(n + 1);
+    let m = matches!(Some(1), Some(_))
+
+    let n = maybe()
+
+    let d = dbg!(n + 1)
+
     let label = match d {
         2 => "two",
         _ => unreachable!(),
-    };
+    }
+
     if m && label.len() == 0 {
         println!("x")
     }
@@ -261,7 +271,7 @@ fn spec_14_unimplemented_macro_rejected() {
         "write!(buf, \"x\")",
         "writeln!(buf, \"x\")",
     ] {
-        let src = format!("fn main() {{ let _ = {macro_call}; }}\n");
+        let src = format!("fn main() {{ let _ = {macro_call}\n }}\n");
         let (ok, _stdout, _stderr) = run_check("spec_14_rejected", &src);
         assert!(!ok, "{macro_call} must be rejected, but `gos check` passed");
     }

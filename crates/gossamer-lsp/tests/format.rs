@@ -87,7 +87,7 @@ fn formatting_response_carries_newtext_when_changed() {
     let uri = "file:///c.gos";
     let server = server_with(
         uri,
-        "fn   spaced()    -> i64    { 0 }\nfn main() { let _ = spaced(); }\n",
+        "fn   spaced()    -> i64    { 0 }\nfn main() { let _ = spaced() }\n",
     );
     let response = server.formatting(&document_params(uri));
     if let Value::Array(edits) = &response {

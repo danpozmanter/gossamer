@@ -33,7 +33,7 @@ impl Parser<'_> {
         } else {
             None
         };
-        self.eat_punct(Punct::Semi);
+        self.reject_trailing_semicolon();
         let end_span = self.last_span();
         let span = self.join(start_span, end_span);
         let id = self.alloc_id();

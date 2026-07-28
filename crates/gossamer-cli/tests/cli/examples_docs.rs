@@ -542,7 +542,7 @@ fn broken() {}\n";
 
 #[test]
 fn lint_fix_applies_auto_suggestions_and_writes_back() {
-    let source = "fn main() { let mut x = 1i64; println(x.to_string()) }\n";
+    let source = "fn main() { let mut x = 1i64\nprintln(x.to_string()) }\n";
     let fixture = write_fixture("lintfix", source);
     let out = Command::new(gos_bin())
         .arg("lint")

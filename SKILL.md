@@ -46,7 +46,7 @@ struct Point { x: f64, y: f64 }
 struct Pair(i64, i64)
 enum Shape { Circle(f64), Rect { w: f64, h: f64 } }
 
-trait Area { fn area(&self) -> f64; }
+trait Area { fn area(&self) -> f64 }
 
 impl Area for Shape {
     fn area(&self) -> f64 {
@@ -89,6 +89,10 @@ Write clear, low-complexity, concise code.
 - **Tuple destructuring everywhere**: `let (a, b) = pair`, `for (k, v)
   in m.iter()`, `let (tx, rx) = channel()`.
 - **`for x in xs`** over collections - no `.iter()`, no `*x`.
+  Bare `String` iteration yields Unicode `char` values; use `.bytes()`
+  for UTF-8 bytes. An omitted range start begins at zero (`..3` yields
+  `0`, `1`, `2`). A range can also be stored and consumed later:
+  `let a = 0..3`, then `for i in a { println(i) }`.
 - **Bare integer indices** - `arr[i]` takes `i64`, no `as usize`.
   Reads and writes outside `[0, len)` panic on every tier. Method-form
   Vec `insert` accepts `0..=len`; `remove` accepts `0..len`; invalid
@@ -185,10 +189,18 @@ let n = 3 |> double |> add(10) |> clamp(0, 100)
   lines directly above an item is its documentation; `gos test` runs
   fenced code inside doc comments (mark non-runnable fences
   ` ```text `).
-- **Semicolons optional**; one statement per line. A newline followed
+- **Semicolons are invalid**; use one statement per line. A newline followed
   by leading `&`, `*`, or `-` starts a NEW statement - for multi-line
   continuation, end the previous line with the operator or
   parenthesize.
+- **Delimited lists** use commas on one line and newlines when multiline.
+  This covers function arguments and parameters, closure parameters,
+  struct fields and literals, and enum variants and payload fields.
+  Legacy multiline commas parse, and `gos fmt` removes them.
+- **Struct construction follows declaration shape**: unit structs use
+  `Unit` or `Unit {}`, tuple structs use `Pair(a, b)`, and named structs
+  require keyed `Point { x: 1, y: 2 }` fields. Positional or mixed
+  braced named-struct literals are rejected.
 - **Imports**: `use std::{iter, os, strings}`, alias via `{HashMap as
   Map}`; always spell the full path (`std::encoding::json`, not
   `std::json`) - paths validate against the std manifest (GR0005).
@@ -370,7 +382,10 @@ Full path spelling is validated (GR0005); discover signatures with
 - Text: `strings strconv utf8 unicode regex`. Prefer `to_lowercase` /
   `to_uppercase`; `split_once`, `substring(a, b)` clamps, `byte_at(i)`
   zero-fills OOB; Unicode 16 + UAX #31 identifiers (`let café = 1`);
-  dynamic regex captures are positional in Gossamer code.
+  dynamic regex captures are positional in Gossamer code. Regex Unicode
+  mode supports Unicode properties, `\w`, case folding, captures,
+  replacement, and split. It does not normalize or group grapheme
+  clusters, and match positions are UTF-8 byte offsets.
 - Collections: section 10. Prelude scalar `min`/`max`/`clamp`
   (vec-shaped `min(xs)`/`max(xs)` return `Option<T>`).
 - Encoding: `encoding::{json, yaml, toml, xml, csv, base64, base32,
@@ -448,6 +463,11 @@ build`. Known sharp edges:
 
 Bare `gos` opens the REPL. In a project, `gos run` / `gos build`
 resolve the entry themselves.
+
+The REPL prompt is `gos>`. Expression output is the value only, with no
+numbered markers. Binding and declaration progress is quiet unless `-v`
+is enabled. Meta-command output wraps to the terminal width, capped at
+80 columns.
 
 | Command | Purpose |
 |---------|---------|

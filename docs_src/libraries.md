@@ -107,8 +107,8 @@ The entry (or library root) declares the top-level modules with
 
 ```gossamer
 // src/main.gos
-mod widget;
-mod sub;
+mod widget
+mod sub
 
 fn main() {
     println!("{}", widget::greet(&"world"))

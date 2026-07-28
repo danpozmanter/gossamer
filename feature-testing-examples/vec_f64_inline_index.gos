@@ -26,7 +26,8 @@ fn main() {
     println!("")
     let mut sum = 0.0
     let mut i = 0
-    while i < 5 { sum += v[i]; i += 1 }
+    while i < 5 { sum += v[i]
+        i += 1 }
     println!("sum={:.2}", sum)
 
     // Vec<i64> read + write.
@@ -35,7 +36,8 @@ fn main() {
     w[0] = 100
     let mut wi = 0
     let mut acc = 0
-    while wi < 5 { acc += w[wi]; wi += 1 }
+    while wi < 5 { acc += w[wi]
+        wi += 1 }
     println!("acc={}", acc)
 
     // Nested Vec<Vec<f64>> read + write.
@@ -50,7 +52,8 @@ fn main() {
     let mut gi = 0
     while gi < 3 {
         let mut gj = 0
-        while gj < 3 { gsum += grid[gi][gj]; gj += 1 }
+        while gj < 3 { gsum += grid[gi][gj]
+            gj += 1 }
         gi += 1
     }
     println!("gsum={:.2}", gsum)

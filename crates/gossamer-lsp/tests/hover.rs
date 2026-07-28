@@ -10,7 +10,7 @@ use gossamer_std::json::Value;
 fn hover_on_fn_name_shows_signature() {
     let server = server_with(
         "file:///f.gos",
-        "/// Adds two numbers.\nfn add(a: i64, b: i64) -> i64 { a + b }\nfn main() { add(1, 2); }\n",
+        "/// Adds two numbers.\nfn add(a: i64, b: i64) -> i64 { a + b }\nfn main() { add(1, 2) }\n",
     );
     // Cursor on the call site `add` (line 2, column 13).
     let params = position_params("file:///f.gos", 2, 13);
@@ -26,7 +26,7 @@ fn hover_on_fn_name_shows_signature() {
 fn hover_on_struct_name_shows_type() {
     let server = server_with(
         "file:///s.gos",
-        "struct Point { x: i64, y: i64 }\nfn main() { let _p: Point; }\n",
+        "struct Point { x: i64, y: i64 }\nfn main() { let _p: Point }\n",
     );
     // Cursor on `Point` in the let annotation (line 1, column 21).
     let params = position_params("file:///s.gos", 1, 21);
@@ -50,7 +50,7 @@ fn hover_on_struct_name_shows_type() {
 fn hover_on_local_binding_shows_type() {
     let server = server_with(
         "file:///l.gos",
-        "fn main() {\n    let count = 7\n    count;\n}\n",
+        "fn main() {\n    let count = 7\n    count\n}\n",
     );
     // Cursor on `count` in the usage line (line 2, column 4).
     let params = position_params("file:///l.gos", 2, 4);
@@ -68,7 +68,7 @@ fn hover_on_local_binding_shows_type() {
 fn hover_on_inferred_mutable_reference_shows_concrete_type() {
     let server = server_with(
         "file:///ref.gos",
-        "fn main() {\n    let mut a = 12\n    let mut b = &mut a\n    b;\n}\n",
+        "fn main() {\n    let mut a = 12\n    let mut b = &mut a\n    b\n}\n",
     );
     let response = server.hover(&position_params("file:///ref.gos", 3, 4));
     let text = hover_text(&response);
@@ -84,7 +84,7 @@ fn hover_on_inferred_mutable_reference_shows_concrete_type() {
 
 #[test]
 fn hover_on_stdlib_symbol_shows_doc() {
-    let server = server_with("file:///p.gos", "fn main() { println!(\"hi\"); }\n");
+    let server = server_with("file:///p.gos", "fn main() { println!(\"hi\") }\n");
     // Cursor on `println` (line 0, column 13).
     let params = position_params("file:///p.gos", 0, 13);
     let response = server.hover(&params);
@@ -112,7 +112,7 @@ fn hover_on_unknown_position_returns_null_or_word_hover() {
 
 #[test]
 fn hover_on_keyword_is_well_formed() {
-    let server = server_with("file:///k.gos", "fn main() { let x = 1; }\n");
+    let server = server_with("file:///k.gos", "fn main() { let x = 1 }\n");
     // Cursor on `let` keyword (line 0, column 13).
     let params = position_params("file:///k.gos", 0, 13);
     let response = server.hover(&params);
@@ -134,7 +134,7 @@ fn hover_on_undefined_document_returns_null() {
 fn hover_on_enum_variant() {
     let server = server_with(
         "file:///e.gos",
-        "enum Color { Red, Green, Blue }\nfn main() { let c = Color::Red; }\n",
+        "enum Color { Red, Green, Blue }\nfn main() { let c = Color::Red }\n",
     );
     // Cursor on `Red` in the variant constructor (line 1, column 28).
     let params = position_params("file:///e.gos", 1, 28);
@@ -146,7 +146,7 @@ fn hover_on_enum_variant() {
 fn hover_on_field_access() {
     let server = server_with(
         "file:///f.gos",
-        "struct P { x: i64 }\nfn main() { let p = P { x: 1 }; let _ = p.x; }\n",
+        "struct P { x: i64 }\nfn main() {\nlet p = P { x: 1 }\nlet _ = p.x\n}\n",
     );
     // Cursor on `.x` (line 1, column 42).
     let params = position_params("file:///f.gos", 1, 42);
@@ -158,7 +158,7 @@ fn hover_on_field_access() {
 fn hover_on_method_call() {
     let server = server_with(
         "file:///m.gos",
-        "fn main() { let s = \"hi\".to_string(); }\n",
+        "fn main() { let s = \"hi\".to_string() }\n",
     );
     // Cursor on `to_string` (line 0, column 27).
     let params = position_params("file:///m.gos", 0, 27);
@@ -170,7 +170,7 @@ fn hover_on_method_call() {
 fn hover_returns_markdown_content_kind() {
     let server = server_with(
         "file:///md.gos",
-        "fn greet() -> i64 { 0 }\nfn main() { greet(); }\n",
+        "fn greet() -> i64 { 0 }\nfn main() { greet() }\n",
     );
     // Cursor on `greet` call (line 1, column 13).
     let params = position_params("file:///md.gos", 1, 13);

@@ -165,6 +165,7 @@ enum BraceKind {
     Paren,
     Bracket,
     Block,
+    DeclList,
     UseList,
 }
 
@@ -248,7 +249,10 @@ fn render(lines: &[Line<'_>], file: FileId) -> String {
             .iter()
             .find(|t| !t.is_comment())
             .is_some_and(|t| starts_continuation(t.kind));
-        let is_cont = lead == 0 && (starts_cont || cont_after_prev_line);
+        let inside_decl_list = stack
+            .last()
+            .is_some_and(|open| open.kind == BraceKind::DeclList);
+        let is_cont = lead == 0 && !inside_decl_list && (starts_cont || cont_after_prev_line);
         let (line_level, line_was_cont) = if lead > 0 {
             // A closing line realigns with the shallowest opener in its
             // leading closer run (`})` aligns with the statement, not
@@ -274,11 +278,15 @@ fn render(lines: &[Line<'_>], file: FileId) -> String {
         let starts_in_top_use_list = stack
             .iter()
             .any(|open| open.kind == BraceKind::UseList && open.line_level == 0);
+        let starts_in_decl_list = stack
+            .last()
+            .is_some_and(|open| open.kind == BraceKind::DeclList);
         let body = render_code_line(
             line,
             file,
             line_level,
             line_was_cont,
+            starts_in_decl_list,
             &mut stack,
             &mut prev_sig,
         );
@@ -339,6 +347,7 @@ fn render_code_line<'src>(
     file: FileId,
     line_level: usize,
     line_was_cont: bool,
+    remove_trailing_list_comma: bool,
     stack: &mut Vec<Open>,
     prev_sig: &mut Option<TokenKind>,
 ) -> String {
@@ -347,7 +356,7 @@ fn render_code_line<'src>(
     let mut prev: Option<Emitted<'src>> = None;
     let mut prev_was_comment = false;
     let mut first_code = true;
-    for tok in &line.toks {
+    for (tok_index, tok) in line.toks.iter().enumerate() {
         if tok.is_comment() {
             if !body.is_empty() {
                 if tok.gap.is_empty() {
@@ -358,6 +367,13 @@ fn render_code_line<'src>(
             }
             body.push_str(tok.text);
             prev_was_comment = true;
+            continue;
+        }
+        if remove_trailing_list_comma
+            && tok.kind == TokenKind::Punct(Punct::Comma)
+            && tok_index + 1 == line.toks.len()
+        {
+            *prev_sig = Some(tok.kind);
             continue;
         }
         let mut class = classify(tok.kind, *prev_sig, &mut closure_pipe, stack.len());
@@ -395,7 +411,21 @@ fn render_code_line<'src>(
             }
         }
         body.push_str(tok.text);
-        let brace = update_stack(tok.kind, *prev_sig, line_level, line_was_cont, stack);
+        let declaration_brace = tok.kind == TokenKind::Punct(Punct::LBrace)
+            && line.toks[..tok_index].iter().any(|prior| {
+                matches!(
+                    prior.kind,
+                    TokenKind::Keyword(Keyword::Struct | Keyword::Enum)
+                )
+            });
+        let brace = update_stack(
+            tok.kind,
+            *prev_sig,
+            line_level,
+            line_was_cont,
+            declaration_brace,
+            stack,
+        );
         if matches!(
             tok.kind,
             TokenKind::Punct(Punct::LBrace | Punct::RBrace | Punct::FatArrow | Punct::Semi)
@@ -421,6 +451,7 @@ fn update_stack(
     prev_sig: Option<TokenKind>,
     line_level: usize,
     line_was_cont: bool,
+    declaration_brace: bool,
     stack: &mut Vec<Open>,
 ) -> Option<BraceKind> {
     let open = |kind: BraceKind| Open {
@@ -438,7 +469,9 @@ fn update_stack(
             Some(BraceKind::Bracket)
         }
         TokenKind::Punct(Punct::LBrace) => {
-            let brace = if prev_sig == Some(TokenKind::Punct(Punct::ColonColon)) {
+            let brace = if declaration_brace {
+                BraceKind::DeclList
+            } else if prev_sig == Some(TokenKind::Punct(Punct::ColonColon)) {
                 BraceKind::UseList
             } else {
                 BraceKind::Block
@@ -826,18 +859,14 @@ fn assemble(entries: &[Entry]) -> String {
 /// and text.
 fn verify_equivalence(before: &str, after: &str, file: FileId) -> Result<(), FormatError> {
     let original = significant_tokens(before, file);
-    let (tokens, errs) = tokenize(after, file);
+    let (_tokens, errs) = tokenize(after, file);
     if !errs.is_empty() {
         return Err(FormatError::SelfCheck(format!(
             "output no longer lexes cleanly ({} error(s))",
             errs.len()
         )));
     }
-    let rendered: Vec<(TokenKind, &str)> = tokens
-        .iter()
-        .filter(|t| !matches!(t.kind, TokenKind::Whitespace | TokenKind::Eof))
-        .map(|t| (t.kind, &after[t.span.start as usize..t.span.end as usize]))
-        .collect();
+    let rendered = significant_tokens(after, file);
     if original.len() != rendered.len() {
         return Err(FormatError::SelfCheck(format!(
             "token count changed from {} to {}",
@@ -861,8 +890,26 @@ fn significant_tokens(source: &str, file: FileId) -> Vec<(TokenKind, &str)> {
     let (tokens, _errs) = tokenize(source, file);
     tokens
         .iter()
-        .filter(|t| !matches!(t.kind, TokenKind::Whitespace | TokenKind::Eof))
-        .map(|t| (t.kind, &source[t.span.start as usize..t.span.end as usize]))
+        .enumerate()
+        .filter(|(index, token)| {
+            if matches!(token.kind, TokenKind::Whitespace | TokenKind::Eof) {
+                return false;
+            }
+            if token.kind != TokenKind::Punct(Punct::Comma) {
+                return true;
+            }
+            let next_start = tokens[index + 1..]
+                .iter()
+                .find(|next| !matches!(next.kind, TokenKind::Whitespace))
+                .map_or(source.len(), |next| next.span.start as usize);
+            !source[token.span.end as usize..next_start].contains('\n')
+        })
+        .map(|(_, token)| {
+            (
+                token.kind,
+                &source[token.span.start as usize..token.span.end as usize],
+            )
+        })
         .collect()
 }
 
@@ -971,7 +1018,10 @@ mod tests {
     #[test]
     fn attributes_stay_tight() {
         let source = "#[derive(Clone, PartialEq)]\nstruct Point {\n    x: f64,\n}\n";
-        assert_eq!(fmt(source), source);
+        assert_eq!(
+            fmt(source),
+            "#[derive(Clone, PartialEq)]\nstruct Point {\n    x: f64\n}\n"
+        );
     }
 
     #[test]
@@ -1014,8 +1064,14 @@ mod tests {
     }
 
     #[test]
-    fn semicolons_kept_as_authored() {
-        let source = "fn main() {\n    let x = 1;\n    let y = 2\n}\n";
+    fn newline_separated_statements_are_kept() {
+        let source = "fn main() {\n    let x = 1\n    let y = 2\n}\n";
         assert_eq!(fmt(source), source);
+    }
+
+    #[test]
+    fn removes_commas_from_multiline_struct_fields() {
+        let source = "struct Point {\n    x: i64,\n    y: i64,\n}\n";
+        assert_eq!(fmt(source), "struct Point {\n    x: i64\n    y: i64\n}\n");
     }
 }

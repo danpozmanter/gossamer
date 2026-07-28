@@ -643,7 +643,10 @@ fn __gos_http_bytes_to_str(b: &[u8]) -> String {
 fn __gos_http_first12(b: &[u8]) -> [u8] {
     let mut out: [u8] = []
     let mut i = 0
-    while i < 12 { out.push(b[i]); i += 1 }
+    while i < 12 {
+        out.push(b[i])
+        i += 1
+    }
     out
 }
 fn __gos_http_trim_slash(s: &String) -> String {

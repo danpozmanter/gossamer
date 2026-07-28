@@ -48,7 +48,7 @@ fn integer_addition_lowers_to_binary_op_add() {
 
 #[test]
 fn cast_expression_preserves_rvalue_cast_node() {
-    let bodies = build("fn main() -> i64 { let n = 7i64; n as i64 }\n");
+    let bodies = build("fn main() -> i64 { let n = 7i64\n n as i64 }\n");
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
     let has_cast = main.blocks.iter().flat_map(|b| &b.stmts).any(|s| {
         matches!(
@@ -97,7 +97,7 @@ fn if_else_produces_switchint_on_bool_discriminant() {
 
 #[test]
 fn while_loop_produces_conditional_back_edge_to_header() {
-    let bodies = build("fn main() { let mut n = 3i64; while n > 0i64 { n = n - 1i64 } }\n");
+    let bodies = build("fn main() { let mut n = 3i64\n while n > 0i64 { n = n - 1i64 } }\n");
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
     let header_id = main
         .blocks
@@ -131,7 +131,7 @@ fn match_on_int_produces_ordered_arms_in_switchint() {
 
 #[test]
 fn tuple_destructuring_produces_field_projection_reads() {
-    let bodies = build("fn main() -> i64 { let (a, b) = (11i64, 22i64); a + b }\n");
+    let bodies = build("fn main() -> i64 { let (a, b) = (11i64, 22i64)\n a + b }\n");
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
     let field_reads: Vec<u32> = main
         .blocks
@@ -160,7 +160,7 @@ fn tuple_destructuring_produces_field_projection_reads() {
 
 #[test]
 fn array_index_produces_projection_index_with_local_offset() {
-    let bodies = build("fn main() -> i64 { let xs = [5i64, 7i64, 9i64]; xs[1i64] }\n");
+    let bodies = build("fn main() -> i64 { let xs = [5i64, 7i64, 9i64]\n xs[1i64] }\n");
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
     let has_index_proj = main.blocks.iter().flat_map(|b| &b.stmts).any(|s| {
         matches!(
@@ -180,7 +180,7 @@ fn array_index_produces_projection_index_with_local_offset() {
 #[test]
 fn positional_struct_constructor_preserves_declaration_order() {
     let bodies = build(
-        "struct Pair { a: i64, b: i64 }\nfn main() -> i64 { let p = Pair { 3i64, 7i64 }; p.a }\n",
+        "struct Pair { a: i64, b: i64 }\nfn main() -> i64 { let p = Pair { a: 3i64, b: 7i64 }\n p.a }\n",
     );
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
     let operands = main
@@ -201,7 +201,7 @@ fn positional_struct_constructor_preserves_declaration_order() {
 #[test]
 fn for_range_produces_counter_loop_with_add_increment() {
     let bodies = build(
-        "fn main() -> i64 { let mut sum = 0i64; for n in 0i64..3i64 { sum = sum + n } sum }\n",
+        "fn main() -> i64 { let mut sum = 0i64\n for n in 0i64..3i64 { sum = sum + n } sum }\n",
     );
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
     let has_counter_add = main.blocks.iter().flat_map(|b| &b.stmts).any(|s| {
@@ -271,7 +271,7 @@ fn function_call_preserves_argument_order_in_terminator() {
 
 #[test]
 fn array_repeat_produces_rvalue_repeat_with_compile_time_count() {
-    let bodies = build("fn main() -> i64 { let xs = [42i64; 5i64]; xs[0i64] }\n");
+    let bodies = build("fn main() -> i64 { let xs = [42i64; 5i64]\n xs[0i64] }\n");
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
     let has_repeat = main.blocks.iter().flat_map(|b| &b.stmts).any(|s| {
         matches!(

@@ -51,9 +51,13 @@ fn main() {
 
     // Algebra over String sets (cardinality + membership only).
     let mut a: HashSet<String> = HashSet::new()
-    a.insert("x"); a.insert("y"); a.insert("z")
+    a.insert("x")
+    a.insert("y")
+    a.insert("z")
     let mut b: HashSet<String> = HashSet::new()
-    b.insert("y"); b.insert("z"); b.insert("w")
+    b.insert("y")
+    b.insert("z")
+    b.insert("w")
     let u = a.union(b)
     println!("union len {} has_w {} has_x {}", u.len(), u.contains("w"), u.contains("x"))
     let i = a.intersection(b)
@@ -66,10 +70,12 @@ fn main() {
 
     // Predicates: subset / superset / disjoint, incl empty-set edges.
     let mut sub: HashSet<String> = HashSet::new()
-    sub.insert("x"); sub.insert("y")
+    sub.insert("x")
+    sub.insert("y")
     let empty: HashSet<String> = HashSet::new()
     let mut far: HashSet<String> = HashSet::new()
-    far.insert("p"); far.insert("q")
+    far.insert("p")
+    far.insert("q")
     println!("subset {} superset {} disjoint {}",
         sub.is_subset(a), a.is_superset(sub), a.is_disjoint(far))
     println!("empty subset {} a-disjoint-empty {}",

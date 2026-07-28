@@ -1,2 +1,10 @@
-fn sum_sorted(xs: Vec<i64>) -> i64 { let mut v = xs; v.sort_by(|a, b| b - a); let mut acc = 0; for n in v { acc += n }; acc }
-fn main() { let mut total = 0; let mut i = 0; while i < 3000 { total += sum_sorted([i % 7, i % 3, i % 11]); i += 1 }; println!("{}", total) }
+fn sum_sorted(xs: Vec<i64>) -> i64 { let mut v = xs
+    v.sort_by(|a, b| b - a)
+    let mut acc = 0
+    for n in v { acc += n }
+    acc }
+fn main() { let mut total = 0
+    let mut i = 0
+    while i < 3000 { total += sum_sorted([i % 7, i % 3, i % 11])
+        i += 1 }
+    println!("{}", total) }

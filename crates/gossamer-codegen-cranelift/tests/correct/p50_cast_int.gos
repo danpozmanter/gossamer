@@ -1,1 +1,4 @@
-fn main() { let n: i32 = 42i32; println(n as i64) }
+fn main() {
+    let n: i32 = 42i32
+    println(n as i64)
+}

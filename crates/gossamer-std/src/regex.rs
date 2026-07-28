@@ -229,6 +229,22 @@ mod tests {
     }
 
     #[test]
+    fn unicode_classes_case_folding_and_offsets_are_explicit() {
+        let letters = compile(r"(?iu)\p{Greek}+").unwrap();
+        assert!(is_match(&letters, "prefix ΔέΛΤΑ suffix"));
+
+        let words = compile(r"\w+").unwrap();
+        let hits = find_all(&words, "café 東京");
+        assert_eq!(
+            hits.iter().map(|hit| hit.2.as_str()).collect::<Vec<_>>(),
+            ["café", "東京"]
+        );
+
+        let accent = compile("é").unwrap();
+        assert_eq!(find(&accent, "aé").unwrap(), (1, 3, "é".to_string()));
+    }
+
+    #[test]
     fn captures_returns_none_for_unmatched_optional_groups() {
         let re = compile(r"(\w+)=(\d+)?").unwrap();
         let caps = captures(&re, "port=").unwrap();

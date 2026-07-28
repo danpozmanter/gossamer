@@ -4,11 +4,11 @@ use std::errors
 // variant (Map), plus scalar leaves. Five variants force the header-disc
 // representation, matching json-serde's JsonVal.
 enum Node {
-    Nil,
-    Num(i64),
-    Txt(String),
-    List(Vec<Node>),
-    Map(Vec<(String, Node)>),
+    Nil
+    Num(i64)
+    Txt(String)
+    List(Vec<Node>)
+    Map(Vec<(String, Node)>)
 }
 
 fn leaf(x: i64) -> Result<Node, errors::Error> {
@@ -42,8 +42,12 @@ fn weigh(n: &Node) -> i64 {
         Node::Nil => 1,
         Node::Num(v) => *v,
         Node::Txt(s) => s.len(),
-        Node::List(xs) => { let mut s = 0; for x in xs { s += weigh(x) }; s }
-        Node::Map(ps) => { let mut s = 0; for (k, v) in ps { s += k.len() + weigh(v) }; s }
+        Node::List(xs) => { let mut s = 0
+            for x in xs { s += weigh(x) }
+            s }
+        Node::Map(ps) => { let mut s = 0
+            for (k, v) in ps { s += k.len() + weigh(v) }
+            s }
     }
 }
 

@@ -7,12 +7,14 @@ use std::{fs, path}
 fn main() {
     let dir = match fs::temp_dir("gossamer-temp-resource") {
         Ok(path) => path,
-        Err(err) => { println!("temp dir error: {}", err); return },
+        Err(err) => { println!("temp dir error: {}", err)
+            return },
     }
     let nested = path::join(&dir, &"roundtrip.txt")
     match fs::write(nested, "temporary contents".to_string().as_bytes()) {
         Ok(_) => println!("temp dir writable: true"),
-        Err(err) => { println!("temp write error: {}", err); return },
+        Err(err) => { println!("temp write error: {}", err)
+            return },
     }
     println!("temp dir exists: {}", fs::is_dir(dir))
     let _ = fs::remove_dir_all(dir)

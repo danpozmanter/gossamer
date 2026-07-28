@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.37.0 - Quieter REPL and consistent syntax
+
+- Make the REPL quiet by default, add command-wide `-v` plumbing, use the
+  `gos>` prompt, print expression values without numbered markers, and wrap
+  help and listing output to the terminal width with an 80-column cap.
+- Reject trailing statement semicolons and consistently separate single-line
+  brace lists with commas and multiline lists with newlines; normalize accepted
+  multiline trailing commas with `gos fmt`.
+- Distinguish unit, tuple, and named struct construction, and reject positional
+  fields for named structs.
+- Iterate bare strings as Unicode characters, start `..end` loops at zero,
+  correctly consume ranges stored in bindings, preserve mutable vector
+  bindings after REPL loops, and verify the Unicode regex contract across
+  execution tiers.
+
 ## 0.36.2 - Nested functions and structs
 
 - Support spec-compliant block-local function and struct items across VM and

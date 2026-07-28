@@ -9,7 +9,10 @@ A generic function may bound a type parameter by a trait and call that
 trait's methods on a parameter receiver:
 
 ```gossamer
-trait Shape { fn name(&self) -> String; fn area(&self) -> i64; }
+trait Shape {
+    fn name(&self) -> String
+    fn area(&self) -> i64
+}
 
 fn report<T: Shape>(s: &T) -> String {
     format!("{}: {}", s.name(), s.area())

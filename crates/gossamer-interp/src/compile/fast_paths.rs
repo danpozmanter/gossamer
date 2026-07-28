@@ -1953,6 +1953,22 @@ impl<'tcx> FnBuilder<'tcx> {
         if next_name.name != "next" || !next_args.is_empty() {
             return Ok(None);
         }
+        // A range or adapter stored in a binding is a real lazy Iterator
+        // state, not an indexable collection. Let generic method dispatch
+        // call `Iterator::next`; treating it as a Vec gives it length zero
+        // and silently skips the loop.
+        let collection_iter_method = matches!(
+            &next_recv.kind,
+            HirExprKind::MethodCall { name, args, .. }
+                if name.name == "iter" && args.is_empty()
+        );
+        if matches!(
+            self.tcx.kind(next_recv.ty),
+            Some(gossamer_types::TyKind::Iterator(_))
+        ) && !collection_iter_method
+        {
+            return Ok(None);
+        }
         // Walk the iterator chain. Recognise:
         //   `vec.iter()`              → element binding, no enumerate
         //   `vec.iter().enumerate()`  → tuple binding (i, x)

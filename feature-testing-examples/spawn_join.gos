@@ -51,8 +51,10 @@ mod tests {
     fn join_returns_ok_with_value() {
         let h = spawn(|| doubler(21))
         match h.join() {
-            Ok(v) => { let _ = testing::check_eq(&v, &42, "ok value"); },
-            Err(_) => { let _ = testing::check(false, "expected Ok"); },
+            Ok(v) => { let _ = testing::check_eq(&v, &42, "ok value")
+            },
+            Err(_) => { let _ = testing::check(false, "expected Ok")
+            },
         }
     }
 
@@ -60,8 +62,10 @@ mod tests {
     fn join_captures_panic_as_err() {
         let h = spawn(|| super::boom())
         match h.join() {
-            Ok(_) => { let _ = testing::check(false, "expected Err"); },
-            Err(e) => { let _ = testing::check_eq(&e, &"boom", "panic message"); },
+            Ok(_) => { let _ = testing::check(false, "expected Err")
+            },
+            Err(e) => { let _ = testing::check_eq(&e, &"boom", "panic message")
+            },
         }
     }
 
@@ -70,8 +74,10 @@ mod tests {
         let base = 1000
         let h = spawn(|| base + 7)
         match h.join() {
-            Ok(v) => { let _ = testing::check_eq(&v, &1007, "captured env"); },
-            Err(_) => { let _ = testing::check(false, "expected Ok"); },
+            Ok(v) => { let _ = testing::check_eq(&v, &1007, "captured env")
+            },
+            Err(_) => { let _ = testing::check(false, "expected Ok")
+            },
         }
     }
 }

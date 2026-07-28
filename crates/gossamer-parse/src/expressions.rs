@@ -744,7 +744,7 @@ impl Parser<'_> {
                     continue;
                 }
                 args.push(p.parse_expr_no_assign());
-                if !p.eat_punct(Punct::Comma) {
+                if !p.eat_list_separator() {
                     break;
                 }
             }
@@ -1432,7 +1432,7 @@ impl Parser<'_> {
                     None
                 };
                 list.push(ClosureParam { pattern, ty });
-                if !self.eat_punct(Punct::Comma) {
+                if !self.eat_list_separator() {
                     break;
                 }
             }
@@ -1641,7 +1641,7 @@ impl Parser<'_> {
                 } else {
                     base = Some(Box::new(expr));
                 }
-                if !self.eat_punct(Punct::Comma) {
+                if !self.eat_list_separator() {
                     break;
                 }
                 continue;
@@ -1669,7 +1669,7 @@ impl Parser<'_> {
             };
             let value = Some(self.parse_expr_no_assign());
             fields.push(StructExprField { name, value });
-            if !self.eat_punct(Punct::Comma) {
+            if !self.eat_list_separator() {
                 break;
             }
         }

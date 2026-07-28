@@ -6,6 +6,17 @@ Compiled regular expressions (Rust `regex` crate syntax; no backreferences or lo
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
+## Unicode behavior
+
+Unicode mode is enabled by default. UTF-8 literals, `.`, `\w`, `\s`, Unicode
+property classes such as `\p{Greek}`, case-insensitive matching, captures,
+split, and replacement operate on Unicode scalar values.
+
+Regex does not normalize text and does not treat an extended grapheme cluster
+as one character. Normalize input explicitly when canonical equivalence is
+required. `find` and `find_all` return UTF-8 byte offsets, matching the
+underlying Rust regex API, while the matched text remains valid UTF-8.
+
 ## API details and source
 
 The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/regex.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.

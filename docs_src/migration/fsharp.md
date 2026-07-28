@@ -58,22 +58,21 @@ let updated = { cfg with Port = 9090 }
 
 ```gos
 struct Config {
-    host: String,
-    port: i64,
-    verbose: bool,
+    host: String
+    port: i64
+    verbose: bool
 }
 
 let cfg = Config { host: "localhost", port: 8080, verbose: false }
 let updated = Config { port: 9090, ..cfg }
 ```
 
-Named structs use braces for both named and positional literals:
+Named structs use braces with keyed fields:
 
 ```gos
 struct Pair { left: i64, right: i64 }
 
 let a = Pair { left: 1, right: 2 }
-let b = Pair { 1, 2 }
 ```
 
 Parentheses are reserved for tuple structs and enum tuple variants.
@@ -163,7 +162,7 @@ implemented explicitly:
 
 ```gos
 trait Area {
-    fn area(&self) -> f64;
+    fn area(&self) -> f64
 }
 
 struct Circle { r: f64 }

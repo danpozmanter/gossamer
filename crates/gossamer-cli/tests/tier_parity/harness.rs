@@ -520,6 +520,7 @@ const SPECS: &[Spec] = &[
     // load/store off the GosVec header on the compiled tiers; covers read,
     // write, nested Vec, scalar lenient OOB, and an aggregate element type.
     spec("feature-testing-examples/vec_f64_inline_index.gos"),
+    spec("feature-testing-examples/vec_get_method.gos"),
     spec("feature-testing-examples/jit_mixed_arity6.gos"),
     spec("feature-testing-examples/jit_aggregate_param.gos"),
     // Bytecode VM user-function inliner - must stay bit-identical to the

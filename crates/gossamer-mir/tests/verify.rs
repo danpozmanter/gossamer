@@ -129,7 +129,7 @@ fn optimise_preserves_verify_invariants() {
         "fn id(x: i64) -> i64 { x }\n",
         "fn add(a: i64, b: i64) -> i64 { a + b }\n",
         "fn const_branch() -> i64 { if true { 1 } else { 0 } }\n",
-        "fn loop_acc(n: i64) -> i64 { let mut s = 0; let mut i = 0; while i < n { s = s + i; i = i + 1 }; s }\n",
+        "fn loop_acc(n: i64) -> i64 { let mut s = 0\n let mut i = 0\n while i < n { s = s + i\n i = i + 1 }\n s }\n",
     ];
     for source in sources {
         let (mut bodies, tcx) = build(source);

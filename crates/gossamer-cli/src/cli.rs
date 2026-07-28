@@ -18,6 +18,9 @@ use crate::{doc, repl};
 #[derive(Debug, Parser)]
 #[command(name = "gos", version, about = "The Gossamer toolchain")]
 pub(crate) struct Cli {
+    /// Print additional progress information for the command being run.
+    #[arg(short, long, global = true)]
+    verbose: bool,
     /// Subcommand to dispatch; omit for a bare no-op that still
     /// prints `--version`.
     #[command(subcommand)]
@@ -629,7 +632,7 @@ enum Command {
 /// `Err` into a non-zero exit code with a styled `error:` prefix.
 pub(crate) fn run() -> ExitCode {
     let cli = parse_cli();
-    match dispatch(cli.command) {
+    match dispatch(cli.command, cli.verbose) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("{}: {err:#}", style::error("error"));
@@ -726,9 +729,9 @@ fn parse_cli() -> Cli {
     clippy::too_many_lines,
     reason = "intentional flat dispatch - one arm per subcommand keeps grep-ability"
 )]
-fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
+fn dispatch(command: Option<Command>, verbose: bool) -> anyhow::Result<()> {
     match command {
-        None | Some(Command::Repl) => repl::cmd_repl(),
+        None | Some(Command::Repl) => repl::cmd_repl(verbose),
         Some(Command::Parse { file }) => cmd::parse::run(&file),
         Some(Command::Check {
             file,

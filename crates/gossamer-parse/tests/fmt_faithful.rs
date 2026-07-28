@@ -54,8 +54,21 @@ fn significant(source: &str) -> Vec<(TokenKind, String)> {
     assert!(errs.is_empty(), "lex errors in input");
     tokens
         .iter()
-        .filter(|t| !matches!(t.kind, TokenKind::Whitespace | TokenKind::Eof))
-        .map(|t| {
+        .enumerate()
+        .filter(|(index, token)| {
+            if matches!(token.kind, TokenKind::Whitespace | TokenKind::Eof) {
+                return false;
+            }
+            if token.kind != TokenKind::Punct(gossamer_lex::Punct::Comma) {
+                return true;
+            }
+            let next_start = tokens[index + 1..]
+                .iter()
+                .find(|next| !matches!(next.kind, TokenKind::Whitespace))
+                .map_or(source.len(), |next| next.span.start as usize);
+            !source[token.span.end as usize..next_start].contains('\n')
+        })
+        .map(|(_, t)| {
             (
                 t.kind,
                 source[t.span.start as usize..t.span.end as usize].to_string(),
@@ -156,8 +169,8 @@ fn println_and_format_macros_never_rewritten() {
 }
 
 #[test]
-fn struct_literals_keep_keyed_positional_and_mixed_forms() {
-    let source = "struct Account { owner: String, balance: i64 }\n\nfn main() {\n    let keyed = Account { owner: \"jane\", balance: 1200 }\n    let positional = Account { \"jane\", 1200 }\n    let mixed = Account { balance: 1200, \"jane\" }\n}\n";
+fn struct_literals_keep_keyed_forms() {
+    let source = "struct Account { owner: String, balance: i64 }\n\nfn main() {\n    let keyed = Account { owner: \"jane\", balance: 1200 }\n}\n";
     assert_eq!(fmt(source), source);
 }
 

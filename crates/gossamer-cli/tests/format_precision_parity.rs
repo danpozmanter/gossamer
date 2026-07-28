@@ -134,8 +134,10 @@ fn format_combined_specifiers() {
     assert_parity(
         "fmt_combo",
         r#"fn main() {
-    let pi = 3.14159265358979;
-    println(format!("pi={:.2} pi3={:.3} pad={:08.3}", pi, pi, pi));
+    let pi = 3.14159265358979
+
+    println(format!("pi={:.2} pi3={:.3} pad={:08.3}", pi, pi, pi))
+
 }
 "#,
     );

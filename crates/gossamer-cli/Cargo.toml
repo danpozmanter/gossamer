@@ -81,6 +81,7 @@ gossamer-types = { workspace = true }
 parking_lot = { workspace = true }
 rustyline = { version = "18", default-features = false, features = ["with-file-history"] }
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
+terminal_size = "0.4"
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 which = { workspace = true }

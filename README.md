@@ -91,6 +91,21 @@ over `typeInfo::<T>()` reflection generates native per-field code.
 
 Gossamer is built to extend simply via (synchronous) Rust.
 
+**No semi-colons**
+
+`let x = 9` not `let x = 9;`. Newlines are sufficient.
+
+## Features unique to Gossamer
+
+Or at least - not a carbon copy by intent!
+
+**Commas or Newlines**
+
+For structs, enums, match branches, function arguments & parameters, 
+use commas for single line, and newlines for multi-line. 
+This gives a consistent and cleaner look.
+(Optional - `gos fmt` will clean this up).
+
 ## Details
 
 - Language spec: [`SPEC.md`](SPEC.md)
@@ -213,7 +228,9 @@ fn main() {
 ## REPL meta commands
 
 Commands such as `%help`, `%ls`, and `%find` help users navigate the language
-from the REPL.
+from the REPL. Input uses the `gos>` prompt and expression results print as
+plain values. Declaration and binding confirmations are hidden unless the REPL
+is started with `-v`; listings wrap to the terminal width, capped at 80 columns.
 
 ## Toolchain commands
 

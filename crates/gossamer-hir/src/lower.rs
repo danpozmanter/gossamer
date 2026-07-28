@@ -69,6 +69,7 @@ pub fn lower_source_file_with_edition(
         import_targets: collect_import_targets(&source.uses),
         ctor_arity: collect_ctor_arities(&source.items),
         struct_fields: collect_struct_fields(&source.items),
+        unit_structs: collect_unit_structs(&source.items),
         module_fn_paths,
         promoted_items: Vec::new(),
     };
@@ -237,6 +238,29 @@ fn collect_struct_fields(items: &[AstItem]) -> std::collections::HashMap<String,
     map
 }
 
+fn collect_unit_structs(items: &[AstItem]) -> std::collections::HashSet<String> {
+    fn visit(items: &[AstItem], out: &mut std::collections::HashSet<String>) {
+        for item in items {
+            match &item.kind {
+                AstItemKind::Struct(decl)
+                    if matches!(decl.body, gossamer_ast::StructBody::Unit) =>
+                {
+                    out.insert(decl.name.name.clone());
+                }
+                AstItemKind::Mod(decl) => {
+                    if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                        visit(inner, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut structs = std::collections::HashSet::new();
+    visit(items, &mut structs);
+    structs
+}
+
 fn collect_struct_fields_into(
     items: &[AstItem],
     map: &mut std::collections::HashMap<String, Vec<String>>,
@@ -357,6 +381,7 @@ struct Lowerer<'a> {
     /// initialized positionally inside braces, and those temporary positions
     /// are rewritten to real field names before MIR lowering.
     struct_fields: std::collections::HashMap<String, Vec<String>>,
+    unit_structs: std::collections::HashSet<String>,
     /// Canonical `mod::name` segments of every inline-module function,
     /// keyed by `DefId`. Path references rewrite to this spelling so a
     /// bare in-module call names the module's own item, not whichever
@@ -721,6 +746,21 @@ impl Lowerer<'_> {
     fn lower_expr_kind(&mut self, expr: &AstExpr) -> HirExprKind {
         match &expr.kind {
             AstExprKind::Literal(lit) => HirExprKind::Literal(lower_literal(lit)),
+            AstExprKind::Path(path)
+                if path
+                    .segments
+                    .last()
+                    .is_some_and(|segment| self.unit_structs.contains(&segment.name.name))
+                    && matches!(
+                        self.resolutions.get(expr.id),
+                        Some(Resolution::Def {
+                            kind: gossamer_resolve::DefKind::Struct,
+                            ..
+                        })
+                    ) =>
+            {
+                self.lower_struct_literal(expr.id, path, &[], None, expr.span)
+            }
             AstExprKind::Path(path) => self.lower_path_expr(expr.id, path),
             AstExprKind::Call { callee, args } => {
                 if let Some(lowered) = self.lower_tuple_struct_call(callee, args, expr.span) {
@@ -984,7 +1024,34 @@ impl Lowerer<'_> {
         label: Option<String>,
         span: Span,
     ) -> HirExprKind {
-        let iter_expr = self.lower_expr(iter);
+        let mut iter_expr = self.lower_expr(iter);
+        if matches!(
+            self.tcx.kind(iter_expr.ty),
+            Some(gossamer_types::TyKind::String)
+        ) {
+            let char_ty = self.tcx.char_ty();
+            let collection_ty = self.tcx.intern(gossamer_types::TyKind::Vec(char_ty));
+            iter_expr = HirExpr {
+                id: self.fresh(),
+                span: iter_expr.span,
+                ty: collection_ty,
+                kind: HirExprKind::MethodCall {
+                    receiver: Box::new(iter_expr),
+                    name: Ident::new("chars"),
+                    args: Vec::new(),
+                },
+            };
+        } else if let HirExprKind::Range { start, .. } = &mut iter_expr.kind
+            && start.is_none()
+        {
+            let zero = HirExpr {
+                id: self.fresh(),
+                span: iter_expr.span,
+                ty: self.tcx.int_ty(gossamer_types::IntTy::I64),
+                kind: HirExprKind::Literal(HirLiteral::Int("0".to_string())),
+            };
+            *start = Some(Box::new(zero));
+        }
         let iter_ty = iter_expr.ty;
         // For unknown / Adt iter types the canonical desugar
         // needs to bind the iter to a fresh slot and call

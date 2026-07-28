@@ -115,11 +115,10 @@ letter         = unicode_letter | "_"
 decimal_digit  = "0" ... "9"
 ```
 
-Whitespace is any sequence of U+0020, U+0009, U+000D, U+000A. Unlike Go,
-Gossamer **does not perform automatic semicolon insertion**. Statements
-are terminated by the end of the expression they produce, or by a
-newline after expressions that don't continue on the next line. Blocks
-(`{ ... }`) serve as the primary delimiters.
+Whitespace is any sequence of U+0020, U+0009, U+000D, U+000A. Semicolons are
+not part of Gossamer statement syntax and are always rejected. Statements are
+separated by a newline after expressions that do not continue on the next
+line, or by a surrounding block delimiter (`{ ... }`).
 
 ### 2.1 Comments
 
@@ -245,8 +244,13 @@ fn abs(n: i32) -> i32 {
 }
 ```
 
-Unlike Go, Gossamer never auto-inserts `;`. The lexer emits tokens
-verbatim; the parser consumes whitespace/newlines only as separators.
+Unlike Go, Gossamer neither inserts nor accepts `;`. The lexer emits tokens
+verbatim; the parser uses whitespace, newlines, and delimiters as separators.
+
+Delimited lists use commas on one line and newlines across multiple lines.
+This applies to function parameters and arguments, closure parameters, struct
+fields and literals, and enum variants and payload fields. A comma at the end
+of a multiline entry is accepted for migration, but `gos fmt` removes it.
 
 One narrow newline rule disambiguates the three operators that are
 also unary prefixes (`&`, `*`, `-`): when one of them appears as the
@@ -267,7 +271,7 @@ The other binary operators (`+`, `&&`, `|>`, `==`, …) continue across
 newlines unconditionally.
 
 > **Gotcha - leading `&` / `*` / `-` starts a new statement.** Because
-> Gossamer never inserts semicolons, a line break before one of these
+> Gossamer does not accept semicolons, and a line break before one of these
 > three operators is **not** a continuation. Splitting a binary
 > expression as
 >
@@ -492,8 +496,10 @@ retained for readability and forward compatibility.
 
 ```
 StructDecl = [ "pub" ] "struct" Ident [ Generics ] [ StructBody ] [ WhereClause ]
-StructBody = "{" [ FieldList ] "}" | "(" [ TypeList ] ")" | ";"
-FieldList  = Field { "," Field } [ "," ]
+StructBody = "{" [ FieldList ] "}" | "(" [ TypeList ] ")"
+FieldList  = SingleLineFields | MultiLineFields
+SingleLineFields = Field { "," Field }
+MultiLineFields  = newline Field { [ "," ] newline Field } [ "," ] newline
 Field      = [ "pub" ] Ident ":" Type
 ```
 
@@ -532,6 +538,9 @@ are retained, so the base stays usable after the update.
 
 ```
 EnumDecl = [ "pub" ] "enum" Ident [ Generics ] "{" VariantList "}" [ WhereClause ]
+VariantList = SingleLineVariants | MultiLineVariants
+SingleLineVariants = Variant { "," Variant }
+MultiLineVariants  = newline Variant { [ "," ] newline Variant } [ "," ] newline
 Variant  = Ident [ "(" TypeList ")" | "{" FieldList "}" ]
 ```
 
@@ -557,10 +566,10 @@ pub enum Result<T, E> { Ok(T), Err(E) }
 
 ```
 TraitDecl = [ "pub" ] "trait" Ident [ Generics ] [ ":" BoundList ] "{" TraitItems "}"
-TraitItem = FnSig ";"
+TraitItem = FnSig
           | FnDecl                         // with default body
-          | "type" Ident [ ":" BoundList ] [ "=" Type ] ";"
-          | "const" Ident ":" Type [ "=" Expr ] ";"
+          | "type" Ident [ ":" BoundList ] [ "=" Type ]
+          | "const" Ident ":" Type [ "=" Expr ]
 ```
 
 Traits support:
@@ -576,7 +585,10 @@ function may bound its type parameters by a trait and call the trait's
 methods on a parameter receiver:
 
 ```
-trait Shape { fn name(&self) -> String; fn area(&self) -> i64; }
+trait Shape {
+    fn name(&self) -> String
+    fn area(&self) -> i64
+}
 fn report<T: Shape>(s: &T) -> String {
     format!("{}: {}", s.name(), s.area())
 }
@@ -696,7 +708,7 @@ pointer, but it is not spelled `dyn`.
 ### 3.12 Type aliases
 
 ```
-TypeAlias = "type" Ident [ Generics ] "=" Type ";"
+TypeAlias = "type" Ident [ Generics ] "=" Type
 ```
 
 ### 3.13 Derivable traits
@@ -750,7 +762,7 @@ to the same entry - with no `#[derive(Hash)]`; hashing is automatic, and
 ### 4.1 Bindings
 
 ```
-LetStmt = "let" [ "mut" ] Pattern [ ":" Type ] [ "=" Expr ] ";"
+LetStmt = "let" [ "mut" ] Pattern [ ":" Type ] [ "=" Expr ]
 ```
 
 - `let x = 1` - immutable binding, type inferred.
@@ -1731,7 +1743,7 @@ closed-channel case:
 ```
 select {
   Some(v) = ch.recv() => process(v),
-  None    = ch.recv() => { break; }      // channel closed
+  None    = ch.recv() => { break }       // channel closed
   default              => do_other(),
 }
 ```
@@ -1892,7 +1904,8 @@ The HIR desugars to
 call advances the same state. `IntoIterator` is implicit:
 `Vec<T>`, `HashMap<K,V>`, ranges, `Receiver<T>`, and any
 user struct with `fn next(&mut self) -> Option<T>` are all
-iterable directly.
+iterable directly. A range stored in a binding retains its iterator state:
+`let a = 0..3` followed by `for i in a { body }` visits `0`, `1`, and `2`.
 
 The public `std::iter` module is currently Experimental and eager. Its free
 functions use data-last argument order (§4.6), accept `Vec<T>` inputs, and
@@ -2305,12 +2318,14 @@ Item         = FnDecl | StructDecl | EnumDecl | TraitDecl | ImplDecl
 
 FnDecl       = [Attrs] [ "pub" ] [ "unsafe" ] "fn" Ident [ Generics ]
                "(" [ ParamList ] ")" [ "->" Type ] [ WhereClause ] Block
-ParamList    = Param { "," Param } [ "," ]
+ParamList    = SingleLineParams | MultiLineParams
+SingleLineParams = Param { "," Param }
+MultiLineParams  = newline Param { [ "," ] newline Param } [ "," ] newline
 Param        = ( "self" | "&" "self" | "&" "mut" "self" | Pattern ":" Type )
 
-Block        = "{" { Stmt ";" } [ Expr ] "}"
+Block        = "{" { Stmt } [ Expr ] "}"
 Stmt         = LetStmt | Item | ExprStmt | DeferStmt | GoStmt
-ExprStmt     = Expr [ ";" ]
+ExprStmt     = Expr
 
 Expr         = LiteralExpr | PathExpr | CallExpr | MethodCall | FieldAccess
              | IndexExpr | UnaryExpr | BinaryExpr | AssignExpr | CastExpr
@@ -2514,7 +2529,7 @@ that needs to materialize a 2027 iterator uses `iter::collect`.
 5. No type switch `x.(type)` - use `match` on an enum or `match` on
    a trait object with `Any::type_id`.
 6. No labeled `goto`.
-7. No implicit newline-as-semicolon rule.
+7. No semicolons. Newlines and delimiters separate statements.
 8. Visibility by `pub`, not by capitalization.
 9. Generics syntax is `<T>`, not `[T]`.
 

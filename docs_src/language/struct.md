@@ -35,19 +35,32 @@ let unit = Unit
 let empty = Empty {}
 let empty_tuple = EmptyTuple()
 let p = Pt { x: 3, y: 4 }     // keyed fields, any order
-let q = Pt { 3, 4 }           // positional values, declaration order
-let r = Pt { y: 4, 3 }        // mixed; positional fills the next unfilled field
 let pair = Pair("row", 4)
 println!("{} {}", p.x, p.y)
 println!("{} {}", pair.0, pair.1)
 let Pt { x, y } = p
 ```
 
-Named structs must be constructed with `Name { ... }`; `Name(...)` is
-rejected for named structs. Inside the braces, keyed fields may appear in any
-order and positional values fill declaration-order fields that were not already
-filled by keyed entries. Tuple structs must be constructed with `Name(...)`;
-`Name { ... }` is rejected for tuple structs.
+Named structs must be constructed with keyed fields in `Name { field: value }`;
+both `Name(...)` and positional `Name { value }` forms are rejected. Unit
+structs use either `Name` or `Name {}`, while tuple structs must be constructed
+with `Name(...)`.
+
+On one line, commas separate fields. In a multiline declaration or literal,
+newlines separate fields. Multiline commas are accepted for migration and
+`gos fmt` removes them:
+
+```gossamer
+struct Point {
+    x: i64
+    y: i64
+}
+
+let p = Point {
+    x: 3
+    y: 4
+}
+```
 
 ## Value semantics: copy and compare with no derive
 

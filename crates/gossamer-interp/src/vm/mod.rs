@@ -2414,7 +2414,7 @@ mod tests {
             "straight-line programs must not retain JIT MIR state"
         );
         assert!(has_jit_eligible_fn(&hir_for_jit_admission(
-            "fn main() -> i64 { let mut n = 0i64; while n < 2i64 { n += 1i64 }; n }"
+            "fn main() -> i64 { let mut n = 0i64\nwhile n < 2i64 { n += 1i64 }\nn }"
         )));
         assert!(has_jit_eligible_fn(&hir_for_jit_admission(
             "fn f(n: i64) -> i64 { if n == 0i64 { 0i64 } else { f(n - 1i64) } } fn main() -> i64 { f(2i64) }"
@@ -2424,7 +2424,7 @@ mod tests {
         )));
         assert!(
             !has_jit_eligible_fn(&hir_for_jit_admission(
-                "fn main() -> i64 { let mut n = 0i64; while n < 2i64 { n += 1i64 }; let xs: Vec<i64> = [1i64]; match xs { [x, ..] => x, _ => 0i64 } }"
+                "fn main() -> i64 { let mut n = 0i64\nwhile n < 2i64 { n += 1i64 }\nlet xs: Vec<i64> = [1i64]\nmatch xs { [x, ..] => x, _ => 0i64 } }"
             )),
             "slice-pattern programs must stay on bytecode until native lowering preserves failed-arm control flow"
         );

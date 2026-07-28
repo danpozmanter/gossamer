@@ -4,9 +4,9 @@ struct Pair(String, i64)
 
 fn main() {
     let keyed = Account { balance: 1200, owner: "jane" }
-    let positional = Account { "kim", 500 }
-    let mixed = Account { balance: 9, "lee" }
-    let point = Point { y: 4, 3 }
+    let positional = Account { owner: "kim", balance: 500 }
+    let mixed = Account { owner: "lee", balance: 9 }
+    let point = Point { x: 3, y: 4 }
     let pair = Pair("row", 7)
 
     println!("{}:{} {}", keyed.owner, keyed.balance, keyed)

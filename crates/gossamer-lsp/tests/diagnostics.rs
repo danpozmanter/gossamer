@@ -60,9 +60,24 @@ fn parse_error_emits_gp_diagnostic() {
 }
 
 #[test]
+fn trailing_semicolon_emits_parse_diagnostic() {
+    let uri = "file:///semicolon.gos";
+    let server = server_with(uri, "fn main() { let x = 9;\nprintln(x) }\n");
+    let diags = diagnostics_from(&server.publish_diagnostics(uri));
+    assert!(
+        diags.iter().any(|diag| {
+            diagnostic_message(diag)
+                .is_some_and(|message| message.contains("trailing semicolons are not allowed"))
+        }),
+        "LSP must publish the semicolon syntax error: {diags:?}"
+    );
+    assert_diagnostics_well_formed(&diags);
+}
+
+#[test]
 fn unresolved_name_emits_gr_diagnostic() {
     let uri = "file:///resolve.gos";
-    let server = server_with(uri, "fn main() { does_not_exist(); }\n");
+    let server = server_with(uri, "fn main() { does_not_exist() }\n");
     let notifs = server.publish_diagnostics(uri);
     let diags = diagnostics_from(&notifs);
     assert!(
@@ -82,7 +97,7 @@ fn type_mismatch_emits_gt_diagnostic() {
     let uri = "file:///type.gos";
     // Assigning a string literal to an i64-annotated binding is a
     // typecheck error.
-    let server = server_with(uri, "fn main() { let x: i64 = \"hello\"; let _ = x; }\n");
+    let server = server_with(uri, "fn main() {\nlet x: i64 = \"hello\"\nlet _ = x\n}\n");
     let notifs = server.publish_diagnostics(uri);
     let diags = diagnostics_from(&notifs);
     // The typechecker may produce different codes for this exact
@@ -100,7 +115,7 @@ fn type_mismatch_emits_gt_diagnostic() {
 #[test]
 fn clean_program_emits_no_errors() {
     let uri = "file:///clean.gos";
-    let server = server_with(uri, "fn main() { let x = 1; let _ = x; }\n");
+    let server = server_with(uri, "fn main() {\nlet x = 1\nlet _ = x\n}\n");
     let notifs = server.publish_diagnostics(uri);
     let diags = diagnostics_from(&notifs);
     // The publishDiagnostics notification is always emitted, but the
@@ -164,7 +179,7 @@ fn unknown_document_publishes_nothing() {
 #[test]
 fn diagnostic_range_is_within_source_bounds() {
     let uri = "file:///bounds.gos";
-    let source = "fn main() { undefined_thing(); }\n";
+    let source = "fn main() { undefined_thing() }\n";
     let server = server_with(uri, source);
     let notifs = server.publish_diagnostics(uri);
     let diags = diagnostics_from(&notifs);
@@ -195,7 +210,7 @@ fn diagnostic_range_is_within_source_bounds() {
 #[test]
 fn duplicate_definition_emits_diagnostic() {
     let uri = "file:///dup.gos";
-    let server = server_with(uri, "fn foo() {}\nfn foo() {}\nfn main() { foo(); }\n");
+    let server = server_with(uri, "fn foo() {}\nfn foo() {}\nfn main() { foo() }\n");
     let notifs = server.publish_diagnostics(uri);
     let diags = diagnostics_from(&notifs);
     // Duplicate-definition shape: emits at least one diagnostic.
@@ -215,7 +230,7 @@ fn arity_mismatch_response_well_formed() {
     let uri = "file:///arity.gos";
     let server = server_with(
         uri,
-        "fn one(x: i64) -> i64 { x }\nfn main() { one(1, 2); }\n",
+        "fn one(x: i64) -> i64 { x }\nfn main() { one(1, 2) }\n",
     );
     let notifs = server.publish_diagnostics(uri);
     let diags = diagnostics_from(&notifs);

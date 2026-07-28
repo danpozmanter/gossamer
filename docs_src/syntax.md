@@ -4,10 +4,15 @@ Gossamer's surface is Rust with two simplifications:
 
 - No lifetime annotations. References express aliasing intent;
   the runtime owns the memory.
-- Semicolons are optional at statement boundaries.
+- Semicolons are not valid. Newlines and delimiters separate statements.
 
 See [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPEC.md)
 for the full grammar and semantics.
+
+Delimited lists use commas on one line and newlines across multiple lines.
+This rule covers function arguments and parameters, closure parameters, struct
+fields and literals, and enum variants and payload fields. Multiline trailing
+commas are accepted for migration and removed by `gos fmt`.
 
 ## Comments
 
@@ -38,7 +43,7 @@ enum Shape {
 }
 
 trait Area {
-    fn area(&self) -> f64;
+    fn area(&self) -> f64
 }
 
 impl Area for Shape {
@@ -86,10 +91,6 @@ fn main() {
     let nums = Pair { fst: 10, snd: 32 }
     println!("{}", nums.fst + nums.snd)  // 42
 
-    let nums_pos = Pair { 10, 32 }
-    let nums_mixed = Pair { snd: 32, 10 }
-    println!("{}", nums_pos.fst + nums_mixed.snd)
-
     let c = Cell { value: 99 }
     println!("{}", c.value)              // 99
 }
@@ -98,9 +99,8 @@ fn main() {
 Field reads carry the per-instance concrete type. When two fields
 share the same parameter (`Pair<i64, i64>`), arithmetic across
 them typechecks directly - no extra annotation required.
-Named struct literals use braces and may be keyed, positional in
-declaration order, or mixed. Tuple structs use parenthesized
-construction.
+Named struct literals use braces with keyed fields only. Tuple structs use
+parenthesized construction.
 
 Generic structs take multiple type parameters, and generic methods
 work too: an `impl<T> Cell<T> { ... }` block specializes per
@@ -126,7 +126,7 @@ Integer range expressions are lazy `Iterator<T>` values, where explicitly
 typed bounds preserve their integer type and otherwise default to `i64`. See
 the [lazy iterator protocol](design/lazy_iterators.md) for ownership, adapters,
 and terminal behavior. `lo..hi` excludes `hi`, while `lo..=hi` includes it. An
-omitted lower bound starts at `i64::MIN`. An omitted upper bound is unbounded:
+omitted lower bound starts at zero. An omitted upper bound is unbounded:
 like Rust's `RangeFrom`, it
 panics on overflow in debug builds, while release builds yield `i64::MAX`,
 wrap to `i64::MIN`, and continue. The REPL prints open ranges without
@@ -219,8 +219,15 @@ the top.
 
 ## Ranges and sequence methods
 
-A range is a plain `Vec<i64>` value: `(2..n)` is exclusive, `(1..=n)`
-inclusive. The sequence combinators are methods on any Vec or range -
+A range is a lazy `Iterator<i64>` value: `(2..n)` is exclusive and `(1..=n)`
+is inclusive. It can be iterated directly or stored and consumed later:
+
+```gossamer
+let first_three = 0..3
+for i in first_three { println(i) }
+```
+
+The sequence combinators are methods on any Vec or range -
 `filter`, `map`, `sum`, `count(pred)`, `any` / `all`, `find` /
 `position`, `fold`, `min` / `max`, `take`, `step_by`, `join` - so a
 query chains directly with no accumulator:
