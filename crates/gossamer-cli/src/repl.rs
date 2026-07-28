@@ -35,7 +35,7 @@ REPL commands
 
 Expressions print their value. Declarations and `let` bindings persist.";
 
-const REPL_MAX_COLUMNS: usize = 80;
+const REPL_FALLBACK_COLUMNS: usize = 80;
 
 fn repl_output_width() -> usize {
     std::env::var("COLUMNS")
@@ -45,8 +45,8 @@ fn repl_output_width() -> usize {
             terminal_size::terminal_size()
                 .map(|(terminal_size::Width(width), _)| usize::from(width))
         })
-        .unwrap_or(REPL_MAX_COLUMNS)
-        .clamp(24, REPL_MAX_COLUMNS)
+        .unwrap_or(REPL_FALLBACK_COLUMNS)
+        .max(24)
 }
 
 fn wrap_repl_output(text: &str) -> String {
@@ -1080,9 +1080,9 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
 pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
     use rustyline::error::ReadlineError;
     use rustyline::history::FileHistory;
-    use rustyline::{ColorMode, CompletionType, Config, EditMode, Editor};
+    use rustyline::{ColorMode, CompletionType, Config, EditMode, Editor, EventHandler, KeyEvent};
 
-    use crate::repl_helper::GosReplHelper;
+    use crate::repl_helper::{GosReplHelper, ReplEnterHandler};
 
     println!(
         "gos repl - type an expression or declaration\n\
@@ -1104,6 +1104,10 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
     let mut editor: Editor<GosReplHelper, FileHistory> =
         Editor::with_config(config).map_err(|e| anyhow!("repl init: {e}"))?;
     editor.set_helper(Some(GosReplHelper::new()));
+    editor.bind_sequence(
+        KeyEvent::from('\r'),
+        EventHandler::Conditional(Box::new(ReplEnterHandler)),
+    );
     let history_path = repl_history_path();
     if let Some(path) = &history_path {
         let _ = editor.load_history(path);
@@ -1164,8 +1168,8 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     return Ok(());
                 }
                 "history" => {
-                    for (i, entry) in transcript.iter().enumerate() {
-                        println!("  {}: {entry}", i + 1);
+                    for entry in &transcript {
+                        println!("{entry}");
                     }
                     continue;
                 }
@@ -1193,8 +1197,8 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                             println!("    no bindings match `{arg}`");
                             continue;
                         }
-                        for (i, line) in matches.into_iter().enumerate() {
-                            println!("  {}: {line}", i + 1);
+                        for line in matches {
+                            println!("{line}");
                         }
                     }
                     continue;
@@ -1222,8 +1226,8 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                             println!("    no declarations match `{arg}`");
                             continue;
                         }
-                        for (i, line) in matches.into_iter().enumerate() {
-                            println!("  {}: {line}", i + 1);
+                        for line in matches {
+                            println!("{line}");
                         }
                     }
                     continue;

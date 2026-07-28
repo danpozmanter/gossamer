@@ -7,6 +7,9 @@
 - Diagnose a missing return value when a function declares a non-unit return
   type.
 - Use the `>>>` REPL prompt and clean stacked meta-command output.
+- Let REPL meta-command output use the full terminal width, and automatically
+  indent continuation lines inside open braces, parentheses, and brackets.
+- Remove numbering from `%bindings`, `%declarations`, and `%history` output.
 
 ## 0.37.0 - REPL overhaul, Syntax changes (commas vs newlines), Fixes for Strings, Iterators, Ranges
 

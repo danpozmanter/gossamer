@@ -230,7 +230,7 @@ fn main() {
 Commands such as `%help`, `%ls`, and `%find` help users navigate the language
 from the REPL. Input uses the `>>>` prompt and expression results print as
 plain values. Declaration and binding confirmations are hidden unless the REPL
-is started with `-v`; listings wrap to the terminal width, capped at 80 columns.
+is started with `-v`; listings wrap to the full terminal width.
 
 ## Toolchain commands
 

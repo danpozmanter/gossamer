@@ -10,11 +10,11 @@
 use std::borrow::Cow;
 
 use gossamer_lex::{Punct, SourceMap, TokenKind, tokenize};
-use rustyline::Helper;
 use rustyline::completion::Completer;
 use rustyline::highlight::{CmdKind, Highlighter};
 use rustyline::hint::Hinter;
 use rustyline::validate::{ValidationContext, ValidationResult, Validator};
+use rustyline::{Cmd, ConditionalEventHandler, Event, EventContext, Helper, RepeatCount};
 
 /// ANSI colour escapes used by the REPL. Chosen to read well on both
 /// light and dark terminals; dim for comments keeps them present but
@@ -39,6 +39,62 @@ impl GosReplHelper {
 }
 
 impl Helper for GosReplHelper {}
+
+/// Adds language-aware indentation when Enter extends incomplete input.
+pub(crate) struct ReplEnterHandler;
+
+impl ConditionalEventHandler for ReplEnterHandler {
+    fn handle(
+        &self,
+        _evt: &Event,
+        _n: RepeatCount,
+        _positive: bool,
+        ctx: &EventContext<'_>,
+    ) -> Option<Cmd> {
+        let input = ctx.line();
+        if ctx.pos() != input.len() || incomplete_reason(input).is_none() {
+            return None;
+        }
+        Some(Cmd::Insert(1, format!("\n{}", continuation_indent(input))))
+    }
+}
+
+fn continuation_indent(input: &str) -> String {
+    const INDENT: &str = "    ";
+
+    let current_line = input.rsplit('\n').next().unwrap_or(input);
+    let leading = &current_line[..current_line
+        .find(|ch: char| !ch.is_whitespace())
+        .unwrap_or(current_line.len())];
+
+    let mut map = SourceMap::new();
+    let file = map.add_file("repl-indent.gos", input.to_string());
+    let (tokens, _) = tokenize(input, file);
+    let opens_block = tokens
+        .iter()
+        .rev()
+        .find(|token| {
+            !matches!(
+                token.kind,
+                TokenKind::Eof
+                    | TokenKind::Whitespace
+                    | TokenKind::LineComment
+                    | TokenKind::BlockComment
+            )
+        })
+        .is_some_and(|token| {
+            matches!(
+                token.kind,
+                TokenKind::Punct(Punct::LBrace | Punct::LParen | Punct::LBracket)
+            )
+        });
+
+    if opens_block {
+        format!("{leading}{INDENT}")
+    } else {
+        leading.to_string()
+    }
+}
 
 /// Every Gossamer keyword, completed when the cursor word is unqualified.
 /// Mirrors `gossamer_lex::Keyword`; the enum exposes no all-variants
@@ -283,7 +339,7 @@ impl Highlighter for GosReplHelper {
 
 #[cfg(test)]
 mod repl_helper_tests {
-    use super::{complete_at, incomplete_reason};
+    use super::{complete_at, continuation_indent, incomplete_reason};
 
     #[test]
     fn keyword_prefix_completes() {
@@ -320,5 +376,21 @@ mod repl_helper_tests {
     fn meta_command_regex_is_never_treated_as_incomplete_source() {
         assert_eq!(incomplete_reason("%find ["), None);
         assert_eq!(incomplete_reason("%bindings foo("), None);
+    }
+
+    #[test]
+    fn continuation_indent_steps_in_after_an_opening_delimiter() {
+        assert_eq!(continuation_indent("fn main() {"), "    ");
+        assert_eq!(continuation_indent("    let values = ["), "        ");
+    }
+
+    #[test]
+    fn continuation_indent_preserves_the_current_level() {
+        assert_eq!(continuation_indent("fn main() {\n    let x = 1"), "    ");
+        assert_eq!(
+            continuation_indent("fn main() { // setup"),
+            "    ",
+            "a trailing comment should not hide the opening brace"
+        );
     }
 }

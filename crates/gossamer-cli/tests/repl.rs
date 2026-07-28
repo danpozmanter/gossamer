@@ -107,6 +107,27 @@ fn repl_persists_bindings_across_lines() {
 }
 
 #[test]
+fn repl_history_outputs_copyable_unnumbered_inputs() {
+    let out = run_repl("let answer = 42\nanswer\n%history\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        ["let answer = 42", "answer", "%history"]
+            .iter()
+            .all(|entry| out.stdout.lines().any(|line| line == *entry)),
+        "history should reproduce each input without decoration: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.lines().any(|line| {
+            let trimmed = line.trim_start();
+            trimmed.starts_with("1:") || trimmed.starts_with("2:") || trimmed.starts_with("3:")
+        }),
+        "history output should not contain numeric prefixes: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_bindings_hide_inference_ids_for_empty_vec() {
     let out = run_repl(
         "let v = Vec::new()\n\
@@ -483,12 +504,12 @@ fn repl_bindings_show_current_shadowed_lets_only() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("  1: mut i: i64 = 2"),
+        out.stdout.lines().any(|line| line == "mut i: i64 = 2"),
         "visible binding should show the current shadowing value; stdout: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("  1: mut i: i64 = 3"),
+        out.stdout.lines().any(|line| line == "mut i: i64 = 3"),
         "assignment should update the displayed current value; stdout: {}",
         out.stdout
     );
@@ -509,7 +530,7 @@ fn repl_bindings_show_immutable_values_without_let_prefix() {
     let out = run_repl("let i = 3\n%bindings\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("  1: i: i64 = 3"),
+        out.stdout.lines().any(|line| line == "i: i64 = 3"),
         "immutable binding should render as `name = value`; stdout: {}",
         out.stdout
     );
@@ -525,13 +546,16 @@ fn repl_bindings_show_full_inferred_types() {
     let out = run_repl("let x = [1,2,3]\nlet words: Vec<String> = [\"a\", \"b\"]\n%bindings\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("  1: x: [i64; 3] = [1, 2, 3]"),
+        out.stdout
+            .lines()
+            .any(|line| line == "x: [i64; 3] = [1, 2, 3]"),
         "fixed array binding should show full inferred type; stdout: {}",
         out.stdout
     );
     assert!(
         out.stdout
-            .contains("  2: words: Vec<String> = [\"a\", \"b\"]"),
+            .lines()
+            .any(|line| line == "words: Vec<String> = [\"a\", \"b\"]"),
         "Vec<String> binding should show full annotated type; stdout: {}",
         out.stdout
     );
@@ -565,7 +589,8 @@ fn repl_rejects_malformed_let_without_phantom_bindings() {
         out.stderr
     );
     assert!(
-        out.stdout.contains("  1: a: i64 = 1") && out.stdout.contains("  2: b: i64 = 3"),
+        out.stdout.lines().any(|line| line == "a: i64 = 1")
+            && out.stdout.lines().any(|line| line == "b: i64 = 3"),
         "valid bindings should remain visible; stdout: {}",
         out.stdout
     );
@@ -607,7 +632,9 @@ fn repl_rejects_push_on_fixed_array_binding() {
         out.stderr
     );
     assert!(
-        out.stdout.contains("  1: mut a: [i64; 3] = [1, 1, 1]"),
+        out.stdout
+            .lines()
+            .any(|line| line == "mut a: [i64; 3] = [1, 1, 1]"),
         "fixed array binding should remain fixed-size; stdout: {}",
         out.stdout
     );
@@ -630,7 +657,9 @@ fn repl_bindings_and_declarations_accept_regex_filters() {
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("  1: alpha_value: i64 = 11"),
+        out.stdout
+            .lines()
+            .any(|line| line == "alpha_value: i64 = 11"),
         "binding regex should match anywhere in rendered bindings: {}",
         out.stdout
     );
@@ -641,7 +670,8 @@ fn repl_bindings_and_declarations_accept_regex_filters() {
     );
     assert!(
         out.stdout
-            .contains("  1: fn AlphaFn(value: i64) -> i64 { value }"),
+            .lines()
+            .any(|line| line == "fn AlphaFn(value: i64) -> i64 { value }"),
         "declaration regex should match anywhere in source text: {}",
         out.stdout
     );
@@ -698,12 +728,16 @@ fn repl_struct_construction_and_display_match_source_shapes() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("  1: struct Pair { x: i64, y: i64 }"),
+        out.stdout
+            .lines()
+            .any(|line| line == "struct Pair { x: i64, y: i64 }"),
         "%declarations should list accumulated declarations; stdout: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("  2: struct Tup(String, i64)"),
+        out.stdout
+            .lines()
+            .any(|line| line == "struct Tup(String, i64)"),
         "%declarations should list tuple struct declarations; stdout: {}",
         out.stdout
     );
