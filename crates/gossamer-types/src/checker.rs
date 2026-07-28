@@ -8759,9 +8759,6 @@ impl<'a> TypeChecker<'a> {
                             let Some(elem) = elems.first().copied() else {
                                 break None;
                             };
-                            for other in elems.iter().copied().skip(1) {
-                                self.unify(elem, other, iter.span);
-                            }
                             break Some(self.tcx.intern(TyKind::Ref {
                                 mutability,
                                 inner: elem,
@@ -8777,9 +8774,6 @@ impl<'a> TypeChecker<'a> {
                         let Some(elem) = elems.first().copied() else {
                             break None;
                         };
-                        for other in elems.iter().copied().skip(1) {
-                            self.unify(elem, other, iter.span);
-                        }
                         break Some(elem);
                     }
                     _ => break None,

@@ -99,6 +99,32 @@ impl<'a> Builder<'a> {
         }
     }
 
+    pub(crate) fn detect_tuple_iter<'h>(
+        &self,
+        iter_expr: &'h HirExpr,
+    ) -> Option<(&'h HirExpr, Vec<Ty>)> {
+        use gossamer_types::TyKind;
+        let cur = match &iter_expr.kind {
+            HirExprKind::MethodCall {
+                receiver,
+                name,
+                args,
+                ..
+            } if name.name == "iter" && args.is_empty() => receiver.as_ref(),
+            _ => iter_expr,
+        };
+        let mut ty = self
+            .receiver_local_from_path(cur)
+            .map_or(cur.ty, |local| self.locals[local.0 as usize].ty);
+        loop {
+            match self.tcx.kind_of(ty) {
+                TyKind::Tuple(elems) => return Some((cur, elems.clone())),
+                TyKind::Ref { inner, .. } => ty = *inner,
+                _ => return None,
+            }
+        }
+    }
+
     pub(crate) fn lower_for_string_bytes(
         &mut self,
         string_expr: &HirExpr,
@@ -1117,6 +1143,100 @@ impl<'a> Builder<'a> {
         );
         self.terminate(Terminator::Goto { target: header });
 
+        self.set_current(exit);
+        Some(self.lower_unit(span))
+    }
+
+    pub(crate) fn lower_for_tuple(
+        &mut self,
+        iter_expr: &HirExpr,
+        elem_tys: &[Ty],
+        loop_pat: &HirPat,
+        body: &HirExpr,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let tuple_local = self.lower_expr(iter_expr)?;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let exit = self.new_block(span);
+        let label = self.pending_loop_label.take();
+
+        for (idx, elem_ty) in elem_tys.iter().copied().enumerate() {
+            let next = self.new_block(span);
+            self.push_scope();
+            match &loop_pat.kind {
+                HirPatKind::Binding { name, mutable } => {
+                    let bind_local = self.push_local(elem_ty, Some(name.clone()), *mutable);
+                    self.bind_local(&name.name, bind_local);
+                    let projected = Place {
+                        local: tuple_local,
+                        projection: vec![crate::ir::Projection::Field(idx as u32)],
+                    };
+                    self.emit_assign(
+                        Place::local(bind_local),
+                        Rvalue::Use(Operand::Copy(projected)),
+                        span,
+                    );
+                }
+                HirPatKind::Tuple(sub_pats) => {
+                    let field_tys: Vec<Ty> = match self.tcx.kind_of(elem_ty) {
+                        TyKind::Tuple(fields) => fields.clone(),
+                        _ => Vec::new(),
+                    };
+                    for (field_idx, sub_pat) in sub_pats.iter().enumerate() {
+                        let HirPatKind::Binding { name, mutable } = &sub_pat.kind else {
+                            continue;
+                        };
+                        let field_ty = if matches!(
+                            self.tcx.kind_of(sub_pat.ty),
+                            TyKind::Var(_) | TyKind::Error
+                        ) {
+                            field_tys
+                                .get(field_idx)
+                                .copied()
+                                .filter(|ty| {
+                                    !matches!(self.tcx.kind_of(*ty), TyKind::Var(_) | TyKind::Error)
+                                })
+                                .unwrap_or(i64_ty)
+                        } else {
+                            sub_pat.ty
+                        };
+                        let bind_local = self.push_local(field_ty, Some(name.clone()), *mutable);
+                        self.bind_local(&name.name, bind_local);
+                        let projected = Place {
+                            local: tuple_local,
+                            projection: vec![
+                                crate::ir::Projection::Field(idx as u32),
+                                crate::ir::Projection::Field(field_idx as u32),
+                            ],
+                        };
+                        self.emit_assign(
+                            Place::local(bind_local),
+                            Rvalue::Use(Operand::Copy(projected)),
+                            span,
+                        );
+                    }
+                }
+                _ => {}
+            }
+            let regioned = self.begin_loop_region(body, span);
+            self.loop_stack.push(LoopContext {
+                continue_to: next,
+                break_to: exit,
+                result: None,
+                break_used: false,
+                defer_depth: self.defer_stack.len(),
+                label: label.clone(),
+            });
+            let _ = self.lower_expr(body);
+            self.loop_stack.pop();
+            self.pop_scope();
+            self.end_loop_region(regioned, span);
+            self.terminate(Terminator::Goto { target: next });
+            self.set_current(next);
+        }
+
+        self.terminate(Terminator::Goto { target: exit });
         self.set_current(exit);
         Some(self.lower_unit(span))
     }

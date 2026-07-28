@@ -331,6 +331,22 @@ fn main() {
 }
 
 #[test]
+fn heterogeneous_tuple_binding_is_iterable() {
+    let src = r#"
+fn main() {
+    let t = (1, 3.4, "a")
+    for i in t { println(i) }
+}
+"#;
+    let dir = fresh_dir("tuple_iter");
+    let path = write_source(&dir, "tuple_iter", src);
+    let run = run_vm(&path);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(run.2, Some(0), "stderr: {}", run.1);
+    assert_eq!(run.0, "1\n3.4\na\n");
+}
+
+#[test]
 fn eprintln_runs_without_aborting_via_jit() {
     // Cranelift JIT must have `gos_rt_eprint_str` /
     // `gos_rt_eprintln` in its symbol table; without them

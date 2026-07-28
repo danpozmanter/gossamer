@@ -403,6 +403,7 @@ impl Parser<'_> {
             let body = if self.eat_punct(Punct::LBrace) {
                 let mut fields = Vec::new();
                 while !self.at_punct(Punct::RBrace) && !self.at_eof() {
+                    let before_field = self.tokens.checkpoint();
                     let field_attrs = self.parse_attrs();
                     let visibility = if self.eat_keyword(Keyword::Pub) {
                         Visibility::Public
@@ -418,6 +419,10 @@ impl Parser<'_> {
                         name: field_name,
                         ty,
                     });
+                    if self.tokens.checkpoint() == before_field {
+                        self.bump();
+                        continue;
+                    }
                     if !self.eat_list_separator() {
                         break;
                     }

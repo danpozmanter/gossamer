@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.37.0 - Quieter REPL and consistent syntax
+## 0.37.0 - REPL overhaul, Syntax changes (commas vs newlines), Fixes for Strings, Iterators, Ranges
 
 - Make the REPL quiet by default, add command-wide `-v` plumbing, use the
   `gos>` prompt, print expression values without numbered markers, and wrap
@@ -14,6 +14,9 @@
   correctly consume ranges stored in bindings, preserve mutable vector
   bindings after REPL loops, and verify the Unicode regex contract across
   execution tiers.
+- Allow heterogeneous tuple bindings in `for` loops, prevent malformed enum
+  fields from stalling parser recovery, and update perf benchmarks to named
+  struct initializers.
 
 ## 0.36.2 - Nested functions and structs
 

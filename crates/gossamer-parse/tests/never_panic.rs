@@ -150,6 +150,7 @@ fn item_recovery_makes_forward_progress_on_item_start_keywords() {
     parse_does_not_panic("struct S {}\nimpl\nimpl\nimpl");
     parse_does_not_panic("\0use");
     parse_does_not_panic("fn a(){} pub pub pub pub pub");
+    parse_does_not_panic("fn maenum E enum E {\n{\n    A,\n    B    A,\n   in() {\n");
     // The exact 173-byte input from the CI fuzz crash.
     parse_does_not_panic(concat!(
         "pub fn greet(name: &str) ->  2ng() + nam -> String {64 { a * b }\n",

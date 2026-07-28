@@ -2697,27 +2697,12 @@ impl<'a> Builder<'a> {
                 span,
             );
         }
-        if let HirExprKind::Tuple(elems) = &for_loop.iter_expr.kind {
-            let elem_ty = match self.tcx.kind_of(for_loop.iter_expr.ty) {
-                TyKind::Tuple(tys) => tys.first().copied(),
-                _ => None,
-            }
-            .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
-            let array_ty = self.tcx.intern(TyKind::Array {
-                elem: elem_ty,
-                len: gossamer_types::ArrayLen::Concrete(elems.len()),
-            });
-            let array_expr = HirExpr {
-                id: for_loop.iter_expr.id,
-                span: for_loop.iter_expr.span,
-                ty: array_ty,
-                kind: HirExprKind::Array(gossamer_hir::HirArrayExpr::List(elems.clone())),
-            };
-            return self.lower_for_array(
-                &array_expr,
+        if let Some((tuple_expr, elems)) = self.detect_tuple_iter(for_loop.iter_expr) {
+            return self.lower_for_tuple(
+                tuple_expr,
+                &elems,
                 for_loop.loop_pat,
                 for_loop.body,
-                elems.len() as i64,
                 span,
             );
         }
