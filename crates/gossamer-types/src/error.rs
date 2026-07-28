@@ -95,6 +95,12 @@ pub enum TypeError {
         /// Human-readable description of the missing patterns.
         missing: String,
     },
+    /// A plain `let` tried to assign a value to a literal.
+    #[error("cannot assign to a literal")]
+    CannotAssignToLiteral,
+    /// A plain `let` used a pattern that might not match its value.
+    #[error("this `let` pattern might not match its value")]
+    LetPatternMayNotMatch,
     /// A nominal struct or enum was destructured with an anonymous tuple
     /// pattern, which would bypass its declared name and field labels.
     #[error("destructuring `{ty}` requires its struct or variant name")]
@@ -497,6 +503,8 @@ impl TypeError {
             Self::UnresolvedOp { .. } => "unresolved-op",
             Self::UnresolvedOpImpl { .. } => "unresolved-op-impl",
             Self::NonExhaustiveMatch { .. } => "non-exhaustive-match",
+            Self::CannotAssignToLiteral => "cannot-assign-to-literal",
+            Self::LetPatternMayNotMatch => "let-pattern-may-not-match",
             Self::StructPatternNameRequired { .. } => "struct-pattern-name-required",
             Self::StructConstructorBracesRequired { .. } => "struct-constructor-braces-required",
             Self::TupleStructConstructorParenthesesRequired { .. } => {
@@ -551,6 +559,7 @@ impl TypeError {
             Self::UnresolvedMethod { .. } => "GT0002",
             Self::UnresolvedOp { .. } | Self::UnresolvedOpImpl { .. } => "GT0003",
             Self::NonExhaustiveMatch { .. } => "GT0004",
+            Self::CannotAssignToLiteral | Self::LetPatternMayNotMatch => "GT0047",
             Self::StructPatternNameRequired { .. } => "GT0033",
             Self::StructConstructorBracesRequired { .. }
             | Self::TupleStructConstructorParenthesesRequired { .. }
@@ -753,6 +762,22 @@ impl TypeDiagnostic {
                 out = out
                     .with_help(format!("add an arm for: {missing}"))
                     .with_note("match expressions must cover every possible value");
+            }
+            TypeError::CannotAssignToLiteral => {
+                out = out
+                    .with_help(
+                        "assign the value to a name instead, for example `let value = 8`",
+                    )
+                    .with_note(
+                        "literals are values, not variables; use `if let`, `match`, or `let ... else` to compare with a literal pattern",
+                    );
+            }
+            TypeError::LetPatternMayNotMatch => {
+                out = out
+                    .with_help(
+                        "use a name or `_` to bind every value, or use `if let`, `match`, or `let ... else` to test the pattern",
+                    )
+                    .with_note("a plain `let` must accept every possible initializer value");
             }
             TypeError::StructPatternNameRequired { ty } => {
                 out = out

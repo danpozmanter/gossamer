@@ -2405,6 +2405,11 @@ impl<'a> TypeChecker<'a> {
                     self.unify(break_ty, got, value.span);
                 }
             }
+        } else if matches!(expr.kind, ExprKind::Return(_))
+            && let Some(ret) = self.current_fn_ret
+        {
+            let unit = self.tcx.unit();
+            self.unify(ret, unit, expr.span);
         }
         self.tcx.never()
     }
@@ -8829,6 +8834,13 @@ impl<'a> TypeChecker<'a> {
     fn check_stmt(&mut self, stmt: &Stmt) {
         match &stmt.kind {
             StmtKind::Let { pattern, ty, init } => {
+                if let Some(problem) = plain_let_pattern_problem(pattern) {
+                    let error = match problem {
+                        PlainLetPatternProblem::Literal => TypeError::CannotAssignToLiteral,
+                        PlainLetPatternProblem::MayNotMatch => TypeError::LetPatternMayNotMatch,
+                    };
+                    self.emit(error, pattern.span);
+                }
                 let forced = self.write_arg_bindings.get(&pattern.id).copied();
                 let binding_ty = match ty {
                     Some(ty) => self.type_from_ast(ty),
@@ -10978,6 +10990,56 @@ fn stmt_diverges(stmt: &Stmt) -> bool {
             init: Some(init), ..
         } => expr_diverges(init),
         _ => false,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PlainLetPatternProblem {
+    Literal,
+    MayNotMatch,
+}
+
+fn plain_let_pattern_problem(pattern: &Pattern) -> Option<PlainLetPatternProblem> {
+    match &pattern.kind {
+        PatternKind::Literal(_) => Some(PlainLetPatternProblem::Literal),
+        PatternKind::Range { .. } => Some(PlainLetPatternProblem::MayNotMatch),
+        PatternKind::Ident { subpattern, .. } => {
+            subpattern.as_deref().and_then(plain_let_pattern_problem)
+        }
+        PatternKind::Tuple(parts) => parts.iter().find_map(plain_let_pattern_problem),
+        PatternKind::Or(parts) => {
+            let problems: Vec<_> = parts.iter().map(plain_let_pattern_problem).collect();
+            if problems.iter().all(Option::is_some) {
+                problems
+                    .into_iter()
+                    .flatten()
+                    .find(|problem| matches!(problem, PlainLetPatternProblem::Literal))
+                    .or(Some(PlainLetPatternProblem::MayNotMatch))
+            } else {
+                None
+            }
+        }
+        PatternKind::Struct { fields, .. } => fields
+            .iter()
+            .filter_map(|field| field.pattern.as_ref())
+            .find_map(plain_let_pattern_problem),
+        PatternKind::TupleStruct { elems, .. } => elems.iter().find_map(plain_let_pattern_problem),
+        PatternKind::Slice {
+            prefix,
+            rest,
+            suffix,
+        } => prefix
+            .iter()
+            .chain(suffix)
+            .find_map(plain_let_pattern_problem)
+            .or_else(|| {
+                (!prefix.is_empty() || rest.is_none() || !suffix.is_empty())
+                    .then_some(PlainLetPatternProblem::MayNotMatch)
+            }),
+        PatternKind::Ref { inner, .. } => plain_let_pattern_problem(inner),
+        PatternKind::Wildcard | PatternKind::Path(_) | PatternKind::Rest | PatternKind::Error => {
+            None
+        }
     }
 }
 

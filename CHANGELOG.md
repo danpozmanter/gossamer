@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.37.1 - Assignment and function fixes
+
+- Reject attempts to assign to literals and patterns that might not match in
+  plain `let` bindings, with direct diagnostics and guidance.
+- Diagnose a missing return value when a function declares a non-unit return
+  type.
+
 ## 0.37.0 - REPL overhaul, Syntax changes (commas vs newlines), Fixes for Strings, Iterators, Ranges
 
 - Make the REPL quiet by default, add command-wide `-v` plumbing, use the

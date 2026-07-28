@@ -577,6 +577,26 @@ fn repl_rejects_malformed_let_without_phantom_bindings() {
 }
 
 #[test]
+fn repl_rejects_literal_let_patterns_and_remains_live() {
+    let out = run_repl("let 9 = 8\n9\n");
+    assert!(
+        out.success,
+        "REPL should remain live; stderr: {}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("cannot assign to a literal"),
+        "literal let should report the type-system error; stderr: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.lines().any(|line| line.trim() == "9"),
+        "REPL should evaluate the next input; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_rejects_push_on_fixed_array_binding() {
     let out = run_repl("let mut a = [1;3]\na.push(3)\n%bindings\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);

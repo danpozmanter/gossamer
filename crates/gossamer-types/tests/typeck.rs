@@ -94,6 +94,159 @@ fn string_literal_has_string_type() {
 }
 
 #[test]
+fn plain_let_rejects_literal_patterns_even_when_values_match() {
+    for source in [
+        "fn main() { let 9 = 8 }\n",
+        "fn main() { let 9 = 9 }\n",
+        "fn main() { let true = true }\n",
+    ] {
+        let checked = run(source);
+        assert!(
+            checked
+                .diagnostics
+                .iter()
+                .any(|diag| matches!(diag.error, TypeError::CannotAssignToLiteral)),
+            "expected a literal-assignment diagnostic for {source:?}: {:?}",
+            checked.diagnostics
+        );
+    }
+}
+
+#[test]
+fn literal_patterns_remain_valid_in_pattern_testing_constructs() {
+    let checked = run("fn main() {\n\
+             if let 9 = 8 { }\n\
+             match 8 { 9 => (), _ => () }\n\
+             let 9 = 8 else { return }\n\
+         }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn basic_invalid_programs_report_their_specific_type_error() {
+    for (name, source, expected) in basic_binding_error_cases()
+        .iter()
+        .chain(basic_expression_error_cases())
+    {
+        let checked = run(source);
+        assert!(
+            checked.diagnostics.iter().any(|diag| expected(&diag.error)),
+            "{name} did not report its expected type error: {:?}",
+            checked.diagnostics
+        );
+    }
+}
+
+type BasicErrorCase = (&'static str, &'static str, fn(&TypeError) -> bool);
+
+fn basic_binding_error_cases() -> &'static [BasicErrorCase] {
+    &[
+        (
+            "annotated binding",
+            "fn main() { let value: bool = 1 }\n",
+            |error| matches!(error, TypeError::TypeMismatch { .. }),
+        ),
+        (
+            "assignment",
+            "fn main() { let mut value = 1\nvalue = false }\n",
+            |error| matches!(error, TypeError::TypeMismatch { .. }),
+        ),
+        (
+            "immutable assignment",
+            "fn main() { let value = 1\nvalue = 2 }\n",
+            |error| matches!(error, TypeError::AssignToImmutable { .. }),
+        ),
+        (
+            "function argument",
+            "fn takes_bool(value: bool) {}\nfn main() { takes_bool(1) }\n",
+            |error| {
+                matches!(
+                    error,
+                    TypeError::TypeMismatch { .. } | TypeError::ArgumentTypeMismatch { .. }
+                )
+            },
+        ),
+        (
+            "return value",
+            "fn value() -> i64 { return false }\n",
+            |error| matches!(error, TypeError::TypeMismatch { .. }),
+        ),
+        (
+            "missing return value",
+            "fn value() -> i64 { return }\n",
+            |error| matches!(error, TypeError::TypeMismatch { .. }),
+        ),
+        ("if condition", "fn main() { if 1 { } }\n", |error| {
+            matches!(error, TypeError::TypeMismatch { .. })
+        }),
+        ("while condition", "fn main() { while 1 { } }\n", |error| {
+            matches!(error, TypeError::TypeMismatch { .. })
+        }),
+        (
+            "match guard",
+            "fn main() { match 1 { value if 1 => (), _ => () } }\n",
+            |error| matches!(error, TypeError::TypeMismatch { .. }),
+        ),
+        ("literal assignment", "fn main() { let 9 = 8 }\n", |error| {
+            matches!(error, TypeError::CannotAssignToLiteral)
+        }),
+    ]
+}
+
+fn basic_expression_error_cases() -> &'static [BasicErrorCase] {
+    &[
+        (
+            "operator operands",
+            "fn main() { let _ = true + 1 }\n",
+            |error| {
+                matches!(
+                    error,
+                    TypeError::UnresolvedOp { .. } | TypeError::TypeMismatch { .. }
+                )
+            },
+        ),
+        ("scalar indexing", "fn main() { let _ = 1[0] }\n", |error| {
+            matches!(error, TypeError::NotIndexable { .. })
+        }),
+        (
+            "struct field initializer",
+            "struct Point { x: i64 }\nfn main() { let _ = Point { x: false } }\n",
+            |error| matches!(error, TypeError::TypeMismatch { .. }),
+        ),
+        (
+            "collection element",
+            "fn main() { let values: Vec<bool> = [true, 1] }\n",
+            |error| matches!(error, TypeError::TypeMismatch { .. }),
+        ),
+        (
+            "call arity",
+            "fn takes_one(value: i64) {}\nfn main() { takes_one() }\n",
+            |error| matches!(error, TypeError::CallArityMismatch { .. }),
+        ),
+        (
+            "non-callable value",
+            "fn main() { let value = 1\nvalue() }\n",
+            |error| matches!(error, TypeError::NotCallable { .. }),
+        ),
+        (
+            "invalid cast",
+            "fn main() { let _ = \"text\" as i64 }\n",
+            |error| matches!(error, TypeError::InvalidCast { .. }),
+        ),
+        (
+            "unknown field",
+            "struct Point { x: i64 }\nfn main() { let p = Point { x: 1 }\np.y }\n",
+            |error| matches!(error, TypeError::UnknownField { .. }),
+        ),
+        (
+            "tuple field bounds",
+            "fn main() { let pair = (1, true)\npair.2 }\n",
+            |error| matches!(error, TypeError::NoTupleField { .. }),
+        ),
+    ]
+}
+
+#[test]
 fn integer_comparisons_accept_different_declared_widths() {
     let checked = run("fn main() {\n\
          let i: usize = 0usize\n\
