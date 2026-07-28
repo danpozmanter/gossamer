@@ -21,6 +21,72 @@ absence of F# metaprogramming features.
 | `Task` result | channel receive or direct `Result` | Blocking calls are acceptable. |
 | `printfn "%d" n` | `println!("{n}")` | Format strings are Rust-like. |
 
+## Gossamer 0.37 Syntax At A Glance
+
+F# uses indentation and separates list elements with semicolons. Gossamer
+rejects semicolons. Inside delimiters, commas are required on one line and
+newlines are canonical across multiple lines. Multiline commas remain accepted
+for migration, but `gos fmt` removes them.
+
+```fsharp
+type User = {
+    Name: string
+    Active: bool
+}
+let user = { Name = "Ada"; Active = true }
+```
+
+```gos
+struct User {
+    name: String
+    active: bool
+}
+
+fn rename(
+    user: User
+    name: String
+) -> User {
+    User {
+        name: name
+        active: user.active
+    }
+}
+
+enum Lookup {
+    Found {
+        index: i64
+        user: User
+    }
+    Missing(String)
+}
+
+let user = User { name: "Ada", active: true } // one line needs commas
+```
+
+Gossamer uses indexing for sequences, named fields for structs, numeric fields
+for tuples, and `Option`-returning lookup for maps:
+
+```fsharp
+let first = users[0]
+let enabled = snd pair
+let cached = Map.tryFind "Ada" byName
+```
+
+```gos
+let users = [user, rename(user, "Grace")]
+let first = users[0]              // Vec/array index; traps if out of bounds
+let initial = first.name[0]       // String index is a UTF-8 byte as i64
+let pair = (first.name, first.active)
+let enabled = pair.1
+let mut by_name: HashMap<String, User> = HashMap::new()
+by_name.insert(first.name, first)
+let cached = by_name.get("Ada")   // HashMap lookup returns Option<V>
+let found = Lookup::Found {
+    index: 0
+    user: cached.unwrap()
+}
+```
+
 ## Pipe Operator
 
 F# pipes into the next function's first argument. Gossamer pipes into
@@ -87,14 +153,14 @@ type Tree =
 
 ```gos
 enum Tree {
-    Leaf,
-    Node(i64, Tree, Tree),
+    Leaf
+    Node(i64, Tree, Tree)
 }
 
 fn sum(t: &Tree) -> i64 {
     match t {
-        Tree::Leaf => 0,
-        Tree::Node(v, l, r) => v + sum(l) + sum(r),
+        Tree::Leaf => 0
+        Tree::Node(v, l, r) => v + sum(l) + sum(r)
     }
 }
 ```

@@ -28,6 +28,73 @@ more explicit types and errors.
 Entry files may use top-level statements. Items are hoisted, and bare
 statements become the body of an implicit `fn main()`.
 
+## Gossamer 0.37 Syntax At A Glance
+
+Go permits implicit statement termination but still uses commas in multiline
+composite literals. Gossamer has no semicolons and uses a stricter layout rule:
+commas separate items on one line, while newlines separate items in a
+multiline delimited list. Legacy multiline commas parse, but `gos fmt` removes
+them.
+
+```go
+type User struct {
+    Name   string
+    Active bool
+}
+user := User{Name: "Ada", Active: true}
+```
+
+```gos
+struct User {
+    name: String
+    active: bool
+}
+
+fn rename(
+    user: User
+    name: String
+) -> User {
+    User {
+        name: name
+        active: user.active
+    }
+}
+
+enum Lookup {
+    Found {
+        index: i64
+        user: User
+    }
+    Missing(String)
+}
+
+let user = User { name: "Ada", active: true } // one line needs commas
+```
+
+Named structs require keyed braces. Parentheses construct tuple structs and
+tuple enum variants. Collection and field access is explicit:
+
+```go
+first := users[0]
+enabled := pair.Enabled
+cached, ok := byName["Ada"]
+```
+
+```gos
+let users = [user, rename(user, "Grace")]
+let first = users[0]              // slice/Vec index; traps if out of bounds
+let initial = first.name[0]       // String index is a UTF-8 byte as i64
+let pair = (first.name, first.active)
+let enabled = pair.1
+let mut by_name: HashMap<String, User> = HashMap::new()
+by_name.insert(first.name, first)
+let cached = by_name.get("Ada")   // HashMap lookup returns Option<V>
+let found = Lookup::Found {
+    index: 0
+    user: cached.unwrap()
+}
+```
+
 ## Errors
 
 Go usually returns `(value, error)`. Gossamer uses `Result<T, E>`:
@@ -103,9 +170,9 @@ while let Some(n) = rx.recv() {
 
 ```gos
 select {
-    v = rx.recv() => println!("got {v}"),
-    tx.send(42) => println!("sent"),
-    default => println!("would block"),
+    v = rx.recv() => println!("got {v}")
+    tx.send(42) => println!("sent")
+    default => println!("would block")
 }
 ```
 
@@ -123,9 +190,9 @@ impl http::Handler for App {
     fn serve(&self, r: http::Request) -> Result<http::Response, http::Error> {
         if r.path() == "/bytes" {
             return Ok(http::Response {
-                status: 200,
-                body: [65, 0, 66],
-                content_type: "application/octet-stream",
+                status: 200
+                body: [65, 0, 66]
+                content_type: "application/octet-stream"
             })
         }
         Ok(http::Response::text(200, "hello\n"))

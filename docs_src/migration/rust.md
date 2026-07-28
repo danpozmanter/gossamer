@@ -26,6 +26,74 @@ concurrency, and which Rust features are intentionally absent.
 Entry files may omit `fn main`. Bare statements at file scope become an
 implicit `fn main()`.
 
+## Gossamer 0.37 Syntax At A Glance
+
+Rust and Gossamer use similar delimiters, but not the same separators.
+Gossamer rejects semicolons. Commas are required inside a delimited list
+written on one line; newlines are the canonical separators once the list is
+multiline. Multiline commas remain accepted for migration, but `gos fmt`
+removes them.
+
+```rust
+struct User {
+    name: String,
+    active: bool,
+}
+let user = User { name: "Ada".into(), active: true };
+```
+
+```gos
+struct User {
+    name: String
+    active: bool
+}
+
+fn rename(
+    user: User
+    name: String
+) -> User {
+    User {
+        name: name
+        active: user.active
+    }
+}
+
+enum Lookup {
+    Found {
+        index: i64
+        user: User
+    }
+    Missing(String)
+}
+
+let user = User { name: "Ada", active: true } // one line needs commas
+```
+
+Named structs always use keyed braces. Tuple structs and tuple enum variants
+use parentheses; named enum payloads use keyed braces. Collections and product
+types have distinct access forms:
+
+```rust
+let first = &users[0];
+let enabled = pair.1;
+let cached = by_name.get("Ada"); // Option<&User>
+```
+
+```gos
+let users = [user, rename(user, "Grace")]
+let first = users[0]              // Vec/array index; traps if out of bounds
+let initial = first.name[0]       // String index is a UTF-8 byte as i64
+let pair = (first.name, first.active)
+let enabled = pair.1              // tuple field
+let mut by_name: HashMap<String, User> = HashMap::new()
+by_name.insert(first.name, first)
+let cached = by_name.get("Ada")   // HashMap lookup returns Option<V>
+let found = Lookup::Found {
+    index: 0
+    user: cached.unwrap()
+}
+```
+
 ## Ownership And References
 
 Gossamer does not expose Rust's ownership-by-move model or lifetime
@@ -83,8 +151,8 @@ the type needs those generated implementations.
 ```gos
 #[derive(Debug, PartialEq, Eq)]
 struct User {
-    name: String,
-    age: i64,
+    name: String
+    age: i64
 }
 ```
 

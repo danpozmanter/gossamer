@@ -22,6 +22,74 @@ are returned as `Result<T, E>` instead of raised as exceptions.
 | `asyncio.create_task` | `go fn() { ... }()` |
 | `if __name__ == "__main__"` | entry-file top-level statements |
 
+## Gossamer 0.37 Syntax At A Glance
+
+Python uses indentation and permits trailing commas in multiline literals and
+calls. Gossamer uses braces, rejects semicolons, and treats layout inside
+delimiters differently: one-line lists require commas; multiline lists use
+newlines. Multiline commas are accepted while porting code, but `gos fmt`
+removes them.
+
+```python
+@dataclass
+class User:
+    name: str
+    active: bool
+
+user = User(name="Ada", active=True)
+```
+
+```gos
+struct User {
+    name: String
+    active: bool
+}
+
+fn rename(
+    user: User
+    name: String
+) -> User {
+    User {
+        name: name
+        active: user.active
+    }
+}
+
+enum Lookup {
+    Found {
+        index: i64
+        user: User
+    }
+    Missing(String)
+}
+
+let user = User { name: "Ada", active: true } // one line needs commas
+```
+
+Index sequences with `[]`, access struct fields by name and tuple fields by
+number, and use `get` when absence is expected:
+
+```python
+first = users[0]
+enabled = pair[1]
+cached = by_name.get("Ada")  # User | None
+```
+
+```gos
+let users = [user, rename(user, "Grace")]
+let first = users[0]              // Vec/array index; traps if out of bounds
+let initial = first.name[0]       // UTF-8 byte as i64, not a Python character
+let pair = (first.name, first.active)
+let enabled = pair.1
+let mut by_name: HashMap<String, User> = HashMap::new()
+by_name.insert(first.name, first)
+let cached = by_name.get("Ada")   // HashMap lookup returns Option<V>
+let found = Lookup::Found {
+    index: 0
+    user: cached.unwrap()
+}
+```
+
 ## Data Types
 
 Use structs for records. Named structs are always constructed with
@@ -29,8 +97,8 @@ braces:
 
 ```gos
 struct User {
-    name: String,
-    age: i64,
+    name: String
+    age: i64
 }
 
 let user = User { name: "Ada", age: 36 }
@@ -41,15 +109,15 @@ Use enums for a closed set of shapes:
 
 ```gos
 enum Event {
-    Click(i64, i64),
-    Message(String),
-    Closed,
+    Click(i64, i64)
+    Message(String)
+    Closed
 }
 
 match event {
-    Event::Click(x, y) => println!("click {x} {y}"),
-    Event::Message(text) => println!("{text}"),
-    Event::Closed => println!("closed"),
+    Event::Click(x, y) => println!("click {x} {y}")
+    Event::Message(text) => println!("{text}")
+    Event::Closed => println!("closed")
 }
 ```
 
@@ -92,11 +160,11 @@ fn read_config(path: &String) -> Result<Config, errors::Error> {
 }
 
 let cfg = match read_config(&path) {
-    Ok(v) => v,
+    Ok(v) => v
     Err(e) => {
         log(&e)
         default_config()
-    },
+    }
 }
 ```
 
@@ -142,9 +210,9 @@ HTTP responses can serve binary bodies directly:
 
 ```gos
 http::Response {
-    status: 200,
-    body: [65, 0, 66],
-    content_type: "application/octet-stream",
+    status: 200
+    body: [65, 0, 66]
+    content_type: "application/octet-stream"
 }
 ```
 

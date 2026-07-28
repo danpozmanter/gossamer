@@ -24,6 +24,72 @@ JVM-hosted and does not use exceptions or `suspend`; it uses explicit
 | `async { ... }.await()` | channel send and receive |
 | `println("$name")` | `println!("{name}")` |
 
+## Gossamer 0.37 Syntax At A Glance
+
+Kotlin uses semicolons optionally and commas in parameter lists, data classes,
+and collection literals. Gossamer rejects semicolons. Commas are required in a
+delimited list on one line; newlines separate items in a multiline list.
+Multiline commas are accepted for migration, but `gos fmt` removes them.
+
+```kotlin
+data class User(
+    val name: String,
+    val active: Boolean,
+)
+val user = User(name = "Ada", active = true)
+```
+
+```gos
+struct User {
+    name: String
+    active: bool
+}
+
+fn rename(
+    user: User
+    name: String
+) -> User {
+    User {
+        name: name
+        active: user.active
+    }
+}
+
+enum Lookup {
+    Found {
+        index: i64
+        user: User
+    }
+    Missing(String)
+}
+
+let user = User { name: "Ada", active: true } // one line needs commas
+```
+
+Named structs use keyed braces. Tuple structs and tuple enum variants use
+parentheses. Collection and product access stays explicit:
+
+```kotlin
+val first = users[0]
+val enabled = pair.second
+val cached = byName["Ada"] // User?
+```
+
+```gos
+let users = [user, rename(user, "Grace")]
+let first = users[0]              // List/Vec index; traps if out of bounds
+let initial = first.name[0]       // String index is a UTF-8 byte as i64
+let pair = (first.name, first.active)
+let enabled = pair.1
+let mut by_name: HashMap<String, User> = HashMap::new()
+by_name.insert(first.name, first)
+let cached = by_name.get("Ada")   // HashMap lookup returns Option<V>
+let found = Lookup::Found {
+    index: 0
+    user: cached.unwrap()
+}
+```
+
 ## Null Safety To Option
 
 Kotlin:
@@ -58,8 +124,8 @@ val older = u.copy(age = 37)
 
 ```gos
 struct User {
-    name: String,
-    age: i64,
+    name: String
+    age: i64
 }
 
 let u = User { name: "Ada", age: 36 }
@@ -80,15 +146,15 @@ object Draw : Outcome()
 
 ```gos
 enum Outcome {
-    Win(String),
-    Loss(String),
-    Draw,
+    Win(String)
+    Loss(String)
+    Draw
 }
 
 match outcome {
-    Outcome::Win(message) => println!("{message}"),
-    Outcome::Loss(message) => eprintln!("{message}"),
-    Outcome::Draw => println!("draw"),
+    Outcome::Win(message) => println!("{message}")
+    Outcome::Loss(message) => eprintln!("{message}")
+    Outcome::Draw => println!("draw")
 }
 ```
 
@@ -121,11 +187,11 @@ Use `match` when a caller should recover locally:
 
 ```gos
 let cfg = match read_config(&path) {
-    Ok(v) => v,
+    Ok(v) => v
     Err(e) => {
         eprintln!("config error: {e}")
         default_config()
-    },
+    }
 }
 ```
 
