@@ -13,11 +13,27 @@ use regex::Regex;
 
 use crate::paths::repl_history_path;
 
-const REPL_HELP_TEXT: &str = "meta-commands: %quit (%q)  %history\n\
-                         %bindings (%b) [regex]  %declarations (%d) [regex]\n\
-                         %reset (%r)  %help (%h)  %ls (%l)  %find (%f) <regex>\n\
-                         plain expressions render their value; declarations and\n\
-                         `let` bindings persist across inputs.";
+const REPL_HELP_TEXT: &str = "\
+REPL commands
+
+  %help (%h) [name|/regex/]
+    Show command help or documentation for a symbol.
+  %ls (%l) [module|type|/regex/]
+    List standard-library modules, members, or core methods.
+  %find (%f) <regex>
+    Search public symbol names.
+  %bindings (%b) [regex]
+    Show persistent `let` bindings.
+  %declarations (%d) [regex]
+    Show persistent declarations.
+  %history
+    Show inputs from this session.
+  %reset (%r)
+    Clear persistent bindings and declarations.
+  %quit (%q)
+    Exit the REPL.
+
+Expressions print their value. Declarations and `let` bindings persist.";
 
 const REPL_MAX_COLUMNS: usize = 80;
 
@@ -47,11 +63,8 @@ fn wrap_repl_line(line: &str, width: usize) -> Vec<String> {
     }
     let indent_len = line.chars().take_while(|ch| ch.is_whitespace()).count();
     let indent = " ".repeat(indent_len.min(width.saturating_sub(1)));
-    let continuation = if indent_len == 0 {
-        String::new()
-    } else {
-        indent.clone()
-    };
+    let continuation_len = indent_len.min(width.saturating_sub(1));
+    let continuation = " ".repeat(continuation_len);
     let mut lines = Vec::new();
     let mut current = indent;
     for word in line.split_whitespace() {
@@ -1110,9 +1123,9 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
     }
     loop {
         let prompt = if tty {
-            "\x1b[32mgos>\x1b[0m ".to_string()
+            "\x1b[32m>>>\x1b[0m ".to_string()
         } else {
-            "gos> ".to_string()
+            ">>> ".to_string()
         };
         let line = match editor.readline(&prompt) {
             Ok(line) => line,
@@ -1757,10 +1770,7 @@ fn repl_find(arg: &str) -> std::result::Result<String, String> {
     }
     let mut out = String::new();
     for candidate in matches.into_iter().take(50) {
-        out.push_str(&format!(
-            "{:<48} {:<7} {}\n",
-            candidate.path, candidate.kind, candidate.doc
-        ));
+        push_catalog_entry(&mut out, &candidate.path, candidate.kind, &candidate.doc);
     }
     Ok(out.trim_end().to_string())
 }
@@ -1862,50 +1872,58 @@ fn render_dir_matches(pattern: &Regex) -> String {
 }
 
 fn render_core_method_dir(owners: &[String]) -> String {
-    let mut out = String::new();
+    let mut entries = Vec::new();
     for owner in owners {
-        push_core_namespace_dir_line(&mut out, owner);
+        let mut entry = String::new();
+        push_core_namespace_dir_line(&mut entry, owner);
+        entries.push(entry);
         for method in core_method_entries()
             .into_iter()
             .filter(|method| method.owner == **owner)
         {
-            push_core_method_dir(&mut out, &method);
+            let mut entry = String::new();
+            push_core_method_dir(&mut entry, &method);
+            entries.push(entry);
         }
     }
-    let mut lines = out.lines().collect::<Vec<_>>();
-    lines.sort_unstable();
-    lines.join("\n")
+    entries.sort_unstable();
+    entries.concat().trim_end().to_string()
 }
 
 fn render_module_dir(modules: &[StdModule]) -> String {
-    let mut out = String::new();
+    let mut entries = Vec::new();
     for module in modules {
-        push_module_dir_line(&mut out, module);
+        let mut entry = String::new();
+        push_module_dir_line(&mut entry, module);
+        entries.push(entry);
         if modules.len() == 1 {
             // A directory command names a module, so render its complete
             // namespace tree: the module's own members plus every registered
             // descendant module and its members.  A plain `%ls` deliberately
             // stays shallow; recursively expanding the entire standard
             // library there would make the useful module overview unusable.
-            push_module_items(&mut out, module);
+            push_module_items(&mut entries, module);
             let prefix = format!("{}::", module.path);
             for child in gossamer_std::registry::modules()
                 .iter()
                 .filter(|child| child.path.starts_with(&prefix))
             {
-                push_module_dir_line(&mut out, child);
-                push_module_items(&mut out, child);
+                let mut entry = String::new();
+                push_module_dir_line(&mut entry, child);
+                entries.push(entry);
+                push_module_items(&mut entries, child);
             }
         }
     }
-    let mut lines = out.lines().collect::<Vec<_>>();
-    lines.sort_unstable();
-    lines.join("\n")
+    entries.sort_unstable();
+    entries.concat().trim_end().to_string()
 }
 
-fn push_module_items(out: &mut String, module: &StdModule) {
+fn push_module_items(entries: &mut Vec<String>, module: &StdModule) {
     for item in module.items {
-        push_item_dir(out, module, item);
+        let mut entry = String::new();
+        push_item_dir(&mut entry, module, item);
+        entries.push(entry);
     }
 }
 
@@ -1955,31 +1973,38 @@ fn push_feature_help(out: &mut String, feature: gossamer_std::manifest::FeatureS
 }
 
 fn push_module_dir_line(out: &mut String, module: &StdModule) {
-    out.push_str(&format!("{:<32} module  {}\n", module.path, module.summary));
+    push_catalog_entry(out, module.path, "module", module.summary);
 }
 
 fn push_core_namespace_dir_line(out: &mut String, owner: &str) {
-    out.push_str(&format!(
-        "{owner:<32} type    Built-in receiver and associated methods.\n"
-    ));
+    push_catalog_entry(
+        out,
+        owner,
+        "type",
+        "Built-in receiver and associated methods.",
+    );
 }
 
 fn push_item_dir(out: &mut String, module: &StdModule, item: &StdItem) {
-    out.push_str(&format!(
-        "{:<32} {:<6} {}\n",
-        format!("{}::{}", module.path, item.name),
+    push_catalog_entry(
+        out,
+        &format!("{}::{}", module.path, item.name),
         item_kind_label(item.kind),
-        item.doc
-    ));
+        item.doc,
+    );
 }
 
 fn push_core_method_dir(out: &mut String, method: &CoreMethodEntry) {
-    out.push_str(&format!(
-        "{:<32} {:<6} {}\n",
-        format!("{}::{}", method.owner, method.name),
+    push_catalog_entry(
+        out,
+        &format!("{}::{}", method.owner, method.name),
         method.kind,
-        method.doc
-    ));
+        &method.doc,
+    );
+}
+
+fn push_catalog_entry(out: &mut String, path: &str, kind: &str, description: &str) {
+    out.push_str(&format!("{path} [{kind}]\n  {description}\n"));
 }
 
 fn core_method_entries() -> Vec<CoreMethodEntry> {
@@ -2793,6 +2818,21 @@ mod tests {
         assert!(wrapped.len() > 1);
         assert!(wrapped.iter().all(|line| line.chars().count() <= 32));
         assert!(wrapped.iter().skip(1).all(|line| line.starts_with("    ")));
+    }
+
+    #[test]
+    fn repl_catalog_wrapping_uses_a_small_consistent_indent() {
+        let mut output = String::new();
+        push_catalog_entry(
+            &mut output,
+            "std::strings::replace",
+            "fn",
+            "Replaces every matching substring in the value.",
+        );
+        assert!(output.starts_with("std::strings::replace [fn]\n  Replaces"));
+        let wrapped = wrap_repl_line("  Replaces every matching substring in the value.", 32);
+        assert!(wrapped.len() > 1);
+        assert!(wrapped.iter().all(|line| line.starts_with("  ")));
     }
 
     #[test]

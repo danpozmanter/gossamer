@@ -70,7 +70,7 @@ the implementation by a rev.
 `gos` with no arguments - or `gos repl` - drops into an
 interactive session. The first-slice supports:
 
-- A `gos>` input prompt; successful expressions print only their value, with
+- A `>>>` input prompt; successful expressions print only their value, with
   no numbered input or output markers.
 - Quiet declaration and binding updates by default. Pass `gos -v repl` or
   `gos repl -v` to show progress messages.

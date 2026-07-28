@@ -1,11 +1,12 @@
 # Changelog
 
-## 0.37.1 - Assignment and function fixes
+## 0.37.1 - Assignment, function fixes, REPL cleanup
 
 - Reject attempts to assign to literals and patterns that might not match in
   plain `let` bindings, with direct diagnostics and guidance.
 - Diagnose a missing return value when a function declares a non-unit return
   type.
+- Use the `>>>` REPL prompt and clean stacked meta-command output.
 
 ## 0.37.0 - REPL overhaul, Syntax changes (commas vs newlines), Fixes for Strings, Iterators, Ranges
 

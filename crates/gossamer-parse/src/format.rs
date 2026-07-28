@@ -278,15 +278,11 @@ fn render(lines: &[Line<'_>], file: FileId) -> String {
         let starts_in_top_use_list = stack
             .iter()
             .any(|open| open.kind == BraceKind::UseList && open.line_level == 0);
-        let starts_in_decl_list = stack
-            .last()
-            .is_some_and(|open| open.kind == BraceKind::DeclList);
         let body = render_code_line(
             line,
             file,
             line_level,
             line_was_cont,
-            starts_in_decl_list,
             &mut stack,
             &mut prev_sig,
         );
@@ -347,7 +343,6 @@ fn render_code_line<'src>(
     file: FileId,
     line_level: usize,
     line_was_cont: bool,
-    remove_trailing_list_comma: bool,
     stack: &mut Vec<Open>,
     prev_sig: &mut Option<TokenKind>,
 ) -> String {
@@ -356,6 +351,10 @@ fn render_code_line<'src>(
     let mut prev: Option<Emitted<'src>> = None;
     let mut prev_was_comment = false;
     let mut first_code = true;
+    let line_has_field = line
+        .toks
+        .iter()
+        .any(|tok| tok.kind == TokenKind::Punct(Punct::Colon));
     for (tok_index, tok) in line.toks.iter().enumerate() {
         if tok.is_comment() {
             if !body.is_empty() {
@@ -369,7 +368,11 @@ fn render_code_line<'src>(
             prev_was_comment = true;
             continue;
         }
-        if remove_trailing_list_comma
+        let in_optional_comma_list = stack.last().is_some_and(|open| {
+            matches!(open.kind, BraceKind::Paren | BraceKind::DeclList)
+                || (open.kind == BraceKind::Block && line_has_field)
+        });
+        if in_optional_comma_list
             && tok.kind == TokenKind::Punct(Punct::Comma)
             && tok_index + 1 == line.toks.len()
         {
@@ -1073,5 +1076,52 @@ mod tests {
     fn removes_commas_from_multiline_struct_fields() {
         let source = "struct Point {\n    x: i64,\n    y: i64,\n}\n";
         assert_eq!(fmt(source), "struct Point {\n    x: i64\n    y: i64\n}\n");
+    }
+
+    #[test]
+    fn removes_commas_from_all_multiline_delimited_lists() {
+        let source = "\
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+let p = Point {
+    y: 12,
+    x: 16,
+}
+
+struct Coord(
+    i64,
+    i64,
+)
+
+let c = Coord(
+    12,
+    16,
+)
+";
+        let expected = "\
+struct Point {
+    x: i64
+    y: i64
+}
+
+let p = Point {
+    y: 12
+    x: 16
+}
+
+struct Coord(
+    i64
+    i64
+)
+
+let c = Coord(
+    12
+    16
+)
+";
+        assert_eq!(fmt(source), expected);
     }
 }

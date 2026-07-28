@@ -992,19 +992,22 @@ fn repl_meta_help_preserves_base_banner() {
     let out = run_repl("%help\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout
-            .contains("%bindings (%b) [regex]  %declarations (%d) [regex]"),
+        out.stdout.contains("%bindings (%b) [regex]")
+            && out.stdout.contains("%declarations (%d) [regex]"),
         "bare %help should document filtering session entries; stdout: {}",
         out.stdout
     );
     assert!(
-        out.stdout
-            .contains("%reset (%r)  %help (%h)  %ls (%l)  %find (%f) <regex>"),
+        out.stdout.contains("%reset (%r)")
+            && out.stdout.contains("%help (%h)")
+            && out.stdout.contains("%ls (%l)")
+            && out.stdout.contains("%find (%f)"),
         "bare %help should list the remaining shortcuts; stdout: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("`let` bindings persist across inputs."),
+        out.stdout
+            .contains("Declarations and `let` bindings persist."),
         "bare %help should keep the existing REPL summary; stdout: {}",
         out.stdout
     );

@@ -464,7 +464,7 @@ build`. Known sharp edges:
 Bare `gos` opens the REPL. In a project, `gos run` / `gos build`
 resolve the entry themselves.
 
-The REPL prompt is `gos>`. Expression output is the value only, with no
+The REPL prompt is `>>>`. Expression output is the value only, with no
 numbered markers. Binding and declaration progress is quiet unless `-v`
 is enabled. Meta-command output wraps to the terminal width, capped at
 80 columns.
