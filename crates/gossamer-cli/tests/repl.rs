@@ -854,6 +854,42 @@ fn repl_accepts_derived_struct_declaration() {
 }
 
 #[test]
+fn repl_executes_nested_function_items() {
+    let out = run_repl(
+        "fn outer(n: i64) -> i64 { fn double(x: i64) -> i64 { x * 2 } double(n) }\n\
+         outer(21)\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Out[2]: 42"),
+        "nested function did not execute in the REPL; stdout: {}; stderr: {}",
+        out.stdout,
+        out.stderr
+    );
+}
+
+#[test]
+fn repl_constructs_nested_struct_items() {
+    let out = run_repl(
+        "fn answer() -> i64 { struct Pair { left: i64, right: i64 } let p = Pair { left: 20, right: 22 } println(p) p.left + p.right }\n\
+         answer()\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Out[2]: 42"),
+        "nested struct did not execute in the REPL; stdout: {}; stderr: {}",
+        out.stdout,
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("Pair { left: 20, right: 22 }")
+            && !out.stdout.contains("__gos_nested_"),
+        "nested struct leaked its backend symbol; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_meta_quit_terminates_with_exit_zero() {
     let out = run_repl("%quit\n");
     assert!(

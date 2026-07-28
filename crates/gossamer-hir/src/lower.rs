@@ -58,6 +58,7 @@ pub fn lower_source_file_with_edition(
         &mut Vec::new(),
         &mut module_fn_paths,
     );
+    collect_nested_item_paths(resolutions, source, &mut module_fn_paths);
     let mut lowerer = Lowerer {
         resolutions,
         table,
@@ -69,10 +70,12 @@ pub fn lower_source_file_with_edition(
         ctor_arity: collect_ctor_arities(&source.items),
         struct_fields: collect_struct_fields(&source.items),
         module_fn_paths,
+        promoted_items: Vec::new(),
     };
     let mut items = Vec::new();
     let mut module_path: Vec<String> = Vec::new();
     lower_items(&mut lowerer, &source.items, &mut items, &mut module_path);
+    items.append(&mut lowerer.promoted_items);
     let mut program = HirProgram { edition, items };
     // Fuse `iter::` range pipelines into loops before returning, so every
     // consumer (the bytecode VM, and the native path that lifts closures
@@ -80,6 +83,47 @@ pub fn lower_source_file_with_edition(
     // stage/terminal closures are still inline and can be spliced in.
     crate::fuse::fuse_iter_pipelines(&mut program, &mut *lowerer.tcx, &mut lowerer.ids);
     program
+}
+
+/// Gives every block-local function or struct a globally unique backend symbol.
+///
+/// Nested functions are ordinary non-capturing items, not closures. HIR keeps
+/// the item statement for lexical structure while also promoting a renamed
+/// copy into the program item list so the VM and native backends compile it
+/// like any other function. References are rewritten by `DefId`, preserving
+/// block scope even when separate blocks reuse the same source name.
+fn collect_nested_item_paths(
+    resolutions: &Resolutions,
+    source: &SourceFile,
+    out: &mut std::collections::HashMap<gossamer_resolve::DefId, Vec<Ident>>,
+) {
+    struct Collector<'a> {
+        resolutions: &'a Resolutions,
+        out: &'a mut std::collections::HashMap<gossamer_resolve::DefId, Vec<Ident>>,
+    }
+
+    impl gossamer_ast::Visitor for Collector<'_> {
+        fn visit_stmt(&mut self, stmt: &AstStmt) {
+            if let AstStmtKind::Item(item) = &stmt.kind
+                && let Some(def) = self.resolutions.definition_of(item.id)
+            {
+                let name = match &item.kind {
+                    AstItemKind::Fn(decl) => Some(&decl.name.name),
+                    AstItemKind::Struct(decl) => Some(&decl.name.name),
+                    _ => None,
+                };
+                if let Some(name) = name {
+                    self.out.insert(
+                        def,
+                        vec![Ident::new(format!("__gos_nested_{}_{}", def.local, name))],
+                    );
+                }
+            }
+            gossamer_ast::visitor::walk_stmt(self, stmt);
+        }
+    }
+
+    gossamer_ast::Visitor::visit_source_file(&mut Collector { resolutions, out }, source);
 }
 
 /// Flattens items in source order, descending into inline modules so
@@ -318,6 +362,7 @@ struct Lowerer<'a> {
     /// bare in-module call names the module's own item, not whichever
     /// same-named sibling registered a flat global last.
     module_fn_paths: std::collections::HashMap<gossamer_resolve::DefId, Vec<Ident>>,
+    promoted_items: Vec<HirItem>,
 }
 
 impl Lowerer<'_> {
@@ -779,7 +824,7 @@ impl Lowerer<'_> {
             AstExprKind::Select(arms) => self.lower_select(arms),
             AstExprKind::Struct {
                 path, fields, base, ..
-            } => self.lower_struct_literal(path, fields, base.as_deref(), expr.span),
+            } => self.lower_struct_literal(expr.id, path, fields, base.as_deref(), expr.span),
             AstExprKind::MacroCall(_) => HirExprKind::Placeholder,
             AstExprKind::Array(arr) => HirExprKind::Array(self.lower_array(arr)),
             AstExprKind::Range {
@@ -1674,16 +1719,23 @@ impl Lowerer<'_> {
     /// node variant.
     fn lower_struct_literal(
         &mut self,
+        node: NodeId,
         path: &gossamer_ast::PathExpr,
         fields: &[gossamer_ast::StructExprField],
         base: Option<&gossamer_ast::Expr>,
         span: Span,
     ) -> HirExprKind {
-        let name = path
+        let mut name = path
             .segments
             .last()
             .map(|seg| seg.name.name.clone())
             .unwrap_or_default();
+        if let Some(Resolution::Def { def, .. }) = self.resolutions.get(node)
+            && let Some(promoted) = self.module_fn_paths.get(&def)
+            && let Some(promoted_name) = promoted.last()
+        {
+            name.clone_from(&promoted_name.name);
+        }
         let error_ty = self.error_ty();
         let string_ty = self.error_ty();
         let mut args = Vec::with_capacity(1 + fields.len() * 2 + 2);
@@ -2007,6 +2059,20 @@ impl Lowerer<'_> {
             }
             AstStmtKind::Item(item) => {
                 if let Some(lowered) = self.lower_item(item, &[]) {
+                    if matches!(lowered.kind, HirItemKind::Fn(_) | HirItemKind::Adt(_))
+                        && let Some(def) = lowered.def
+                        && let Some(path) = self.module_fn_paths.get(&def)
+                    {
+                        let mut promoted = lowered.clone();
+                        let promoted_name =
+                            path.last().cloned().expect("nested item path is non-empty");
+                        match &mut promoted.kind {
+                            HirItemKind::Fn(decl) => decl.name = promoted_name,
+                            HirItemKind::Adt(decl) => decl.name = promoted_name,
+                            _ => unreachable!("only functions and ADTs are promoted"),
+                        }
+                        self.promoted_items.push(promoted);
+                    }
                     HirStmtKind::Item(Box::new(lowered))
                 } else {
                     HirStmtKind::Expr {
@@ -2430,14 +2496,23 @@ impl Lowerer<'_> {
                 let fields = self.lower_variant_pat_fields(elems, arity, pattern.span, ty);
                 HirPatKind::Variant { name, fields }
             }
-            AstPatKind::Struct { path, fields, rest } => HirPatKind::Struct {
-                name: path
+            AstPatKind::Struct { path, fields, rest } => {
+                let mut name = path
                     .segments
                     .last()
-                    .map_or_else(|| Ident::new("<error>"), |seg| seg.name.clone()),
-                fields: fields.iter().map(|f| self.lower_field_pat(f)).collect(),
-                rest: *rest,
-            },
+                    .map_or_else(|| Ident::new("<error>"), |seg| seg.name.clone());
+                if let Some(Resolution::Def { def, .. }) = self.resolutions.get(pattern.id)
+                    && let Some(promoted) = self.module_fn_paths.get(&def)
+                    && let Some(promoted_name) = promoted.last()
+                {
+                    name.clone_from(promoted_name);
+                }
+                HirPatKind::Struct {
+                    name,
+                    fields: fields.iter().map(|f| self.lower_field_pat(f)).collect(),
+                    rest: *rest,
+                }
+            }
             AstPatKind::Tuple(parts) => {
                 HirPatKind::Tuple(parts.iter().map(|p| self.lower_pat(p)).collect())
             }

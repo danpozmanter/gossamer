@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.36.2 - Nested functions and structs
+
+- Support spec-compliant block-local function and struct items across VM and
+  native backends, including recursion and lexical name isolation.
+
 ## 0.36.1 - Collection iteration and REPL fixes
 
 - Make bare `HashMap` and `BTreeMap` values directly iterable as key-value

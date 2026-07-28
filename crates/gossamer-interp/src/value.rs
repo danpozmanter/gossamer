@@ -2640,7 +2640,11 @@ impl fmt::Display for Value {
                         return Ok(());
                     }
                 }
-                write_struct(out, inner.name.as_str(), &inner.fields.to_vec())
+                write_struct(
+                    out,
+                    source_facing_nested_item_name(inner.name.as_str()),
+                    &inner.fields.to_vec(),
+                )
             }
             Self::Closure(_) => out.write_str("<closure>"),
             Self::Builtin(inner) => write!(out, "<builtin {}>", inner.name),
@@ -2692,7 +2696,10 @@ fn repr_value(value: &Value) -> String {
         {
             inner.name.as_str().to_string()
         }
-        Value::Struct(inner) => repr_struct(inner.name.as_str(), &inner.fields.to_vec()),
+        Value::Struct(inner) => repr_struct(
+            source_facing_nested_item_name(inner.name.as_str()),
+            &inner.fields.to_vec(),
+        ),
         Value::Map(map) => {
             let map = map.lock();
             let mut entries: Vec<_> = map.iter().collect();
@@ -2751,6 +2758,20 @@ fn repr_struct(name: &str, fields: &[(&'static str, Value)]) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     )
+}
+
+fn source_facing_nested_item_name(name: &str) -> &str {
+    let Some(rest) = name.strip_prefix("__gos_nested_") else {
+        return name;
+    };
+    let Some((def, source_name)) = rest.split_once('_') else {
+        return name;
+    };
+    if def.bytes().all(|byte| byte.is_ascii_digit()) && !source_name.is_empty() {
+        source_name
+    } else {
+        name
+    }
 }
 
 fn write_tuple(out: &mut fmt::Formatter<'_>, parts: &[Value]) -> fmt::Result {

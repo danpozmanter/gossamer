@@ -356,6 +356,8 @@ const SPECS: &[Spec] = &[
     // Structs / enums compare and order by value with no `#[derive(...)]`:
     // auto-synthesized `eq` / `cmp`, plus `..` rest in multi-field variants.
     spec("feature-testing-examples/structural_comparison.gos"),
+    spec("feature-testing-examples/nested_function_items.gos"),
+    spec("feature-testing-examples/nested_struct_items.gos"),
     // Operator overloading (`% - | & ^ << >> []`), the desugar macros
     // (`matches!` / `dbg!`), and `x.into()` routing to `B::from(x)`.
     spec("feature-testing-examples/operator_overloads.gos"),

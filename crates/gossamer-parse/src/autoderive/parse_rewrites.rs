@@ -18,23 +18,38 @@ fn struct_ctor_fields(
     (names.len() == args.len()).then(|| names.clone())
 }
 
+struct TupleStructCollector<'a> {
+    arity: &'a mut HashMap<String, usize>,
+    constructors: &'a mut HashMap<String, Vec<String>>,
+}
+
+impl gossamer_ast::Visitor for TupleStructCollector<'_> {
+    fn visit_item(&mut self, item: &gossamer_ast::Item) {
+        if let ItemKind::Struct(decl) = &item.kind
+            && let StructBody::Tuple(fields) = &decl.body
+        {
+            self.arity.insert(decl.name.name.clone(), fields.len());
+            self.constructors.insert(
+                decl.name.name.clone(),
+                (0..fields.len()).map(|index| index.to_string()).collect(),
+            );
+        }
+        gossamer_ast::visitor::walk_item(self, item);
+    }
+}
+
 /// Rewrites a declared tuple struct constructor call `Pt(a, b)` into the
 /// equivalent internal struct literal using `"0".."N-1"` field names.
 pub fn rewrite_tuple_struct_ctors(sf: &mut SourceFile) {
-    use gossamer_ast::VisitorMut;
+    use gossamer_ast::{Visitor, VisitorMut};
     let mut arity: HashMap<String, usize> = HashMap::new();
     let mut constructors: HashMap<String, Vec<String>> = HashMap::new();
-    for item in flatten_items(&sf.items) {
-        if let ItemKind::Struct(decl) = &item.kind {
-            if let StructBody::Tuple(fields) = &decl.body {
-                arity.insert(decl.name.name.clone(), fields.len());
-                constructors.insert(
-                    decl.name.name.clone(),
-                    (0..fields.len()).map(|index| index.to_string()).collect(),
-                );
-            }
-        }
+
+    TupleStructCollector {
+        arity: &mut arity,
+        constructors: &mut constructors,
     }
+    .visit_source_file(sf);
     if constructors.is_empty() {
         return;
     }

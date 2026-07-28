@@ -8864,7 +8864,15 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
             }
-            StmtKind::Item(item) => self.check_item(item),
+            StmtKind::Item(item) => {
+                // Block-local items are not part of the source file's
+                // top-level signature prepass. Register their definitions
+                // before checking the body so nested structs expose fields
+                // and nested functions/types use the same DefId-keyed
+                // metadata as module-level items.
+                self.collect_signatures(std::slice::from_ref(item));
+                self.check_item(item);
+            }
             StmtKind::Defer(inner) | StmtKind::Go(inner) => {
                 self.check_expr(inner);
             }

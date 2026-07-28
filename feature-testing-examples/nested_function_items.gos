@@ -1,0 +1,32 @@
+// Block-local functions are non-capturing items. They support recursion, and
+// same-named functions in separate blocks retain distinct lexical identities.
+
+fn main() {
+    fn fact(n: i64) -> i64 {
+        if n <= 1 { 1 } else { n * fact(n - 1) }
+    }
+
+    let a = {
+        fn value() -> i64 { 20 }
+        value()
+    }
+    let b = {
+        fn value() -> i64 { 22 }
+        value()
+    }
+    let c = {
+        struct Pair { left: i64, right: i64 }
+        let p = Pair { left: 19, right: 23 }
+        p.left + p.right
+    }
+    let d = {
+        struct Pair { value: i64 }
+        let p = Pair { value: 7 }
+        p.value
+    }
+
+    println!("{}", fact(5))
+    println!("{}", a + b)
+    println!("{}", c)
+    println!("{}", d)
+}

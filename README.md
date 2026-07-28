@@ -54,7 +54,7 @@ My goal is for Gossamer to replace Go, Python, F#/C#, Kotlin/Java, and
 | Strong static type system | ✓ | ✓ | ✓ |  |  |
 | Algebraic data types / discriminated unions | ✓ |  | ✓ |  | ✓ |
 | Exhaustive pattern matching | ✓ |  | ✓ |  | ✓ |
-| Error handling via `?` with `Result` & `Option` | ✓ |  | ✓ |  |  |
+| Error handling via `?` with `Result` & `Option` | ✓ |  |  |  |  |
 | No `null` by default | ✓ |  | ✓ |  | ✓ |
 | Immutable by default | ✓ |  | ✓ |  | ✓ |
 | Reference mutability and escape checks | ✓ |  |  |  |  |

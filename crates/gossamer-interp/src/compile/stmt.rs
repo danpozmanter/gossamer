@@ -218,7 +218,9 @@ impl<'tcx> FnBuilder<'tcx> {
                 Ok(false)
             }
             HirStmtKind::Item(item) => match &item.kind {
-                gossamer_hir::HirItemKind::Const(_) => Ok(false),
+                gossamer_hir::HirItemKind::Const(_)
+                | gossamer_hir::HirItemKind::Fn(_)
+                | gossamer_hir::HirItemKind::Adt(_) => Ok(false),
                 _ => Err(RuntimeError::Unsupported("nested items")),
             },
         }
