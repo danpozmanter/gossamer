@@ -151,6 +151,12 @@ fn item_recovery_makes_forward_progress_on_item_start_keywords() {
     parse_does_not_panic("\0use");
     parse_does_not_panic("fn a(){} pub pub pub pub pub");
     parse_does_not_panic("fn maenum E enum E {\n{\n    A,\n    B    A,\n   in() {\n");
+    // Delimited declaration lists must consume malformed tokens even when
+    // newline separation would otherwise keep their loops active.
+    parse_does_not_panic("fn f(!\n\n");
+    parse_does_not_panic("struct Point { x: i64, i64 !\n\n");
+    parse_does_not_panic("struct Pair(i64, !\n\n");
+    parse_does_not_panic("enum E { Pair(i64, !\n\n");
     // Exact input from a fuzz OOM caused by `struct` inside an enum body.
     parse_does_not_panic(concat!(
         "struct Point { x: i64, y: i64 }\n\n",

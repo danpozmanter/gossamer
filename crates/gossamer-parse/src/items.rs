@@ -255,6 +255,7 @@ impl Parser<'_> {
             }
         }
         while !self.at_punct(Punct::RParen) && !self.at_eof() {
+            let before_param = self.tokens.checkpoint();
             let is_comptime = self.eat_keyword(Keyword::Comptime);
             let pattern = self.parse_pattern_no_or();
             self.expect_punct(Punct::Colon, "after parameter pattern");
@@ -264,6 +265,10 @@ impl Parser<'_> {
                 ty,
                 is_comptime,
             });
+            if self.tokens.checkpoint() == before_param {
+                self.bump();
+                continue;
+            }
             if !self.eat_list_separator() {
                 break;
             }
@@ -340,6 +345,7 @@ impl Parser<'_> {
         if self.eat_punct(Punct::LBrace) {
             let mut fields = Vec::new();
             while !self.at_punct(Punct::RBrace) && !self.at_eof() {
+                let before_field = self.tokens.checkpoint();
                 let attrs = self.parse_attrs();
                 let visibility = if self.eat_keyword(Keyword::Pub) {
                     Visibility::Public
@@ -355,6 +361,10 @@ impl Parser<'_> {
                     name,
                     ty,
                 });
+                if self.tokens.checkpoint() == before_field {
+                    self.bump();
+                    continue;
+                }
                 if !self.eat_list_separator() {
                     break;
                 }
@@ -365,6 +375,7 @@ impl Parser<'_> {
         if self.eat_punct(Punct::LParen) {
             let mut fields = Vec::new();
             while !self.at_punct(Punct::RParen) && !self.at_eof() {
+                let before_field = self.tokens.checkpoint();
                 let attrs = self.parse_attrs();
                 let visibility = if self.eat_keyword(Keyword::Pub) {
                     Visibility::Public
@@ -377,6 +388,10 @@ impl Parser<'_> {
                     visibility,
                     ty,
                 });
+                if self.tokens.checkpoint() == before_field {
+                    self.bump();
+                    continue;
+                }
                 if !self.eat_list_separator() {
                     break;
                 }
@@ -433,6 +448,7 @@ impl Parser<'_> {
             } else if self.eat_punct(Punct::LParen) {
                 let mut fields = Vec::new();
                 while !self.at_punct(Punct::RParen) && !self.at_eof() {
+                    let before_field = self.tokens.checkpoint();
                     let field_attrs = self.parse_attrs();
                     let visibility = if self.eat_keyword(Keyword::Pub) {
                         Visibility::Public
@@ -445,6 +461,10 @@ impl Parser<'_> {
                         visibility,
                         ty,
                     });
+                    if self.tokens.checkpoint() == before_field {
+                        self.bump();
+                        continue;
+                    }
                     if !self.eat_list_separator() {
                         break;
                     }

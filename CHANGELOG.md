@@ -14,9 +14,9 @@
   correctly consume ranges stored in bindings, preserve mutable vector
   bindings after REPL loops, and verify the Unicode regex contract across
   execution tiers.
-- Allow heterogeneous tuple bindings in `for` loops, prevent malformed enum
-  bodies from stalling parser recovery, and update perf benchmarks to named
-  struct initializers.
+- Allow heterogeneous tuple bindings in `for` loops, prevent malformed
+  declaration lists from stalling parser recovery, and update perf benchmarks
+  to named struct initializers.
 - Keep MCP tests independent of binaries excluded from their CI shard.
 
 ## 0.36.2 - Nested functions and structs
