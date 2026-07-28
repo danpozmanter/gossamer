@@ -1557,7 +1557,8 @@ unsafe fn vec_str_self_enum_eq(a_word: i64, b_word: i64, desc: *const i64) -> bo
 /// the output is deterministic and byte-identical across tiers (an
 /// `FxHashMap`'s bucket order is neither stable nor the same as the
 /// VM's). Keys and values render the way the VM's `Display` does -
-/// integers via `format_int`, strings bare. Empty maps and storage
+/// integers via `format_int`; string keys are quoted while string values
+/// remain bare. Empty maps and storage
 /// shapes whose values aren't scalar (struct-keyed / byte-erased)
 /// render as `{}`; the codegen only routes scalar-keyed, scalar- or
 /// string-valued maps here.
@@ -1610,12 +1611,8 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
                     inner.iter().map(|(k, v)| (k.as_ref(), *v)).collect();
                 entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
                 for (k, v) in entries {
-                    push_entry(
-                        &mut out,
-                        &mut first,
-                        &String::from_utf8_lossy(k),
-                        &crate::builtins::format_int(v),
-                    );
+                    let key = format!("{:?}", String::from_utf8_lossy(k));
+                    push_entry(&mut out, &mut first, &key, &crate::builtins::format_int(v));
                 }
             }
             MapStorage::StrStr(inner) => {
@@ -1625,12 +1622,8 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
                     .collect();
                 entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
                 for (k, v) in entries {
-                    push_entry(
-                        &mut out,
-                        &mut first,
-                        &String::from_utf8_lossy(k),
-                        &String::from_utf8_lossy(v),
-                    );
+                    let key = format!("{:?}", String::from_utf8_lossy(k));
+                    push_entry(&mut out, &mut first, &key, &String::from_utf8_lossy(v));
                 }
             }
             MapStorage::I64Str(inner) => {
@@ -1650,11 +1643,12 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
                 let mut entries: Vec<(&[u8], &[u8])> = inner.iter().collect();
                 entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
                 for (k, v) in entries {
+                    let key = format!("{:?}", String::from_utf8_lossy(k));
                     let value = format!(
                         "[{}]",
                         v.iter().map(u8::to_string).collect::<Vec<_>>().join(", ")
                     );
-                    push_entry(&mut out, &mut first, &String::from_utf8_lossy(k), &value);
+                    push_entry(&mut out, &mut first, &key, &value);
                 }
             }
             MapStorage::Empty | MapStorage::Bytes(_) | MapStorage::SkeyVal(_) => {}
@@ -2397,6 +2391,32 @@ pub unsafe extern "C" fn gos_rt_map_remove(m: *mut GosMap, key: *const u8) -> i3
 #[cfg(test)]
 mod map_iter_tests {
     use super::*;
+
+    unsafe fn formatted_map(map: *const GosMap) -> String {
+        let rendered = unsafe { gos_rt_map_format(map) };
+        assert!(!rendered.is_null());
+        let text = unsafe { CStr::from_ptr(rendered) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { crate::c_abi::gos_rt_str_free(rendered) };
+        text
+    }
+
+    #[test]
+    fn map_format_quotes_and_sorts_string_keys() {
+        unsafe {
+            let map = gos_rt_map_new(8, 8);
+            gos_rt_map_insert_str_i64(map, c"zebra".as_ptr(), 1);
+            gos_rt_map_insert_str_i64(map, c"apple".as_ptr(), 2);
+            gos_rt_map_insert_str_i64(map, c"mango".as_ptr(), 3);
+
+            assert_eq!(
+                formatted_map(map),
+                r#"{"apple": 2, "mango": 3, "zebra": 1}"#
+            );
+            gos_rt_map_free(map);
+        }
+    }
 
     #[test]
     fn map_keys_i64_snapshots_inserted_keys() {
