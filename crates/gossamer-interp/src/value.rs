@@ -2810,7 +2810,7 @@ fn write_str_int_map(out: &mut fmt::Formatter<'_>, map: &DenseMap<SmolStr, i64>)
         if i > 0 {
             out.write_str(", ")?;
         }
-        write!(out, "{}: {v}", k.as_str())?;
+        write!(out, "{:?}: {v}", k.as_str())?;
     }
     out.write_str("}")
 }

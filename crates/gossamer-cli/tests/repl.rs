@@ -1868,3 +1868,32 @@ fn repl_or_insert_persists_and_cannot_retype_the_map() {
         out.stdout
     );
 }
+
+#[test]
+fn repl_bare_map_iteration_formats_keys_and_returns_unit() {
+    let out = run_repl(
+        "let mut h = HashMap::new()\n\
+         h.insert(\"a\", 1)\n\
+         h.insert(\"b\", 2)\n\
+         %b\n\
+         for (k, v) in h { println!(\"{}: {}\", k, v) }\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout
+            .contains(r#"h: HashMap<String, i64> = {"a": 1, "b": 2}"#),
+        "map binding did not quote string keys: {}",
+        out.stdout
+    );
+    assert!(out.stdout.contains("a: 1\nb: 2\n"), "{}", out.stdout);
+    assert!(
+        !out.stdout.contains("Out[5]:"),
+        "unit-valued for loop leaked a stale result: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stderr.contains("not indexable"),
+        "bare map iteration attempted numeric map indexing: {}",
+        out.stderr
+    );
+}

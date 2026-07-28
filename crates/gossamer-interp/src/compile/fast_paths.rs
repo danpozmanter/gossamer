@@ -1826,7 +1826,11 @@ impl<'tcx> FnBuilder<'tcx> {
         let counter_i = self.as_i64(start_tr);
         let end_i = self.as_i64(end_tr);
 
-        let result = self.alloc_reg();
+        // A `for` expression without an explicit value-bearing `break`
+        // evaluates to unit. Initialise the result before entering the loop
+        // so an empty loop and normal exhaustion cannot expose a stale
+        // register value to the REPL.
+        let result = self.load_unit();
         self.push_scope();
         if let Some(name) = &loop_var {
             self.bind_local(
@@ -2095,8 +2099,10 @@ impl<'tcx> FnBuilder<'tcx> {
         // the loop advances instead of cloning, so the input frees as it
         // is consumed. Disabled for a `HashSet` source, whose elements
         // are read from a fresh sorted snapshot rather than the local.
+        let source_is_set = self.expr_is_hashset(source_expr);
+        let source_is_map = self.expr_is_map(source_expr);
         let consume_source =
-            self.consumable_path(source_expr).is_some() && !self.expr_is_hashset(source_expr);
+            self.consumable_path(source_expr).is_some() && !source_is_set && !source_is_map;
 
         // Compile the iterable and capture it once.
         let mut vec_reg = self.compile_expr(source_expr)?;
@@ -2105,7 +2111,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // sorted `Vec` (the same order `set.to_vec()` / `.iter()` yield)
         // and drive that by index. The set handle would otherwise report
         // no indexable length and the loop would never run.
-        if self.expr_is_hashset(source_expr) {
+        if source_is_set {
             let snap = self.alloc_reg();
             let to_vec_idx = self.global_idx("to_vec");
             let cache_idx = self.alloc_cache_idx();
@@ -2113,6 +2119,23 @@ impl<'tcx> FnBuilder<'tcx> {
                 dst: snap,
                 receiver: vec_reg,
                 name_idx: to_vec_idx,
+                args: 0,
+                argc: 0,
+                cache_idx,
+            });
+            vec_reg = snap;
+        } else if source_is_map {
+            // Maps are iterable as `(key, value)` pairs, but their runtime
+            // storage is keyed rather than numerically indexable. Snapshot
+            // entries exactly as `m.iter()` does before using the common
+            // indexed loop machinery. This covers both HashMap and BTreeMap.
+            let snap = self.alloc_reg();
+            let iter_idx = self.global_idx("iter");
+            let cache_idx = self.alloc_cache_idx();
+            self.emit(Op::MethodCall {
+                dst: snap,
+                receiver: vec_reg,
+                name_idx: iter_idx,
                 args: 0,
                 argc: 0,
                 cache_idx,
@@ -2146,7 +2169,9 @@ impl<'tcx> FnBuilder<'tcx> {
             dst_i: counter_i,
             idx: zero_idx,
         });
-        let result = self.alloc_reg();
+        // Normal exhaustion of a `for` loop yields unit. A value-bearing
+        // `break` still overwrites this register through `LoopCtx`.
+        let result = self.load_unit();
         self.push_scope();
 
         // Element register: a fresh Value reg refilled each iteration.

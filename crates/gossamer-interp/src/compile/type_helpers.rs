@@ -57,6 +57,15 @@ impl<'tcx> FnBuilder<'tcx> {
         )
     }
 
+    /// True when `expr` is a `HashMap` or `BTreeMap`. Both surface types
+    /// share `TyKind::HashMap` and the same runtime storage.
+    pub(crate) fn expr_is_map(&self, expr: &HirExpr) -> bool {
+        matches!(
+            self.tcx.kind(self.unwrap_ref(expr.ty)),
+            Some(TyKind::HashMap { .. })
+        )
+    }
+
     /// Bare type name to dispatch a struct `==` / `!=` through its
     /// derived `<Type>::eq` method, seeing through `&` / `&mut`. Returns
     /// `Some` only for a *struct* whose layout the compiler knows (an

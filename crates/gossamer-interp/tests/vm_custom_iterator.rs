@@ -112,6 +112,32 @@ fn main() {
 }
 
 #[test]
+fn for_loop_over_bare_map_pairs() {
+    let src = r#"
+use std::collections::{BTreeMap, HashMap}
+fn main() {
+    let mut hash: HashMap<String, i64> = HashMap::new()
+    hash.insert("a", 10)
+    hash.insert("b", 20)
+    let mut hash_sum = 0
+    for (key, value) in hash {
+        hash_sum = hash_sum + key.len() + value
+    }
+
+    let mut tree: BTreeMap<i64, i64> = BTreeMap::new()
+    tree.insert(2, 20)
+    tree.insert(1, 10)
+    let mut tree_sum = 0
+    for (key, value) in tree {
+        tree_sum = tree_sum + key + value
+    }
+    println!("hash={} tree={}", hash_sum, tree_sum)
+}
+"#;
+    assert_eq!(run_main(src), "hash=32 tree=33\n");
+}
+
+#[test]
 fn for_loop_over_map_keys_and_values() {
     let src = r#"
 use std::collections::HashMap
