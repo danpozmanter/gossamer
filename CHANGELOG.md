@@ -1,12 +1,14 @@
 # Changelog
 
-## 0.36.1 - Collection iteration fixes
+## 0.36.1 - Collection iteration and REPL fixes
 
 - Make bare `HashMap` and `BTreeMap` values directly iterable as key-value
   pairs, quote string map keys in display output, and return unit after normal
   `for`-loop exhaustion.
 - Verify direct iteration handling for vectors, arrays, slices, tuples, and
   hash sets.
+- Accept attributed REPL declarations such as `#[derive(PartialEq)] struct
+  Point { ... }`, and run derive synthesis before evaluating later inputs.
 
 ## 0.36.0 - Compact collections and trustworthy types
 

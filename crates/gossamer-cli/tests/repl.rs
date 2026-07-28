@@ -826,6 +826,34 @@ fn repl_evaluates_function_definition() {
 }
 
 #[test]
+fn repl_accepts_derived_struct_declaration() {
+    let out = run_repl(
+        "#[derive(PartialEq)] struct Point { x: i64, y: i64 }\n\
+         let p1 = Point { x: 1, y: 2 }\n\
+         let p2 = Point { x: 1, y: 2 }\n\
+         println(p1 == p2)\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("added 1 declarations"),
+        "attributed struct should be stored as a declaration; stdout: {}; stderr: {}",
+        out.stdout,
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("true"),
+        "derived equality should be callable in the REPL; stdout: {}; stderr: {}",
+        out.stdout,
+        out.stderr
+    );
+    assert!(
+        !out.stderr.contains("nested items"),
+        "attributed struct was interpreted as a nested item: {}",
+        out.stderr
+    );
+}
+
+#[test]
 fn repl_meta_quit_terminates_with_exit_zero() {
     let out = run_repl("%quit\n");
     assert!(

@@ -1495,6 +1495,7 @@ fn split_meta_command(input: &str) -> (&str, &str) {
 }
 
 fn input_is_declaration(input: &str) -> bool {
+    let input = strip_leading_outer_attributes(input);
     let input = input
         .strip_prefix("pub ")
         .or_else(|| input.strip_prefix("pub(crate) "))
@@ -1506,6 +1507,56 @@ fn input_is_declaration(input: &str) -> bool {
         || input.starts_with("const ")
         || input.starts_with("static ")
         || input.starts_with("type ")
+}
+
+/// Removes complete outer attributes from the beginning of a REPL input.
+///
+/// The REPL classifies declarations before rebuilding the accumulated source.
+/// An attributed item still starts with `#`, so without this step it is
+/// mistaken for an expression and wrapped in the synthetic REPL function.
+fn strip_leading_outer_attributes(mut input: &str) -> &str {
+    loop {
+        input = input.trim_start();
+        if !input.starts_with("#[") {
+            return input;
+        }
+
+        let mut depth = 0usize;
+        let mut quote = None;
+        let mut escaped = false;
+        let mut end = None;
+
+        for (offset, ch) in input.char_indices() {
+            if let Some(delimiter) = quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == delimiter {
+                    quote = None;
+                }
+                continue;
+            }
+
+            match ch {
+                '"' | '\'' => quote = Some(ch),
+                '[' => depth += 1,
+                ']' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = Some(offset + ch.len_utf8());
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let Some(end) = end else {
+            return input;
+        };
+        input = &input[end..];
+    }
 }
 
 fn repl_help(arg: &str) -> std::result::Result<String, String> {
@@ -2501,6 +2552,7 @@ fn repl_callee_is_mutating_name(callee: &gossamer_ast::Expr) -> bool {
 /// loadable, `Err` rolls back the just-added declaration.
 fn rebuild_session(declarations: &[String]) -> std::result::Result<(), String> {
     let source = declarations.join("\n") + "\nfn __irepl_probe() { }\n";
+    let source = gossamer_parse::autoderive::augment_source(&source);
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file("irepl".to_string(), source.clone());
     let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&source, file);
@@ -2533,9 +2585,10 @@ fn build_and_call_with_type(
     source: &str,
     entry: &str,
 ) -> std::result::Result<(gossamer_interp::Value, String), String> {
+    let source = gossamer_parse::autoderive::augment_source(source);
     let mut map = gossamer_lex::SourceMap::new();
-    let file = map.add_file("irepl".to_string(), source.to_string());
-    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(source, file);
+    let file = map.add_file("irepl".to_string(), source.clone());
+    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&source, file);
     if !parse_diags.is_empty() {
         return Err(format_parse_diags(&parse_diags, &map, file));
     }
