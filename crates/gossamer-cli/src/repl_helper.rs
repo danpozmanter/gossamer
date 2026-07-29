@@ -33,24 +33,6 @@ pub(crate) struct GosReplHelper {
     hash_set_bindings: HashSet<String>,
 }
 
-const HASH_SET_METHODS: &[&str] = &[
-    "clear",
-    "contains",
-    "difference",
-    "insert",
-    "intersection",
-    "is_disjoint",
-    "is_empty",
-    "is_subset",
-    "is_superset",
-    "iter",
-    "len",
-    "remove",
-    "symmetric_difference",
-    "to_vec",
-    "union",
-];
-
 impl GosReplHelper {
     /// Constructs a fresh helper with no per-session state.
     #[must_use]
@@ -73,6 +55,11 @@ impl GosReplHelper {
     /// Clears all completion metadata with the rest of the REPL session.
     pub(crate) fn reset_session(&mut self) {
         self.hash_set_bindings.clear();
+    }
+
+    /// Returns the documented built-in receiver type for a session binding.
+    pub(crate) fn receiver_type(&self, name: &str) -> Option<&'static str> {
+        self.hash_set_bindings.contains(name).then_some("HashSet")
     }
 }
 
@@ -181,10 +168,10 @@ fn complete_at(
     {
         return (
             start,
-            HASH_SET_METHODS
-                .iter()
+            crate::repl::core_method_names("HashSet")
+                .into_iter()
                 .filter(|method| method.starts_with(word))
-                .map(|method| (*method).to_string())
+                .map(str::to_string)
                 .collect(),
         );
     }

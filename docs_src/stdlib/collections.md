@@ -52,3 +52,12 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 | [`peek`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek(xs: Stack<i64>) -> i64` | Top element, or 0 if empty. |
 | [`pop`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn pop(xs: Stack<i64>) -> Stack<i64>` | Drop the top; returns the new stack. |
 | [`push`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn push(xs: Stack<i64>, value: i64) -> Stack<i64>` | Push an i64 onto the top; returns the new stack. |
+
+## `HashSet<T>` methods
+
+`HashSet` provides `new`, `insert`, `remove`, `contains`, `len`, `is_empty`,
+`clear`, `iter`, `to_vec`, `union`, `intersection`, `difference`,
+`symmetric_difference`, `is_subset`, `is_superset`, and `is_disjoint`.
+
+As in Rust, `map` is an iterator method rather than a `HashSet` method. Use
+`set.iter().map(f)`. Calling `set.map(f)` is a type error.

@@ -1073,7 +1073,9 @@ fn repl_hash_set_bindings_show_and_iterate_stored_structs() {
          set.insert(p1)\n\
          set.insert(p2)\n\
          %bindings\n\
-         for point in set { println(point) }\n",
+         for point in set { println(point) }\n\
+         %ls set\n\
+         set.map(|point| point.x)\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
@@ -1093,6 +1095,21 @@ fn repl_hash_set_bindings_show_and_iterate_stored_structs() {
             out.stdout
         );
     }
+    assert!(
+        out.stdout.contains("HashSet::insert [method]"),
+        "`%ls set` should list methods for the binding's HashSet type: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("Set::bool"),
+        "`%ls set` resolved to the unrelated Set type: {}",
+        out.stdout
+    );
+    assert!(
+        out.stderr.contains("no method named `map`"),
+        "direct HashSet.map should be rejected: {}",
+        out.stderr
+    );
 }
 
 #[test]

@@ -126,6 +126,14 @@ struct CoreMethodEntry {
     doc: String,
 }
 
+pub(crate) fn core_method_names(owner: &str) -> Vec<&'static str> {
+    CORE_METHODS
+        .iter()
+        .filter(|method| method.owner == owner && method.kind == "method")
+        .map(|method| method.name)
+        .collect()
+}
+
 // These prelude functions are runtime builtins rather than stdlib-manifest
 // exports. Every parser-recognized macro is sourced from BUILTIN_MACROS below.
 const PRELUDE_BUILTINS: &[PreludeBuiltinHelp] = &[
@@ -979,6 +987,62 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         doc: "Returns values present in exactly one set.",
     },
     CoreMethodHelp {
+        owner: "HashSet",
+        name: "len",
+        kind: "method",
+        signature: "fn len<T>(self: HashSet<T>) -> i64",
+        doc: "Returns the number of values.",
+    },
+    CoreMethodHelp {
+        owner: "HashSet",
+        name: "is_empty",
+        kind: "method",
+        signature: "fn is_empty<T>(self: HashSet<T>) -> bool",
+        doc: "Returns true when the set has no values.",
+    },
+    CoreMethodHelp {
+        owner: "HashSet",
+        name: "clear",
+        kind: "method",
+        signature: "fn clear<T>(self: &mut HashSet<T>) -> ()",
+        doc: "Removes every value.",
+    },
+    CoreMethodHelp {
+        owner: "HashSet",
+        name: "iter",
+        kind: "method",
+        signature: "fn iter<T>(self: HashSet<T>) -> Vec<T>",
+        doc: "Returns a deterministic snapshot suitable for iterator methods.",
+    },
+    CoreMethodHelp {
+        owner: "HashSet",
+        name: "to_vec",
+        kind: "method",
+        signature: "fn to_vec<T>(self: HashSet<T>) -> Vec<T>",
+        doc: "Returns the values in deterministic order.",
+    },
+    CoreMethodHelp {
+        owner: "HashSet",
+        name: "is_subset",
+        kind: "method",
+        signature: "fn is_subset<T>(self: HashSet<T>, other: HashSet<T>) -> bool",
+        doc: "Returns true when every value is present in the other set.",
+    },
+    CoreMethodHelp {
+        owner: "HashSet",
+        name: "is_superset",
+        kind: "method",
+        signature: "fn is_superset<T>(self: HashSet<T>, other: HashSet<T>) -> bool",
+        doc: "Returns true when the set contains every value from the other set.",
+    },
+    CoreMethodHelp {
+        owner: "HashSet",
+        name: "is_disjoint",
+        kind: "method",
+        signature: "fn is_disjoint<T>(self: HashSet<T>, other: HashSet<T>) -> bool",
+        doc: "Returns true when the sets have no values in common.",
+    },
+    CoreMethodHelp {
         owner: "VecDeque",
         name: "new",
         kind: "assoc",
@@ -1279,7 +1343,13 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     continue;
                 }
                 "ls" | "l" => {
-                    match repl_ls(arg) {
+                    let binding_receiver =
+                        editor.helper().and_then(|helper| helper.receiver_type(arg));
+                    let result = binding_receiver.map_or_else(
+                        || repl_ls(arg),
+                        |owner| Ok(render_core_method_dir(&[owner.to_string()])),
+                    );
+                    match result {
                         Ok(text) => print_repl_output(&text),
                         Err(msg) => print_repl_error(&msg),
                     }

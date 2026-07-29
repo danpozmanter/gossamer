@@ -1756,6 +1756,17 @@
 
 </li>
 
+        <li class="md-nav__item">
+  <a href="#hashsett-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        HashSet&lt;T&gt; methods
+
+    </span>
+  </a>
+
+</li>
+
     </ul>
 
 </nav>
@@ -1991,6 +2002,12 @@
 </tr>
 </tbody>
 </table>
+<h2 id="hashsett-methods"><code>HashSet&lt;T&gt;</code> methods<a class="headerlink" href="#hashsett-methods" title="Permanent link">&para;</a></h2>
+<p><code>HashSet</code> provides <code>new</code>, <code>insert</code>, <code>remove</code>, <code>contains</code>, <code>len</code>, <code>is_empty</code>,
+<code>clear</code>, <code>iter</code>, <code>to_vec</code>, <code>union</code>, <code>intersection</code>, <code>difference</code>,
+<code>symmetric_difference</code>, <code>is_subset</code>, <code>is_superset</code>, and <code>is_disjoint</code>.</p>
+<p>As in Rust, <code>map</code> is an iterator method rather than a <code>HashSet</code> method. Use
+<code>set.iter().map(f)</code>. Calling <code>set.map(f)</code> is a type error.</p>
 
 
 

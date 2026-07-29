@@ -26,7 +26,8 @@
   statements separated by either semicolons or newlines.
 - Persist REPL `impl` blocks, complete methods on `HashSet` bindings, preserve
   struct elements during set iteration, and show set contents instead of
-  internal handles in `%bindings`.
+  internal handles in `%bindings`; make `%ls`, completion, and docs expose the
+  same set API, with mapping available only through `set.iter().map(...)`.
 
 ## 0.38.0 - Assignment, function fixes, REPL cleanup, performance fixes
 

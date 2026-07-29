@@ -5322,6 +5322,9 @@ impl<'a> TypeChecker<'a> {
         if let Some(ty) = self.set_method_ret(method, resolved) {
             return ty;
         }
+        if self.reject_unknown_set_method(resolved, method, receiver.span) {
+            return self.tcx.error_ty();
+        }
         if let Some(ty) = self.map_method_ret(method, args, &arg_tys, resolved, receiver.span) {
             return ty;
         }
@@ -5406,6 +5409,25 @@ impl<'a> TypeChecker<'a> {
             self.tcx.kind(resolved),
             Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. })
         ) {
+            return false;
+        }
+        let ty = self.render_public_ty(resolved);
+        self.emit(
+            TypeError::UnresolvedMethod {
+                ty,
+                name: method.to_string(),
+            },
+            span,
+        );
+        true
+    }
+
+    fn reject_unknown_set_method(&mut self, resolved: Ty, method: &str, span: Span) -> bool {
+        let is_hash_set = matches!(
+            self.tcx.kind(resolved),
+            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 7
+        );
+        if !is_hash_set {
             return false;
         }
         let ty = self.render_public_ty(resolved);
