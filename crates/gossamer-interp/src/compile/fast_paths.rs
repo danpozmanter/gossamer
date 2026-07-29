@@ -1857,12 +1857,15 @@ impl<'tcx> FnBuilder<'tcx> {
         }
         let HirExprKind::Range {
             start: Some(start),
-            end: Some(end),
+            end,
             inclusive,
         } = &receiver.kind
         else {
             return Ok(None);
         };
+        if *inclusive && end.is_none() {
+            return Ok(None);
+        }
         // A range's bounds are integers by typecheck. Accept a bound
         // whose static kind is `i64` (the common case, driven by a typed
         // counter) or `Value` (an unresolved-typed bound such as
@@ -1871,7 +1874,11 @@ impl<'tcx> FnBuilder<'tcx> {
         // float bound is rejected (no valid for-range produces one), so
         // it falls through to the general inline-iterable materialiser
         // rather than miscompiling.
-        if self.expr_kind(start) == RegKind::F64 || self.expr_kind(end) == RegKind::F64 {
+        if self.expr_kind(start) == RegKind::F64
+            || end
+                .as_deref()
+                .is_some_and(|end| self.expr_kind(end) == RegKind::F64)
+        {
             return Ok(None);
         }
         let some_arm = &arms[0];
@@ -1906,9 +1913,13 @@ impl<'tcx> FnBuilder<'tcx> {
         let inclusive = *inclusive;
 
         let start_tr = self.compile_expr_ex(start)?;
-        let end_tr = self.compile_expr_ex(end)?;
         let counter_i = self.as_i64(start_tr);
-        let end_i = self.as_i64(end_tr);
+        let end_i = if let Some(end) = end {
+            let end_tr = self.compile_expr_ex(end)?;
+            Some(self.as_i64(end_tr))
+        } else {
+            None
+        };
 
         // A `for` expression without an explicit value-bearing `break`
         // evaluates to unit. Initialise the result before entering the loop
@@ -1934,18 +1945,20 @@ impl<'tcx> FnBuilder<'tcx> {
         // (counter has reached end) lands directly on the post-loop
         // block.
         let header = self.cur_idx();
-        let exit_branch_idx = self.emit(if inclusive {
-            Op::BranchIfGtI64 {
-                lhs_i: counter_i,
-                rhs_i: end_i,
-                target: 0,
-            }
-        } else {
-            Op::BranchIfGeI64 {
-                lhs_i: counter_i,
-                rhs_i: end_i,
-                target: 0,
-            }
+        let exit_branch_idx = end_i.map(|end_i| {
+            self.emit(if inclusive {
+                Op::BranchIfGtI64 {
+                    lhs_i: counter_i,
+                    rhs_i: end_i,
+                    target: 0,
+                }
+            } else {
+                Op::BranchIfGeI64 {
+                    lhs_i: counter_i,
+                    rhs_i: end_i,
+                    target: 0,
+                }
+            })
         });
 
         self.loop_stack.push(LoopCtx {
@@ -1965,21 +1978,33 @@ impl<'tcx> FnBuilder<'tcx> {
         // equivalent bounds test, so intermediate iterations skip
         // the header check and only loop entry pays it.
         let continue_target = self.cur_idx();
-        self.emit(if inclusive {
-            Op::IncJumpIfLeI64 {
-                counter_i,
-                end_i,
-                target: header + 1,
-            }
+        if let Some(end_i) = end_i {
+            self.emit(if inclusive {
+                Op::IncJumpIfLeI64 {
+                    counter_i,
+                    end_i,
+                    target: header + 1,
+                }
+            } else {
+                Op::IncJumpIfLtI64 {
+                    counter_i,
+                    end_i,
+                    target: header + 1,
+                }
+            });
         } else {
-            Op::IncJumpIfLtI64 {
-                counter_i,
-                end_i,
-                target: header + 1,
-            }
-        });
+            self.emit(Op::ArithImmI64 {
+                kind: ImmArithKind::Add,
+                dst_i: counter_i,
+                lhs_i: counter_i,
+                imm: 1,
+            });
+            self.emit(Op::Jump { target: header });
+        }
         let after = self.cur_idx();
-        self.patch_jump(exit_branch_idx, after);
+        if let Some(exit_branch_idx) = exit_branch_idx {
+            self.patch_jump(exit_branch_idx, after);
+        }
         let ctx = self
             .loop_stack
             .pop()

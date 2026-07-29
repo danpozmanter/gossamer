@@ -338,22 +338,14 @@ impl<'a> Builder<'a> {
                     // the complete buffer into `a`. Large numeric buffers
                     // therefore used twice their required memory and paid an
                     // avoidable full-buffer copy before useful work began.
-                    if let HirExprKind::Array(gossamer_hir::HirArrayExpr::Repeat {
-                        value,
-                        count,
-                    }) = &init.kind
+                    if let HirExprKind::Array(gossamer_hir::HirArrayExpr::Repeat { value, count }) =
+                        &init.kind
                         && (matches!(
                             self.tcx.kind_of(init.ty),
                             gossamer_types::TyKind::Vec(_) | gossamer_types::TyKind::Slice(_)
                         ) || literal_u64(count).is_none())
                         && self
-                            .lower_array_repeat_into(
-                                value,
-                                count,
-                                init.ty,
-                                stmt.span,
-                                Some(local),
-                            )
+                            .lower_array_repeat_into(value, count, init.ty, stmt.span, Some(local))
                             .is_some()
                     {
                         if let HirPatKind::Binding { name, .. } = &pattern.kind {

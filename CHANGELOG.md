@@ -9,6 +9,9 @@
   `madvise` for nearly every short-lived allocation. Immediate purging remains
   available with `GOS_ALLOC_PURGE_DELAY=0`.
 - Keep the Windows native performance regression on platform-supported checks.
+- Correct tuple-struct constructor diagnostics, optional match-arm commas,
+  source-like integral float rendering in the REPL, and control flow for
+  open-ended `for` ranges.
 
 ## 0.38.0 - Assignment, function fixes, REPL cleanup, performance fixes
 

@@ -155,6 +155,30 @@ fn repl_bindings_hide_inference_ids_for_empty_vec() {
 }
 
 #[test]
+fn repl_bindings_keep_integral_float_decimal_points() {
+    let out = run_repl(
+        "struct Point<T, U> { x: T, y: U }\n\
+         let point = Point { x: 1.0, y: 4.0 }\n\
+         let integral = 2.0\n\
+         let fractional = 2.3\n\
+         %b\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout
+            .contains("point: Point<f64, f64> = Point { x: 1.0, y: 4.0 }"),
+        "{}",
+        out.stdout
+    );
+    assert!(out.stdout.contains("integral: f64 = 2.0"), "{}", out.stdout);
+    assert!(
+        out.stdout.contains("fractional: f64 = 2.3"),
+        "{}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_meta_commands_accept_leading_whitespace() {
     let out = run_repl("let x = 1\n  %b\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);

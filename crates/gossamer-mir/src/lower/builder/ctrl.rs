@@ -2755,11 +2755,11 @@ impl<'a> Builder<'a> {
         match &for_loop.iter_expr.kind {
             HirExprKind::Range {
                 start: Some(start),
-                end: Some(end),
+                end,
                 inclusive,
             } => self.lower_for_range(
                 start,
-                end,
+                end.as_deref(),
                 *inclusive,
                 for_loop.loop_pat,
                 for_loop.body,

@@ -1900,6 +1900,25 @@ fn unit_and_empty_named_struct_construction_are_distinct() {
 
 #[test]
 fn tuple_struct_construction_requires_parentheses() {
+    let checked = run("struct Point(i64, i64)\nfn main() { let _ = Point }\n");
+    let diagnostic = checked
+        .diagnostics
+        .iter()
+        .find(|diagnostic| {
+            matches!(
+                diagnostic.error,
+                TypeError::TupleStructConstructorParenthesesRequired { .. }
+            )
+        })
+        .expect("bare tuple struct should require parentheses")
+        .to_diagnostic();
+    assert!(
+        diagnostic.title.contains("constructed with parentheses"),
+        "{}",
+        diagnostic.title
+    );
+    assert!(!diagnostic.title.contains("braces"), "{}", diagnostic.title);
+
     let d = diagnostics_for("struct Point(i64, i64)\nfn main() { let _ = Point { x: 1, y: 2 } }\n");
     assert!(has_code(&d, "GT0034"), "{d:?}");
 

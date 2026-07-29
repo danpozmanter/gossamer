@@ -84,6 +84,46 @@ fn main() {
 }
 
 #[test]
+fn open_ranges_honor_break_and_start_at_their_expected_lower_bound() {
+    let src = r#"
+fn main() {
+    let mut sum = 0
+    for i in 4.. {
+        sum += i
+        if i == 6 { break }
+        if i > 20 { panic("open-end break failed") }
+    }
+    println(sum)
+
+    let mut count = 0
+    for i in .. {
+        count += i
+        if i == 2 { break }
+        if i > 20 { panic("fully open break failed") }
+    }
+    println(count)
+
+    let mut last = -1
+    for i in ..3 { last = i }
+    println(last)
+}
+"#;
+    assert_eq!(run_main(src), "15\n3\n2\n");
+}
+
+#[test]
+fn open_range_array_indexing_reports_out_of_bounds() {
+    let src = r"
+fn main() {
+    let a = [1, 2, 3]
+    for i in .. { println(a[i]) }
+}
+";
+    let error = try_run_main(src).expect_err("index 3 must fail");
+    assert!(error.contains("out of bounds"), "{error}");
+}
+
+#[test]
 fn open_range_matches_rust_overflow_profile() {
     let src = r#"
 fn main() {

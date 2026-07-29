@@ -165,6 +165,7 @@ enum BraceKind {
     Paren,
     Bracket,
     Block,
+    Match,
     DeclList,
     UseList,
 }
@@ -371,6 +372,7 @@ fn render_code_line<'src>(
         let in_optional_comma_list = stack.last().is_some_and(|open| {
             matches!(open.kind, BraceKind::Paren | BraceKind::DeclList)
                 || (open.kind == BraceKind::Block && line_has_field)
+                || open.kind == BraceKind::Match
         });
         if in_optional_comma_list
             && tok.kind == TokenKind::Punct(Punct::Comma)
@@ -414,19 +416,16 @@ fn render_code_line<'src>(
             }
         }
         body.push_str(tok.text);
-        let declaration_brace = tok.kind == TokenKind::Punct(Punct::LBrace)
-            && line.toks[..tok_index].iter().any(|prior| {
-                matches!(
-                    prior.kind,
-                    TokenKind::Keyword(Keyword::Struct | Keyword::Enum)
-                )
-            });
+        let declaration_brace =
+            line_opens_brace_after(line, tok_index, &[Keyword::Struct, Keyword::Enum]);
+        let match_brace = line_opens_brace_after(line, tok_index, &[Keyword::Match]);
         let brace = update_stack(
             tok.kind,
             *prev_sig,
             line_level,
             line_was_cont,
             declaration_brace,
+            match_brace,
             stack,
         );
         if matches!(
@@ -447,6 +446,13 @@ fn render_code_line<'src>(
     body
 }
 
+fn line_opens_brace_after(line: &Line<'_>, index: usize, keywords: &[Keyword]) -> bool {
+    line.toks[index].kind == TokenKind::Punct(Punct::LBrace)
+        && line.toks[..index].iter().any(
+            |prior| matches!(prior.kind, TokenKind::Keyword(keyword) if keywords.contains(&keyword)),
+        )
+}
+
 /// Pushes or pops the bracket stack for `kind`; returns the brace kind
 /// when `kind` opens or closes a brace pair.
 fn update_stack(
@@ -455,6 +461,7 @@ fn update_stack(
     line_level: usize,
     line_was_cont: bool,
     declaration_brace: bool,
+    match_brace: bool,
     stack: &mut Vec<Open>,
 ) -> Option<BraceKind> {
     let open = |kind: BraceKind| Open {
@@ -474,6 +481,8 @@ fn update_stack(
         TokenKind::Punct(Punct::LBrace) => {
             let brace = if declaration_brace {
                 BraceKind::DeclList
+            } else if match_brace {
+                BraceKind::Match
             } else if prev_sig == Some(TokenKind::Punct(Punct::ColonColon)) {
                 BraceKind::UseList
             } else {
@@ -1013,9 +1022,10 @@ mod tests {
     }
 
     #[test]
-    fn match_arms_and_struct_literals_keep_shape() {
+    fn match_arms_drop_optional_trailing_commas() {
         let source = "fn main() {\n    let p = Point { x: 1.0, y: 2.0 }\n    match shape {\n        Shape::Circle(r) => r * r,\n        Shape::Rect { w, h } => w * h,\n    }\n}\n";
-        assert_eq!(fmt(source), source);
+        let expected = "fn main() {\n    let p = Point { x: 1.0, y: 2.0 }\n    match shape {\n        Shape::Circle(r) => r * r\n        Shape::Rect { w, h } => w * h\n    }\n}\n";
+        assert_eq!(fmt(source), expected);
     }
 
     #[test]
@@ -1122,6 +1132,13 @@ let c = Coord(
     16
 )
 ";
+        assert_eq!(fmt(source), expected);
+    }
+
+    #[test]
+    fn removes_optional_comma_after_match_break_arm() {
+        let source = "match pos {\n    7 => break,\n    _ => pos += 3\n}\n";
+        let expected = "match pos {\n    7 => break\n    _ => pos += 3\n}\n";
         assert_eq!(fmt(source), expected);
     }
 }

@@ -157,7 +157,8 @@ fn block_comments_survive_inline_and_standalone() {
 #[test]
 fn comments_inside_match_arms_and_chains() {
     let source = "fn label(n: i64) -> String {\n    match n {\n        // negative side\n        x if x < 0 => \"neg\",\n        // everything else\n        _ => \"pos\",\n    }\n}\n\nfn chain(input: [i64]) -> i64 {\n    input\n        // keep evens only\n        |> filter(|n: i64| n % 2 == 0)\n        |> count\n}\n";
-    assert_eq!(fmt(source), source);
+    let expected = "fn label(n: i64) -> String {\n    match n {\n        // negative side\n        x if x < 0 => \"neg\"\n        // everything else\n        _ => \"pos\"\n    }\n}\n\nfn chain(input: [i64]) -> i64 {\n    input\n        // keep evens only\n        |> filter(|n: i64| n % 2 == 0)\n        |> count\n}\n";
+    assert_eq!(fmt(source), expected);
 }
 
 #[test]

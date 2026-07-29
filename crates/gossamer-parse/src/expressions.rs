@@ -1382,11 +1382,12 @@ impl Parser<'_> {
     fn parse_break_expr(&mut self) -> ExprKind {
         self.bump();
         let label = self.try_parse_label();
-        let value = if is_expression_start(self) && !at_block_end(self) {
-            Some(Box::new(self.parse_expr_no_assign()))
-        } else {
-            None
-        };
+        let value =
+            if !self.newline_before_peek() && is_expression_start(self) && !at_block_end(self) {
+                Some(Box::new(self.parse_expr_no_assign()))
+            } else {
+                None
+            };
         ExprKind::Break { label, value }
     }
 

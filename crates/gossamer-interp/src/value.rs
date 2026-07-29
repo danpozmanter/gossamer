@@ -2665,6 +2665,7 @@ impl fmt::Display for Value {
 
 fn repr_value(value: &Value) -> String {
     match value {
+        Value::Float(number) => repr_float(*number),
         Value::String(text) => format!("{:?}", text.as_str()),
         Value::Char(ch) => format!("{ch:?}"),
         Value::Tuple(parts) => {
@@ -2683,7 +2684,13 @@ fn repr_value(value: &Value) -> String {
         Value::ByteArray(data) => format!("{:?}", &data[..]),
         Value::InlineByteArray(data) => format!("{:?}", data.as_slice()),
         Value::ByteVec(data) => format!("{:?}", data.as_slice()),
-        Value::FloatVec(data) => format!("{:?}", data.as_slice()),
+        Value::FloatVec(data) => format!(
+            "[{}]",
+            data.iter()
+                .map(|number| repr_float(*number))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         Value::LazyIter(id) => crate::stdlib_builtins::iter::lazy_iter_repr(*id)
             .unwrap_or_else(|| "<iterator>".to_string()),
         Value::Variant(inner) => {
@@ -2736,6 +2743,15 @@ fn repr_value(value: &Value) -> String {
         Value::MutCell(cell) => repr_value(&cell.lock()),
         Value::NativeEnum(owner) => repr_value(&native_enum_to_variant(owner)),
         _ => value.to_string(),
+    }
+}
+
+fn repr_float(number: f64) -> String {
+    let rendered = number.to_string();
+    if number.is_finite() && number.fract() == 0.0 {
+        format!("{rendered}.0")
+    } else {
+        rendered
     }
 }
 
@@ -3939,6 +3955,18 @@ mod repr_tests {
             "Message { text: \"hello\", value: Ok([\"wow\", 'a']) }"
         );
         assert_eq!(Value::String("wow".into()).to_string(), "wow");
+    }
+
+    #[test]
+    fn repr_keeps_integral_floats_source_like_recursively() {
+        let record = Value::Struct(Arc::new(StructInner {
+            name: intern_type_tag("Point"),
+            fields: StructFields::new(vec![("x", Value::Float(1.0)), ("y", Value::Float(4.0))]),
+        }));
+
+        assert_eq!(record.repr(), "Point { x: 1.0, y: 4.0 }");
+        assert_eq!(Value::Float(2.0).repr(), "2.0");
+        assert_eq!(Value::Float(2.3).repr(), "2.3");
     }
 }
 

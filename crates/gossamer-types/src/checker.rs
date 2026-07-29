@@ -9102,7 +9102,12 @@ impl<'a> TypeChecker<'a> {
                             .tcx
                             .def_name(def)
                             .map_or_else(|| "<struct>".to_string(), ToString::to_string);
-                        self.emit(TypeError::StructConstructorBracesRequired { name }, span);
+                        let error = if self.tcx.is_tuple_struct(def.local) {
+                            TypeError::TupleStructConstructorParenthesesRequired { name }
+                        } else {
+                            TypeError::StructConstructorBracesRequired { name }
+                        };
+                        self.emit(error, span);
                     }
                     self.tcx.intern(TyKind::Adt {
                         def,

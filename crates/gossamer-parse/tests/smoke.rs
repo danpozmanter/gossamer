@@ -674,3 +674,15 @@ fn malformed_match_arms_report_one_local_error_each() {
         );
     }
 }
+
+#[test]
+fn newline_separates_break_match_arm_without_comma() {
+    let source = "fn main() {\n    match 7 {\n        7 => break\n        _ => 0\n    }\n}\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("break_match_arm.gos", source.to_string());
+    let (_sf, diags) = parse_source_file(source, file);
+    assert!(
+        diags.is_empty(),
+        "newline must terminate a valueless break arm: {diags:?}"
+    );
+}

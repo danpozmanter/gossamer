@@ -855,7 +855,7 @@ impl<'a> Builder<'a> {
     pub(crate) fn lower_for_range(
         &mut self,
         start: &HirExpr,
-        end: &HirExpr,
+        end: Option<&HirExpr>,
         inclusive: bool,
         loop_pat: &HirPat,
         body: &HirExpr,
@@ -863,7 +863,10 @@ impl<'a> Builder<'a> {
     ) -> Option<Local> {
         use gossamer_types::{IntTy as It, TyKind};
         let start_local = self.lower_expr(start)?;
-        let end_local = self.lower_expr(end)?;
+        let end_local = match end {
+            Some(end) => Some(self.lower_expr(end)?),
+            None => None,
+        };
         // The loop counter's cranelift width must be concrete. Prefer
         // the MIR type picked by `lower_literal` for `start`; fall
         // back to i64 when neither HIR nor lowered MIR gave an
@@ -894,23 +897,27 @@ impl<'a> Builder<'a> {
         self.terminate(Terminator::Goto { target: header });
 
         self.set_current(header);
-        let bool_ty = self.tcx.bool_ty();
-        let cmp = self.fresh(bool_ty);
-        let op = if inclusive { BinOp::Le } else { BinOp::Lt };
-        self.emit_assign(
-            Place::local(cmp),
-            Rvalue::BinaryOp {
-                op,
-                lhs: Operand::Copy(Place::local(counter)),
-                rhs: Operand::Copy(Place::local(end_local)),
-            },
-            span,
-        );
-        self.terminate(Terminator::SwitchInt {
-            discriminant: Operand::Copy(Place::local(cmp)),
-            arms: vec![(0, exit)],
-            default: body_block,
-        });
+        if let Some(end_local) = end_local {
+            let bool_ty = self.tcx.bool_ty();
+            let cmp = self.fresh(bool_ty);
+            let op = if inclusive { BinOp::Le } else { BinOp::Lt };
+            self.emit_assign(
+                Place::local(cmp),
+                Rvalue::BinaryOp {
+                    op,
+                    lhs: Operand::Copy(Place::local(counter)),
+                    rhs: Operand::Copy(Place::local(end_local)),
+                },
+                span,
+            );
+            self.terminate(Terminator::SwitchInt {
+                discriminant: Operand::Copy(Place::local(cmp)),
+                arms: vec![(0, exit)],
+                default: body_block,
+            });
+        } else {
+            self.terminate(Terminator::Goto { target: body_block });
+        }
 
         self.set_current(body_block);
         self.push_scope();

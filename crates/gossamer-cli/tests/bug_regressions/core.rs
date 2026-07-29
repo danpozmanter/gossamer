@@ -769,6 +769,7 @@ fn main() {
     }
     println!("acc={}", acc)
 }
+
 "#;
     let dir = fresh_dir("continue_for_range");
     let path = write_source(&dir, "continue_for_range", src);
@@ -789,6 +790,58 @@ fn main() {
         native.0.contains("acc=33"),
         "native: expected acc=33, got: {:?}",
         native.0
+    );
+}
+
+#[test]
+fn open_range_breaks_and_bounds_checks_match_across_tiers() {
+    let break_src = r#"
+fn main() {
+    let mut total = 0
+    for i in 0.. {
+        total += i
+        if i == 2 { break }
+        if i > 20 { panic("break failed") }
+    }
+    let mut total2 = 0
+    for i in .. {
+        total2 += i
+        if i == 2 { break }
+        if i > 20 { panic("break failed") }
+    }
+    let mut finite = 0
+    for i in ..3 { finite += i }
+    println!("{} {} {}", total, total2, finite)
+}
+"#;
+    let dir = fresh_dir("open_range_break");
+    let path = write_source(&dir, "open_range_break", break_src);
+    let vm = run_vm(&path);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, "3 3 3\n");
+    let cl_dir = dir.join("cl");
+    fs::create_dir_all(&cl_dir).unwrap();
+    let bin = build_native(&path, &cl_dir).expect("cranelift build");
+    let native = run_native(&bin);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(native.0, vm.0);
+
+    let bounds_src =
+        "fn main() {\n    let a = [1, 2, 3]\n    for i in .. { println(a[i]) }\n}\n";
+    let bounds_path = write_source(&dir, "open_range_bounds", bounds_src);
+    let vm_bounds = run_vm(&bounds_path);
+    assert_ne!(vm_bounds.2, Some(0), "VM accepted index 3");
+    assert!(vm_bounds.1.contains("out of bounds"), "{}", vm_bounds.1);
+    let bounds_dir = dir.join("bounds-cl");
+    fs::create_dir_all(&bounds_dir).unwrap();
+    let bounds_bin = build_native(&bounds_path, &bounds_dir).expect("cranelift build");
+    let native_bounds = run_native(&bounds_bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_ne!(native_bounds.2, Some(0), "native accepted index 3");
+    assert!(
+        native_bounds.1.contains("out of bounds"),
+        "{}",
+        native_bounds.1
     );
 }
 
