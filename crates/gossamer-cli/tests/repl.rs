@@ -107,6 +107,22 @@ fn repl_persists_bindings_across_lines() {
 }
 
 #[test]
+fn repl_accepts_trailing_line_comments() {
+    let out = run_repl("let a = 1 // comment\na\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.is_empty(),
+        "a trailing comment must not cause a parse error: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.lines().any(|line| line == "1"),
+        "binding after a trailing comment was not retained: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_accepts_semicolon_between_binding_and_multiline_loop() {
     let out = run_repl(
         "let mut pos = 1; while pos < 10 { match pos { 7 => break, _ => pos += 3 } }\npos\n",

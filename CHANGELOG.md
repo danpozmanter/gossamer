@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.38.2 - Native lowering and REPL comment fixes
+
+- Lower integer `abs()` calls through `gos_rt_math_abs_i64` in both LLVM call
+  lowering paths, preventing malformed `llvm.fabs.f64` IR in native builds.
+- Permit trailing line comments in REPL expressions, `let` bindings, and
+  mutation classification.
+
 ## 0.38.1 - Native allocation, array construction, CI fixes, syntax fixes
 
 - Build runtime-sized repeated arrays directly in their destination binding,

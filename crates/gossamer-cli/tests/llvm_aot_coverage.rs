@@ -182,6 +182,20 @@ fn main() {
     );
 }
 
+#[test]
+fn aot_integer_abs_uses_integer_lowering() {
+    assert_release_stdout_eq(
+        "integer_abs",
+        r#"
+fn main() {
+    let x: i64 = -42
+    println!("{}", x.abs())
+}
+"#,
+        "42\n",
+    );
+}
+
 // ===============================================================
 // strings free-fn dispatch - every entry has a `gos_rt_str_*`
 // runtime shim, the MIR free-fn table just doesn't route to it.

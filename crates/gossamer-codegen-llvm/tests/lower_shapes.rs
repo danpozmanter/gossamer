@@ -121,6 +121,50 @@ fn build_const_int_main(value: i64) -> (Body, TyCtxt) {
     (body, tcx)
 }
 
+fn build_integer_abs_main() -> (Body, TyCtxt) {
+    let mut tcx = TyCtxt::new();
+    let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+    let body = Body {
+        name: "main".to_string(),
+        def: None,
+        arity: 0,
+        locals: vec![
+            LocalDecl {
+                ty: i64_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+            LocalDecl {
+                ty: i64_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+        ],
+        blocks: vec![BasicBlock {
+            id: BlockId(0),
+            stmts: vec![
+                const_int_assign(1, -42),
+                Statement {
+                    span: dummy_span(),
+                    kind: StatementKind::Assign {
+                        place: place(0),
+                        rvalue: Rvalue::CallIntrinsic {
+                            name: "abs",
+                            args: vec![Operand::Copy(place(1))],
+                        },
+                    },
+                },
+            ],
+            terminator: Terminator::Return,
+            span: dummy_span(),
+        }],
+        span: dummy_span(),
+    };
+    (body, tcx)
+}
+
 fn build_vec_pop_main() -> (Body, TyCtxt) {
     let mut tcx = TyCtxt::new();
     let unit = tcx.intern(TyKind::Unit);
@@ -645,4 +689,18 @@ fn fixed_u8_array_uses_packed_native_storage() {
         "IR was:\n{ir}"
     );
     assert!(!ir.contains("alloca [64 x i64]"), "IR was:\n{ir}");
+}
+
+#[test]
+fn integer_abs_uses_the_integer_runtime_helper() {
+    let (body, tcx) = build_integer_abs_main();
+    let ir = render_ir_to_string(&[body], &tcx, false).unwrap();
+    assert!(
+        ir.contains("call i64 @gos_rt_math_abs_i64(i64"),
+        "integer abs should call the integer helper:\n{ir}"
+    );
+    assert!(
+        !ir.contains("llvm.fabs.f64"),
+        "integer abs must not call the floating-point intrinsic:\n{ir}"
+    );
 }

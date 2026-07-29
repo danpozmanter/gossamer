@@ -663,7 +663,24 @@ impl<'a> Lowerer<'a> {
             "f64.sqrt" | "sqrt" => ("llvm.sqrt.f64", 1),
             "f64.sin" | "sin" => ("llvm.sin.f64", 1),
             "f64.cos" | "cos" => ("llvm.cos.f64", 1),
-            "f64.abs" | "abs" => ("llvm.fabs.f64", 1),
+            "f64.abs" | "fabs" | "abs" => {
+                // `abs` is shared by the integer and floating-point method
+                // surfaces. MIR can retain the `f64.abs` spelling for an
+                // integer call while its typed destination is i64. Only a
+                // double result can use LLVM's `fabs` intrinsic; routing an
+                // integer receiver through it produces malformed IR
+                // (`call i64 @llvm.fabs.f64(double i64)`).
+                if args.len() == 1
+                    && render_ty(self.tcx, self.body.local_ty(dest_local)) != "double"
+                {
+                    return self.lower_runtime_call_intrinsic(
+                        "gos_rt_math_abs_i64",
+                        args,
+                        dest_local,
+                    );
+                }
+                ("llvm.fabs.f64", 1)
+            }
             "f64.floor" | "floor" => ("llvm.floor.f64", 1),
             "f64.ceil" | "ceil" => ("llvm.ceil.f64", 1),
             "f64.exp" | "exp" => ("llvm.exp.f64", 1),

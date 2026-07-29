@@ -1467,7 +1467,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
             format!("{}\n    ", lets.join("\n    "))
         };
         let program_source = format!(
-            "{}\nfn __irepl_{n}() {{ {lets}{expr} }}\n",
+            "{}\nfn __irepl_{n}() {{ {lets}{expr}\n}}\n",
             declarations.join("\n"),
             n = input_no,
             lets = let_body,
@@ -1562,7 +1562,9 @@ fn render_repl_bindings(
 fn repl_binding_from_let_source(input: &str) -> std::result::Result<ReplBinding, String> {
     use gossamer_ast::{ExprKind, ItemKind, StmtKind};
 
-    let source = format!("fn __irepl_binding_names() {{ {input} }}\n");
+    // End the input before the synthetic closing brace so a trailing line
+    // comment cannot consume it.
+    let source = format!("fn __irepl_binding_names() {{ {input}\n}}\n");
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file("irepl-binding-names".to_string(), source.clone());
     let (sf, diags) = gossamer_parse::parse_source_file(&source, file);
@@ -2482,7 +2484,9 @@ fn item_kind_label(kind: StdItemKind) -> &'static str {
 fn input_mutates_binding(input: &str) -> bool {
     use gossamer_ast::{ExprKind, ItemKind, StmtKind};
 
-    let source = format!("fn __irepl_classify() {{ {input} }}\n");
+    // End the input before the synthetic closing brace so a trailing line
+    // comment cannot consume it.
+    let source = format!("fn __irepl_classify() {{ {input}\n}}\n");
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file("irepl-classify".to_string(), source.clone());
     let (sf, diags) = gossamer_parse::parse_source_file(&source, file);

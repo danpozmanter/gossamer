@@ -395,6 +395,17 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  unreachable").unwrap();
             return Ok(());
         }
+        // Integer `.abs()` calls can still reach the Terminator::Call route
+        // with an `f64.abs`-style name. Dispatch from the destination type,
+        // which is the authoritative MIR representation, before selecting a
+        // floating-point LLVM intrinsic.
+        if name.rsplit("::").next().is_some_and(|tail| tail == "abs")
+            && args.len() == 1
+            && render_ty(self.tcx, self.body.local_ty(destination.local)) != "double"
+        {
+            self.emit_named_call("gos_rt_math_abs_i64", args, destination, target)?;
+            return Ok(());
+        }
         // Recognise `math::*` calls and emit a direct
         // LLVM intrinsic invocation instead of routing
         // through an undefined `@"math::sqrt"` symbol. These
