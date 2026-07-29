@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.37.1 - Assignment, function fixes, REPL cleanup, performance fixes
+## 0.38.0 - Assignment, function fixes, REPL cleanup, performance fixes
 
 - Reject attempts to assign to literals and patterns that might not match in
   plain `let` bindings, with direct diagnostics and guidance.
