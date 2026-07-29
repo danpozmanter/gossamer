@@ -924,6 +924,16 @@ fn repl_accepts_semicolons_between_same_line_statements() {
 }
 
 #[test]
+fn repl_persists_same_line_semicolon_separated_lets() {
+    let out = run_repl("let x = 2;let y = 1\nx + y\n%bindings\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(out.stderr.is_empty(), "stderr: {}", out.stderr);
+    assert!(out.stdout.contains("\n3\n"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("x: i64 = 2"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("y: i64 = 1"), "stdout: {}", out.stdout);
+}
+
+#[test]
 fn repl_evaluates_function_definition() {
     let out = run_repl_args(
         "fn add(a: i64, b: i64) -> i64 { a + b }\nadd(1, 2)\n",

@@ -22,6 +22,8 @@
   their bare name.
 - Allow semicolons only as separators between statements on the same authored
   line, with trailing and line-ending semicolons remaining errors.
+- Persist every binding from semicolon-separated `let` statements entered on
+  one REPL line.
 
 ## 0.37.0 - REPL overhaul, Syntax changes (commas vs newlines), Fixes for Strings, Iterators, Ranges
 

@@ -1480,25 +1480,25 @@ fn repl_binding_from_let_source(input: &str) -> std::result::Result<ReplBinding,
     let ExprKind::Block(block) = &body.kind else {
         return Err(repl_let_shape_error());
     };
-    if block.stmts.len() != 1 || block.tail.is_some() {
+    if block.stmts.is_empty() || block.tail.is_some() {
         return Err(repl_let_shape_error());
-    }
-    let Some(stmt) = block.stmts.first() else {
-        return Err(repl_let_shape_error());
-    };
-    let StmtKind::Let { pattern, init, .. } = &stmt.kind else {
-        return Err(repl_let_shape_error());
-    };
-    if init.is_none() {
-        return Err(repl_let_initializer_error());
     }
     let mut vars = Vec::new();
-    collect_repl_pattern_bindings(pattern, &mut vars);
+    for stmt in &block.stmts {
+        let StmtKind::Let { pattern, init, .. } = &stmt.kind else {
+            return Err(repl_let_shape_error());
+        };
+        if init.is_none() {
+            return Err(repl_let_initializer_error());
+        }
+        collect_repl_pattern_bindings(pattern, &mut vars);
+    }
     Ok(ReplBinding { vars })
 }
 
 fn repl_let_shape_error() -> String {
-    "1 REPL input error:\n  malformed `let` input: expected exactly `let PAT = EXPR`".to_string()
+    "1 REPL input error:\n  malformed `let` input: expected one or more `let PAT = EXPR` statements"
+        .to_string()
 }
 
 fn repl_let_initializer_error() -> String {
