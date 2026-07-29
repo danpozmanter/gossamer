@@ -180,6 +180,33 @@ fn repl_history_outputs_copyable_unnumbered_inputs() {
 }
 
 #[test]
+fn repl_history_shortcut_filters_with_a_regex() {
+    let out = run_repl("let answer = 42\nanswer\n%h ^let\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.lines().any(|line| line == "let answer = 42"),
+        "%h should retain matching entries: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.lines().any(|line| line == "answer"),
+        "%h should omit non-matching entries: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_info_accepts_literals() {
+    let out = run_repl("%i 42\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Expression or literal"),
+        "%info should provide a useful result for literals: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_bindings_hide_inference_ids_for_empty_vec() {
     let out = run_repl(
         "let v = Vec::new()\n\
@@ -323,7 +350,7 @@ fn repl_byte_buffer_has_a_public_type_and_strict_mutation_contract() {
          b.len()\n\
          b.to_string()\n\
          %b\n\
-         %h push\n",
+         %help push\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     let diagnostics = format!("{}\n{}", out.stdout, out.stderr);
@@ -1090,7 +1117,7 @@ fn repl_hash_set_bindings_show_and_iterate_stored_structs() {
          set.insert(p2)\n\
          %bindings\n\
          for point in set { println(point) }\n\
-         %ls set\n\
+         %info set\n\
          set.map(|point| point.x)\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -1113,12 +1140,12 @@ fn repl_hash_set_bindings_show_and_iterate_stored_structs() {
     }
     assert!(
         out.stdout.contains("HashSet::insert [method]"),
-        "`%ls set` should list methods for the binding's HashSet type: {}",
+        "`%info set` should list methods for the binding's HashSet type: {}",
         out.stdout
     );
     assert!(
         !out.stdout.contains("Set::bool"),
-        "`%ls set` resolved to the unrelated Set type: {}",
+        "`%info set` resolved to the unrelated Set type: {}",
         out.stdout
     );
     assert!(
@@ -1207,8 +1234,9 @@ fn repl_meta_help_preserves_base_banner() {
     );
     assert!(
         out.stdout.contains("%reset (%r)")
-            && out.stdout.contains("%help (%h)")
-            && out.stdout.contains("%ls (%l)")
+            && out.stdout.contains("%help [name|/regex/]")
+            && out.stdout.contains("%info (%i)")
+            && out.stdout.contains("%history (%h) [regex]")
             && out.stdout.contains("%find (%f)"),
         "bare %help should list the remaining shortcuts; stdout: {}",
         out.stdout
@@ -1228,9 +1256,9 @@ fn repl_meta_command_shortcuts_match_their_long_forms() {
          fn identity(value: i64) -> i64 { value }\n\
          %b\n\
          %d\n\
-         %l strings\n\
+         %i strings\n\
          %f strings.*trim\n\
-         %h strings::trim\n\
+         %help strings::trim\n\
          %r\n\
          %b\n\
          %d\n\
@@ -1251,7 +1279,7 @@ fn repl_meta_command_shortcuts_match_their_long_forms() {
     );
     assert!(
         out.stdout.contains("std::strings::trim"),
-        "%l, %f, or %h did not reach stdlib discovery: {}",
+        "%i, %f, or %help did not reach stdlib discovery: {}",
         out.stdout
     );
     assert!(
@@ -1498,7 +1526,7 @@ fn repl_meta_help_finds_stdlib_symbol() {
 #[test]
 fn repl_string_listing_contains_only_supported_core_methods() {
     let out = run_repl(
-        "%ls String\n\
+        "%info String\n\
          let mut s = String::from(\"hello\")\n\
          s.truncate(3)\n\
          s.clear()\n",
@@ -1527,7 +1555,7 @@ fn repl_meta_help_ls_and_find_cover_core_string_parse() {
         "%help string::parse\n\
          %help String::parse\n\
          %help strings::parse\n\
-         %ls string\n\
+         %info string\n\
          %find String::parse\n\
          \"123\".parse<i64>()\n",
     );
@@ -1556,7 +1584,7 @@ fn repl_meta_help_ls_and_find_cover_core_string_parse() {
             && out
                 .stdout
                 .contains("Parses the string into the expected result type."),
-        "expected %ls and %find to expose String::parse; stdout: {}",
+        "expected %info and %find to expose String::parse; stdout: {}",
         out.stdout
     );
     assert!(
@@ -1624,19 +1652,19 @@ fn repl_meta_help_ls_and_find_cover_core_collection_types() {
     let out = run_repl(
         "%help Vec::new\n\
          %help Vec::push\n\
-         %ls Vec\n\
+         %info Vec\n\
          %find Vec::join\n\
          %help HashMap::new\n\
          %help HashMap::insert\n\
-         %ls HashMap\n\
+         %info HashMap\n\
          %find HashMap::pop\n\
          %help BTreeMap::new\n\
          %help BTreeMap::insert\n\
-         %ls BTreeMap\n\
+         %info BTreeMap\n\
          %help HashSet::union\n\
-         %ls HashSet\n\
+         %info HashSet\n\
          %help VecDeque::push_back\n\
-         %ls VecDeque\n",
+         %info VecDeque\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
@@ -1675,8 +1703,8 @@ fn repl_meta_help_covers_builtin_receiver_types() {
          %help AtomicI64::new\n\
          %help http::Response::text\n\
          %help validate::Errors::add\n\
-         %ls Option\n\
-         %ls http::Response\n",
+         %info Option\n\
+         %info http::Response\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
@@ -1815,7 +1843,7 @@ fn repl_meta_help_searches_regex() {
 
 #[test]
 fn repl_meta_ls_lists_modules() {
-    let out = run_repl("%ls\n");
+    let out = run_repl("%info\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("std::strings"),
@@ -1829,14 +1857,14 @@ fn repl_meta_ls_lists_modules() {
     );
     assert!(
         !out.stdout.contains("experimental"),
-        "%ls must not render feature status for modules; stdout: {}",
+        "%info must not render feature status for modules; stdout: {}",
         out.stdout
     );
 }
 
 #[test]
 fn repl_meta_ls_lists_namespace_items() {
-    let out = run_repl("%ls strings\n");
+    let out = run_repl("%info strings\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("std::strings"),
@@ -1852,20 +1880,20 @@ fn repl_meta_ls_lists_namespace_items() {
 
 #[test]
 fn repl_meta_ls_lists_the_complete_io_namespace() {
-    let out = run_repl("%ls io\n");
+    let out = run_repl("%info io\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for item in ["stdin", "stdout", "stderr", "ReadAll", "Copy"] {
         assert!(
             out.stdout.contains(&format!("std::io::{item}")),
-            "%ls io omitted {item}; stdout: {}",
+            "%info io omitted {item}; stdout: {}",
             out.stdout
         );
     }
 }
 
 #[test]
-fn repl_meta_ls_filters_regex_to_modules_only() {
-    let out = run_repl("%ls /std::regex/\n");
+fn repl_meta_info_combines_regex_help_and_listing() {
+    let out = run_repl("%info /std::regex/\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("std::regex"),
@@ -1873,20 +1901,25 @@ fn repl_meta_ls_filters_regex_to_modules_only() {
         out.stdout
     );
     assert!(
-        !out.stdout.contains("replace_all"),
-        "%ls must not list function members; stdout: {}",
+        out.stdout.contains("replace_all"),
+        "%info should combine module help with its listing; stdout: {}",
         out.stdout
     );
 }
 
 #[test]
-fn repl_meta_ls_rejects_functions() {
-    let out = run_repl("%ls strings::slice\n");
+fn repl_meta_info_combines_function_help_and_listing() {
+    let out = run_repl("%info strings::slice\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stderr.contains("%ls accepts module names only"),
-        "expected function rejection; stderr: {}",
+        out.stderr.is_empty(),
+        "%info should accept functions: {}",
         out.stderr
+    );
+    assert!(
+        out.stdout.contains("std::strings::slice") && out.stdout.contains("std::strings::trim"),
+        "%info should render item help and its module listing: {}",
+        out.stdout
     );
 }
 

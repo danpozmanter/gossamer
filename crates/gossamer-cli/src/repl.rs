@@ -16,18 +16,18 @@ use crate::paths::repl_history_path;
 const REPL_HELP_TEXT: &str = "\
 REPL commands
 
-  %help (%h) [name|/regex/]
+  %info (%i) [anything]
+    Show help and the relevant module or type listing.
+  %help [name|/regex/]
     Show command help or documentation for a symbol.
-  %ls (%l) [module|type|/regex/]
-    List standard-library modules, members, or core methods.
   %find (%f) <regex>
     Search public symbol names.
   %bindings (%b) [regex]
     Show persistent `let` bindings.
   %declarations (%d) [regex]
     Show persistent declarations.
-  %history
-    Show inputs from this session.
+  %history (%h) [regex]
+    Search inputs from this and previous sessions.
   %reset (%r)
     Clear persistent bindings and declarations.
   %quit (%q)
@@ -151,7 +151,7 @@ const PRELUDE_BUILTINS: &[PreludeBuiltinHelp] = &[
 
 // Core receiver and associated methods are runtime builtins, not stdlib module
 // exports. Keep them visible to REPL discovery so working calls such as
-// `"123".parse()` are not hidden from `%help`, `%ls`, and `%find`.
+// `"123".parse()` are not hidden from `%help`, `%info`, and `%find`.
 const CORE_METHODS: &[CoreMethodHelp] = &[
     CoreMethodHelp {
         owner: "Buffer",
@@ -1189,6 +1189,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
     if let Some(path) = &history_path {
         let _ = editor.load_history(path);
     }
+    transcript.extend(editor.history().iter().cloned());
 
     let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
     if tty {
@@ -1244,9 +1245,14 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     }
                     return Ok(());
                 }
-                "history" => {
-                    for entry in &transcript {
-                        println!("{}", crate::style::repl_meta_accent(entry));
+                "history" | "h" => {
+                    match render_repl_history(&transcript, arg) {
+                        Ok(entries) => {
+                            for entry in entries {
+                                println!("{}", crate::style::repl_meta_accent(&entry));
+                            }
+                        }
+                        Err(message) => print_repl_error(&message),
                     }
                     continue;
                 }
@@ -1335,19 +1341,19 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     println!("{}", crate::style::repl_meta_accent("session cleared"));
                     continue;
                 }
-                "help" | "h" => {
+                "help" => {
                     match repl_help(arg) {
                         Ok(text) => print_repl_output(&text),
                         Err(msg) => print_repl_error(&msg),
                     }
                     continue;
                 }
-                "ls" | "l" => {
+                "info" | "i" => {
                     let binding_receiver =
                         editor.helper().and_then(|helper| helper.receiver_type(arg));
                     let result = binding_receiver.map_or_else(
-                        || repl_ls(arg),
-                        |owner| Ok(render_core_method_dir(&[owner.to_string()])),
+                        || repl_info(arg),
+                        |owner| repl_info_for_receiver(arg, owner),
                     );
                     match result {
                         Ok(text) => print_repl_output(&text),
@@ -1786,7 +1792,36 @@ fn repl_help(arg: &str) -> std::result::Result<String, String> {
     }
 }
 
-fn repl_ls(arg: &str) -> std::result::Result<String, String> {
+fn repl_info(arg: &str) -> std::result::Result<String, String> {
+    let help = repl_help(arg)?;
+    let listing = repl_info_listing(arg)?;
+    let mut sections = Vec::new();
+    if !help.starts_with("no help found") {
+        sections.push(help);
+    }
+    if !listing.starts_with("no catalog listing") {
+        sections.push(listing);
+    }
+    if sections.is_empty() {
+        Ok(format!(
+            "{arg}\n  Expression or literal. No built-in catalog entry is available."
+        ))
+    } else {
+        Ok(sections.join("\n\n"))
+    }
+}
+
+fn repl_info_for_receiver(arg: &str, owner: &str) -> std::result::Result<String, String> {
+    let help = repl_help(arg)?;
+    let listing = render_core_method_dir(&[owner.to_string()]);
+    if help.starts_with("no help found") {
+        Ok(listing)
+    } else {
+        Ok(format!("{help}\n\n{listing}"))
+    }
+}
+
+fn repl_info_listing(arg: &str) -> std::result::Result<String, String> {
     if arg.is_empty() {
         return Ok(render_module_dir(gossamer_std::registry::modules()));
     }
@@ -1806,21 +1841,29 @@ fn repl_ls(arg: &str) -> std::result::Result<String, String> {
     }
 
     if let Some(method) = matching_core_methods(query).into_iter().next() {
-        return Err(format!(
-            "`{}::{}` is a {}; %ls accepts module or core type names only (use %help for an item)",
-            method.owner, method.name, method.kind
-        ));
+        return Ok(render_core_method_dir(&[method.owner]));
     }
 
-    if let Some((module, item)) = matching_items(query).into_iter().next() {
-        return Err(format!(
-            "`{}::{}` is a {}; %ls accepts module names only (use %help for an item)",
-            module.path,
-            item.name,
-            item_kind_label(item.kind)
-        ));
+    if let Some((module, _item)) = matching_items(query).into_iter().next() {
+        return Ok(render_module_dir(&[module]));
     }
-    Ok(format!("no stdlib module found for `{arg}`"))
+    Ok(format!("no catalog listing found for `{arg}`"))
+}
+
+fn render_repl_history(
+    transcript: &[String],
+    arg: &str,
+) -> std::result::Result<Vec<String>, String> {
+    let pattern = if arg.is_empty() {
+        None
+    } else {
+        Some(compile_search_regex("history", arg)?)
+    };
+    Ok(transcript
+        .iter()
+        .filter(|entry| pattern.as_ref().is_none_or(|regex| regex.is_match(entry)))
+        .cloned()
+        .collect())
 }
 
 /// Searches public symbol paths with a regular expression. Plain text remains
@@ -2022,7 +2065,7 @@ fn render_module_dir(modules: &[StdModule]) -> String {
         if modules.len() == 1 {
             // A directory command names a module, so render its complete
             // namespace tree: the module's own members plus every registered
-            // descendant module and its members.  A plain `%ls` deliberately
+            // descendant module and its members. A plain `%info` deliberately
             // stays shallow; recursively expanding the entire standard
             // library there would make the useful module overview unusable.
             push_module_items(&mut entries, module);
@@ -3047,6 +3090,19 @@ mod tests {
                 "missing REPL metadata for {query}"
             );
         }
+    }
+
+    #[test]
+    fn history_search_filters_saved_and_current_entries() {
+        let history = vec![
+            "let prior = 1".to_string(),
+            "prior".to_string(),
+            "let current = 2".to_string(),
+        ];
+        assert_eq!(
+            render_repl_history(&history, "^let").unwrap(),
+            ["let prior = 1", "let current = 2"]
+        );
     }
 
     #[test]

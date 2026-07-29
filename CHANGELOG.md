@@ -1,11 +1,14 @@
 # Changelog
 
-## 0.38.2 - Native lowering and REPL comment fixes
+## 0.38.2 - Native lowering and REPL refinement
 
 - Lower integer `abs()` calls through `gos_rt_math_abs_i64` in both LLVM call
   lowering paths, preventing malformed `llvm.fabs.f64` IR in native builds.
 - Permit trailing line comments in REPL expressions, `let` bindings, and
   mutation classification.
+- Replace `%ls` with `%info`/`%i`
+- `%history`/`%h` now recalls and searches saved history.
+- `%h` no longer is a shortcut for `%help`
 
 ## 0.38.1 - Native allocation, array construction, CI fixes, syntax fixes
 
