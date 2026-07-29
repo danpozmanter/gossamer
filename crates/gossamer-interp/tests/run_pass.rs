@@ -87,6 +87,21 @@ fn main() {
 }
 
 #[test]
+fn padded_integer_concat_preserves_format_semantics() {
+    let source = r#"
+fn main() {
+    println(format!("key-{:08}", 42i64))
+    println(format!("left-{:_<6}", 42i64))
+    println(format!("center-{:_^6}", 42i64))
+}
+"#;
+    assert_eq!(
+        run_program(source),
+        "key-00000042\nleft-42____\ncenter-__42__\n"
+    );
+}
+
+#[test]
 fn if_else_branch_selects_correct_arm() {
     let source = r#"
 fn main() {

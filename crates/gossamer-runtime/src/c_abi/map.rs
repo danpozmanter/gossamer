@@ -161,6 +161,7 @@ struct StrBytesStorage {
     entries: FxHashMap<Box<[u8]>, u64>,
     data: Vec<u8>,
     live_bytes: usize,
+    reserve_entries: usize,
 }
 
 impl StrBytesStorage {
@@ -169,6 +170,7 @@ impl StrBytesStorage {
             entries: FxHashMap::with_capacity_and_hasher(cap, rustc_hash::FxBuildHasher),
             data: Vec::new(),
             live_bytes: 0,
+            reserve_entries: cap,
         }
     }
 
@@ -201,6 +203,14 @@ impl StrBytesStorage {
     }
 
     fn insert(&mut self, key: &[u8], value: &[u8]) -> bool {
+        // `HashMap::with_capacity` promises that the requested entry count
+        // can be populated without repeated table growth. Apply the same
+        // principle to compact byte values once their actual width is known.
+        // This avoids repeatedly copying the entire contiguous value arena.
+        if self.data.capacity() == 0 && !value.is_empty() {
+            let requested = self.reserve_entries.saturating_mul(value.len());
+            let _ = self.data.try_reserve_exact(requested);
+        }
         let start = self.data.len();
         self.data.extend_from_slice(value);
         let span = Self::span(start, value.len());

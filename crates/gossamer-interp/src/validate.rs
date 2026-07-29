@@ -2175,6 +2175,19 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
             }
         }
         Op::Wide { idx } => match &chunk.wide_ops[idx as usize] {
+            WideOp::StrConcatPadI64 {
+                dst,
+                prefix,
+                value,
+                width,
+                fill,
+                align,
+            } => {
+                effect
+                    .v_reads
+                    .extend([*prefix, *value, *width, *fill, *align]);
+                effect.v_writes.push(*dst);
+            }
             WideOp::MapIncAt {
                 dst,
                 map_reg,
@@ -2238,6 +2251,18 @@ fn validate_wide_op(
 ) -> Result<(), ValidationError> {
     let f_count = u32::from(chunk.float_count);
     match *wide {
+        WideOp::StrConcatPadI64 {
+            dst,
+            prefix,
+            value,
+            width,
+            fill,
+            align,
+        } => {
+            for reg in [dst, prefix, value, width, fill, align] {
+                check_v(op_idx, reg)?;
+            }
+        }
         WideOp::MapIncAt {
             dst,
             map_reg,

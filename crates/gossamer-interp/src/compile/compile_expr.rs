@@ -3113,6 +3113,51 @@ impl<'tcx> FnBuilder<'tcx> {
         if Self::callee_is_concat(callee)
             && args.len() == 2
             && matches!(self.tcx.kind(args[0].ty), Some(TyKind::String))
+            && let HirExprKind::Call {
+                callee: pad_callee,
+                args: pad_args,
+            } = &args[1].kind
+            && let HirExprKind::Path {
+                segments: pad_segments,
+                ..
+            } = &pad_callee.kind
+            && pad_segments
+                .last()
+                .is_some_and(|segment| segment.name == "__fmt_pad")
+            && pad_args.len() == 4
+            && let HirExprKind::Call {
+                callee: rendered_callee,
+                args: rendered_args,
+            } = &pad_args[0].kind
+            && Self::callee_is_concat(rendered_callee)
+            && rendered_args.len() == 1
+            && matches!(self.tcx.kind(rendered_args[0].ty), Some(TyKind::Int(_)))
+            && !self.expr_has_uint_display_provenance(&rendered_args[0])
+        {
+            let prefix = self.compile_expr(&args[0])?;
+            let value = self.compile_expr(&rendered_args[0])?;
+            let width = self.compile_expr(&pad_args[1])?;
+            let fill = self.compile_expr(&pad_args[2])?;
+            let align = self.compile_expr(&pad_args[3])?;
+            let dst = self.alloc_reg();
+            let idx = u16::try_from(self.wide_ops.len()).map_err(|_| {
+                RuntimeError::Panic("too many wide bytecode operations".to_string())
+            })?;
+            self.wide_ops
+                .push(crate::bytecode::WideOp::StrConcatPadI64 {
+                    dst,
+                    prefix,
+                    value,
+                    width,
+                    fill,
+                    align,
+                });
+            self.emit(Op::Wide { idx });
+            return Ok(dst);
+        }
+        if Self::callee_is_concat(callee)
+            && args.len() == 2
+            && matches!(self.tcx.kind(args[0].ty), Some(TyKind::String))
             && matches!(self.tcx.kind(args[1].ty), Some(TyKind::Int(_)))
             && !self.expr_has_uint_display_provenance(&args[1])
         {

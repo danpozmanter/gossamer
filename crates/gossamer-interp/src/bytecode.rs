@@ -1522,6 +1522,22 @@ pub(crate) struct CacheSlot {
 /// so the in-line `Op` enum can stay narrow on the hot path.
 #[derive(Debug, Clone)]
 pub enum WideOp {
+    /// `__concat(prefix, __fmt_pad(__concat(integer), width, fill, align))`.
+    /// Renders, pads, and concatenates in one allocation.
+    StrConcatPadI64 {
+        /// Destination string value register.
+        dst: Reg,
+        /// String prefix value register.
+        prefix: Reg,
+        /// Signed integer register to render.
+        value: Reg,
+        /// Width value register.
+        width: Reg,
+        /// Fill character value register.
+        fill: Reg,
+        /// Alignment value register.
+        align: Reg,
+    },
     /// `m.inc_at(seq, start, len, by)` - see the original
     /// `Op::MapIncAt` doc; moved to the side table because the
     /// 6-register payload bloated every `Op` slot.

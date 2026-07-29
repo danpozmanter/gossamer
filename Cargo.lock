@@ -1573,6 +1573,7 @@ dependencies = [
  "gossamer-types",
  "gossamer-ws",
  "indexmap",
+ "itoa",
  "libc",
  "parking_lot",
  "rustc-hash",

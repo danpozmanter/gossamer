@@ -3199,6 +3199,57 @@ pub unsafe extern "C" fn gos_rt_fmt_pad_i64(
     })
 }
 
+/// Concatenate a string prefix and a width-formatted integer in one allocation.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_concat_pad_i64(
+    prefix: *const c_char,
+    value: i64,
+    width: i64,
+    fill: i64,
+    align: i64,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if width < 0 {
+            unsafe { gos_rt_panic(c"__fmt_pad: width must be non-negative".as_ptr()) };
+        }
+        let prefix = unsafe { cstr(prefix) }.as_bytes();
+        let mut number = itoa::Buffer::new();
+        let rendered = number.format(value);
+        let width = usize::try_from(width).unwrap_or(0);
+        let pad_char = u32::try_from(fill)
+            .ok()
+            .and_then(char::from_u32)
+            .unwrap_or(' ');
+        let total = width.saturating_sub(rendered.len());
+        let (left, right) = match align {
+            1 => (0, total),
+            2 => (total / 2, total - total / 2),
+            _ => (total, 0),
+        };
+        let mut encoded_fill = [0u8; 4];
+        let fill_bytes = pad_char.encode_utf8(&mut encoded_fill).as_bytes();
+        let padding_len = total.saturating_mul(fill_bytes.len());
+        let output_len = prefix
+            .len()
+            .saturating_add(rendered.len())
+            .saturating_add(padding_len);
+        alloc_growable_with_fill(output_len, output_len, false, |out| {
+            unsafe { copy_small_bytes(prefix.as_ptr(), out, prefix.len()) };
+            let mut offset = prefix.len();
+            for _ in 0..left {
+                unsafe { copy_small_bytes(fill_bytes.as_ptr(), out.add(offset), fill_bytes.len()) };
+                offset += fill_bytes.len();
+            }
+            unsafe { copy_small_bytes(rendered.as_ptr(), out.add(offset), rendered.len()) };
+            offset += rendered.len();
+            for _ in 0..right {
+                unsafe { copy_small_bytes(fill_bytes.as_ptr(), out.add(offset), fill_bytes.len()) };
+                offset += fill_bytes.len();
+            }
+        })
+    })
+}
+
 /// `strings::contains_rune(s, r) -> bool`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_contains_rune(s: *const c_char, r: i64) -> i32 {

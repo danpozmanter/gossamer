@@ -1273,6 +1273,54 @@ impl Vm {
                     // for every non-wide op.
                     let wide = unsafe { chunk.wide_ops.get_unchecked(idx as usize) };
                     match wide {
+                        crate::bytecode::WideOp::StrConcatPadI64 {
+                            dst,
+                            prefix,
+                            value,
+                            width,
+                            fill,
+                            align,
+                        } => {
+                            let prefix = match &registers[*prefix as usize] {
+                                Value::String(value) => value.as_str(),
+                                _ => "",
+                            };
+                            let width = match &registers[*width as usize] {
+                                Value::Int(value) if *value >= 0 => *value as usize,
+                                _ => 0,
+                            };
+                            let fill = match &registers[*fill as usize] {
+                                Value::Char(value) => *value,
+                                Value::Int(value) => char::from_u32(*value as u32).unwrap_or(' '),
+                                _ => ' ',
+                            };
+                            let align = match &registers[*align as usize] {
+                                Value::Int(value) => *value,
+                                _ => 0,
+                            };
+                            let value = match &registers[*value as usize] {
+                                Value::Int(value) => *value,
+                                _ => 0,
+                            };
+                            let mut number = itoa::Buffer::new();
+                            let rendered = number.format(value);
+                            let total = width.saturating_sub(rendered.len());
+                            let (left, right) = match align {
+                                1 => (0, total),
+                                2 => (total / 2, total - total / 2),
+                                _ => (total, 0),
+                            };
+                            let mut out = String::with_capacity(
+                                prefix.len()
+                                    + rendered.len()
+                                    + total.saturating_mul(fill.len_utf8()),
+                            );
+                            out.push_str(prefix);
+                            out.extend(std::iter::repeat_n(fill, left));
+                            out.push_str(rendered);
+                            out.extend(std::iter::repeat_n(fill, right));
+                            registers[*dst as usize] = Value::String(out.into());
+                        }
                         crate::bytecode::WideOp::MapIncAt {
                             dst,
                             map_reg,

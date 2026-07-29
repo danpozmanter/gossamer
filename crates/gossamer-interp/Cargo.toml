@@ -12,6 +12,7 @@ description = "Bytecode interpreter and adaptive JIT runtime for the Gossamer la
 workspace = true
 
 [dependencies]
+itoa = "1"
 gossamer-ast = { workspace = true }
 gossamer-coro = { workspace = true }
 gossamer-hir = { workspace = true }

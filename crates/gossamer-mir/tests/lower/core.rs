@@ -85,12 +85,14 @@ fn key(i: i64) -> String {
     let body = bodies.iter().find(|body| body.name == "key").expect("body");
     let symbols = call_symbol_names(body);
     assert!(
-        symbols.iter().any(|name| name == "gos_rt_fmt_pad_i64"),
-        "integer padding should use the fused native helper: {symbols:?}"
+        symbols.iter().any(|name| name == "gos_rt_concat_pad_i64"),
+        "integer padding and concatenation should use one native helper: {symbols:?}"
     );
     assert!(
-        !symbols.iter().any(|name| name == "gos_rt_fmt_pad"),
-        "integer padding must not first allocate a rendered string: {symbols:?}"
+        !symbols
+            .iter()
+            .any(|name| matches!(name.as_str(), "gos_rt_fmt_pad" | "gos_rt_fmt_pad_i64")),
+        "integer padding must not allocate an intermediate string: {symbols:?}"
     );
 }
 

@@ -217,6 +217,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_concat_finish", () -> Ptr, Both, "Finalise the active concat buffer and return the result String."),
     rt!("gos_rt_concat_i64", (I64) -> Void, Both, "Append an i64 to the active concat buffer."),
     rt!("gos_rt_concat_init", () -> Void, Both, "Initialise a new concat buffer for format! or string concatenation."),
+    rt!("gos_rt_concat_pad_i64", (Ptr, I64, I64, I64, I64) -> Ptr, Cranelift, "Concatenate a string prefix and width-formatted integer in one allocation."),
     rt!("gos_rt_concat_str", (Ptr) -> Void, Both, "Append a String slice to the active concat buffer."),
     rt!("gos_rt_concat_u64", (I64) -> Void, Both, "Append a u64 to the active concat buffer."),
     rt!("gos_rt_cov_bump", (I64) -> Void, Both, "Bump a pre-registered coverage counter slot by index."),

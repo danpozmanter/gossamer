@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.38.1 - Native allocation, array construction, CI fixes
+## 0.38.1 - Native allocation, array construction, CI fixes, syntax fixes
 
 - Build runtime-sized repeated arrays directly in their destination binding,
   removing a full deep clone and duplicate backing allocation from native
@@ -16,6 +16,8 @@
   to a muted, lighter palette distinct from source syntax highlighting.
 - Bypass dynamic JIT dispatch for generic hash-map insertion and avoid an
   intermediate allocation when formatting padded integer keys natively.
+- Fuse padded integer key construction in VM and native execution, and reserve
+  compact byte-map value arenas from actual payload width.
 - Accept optional line-ending semicolons while continuing to remove them with
   `gos fmt`.
 - Construct runtime-sized primitive repeated arrays at their final length,

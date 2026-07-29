@@ -254,6 +254,60 @@ impl<'a> Builder<'a> {
             if joined == "String::from" && args.len() == 1 {
                 return self.lower_expr(&args[0]);
             }
+            // Fuse the common `format!("prefix{:08}", integer)` shape all
+            // the way through concatenation. `__fmt_pad` already avoids an
+            // intermediate decimal string; recognizing it as a concat piece
+            // also avoids allocating the padded fragment only to copy it
+            // immediately into the final string.
+            if joined == "__concat"
+                && args.len() == 2
+                && let HirExprKind::Call {
+                    callee: pad_callee,
+                    args: pad_args,
+                } = &args[1].kind
+                && let HirExprKind::Path {
+                    segments: pad_segments,
+                    ..
+                } = &pad_callee.kind
+                && pad_segments.len() == 1
+                && pad_segments[0].name.as_str() == "__fmt_pad"
+                && pad_args.len() == 4
+                && let HirExprKind::Call {
+                    callee: rendered_callee,
+                    args: rendered_args,
+                } = &pad_args[0].kind
+                && let HirExprKind::Path {
+                    segments: rendered_segments,
+                    ..
+                } = &rendered_callee.kind
+                && rendered_segments.len() == 1
+                && rendered_segments[0].name.as_str() == "__concat"
+                && rendered_args.len() == 1
+                && matches!(
+                    self.tcx.kind_of(rendered_args[0].ty),
+                    gossamer_types::TyKind::Int(_)
+                )
+            {
+                let mut locals = Vec::with_capacity(5);
+                locals.push(self.lower_expr(&args[0])?);
+                locals.push(self.lower_expr(&rendered_args[0])?);
+                for arg in &pad_args[1..] {
+                    locals.push(self.lower_expr(arg)?);
+                }
+                let dest = self.fresh(ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_concat_pad_i64".to_string())),
+                    args: locals
+                        .into_iter()
+                        .map(|local| Operand::Copy(Place::local(local)))
+                        .collect(),
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                return Some(dest);
+            }
             if matches!(
                 joined.as_str(),
                 "Vec::from" | "collections::Vec::from" | "std::collections::Vec::from"
