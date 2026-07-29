@@ -378,38 +378,14 @@ impl<'src> Parser<'src> {
         self.eat_punct(Punct::Comma) || self.newline_before_peek()
     }
 
-    /// Consumes a semicolon used as a same-line statement separator.
-    ///
-    /// Semicolons are separators rather than terminators: both surrounding
-    /// statements must occupy the same authored line.
+    /// Consumes an optional semicolon after a statement.
     pub(crate) fn reject_trailing_semicolon(&mut self) -> bool {
         self.eat_statement_semicolon()
     }
 
-    /// Consumes a same-line statement separator, diagnosing a semicolon used
-    /// at a line or block boundary.
+    /// Consumes an optional statement semicolon.
     pub(crate) fn eat_statement_semicolon(&mut self) -> bool {
-        if !self.at_punct(Punct::Semi) {
-            return false;
-        }
-        let newline_before = self.newline_before_peek();
-        let span = self.peek_span();
-        self.bump();
-        if newline_before
-            || self.newline_before_peek()
-            || self.at_punct(Punct::RBrace)
-            || self.at_eof()
-        {
-            self.record(
-                ParseError::Unexpected {
-                    expected: "another statement on the same line; semicolons are separators, not terminators"
-                        .to_string(),
-                    found: "`;`".to_string(),
-                },
-                span,
-            );
-        }
-        true
+        self.eat_punct(Punct::Semi)
     }
 }
 

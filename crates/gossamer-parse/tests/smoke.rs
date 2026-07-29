@@ -228,7 +228,7 @@ fn statement_semicolons_separate_same_line_statements() {
 }
 
 #[test]
-fn statement_semicolon_terminators_are_rejected() {
+fn statement_semicolon_terminators_are_optional() {
     for source in [
         "use example;\n",
         "let x = 1;\n",
@@ -239,7 +239,7 @@ fn statement_semicolon_terminators_are_rejected() {
         let mut map = SourceMap::new();
         let file = map.add_file("semicolon.gos", source.to_string());
         let (_, diags) = parse_source_file(source, file);
-        assert!(!diags.is_empty(), "`{source}` unexpectedly parsed");
+        assert!(diags.is_empty(), "`{source}` produced {diags:?}");
     }
 }
 

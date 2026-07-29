@@ -2500,6 +2500,22 @@ impl<'tcx> FnBuilder<'tcx> {
                 return Ok(reg);
             }
         }
+        if name.name == "insert"
+            && args.len() == 2
+            && matches!(self.tcx.kind(receiver.ty), Some(TyKind::HashMap { .. }))
+        {
+            let map_reg = self.compile_expr(receiver)?;
+            let key_reg = self.compile_expr(&args[0])?;
+            let value_reg = self.compile_expr(&args[1])?;
+            let dst = self.alloc_reg();
+            self.emit(Op::MapInsert {
+                dst,
+                map_reg,
+                key_reg,
+                value_reg,
+            });
+            return Ok(dst);
+        }
         let receiver_reg = self.compile_expr(receiver)?;
         // `xs.pop()` evaluates to `Option<last>` while shortening the
         // receiver. `Op::VecPop` does both in one in-place step: it

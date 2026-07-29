@@ -74,6 +74,27 @@ fn make() -> String {
 }
 
 #[test]
+fn padded_integer_formatting_avoids_an_intermediate_string() {
+    let (bodies, _) = build(
+        r#"
+fn key(i: i64) -> String {
+    format!("key-{:08}", i)
+}
+"#,
+    );
+    let body = bodies.iter().find(|body| body.name == "key").expect("body");
+    let symbols = call_symbol_names(body);
+    assert!(
+        symbols.iter().any(|name| name == "gos_rt_fmt_pad_i64"),
+        "integer padding should use the fused native helper: {symbols:?}"
+    );
+    assert!(
+        !symbols.iter().any(|name| name == "gos_rt_fmt_pad"),
+        "integer padding must not first allocate a rendered string: {symbols:?}"
+    );
+}
+
+#[test]
 fn identity_function_produces_return_only_body() {
     let (bodies, _) = build("fn id(x: i64) -> i64 { x }\n");
     let body = &bodies[0];

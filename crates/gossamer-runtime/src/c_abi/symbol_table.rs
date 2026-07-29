@@ -4405,6 +4405,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         ),
         ("gos_rt_fmt_pad", crate::c_abi::gos_rt_fmt_pad as *const u8),
         (
+            "gos_rt_fmt_pad_i64",
+            crate::c_abi::gos_rt_fmt_pad_i64 as *const u8,
+        ),
+        (
             "gos_rt_str_pad_right",
             crate::c_abi::gos_rt_str_pad_right as *const u8,
         ),

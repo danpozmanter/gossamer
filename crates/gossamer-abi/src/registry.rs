@@ -346,6 +346,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_floatarr_slice_result", (Ptr, I64, I64, I64) -> I128, Cranelift, "Result-returning slice on a [f64; N] / &[f64] receiver. Args: (ptr, len, start, end). Returns Ok(Vec<f64>) on success."),
     rt!("gos_rt_flush_stdout", () -> Void, Cranelift, "Flush the stdout write buffer to the OS."),
     rt!("gos_rt_fmt_pad", (Ptr, I64, I64, I64) -> Ptr, Cranelift, "__fmt_pad(s, width, fill, align) -> String; pads a rendered value for a `{:spec}` width/align."),
+    rt!("gos_rt_fmt_pad_i64", (I64, I64, I64, I64) -> Ptr, Cranelift, "Fused integer rendering and width padding for integer `{:spec}` formatting."),
     rt!("gos_rt_fmt_radix_i64", (I64, I64) -> Ptr, Both, "Format-spec integer radix rendering with two's-complement negatives."),
     rt!("gos_rt_fs_canonicalize", (Ptr) -> I128, Cranelift, "os::canonicalize / fs::canonicalize(p) -> Result<String, Error>."),
     rt!("gos_rt_fs_copy", (Ptr, Ptr) -> I128, Cranelift, "os::copy / fs::copy(src, dst) -> Result<i64, Error>."),

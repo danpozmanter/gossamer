@@ -14,6 +14,10 @@
   open-ended `for` ranges.
 - Give REPL errors an accessible red treatment and move meta-command output
   to a muted, lighter palette distinct from source syntax highlighting.
+- Bypass dynamic JIT dispatch for generic hash-map insertion and avoid an
+  intermediate allocation when formatting padded integer keys natively.
+- Accept optional line-ending semicolons while continuing to remove them with
+  `gos fmt`.
 
 ## 0.38.0 - Assignment, function fixes, REPL cleanup, performance fixes
 

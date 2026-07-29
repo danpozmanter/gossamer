@@ -47,6 +47,16 @@ fn fmt(source: &str) -> String {
     format_source(source, file).expect("format fixture")
 }
 
+#[test]
+fn removes_optional_line_ending_semicolons() {
+    let source = "use std::strings;\nfn main() {\n    let value = 1;\n    println(value);\n}\n";
+    let formatted = fmt(source);
+    assert_eq!(
+        formatted,
+        "use std::strings\n\nfn main() {\n    let value = 1\n    println(value)\n}\n"
+    );
+}
+
 fn significant(source: &str) -> Vec<(TokenKind, String)> {
     let mut map = SourceMap::new();
     let file = file_id(&mut map, "sig.gos", source);
@@ -58,6 +68,22 @@ fn significant(source: &str) -> Vec<(TokenKind, String)> {
         .filter(|(index, token)| {
             if matches!(token.kind, TokenKind::Whitespace | TokenKind::Eof) {
                 return false;
+            }
+            if token.kind == TokenKind::Punct(gossamer_lex::Punct::Semi) {
+                let next = tokens[index + 1..]
+                    .iter()
+                    .find(|next| !matches!(next.kind, TokenKind::Whitespace));
+                let next_start = next.map_or(source.len(), |next| next.span.start as usize);
+                if source[token.span.end as usize..next_start].contains('\n')
+                    || next.is_none_or(|next| {
+                        matches!(
+                            next.kind,
+                            TokenKind::Punct(gossamer_lex::Punct::RBrace) | TokenKind::Eof
+                        )
+                    })
+                {
+                    return false;
+                }
             }
             if token.kind != TokenKind::Punct(gossamer_lex::Punct::Comma) {
                 return true;

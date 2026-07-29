@@ -590,6 +590,17 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, key_reg)?;
                 check_v(op_idx, by_reg)?;
             }
+            Op::MapInsert {
+                dst,
+                map_reg,
+                key_reg,
+                value_reg,
+            } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, map_reg)?;
+                check_v(op_idx, key_reg)?;
+                check_v(op_idx, value_reg)?;
+            }
             Op::MapInc {
                 dst,
                 map_reg,
@@ -1685,6 +1696,7 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
         | Op::U8VecSetByte { dst, .. }
         | Op::StrSubstring { dst, .. }
         | Op::MapIncMethod { dst, .. }
+        | Op::MapInsert { dst, .. }
         | Op::MapInc { dst, .. }
         | Op::MethodCall { dst, .. }
         | Op::Call { dst, .. }
@@ -2025,6 +2037,12 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
             effect.v_reads.push(map_reg);
             effect.i_reads.extend([key_i, value_i]);
         }
+        Op::MapInsert {
+            map_reg,
+            key_reg,
+            value_reg,
+            ..
+        } => effect.v_reads.extend([map_reg, key_reg, value_reg]),
         Op::IntMapLen { map_reg, .. } => effect.v_reads.push(map_reg),
         Op::IntMapContainsKey { map_reg, key_i, .. } => {
             effect.v_reads.push(map_reg);

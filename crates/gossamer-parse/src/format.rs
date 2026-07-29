@@ -112,7 +112,7 @@ fn split_lines(source: &str, file: FileId) -> Vec<Line<'_>> {
     let mut current_blank = 0u32;
     let mut pending_newlines = 0u32;
     let mut gap: &str = "";
-    for token in &raw {
+    for (index, token) in raw.iter().enumerate() {
         let text = &source[token.span.start as usize..token.span.end as usize];
         match token.kind {
             TokenKind::Whitespace => {
@@ -132,6 +132,9 @@ fn split_lines(source: &str, file: FileId) -> Vec<Line<'_>> {
             }
             TokenKind::Eof => break,
             _ => {
+                if is_trailing_semicolon(&raw, index, source) {
+                    continue;
+                }
                 if current.is_empty() {
                     current_blank = if lines.is_empty() {
                         0
@@ -156,6 +159,21 @@ fn split_lines(source: &str, file: FileId) -> Vec<Line<'_>> {
         });
     }
     lines
+}
+
+fn is_trailing_semicolon(tokens: &[gossamer_lex::Token], index: usize, source: &str) -> bool {
+    let token = &tokens[index];
+    if token.kind != TokenKind::Punct(Punct::Semi) {
+        return false;
+    }
+    let next = tokens[index + 1..]
+        .iter()
+        .find(|next| !matches!(next.kind, TokenKind::Whitespace));
+    let next_start = next.map_or(source.len(), |next| next.span.start as usize);
+    source[token.span.end as usize..next_start].contains('\n')
+        || next.is_none_or(|next| {
+            matches!(next.kind, TokenKind::Punct(Punct::RBrace) | TokenKind::Eof)
+        })
 }
 
 /// What a `{` opens: a code block / struct body, or a `use ...::{...}`
@@ -905,6 +923,9 @@ fn significant_tokens(source: &str, file: FileId) -> Vec<(TokenKind, &str)> {
         .enumerate()
         .filter(|(index, token)| {
             if matches!(token.kind, TokenKind::Whitespace | TokenKind::Eof) {
+                return false;
+            }
+            if is_trailing_semicolon(&tokens, *index, source) {
                 return false;
             }
             if token.kind != TokenKind::Punct(Punct::Comma) {

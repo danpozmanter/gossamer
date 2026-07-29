@@ -315,6 +315,15 @@ pub enum Op {
         /// a loaded `1` for the `m.inc(key)` form).
         by_reg: Reg,
     },
+    /// In-place generic map insertion without method lookup or argument
+    /// marshalling. The destination receives the same map handle returned by
+    /// the source-level `insert` method.
+    MapInsert {
+        dst: Reg,
+        map_reg: Reg,
+        key_reg: Reg,
+        value_reg: Reg,
+    },
     /// Specialised `m.insert(k, m.get_or(k, 0) + by)` - fused
     /// counter-increment super-instruction. Collapses the two
     /// `MethodCall`s, two IC probes, two arg-vec materialisations,

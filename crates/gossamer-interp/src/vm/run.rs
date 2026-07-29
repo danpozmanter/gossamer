@@ -1245,6 +1245,22 @@ impl Vm {
                     };
                     registers[dst as usize] = result;
                 }
+                Op::MapInsert {
+                    dst,
+                    map_reg,
+                    key_reg,
+                    value_reg,
+                } => {
+                    let Value::Map(map) = &registers[map_reg as usize] else {
+                        return Err(RuntimeError::Type(
+                            "MapInsert: receiver lost map invariant".to_string(),
+                        ));
+                    };
+                    let key = MapKey::from_value(&registers[key_reg as usize]);
+                    let value = registers[value_reg as usize].clone();
+                    map.lock().insert(key, value);
+                    registers[dst as usize] = Value::Map(Arc::clone(map));
+                }
                 Op::Wide { idx } => {
                     // Side-table indirection for the rare
                     // 6-payload-field ops. Reads the actual

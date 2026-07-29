@@ -3479,6 +3479,40 @@ impl<'a> Builder<'a> {
         args: &[HirExpr],
         span: Span,
     ) -> Option<Local> {
+        if rt_name == "gos_rt_fmt_pad"
+            && args.len() == 4
+            && let HirExprKind::Call {
+                callee,
+                args: rendered_args,
+            } = &args[0].kind
+            && let HirExprKind::Path { segments, .. } = &callee.kind
+            && segments.len() == 1
+            && segments[0].name.as_str() == "__concat"
+            && rendered_args.len() == 1
+            && matches!(
+                self.tcx.kind_of(rendered_args[0].ty),
+                gossamer_types::TyKind::Int(_)
+            )
+        {
+            let mut locals = Vec::with_capacity(4);
+            locals.push(self.lower_expr(&rendered_args[0])?);
+            for arg in &args[1..] {
+                locals.push(self.lower_expr(arg)?);
+            }
+            let dest = self.fresh(ret_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_fmt_pad_i64".to_string())),
+                args: locals
+                    .into_iter()
+                    .map(|local| Operand::Copy(Place::local(local)))
+                    .collect(),
+                destination: Place::local(dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+            return Some(dest);
+        }
         if rt_name.is_empty() {
             // Identity passthrough for testing::check_ok and friends.
             let v = args.first().and_then(|a| self.lower_expr(a))?;

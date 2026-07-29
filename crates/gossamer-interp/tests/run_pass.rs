@@ -71,6 +71,22 @@ fn arithmetic_program_prints_sum() {
 }
 
 #[test]
+fn generic_hash_map_insert_preserves_values_and_replacement() {
+    let source = r#"
+use std::collections::HashMap
+
+fn main() {
+    let mut map: HashMap<String, [u8]> = HashMap::with_capacity(2)
+    map.insert("key", [1u8, 2u8])
+    map.insert("key", [3u8, 4u8])
+    let value = map.get("key").unwrap()
+    println(value[0], value[1], map.len())
+}
+"#;
+    assert_eq!(run_program(source), "3 4 1\n");
+}
+
+#[test]
 fn if_else_branch_selects_correct_arm() {
     let source = r#"
 fn main() {
