@@ -167,7 +167,7 @@ pub(crate) fn set_id_of(value: &Value) -> Option<i64> {
 pub(crate) fn builtin_set_new(_args: &[Value]) -> RuntimeResult<Value> {
     let id = next_set_handle();
     SET_REGISTRY.with(|r| {
-        r.borrow_mut().insert(id, std::collections::HashSet::new());
+        r.borrow_mut().insert(id, StdHashMap::default());
     });
     Ok(set_handle(id))
 }
@@ -182,7 +182,7 @@ pub(crate) fn builtin_set_insert(args: &[Value]) -> RuntimeResult<Value> {
     let key = MapKey::from_value(value);
     let inserted = SET_REGISTRY.with(|r| {
         if let Some(s) = r.borrow_mut().get_mut(&id) {
-            s.insert(key)
+            s.insert(key, value.clone()).is_none()
         } else {
             false
         }
@@ -200,7 +200,7 @@ pub(crate) fn builtin_set_remove(args: &[Value]) -> RuntimeResult<Value> {
     let key = MapKey::from_value(value);
     let removed = SET_REGISTRY.with(|r| {
         if let Some(s) = r.borrow_mut().get_mut(&id) {
-            s.remove(&key)
+            s.remove(&key).is_some()
         } else {
             false
         }
@@ -216,7 +216,7 @@ pub(crate) fn builtin_set_contains(args: &[Value]) -> RuntimeResult<Value> {
         return Ok(Value::Bool(false));
     };
     let key = MapKey::from_value(value);
-    let has = SET_REGISTRY.with(|r| r.borrow().get(&id).is_some_and(|s| s.contains(&key)));
+    let has = SET_REGISTRY.with(|r| r.borrow().get(&id).is_some_and(|s| s.contains_key(&key)));
     Ok(Value::Bool(has))
 }
 
@@ -224,11 +224,7 @@ pub(crate) fn builtin_set_len(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(set_id_of) else {
         return Ok(Value::Int(0));
     };
-    let n = SET_REGISTRY.with(|r| {
-        r.borrow()
-            .get(&id)
-            .map_or(0, std::collections::HashSet::len)
-    });
+    let n = SET_REGISTRY.with(|r| r.borrow().get(&id).map_or(0, StdHashMap::len));
     Ok(Value::Int(n as i64))
 }
 
@@ -236,11 +232,7 @@ pub(crate) fn builtin_set_is_empty(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(set_id_of) else {
         return Ok(Value::Bool(true));
     };
-    let empty = SET_REGISTRY.with(|r| {
-        r.borrow()
-            .get(&id)
-            .is_none_or(std::collections::HashSet::is_empty)
-    });
+    let empty = SET_REGISTRY.with(|r| r.borrow().get(&id).is_none_or(StdHashMap::is_empty));
     Ok(Value::Bool(empty))
 }
 
@@ -256,23 +248,30 @@ pub(crate) fn builtin_set_clear(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_set_to_vec(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(id) = args.first().and_then(set_id_of) else {
-        return Ok(Value::Array(Arc::new(Vec::new())));
-    };
-    let values: Vec<Value> = SET_REGISTRY.with(|r| {
+    let values = args.first().and_then(set_snapshot).unwrap_or_default();
+    Ok(Value::Array(Arc::new(values)))
+}
+
+/// Returns the stored values in deterministic key order for user-facing
+/// iteration and REPL rendering.
+pub(crate) fn set_snapshot(value: &Value) -> Option<Vec<Value>> {
+    let id = set_id_of(value)?;
+    Some(SET_REGISTRY.with(|r| {
         r.borrow()
             .get(&id)
             .map(|s| {
                 // Sort for deterministic, cross-tier-identical order - a
                 // `HashSet`'s iteration order is otherwise unstable
                 // (RandomState) and differs run-to-run and across tiers.
-                let mut keys: Vec<MapKey> = s.iter().cloned().collect();
-                keys.sort();
-                keys.iter().map(MapKey::to_value).collect()
+                let mut entries: Vec<(&MapKey, &Value)> = s.iter().collect();
+                entries.sort_by_key(|(key, _)| (*key).clone());
+                entries
+                    .into_iter()
+                    .map(|(_, value)| value.clone())
+                    .collect()
             })
             .unwrap_or_default()
-    });
-    Ok(Value::Array(Arc::new(values)))
+    }))
 }
 
 fn set_pair_ids(args: &[Value]) -> Option<(i64, i64)> {
@@ -286,10 +285,7 @@ fn set_pair_ids(args: &[Value]) -> Option<(i64, i64)> {
 /// result under a fresh handle.
 fn set_binary_op(
     args: &[Value],
-    op: impl Fn(
-        &std::collections::HashSet<MapKey>,
-        &std::collections::HashSet<MapKey>,
-    ) -> std::collections::HashSet<MapKey>,
+    op: impl Fn(&StdHashMap<MapKey, Value>, &StdHashMap<MapKey, Value>) -> StdHashMap<MapKey, Value>,
 ) -> RuntimeResult<Value> {
     let result = match set_pair_ids(args) {
         Some((a, b)) => SET_REGISTRY.with(|r| {
@@ -298,7 +294,7 @@ fn set_binary_op(
             let sb = r.get(&b).cloned().unwrap_or_default();
             op(&sa, &sb)
         }),
-        None => std::collections::HashSet::new(),
+        None => StdHashMap::default(),
     };
     let id = next_set_handle();
     SET_REGISTRY.with(|r| {
@@ -309,7 +305,7 @@ fn set_binary_op(
 
 fn set_predicate(
     args: &[Value],
-    pred: impl Fn(&std::collections::HashSet<MapKey>, &std::collections::HashSet<MapKey>) -> bool,
+    pred: impl Fn(&StdHashMap<MapKey, Value>, &StdHashMap<MapKey, Value>) -> bool,
 ) -> RuntimeResult<Value> {
     let result = match set_pair_ids(args) {
         Some((a, b)) => SET_REGISTRY.with(|r| {
@@ -324,31 +320,53 @@ fn set_predicate(
 }
 
 pub(crate) fn builtin_set_union(args: &[Value]) -> RuntimeResult<Value> {
-    set_binary_op(args, |a, b| a.union(b).cloned().collect())
+    set_binary_op(args, |a, b| {
+        let mut result = a.clone();
+        for (key, value) in b {
+            result.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+        result
+    })
 }
 
 pub(crate) fn builtin_set_intersection(args: &[Value]) -> RuntimeResult<Value> {
-    set_binary_op(args, |a, b| a.intersection(b).cloned().collect())
+    set_binary_op(args, |a, b| {
+        a.iter()
+            .filter(|(key, _)| b.contains_key(*key))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
+    })
 }
 
 pub(crate) fn builtin_set_difference(args: &[Value]) -> RuntimeResult<Value> {
-    set_binary_op(args, |a, b| a.difference(b).cloned().collect())
+    set_binary_op(args, |a, b| {
+        a.iter()
+            .filter(|(key, _)| !b.contains_key(*key))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
+    })
 }
 
 pub(crate) fn builtin_set_symmetric_difference(args: &[Value]) -> RuntimeResult<Value> {
-    set_binary_op(args, |a, b| a.symmetric_difference(b).cloned().collect())
+    set_binary_op(args, |a, b| {
+        a.iter()
+            .filter(|(key, _)| !b.contains_key(*key))
+            .chain(b.iter().filter(|(key, _)| !a.contains_key(*key)))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
+    })
 }
 
 pub(crate) fn builtin_set_is_subset(args: &[Value]) -> RuntimeResult<Value> {
-    set_predicate(args, |a, b| a.is_subset(b))
+    set_predicate(args, |a, b| a.keys().all(|key| b.contains_key(key)))
 }
 
 pub(crate) fn builtin_set_is_superset(args: &[Value]) -> RuntimeResult<Value> {
-    set_predicate(args, |a, b| a.is_superset(b))
+    set_predicate(args, |a, b| b.keys().all(|key| a.contains_key(key)))
 }
 
 pub(crate) fn builtin_set_is_disjoint(args: &[Value]) -> RuntimeResult<Value> {
-    set_predicate(args, |a, b| a.is_disjoint(b))
+    set_predicate(args, |a, b| a.keys().all(|key| !b.contains_key(key)))
 }
 
 // ----------------------------------------------------------------------
@@ -395,7 +413,7 @@ pub(crate) static MUTEX_REGISTRY: GlobalReg<StdHashMap<i64, Arc<MutexCell>>> =
 // Mirrors the `sync::*` registries above.
 pub(crate) static NEXT_SET_HANDLE: GlobalReg<i64> =
     GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(1)));
-pub(crate) static SET_REGISTRY: GlobalReg<StdHashMap<i64, std::collections::HashSet<MapKey>>> =
+pub(crate) static SET_REGISTRY: GlobalReg<StdHashMap<i64, StdHashMap<MapKey, Value>>> =
     GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
 
 /// Backing state for an interpreter `sync::Mutex`. The lock is held
@@ -515,5 +533,32 @@ mod set_registry_tests {
             Value::Bool(b) => assert!(b),
             other => panic!("expected Bool, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn set_snapshot_preserves_aggregate_values() {
+        let handle = builtin_set_new(&[]).unwrap();
+        let first = Value::struct_("Point", vec![("x", Value::Int(1)), ("y", Value::Int(2))]);
+        let equal = Value::struct_("Point", vec![("x", Value::Int(1)), ("y", Value::Int(2))]);
+
+        assert!(matches!(
+            builtin_set_insert(&[handle.clone(), first.clone()]).unwrap(),
+            Value::Bool(true)
+        ));
+        assert!(matches!(
+            builtin_set_insert(&[handle.clone(), equal]).unwrap(),
+            Value::Bool(false)
+        ));
+        let Value::Array(snapshot) = builtin_set_to_vec(std::slice::from_ref(&handle)).unwrap()
+        else {
+            panic!("expected array snapshot");
+        };
+        assert_eq!(snapshot.len(), 1);
+        assert!(matches!(snapshot.first(), Some(Value::Struct(_))));
+        assert_eq!(
+            snapshot.first().map(MapKey::from_value),
+            Some(MapKey::from_value(&first))
+        );
+        assert_eq!(handle.repr(), "HashSet {Point { x: 1, y: 2 }}");
     }
 }

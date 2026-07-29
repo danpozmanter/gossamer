@@ -87,6 +87,33 @@ fn main() {
 }
 
 #[test]
+fn hash_set_iteration_preserves_user_struct_values() {
+    let source = r#"
+use std::collections::HashSet
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+fn main() {
+    let mut points: HashSet<Point> = HashSet::new()
+    points.insert(Point { x: 1, y: 2 })
+    points.insert(Point { x: 3, y: 4 })
+    points.insert(Point { x: 1, y: 2 })
+
+    let mut totals = Vec::new()
+    for point in points {
+        totals.push(point.x + point.y)
+    }
+    totals.sort()
+    println!("{:?}", totals)
+}
+"#;
+    assert_eq!(run_program(source), "[3, 7]\n");
+}
+
+#[test]
 fn padded_integer_concat_preserves_format_semantics() {
     let source = r#"
 fn main() {

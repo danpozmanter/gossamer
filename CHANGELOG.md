@@ -24,6 +24,9 @@
   eliminating per-element checked pushes in native numeric workloads.
 - Let REPL submissions combine persisted `let` bindings with following
   statements separated by either semicolons or newlines.
+- Persist REPL `impl` blocks, complete methods on `HashSet` bindings, preserve
+  struct elements during set iteration, and show set contents instead of
+  internal handles in `%bindings`.
 
 ## 0.38.0 - Assignment, function fixes, REPL cleanup, performance fixes
 

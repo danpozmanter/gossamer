@@ -1034,6 +1034,68 @@ fn repl_accepts_derived_struct_declaration() {
 }
 
 #[test]
+fn repl_accepts_impl_block_declaration() {
+    let out = run_repl_args(
+        "struct Point { x: i64, y: i64 }\n\
+         impl Point { fn total(self) -> i64 { self.x + self.y } }\n\
+         let point = Point { x: 20, y: 22 }\n\
+         point.total()\n",
+        &["-v"],
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("added 2 declarations"),
+        "impl block should be stored as a declaration; stdout: {}; stderr: {}",
+        out.stdout,
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("42"),
+        "impl method should be callable from later input; stdout: {}; stderr: {}",
+        out.stdout,
+        out.stderr
+    );
+    assert!(
+        !out.stderr.contains("nested items"),
+        "impl block was interpreted as a nested item: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn repl_hash_set_bindings_show_and_iterate_stored_structs() {
+    let out = run_repl(
+        "#[derive(Debug, PartialEq, Eq)] struct Point { x: i64, y: i64 }\n\
+         let mut set = HashSet::new()\n\
+         let p1 = Point { x: 1, y: 2 }\n\
+         let p2 = Point { x: 3, y: 4 }\n\
+         impl Point { fn total(self) -> i64 { self.x + self.y } }\n\
+         set.insert(p1)\n\
+         set.insert(p2)\n\
+         %bindings\n\
+         for point in set { println(point) }\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        !out.stderr.contains("nested items"),
+        "impl block was interpreted as a nested item: {}",
+        out.stderr
+    );
+    assert!(
+        !out.stdout.contains("__set"),
+        "internal set handle leaked into user output: {}",
+        out.stdout
+    );
+    for point in ["Point { x: 1, y: 2 }", "Point { x: 3, y: 4 }"] {
+        assert!(
+            out.stdout.matches(point).count() >= 2,
+            "`%bindings` and iteration should both show {point}: {}",
+            out.stdout
+        );
+    }
+}
+
+#[test]
 fn repl_executes_nested_function_items() {
     let out = run_repl(
         "fn outer(n: i64) -> i64 { fn double(x: i64) -> i64 { x * 2 } double(n) }\n\

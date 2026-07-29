@@ -2706,6 +2706,13 @@ fn repr_value(value: &Value) -> String {
         {
             inner.name.as_str().to_string()
         }
+        Value::Struct(inner) if inner.name == "HashSet" => {
+            let values = crate::stdlib_builtins::set::set_snapshot(value).unwrap_or_default();
+            format!(
+                "HashSet {{{}}}",
+                values.iter().map(repr_value).collect::<Vec<_>>().join(", ")
+            )
+        }
         Value::Struct(inner) => repr_struct(
             source_facing_nested_item_name(inner.name.as_str()),
             &inner.fields.to_vec(),

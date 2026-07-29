@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 
 use gossamer_lex::{Punct, SourceMap, TokenKind, tokenize};
 use rustyline::completion::Completer;
@@ -28,13 +29,50 @@ const DIM: &str = "\x1b[2m";
 
 /// REPL helper that highlights Gossamer source as the user types.
 #[derive(Default)]
-pub(crate) struct GosReplHelper;
+pub(crate) struct GosReplHelper {
+    hash_set_bindings: HashSet<String>,
+}
+
+const HASH_SET_METHODS: &[&str] = &[
+    "clear",
+    "contains",
+    "difference",
+    "insert",
+    "intersection",
+    "is_disjoint",
+    "is_empty",
+    "is_subset",
+    "is_superset",
+    "iter",
+    "len",
+    "remove",
+    "symmetric_difference",
+    "to_vec",
+    "union",
+];
 
 impl GosReplHelper {
     /// Constructs a fresh helper with no per-session state.
     #[must_use]
     pub(crate) fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// Records receiver types introduced by a successful REPL `let`.
+    pub(crate) fn observe_let(&mut self, source: &str, names: &[&str]) {
+        let is_hash_set = source.contains("HashSet::new(") || source.contains(": HashSet<");
+        for name in names {
+            if is_hash_set {
+                self.hash_set_bindings.insert((*name).to_string());
+            } else {
+                self.hash_set_bindings.remove(*name);
+            }
+        }
+    }
+
+    /// Clears all completion metadata with the rest of the REPL session.
+    pub(crate) fn reset_session(&mut self) {
+        self.hash_set_bindings.clear();
     }
 }
 
@@ -120,17 +158,35 @@ impl Completer for GosReplHelper {
         pos: usize,
         _ctx: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<String>)> {
-        Ok(complete_at(line, pos))
+        Ok(complete_at(line, pos, &self.hash_set_bindings))
     }
 }
 
 /// Computes completion candidates for the word ending at `pos`. Split out
 /// from the trait method so it is testable without a rustyline `Context`.
-fn complete_at(line: &str, pos: usize) -> (usize, Vec<String>) {
+fn complete_at(
+    line: &str,
+    pos: usize,
+    hash_set_bindings: &HashSet<String>,
+) -> (usize, Vec<String>) {
     let start = word_start(line, pos);
     let word = &line[start..pos];
     if word.is_empty() {
         return (start, Vec::new());
+    }
+    if start > 0
+        && line.as_bytes()[start - 1] == b'.'
+        && let Some(receiver_start) = receiver_start(line, start - 1)
+        && hash_set_bindings.contains(&line[receiver_start..start - 1])
+    {
+        return (
+            start,
+            HASH_SET_METHODS
+                .iter()
+                .filter(|method| method.starts_with(word))
+                .map(|method| (*method).to_string())
+                .collect(),
+        );
     }
     let mut out: Vec<String> = Vec::new();
     if !word.contains(':') {
@@ -157,6 +213,20 @@ fn complete_at(line: &str, pos: usize) -> (usize, Vec<String>) {
     out.sort();
     out.dedup();
     (start, out)
+}
+
+fn receiver_start(line: &str, dot: usize) -> Option<usize> {
+    let bytes = line.as_bytes();
+    let mut start = dot;
+    while start > 0 {
+        let byte = bytes[start - 1];
+        if byte.is_ascii_alphanumeric() || byte == b'_' {
+            start -= 1;
+        } else {
+            break;
+        }
+    }
+    (start < dot).then_some(start)
 }
 
 /// The module path forms a user might type to reach a module: the canonical
@@ -339,24 +409,25 @@ impl Highlighter for GosReplHelper {
 
 #[cfg(test)]
 mod repl_helper_tests {
-    use super::{complete_at, continuation_indent, incomplete_reason};
+    use super::{GosReplHelper, complete_at, continuation_indent, incomplete_reason};
+    use std::collections::HashSet;
 
     #[test]
     fn keyword_prefix_completes() {
-        let (start, cands) = complete_at("le", 2);
+        let (start, cands) = complete_at("le", 2, &HashSet::new());
         assert_eq!(start, 0);
         assert!(cands.iter().any(|c| c == "let"));
     }
 
     #[test]
     fn empty_word_yields_nothing() {
-        let (_, cands) = complete_at("let x = ", 8);
+        let (_, cands) = complete_at("let x = ", 8, &HashSet::new());
         assert!(cands.is_empty());
     }
 
     #[test]
     fn qualified_path_completes_member() {
-        let (start, cands) = complete_at("println!(strings::jo", 20);
+        let (start, cands) = complete_at("println!(strings::jo", 20, &HashSet::new());
         assert_eq!(start, 9);
         assert!(
             cands.iter().any(|c| c == "strings::join"),
@@ -368,8 +439,21 @@ mod repl_helper_tests {
 
     #[test]
     fn completion_offset_is_word_start_not_line_start() {
-        let (start, _) = complete_at("    fo", 6);
+        let (start, _) = complete_at("    fo", 6, &HashSet::new());
         assert_eq!(start, 4);
+    }
+
+    #[test]
+    fn hash_set_binding_completes_methods_after_dot() {
+        let mut helper = GosReplHelper::new();
+        helper.observe_let("let mut set = HashSet::new()", &["set"]);
+
+        let (start, cands) = complete_at("set.ins", 7, &helper.hash_set_bindings);
+        assert_eq!(start, 4);
+        assert_eq!(cands, vec!["insert"]);
+
+        let (_, cands) = complete_at("set.insecure", 12, &helper.hash_set_bindings);
+        assert!(cands.is_empty());
     }
 
     #[test]

@@ -188,7 +188,7 @@ pub const COLLECTIONS: StdModule = StdModule {
         StdItem {
             name: "HashSet",
             kind: StdItemKind::Type,
-            doc: "Unordered set built on top of `HashMap`.",
+            doc: "Unordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods. Like Rust's `HashSet`, mapping is an iterator operation: use `set.iter().map(f)`, not `set.map(f)`.",
         },
     ],
 };

@@ -1265,6 +1265,9 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     declarations.clear();
                     lets.clear();
                     bindings.clear();
+                    if let Some(helper) = editor.helper_mut() {
+                        helper.reset_session();
+                    }
                     println!("{}", crate::style::repl_meta_accent("session cleared"));
                     continue;
                 }
@@ -1335,6 +1338,14 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
             );
             match build_and_call(&probe, &format!("__irepl_{input_no}")) {
                 Ok(_) => {
+                    if let Some(helper) = editor.helper_mut() {
+                        let names: Vec<&str> = new_binding
+                            .vars
+                            .iter()
+                            .map(|var| var.name.as_str())
+                            .collect();
+                        helper.observe_let(&candidate, &names);
+                    }
                     update_repl_bindings(&mut bindings, new_binding);
                     if verbose {
                         println!("    binding added ({} total)", bindings.len());
@@ -1609,6 +1620,8 @@ fn input_is_declaration(input: &str) -> bool {
     input.starts_with("fn ")
         || input.starts_with("struct ")
         || input.starts_with("enum ")
+        || input.starts_with("impl ")
+        || input.starts_with("trait ")
         || input.starts_with("use ")
         || input.starts_with("const ")
         || input.starts_with("static ")
