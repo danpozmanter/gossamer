@@ -107,6 +107,42 @@ fn repl_persists_bindings_across_lines() {
 }
 
 #[test]
+fn repl_accepts_semicolon_between_binding_and_multiline_loop() {
+    let out = run_repl(
+        "let mut pos = 1; while pos < 10 { match pos { 7 => break, _ => pos += 3 } }\npos\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.is_empty(),
+        "valid mixed input must not produce an error; stderr: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.lines().any(|line| line == "7"),
+        "loop should break with the persisted binding at 7; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_accepts_newline_between_binding_and_multiline_loop() {
+    let out = run_repl(
+        "let mut pos = 1\nwhile pos < 10 {\n    match pos {\n        7 => break\n        _ => pos += 3\n    }\n}\npos\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.is_empty(),
+        "valid multiline input must not produce an error; stderr: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.lines().any(|line| line == "7"),
+        "newline-separated loop should break with pos at 7; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_history_outputs_copyable_unnumbered_inputs() {
     let out = run_repl("let answer = 42\nanswer\n%history\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -600,10 +636,7 @@ fn repl_rejects_malformed_let_without_phantom_bindings() {
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr
-            .contains("malformed `let` input: missing `=` initializer; write `let PAT = EXPR`")
-            && out.stderr.contains(
-                "malformed `let` input: expected one or more `let PAT = EXPR` statements"
-            ),
+            .contains("malformed `let` input: missing `=` initializer; write `let PAT = EXPR`"),
         "malformed let inputs should be rejected clearly; stderr: {}",
         out.stderr
     );
@@ -919,18 +952,17 @@ fn repl_handles_syntax_error_recovery() {
 }
 
 #[test]
-fn repl_rejects_line_ending_semicolons() {
+fn repl_accepts_optional_line_ending_semicolons() {
     let out = run_repl("let x = 9;\n%b\n");
-    assert!(out.success, "repl should recover; stderr: {}", out.stderr);
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stderr
-            .contains("semicolons are separators, not terminators"),
-        "missing semicolon diagnostic:\n{}",
+        out.stderr.is_empty(),
+        "optional semicolon must not produce a diagnostic:\n{}",
         out.stderr
     );
     assert!(
-        !out.stdout.contains("x:"),
-        "invalid semicolon input created a binding:\n{}",
+        out.stdout.lines().any(|line| line == "x: i64 = 9"),
+        "semicolon-terminated binding was not persisted:\n{}",
         out.stdout
     );
 }

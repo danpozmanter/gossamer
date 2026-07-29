@@ -1500,18 +1500,23 @@ fn repl_binding_from_let_source(input: &str) -> std::result::Result<ReplBinding,
     let ExprKind::Block(block) = &body.kind else {
         return Err(repl_let_shape_error());
     };
-    if block.stmts.is_empty() || block.tail.is_some() {
+    if block.stmts.is_empty() {
         return Err(repl_let_shape_error());
     }
     let mut vars = Vec::new();
+    let mut saw_let = false;
     for stmt in &block.stmts {
         let StmtKind::Let { pattern, init, .. } = &stmt.kind else {
-            return Err(repl_let_shape_error());
+            continue;
         };
+        saw_let = true;
         if init.is_none() {
             return Err(repl_let_initializer_error());
         }
         collect_repl_pattern_bindings(pattern, &mut vars);
+    }
+    if !saw_let {
+        return Err(repl_let_shape_error());
     }
     Ok(ReplBinding { vars })
 }

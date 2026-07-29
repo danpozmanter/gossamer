@@ -1274,6 +1274,52 @@ pub unsafe extern "C" fn gos_rt_vec_with_capacity(elem_bytes: u32, cap: i64) -> 
     })
 }
 
+/// Constructs a primitive Vec containing `count` copies of `value`.
+///
+/// Runtime-sized `[value; count]` expressions used to reserve capacity and
+/// execute the ordinary checked push path once per element. The final length
+/// and capacity are already known, so constructing the initialized buffer in
+/// one runtime call avoids repeated header traffic and branches.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_repeat_primitive(
+    elem_bytes: u32,
+    count: i64,
+    value: i64,
+) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        if count < 0 {
+            unsafe { gos_rt_panic(c"array repeat count must be non-negative".as_ptr()) };
+        }
+        if !matches!(elem_bytes, 1 | 2 | 4 | 8) {
+            unsafe { gos_rt_panic(c"invalid primitive array element width".as_ptr()) };
+        }
+        let vec = unsafe { alloc_vec_with_capacity(elem_bytes, vec_elem_kind::PRIMITIVE, count) };
+        if vec.is_null() {
+            return vec;
+        }
+        let bytes = checked_buffer_bytes(count as usize, elem_bytes as usize);
+        if bytes != 0 {
+            let data = unsafe { (*vec).ptr.as_ptr() };
+            if value == 0 {
+                unsafe { std::ptr::write_bytes(data, 0, bytes) };
+            } else {
+                let encoded = value.to_ne_bytes();
+                for index in 0..count as usize {
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            encoded.as_ptr(),
+                            data.add(index * elem_bytes as usize),
+                            elem_bytes as usize,
+                        );
+                    }
+                }
+            }
+        }
+        unsafe { (*vec).len = count };
+        vec
+    })
+}
+
 /// `gos_rt_vec_with_capacity` variant that records the element
 /// kind in the header so `gos_rt_vec_free` can deep-free
 /// pointer-bearing payloads. See [`vec_elem_kind`] for the tag
@@ -2081,6 +2127,26 @@ mod packed_row_tests {
             assert_eq!(gos_rt_vec_get_i64(row, 0), 777);
             assert_eq!(gos_rt_vec_get_i64(row, 2), 779);
             crate::c_abi::map::gos_rt_vec_free(outer);
+        }
+    }
+
+    #[test]
+    fn primitive_repeat_constructs_final_length_and_values() {
+        unsafe {
+            let zeros = gos_rt_vec_repeat_primitive(8, 1024, 0);
+            assert_eq!((*zeros).len, 1024);
+            assert_eq!((*zeros).cap, 1024);
+            assert_eq!(gos_rt_vec_get_i64(zeros, 0), 0);
+            assert_eq!(gos_rt_vec_get_i64(zeros, 1023), 0);
+            crate::c_abi::map::gos_rt_vec_free(zeros);
+
+            let bytes = gos_rt_vec_repeat_primitive(1, 4, 0xab);
+            assert_eq!((*bytes).len, 4);
+            assert_eq!(
+                std::slice::from_raw_parts((*bytes).ptr.as_ptr(), 4),
+                &[0xab; 4]
+            );
+            crate::c_abi::map::gos_rt_vec_free(bytes);
         }
     }
 }

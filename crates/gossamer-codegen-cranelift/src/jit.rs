@@ -2529,6 +2529,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_stdout_release"      => rt::gos_rt_stdout_release,
         "gos_rt_vec_new"             => rt::gos_rt_vec_new,
         "gos_rt_vec_with_capacity"   => rt::gos_rt_vec_with_capacity,
+        "gos_rt_vec_repeat_primitive" => rt::gos_rt_vec_repeat_primitive,
         "gos_rt_vec_capacity"        => rt::gos_rt_vec_capacity,
         "gos_rt_vec_from_arr"        => rt::gos_rt_vec_from_arr,
         "gos_rt_vec_borrow_arr"      => rt::gos_rt_vec_borrow_arr,

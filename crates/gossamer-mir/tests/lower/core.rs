@@ -1016,8 +1016,14 @@ fn runtime_array_repeat_builds_directly_in_let_binding() {
     let body = &bodies[0];
     let names = call_symbol_names(body);
     assert!(
-        names.iter().any(|name| name == "gos_rt_vec_with_capacity"),
-        "runtime-sized repeat must allocate its backing Vec"
+        names
+            .iter()
+            .any(|name| name == "gos_rt_vec_repeat_primitive"),
+        "primitive runtime-sized repeat must construct initialized storage directly"
+    );
+    assert!(
+        !names.iter().any(|name| name == "gos_rt_vec_push"),
+        "primitive runtime-sized repeat must not execute a checked push loop"
     );
     assert!(
         !names.iter().any(|name| name == "gos_rt_vec_clone"),

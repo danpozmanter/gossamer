@@ -18,6 +18,10 @@
   intermediate allocation when formatting padded integer keys natively.
 - Accept optional line-ending semicolons while continuing to remove them with
   `gos fmt`.
+- Construct runtime-sized primitive repeated arrays at their final length,
+  eliminating per-element checked pushes in native numeric workloads.
+- Let REPL submissions combine persisted `let` bindings with following
+  statements separated by either semicolons or newlines.
 
 ## 0.38.0 - Assignment, function fixes, REPL cleanup, performance fixes
 

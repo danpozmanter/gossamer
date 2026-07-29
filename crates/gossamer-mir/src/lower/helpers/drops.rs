@@ -2699,6 +2699,7 @@ pub(crate) fn insert_vec_elem_metas(body: &mut Body, tcx: &mut gossamer_types::T
                 | "gos_rt_vec_new_typed"
                 | "gos_rt_vec_with_capacity"
                 | "gos_rt_vec_with_capacity_typed"
+                | "gos_rt_vec_repeat_primitive"
                 | "gos_rt_vec_from_arr"
                 | "gos_rt_nested_arr_to_vec"
         )
@@ -3576,7 +3577,9 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
         match name {
             // Runtime-symbol form (used by some peephole sites).
             "gos_rt_map_new" | "gos_rt_map_new_with_capacity" => Some("gos_rt_map_free"),
-            "gos_rt_vec_new" | "gos_rt_vec_with_capacity" => Some("gos_rt_vec_free"),
+            "gos_rt_vec_new" | "gos_rt_vec_with_capacity" | "gos_rt_vec_repeat_primitive" => {
+                Some("gos_rt_vec_free")
+            }
             // Always returns a freshly allocated vec the frame owns,
             // whatever the destination's inferred type (a cloned borrowed
             // row lands in a Slice-typed local the type-based inference

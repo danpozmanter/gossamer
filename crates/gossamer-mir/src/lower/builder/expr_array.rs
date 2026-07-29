@@ -285,6 +285,26 @@ impl<'a> Builder<'a> {
             span,
         );
         let vec_local = destination.unwrap_or_else(|| self.fresh(ty));
+        let primitive_repeat = elem_bytes_val <= 8
+            && matches!(
+                self.tcx.kind_of(elem_src_ty),
+                TyKind::Int(_) | TyKind::Bool | TyKind::Char
+            );
+        if primitive_repeat {
+            let after_repeat = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_repeat_primitive".to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(elem_bytes_local)),
+                    Operand::Copy(Place::local(count_local)),
+                    Operand::Copy(Place::local(value_local)),
+                ],
+                destination: Place::local(vec_local),
+                target: Some(after_repeat),
+            });
+            self.set_current(after_repeat);
+            return Some(vec_local);
+        }
         let after_new = self.new_block(span);
         self.terminate(Terminator::Call {
             callee: Operand::Const(ConstValue::Str("gos_rt_vec_with_capacity".to_string())),

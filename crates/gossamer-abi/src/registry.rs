@@ -1424,6 +1424,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_vec_push_front_i64", (Ptr, I64) -> Ptr, Cranelift, "Prepend an i64 to a Vec in place; returns the same pointer."),
     rt!("gos_rt_vec_push_i128", (Ptr, I128) -> Void, Both, "Append a 16-byte i128 (by-value Result/Option) to a GosVec."),
     rt!("gos_rt_vec_push_i64", (Ptr, I64) -> Void, Both, "Append an i64 to a GosVec."),
+    rt!("gos_rt_vec_repeat_primitive", (I32, I64, I64) -> Ptr, Both, "Construct a primitive GosVec containing count copies of a scalar value."),
     rt!("gos_rt_vec_remove_at", (Ptr, I64) -> I64, Cranelift, "In-place Vec::remove: removes and returns the value at idx, shifting the tail down; out-of-range panics."),
     rt!("gos_rt_vec_remove_safe", (Ptr, I64) -> I128, Cranelift, "Result-returning Vec::remove; returns Ok(element) or Err on OOB."),
     rt!("gos_rt_vec_reserve_at_least", (Ptr, I64) -> Void, Both, "Ensure a GosVec has at least the requested total capacity, growing geometrically."),
