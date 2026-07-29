@@ -82,23 +82,24 @@ fn mimalloc_option_defaults() -> (i64, i64, i64) {
 
 /// Default mimalloc purge delay for release programs, in milliseconds.
 ///
-/// Immediate purge keeps resident memory close to the live set on programs
-/// with large allocation/free phases. `GOS_ALLOC_PURGE_DELAY=<ms>` restores
-/// mimalloc batching for applications that prefer fewer `madvise` calls.
+/// A short delay lets mimalloc batch page purges. Immediate purging turns
+/// short-lived allocation loops into one `madvise` syscall per iteration,
+/// which can dominate otherwise CPU-local workloads. Set
+/// `GOS_ALLOC_PURGE_DELAY=0` when immediate return-to-OS behavior is required.
 #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
 fn configured_purge_delay() -> std::os::raw::c_long {
     std::env::var("GOS_ALLOC_PURGE_DELAY")
         .ok()
         .and_then(|s| s.parse::<std::os::raw::c_long>().ok())
-        .unwrap_or(0)
+        .unwrap_or(10)
 }
 
 /// Configures the process allocator for a predictable memory footprint.
 ///
-/// Sets mimalloc's purge delay to immediate by default so freed allocation
-/// phases return pages to the OS instead of retaining them until mimalloc's
-/// batching timer fires. Set `GOS_ALLOC_PURGE_DELAY=<ms>` to restore or tune
-/// batching for applications where fewer purge syscalls beat lower RSS.
+/// Uses a 10 ms mimalloc purge delay by default. Immediate purge made
+/// allocator-heavy native loops issue `madvise(MADV_DONTNEED)` for nearly
+/// every released object. Set `GOS_ALLOC_PURGE_DELAY=0` to opt into immediate
+/// return-to-OS behavior, or another millisecond value to tune batching.
 ///
 /// Compiled Gossamer programs reach this from their generated `main` via
 /// `gos_rt_set_args` -> `runtime_init`; the `gos` binary (which links

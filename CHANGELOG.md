@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.38.1 - Native allocation, array construction, CI fixes
+
+- Build runtime-sized repeated arrays directly in their destination binding,
+  removing a full deep clone and duplicate backing allocation from native
+  array workloads.
+- Batch native allocator page purges by default instead of issuing
+  `madvise` for nearly every short-lived allocation. Immediate purging remains
+  available with `GOS_ALLOC_PURGE_DELAY=0`.
+- Keep the Windows native performance regression on platform-supported checks.
+
 ## 0.38.0 - Assignment, function fixes, REPL cleanup, performance fixes
 
 - Reject attempts to assign to literals and patterns that might not match in

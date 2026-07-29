@@ -231,6 +231,17 @@ impl<'a> Builder<'a> {
         ty: Ty,
         span: Span,
     ) -> Option<Local> {
+        self.lower_array_repeat_into(value, count, ty, span, None)
+    }
+
+    pub(crate) fn lower_array_repeat_into(
+        &mut self,
+        value: &HirExpr,
+        count: &HirExpr,
+        ty: Ty,
+        span: Span,
+        destination: Option<Local>,
+    ) -> Option<Local> {
         use gossamer_types::TyKind;
         // A `[value; N]` literal whose context wants a growable Vec/Slice
         // builds a heap GosVec of N copies, byte-correct for the element
@@ -273,7 +284,7 @@ impl<'a> Builder<'a> {
             Rvalue::Use(Operand::Const(ConstValue::Int(elem_bytes_val))),
             span,
         );
-        let vec_local = self.fresh(ty);
+        let vec_local = destination.unwrap_or_else(|| self.fresh(ty));
         let after_new = self.new_block(span);
         self.terminate(Terminator::Call {
             callee: Operand::Const(ConstValue::Str("gos_rt_vec_with_capacity".to_string())),
@@ -356,12 +367,6 @@ impl<'a> Builder<'a> {
         self.terminate(Terminator::Goto { target: header });
 
         self.set_current(exit);
-        let dest = self.fresh(ty);
-        self.emit_assign(
-            Place::local(dest),
-            Rvalue::Use(Operand::Copy(Place::local(vec_local))),
-            span,
-        );
-        Some(dest)
+        Some(vec_local)
     }
 }

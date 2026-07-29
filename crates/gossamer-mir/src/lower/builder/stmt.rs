@@ -331,6 +331,36 @@ impl<'a> Builder<'a> {
                     return;
                 }
                 if let Some(init) = init {
+                    // A runtime-sized repeat (`let a = [value; n]`) is a heap
+                    // Vec. Build it directly in the binding. Lowering it as a
+                    // general expression first produced a temporary Vec and
+                    // then applied ordinary Vec value semantics, deep-cloning
+                    // the complete buffer into `a`. Large numeric buffers
+                    // therefore used twice their required memory and paid an
+                    // avoidable full-buffer copy before useful work began.
+                    if let HirExprKind::Array(gossamer_hir::HirArrayExpr::Repeat {
+                        value,
+                        count,
+                    }) = &init.kind
+                        && (matches!(
+                            self.tcx.kind_of(init.ty),
+                            gossamer_types::TyKind::Vec(_) | gossamer_types::TyKind::Slice(_)
+                        ) || literal_u64(count).is_none())
+                        && self
+                            .lower_array_repeat_into(
+                                value,
+                                count,
+                                init.ty,
+                                stmt.span,
+                                Some(local),
+                            )
+                            .is_some()
+                    {
+                        if let HirPatKind::Binding { name, .. } = &pattern.kind {
+                            self.bind_local(&name.name, local);
+                        }
+                        return;
+                    }
                     if let Some(mut value) = self.lower_expr(init) {
                         // Coerce a `json::Value`-typed initialiser
                         // when the binding has an explicit primitive

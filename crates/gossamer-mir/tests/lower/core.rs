@@ -984,6 +984,27 @@ fn array_repeat_lowers_to_rvalue_repeat() {
 }
 
 #[test]
+fn runtime_array_repeat_builds_directly_in_let_binding() {
+    let source = r"fn make(n: i64) -> i64 {
+    let mut xs = [0i64; n]
+    xs[0] = 7
+    xs.len()
+}
+";
+    let (bodies, _) = build(source);
+    let body = &bodies[0];
+    let names = call_symbol_names(body);
+    assert!(
+        names.iter().any(|name| name == "gos_rt_vec_with_capacity"),
+        "runtime-sized repeat must allocate its backing Vec"
+    );
+    assert!(
+        !names.iter().any(|name| name == "gos_rt_vec_clone"),
+        "fresh repeat storage must move directly into the binding"
+    );
+}
+
+#[test]
 fn monomorphise_emits_one_specialised_body_per_distinct_substitution() {
     let source = r"fn ident<T>(x: T) -> T { x }
 
