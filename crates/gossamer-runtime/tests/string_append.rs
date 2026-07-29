@@ -4,8 +4,8 @@ use std::ffi::{CStr, CString};
 
 use gossamer_runtime::c_abi::{
     alloc_cstring, gos_rt_arena_pop, gos_rt_arena_push, gos_rt_str_append_bytes,
-    gos_rt_str_append_i64, gos_rt_str_concat_drop_a, gos_rt_str_free, gos_rt_str_push_byte,
-    gos_rt_str_push_char, gos_rt_str_with_capacity,
+    gos_rt_str_append_i64, gos_rt_str_char_at, gos_rt_str_concat_drop_a, gos_rt_str_free,
+    gos_rt_str_push_byte, gos_rt_str_push_char, gos_rt_str_with_capacity,
 };
 
 #[test]
@@ -78,5 +78,17 @@ fn character_push_grows_an_exhausted_buffer() {
         assert_ne!(grown, string, "an exhausted buffer must be replaced");
         assert_eq!(CStr::from_ptr(grown).to_bytes(), b"full!");
         gos_rt_str_free(grown);
+    }
+}
+
+#[test]
+fn incremental_append_index_preserves_unicode_lookup() {
+    unsafe {
+        let mut string = gos_rt_str_with_capacity(512);
+        for _ in 0..100 {
+            string = gos_rt_str_append_bytes(string, "aç".as_ptr(), 3);
+        }
+        assert_eq!(gos_rt_str_char_at(string, 199), 'ç' as i64);
+        gos_rt_str_free(string);
     }
 }

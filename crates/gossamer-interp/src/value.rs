@@ -981,12 +981,12 @@ struct HeapSmolStr {
     len: u32,
     cap: u32,
     char_len: u32,
-    char_index: Box<[u32]>,
+    char_index: Vec<u32>,
 }
 
 const SMOL_CHAR_INDEX_STRIDE: usize = 32;
 
-fn smol_char_index(s: &str) -> Box<[u32]> {
+fn smol_char_index(s: &str) -> Vec<u32> {
     s.char_indices()
         .enumerate()
         .filter_map(|(char_index, (byte_index, _))| {
@@ -1060,7 +1060,7 @@ impl HeapSmolStr {
                 len: len_u32,
                 cap: cap_u32,
                 char_len: 0,
-                char_index: Box::new([]),
+                char_index: Vec::new(),
             });
             fill(Self::bytes_mut(header));
             let text = std::str::from_utf8_unchecked(std::slice::from_raw_parts(
@@ -1115,17 +1115,20 @@ impl HeapSmolStr {
             );
             (*header).len =
                 u32::try_from(len + bytes.len()).expect("SmolStr heap string too large");
-            (*header).char_len = (*header)
-                .char_len
-                .checked_add(
-                    std::str::from_utf8_unchecked(bytes)
-                        .chars()
-                        .count()
-                        .try_into()
-                        .expect("SmolStr heap string too large"),
-                )
-                .expect("SmolStr heap string too large");
-            (*header).char_index = smol_char_index(Self::as_str(header));
+            let suffix = std::str::from_utf8_unchecked(bytes);
+            let old_char_len = (*header).char_len as usize;
+            let mut added_chars = 0usize;
+            for (byte_offset, _) in suffix.char_indices() {
+                let char_index = old_char_len + added_chars;
+                if char_index.is_multiple_of(SMOL_CHAR_INDEX_STRIDE) {
+                    (*header)
+                        .char_index
+                        .push(u32::try_from(len + byte_offset).expect("string too large"));
+                }
+                added_chars += 1;
+            }
+            (*header).char_len =
+                u32::try_from(old_char_len + added_chars).expect("SmolStr heap string too large");
         }
     }
 
@@ -3876,11 +3879,12 @@ mod smolstr_tests {
     fn repeated_appends_preserve_contents() {
         let mut s = SmolStr::new();
         for _ in 0..10_000 {
-            s.push_str("abc");
+            s.push_str("aç");
         }
-        assert_eq!(s.len(), 30_000);
-        assert!(s.as_str().starts_with("abcabc"));
-        assert!(s.as_str().ends_with("abc"));
+        assert_eq!(s.len(), 20_000);
+        assert_eq!(s.char_at(19_999), Some('ç'));
+        assert!(s.as_str().starts_with("açaç"));
+        assert!(s.as_str().ends_with("aç"));
     }
 
     #[test]

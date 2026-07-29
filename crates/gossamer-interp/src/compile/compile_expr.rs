@@ -312,6 +312,11 @@ impl<'tcx> FnBuilder<'tcx> {
                 if let Some(tr) = self.try_build_float_array(expr.ty, elems.as_slice())? {
                     return Ok(tr);
                 }
+                if let Some(tr) =
+                    self.try_build_float_array_from_structs(expr.ty, elems.as_slice())?
+                {
+                    return Ok(tr);
+                }
                 if let Some(tr) = self.try_build_int_array(expr.ty, elems.as_slice())? {
                     return Ok(tr);
                 }

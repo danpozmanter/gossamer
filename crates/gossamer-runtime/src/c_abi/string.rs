@@ -263,6 +263,35 @@ unsafe fn rebuild_str_index(s: *mut c_char, len: usize, cap: usize) {
     unsafe { footer.write_unaligned(chars as u32) };
 }
 
+/// Extends the footer character index after an in-place append. The previous
+/// implementation rebuilt it from byte zero on every append, making otherwise
+/// amortized string builders quadratic.
+unsafe fn extend_str_index(s: *mut c_char, old_len: usize, added: &[u8], cap: usize) {
+    let footer = unsafe { s.cast::<u8>().add(cap + 1).cast::<u32>() };
+    let old_chars = unsafe { footer.read_unaligned() };
+    if old_chars == u32::MAX {
+        unsafe { rebuild_str_index(s, old_len + added.len(), cap) };
+        return;
+    }
+    let Ok(text) = std::str::from_utf8(added) else {
+        unsafe { footer.write_unaligned(u32::MAX) };
+        return;
+    };
+    let mut added_chars = 0usize;
+    for (byte_offset, _) in text.char_indices() {
+        let char_index = old_chars as usize + added_chars;
+        if char_index.is_multiple_of(STR_INDEX_STRIDE) {
+            unsafe {
+                footer
+                    .add(1 + char_index / STR_INDEX_STRIDE)
+                    .write_unaligned((old_len + byte_offset) as u32);
+            }
+        }
+        added_chars += 1;
+    }
+    unsafe { footer.write_unaligned(old_chars.saturating_add(added_chars as u32)) };
+}
+
 #[inline]
 unsafe fn typed_str_cap(s: *const c_char) -> Option<usize> {
     if s.is_null() {
@@ -1106,7 +1135,7 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
                         hdr_mut.add(8),
                         4,
                     );
-                    rebuild_str_index(a.cast_mut(), new_len, cap);
+                    extend_str_index(a.cast_mut(), len_a, b_bytes, cap);
                 }
                 return a.cast_mut();
             }
@@ -1176,7 +1205,7 @@ pub unsafe extern "C" fn gos_rt_str_append_bytes(
                     hdr_mut.add(8),
                     4,
                 );
-                rebuild_str_index(acc.cast_mut(), new_len, cap);
+                extend_str_index(acc.cast_mut(), len_a, b_bytes, cap);
             }
             return acc.cast_mut();
         }

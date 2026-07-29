@@ -1551,6 +1551,22 @@ pub enum WideOp {
         /// First float register of the flat data block.
         first_f: Reg,
     },
+    /// Builds a packed `Value::FloatArray` from consecutive value
+    /// registers containing instances of the same all-`f64` struct.
+    /// This preserves the packed representation when array elements
+    /// come from calls or other expressions rather than direct literals.
+    BuildFloatArrayFromStructs {
+        /// Destination value register.
+        dst_v: Reg,
+        /// First value register containing a struct element.
+        first_v: Reg,
+        /// Number of struct elements.
+        elem_count: u16,
+        /// Const-pool index of the element struct name.
+        name_idx: ConstIdx,
+        /// Const-pool index of field names in declaration order.
+        fields_idx: ConstIdx,
+    },
 }
 
 /// One closure literal's compile-time template, referenced by

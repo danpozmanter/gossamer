@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.37.1 - Assignment, function fixes, REPL cleanup
+## 0.37.1 - Assignment, function fixes, REPL cleanup, performance fixes
 
 - Reject attempts to assign to literals and patterns that might not match in
   plain `let` bindings, with direct diagnostics and guidance.
@@ -24,6 +24,13 @@
   line, with trailing and line-ending semicolons remaining errors.
 - Persist every binding from semicolon-separated `let` statements entered on
   one REPL line.
+- Preserve packed VM storage for fixed arrays of all-`f64` structs when their
+  elements come from constructor helpers or other expressions, restoring
+  n-body performance after named struct initializers replaced positional
+  literals.
+- Extend Unicode character-position indexes incrementally when appending to
+  VM and native strings instead of rescanning the entire accumulated string,
+  restoring linear JSON builders and improving byte-oriented native workloads.
 
 ## 0.37.0 - REPL overhaul, Syntax changes (commas vs newlines), Fixes for Strings, Iterators, Ranges
 

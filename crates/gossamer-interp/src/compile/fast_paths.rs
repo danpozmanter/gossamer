@@ -1060,6 +1060,90 @@ impl<'tcx> FnBuilder<'tcx> {
         }))
     }
 
+    /// Packs a fixed array of all-`f64` structs whose elements are general
+    /// expressions. Direct struct literals use [`Self::try_build_float_array`]
+    /// and compile straight into float registers. This fallback evaluates
+    /// each expression normally, then packs its struct fields once at array
+    /// construction time. It covers constructor helpers and other call
+    /// boundaries without leaving hot indexed-field loops on boxed storage.
+    pub(crate) fn try_build_float_array_from_structs(
+        &mut self,
+        array_ty: Ty,
+        elems: &[HirExpr],
+    ) -> RuntimeResult<Option<TypedReg>> {
+        let elem_ty = match self.tcx.kind(array_ty) {
+            Some(TyKind::Array { elem, .. }) => *elem,
+            _ => return Ok(None),
+        };
+        let def = match self.tcx.kind(elem_ty) {
+            Some(TyKind::Adt { def, .. }) => *def,
+            _ => return Ok(None),
+        };
+        let Some(field_names) = self.layouts.get(&def).cloned() else {
+            return Ok(None);
+        };
+        if field_names.is_empty()
+            || !self.tcx.struct_field_tys(def).is_some_and(|tys| {
+                tys.iter()
+                    .all(|ty| matches!(self.tcx.kind(*ty), Some(TyKind::Float(FloatTy::F64))))
+            })
+        {
+            return Ok(None);
+        }
+        let Ok(stride) = u16::try_from(field_names.len()) else {
+            return Ok(None);
+        };
+        let Some(struct_name) = self.tcx.def_name(def).map(str::to_owned) else {
+            return Ok(None);
+        };
+        let elem_count = u16::try_from(elems.len())
+            .map_err(|_| RuntimeError::Unsupported("array literal exceeds 65535 elements"))?;
+        if elem_count == 0 {
+            return Ok(None);
+        }
+
+        let first_v = self.alloc_reg();
+        for _ in 1..elems.len() {
+            let _ = self.alloc_reg();
+        }
+        for (index, elem) in elems.iter().enumerate() {
+            let src = self.compile_expr(elem)?;
+            let dst = first_v + index as u16;
+            if src != dst {
+                self.emit(Op::Move { dst, src });
+            }
+        }
+
+        let name_idx = self.const_idx(
+            ConstKey::String(struct_name.clone()),
+            Value::String(struct_name.into()),
+        );
+        let fields_key = field_names.join("\0");
+        let fields_value = Value::Array(Arc::new(
+            field_names
+                .iter()
+                .map(|name| Value::String(SmolStr::from(name.clone())))
+                .collect(),
+        ));
+        let fields_idx = self.const_idx(ConstKey::String(fields_key), fields_value);
+        let dst_v = self.alloc_reg();
+        let wide_idx = u16::try_from(self.wide_ops.len()).expect("wide_ops index overflow");
+        self.wide_ops
+            .push(crate::bytecode::WideOp::BuildFloatArrayFromStructs {
+                dst_v,
+                first_v,
+                elem_count,
+                name_idx,
+                fields_idx,
+            });
+        self.emit(Op::Wide { idx: wide_idx });
+        self.flat_locals.insert(dst_v, stride);
+        Ok(Some(TypedReg {
+            reg: dst_v,
+            kind: RegKind::Value,
+        }))
+    }
+
     /// Lowers a numeric `Vec::new()` or `Vec::with_capacity(n)` to a flat empty `IntArray` /
     /// `FloatVec` (8 bytes per element) instead of the boxed
     /// `Value::Array` the generic `Vec::new` builtin returns. The local

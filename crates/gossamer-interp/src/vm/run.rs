@@ -1362,6 +1362,73 @@ impl Vm {
                                 Arc::new(data),
                             );
                         }
+                        crate::bytecode::WideOp::BuildFloatArrayFromStructs {
+                            dst_v,
+                            first_v,
+                            elem_count,
+                            name_idx,
+                            fields_idx,
+                        } => {
+                            let Value::String(name) = &chunk.consts[*name_idx as usize] else {
+                                return Err(RuntimeError::Panic(
+                                    "BuildFloatArrayFromStructs: name must be string const"
+                                        .to_string(),
+                                ));
+                            };
+                            let Value::Array(field_names_values) =
+                                &chunk.consts[*fields_idx as usize]
+                            else {
+                                return Err(RuntimeError::Panic(
+                                    "BuildFloatArrayFromStructs: fields must be string array"
+                                        .to_string(),
+                                ));
+                            };
+                            let field_names: Vec<String> = field_names_values
+                                .iter()
+                                .map(|value| match value {
+                                    Value::String(field) => Ok(field.as_str().to_owned()),
+                                    _ => Err(RuntimeError::Panic(
+                                        "BuildFloatArrayFromStructs: invalid field name"
+                                            .to_string(),
+                                    )),
+                                })
+                                .collect::<RuntimeResult<_>>()?;
+                            let mut data =
+                                Vec::with_capacity(usize::from(*elem_count) * field_names.len());
+                            for index in 0..*elem_count {
+                                let value = &registers[usize::from(*first_v + index)];
+                                let Value::Struct(inner) = value else {
+                                    return Err(RuntimeError::Panic(
+                                        "BuildFloatArrayFromStructs: element must be struct"
+                                            .to_string(),
+                                    ));
+                                };
+                                for field_name in &field_names {
+                                    let Some(offset) = inner.fields.position(field_name) else {
+                                        return Err(RuntimeError::Panic(
+                                            "BuildFloatArrayFromStructs: missing field".to_string(),
+                                        ));
+                                    };
+                                    let Value::Float(field) = inner.fields[offset] else {
+                                        return Err(RuntimeError::Panic(
+                                            "BuildFloatArrayFromStructs: field must be f64"
+                                                .to_string(),
+                                        ));
+                                    };
+                                    data.push(field);
+                                }
+                            }
+                            registers[*dst_v as usize] = Value::float_array(
+                                name.as_str(),
+                                u16::try_from(field_names.len()).map_err(|_| {
+                                    RuntimeError::Panic(
+                                        "BuildFloatArrayFromStructs: too many fields".to_string(),
+                                    )
+                                })?,
+                                Arc::new(field_names),
+                                Arc::new(data),
+                            );
+                        }
                     }
                 }
                 Op::MapInc {

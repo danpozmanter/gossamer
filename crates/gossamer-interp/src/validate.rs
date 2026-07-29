@@ -2185,6 +2185,15 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
                 );
                 effect.v_writes.push(*dst_v);
             }
+            WideOp::BuildFloatArrayFromStructs {
+                dst_v,
+                first_v,
+                elem_count,
+                ..
+            } => {
+                add_v_span(&mut effect.v_reads, *first_v, *elem_count);
+                effect.v_writes.push(*dst_v);
+            }
         },
         Op::ClearRegs { start, count } => add_v_span(&mut effect.v_clears, start, count),
     }
@@ -2264,6 +2273,28 @@ fn validate_wide_op(
                 }
             }
             check_f(op_idx, first_f).ok();
+        }
+        WideOp::BuildFloatArrayFromStructs {
+            dst_v,
+            first_v,
+            elem_count,
+            name_idx,
+            fields_idx,
+        } => {
+            check_v(op_idx, dst_v)?;
+            for idx in [name_idx, fields_idx] {
+                if usize::from(idx) >= consts_len {
+                    return Err(ValidationError::ConstantOutOfBounds {
+                        op_idx,
+                        idx: u32::from(idx),
+                        len: consts_len,
+                        pool: PoolKind::Consts,
+                    });
+                }
+            }
+            for offset in 0..elem_count {
+                check_v(op_idx, first_v.saturating_add(offset))?;
+            }
         }
     }
     Ok(())

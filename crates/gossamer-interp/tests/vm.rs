@@ -63,6 +63,24 @@ fn vm_evaluates_arithmetic_expression() {
 }
 
 #[test]
+fn vm_packs_float_struct_arrays_built_by_constructor_helpers() {
+    let vm = build_vm(
+        r"
+struct Body { x: f64, y: f64 }
+fn body(x: f64, y: f64) -> Body { Body { x: x, y: y } }
+fn sum_bodies() -> f64 {
+    let mut bodies: [Body; 2] = [body(1.0, 2.0), body(3.0, 4.0)]
+    bodies[1].x = bodies[0].y + 5.0
+    bodies[0].x + bodies[1].x + bodies[1].y
+}
+fn main() {}
+",
+    );
+    let result = vm.call("sum_bodies", Vec::new()).expect("sum_bodies");
+    assert!(matches!(result, Value::Float(value) if value == 12.0));
+}
+
+#[test]
 fn vm_persists_statement_position_byte_vector_pushes() {
     let source = r#"
 fn main() {
