@@ -87,15 +87,15 @@ fn check_run_and_timeout_work_end_to_end() {
 
     // A parser error surfaces through `check` as a structured diagnostic.
     let bad = dir.join("bad.gos");
-    std::fs::write(&bad, "fn main() { let x = 9;\nprintln(x) }\n").unwrap();
+    std::fs::write(&bad, "fn main() { let x = }\n").unwrap();
     let text = client.call_tool("check", &format!("{{\"file\":\"{}\"}}", json_path(&bad)));
     assert!(
         text.contains("exit code: 1"),
         "invalid syntax must fail MCP check: {text}"
     );
     assert!(
-        text.contains("semicolons are separators, not terminators"),
-        "MCP check omitted semicolon diagnostic: {text}"
+        text.contains("\"code\":\"GP0001\""),
+        "MCP check omitted parser diagnostic: {text}"
     );
 
     // A clean program runs and its stdout comes back.
