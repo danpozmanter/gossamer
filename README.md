@@ -91,10 +91,6 @@ over `typeInfo::<T>()` reflection generates native per-field code.
 
 Gossamer is built to extend simply via (synchronous) Rust.
 
-**No semi-colons**
-
-`let x = 9` not `let x = 9;`. Newlines are sufficient.
-
 ## Features unique to Gossamer
 
 Or at least - not a carbon copy by intent!
