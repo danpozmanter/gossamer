@@ -387,7 +387,7 @@
       "name": "std::collections::HashSet",
       "kind": "type",
       "signature": null,
-      "description": "Unordered set built on top of `HashMap`.",
+      "description": "Unordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods. Like Rust's `HashSet`, mapping is an iterator operation: use `set.iter().map(f)`, not `set.map(f)`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

@@ -60,19 +60,14 @@ fn parse_error_emits_gp_diagnostic() {
 }
 
 #[test]
-fn trailing_semicolon_emits_parse_diagnostic() {
+fn trailing_semicolon_is_accepted() {
     let uri = "file:///semicolon.gos";
     let server = server_with(uri, "fn main() { let x = 9;\nprintln(x) }\n");
     let diags = diagnostics_from(&server.publish_diagnostics(uri));
     assert!(
-        diags.iter().any(|diag| {
-            diagnostic_message(diag).is_some_and(|message| {
-                message.contains("semicolons are separators, not terminators")
-            })
-        }),
-        "LSP must publish the semicolon syntax error: {diags:?}"
+        diags.is_empty(),
+        "accepted line-ending semicolon produced diagnostics: {diags:?}"
     );
-    assert_diagnostics_well_formed(&diags);
 }
 
 #[test]

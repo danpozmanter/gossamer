@@ -6052,6 +6052,7 @@ impl<'a> TypeChecker<'a> {
             "insert" | "remove" | "contains" | "is_empty" | "is_subset" | "is_superset"
             | "is_disjoint" => Some(self.tcx.bool_ty()),
             "len" => Some(self.tcx.int_ty(IntTy::I64)),
+            "clear" => Some(self.tcx.unit()),
             _ => None,
         }
     }

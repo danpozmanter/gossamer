@@ -14,8 +14,9 @@
   open-ended `for` ranges.
 - Give REPL errors an accessible red treatment and move meta-command output
   to a muted, lighter palette distinct from source syntax highlighting.
-- Bypass dynamic JIT dispatch for generic hash-map insertion and avoid an
-  intermediate allocation when formatting padded integer keys natively.
+- Keep generic hash-map insertion on the invariant-preserving dispatch path
+  and avoid an intermediate allocation when formatting padded integer keys
+  natively.
 - Fuse padded integer key construction in VM and native execution, and reserve
   compact byte-map value arenas from actual payload width.
 - Accept optional line-ending semicolons while continuing to remove them with
