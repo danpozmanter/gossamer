@@ -7,6 +7,18 @@ use std::sync::OnceLock;
 
 static ENABLED: OnceLock<bool> = OnceLock::new();
 
+pub(crate) fn terminal_width(fallback: usize, minimum: usize) -> usize {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .or_else(|| {
+            terminal_size::terminal_size()
+                .map(|(terminal_size::Width(width), _)| usize::from(width))
+        })
+        .unwrap_or(fallback)
+        .max(minimum)
+}
+
 fn enabled() -> bool {
     *ENABLED.get_or_init(|| {
         if std::env::var_os("NO_COLOR").is_some() {
@@ -38,4 +50,19 @@ fn wrap(prefix: &'static str, s: &str) -> String {
 #[must_use]
 pub(crate) fn error(s: &str) -> String {
     wrap("\x1b[1;31m", s)
+}
+
+#[must_use]
+pub(crate) fn heading(s: &str) -> String {
+    wrap("\x1b[1;36m", s)
+}
+
+#[must_use]
+pub(crate) fn accent(s: &str) -> String {
+    wrap("\x1b[36m", s)
+}
+
+#[must_use]
+pub(crate) fn detail(s: &str) -> String {
+    wrap("\x1b[2m", s)
 }

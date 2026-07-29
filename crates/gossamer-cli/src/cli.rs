@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::cmd::{self, RunMode, TestOpts};
 use crate::style;
@@ -716,10 +716,18 @@ fn parse_cli() -> Cli {
     std::thread::Builder::new()
         .name("gos-cli-parser".to_string())
         .stack_size(4 * 1024 * 1024)
-        .spawn(Cli::parse)
+        .spawn(|| {
+            let matches = Cli::command().term_width(cli_help_width()).get_matches();
+            Cli::from_arg_matches(&matches).expect("Clap produced invalid CLI matches")
+        })
         .expect("failed to start CLI parser")
         .join()
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+fn cli_help_width() -> usize {
+    const FALLBACK_COLUMNS: usize = 80;
+    style::terminal_width(FALLBACK_COLUMNS, 24)
 }
 
 /// Routes the parsed [`Command`] to the matching `cmd::*` module.

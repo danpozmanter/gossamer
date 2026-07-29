@@ -29,7 +29,8 @@ implicit `fn main()`.
 ## Gossamer 0.37 Syntax At A Glance
 
 Rust and Gossamer use similar delimiters, but not the same separators.
-Gossamer rejects semicolons. Commas are required inside a delimited list
+Gossamer accepts semicolons only between statements on the same line; trailing
+semicolons are rejected. Commas are required inside a delimited list
 written on one line; newlines are the canonical separators once the list is
 multiline. Multiline commas remain accepted for migration, but `gos fmt`
 removes them.

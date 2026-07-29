@@ -51,6 +51,8 @@ fn main() {
   Runs under `gos run` (bytecode VM + Cranelift JIT), `gos build`
   (LLVM `-O0`), and `gos build --release` (LLVM `-O3`); the
   tier_parity test confirms identical output across all three.
+- **`semicolon_separators.gos`** - shows semicolons replacing newlines between
+  statements on one line while keeping trailing terminators invalid.
 - **`generic_struct.gos`** - three generic struct shapes: `Pair<A, B>`
   (two independent parameters), `SameType<T>` (one parameter shared by
   both fields, enabling field arithmetic), and `Triple<A, B, C>` (three

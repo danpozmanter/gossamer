@@ -1841,6 +1841,12 @@ fn constructor_calls_are_not_flagged_as_non_callable() {
 }
 
 #[test]
+fn empty_named_struct_accepts_bare_construction() {
+    let checked = run("struct Unit {}\nfn main() { let u = Unit\n let _ = u }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
 fn named_struct_associated_function_is_not_checked_as_constructor() {
     let checked = run(
         "struct Pt { x: i64, y: i64 }\nimpl Pt { fn origin() -> Pt { Pt { x: 0, y: 0 } } }\nfn main() { let p = Pt::origin() }\n",

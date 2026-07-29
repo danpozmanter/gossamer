@@ -66,8 +66,9 @@ fn trailing_semicolon_emits_parse_diagnostic() {
     let diags = diagnostics_from(&server.publish_diagnostics(uri));
     assert!(
         diags.iter().any(|diag| {
-            diagnostic_message(diag)
-                .is_some_and(|message| message.contains("trailing semicolons are not allowed"))
+            diagnostic_message(diag).is_some_and(|message| {
+                message.contains("semicolons are separators, not terminators")
+            })
         }),
         "LSP must publish the semicolon syntax error: {diags:?}"
     );

@@ -213,12 +213,28 @@ fn same_line_lists_require_commas() {
 }
 
 #[test]
-fn statement_semicolons_are_always_rejected() {
+fn statement_semicolons_separate_same_line_statements() {
+    for source in [
+        "fn main() { let x = 9; println(x) }\n",
+        "fn main() { println(1); println(2) }\n",
+        "let x = 4; println(x)\n",
+        "use std::strings; use std::iter\nfn main() {}\n",
+    ] {
+        let mut map = SourceMap::new();
+        let file = map.add_file("semicolon_separator.gos", source.to_string());
+        let (_, diags) = parse_source_file(source, file);
+        assert!(diags.is_empty(), "`{source}` produced {diags:?}");
+    }
+}
+
+#[test]
+fn statement_semicolon_terminators_are_rejected() {
     for source in [
         "use example;\n",
         "let x = 1;\n",
         "fn main() { let x = 9;\nprintln(x) }\n",
-        "fn main() { println(1); println(2) }\n",
+        "fn main() { println(1);\nprintln(2) }\n",
+        "fn main() { println(1); }\n",
     ] {
         let mut map = SourceMap::new();
         let file = map.add_file("semicolon.gos", source.to_string());
@@ -553,6 +569,30 @@ fn inclusive_value_range_requires_an_upper_bound() {
         assert!(rendered.title.contains("requires an upper bound"));
         assert!(rendered.helps.iter().any(|help| help.contains("use `..`")));
     }
+}
+
+#[test]
+fn open_end_range_stops_before_for_body() {
+    let source = "fn main() { for i in 3.. { println(i) } }";
+    let mut map = SourceMap::new();
+    let file = map.add_file("open_end_for.gos", source.to_string());
+    let (_, diags) = parse_source_file(source, file);
+    assert!(
+        diags.is_empty(),
+        "open-ended range should stop before the `for` body: {diags:?}"
+    );
+}
+
+#[test]
+fn open_end_range_stops_before_next_line_expression() {
+    let source = "fn main() {\n let b = 3..\n ()\n}";
+    let mut map = SourceMap::new();
+    let file = map.add_file("open_end_statement.gos", source.to_string());
+    let (_, diags) = parse_source_file(source, file);
+    assert!(
+        diags.is_empty(),
+        "open-ended range should stop at the newline: {diags:?}"
+    );
 }
 
 #[test]

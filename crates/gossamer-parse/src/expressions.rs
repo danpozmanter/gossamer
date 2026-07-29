@@ -268,7 +268,7 @@ impl Parser<'_> {
             self.bump();
             RangeKind::Exclusive
         };
-        let end = if is_expression_start(self) {
+        let end = if self.range_upper_bound_starts_here() {
             Some(Box::new(self.parse_expr_with_prec(RANGE_PREC, false)))
         } else {
             None
@@ -478,7 +478,7 @@ impl Parser<'_> {
             self.bump();
             RangeKind::Exclusive
         };
-        let end = if is_expression_start(self) {
+        let end = if self.range_upper_bound_starts_here() {
             Some(Box::new(self.parse_expr_with_prec(RANGE_PREC, false)))
         } else {
             None
@@ -497,6 +497,19 @@ impl Parser<'_> {
                 kind,
             },
         )
+    }
+
+    /// Whether the token after a range operator begins its upper bound.
+    ///
+    /// A newline ends an open-ended range before a following expression.
+    /// Operators such as `|>` are parsed by the enclosing expression loop,
+    /// so multiline iterator pipelines remain valid. In condition-like
+    /// positions, `{` belongs to the surrounding `for`/`if`/`while` body,
+    /// rather than serving as a block-valued range bound.
+    fn range_upper_bound_starts_here(&self) -> bool {
+        is_expression_start(self)
+            && !self.newline_before_peek()
+            && !(self.struct_literal_forbidden() && self.at_punct(Punct::LBrace))
     }
 
     fn peek_unary_op(&self) -> Option<UnaryOp> {

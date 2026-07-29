@@ -38,15 +38,7 @@ Expressions print their value. Declarations and `let` bindings persist.";
 const REPL_FALLBACK_COLUMNS: usize = 80;
 
 fn repl_output_width() -> usize {
-    std::env::var("COLUMNS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .or_else(|| {
-            terminal_size::terminal_size()
-                .map(|(terminal_size::Width(width), _)| usize::from(width))
-        })
-        .unwrap_or(REPL_FALLBACK_COLUMNS)
-        .max(24)
+    crate::style::terminal_width(REPL_FALLBACK_COLUMNS, 24)
 }
 
 fn wrap_repl_output(text: &str) -> String {
@@ -87,7 +79,24 @@ fn wrap_repl_line(line: &str, width: usize) -> Vec<String> {
 }
 
 fn print_repl_output(text: &str) {
-    println!("{}", wrap_repl_output(text));
+    let wrapped = wrap_repl_output(text);
+    for line in wrapped.lines() {
+        println!("{}", style_repl_output_line(line));
+    }
+}
+
+fn style_repl_output_line(line: &str) -> String {
+    let trimmed = line.trim_start();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if !line.starts_with(char::is_whitespace) {
+        return crate::style::heading(line);
+    }
+    if trimmed.starts_with('%') {
+        return crate::style::accent(line);
+    }
+    crate::style::detail(line)
 }
 
 struct PreludeBuiltinHelp {
@@ -1169,7 +1178,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                 }
                 "history" => {
                     for entry in &transcript {
-                        println!("{entry}");
+                        println!("{}", crate::style::accent(entry));
                     }
                     continue;
                 }
@@ -1198,7 +1207,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                             continue;
                         }
                         for line in matches {
-                            println!("{line}");
+                            println!("{}", crate::style::heading(line));
                         }
                     }
                     continue;
@@ -1227,7 +1236,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                             continue;
                         }
                         for line in matches {
-                            println!("{line}");
+                            println!("{}", crate::style::heading(line));
                         }
                     }
                     continue;
@@ -1236,7 +1245,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     declarations.clear();
                     lets.clear();
                     bindings.clear();
-                    println!("session cleared");
+                    println!("{}", crate::style::accent("session cleared"));
                     continue;
                 }
                 "help" | "h" => {
@@ -2717,9 +2726,21 @@ fn build_and_call_with_type(
     }
     let mut vm = gossamer_interp::Vm::new();
     vm.load(&program, tcx, true).map_err(|e| format!("{e}"))?;
-    vm.call(entry, Vec::new())
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| vm.call(entry, Vec::new())))
+            .map_err(repl_panic_message)?;
+    result
         .map(|value| (value, tail_ty))
         .map_err(|e| format!("{e}"))
+}
+
+fn repl_panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    let message = payload
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic".to_string());
+    format!("panic: {message}")
 }
 
 fn repl_generated_tail_expr(sf: &gossamer_ast::SourceFile) -> Option<&gossamer_ast::Expr> {

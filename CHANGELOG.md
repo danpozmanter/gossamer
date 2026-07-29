@@ -9,7 +9,19 @@
 - Use the `>>>` REPL prompt and clean stacked meta-command output.
 - Let REPL meta-command output use the full terminal width, and automatically
   indent continuation lines inside open braces, parentheses, and brackets.
+- Add contrasting title and description colors to REPL meta-command output,
+  making long help, symbol, binding, declaration, and history lists easier to
+  scan.
+- Wrap `gos --help` and subcommand help to the detected terminal width.
 - Remove numbering from `%bindings`, `%declarations`, and `%history` output.
+- Treat open-ended ranges as lazy iterators at statement and loop-body
+  boundaries, including persistent REPL bindings and `for i in start..` loops.
+- Keep the REPL session alive after user and unwind panics, preserving earlier
+  bindings for the next input.
+- Allow empty named structs such as `struct Unit {}` to be constructed by
+  their bare name.
+- Allow semicolons only as separators between statements on the same authored
+  line, with trailing and line-ending semicolons remaining errors.
 
 ## 0.37.0 - REPL overhaul, Syntax changes (commas vs newlines), Fixes for Strings, Iterators, Ranges
 

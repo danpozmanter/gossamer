@@ -25,7 +25,8 @@ are returned as `Result<T, E>` instead of raised as exceptions.
 ## Gossamer 0.37 Syntax At A Glance
 
 Python uses indentation and permits trailing commas in multiline literals and
-calls. Gossamer uses braces, rejects semicolons, and treats layout inside
+calls. Gossamer uses braces, permits semicolons only between statements on one
+line, and treats layout inside
 delimiters differently: one-line lists require commas; multiline lists use
 newlines. Multiline commas are accepted while porting code, but `gos fmt`
 removes them.

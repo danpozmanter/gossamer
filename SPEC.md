@@ -115,10 +115,11 @@ letter         = unicode_letter | "_"
 decimal_digit  = "0" ... "9"
 ```
 
-Whitespace is any sequence of U+0020, U+0009, U+000D, U+000A. Semicolons are
-not part of Gossamer statement syntax and are always rejected. Statements are
+Whitespace is any sequence of U+0020, U+0009, U+000D, U+000A. Statements are
 separated by a newline after expressions that do not continue on the next
-line, or by a surrounding block delimiter (`{ ... }`).
+line, by a surrounding block delimiter (`{ ... }`), or by a semicolon between
+two statements on the same authored line. A semicolon is a separator, never a
+terminator: it is invalid before a newline, `}`, or end of input.
 
 ### 2.1 Comments
 
@@ -270,9 +271,8 @@ of the previous line (`let x = a -\n  b`) or inside parentheses.
 The other binary operators (`+`, `&&`, `|>`, `==`, …) continue across
 newlines unconditionally.
 
-> **Gotcha - leading `&` / `*` / `-` starts a new statement.** Because
-> Gossamer does not accept semicolons, and a line break before one of these
-> three operators is **not** a continuation. Splitting a binary
+> **Gotcha - leading `&` / `*` / `-` starts a new statement.** A line break
+> before one of these three operators is **not** a continuation. Splitting a binary
 > expression as
 >
 > ```
@@ -2529,7 +2529,8 @@ that needs to materialize a 2027 iterator uses `iter::collect`.
 5. No type switch `x.(type)` - use `match` on an enum or `match` on
    a trait object with `Any::type_id`.
 6. No labeled `goto`.
-7. No semicolons. Newlines and delimiters separate statements.
+7. Semicolons are allowed only as same-line statement separators; trailing
+   semicolons are invalid.
 8. Visibility by `pub`, not by capitalization.
 9. Generics syntax is `<T>`, not `[T]`.
 

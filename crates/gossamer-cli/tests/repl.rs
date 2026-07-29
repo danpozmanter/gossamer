@@ -838,7 +838,7 @@ fn repl_open_ranges_are_lazy_and_printable() {
 
 #[test]
 fn repl_prints_runtime_error_without_crashing() {
-    let out = run_repl("panic!(\"boom\")\n1 + 1\n");
+    let out = run_repl("let answer = 41\npanic!(\"boom\")\nanswer + 1\n");
     assert!(
         out.success,
         "repl should keep running after a runtime panic; stderr: {}",
@@ -856,6 +856,14 @@ fn repl_prints_runtime_error_without_crashing() {
         "REPL did not recover after the panic; stdout: {}",
         out.stdout
     );
+}
+
+#[test]
+fn repl_constructs_empty_named_struct_from_its_bare_name() {
+    let out = run_repl("struct Unit {}\nlet u = Unit\nu\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(out.stderr.is_empty(), "stderr: {}", out.stderr);
+    assert!(out.stdout.contains("Unit"), "stdout: {}", out.stdout);
 }
 
 #[test]
@@ -895,7 +903,8 @@ fn repl_rejects_line_ending_semicolons() {
     let out = run_repl("let x = 9;\n%b\n");
     assert!(out.success, "repl should recover; stderr: {}", out.stderr);
     assert!(
-        out.stderr.contains("trailing semicolons are not allowed"),
+        out.stderr
+            .contains("semicolons are separators, not terminators"),
         "missing semicolon diagnostic:\n{}",
         out.stderr
     );
@@ -904,6 +913,14 @@ fn repl_rejects_line_ending_semicolons() {
         "invalid semicolon input created a binding:\n{}",
         out.stdout
     );
+}
+
+#[test]
+fn repl_accepts_semicolons_between_same_line_statements() {
+    let out = run_repl("println(1); println(2)\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(out.stderr.is_empty(), "stderr: {}", out.stderr);
+    assert!(out.stdout.contains("\n1\n2\n"), "stdout: {}", out.stdout);
 }
 
 #[test]
@@ -1858,6 +1875,22 @@ fn repl_iterates_a_range_stored_in_a_binding() {
         "stored range silently produced no values:\n{}",
         out.stdout
     );
+}
+
+#[test]
+fn repl_stores_and_iterates_an_open_end_range() {
+    let out = run_repl(
+        "use std::iter\n\
+         let b = 3..\n\
+         b.take(3) |> iter::collect()\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.is_empty(),
+        "open-ended range produced diagnostics:\n{}",
+        out.stderr
+    );
+    assert!(out.stdout.contains("[3, 4, 5]"), "{}", out.stdout);
 }
 
 #[test]

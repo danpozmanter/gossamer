@@ -50,6 +50,25 @@ fn version_flag_prints_package_version() {
 }
 
 #[test]
+fn help_wraps_to_narrow_terminal_width() {
+    let out = Command::new(gos_bin())
+        .arg("--help")
+        .env("COLUMNS", "40")
+        .output()
+        .expect("spawn --help");
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).expect("utf8");
+    assert!(
+        stdout.lines().all(|line| {
+            line.chars().count() <= 40 || line.trim().split_whitespace().count() == 1
+        }),
+        "wrappable help prose exceeded requested terminal width:\n{stdout}"
+    );
+    assert!(stdout.contains("The Gossamer toolchain"), "{stdout}");
+    assert!(stdout.contains("Commands:"), "{stdout}");
+}
+
+#[test]
 fn cache_status_uses_human_readable_sizes_by_default() {
     let root = env::temp_dir().join(format!("gossamer-cache-status-{}", std::process::id()));
     let frontend = root.join("frontend");

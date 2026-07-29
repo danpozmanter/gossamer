@@ -4,7 +4,8 @@ Gossamer's surface is Rust with two simplifications:
 
 - No lifetime annotations. References express aliasing intent;
   the runtime owns the memory.
-- Semicolons are not valid. Newlines and delimiters separate statements.
+- Semicolons may replace newlines only between statements on the same line.
+  They are separators, not trailing terminators.
 
 See [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPEC.md)
 for the full grammar and semantics.
@@ -13,6 +14,15 @@ Delimited lists use commas on one line and newlines across multiple lines.
 This rule covers function arguments and parameters, closure parameters, struct
 fields and literals, and enum variants and payload fields. Multiline trailing
 commas are accepted for migration and removed by `gos fmt`.
+
+Statement separators follow the same layout-first principle:
+
+```gossamer
+let width = 6; let height = 7; println(width * height)
+```
+
+The semicolons above replace newlines. A semicolon before a newline, `}`, or
+the end of the file is invalid, so `let width = 6;` remains an error.
 
 ## Comments
 

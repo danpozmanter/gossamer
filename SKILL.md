@@ -189,10 +189,11 @@ let n = 3 |> double |> add(10) |> clamp(0, 100)
   lines directly above an item is its documentation; `gos test` runs
   fenced code inside doc comments (mark non-runnable fences
   ` ```text `).
-- **Semicolons are invalid**; use one statement per line. A newline followed
-  by leading `&`, `*`, or `-` starts a NEW statement - for multi-line
-  continuation, end the previous line with the operator or
-  parenthesize.
+- **Semicolons are same-line separators only**: `let a = 1; let b = 2`
+  replaces a newline between statements. A trailing semicolon, or one before
+  a newline or `}`, is invalid. A newline followed by leading `&`, `*`, or `-`
+  starts a NEW statement; for multi-line continuation, end the previous line
+  with the operator or parenthesize.
 - **Delimited lists** use commas on one line and newlines when multiline.
   This covers function arguments and parameters, closure parameters,
   struct fields and literals, and enum variants and payload fields.

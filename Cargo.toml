@@ -125,7 +125,7 @@ gossamer-types = { path = "crates/gossamer-types", version = "0.37.1" }
 gossamer-ws = { path = "crates/gossamer-ws", version = "0.37.1" }
 
 anyhow = "1"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "wrap_help"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = { version = "0.10", default-features = false }
 crossbeam-channel = "0.5"

@@ -378,37 +378,37 @@ impl<'src> Parser<'src> {
         self.eat_punct(Punct::Comma) || self.newline_before_peek()
     }
 
-    /// Consumes and diagnoses a statement-style trailing semicolon.
+    /// Consumes a semicolon used as a same-line statement separator.
+    ///
+    /// Semicolons are separators rather than terminators: both surrounding
+    /// statements must occupy the same authored line.
     pub(crate) fn reject_trailing_semicolon(&mut self) -> bool {
-        if !self.at_punct(Punct::Semi) {
-            return false;
-        }
-        let span = self.peek_span();
-        self.bump();
-        self.record(
-            ParseError::Unexpected {
-                expected: "a newline; trailing semicolons are not allowed".to_string(),
-                found: "`;`".to_string(),
-            },
-            span,
-        );
-        true
+        self.eat_statement_semicolon()
     }
 
-    /// Consumes and rejects the legacy statement terminator.
+    /// Consumes a same-line statement separator, diagnosing a semicolon used
+    /// at a line or block boundary.
     pub(crate) fn eat_statement_semicolon(&mut self) -> bool {
         if !self.at_punct(Punct::Semi) {
             return false;
         }
+        let newline_before = self.newline_before_peek();
         let span = self.peek_span();
         self.bump();
-        self.record(
-            ParseError::Unexpected {
-                expected: "a newline; trailing semicolons are not allowed".to_string(),
-                found: "`;`".to_string(),
-            },
-            span,
-        );
+        if newline_before
+            || self.newline_before_peek()
+            || self.at_punct(Punct::RBrace)
+            || self.at_eof()
+        {
+            self.record(
+                ParseError::Unexpected {
+                    expected: "another statement on the same line; semicolons are separators, not terminators"
+                        .to_string(),
+                    found: "`;`".to_string(),
+                },
+                span,
+            );
+        }
         true
     }
 }

@@ -27,7 +27,8 @@ JVM-hosted and does not use exceptions or `suspend`; it uses explicit
 ## Gossamer 0.37 Syntax At A Glance
 
 Kotlin uses semicolons optionally and commas in parameter lists, data classes,
-and collection literals. Gossamer rejects semicolons. Commas are required in a
+and collection literals. Gossamer accepts semicolons only as same-line
+statement separators and rejects trailing semicolons. Commas are required in a
 delimited list on one line; newlines separate items in a multiline list.
 Multiline commas are accepted for migration, but `gos fmt` removes them.
 

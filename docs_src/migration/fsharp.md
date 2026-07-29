@@ -23,8 +23,9 @@ absence of F# metaprogramming features.
 
 ## Gossamer 0.37 Syntax At A Glance
 
-F# uses indentation and separates list elements with semicolons. Gossamer
-rejects semicolons. Inside delimiters, commas are required on one line and
+F# uses indentation and separates list elements with semicolons. Gossamer uses
+semicolons only between same-line statements. Inside delimiters, commas are
+required on one line and
 newlines are canonical across multiple lines. Multiline commas remain accepted
 for migration, but `gos fmt` removes them.
 

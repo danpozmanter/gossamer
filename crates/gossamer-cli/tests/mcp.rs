@@ -94,7 +94,7 @@ fn check_run_and_timeout_work_end_to_end() {
         "invalid syntax must fail MCP check: {text}"
     );
     assert!(
-        text.contains("trailing semicolons are not allowed"),
+        text.contains("semicolons are separators, not terminators"),
         "MCP check omitted semicolon diagnostic: {text}"
     );
 

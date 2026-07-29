@@ -243,7 +243,11 @@ fn collect_unit_structs(items: &[AstItem]) -> std::collections::HashSet<String> 
         for item in items {
             match &item.kind {
                 AstItemKind::Struct(decl)
-                    if matches!(decl.body, gossamer_ast::StructBody::Unit) =>
+                    if matches!(decl.body, gossamer_ast::StructBody::Unit)
+                        || matches!(
+                            &decl.body,
+                            gossamer_ast::StructBody::Named(fields) if fields.is_empty()
+                        ) =>
                 {
                     out.insert(decl.name.name.clone());
                 }

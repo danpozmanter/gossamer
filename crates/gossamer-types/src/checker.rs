@@ -9094,8 +9094,9 @@ impl<'a> TypeChecker<'a> {
             Resolution::Primitive(prim) => self.type_from_primitive(prim),
             Resolution::Def { def, kind } => match kind {
                 gossamer_resolve::DefKind::Struct => {
-                    if self.struct_fields.contains_key(&def)
-                        && !self.callee_path_nodes.contains(&node)
+                    if self.struct_fields.get(&def).is_some_and(|fields| {
+                        !fields.is_empty() || self.tcx.is_tuple_struct(def.local)
+                    }) && !self.callee_path_nodes.contains(&node)
                     {
                         let name = self
                             .tcx

@@ -21,6 +21,7 @@ JIT, and the `gos build` native binary).
 | `concurrency.gos` | Goroutines + channels - producer / consumer | runs (`gos run` and `gos build`) |
 | `go_spawn.gos` | Goroutines without channels - fan-out sketch | runs and builds natively |
 | `function_piping.gos` | `|>` forward-pipe operator tour | runs |
+| `semicolon_separators.gos` | Optional same-line statement separators | runs |
 | `grep.gos` | Simple Unix-style CLI tool | runs (reads stdin) |
 | `testing.gos` | `#[test]` harness + `std::testing` | runs via `gos test` |
 | `projects/web_service/` | Full project layout (`project.toml` + `src/`) - multi-endpoint HTTP service with unit tests | `cd` in and run `gos test` |
