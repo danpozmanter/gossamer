@@ -60,7 +60,7 @@ fn help_wraps_to_narrow_terminal_width() {
     let stdout = String::from_utf8(out.stdout).expect("utf8");
     assert!(
         stdout.lines().all(|line| {
-            line.chars().count() <= 40 || line.trim().split_whitespace().count() == 1
+            line.chars().count() <= 40 || line.split_whitespace().count() == 1
         }),
         "wrappable help prose exceeded requested terminal width:\n{stdout}"
     );
