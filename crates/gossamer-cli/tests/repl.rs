@@ -577,9 +577,9 @@ fn repl_rejects_malformed_let_without_phantom_bindings() {
     assert!(
         out.stderr
             .contains("malformed `let` input: missing `=` initializer; write `let PAT = EXPR`")
-            && out
-                .stderr
-                .contains("malformed `let` input: expected exactly `let PAT = EXPR`"),
+            && out.stderr.contains(
+                "malformed `let` input: expected one or more `let PAT = EXPR` statements"
+            ),
         "malformed let inputs should be rejected clearly; stderr: {}",
         out.stderr
     );
@@ -752,7 +752,7 @@ fn repl_struct_construction_and_display_match_source_shapes() {
 }
 
 #[test]
-fn repl_constructs_unit_and_empty_named_structs_with_distinct_syntax() {
+fn repl_constructs_unit_and_empty_named_structs_with_unit_like_syntax() {
     let out = run_repl(
         "struct Unit\n\
          struct Empty {}\n\
@@ -763,7 +763,8 @@ fn repl_constructs_unit_and_empty_named_structs_with_distinct_syntax() {
          let empty = Empty {}\n\
          empty\n\
          let bad_unit = Unit()\n\
-         let bad_empty = Empty\n",
+         let bare_empty = Empty\n\
+         bare_empty\n",
     );
     assert!(out.success, "REPL should remain live: {}", out.stderr);
     assert!(out.stdout.contains("Unit {  }"), "{}", out.stdout);
@@ -775,12 +776,7 @@ fn repl_constructs_unit_and_empty_named_structs_with_distinct_syntax() {
         "{}",
         out.stderr
     );
-    assert!(
-        out.stderr
-            .contains("struct `Empty` must be constructed with braces"),
-        "{}",
-        out.stderr
-    );
+    assert!(!out.stderr.contains("struct `Empty`"), "{}", out.stderr);
 }
 
 #[test]
