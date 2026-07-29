@@ -91,12 +91,16 @@ fn style_repl_output_line(line: &str) -> String {
         return String::new();
     }
     if !line.starts_with(char::is_whitespace) {
-        return crate::style::heading(line);
+        return crate::style::repl_meta_heading(line);
     }
     if trimmed.starts_with('%') {
-        return crate::style::accent(line);
+        return crate::style::repl_meta_accent(line);
     }
-    crate::style::detail(line)
+    crate::style::repl_meta_detail(line)
+}
+
+fn print_repl_error(message: &str) {
+    eprintln!("{}", crate::style::repl_error(message));
 }
 
 struct PreludeBuiltinHelp {
@@ -1154,7 +1158,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                 return Ok(());
             }
             Err(err) => {
-                eprintln!("{}: {err}", crate::style::error("repl"));
+                print_repl_error(&format!("repl: {err}"));
                 return Ok(());
             }
         };
@@ -1178,13 +1182,16 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                 }
                 "history" => {
                     for entry in &transcript {
-                        println!("{}", crate::style::accent(entry));
+                        println!("{}", crate::style::repl_meta_accent(entry));
                     }
                     continue;
                 }
                 "bindings" | "b" => {
                     if bindings.is_empty() {
-                        println!("    no `let` bindings yet");
+                        println!(
+                            "{}",
+                            crate::style::repl_meta_detail("    no `let` bindings yet")
+                        );
                     } else {
                         let pattern = if arg.is_empty() {
                             None
@@ -1192,7 +1199,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                             match compile_search_regex("bindings", arg) {
                                 Ok(pattern) => Some(pattern),
                                 Err(message) => {
-                                    eprintln!("{message}");
+                                    print_repl_error(&message);
                                     continue;
                                 }
                             }
@@ -1203,18 +1210,26 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                             .filter(|line| pattern.as_ref().is_none_or(|re| re.is_match(line)))
                             .collect::<Vec<_>>();
                         if matches.is_empty() {
-                            println!("    no bindings match `{arg}`");
+                            println!(
+                                "{}",
+                                crate::style::repl_meta_detail(&format!(
+                                    "    no bindings match `{arg}`"
+                                ))
+                            );
                             continue;
                         }
                         for line in matches {
-                            println!("{}", crate::style::heading(line));
+                            println!("{}", crate::style::repl_meta_heading(line));
                         }
                     }
                     continue;
                 }
                 "declarations" | "decls" | "d" => {
                     if declarations.is_empty() {
-                        println!("    no declarations yet");
+                        println!(
+                            "{}",
+                            crate::style::repl_meta_detail("    no declarations yet")
+                        );
                     } else {
                         let pattern = if arg.is_empty() {
                             None
@@ -1222,7 +1237,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                             match compile_search_regex("declarations", arg) {
                                 Ok(pattern) => Some(pattern),
                                 Err(message) => {
-                                    eprintln!("{message}");
+                                    print_repl_error(&message);
                                     continue;
                                 }
                             }
@@ -1232,11 +1247,16 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                             .filter(|line| pattern.as_ref().is_none_or(|re| re.is_match(line)))
                             .collect::<Vec<_>>();
                         if matches.is_empty() {
-                            println!("    no declarations match `{arg}`");
+                            println!(
+                                "{}",
+                                crate::style::repl_meta_detail(&format!(
+                                    "    no declarations match `{arg}`"
+                                ))
+                            );
                             continue;
                         }
                         for line in matches {
-                            println!("{}", crate::style::heading(line));
+                            println!("{}", crate::style::repl_meta_heading(line));
                         }
                     }
                     continue;
@@ -1245,32 +1265,32 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     declarations.clear();
                     lets.clear();
                     bindings.clear();
-                    println!("{}", crate::style::accent("session cleared"));
+                    println!("{}", crate::style::repl_meta_accent("session cleared"));
                     continue;
                 }
                 "help" | "h" => {
                     match repl_help(arg) {
                         Ok(text) => print_repl_output(&text),
-                        Err(msg) => eprintln!("{msg}"),
+                        Err(msg) => print_repl_error(&msg),
                     }
                     continue;
                 }
                 "ls" | "l" => {
                     match repl_ls(arg) {
                         Ok(text) => print_repl_output(&text),
-                        Err(msg) => eprintln!("{msg}"),
+                        Err(msg) => print_repl_error(&msg),
                     }
                     continue;
                 }
                 "find" | "f" => {
                     match repl_find(arg) {
                         Ok(text) => print_repl_output(&text),
-                        Err(msg) => eprintln!("{msg}"),
+                        Err(msg) => print_repl_error(&msg),
                     }
                     continue;
                 }
                 _ => {
-                    eprintln!("unknown meta-command: %{rest}");
+                    print_repl_error(&format!("unknown meta-command: %{rest}"));
                     continue;
                 }
             }
@@ -1288,7 +1308,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                 }
                 Err(msg) => {
                     declarations.pop();
-                    eprintln!("    {msg}");
+                    print_repl_error(&format!("    {msg}"));
                 }
             }
             input_no += 1;
@@ -1300,7 +1320,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
             let new_binding = match repl_binding_from_let_source(&candidate) {
                 Ok(binding) => binding,
                 Err(msg) => {
-                    eprintln!("    {msg}");
+                    print_repl_error(&format!("    {msg}"));
                     input_no += 1;
                     continue;
                 }
@@ -1322,7 +1342,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                 }
                 Err(msg) => {
                     lets.pop();
-                    eprintln!("    {msg}");
+                    print_repl_error(&format!("    {msg}"));
                 }
             }
             input_no += 1;
@@ -1353,7 +1373,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                 }
                 Err(msg) => {
                     lets.pop();
-                    eprintln!("{}: {msg}", crate::style::error("error"));
+                    print_repl_error(&format!("error: {msg}"));
                 }
             }
             input_no += 1;
@@ -1379,7 +1399,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                 }
             }
             Err(msg) => {
-                eprintln!("{}: {msg}", crate::style::error("error"));
+                print_repl_error(&format!("error: {msg}"));
             }
         }
         input_no += 1;

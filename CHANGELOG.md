@@ -12,6 +12,8 @@
 - Correct tuple-struct constructor diagnostics, optional match-arm commas,
   source-like integral float rendering in the REPL, and control flow for
   open-ended `for` ranges.
+- Give REPL errors an accessible red treatment and move meta-command output
+  to a muted, lighter palette distinct from source syntax highlighting.
 
 ## 0.38.0 - Assignment, function fixes, REPL cleanup, performance fixes
 

@@ -38,6 +38,10 @@ pub(crate) fn force_enable() {
 }
 
 const RESET: &str = "\x1b[0m";
+const REPL_META_HEADING: &str = "\x1b[38;5;67m";
+const REPL_META_ACCENT: &str = "\x1b[38;5;73m";
+const REPL_META_DETAIL: &str = "\x1b[38;5;252m";
+const REPL_ERROR: &str = "\x1b[91m";
 
 fn wrap(prefix: &'static str, s: &str) -> String {
     if enabled() && !s.is_empty() {
@@ -52,17 +56,40 @@ pub(crate) fn error(s: &str) -> String {
     wrap("\x1b[1;31m", s)
 }
 
+/// Muted REPL metadata palette. These 256-colour tones deliberately avoid
+/// the cyan, green, yellow, and magenta used by source syntax highlighting.
 #[must_use]
-pub(crate) fn heading(s: &str) -> String {
-    wrap("\x1b[1;36m", s)
+pub(crate) fn repl_meta_heading(s: &str) -> String {
+    wrap(REPL_META_HEADING, s)
 }
 
 #[must_use]
-pub(crate) fn accent(s: &str) -> String {
-    wrap("\x1b[36m", s)
+pub(crate) fn repl_meta_accent(s: &str) -> String {
+    wrap(REPL_META_ACCENT, s)
 }
 
 #[must_use]
-pub(crate) fn detail(s: &str) -> String {
-    wrap("\x1b[2m", s)
+pub(crate) fn repl_meta_detail(s: &str) -> String {
+    wrap(REPL_META_DETAIL, s)
+}
+
+#[must_use]
+pub(crate) fn repl_error(s: &str) -> String {
+    wrap(REPL_ERROR, s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{REPL_ERROR, REPL_META_ACCENT, REPL_META_DETAIL, REPL_META_HEADING};
+
+    #[test]
+    fn repl_metadata_palette_is_distinct_and_reserves_red_for_errors() {
+        let metadata = [REPL_META_HEADING, REPL_META_ACCENT, REPL_META_DETAIL];
+        assert_eq!(
+            metadata.as_slice(),
+            ["\x1b[38;5;67m", "\x1b[38;5;73m", "\x1b[38;5;252m"]
+        );
+        assert_eq!(REPL_ERROR, "\x1b[91m");
+        assert!(!metadata.contains(&REPL_ERROR));
+    }
 }
