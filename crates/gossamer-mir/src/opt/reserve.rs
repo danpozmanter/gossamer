@@ -511,4 +511,76 @@ fn terminator_mentions_local_forbidden(term: &Terminator, local: Local) -> bool 
         | Terminator::Panic { .. } => false,
     }
 }
-
+/// Turns the deep clone introduced for a source-level three-way Vec swap
+/// back into an ownership-preserving pointer move:
+///
+/// ```text
+/// tmp = clone(left); left = right; right = tmp
+/// ```
+///
+/// A normal `let tmp = left` must retain value semantics because either
+/// binding may subsequently mutate independently. In this exact permutation,
+/// however, `left` is overwritten before `tmp` is observed, so cloning the
+/// full buffer is unnecessary. Radix-sort's per-pass ping-pong swap otherwise
+/// copied the entire input on every pass and retained those copies until
+/// function exit.
+pub(crate) fn elide_vec_clone_in_three_way_swaps(body: &mut Body) {
+    let mut rewrites = Vec::new();
+    for (bi, block) in body.blocks.iter().enumerate() {
+        let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            args,
+            destination,
+            target: Some(target),
+        } = &block.terminator
+        else {
+            continue;
+        };
+        if name != "gos_rt_vec_clone"
+            || args.len() != 1
+            || !destination.projection.is_empty()
+        {
+            continue;
+        }
+        let Operand::Copy(source) = &args[0] else {
+            continue;
+        };
+        if !source.projection.is_empty() {
+            continue;
+        }
+        let Some(next) = body.blocks.get(target.0 as usize) else {
+            continue;
+        };
+        let mut copies = next.stmts.iter().filter_map(|stmt| match &stmt.kind {
+            StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Use(Operand::Copy(source)),
+            } if place.projection.is_empty() && source.projection.is_empty() => {
+                Some((place, source))
+            }
+            _ => None,
+        });
+        let (Some((first_dst, first_src)), Some((second_dst, second_src))) =
+            (copies.next(), copies.next())
+        else {
+            continue;
+        };
+        if first_dst.local == source.local
+            && second_dst.local == first_src.local
+            && second_src.local == destination.local
+            && source.local != first_src.local
+        {
+            rewrites.push((bi, source.clone(), destination.clone(), *target, block.span));
+        }
+    }
+    for (bi, source, destination, target, span) in rewrites {
+        body.blocks[bi].stmts.push(Statement {
+            kind: StatementKind::Assign {
+                place: destination,
+                rvalue: Rvalue::Use(Operand::Copy(source)),
+            },
+            span,
+        });
+        body.blocks[bi].terminator = Terminator::Goto { target };
+    }
+}

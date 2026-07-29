@@ -31,6 +31,9 @@
 - Extend Unicode character-position indexes incrementally when appending to
   VM and native strings instead of rescanning the entire accumulated string,
   restoring linear JSON builders and improving byte-oriented native workloads.
+- Keep dynamic native `String.len()` on its O(1) Unicode-length index, restoring
+  linear JSON rendering and checksum passes.
+- Treat three-way vector swaps as ownership moves.
 
 ## 0.37.0 - REPL overhaul, Syntax changes (commas vs newlines), Fixes for Strings, Iterators, Ranges
 

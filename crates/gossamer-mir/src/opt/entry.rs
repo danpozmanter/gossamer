@@ -80,6 +80,7 @@ pub fn optimise_for_jit(body: &mut Body, tcx: &TyCtxt) {
 fn optimise_with_bounds_limit(body: &mut Body, tcx: &TyCtxt, versioning_candidate_limit: Option<usize>) {
     crate::verify::debug_verify_body(body);
     copy_propagate(body, tcx);
+    elide_vec_clone_in_three_way_swaps(body);
     crate::verify::debug_verify_body(body);
     const_fold(body);
     crate::verify::debug_verify_body(body);

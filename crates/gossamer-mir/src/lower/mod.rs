@@ -209,6 +209,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
         // pass cannot tell it owns a `String` and never releases it (a leak).
         propagate_copy_types(body, tcx);
         rewrite_str_concat_consuming(body);
+        crate::opt::elide_vec_clone_in_three_way_swaps(body);
         crate::opt::reserve_vecs_for_counted_push_loops(body);
         crate::opt::reserve_hashmaps_for_counted_insert_loops(body, tcx);
         // Fuse `seq.substring(i, i+k)` + `m.inc(kmer)` into the borrowed-slice
@@ -229,6 +230,9 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
         // and container teardown without a post-hoc "suppress the drop"
         // escape hatch (which used to turn every inserted value into a leak).
         crate::opt::fuse_slice_parse_ranges(body);
+        // Copy/type and ownership lowering can expose the canonical
+        // three-way swap only after their temporary assignments settle.
+        crate::opt::elide_vec_clone_in_three_way_swaps(body);
         if std::env::var("GOS_DUMP_MIR_RC").is_ok() {
             eprintln!("=== MIR(post-rc) {} ===", body.name);
             for block in &body.blocks {

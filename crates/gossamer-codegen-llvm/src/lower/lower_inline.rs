@@ -1334,10 +1334,15 @@ impl<'a> Lowerer<'a> {
             return Ok(());
         }
         let s_v = self.lower_operand(arg)?;
-        self.runtime_refs
-            .insert("declare i64 @strlen(ptr)".to_string());
+        // Runtime strings carry an incrementally maintained Unicode-scalar
+        // length in their footer. Calling strlen here discarded that index
+        // and made every non-constant `String.len()` scan the full byte
+        // buffer. A loop such as `while i < s.len()` therefore became
+        // quadratic for large JSON documents. Keep the constant fold above,
+        // but route dynamic strings through the O(1) runtime lookup.
+        declare_rt(&mut self.runtime_refs, "gos_rt_str_len");
         let tmp = self.fresh();
-        writeln!(self.out, "  {tmp} = call i64 @strlen(ptr {s_v})").unwrap();
+        writeln!(self.out, "  {tmp} = call i64 @gos_rt_str_len(ptr {s_v})").unwrap();
         if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
             let slot = local_slot(destination.local);
             writeln!(self.out, "  store i64 {tmp}, ptr {slot}").unwrap();
