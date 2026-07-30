@@ -1146,6 +1146,15 @@ impl<'a> Builder<'a> {
                 let f64_ty = self.tcx.float_ty(gossamer_types::FloatTy::F64);
                 let elem_is_f64 =
                     matches!(self.iter_element_kind(args[1].ty), Some(TyKind::Float(_)));
+                let elem_ty = self
+                    .iter_element_kind(args[1].ty)
+                    .map(|kind| self.tcx.intern(kind));
+                let elem_is_aggregate = elem_ty.is_some_and(|elem| {
+                    matches!(
+                        self.tcx.kind_of(elem),
+                        TyKind::Adt { .. } | TyKind::Tuple(_) | TyKind::Array { .. }
+                    )
+                });
                 let out_ty = self
                     .iter_element_kind(ty)
                     .map_or(i64_ty, |k| self.tcx.intern(k));
@@ -1173,11 +1182,18 @@ impl<'a> Builder<'a> {
                     self.set_current(next);
                     return Some(dest);
                 }
-                let (in_ty, helper) = match (elem_is_f64, out_is_f64) {
-                    (true, true) => (f64_ty, "gos_rt_iter_map_f64"),
-                    (true, false) => (f64_ty, "gos_rt_iter_map_f64_word"),
-                    (false, true) => (i64_ty, "gos_rt_iter_map_word_f64"),
-                    (false, false) => (i64_ty, "gos_rt_iter_map_i64"),
+                let (in_ty, helper) = if elem_is_aggregate && !out_is_f64 {
+                    (
+                        elem_ty.expect("aggregate iterator has an element type"),
+                        "gos_rt_iter_map_ptr_i64",
+                    )
+                } else {
+                    match (elem_is_f64, out_is_f64) {
+                        (true, true) => (f64_ty, "gos_rt_iter_map_f64"),
+                        (true, false) => (f64_ty, "gos_rt_iter_map_f64_word"),
+                        (false, true) => (i64_ty, "gos_rt_iter_map_word_f64"),
+                        (false, false) => (i64_ty, "gos_rt_iter_map_i64"),
+                    }
                 };
                 let closure_local = self.lower_iter_closure(&args[0], &[in_ty], out_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;

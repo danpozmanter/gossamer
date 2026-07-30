@@ -1228,6 +1228,25 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
         if trimmed.is_empty() {
             continue;
         }
+
+        // History searches must run against earlier inputs only. Recording
+        // `%history pattern` first would make it match its own pattern.
+        if let Some(rest) = trimmed.strip_prefix('%') {
+            let (command, arg) = split_meta_command(rest.trim());
+            if matches!(command, "history" | "h") {
+                match render_repl_history(&transcript, arg) {
+                    Ok(entries) => {
+                        for entry in entries {
+                            println!("{}", crate::style::repl_meta_accent(&entry));
+                        }
+                    }
+                    Err(message) => print_repl_error(&message),
+                }
+                let _ = editor.add_history_entry(trimmed);
+                transcript.push(trimmed.to_string());
+                continue;
+            }
+        }
         let _ = editor.add_history_entry(trimmed);
         transcript.push(trimmed.to_string());
 
@@ -1241,17 +1260,6 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                         let _ = editor.save_history(path);
                     }
                     return Ok(());
-                }
-                "history" | "h" => {
-                    match render_repl_history(&transcript, arg) {
-                        Ok(entries) => {
-                            for entry in entries {
-                                println!("{}", crate::style::repl_meta_accent(&entry));
-                            }
-                        }
-                        Err(message) => print_repl_error(&message),
-                    }
-                    continue;
                 }
                 "bindings" | "b" => {
                     if bindings.is_empty() {
@@ -1347,12 +1355,18 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     continue;
                 }
                 "info" | "i" => {
-                    let binding_receiver =
-                        editor.helper().and_then(|helper| helper.receiver_type(arg));
-                    let result = binding_receiver.map_or_else(
-                        || repl_info(arg),
-                        |owner| repl_info_for_receiver(arg, owner),
-                    );
+                    let result = match repl_info_for_session(arg, &declarations, &lets, &bindings) {
+                        Ok(Some(text)) => Ok(text),
+                        Ok(None) => {
+                            let binding_receiver =
+                                editor.helper().and_then(|helper| helper.receiver_type(arg));
+                            binding_receiver.map_or_else(
+                                || repl_info(arg),
+                                |owner| repl_info_for_receiver(arg, owner),
+                            )
+                        }
+                        Err(message) => Err(message),
+                    };
                     match result {
                         Ok(text) => print_repl_output(&text),
                         Err(msg) => print_repl_error(&msg),
@@ -1801,12 +1815,116 @@ fn repl_info(arg: &str) -> std::result::Result<String, String> {
         sections.push(listing);
     }
     if sections.is_empty() {
-        Ok(format!(
-            "{arg}\n  Expression or literal. No built-in catalog entry is available."
-        ))
+        Ok(format!("{arg}\n  Undefined name."))
     } else {
         Ok(sections.join("\n\n"))
     }
+}
+
+fn repl_info_for_session(
+    arg: &str,
+    declarations: &[String],
+    lets: &[String],
+    bindings: &[ReplBinding],
+) -> std::result::Result<Option<String>, String> {
+    let query = normalize_query(arg);
+    if !repl_is_identifier(query) {
+        return repl_info_expression(arg, declarations, lets).map(Some);
+    }
+
+    if let Some(binding) = repl_info_binding(query, declarations, lets, bindings) {
+        return Ok(Some(binding));
+    }
+    if let Some(declaration) = repl_info_declaration(query, declarations) {
+        return Ok(Some(declaration));
+    }
+
+    Ok(None)
+}
+
+fn repl_info_binding(
+    name: &str,
+    declarations: &[String],
+    lets: &[String],
+    bindings: &[ReplBinding],
+) -> Option<String> {
+    if !bindings
+        .iter()
+        .flat_map(|binding| &binding.vars)
+        .any(|binding| binding.name == name)
+    {
+        return None;
+    }
+
+    render_repl_bindings(declarations, lets, bindings)
+        .into_iter()
+        .find(|line| {
+            let line = line.strip_prefix("mut ").unwrap_or(line);
+            line.strip_prefix(name)
+                .is_some_and(|remainder| remainder.starts_with(':'))
+        })
+}
+
+fn repl_info_declaration(name: &str, declarations: &[String]) -> Option<String> {
+    declarations
+        .iter()
+        .rev()
+        .find(|declaration| repl_declaration_name(declaration).as_deref() == Some(name))
+        .cloned()
+}
+
+fn repl_declaration_name(declaration: &str) -> Option<String> {
+    use gossamer_ast::ItemKind;
+
+    let mut map = gossamer_lex::SourceMap::new();
+    let file = map.add_file(
+        "irepl-info-declaration".to_string(),
+        declaration.to_string(),
+    );
+    let (source_file, diagnostics) = gossamer_parse::parse_source_file(declaration, file);
+    if !diagnostics.is_empty() {
+        return None;
+    }
+    let item = source_file.items.first()?;
+    let name = match &item.kind {
+        ItemKind::Fn(item) => &item.name.name,
+        ItemKind::Struct(item) => &item.name.name,
+        ItemKind::Enum(item) => &item.name.name,
+        ItemKind::Trait(item) => &item.name.name,
+        ItemKind::TypeAlias(item) => &item.name.name,
+        ItemKind::Const(item) => &item.name.name,
+        ItemKind::Static(item) => &item.name.name,
+        ItemKind::Mod(item) => &item.name.name,
+        ItemKind::Impl(_) | ItemKind::AttrItem(_) => return None,
+    };
+    Some(name.clone())
+}
+
+fn repl_info_expression(
+    arg: &str,
+    declarations: &[String],
+    lets: &[String],
+) -> std::result::Result<String, String> {
+    let let_body = if lets.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n    ", lets.join("\n    "))
+    };
+    let source = format!(
+        "{}\nfn __irepl_info() {{ {lets}{arg}\n}}\n",
+        declarations.join("\n"),
+        lets = let_body,
+    );
+    let (value, ty) = build_and_call_with_type(&source, "__irepl_info")?;
+    Ok(format!("{arg}: {ty} = {}", render_repl_value(&value)))
+}
+
+fn repl_is_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars
+        .next()
+        .is_some_and(|ch| ch == '_' || ch.is_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_alphanumeric())
 }
 
 fn repl_info_for_receiver(arg: &str, owner: &str) -> std::result::Result<String, String> {
@@ -2198,11 +2316,14 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
             } else {
                 "method"
             };
-            let signature = if kind == "assoc" {
-                format!("fn {name}(...) -> ...")
-            } else {
-                format!("fn {name}(self, ...) -> ...")
-            };
+            let signature =
+                runtime_core_method_signature(&owner, &name, kind).unwrap_or_else(|| {
+                    if kind == "assoc" {
+                        format!("fn {name}(...) -> ...")
+                    } else {
+                        format!("fn {name}(self, ...) -> ...")
+                    }
+                });
             let doc = runtime_core_method_doc(&owner, &name)
                 .map_or_else(|| format!("Built-in {kind} on {owner}."), str::to_string);
             insert_core_method_entry(
@@ -2218,6 +2339,35 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
         }
     }
     entries.into_values().collect()
+}
+
+fn runtime_core_method_signature(owner: &str, name: &str, kind: &str) -> Option<String> {
+    if owner == "String" && kind == "method" {
+        if let Some(shape) = gossamer_types::stdlib_function_shape("std::strings", name) {
+            let mut params = vec!["self: String".to_string()];
+            params.extend(
+                shape
+                    .params
+                    .iter()
+                    .skip(1)
+                    .map(|param| format!("{}: {}", param.name, param.ty)),
+            );
+            return Some(format!(
+                "fn {name}({}) -> {}",
+                params.join(", "),
+                shape.return_ty
+            ));
+        }
+        if let Some(signature) = match name {
+            "byte_at" => Some("fn byte_at(self: String, index: i64) -> i64"),
+            "byte_len" => Some("fn byte_len(self: String) -> i64"),
+            "substring" => Some("fn substring(self: String, start: i64, end: i64) -> String"),
+            _ => None,
+        } {
+            return Some(signature.to_string());
+        }
+    }
+    None
 }
 
 #[allow(
@@ -3051,6 +3201,21 @@ mod tests {
         assert!(
             incomplete.is_empty(),
             "runtime type builtins without concrete public signatures: {incomplete:?}"
+        );
+    }
+
+    #[test]
+    fn string_methods_reuse_the_complete_stdlib_signature_catalog() {
+        let mut incomplete = core_method_entries()
+            .into_iter()
+            .filter(|entry| entry.owner == "String")
+            .filter(|entry| entry.signature.contains("..."))
+            .map(|entry| entry.name)
+            .collect::<Vec<_>>();
+        incomplete.sort();
+        assert!(
+            incomplete.is_empty(),
+            "String methods without concrete public signatures: {incomplete:?}"
         );
     }
 

@@ -41,7 +41,8 @@ pub use exhaustiveness::{ExhaustivenessDiagnostic, ExhaustivenessError, check_ex
 pub use infer::{InferCtxt, UnifyError};
 pub use printer::{render_public_ty, render_ty};
 pub use stdlib_signatures::{
-    STD_FUNCTION_SIGNATURES, StdFunctionSignature, function_signature as stdlib_function_signature,
+    STD_FUNCTION_SIGNATURES, StdFunctionSignature, function_shape as stdlib_function_shape,
+    function_signature as stdlib_function_signature,
 };
 pub use subst::{GenericArg, Substs};
 pub use table::TypeTable;

@@ -536,6 +536,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_iter_map_f64", (Ptr, Ptr) -> Ptr, Both, "iter::map over Vec<f64> -> Vec<f64>: reinterprets each element's bits as f64, calls the float-ABI closure, and stores f(x)'s bits."),
     rt!("gos_rt_iter_map_f64_word", (Ptr, Ptr) -> Ptr, Both, "iter::map over Vec<f64> -> Vec<i64/ptr>: f64 element, integer-register result."),
     rt!("gos_rt_iter_map_i64", (Ptr, Ptr) -> Ptr, Both, "iter::map over Vec<i64>: returns a fresh Vec<i64> of f(x)."),
+    rt!("gos_rt_iter_map_ptr_i64", (Ptr, Ptr) -> Ptr, Both, "iter::map over aggregate elements: callbacks receive each element's storage address."),
     rt!("gos_rt_iter_map_word_f64", (Ptr, Ptr) -> Ptr, Both, "iter::map over Vec<i64/ptr> -> Vec<f64>: integer-register element, f64 result."),
     rt!("gos_rt_iter_max_by_i64", (Ptr, Ptr) -> I128, Both, "iter::max_by over Vec<i64> -> Option<i64>."),
     rt!("gos_rt_iter_max_by_key_i64", (Ptr, Ptr) -> I128, Both, "iter::max_by_key over Vec<i64> -> Option<i64>."),

@@ -1754,6 +1754,9 @@ fn collect_thunk_names_in_body(body: &Body, out: &mut std::collections::BTreeSet
 /// argument. `map` / predicate / comparator callbacks return `i64` / `bool`,
 /// which already agree on the GP register, so they are not listed here.
 const CABI_I128_COMBINATORS: &[&str] = &[
+    // Aggregate iterator maps return i64 but still need a codegen-owned
+    // reference for the runtime dispatch-table parity gate.
+    "gos_rt_iter_map_ptr_i64",
     "gos_rt_result_and_then",
     "gos_rt_result_or_else",
     "gos_rt_option_and_then",

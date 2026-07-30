@@ -1127,6 +1127,31 @@ pub unsafe extern "C" fn gos_rt_iter_map_i64(env: *const u8, v: *const GosVec) -
     })
 }
 
+/// `iter::map(f, xs)` for aggregate elements whose callback receives an
+/// address to the element's complete flat-slot storage.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_map_ptr_i64(env: *const u8, v: *const GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { gos_rt_vec_new(8) };
+        if env.is_null() || v.is_null() {
+            return out;
+        }
+        type CallFn = unsafe extern "C" fn(env: *const u8, x: *const u8) -> i64;
+        let fn_addr_raw = unsafe { (env as *const usize).read() };
+        if fn_addr_raw == 0 {
+            return out;
+        }
+        let f: CallFn = unsafe { std::mem::transmute(fn_addr_raw) };
+        let len = unsafe { gos_rt_vec_len(v) };
+        for i in 0..len {
+            let x = unsafe { gos_rt_vec_get_ptr(v, i) };
+            let y = unsafe { f(env, x) };
+            unsafe { gos_rt_vec_push_i64(out, y) };
+        }
+        out
+    })
+}
+
 /// `iter::filter(p, xs)` for `Vec<i64>`. Predicate returns i64
 /// (truthy = nonzero) to keep the callback ABI uniform.
 #[unsafe(no_mangle)]

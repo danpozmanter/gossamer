@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.38.4 - REPL signature catalog & native aggregate iterator fix
+
+- Fix native iterator mapping over struct values, which could segfault in a
+  freshly built executable.
+- Give every String method shown by the REPL info command a complete parameter 
+  and return-type signature.
+- Source those method signatures from the checker-owned standard strings catalog where possible.
+- Native aggregate iterator mapping now uses a pointer-element callback ABI 
+  instead of treating struct values as i64
+
 ## 0.38.3 - REPL banner, %help output, dependency cleanup
 
 - Show the version and runtime architecture in the REPL banner.

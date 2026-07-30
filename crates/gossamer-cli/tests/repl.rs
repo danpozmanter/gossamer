@@ -163,7 +163,7 @@ fn repl_history_outputs_copyable_unnumbered_inputs() {
     let out = run_repl("let answer = 42\nanswer\n%history\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        ["let answer = 42", "answer", "%history"]
+        ["let answer = 42", "answer"]
             .iter()
             .all(|entry| out.stdout.lines().any(|line| line == *entry)),
         "history should reproduce each input without decoration: {}",
@@ -196,12 +196,52 @@ fn repl_history_shortcut_filters_with_a_regex() {
 }
 
 #[test]
+fn repl_history_search_does_not_match_itself() {
+    let query = format!("repl_history_self_match_{}", std::process::id());
+    let command = format!("%h {query}");
+    let out = run_repl(&format!("{command}\n"));
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        !out.stdout.lines().any(|line| line == command),
+        "%h should search the history from before the current command: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_info_accepts_literals() {
     let out = run_repl("%i 42\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("Expression or literal"),
-        "%info should provide a useful result for literals: {}",
+        out.stdout.contains("42: i64 = 42"),
+        "%info should evaluate literals: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_info_inspects_session_bindings_declarations_and_undefined_names() {
+    let out = run_repl(
+        "let x = 9\n\
+         fn wow() { \"heyoooo\" }\n\
+         %i whatever\n\
+         %i x\n\
+         %i wow\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("whatever\n  Undefined name."),
+        "%info should identify an undefined name: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("x: i64 = 9"),
+        "%info should render a binding as %bindings does: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("fn wow() { \"heyoooo\" }"),
+        "%info should render a declaration as %declarations does: {}",
         out.stdout
     );
 }
@@ -1139,13 +1179,8 @@ fn repl_hash_set_bindings_show_and_iterate_stored_structs() {
         );
     }
     assert!(
-        out.stdout.contains("HashSet::insert [method]"),
-        "`%info set` should list methods for the binding's HashSet type: {}",
-        out.stdout
-    );
-    assert!(
-        !out.stdout.contains("Set::bool"),
-        "`%info set` resolved to the unrelated Set type: {}",
+        out.stdout.contains("mut set: HashSet<_> ="),
+        "`%info set` should render the binding as `%bindings` does: {}",
         out.stdout
     );
     assert!(
@@ -1227,7 +1262,7 @@ fn repl_meta_help_preserves_base_banner() {
     let out = run_repl("%help\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     let banner = format!(
-        "gos 0.38.3 REPL [{}-{}]",
+        "gos 0.38.4 REPL [{}-{}]",
         std::env::consts::ARCH,
         std::env::consts::OS
     );
@@ -1552,6 +1587,32 @@ fn repl_meta_info_finds_stdlib_symbol() {
         out.stdout
             .contains("Removes leading and trailing whitespace."),
         "expected manifest doc text; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_info_shows_complete_signatures_for_string_methods() {
+    let out = run_repl("%i starts_with\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout
+            .contains("fn starts_with(self: String, needle: String | char) -> bool"),
+        "String method signature should name every parameter and return type: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("fn starts_with(self, ...) -> ..."),
+        "String method signature must not use placeholders: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout
+            .contains("fn starts_with(text: String, needle: String | char) -> bool")
+            && out
+                .stdout
+                .contains("fn starts_with(path: String, prefix: String) -> bool"),
+        "stdlib overloads should retain their complete signatures: {}",
         out.stdout
     );
 }
