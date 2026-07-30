@@ -1908,17 +1908,25 @@ fn repl_meta_info_combines_regex_help_and_listing() {
 }
 
 #[test]
-fn repl_meta_info_combines_function_help_and_listing() {
-    let out = run_repl("%info strings::slice\n");
+fn repl_meta_info_for_qualified_function_is_focused() {
+    let out = run_repl("%i strings::trim_start_matches\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr.is_empty(),
-        "%info should accept functions: {}",
+        "%i should accept qualified functions: {}",
         out.stderr
     );
     assert!(
-        out.stdout.contains("std::strings::slice") && out.stdout.contains("std::strings::trim"),
-        "%info should render item help and its module listing: {}",
+        out.stdout.contains("std::strings::trim_start_matches")
+            && out
+                .stdout
+                .contains("fn trim_start_matches(text: String, cutset: String | char) -> String"),
+        "%i should render help for the qualified function: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("std::strings::bytes [fn]"),
+        "%i should not dump the function's module listing: {}",
         out.stdout
     );
 }

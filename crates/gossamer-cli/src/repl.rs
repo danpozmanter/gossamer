@@ -1844,8 +1844,11 @@ fn repl_info_listing(arg: &str) -> std::result::Result<String, String> {
         return Ok(render_core_method_dir(&[method.owner]));
     }
 
-    if let Some((module, _item)) = matching_items(query).into_iter().next() {
-        return Ok(render_module_dir(&[module]));
+    if !matching_items(query).is_empty() {
+        // `%info` for a specific stdlib item should stay focused on that
+        // item's documentation. Module listings are useful when the query
+        // names a module, but turn an item lookup into a noisy full dump.
+        return Ok(format!("no catalog listing found for `{arg}`"));
     }
     Ok(format!("no catalog listing found for `{arg}`"))
 }
