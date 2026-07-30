@@ -551,7 +551,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_i64_i64(m: *mut GosMap, key: i64, val
 /// content is folded in). Nested all-scalar structs inline their slots, so
 /// they appear as runs of `'s'`. The result is identical for two equal values
 /// at distinct allocations, matching the VM's value-keying.
-unsafe fn build_skey(key: *const u8, desc: *const c_char) -> Option<Vec<u8>> {
+pub(crate) unsafe fn build_skey_for_set(key: *const u8, desc: *const c_char) -> Option<Vec<u8>> {
     if key.is_null() || desc.is_null() {
         return None;
     }
@@ -580,6 +580,11 @@ unsafe fn build_skey(key: *const u8, desc: *const c_char) -> Option<Vec<u8>> {
         off += 8;
     }
     Some(out)
+}
+
+#[allow(dead_code)]
+unsafe fn build_skey(key: *const u8, desc: *const c_char) -> Option<Vec<u8>> {
+    unsafe { build_skey_for_set(key, desc) }
 }
 
 /// Struct-keyed insert: keys by the aggregate's content (per `desc`) rather

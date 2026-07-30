@@ -350,7 +350,7 @@ fn repl_byte_buffer_has_a_public_type_and_strict_mutation_contract() {
          b.len()\n\
          b.to_string()\n\
          %b\n\
-         %help push\n",
+         %info push\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     let diagnostics = format!("{}\n{}", out.stdout, out.stderr);
@@ -1234,7 +1234,7 @@ fn repl_meta_help_preserves_base_banner() {
     );
     assert!(
         out.stdout.contains("%reset (%r)")
-            && out.stdout.contains("%help [name|/regex/]")
+            && out.stdout.contains("%help\n")
             && out.stdout.contains("%info (%i)")
             && out.stdout.contains("%history (%h) [regex]")
             && out.stdout.contains("%find (%f)"),
@@ -1250,6 +1250,22 @@ fn repl_meta_help_preserves_base_banner() {
 }
 
 #[test]
+fn repl_meta_help_rejects_symbol_queries() {
+    let out = run_repl("%help strings::trim\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("usage: %help"),
+        "%help arguments should be rejected: {}",
+        out.stderr
+    );
+    assert!(
+        !out.stdout.contains("std::strings::trim [fn]"),
+        "%help should not perform symbol lookup: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_meta_command_shortcuts_match_their_long_forms() {
     let out = run_repl(
         "let answer = 42\n\
@@ -1258,7 +1274,7 @@ fn repl_meta_command_shortcuts_match_their_long_forms() {
          %d\n\
          %i strings\n\
          %f strings.*trim\n\
-         %help strings::trim\n\
+         %info strings::trim\n\
          %r\n\
          %b\n\
          %d\n\
@@ -1507,8 +1523,8 @@ fn repl_vec_slice_rejects_bad_arity_and_argument_types() {
 }
 
 #[test]
-fn repl_meta_help_finds_stdlib_symbol() {
-    let out = run_repl("%help strings::trim\n");
+fn repl_meta_info_finds_stdlib_symbol() {
+    let out = run_repl("%info strings::trim\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("std::strings::trim [fn]"),
@@ -1552,9 +1568,9 @@ fn repl_string_listing_contains_only_supported_core_methods() {
 #[test]
 fn repl_meta_help_ls_and_find_cover_core_string_parse() {
     let out = run_repl(
-        "%help string::parse\n\
-         %help String::parse\n\
-         %help strings::parse\n\
+        "%info string::parse\n\
+         %info String::parse\n\
+         %info strings::parse\n\
          %info string\n\
          %find String::parse\n\
          \"123\".parse<i64>()\n",
@@ -1650,20 +1666,20 @@ fn repl_string_parse_turbofish_forms_typecheck_without_bool_diagnostics() {
 #[test]
 fn repl_meta_help_ls_and_find_cover_core_collection_types() {
     let out = run_repl(
-        "%help Vec::new\n\
-         %help Vec::push\n\
+        "%info Vec::new\n\
+         %info Vec::push\n\
          %info Vec\n\
          %find Vec::join\n\
-         %help HashMap::new\n\
-         %help HashMap::insert\n\
+         %info HashMap::new\n\
+         %info HashMap::insert\n\
          %info HashMap\n\
          %find HashMap::pop\n\
-         %help BTreeMap::new\n\
-         %help BTreeMap::insert\n\
+         %info BTreeMap::new\n\
+         %info BTreeMap::insert\n\
          %info BTreeMap\n\
-         %help HashSet::union\n\
+         %info HashSet::union\n\
          %info HashSet\n\
-         %help VecDeque::push_back\n\
+         %info VecDeque::push_back\n\
          %info VecDeque\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -1695,14 +1711,14 @@ fn repl_meta_help_ls_and_find_cover_core_collection_types() {
 #[test]
 fn repl_meta_help_covers_builtin_receiver_types() {
     let out = run_repl(
-        "%help Option::map\n\
-         %help Result::map_err\n\
-         %help Iterator::collect\n\
-         %help Stream::write\n\
-         %help Child::wait\n\
-         %help AtomicI64::new\n\
-         %help http::Response::text\n\
-         %help validate::Errors::add\n\
+        "%info Option::map\n\
+         %info Result::map_err\n\
+         %info Iterator::collect\n\
+         %info Stream::write\n\
+         %info Child::wait\n\
+         %info AtomicI64::new\n\
+         %info http::Response::text\n\
+         %info validate::Errors::add\n\
          %info Option\n\
          %info http::Response\n",
     );
@@ -1757,9 +1773,9 @@ fn repl_question_mark_rejects_invalid_contexts_before_execution() {
 fn repl_meta_help_covers_every_builtin_macro_and_prelude_assertion() {
     let mut input = String::new();
     for builtin in gossamer_parse::builtin_macros::BUILTIN_MACROS {
-        writeln!(&mut input, "%help {}", builtin.name).expect("write macro-help input");
+        writeln!(&mut input, "%info {}", builtin.name).expect("write macro-info input");
     }
-    input.push_str("%help assert\n%help assert_eq\n");
+    input.push_str("%info assert\n%info assert_eq\n");
     let out = run_repl(&input);
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for builtin in gossamer_parse::builtin_macros::BUILTIN_MACROS {
@@ -1784,8 +1800,8 @@ fn repl_meta_help_covers_every_builtin_macro_and_prelude_assertion() {
 }
 
 #[test]
-fn repl_meta_help_shows_a_function_signature_and_docs() {
-    let out = run_repl("%help strings::slice\n");
+fn repl_meta_info_shows_a_function_signature_and_docs() {
+    let out = run_repl("%info strings::slice\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains(
@@ -1802,8 +1818,8 @@ fn repl_meta_help_shows_a_function_signature_and_docs() {
 }
 
 #[test]
-fn repl_meta_help_uses_checker_exposed_stdlib_signatures() {
-    let out = run_repl("%help fs::read\n");
+fn repl_meta_info_uses_checker_exposed_stdlib_signatures() {
+    let out = run_repl("%info fs::read\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout
@@ -1814,8 +1830,8 @@ fn repl_meta_help_uses_checker_exposed_stdlib_signatures() {
 }
 
 #[test]
-fn repl_meta_help_distinguishes_same_leaf_function_names_by_type() {
-    let out = run_repl("%help count\n");
+fn repl_meta_info_distinguishes_same_leaf_function_names_by_type() {
+    let out = run_repl("%info count\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout
@@ -1831,8 +1847,8 @@ fn repl_meta_help_distinguishes_same_leaf_function_names_by_type() {
 }
 
 #[test]
-fn repl_meta_help_searches_regex() {
-    let out = run_repl("%help /question_mark/\n");
+fn repl_meta_info_searches_regex() {
+    let out = run_repl("%info /question_mark/\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("lang::question_mark (shipped)"),
@@ -1927,6 +1943,30 @@ fn repl_meta_info_for_qualified_function_is_focused() {
     assert!(
         !out.stdout.contains("std::strings::bytes [fn]"),
         "%i should not dump the function's module listing: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_info_for_shared_method_name_does_not_append_an_owner_listing() {
+    let out = run_repl("%i contains_key\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for expected in [
+        "BTreeMap::contains_key [method]",
+        "HashMap::contains_key [method]",
+        "Map::contains_key [method]",
+        "sync::Map::contains_key [method]",
+        "std::collections::ordered_map::contains_key [fn]",
+    ] {
+        assert!(
+            out.stdout.contains(expected),
+            "%i omitted `{expected}`: {}",
+            out.stdout
+        );
+    }
+    assert!(
+        !out.stdout.contains("BTreeMap::get [method]"),
+        "%i should not append the arbitrary BTreeMap listing: {}",
         out.stdout
     );
 }

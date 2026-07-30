@@ -18,8 +18,8 @@ REPL commands
 
   %info (%i) [anything]
     Show help and the relevant module or type listing.
-  %help [name|/regex/]
-    Show command help or documentation for a symbol.
+  %help
+    Show this list of REPL commands.
   %find (%f) <regex>
     Search public symbol names.
   %bindings (%b) [regex]
@@ -1342,9 +1342,10 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     continue;
                 }
                 "help" => {
-                    match repl_help(arg) {
-                        Ok(text) => print_repl_output(&text),
-                        Err(msg) => print_repl_error(&msg),
+                    if arg.is_empty() {
+                        print_repl_output(REPL_HELP_TEXT);
+                    } else {
+                        print_repl_error("usage: %help");
                     }
                     continue;
                 }
@@ -1840,8 +1841,11 @@ fn repl_info_listing(arg: &str) -> std::result::Result<String, String> {
         return Ok(render_module_dir(&modules));
     }
 
-    if let Some(method) = matching_core_methods(query).into_iter().next() {
-        return Ok(render_core_method_dir(&[method.owner]));
+    if !matching_core_methods(query).is_empty() {
+        // A method name can match several receiver types. `repl_help` has
+        // already rendered every match, so choosing the first owner here
+        // would append an arbitrary and unrelated type listing.
+        return Ok(format!("no catalog listing found for `{arg}`"));
     }
 
     if !matching_items(query).is_empty() {

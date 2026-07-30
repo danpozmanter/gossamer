@@ -2442,6 +2442,10 @@ impl<'a> Builder<'a> {
                 | "gos_rt_router_add"
         );
         let mut rt = rt;
+        let aggregate_set_desc = self
+            .first_generic_of(receiver.ty)
+            .filter(|elem| self.is_aggregate_key(*elem))
+            .and_then(|elem| self.key_descriptor(elem));
         // An i64-element `HashSet` stores its keys as decimal strings;
         // passing the raw i64 to the String shims reinterprets it as a
         // key pointer and crashes. The element kind is erased from the
@@ -2467,6 +2471,14 @@ impl<'a> Builder<'a> {
         // i64 set's keys back as integers (sorted numerically).
         if rt == "gos_rt_set_to_vec" && matches!(self.set_elem_kind_of(receiver), MapKeyKind::I64) {
             rt = "gos_rt_set_to_vec_i64";
+        }
+        if aggregate_set_desc.is_some() {
+            rt = match rt {
+                "gos_rt_set_insert" => "gos_rt_set_insert_skey",
+                "gos_rt_set_to_vec" => "gos_rt_set_to_vec_skey",
+                "gos_rt_set_intersection" => "gos_rt_set_intersection_skey",
+                _ => rt,
+            };
         }
         if router_handler_method && !args.is_empty() {
             let handler_idx = args.len() - 1;
@@ -2537,6 +2549,11 @@ impl<'a> Builder<'a> {
                 arg_operands.push(Operand::Copy(Place::local(a)));
             }
         }
+        if matches!(rt, "gos_rt_set_insert_skey" | "gos_rt_set_to_vec_skey")
+            && let Some(desc) = aggregate_set_desc
+        {
+            arg_operands.push(Operand::Const(ConstValue::Str(desc)));
+        }
         Some((arg_operands, rt, mut_ref_reloads))
     }
 
@@ -2571,6 +2588,7 @@ impl<'a> Builder<'a> {
             | "gos_rt_bufio_scanner_scan"
             | "gos_rt_set_insert"
             | "gos_rt_set_insert_i64"
+            | "gos_rt_set_insert_skey"
             | "gos_rt_set_contains"
             | "gos_rt_set_contains_i64"
             | "gos_rt_set_remove"
@@ -2587,6 +2605,7 @@ impl<'a> Builder<'a> {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 self.tcx.intern(gossamer_types::TyKind::Vec(i))
             }
+            "gos_rt_set_to_vec_skey" => ty,
             "gos_rt_http_response_status"
             | "gos_rt_vec_capacity"
             | "gos_rt_set_len"

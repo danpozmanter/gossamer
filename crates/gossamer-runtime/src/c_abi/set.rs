@@ -28,6 +28,9 @@ use std::os::raw::c_char;
 
 pub struct GosSet {
     inner: std::collections::HashSet<String>,
+    /// Aggregate elements are keyed by their canonical slot bytes and retain
+    /// an owned copy of those slots for `iter()` / set algebra.
+    struct_inner: rustc_hash::FxHashMap<Box<[u8]>, Box<[u8]>>,
 }
 
 #[unsafe(no_mangle)]
@@ -35,6 +38,7 @@ pub unsafe extern "C" fn gos_rt_set_new() -> *mut GosSet {
     ffi_entry!(std::ptr::null_mut(), {
         Box::into_raw(Box::new(GosSet {
             inner: std::collections::HashSet::new(),
+            struct_inner: rustc_hash::FxHashMap::default(),
         }))
     })
 }
@@ -124,7 +128,8 @@ pub unsafe extern "C" fn gos_rt_set_len(s: *const GosSet) -> i64 {
         if s.is_null() {
             return 0;
         }
-        unsafe { (*s).inner.len() as i64 }
+        let s = unsafe { &*s };
+        (s.inner.len() + s.struct_inner.len()) as i64
     })
 }
 
@@ -214,7 +219,68 @@ unsafe fn set_pair<'a>(
 }
 
 unsafe fn set_from(inner: std::collections::HashSet<String>) -> *mut GosSet {
-    Box::into_raw(Box::new(GosSet { inner }))
+    Box::into_raw(Box::new(GosSet {
+        inner,
+        struct_inner: rustc_hash::FxHashMap::default(),
+    }))
+}
+
+/// Inserts a struct or tuple by value. `desc` is the same slot descriptor as
+/// the aggregate-keyed HashMap ABI, so equal values at different addresses
+/// remain equal in the native runtime.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_insert_skey(
+    s: *mut GosSet,
+    key: *const u8,
+    desc: *const c_char,
+) -> i64 {
+    ffi_entry!(-1, {
+        let Some(canonical) = (unsafe { crate::c_abi::map::build_skey_for_set(key, desc) }) else {
+            return 0;
+        };
+        if s.is_null() {
+            return 0;
+        }
+        let width = unsafe { CStr::from_ptr(desc) }.to_bytes().len() * 8;
+        let slots = unsafe { std::slice::from_raw_parts(key, width) }
+            .to_vec()
+            .into_boxed_slice();
+        let s = unsafe { &mut *s };
+        i64::from(
+            s.struct_inner
+                .insert(canonical.into_boxed_slice(), slots)
+                .is_none(),
+        )
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_to_vec_skey(
+    s: *const GosSet,
+    desc: *const c_char,
+) -> *mut crate::c_abi::vec::GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        if desc.is_null() {
+            return std::ptr::null_mut();
+        }
+        let width = unsafe { CStr::from_ptr(desc) }.to_bytes().len() * 8;
+        let out = unsafe {
+            crate::c_abi::vec::gos_rt_vec_new_typed(
+                width as u32,
+                crate::c_abi::vec::vec_elem_kind::PRIMITIVE,
+            )
+        };
+        if s.is_null() {
+            return out;
+        }
+        let s = unsafe { &*s };
+        let mut entries: Vec<_> = s.struct_inner.iter().collect();
+        entries.sort_unstable_by_key(|(key, _)| *key);
+        for (_, slots) in entries {
+            unsafe { crate::c_abi::vec::gos_rt_vec_push(out, slots.as_ptr()) };
+        }
+        out
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -233,6 +299,29 @@ pub unsafe extern "C" fn gos_rt_set_intersection(
     ffi_entry!(std::ptr::null_mut(), {
         let (a, b) = unsafe { set_pair(a, b) };
         unsafe { set_from(a.intersection(b).cloned().collect()) }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_intersection_skey(
+    a: *const GosSet,
+    b: *const GosSet,
+) -> *mut GosSet {
+    ffi_entry!(std::ptr::null_mut(), {
+        let mut out = GosSet {
+            inner: std::collections::HashSet::new(),
+            struct_inner: rustc_hash::FxHashMap::default(),
+        };
+        if a.is_null() || b.is_null() {
+            return Box::into_raw(Box::new(out));
+        }
+        let (a, b) = unsafe { (&*a, &*b) };
+        for (key, slots) in &a.struct_inner {
+            if b.struct_inner.contains_key(key) {
+                out.struct_inner.insert(key.clone(), slots.clone());
+            }
+        }
+        Box::into_raw(Box::new(out))
     })
 }
 

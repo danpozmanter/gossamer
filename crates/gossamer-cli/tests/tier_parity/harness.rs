@@ -486,6 +486,7 @@ const SPECS: &[Spec] = &[
     // (HashSet to_vec/iter/clear, Vec method insert/remove, BTreeMap keys).
     spec("feature-testing-examples/winb2_vec_new_struct.gos"),
     spec("feature-testing-examples/winb2_hashset_i64.gos"),
+    spec("feature-testing-examples/hashset_struct_keys.gos"),
     spec("feature-testing-examples/winb2_regex_find_all_bound.gos"),
     spec("feature-testing-examples/winb2_map_contains.gos"),
     spec("feature-testing-examples/winb2_parse_u64.gos"),
