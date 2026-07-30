@@ -3639,6 +3639,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_set_contains_i64 as *const u8,
         ),
         (
+            "gos_rt_set_contains_skey",
+            crate::c_abi::gos_rt_set_contains_skey as *const u8,
+        ),
+        (
             "gos_rt_set_free",
             crate::c_abi::gos_rt_set_free as *const u8,
         ),
@@ -3663,6 +3667,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_set_remove_i64",
             crate::c_abi::gos_rt_set_remove_i64 as *const u8,
+        ),
+        (
+            "gos_rt_set_remove_skey",
+            crate::c_abi::gos_rt_set_remove_skey as *const u8,
         ),
         (
             "gos_rt_set_to_vec",

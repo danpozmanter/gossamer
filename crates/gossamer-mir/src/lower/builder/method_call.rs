@@ -2475,6 +2475,8 @@ impl<'a> Builder<'a> {
         if aggregate_set_desc.is_some() {
             rt = match rt {
                 "gos_rt_set_insert" => "gos_rt_set_insert_skey",
+                "gos_rt_set_contains" => "gos_rt_set_contains_skey",
+                "gos_rt_set_remove" => "gos_rt_set_remove_skey",
                 "gos_rt_set_to_vec" => "gos_rt_set_to_vec_skey",
                 "gos_rt_set_intersection" => "gos_rt_set_intersection_skey",
                 _ => rt,
@@ -2549,8 +2551,13 @@ impl<'a> Builder<'a> {
                 arg_operands.push(Operand::Copy(Place::local(a)));
             }
         }
-        if matches!(rt, "gos_rt_set_insert_skey" | "gos_rt_set_to_vec_skey")
-            && let Some(desc) = aggregate_set_desc
+        if matches!(
+            rt,
+            "gos_rt_set_insert_skey"
+                | "gos_rt_set_contains_skey"
+                | "gos_rt_set_remove_skey"
+                | "gos_rt_set_to_vec_skey"
+        ) && let Some(desc) = aggregate_set_desc
         {
             arg_operands.push(Operand::Const(ConstValue::Str(desc)));
         }
@@ -2589,6 +2596,8 @@ impl<'a> Builder<'a> {
             | "gos_rt_set_insert"
             | "gos_rt_set_insert_i64"
             | "gos_rt_set_insert_skey"
+            | "gos_rt_set_contains_skey"
+            | "gos_rt_set_remove_skey"
             | "gos_rt_set_contains"
             | "gos_rt_set_contains_i64"
             | "gos_rt_set_remove"

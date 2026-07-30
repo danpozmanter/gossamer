@@ -255,6 +255,42 @@ pub unsafe extern "C" fn gos_rt_set_insert_skey(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_contains_skey(
+    s: *const GosSet,
+    key: *const u8,
+    desc: *const c_char,
+) -> i64 {
+    ffi_entry!(-1, {
+        let Some(canonical) = (unsafe { crate::c_abi::map::build_skey_for_set(key, desc) }) else {
+            return 0;
+        };
+        if s.is_null() {
+            return 0;
+        }
+        let s = unsafe { &*s };
+        i64::from(s.struct_inner.contains_key(canonical.as_slice()))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_remove_skey(
+    s: *mut GosSet,
+    key: *const u8,
+    desc: *const c_char,
+) -> i64 {
+    ffi_entry!(-1, {
+        let Some(canonical) = (unsafe { crate::c_abi::map::build_skey_for_set(key, desc) }) else {
+            return 0;
+        };
+        if s.is_null() {
+            return 0;
+        }
+        let s = unsafe { &mut *s };
+        i64::from(s.struct_inner.remove(canonical.as_slice()).is_some())
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_to_vec_skey(
     s: *const GosSet,
     desc: *const c_char,
