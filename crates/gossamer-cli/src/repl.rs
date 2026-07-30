@@ -1828,6 +1828,12 @@ fn repl_info_for_session(
     bindings: &[ReplBinding],
 ) -> std::result::Result<Option<String>, String> {
     let query = normalize_query(arg);
+    // Catalog queries must not be evaluated as REPL expressions first. For
+    // example, `%info Result::map_err` would otherwise attempt execution and
+    // prevent the metadata fallback from ever running.
+    if repl_info_uses_catalog(query) {
+        return Ok(None);
+    }
     if !repl_is_identifier(query) {
         return repl_info_expression(arg, declarations, lets).map(Some);
     }
@@ -1925,6 +1931,17 @@ fn repl_is_identifier(value: &str) -> bool {
         .next()
         .is_some_and(|ch| ch == '_' || ch.is_alphabetic())
         && chars.all(|ch| ch == '_' || ch.is_alphanumeric())
+}
+
+fn repl_info_uses_catalog(query: &str) -> bool {
+    query.is_empty()
+        || (query.starts_with('/') && query.ends_with('/') && query.len() >= 2)
+        || !matching_builtin_macros(query).is_empty()
+        || !matching_prelude_builtins(query).is_empty()
+        || !matching_core_methods(query).is_empty()
+        || !matching_modules(query).is_empty()
+        || !matching_items(query).is_empty()
+        || !matching_features(query).is_empty()
 }
 
 fn repl_info_for_receiver(arg: &str, owner: &str) -> std::result::Result<String, String> {
