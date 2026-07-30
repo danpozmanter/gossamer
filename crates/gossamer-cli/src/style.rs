@@ -38,8 +38,10 @@ pub(crate) fn force_enable() {
 }
 
 const RESET: &str = "\x1b[0m";
-const REPL_META_HEADING: &str = "\x1b[38;5;67m";
-const REPL_META_ACCENT: &str = "\x1b[38;5;73m";
+// Light blue/cyan metadata remains distinct from source syntax colours while
+// staying legible on both dark terminals and low-contrast displays.
+const REPL_META_HEADING: &str = "\x1b[38;5;111m";
+const REPL_META_ACCENT: &str = "\x1b[38;5;117m";
 const REPL_META_DETAIL: &str = "\x1b[38;5;252m";
 const REPL_ERROR: &str = "\x1b[91m";
 
@@ -56,8 +58,8 @@ pub(crate) fn error(s: &str) -> String {
     wrap("\x1b[1;31m", s)
 }
 
-/// Muted REPL metadata palette. These 256-colour tones deliberately avoid
-/// the cyan, green, yellow, and magenta used by source syntax highlighting.
+/// High-contrast REPL metadata palette. These 256-colour tones deliberately
+/// avoid the green, yellow, and magenta used by source syntax highlighting.
 #[must_use]
 pub(crate) fn repl_meta_heading(s: &str) -> String {
     wrap(REPL_META_HEADING, s)
@@ -87,7 +89,7 @@ mod tests {
         let metadata = [REPL_META_HEADING, REPL_META_ACCENT, REPL_META_DETAIL];
         assert_eq!(
             metadata.as_slice(),
-            ["\x1b[38;5;67m", "\x1b[38;5;73m", "\x1b[38;5;252m"]
+            ["\x1b[38;5;111m", "\x1b[38;5;117m", "\x1b[38;5;252m"]
         );
         assert_eq!(REPL_ERROR, "\x1b[91m");
         assert!(!metadata.contains(&REPL_ERROR));

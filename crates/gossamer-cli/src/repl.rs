@@ -2361,14 +2361,15 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
             } else {
                 "method"
             };
-            let signature =
-                runtime_core_method_signature(&owner, &name, kind).unwrap_or_else(|| {
-                    if kind == "assoc" {
-                        format!("fn {name}(...) -> ...")
-                    } else {
-                        format!("fn {name}(self, ...) -> ...")
-                    }
-                });
+            // Registration provides a dispatch name, not a callable type
+            // contract. Never invent `...` parameters from that incomplete
+            // information: an omitted catalog entry is preferable to a
+            // confidently false signature. New runtime methods must add
+            // checker-owned metadata through this function before `%info`
+            // exposes them.
+            let Some(signature) = runtime_core_method_signature(&owner, &name, kind) else {
+                continue;
+            };
             let doc = runtime_core_method_doc(&owner, &name)
                 .map_or_else(|| format!("Built-in {kind} on {owner}."), str::to_string);
             insert_core_method_entry(
@@ -2391,6 +2392,22 @@ fn runtime_core_method_signature(owner: &str, name: &str, kind: &str) -> Option<
     // interpreter rather than the stdlib function catalog. Keep their public
     // contracts here so `%info` never fabricates an ellipsis signature.
     if let Some(signature) = match (owner, name) {
+        ("Arc", "new") => Some("fn new<T>(value: T) -> Arc<T>"),
+        ("Rc", "new") => Some("fn new<T>(value: T) -> Rc<T>"),
+        ("Box", "new") => Some("fn new<T>(value: T) -> Box<T>"),
+        ("AtomicBool", "new") => Some("fn new(value: bool) -> AtomicBool"),
+        ("AtomicI32", "new") => Some("fn new(value: i64) -> AtomicI32"),
+        ("AtomicI64", "new") => Some("fn new(value: i64) -> AtomicI64"),
+        ("AtomicU64", "new") => Some("fn new(value: i64) -> AtomicU64"),
+        ("Barrier", "new") => Some("fn new(parties: i64) -> Barrier"),
+        ("Mutex", "new") => Some("fn new<T>(value: T) -> Mutex<T>"),
+        ("RwLock", "new") => Some("fn new<T>(value: T) -> RwLock<T>"),
+        ("Once", "new") => Some("fn new() -> Once"),
+        ("WaitGroup", "new") => Some("fn new() -> WaitGroup"),
+        ("Errors" | "validate::Errors", "new") => Some("fn new() -> validate::Errors"),
+        ("FieldError" | "validate::FieldError", "new") => {
+            Some("fn new(path: String, message: String, code: String) -> validate::FieldError")
+        }
         ("http::Client", "new") => Some("fn new() -> http::Client"),
         ("http::Client", "builder") => Some("fn builder() -> http::ClientBuilder"),
         _ => None,

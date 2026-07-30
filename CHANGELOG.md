@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.38.5 - Cross-platform release profile correctness
+## 0.38.5 - Cross-platform release profile correctness and REPL refinement
 
 - Make native debug and release MIR pipelines genuinely distinct: debug keeps
   call boundaries and lightweight canonicalisation, while release performs
@@ -13,7 +13,8 @@
 - Configure the runtime before copying process arguments so macOS and Windows
   receive allocator policy before their first runtime-owned allocation.
 - Make REPL `%info` prefer session bindings and declarations, then catalog
-  lookup; add `%clear-history` and concrete HTTP constructor signatures.
+  lookup; add `%clear-history` and suppress untyped runtime entries rather
+  than displaying fabricated `...` signatures.
 
 ## 0.38.4 - REPL signature catalog & native aggregate iterator fix
 
@@ -21,7 +22,8 @@
   freshly built executable.
 - Give every String method shown by the REPL info command a complete parameter 
   and return-type signature.
-- Source those method signatures from the checker-owned standard strings catalog where possible.
+- Source those method signatures from the checker-owned standard strings catalog
+  where possible.
 - Native aggregate iterator mapping now uses a pointer-element callback ABI 
   instead of treating struct values as i64
 

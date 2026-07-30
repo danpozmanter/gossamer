@@ -299,6 +299,31 @@ fn repl_info_resolves_qualified_http_constructor_with_a_real_signature() {
 }
 
 #[test]
+fn repl_info_never_invents_placeholder_signatures() {
+    let out = run_repl("%i new\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        !out.stdout.contains("..."),
+        "%info must only show catalog entries with concrete signatures: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout
+            .contains("http::Client::new [assoc]\n  fn new() -> http::Client"),
+        "known runtime constructors must remain discoverable: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("validate::Errors::new [assoc]\n  fn new() -> validate::Errors")
+            && out.stdout.contains(
+                "validate::FieldError::new [assoc]\n  fn new(path: String, message: String, code: String) -> validate::FieldError"
+            ),
+        "validate constructors must have concrete runtime signatures: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_bindings_hide_inference_ids_for_empty_vec() {
     let out = run_repl(
         "let v = Vec::new()\n\
