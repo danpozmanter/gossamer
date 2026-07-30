@@ -148,7 +148,6 @@ fn locate_workspace_root() -> Result<PathBuf> {
 #[derive(Debug, Serialize)]
 struct PublicApiCatalog {
     schema_version: u32,
-    gossamer_version: &'static str,
     entries: Vec<PublicApiEntry>,
 }
 
@@ -293,7 +292,6 @@ fn build_public_api_catalog() -> Result<PublicApiCatalog> {
     }
     Ok(PublicApiCatalog {
         schema_version: 1,
-        gossamer_version: env!("CARGO_PKG_VERSION"),
         entries,
     })
 }

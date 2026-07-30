@@ -1,6 +1,5 @@
 {
   "schema_version": 1,
-  "gossamer_version": "0.38.3",
   "entries": [
     {
       "id": "std-archive-tar-TarEntry",
