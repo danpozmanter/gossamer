@@ -52,6 +52,8 @@ pub(crate) struct BuildRequest<'a> {
     pub(crate) link: LinkOptions,
     pub(crate) out_dir: Option<PathBuf>,
     pub(crate) timings: bool,
+    /// Print the selected profile and target-sensitive optimization plan.
+    pub(crate) explain_profile: bool,
 }
 
 /// `gos build` dispatcher: walks the project root for a default
@@ -100,6 +102,23 @@ impl LinkOptions {
     /// unless the user explicitly requested debug info via `-g`.
     fn want_strip(self) -> bool {
         !self.debug_info
+    }
+}
+
+/// Explicit Apple linker optimization level for a profile. Kept pure so Linux
+/// tests cover the macOS plan without requiring an Apple linker.
+fn macos_link_optimisation_flag(opts: LinkOptions) -> &'static str {
+    if opts.release { "-Wl,-O1" } else { "-Wl,-O0" }
+}
+
+/// Explicit MSVC/lld-link optimization settings for a profile. Keeping these
+/// out of the `#[cfg(windows)]` function prevents Windows-only policy drift.
+#[cfg(any(windows, test))]
+fn windows_link_optimisation_flags(opts: LinkOptions) -> &'static [&'static str] {
+    if opts.release {
+        &["/OPT:REF", "/OPT:ICF", "/INCREMENTAL:NO"]
+    } else {
+        &["/OPT:NOREF", "/OPT:NOICF"]
     }
 }
 
@@ -180,6 +199,7 @@ fn run(file: &PathBuf, request: &BuildRequest<'_>) -> Result<()> {
     let release = opts.release;
     let out_dir = request.out_dir.as_deref();
     let timings = request.timings;
+    let explain_profile = request.explain_profile;
     let started = Instant::now();
     let mut build_timings = BuildTimings::default();
     warn_if_pgo_profile_is_stale(file);
@@ -212,6 +232,12 @@ fn run(file: &PathBuf, request: &BuildRequest<'_>) -> Result<()> {
         }
         _ => None,
     };
+
+    if explain_profile {
+        let planned_target = resolve_link_target(cross_target);
+        let static_musl = planned_target.env == TargetEnv::Musl || opts.want_static_musl();
+        print_profile_plan(&planned_target, opts, static_musl);
+    }
 
     let unit_name = default_unit_name(file);
     // `cross_target` is `Some` only for a validated `*-linux-*` triple (see
@@ -275,6 +301,41 @@ fn run(file: &PathBuf, request: &BuildRequest<'_>) -> Result<()> {
         build_timings.print(false);
     }
     Ok(())
+}
+
+/// Emits a stable, machine-readable summary of the selected optimization
+/// policy. This is deliberately available before the artifact-cache return so
+/// a reporter can prove profile selection even when no codegen reruns.
+fn print_profile_plan(target: &LinkTarget, opts: LinkOptions, static_musl: bool) {
+    let profile = if opts.release { "release" } else { "debug" };
+    let (mir, llvm) = if opts.release {
+        ("release-inline+optimise", "O3")
+    } else {
+        ("debug-canonicalise", "O0")
+    };
+    let linker = match target.os {
+        TargetOs::MacOs => {
+            if opts.release {
+                "macos:O1+dead-strip"
+            } else {
+                "macos:O0"
+            }
+        }
+        TargetOs::Windows => {
+            if opts.release {
+                "windows:OPT-REF+ICF"
+            } else {
+                "windows:NOREF+NOICF"
+            }
+        }
+        TargetOs::Linux if static_musl => "linux:static-musl",
+        TargetOs::Linux => "linux:dynamic",
+        TargetOs::Other => "other",
+    };
+    eprintln!(
+        "build-profile: {{\"profile\":\"{profile}\",\"target\":\"{}\",\"mir\":\"{mir}\",\"llvm\":\"{llvm}\",\"static_musl\":{static_musl},\"loop_idiom_disabled\":{static_musl},\"link\":\"{linker}\",\"runtime_profile\":\"embedded\"}}",
+        target.triple,
+    );
 }
 
 /// Wall-clock accounting for the native build critical path. The values are
@@ -341,6 +402,12 @@ fn build_artifact_key(
     opts: LinkOptions,
     out_path: &Path,
 ) -> String {
+    // The object code and final linker invocation differ between static musl
+    // and dynamic links. Include the resolved policy, not just the user flag:
+    // installing or removing the musl target between builds must invalidate a
+    // cached dynamic/static artifact rather than reusing the wrong binary.
+    let resolved_target = resolve_link_target(target);
+    let static_musl = resolved_target.env == TargetEnv::Musl || opts.want_static_musl();
     let mut hash = gossamer_pkg::sha256::Hasher::new();
     let mut add = |label: &str, bytes: &[u8]| {
         hash.update(label.as_bytes());
@@ -355,7 +422,7 @@ fn build_artifact_key(
     add(
         "options",
         format!(
-            "edition={edition:?}|target={}|release={}|debug={}|dynamic={}|reproducible={}",
+            "edition={edition:?}|target={}|release={}|debug={}|dynamic={}|static_musl={static_musl}|reproducible={}",
             target.unwrap_or("host"),
             opts.release,
             opts.debug_info,
@@ -864,14 +931,23 @@ fn try_native_build(
         std::env::temp_dir().join(format!("gos-build-{}-{}", std::process::id(), unit_name));
     fs::create_dir_all(&tmp_dir)
         .map_err(|err| NativeBuildError::Io(anyhow!("creating {}: {err}", tmp_dir.display())))?;
+    // Decide the final link shape before codegen. LLVM's tiny-copy policy is
+    // intentionally scoped to static musl, where it was measured; macOS,
+    // Windows, and dynamic Linux keep LLVM's normal loop idiom recognition.
+    let static_musl = lt.env == TargetEnv::Musl || opts.want_static_musl();
     let phase_started = Instant::now();
-    let (object_paths, object_triple) =
-        emit_native_objects(unit_name, &tmp_dir, opts.release, checked, timings)?;
+    let (object_paths, object_triple) = emit_native_objects(
+        unit_name,
+        &tmp_dir,
+        opts.release,
+        static_musl,
+        checked,
+        timings,
+    )?;
     timings.codegen = phase_started.elapsed();
     profile_rss_stage("build_backend_emitted");
     // Static-musl is chosen for a cross musl target (musl links
     // statically by construction) or for a host release that opted in.
-    let static_musl = lt.env == TargetEnv::Musl || opts.want_static_musl();
     let runtime_lib = if lt.is_cross {
         find_runtime_lib_for_target(&lt.triple)?
     } else if opts.want_static_musl() {
@@ -926,7 +1002,7 @@ fn try_native_build(
     // path it uses today.
     let phase_started = Instant::now();
     let link_result = if !lt.is_cross && cfg!(all(windows, target_env = "msvc")) {
-        link_windows_msvc(&object_paths, &runtime_lib, &extra_archives, out_path)
+        link_windows_msvc(&object_paths, &runtime_lib, &extra_archives, out_path, opts)
     } else if static_musl {
         link_posix_static_musl(
             &lt,
@@ -1244,6 +1320,10 @@ fn link_posix(
     let mut cmd = std::process::Command::new(&cc);
     if lt.os == TargetOs::MacOs {
         configure_macos_link_command(&mut cmd);
+        // Apple ld keeps a small default optimization set when no `-O` is
+        // supplied. Make the profile contract explicit independently of
+        // symbol stripping, which `-g` may disable.
+        cmd.arg(macos_link_optimisation_flag(opts));
     }
     // Prefer a fast linker for a native host link only; a cross gcc
     // driver selects its own target linker, so mold/lld here would
@@ -1543,10 +1623,14 @@ fn link_windows_msvc(
     runtime_lib: &Path,
     extra_archives: &[PathBuf],
     out_path: &Path,
+    opts: LinkOptions,
 ) -> std::result::Result<(), NativeBuildError> {
     let linker = locate_rust_lld()?;
     let mut cmd = std::process::Command::new(&linker);
     cmd.arg("-flavor").arg("link").arg("/NOLOGO");
+    // Do not depend on lld-link's changing defaults. These are the COFF
+    // equivalents of the release dead-strip path used on POSIX targets.
+    cmd.args(windows_link_optimisation_flags(opts));
     let mut out_arg = std::ffi::OsString::from("/OUT:");
     out_arg.push(out_path);
     cmd.arg(out_arg);
@@ -1604,6 +1688,7 @@ fn link_windows_msvc(
     _runtime_lib: &Path,
     _extra_archives: &[PathBuf],
     _out_path: &Path,
+    _opts: LinkOptions,
 ) -> std::result::Result<(), NativeBuildError> {
     Err(NativeBuildError::LinkerMissing(
         "Windows MSVC link path is only available on a Windows host".to_string(),
@@ -1633,6 +1718,7 @@ fn emit_native_objects(
     unit_name: &str,
     tmp_dir: &Path,
     release: bool,
+    static_musl: bool,
     checked: gossamer_driver::CheckedFrontend,
     timings: &mut BuildTimings,
 ) -> std::result::Result<(Vec<PathBuf>, Option<String>), NativeBuildError> {
@@ -1649,6 +1735,7 @@ fn emit_native_objects(
     } else {
         gossamer_codegen_llvm::OptProfile::Debug
     });
+    gossamer_codegen_llvm::set_static_musl_link(static_musl);
     // Anchor the incremental cache next to the project when possible
     // so repeated `gos build` invocations share a warm cache.
     let cache_dir = std::env::current_dir()
@@ -1874,5 +1961,29 @@ mod tests {
         assert_ne!(first, source_changed);
         assert_ne!(first, profile_changed);
         std::fs::remove_dir_all(root).expect("remove scratch");
+    }
+
+    #[test]
+    fn target_link_plans_are_explicit_for_both_profiles() {
+        let debug = super::LinkOptions {
+            release: false,
+            debug_info: false,
+            dynamic: true,
+        };
+        let release = super::LinkOptions {
+            release: true,
+            debug_info: false,
+            dynamic: true,
+        };
+        assert_eq!(super::macos_link_optimisation_flag(debug), "-Wl,-O0");
+        assert_eq!(super::macos_link_optimisation_flag(release), "-Wl,-O1");
+        assert_eq!(
+            super::windows_link_optimisation_flags(debug),
+            ["/OPT:NOREF", "/OPT:NOICF"]
+        );
+        assert_eq!(
+            super::windows_link_optimisation_flags(release),
+            ["/OPT:REF", "/OPT:ICF", "/INCREMENTAL:NO"]
+        );
     }
 }

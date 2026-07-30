@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.38.5 - Cross-platform release profile correctness
+
+- Make native debug and release MIR pipelines genuinely distinct: debug keeps
+  call boundaries and lightweight canonicalisation, while release performs
+  whole-program inlining and full MIR optimisation.
+- Scope the LLVM loop-idiom workaround to static-musl links, preserving the
+  measured Linux optimization without disabling optimized memory idioms on
+  macOS, Windows, or dynamic Linux builds.
+- Make macOS and Windows linker optimization policy explicit and expose
+  `gos build --explain-profile` for a machine-readable profile decision trace.
+- Configure the runtime before copying process arguments so macOS and Windows
+  receive allocator policy before their first runtime-owned allocation.
+- Make REPL `%info` prefer session bindings and declarations, then catalog
+  lookup; add `%clear-history` and concrete HTTP constructor signatures.
+
 ## 0.38.4 - REPL signature catalog & native aggregate iterator fix
 
 - Fix native iterator mapping over struct values, which could segfault in a

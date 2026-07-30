@@ -11,17 +11,13 @@
 //! gates the CASE WHERE THE BUILD ITSELF CALLS THE FALLBACK (it errors
 //! when `GOSSAMER_FAIL_ON_LLVM_FALLBACK=1`). But a regression that
 //! lowers a body to a no-op stub or to wrong-but-runnable code passes
-//! that gate. The only end-to-end signal for that class is wall-clock:
-//! the release tier should not be markedly slower than the debug tier
-//! on a workload where LLVM -O3 has a real edge over Cranelift -O2.
+//! that gate. The end-to-end signal for that class is wall-clock: the release
+//! LLVM tier must materially outperform the debug LLVM tier on a workload
+//! where `-O3` can simplify the hot loop.
 //!
-//! This test builds a numeric-loop workload twice - `gos build` (debug
-//! Cranelift) and `gos build --release` (LLVM) - runs each, and
-//! asserts the release wall-clock is no worse than the debug one. A
-//! small noise margin is allowed because LLVM compile time can dwarf
-//! the program's runtime on tiny workloads. The workload is sized so
-//! the release tier should win comfortably (~3-10×) on any reasonable
-//! laptop, leaving plenty of headroom for noise.
+//! This test builds a numeric-loop workload twice, runs each, and asserts a
+//! release win. The loop is deliberately large enough that startup noise does
+//! not hide a lost release pipeline.
 
 #![allow(missing_docs)]
 
@@ -109,11 +105,9 @@ fn time_best(bin: &Path, runs: u32) -> Duration {
     best
 }
 
-/// A numeric loop where LLVM -O3 has a clear edge over Cranelift
-/// -O2: i64 multiply-add chain, no allocations, no calls inside
-/// the loop. Sized so total runtime is ~50-200ms in release and
-/// ~500ms-2s in debug on a 2026-era laptop. Outputs a final
-/// scalar so the optimizer can't dead-code-eliminate the loop.
+/// A numeric loop where LLVM -O3 has a clear edge over LLVM -O0:
+/// i64 multiply-add chain, no allocations, no calls inside the loop. Outputs
+/// a final scalar so the optimizer can't dead-code-eliminate the loop.
 const NUMERIC_LOOP_SOURCE: &str = r#"
 fn main() {
     let n: i64 = 50000000
@@ -152,33 +146,17 @@ fn release_tier_is_at_least_as_fast_as_debug_on_numeric_loop() {
     let rel_time = time_best(&rel_bin, 3);
     let _ = fs::remove_dir_all(&dir);
 
-    eprintln!("debug (cranelift): {dbg_time:?}");
+    eprintln!("debug (llvm O0):   {dbg_time:?}");
     eprintln!("release (llvm):    {rel_time:?}");
 
-    // When both wall-clocks are sub-50ms, both backends have
-    // constant-folded the loop to its closed form and the
-    // remaining time is process-startup noise (binary load +
-    // `println!` flush). The silent-fallback regression this
-    // test guards against produced 21+s release times against
-    // a 0.93s baseline - it cannot hide inside sub-50ms noise,
-    // so a strict ratio assertion here only catches jitter.
-    if dbg_time < Duration::from_millis(50) && rel_time < Duration::from_millis(50) {
-        eprintln!("both backends folded the loop - startup-noise regime, skipping ratio check");
-        return;
-    }
-
-    // `release` must be no slower than `debug` plus a small
-    // noise margin. The historical silent-fallback regression
-    // made release ≈ debug (LLVM body fell back to Cranelift,
-    // so identical wall-clock plus LLVM build-time overhead).
-    // 1.25× tolerance accommodates CI jitter without letting a
-    // 23× spectral-norm-style regression sneak through.
-    let bound = dbg_time.mul_f64(1.25);
+    // A 10% margin leaves room for runner jitter while rejecting the issue
+    // #102 fingerprint where release and debug are effectively identical.
+    let bound = dbg_time.mul_f64(0.90);
     assert!(
         rel_time <= bound,
-        "release tier ({rel_time:?}) is slower than debug tier ({dbg_time:?}) - \
-         this is the silent-fallback fingerprint from `spectral_norm_regression_fix.md`. \
-         Re-run with `GOS_LLVM_DUMP=1` and inspect /tmp/gos-llvm-*/unit.ll for missing \
+        "release tier ({rel_time:?}) did not beat debug tier ({dbg_time:?}) by 10% - \
+         inspect `gos build --explain-profile`, then re-run with \
+         `GOS_LLVM_DUMP=1` and inspect /tmp/gos-llvm-*/unit.ll for missing \
          user-fn `define` blocks or stale runtime_refs entries.",
     );
 }

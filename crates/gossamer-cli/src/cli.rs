@@ -173,6 +173,9 @@ enum Command {
         /// Emit one machine-readable line with build-phase timings.
         #[arg(long)]
         timings: bool,
+        /// Print the selected MIR, LLVM, and target linker optimization plan.
+        #[arg(long)]
+        explain_profile: bool,
         /// Produce a bit-identical artifact across two clean builds
         /// of the same source on the same target. Pins the build
         /// timestamp via `SOURCE_DATE_EPOCH`, strips embedded
@@ -782,6 +785,7 @@ fn dispatch(command: Option<Command>, verbose: bool) -> anyhow::Result<()> {
             debug_info,
             dynamic,
             timings,
+            explain_profile,
             reproducible,
             out_dir,
             locked,
@@ -815,6 +819,7 @@ fn dispatch(command: Option<Command>, verbose: bool) -> anyhow::Result<()> {
                 },
                 out_dir,
                 timings,
+                explain_profile,
             )
         }
         Some(Command::Init { id }) => cmd::scaffold::init(&id),
@@ -1137,6 +1142,7 @@ fn dispatch_build(
     flags: BuildFlags,
     out_dir: Option<PathBuf>,
     timings: bool,
+    explain_profile: bool,
 ) -> anyhow::Result<()> {
     if flags.debug_info {
         gossamer_codegen_llvm::set_debug_info(true);
@@ -1154,6 +1160,7 @@ fn dispatch_build(
         },
         out_dir,
         timings,
+        explain_profile,
     })
 }
 
@@ -1270,6 +1277,11 @@ mod tests {
     #[test]
     fn build_subcommand_parses_timings() {
         assert!(Cli::try_parse_from(["gos", "build", "hello.gos", "--timings"]).is_ok());
+    }
+
+    #[test]
+    fn build_subcommand_parses_profile_explanation() {
+        assert!(Cli::try_parse_from(["gos", "build", "hello.gos", "--explain-profile"]).is_ok());
     }
 
     #[test]

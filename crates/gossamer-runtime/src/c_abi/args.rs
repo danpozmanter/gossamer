@@ -18,6 +18,7 @@
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use super::*;
 
@@ -57,6 +58,14 @@ static PROGRAM_NAME_PTR: AtomicUsize = AtomicUsize::new(0);
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char) {
     ffi_entry!((), {
+        let startup_started = Instant::now();
+        // Configure the allocator before copying argv into Gossamer-owned
+        // strings. Linux also has an earlier constructor for THP policy, but
+        // macOS and Windows reach this C entry first; doing it here gives all
+        // native targets the same allocation policy before runtime-owned
+        // allocations begin. `runtime_init` is process-idempotent.
+        runtime_init();
+        startup_trace("runtime_init", startup_started.elapsed());
         // Capture argv[0] as the program name whenever argv has any
         // entries - previously this only happened when argc > 1, so
         // a binary run with no user args had `env::program_name()`
@@ -126,6 +135,7 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
             let vec = unsafe { gos_rt_vec_new_typed(8, vec_elem_kind::STRING) };
             ARGS_VEC.store(vec as usize, Ordering::SeqCst);
         }
+        startup_trace("arguments", startup_started.elapsed());
         // Initialise the Rust runtime's per-process state. The
         // Cranelift-emitted `main` shim is a plain
         // `extern "C" fn main(int, **char) -> int`, so libc's
@@ -153,8 +163,21 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
         // pointer" abort under HTTP keep-alive load. We additionally
         // ignore SIGPIPE so writes to closed connections surface as
         // `EPIPE` instead of process-wide termination.
-        runtime_init();
+        // `runtime_init` ran before argv copying so allocator setup is not
+        // delayed past the first runtime allocation.
     });
+}
+
+/// Emits opt-in startup phase timings for native binaries. This makes
+/// cross-platform startup regressions diagnosable without affecting normal
+/// program output or depending on a platform-specific profiler.
+fn startup_trace(phase: &str, elapsed: Duration) {
+    if std::env::var_os("GOS_STARTUP_TRACE").is_some() {
+        eprintln!(
+            "gos-startup: phase={phase} elapsed_us={}",
+            elapsed.as_micros()
+        );
+    }
 }
 
 /// Configures mimalloc options that need to be process-wide. Delegates to the

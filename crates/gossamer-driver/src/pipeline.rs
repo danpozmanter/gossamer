@@ -12,7 +12,7 @@ use gossamer_hir::{lift_closures, lower_source_file_with_edition};
 use gossamer_lex::SourceMap;
 use gossamer_mir::{
     Body, check_generic_layouts, inline_general, inline_small_callees, inline_trivial_wrappers,
-    lower_program, optimise,
+    lower_program, optimise, optimise_debug,
 };
 use gossamer_resolve::Resolutions;
 use gossamer_types::{TyCtxt, TypeTable};
@@ -296,13 +296,25 @@ fn lower_to_mir_from_frontend(
     let hir = lift_closures(hir, &mut tcx);
     let mut bodies = lower_program(&hir, &mut tcx);
     gossamer_mir::monomorphise(&mut bodies, &mut tcx);
-    inline_trivial_wrappers(&mut bodies);
-    inline_small_callees(&mut bodies);
-    inline_general(&mut bodies);
-    for body in &mut bodies {
-        match profile {
-            MirProfile::Debug => optimise(body, &tcx),
-            MirProfile::Release => optimise(body, &tcx),
+    match profile {
+        // Debug deliberately keeps calls intact and runs only the inexpensive
+        // canonicalisation needed by native codegen. This is both faster to
+        // compile and makes `gos build` a real contrast to `--release`.
+        MirProfile::Debug => {
+            for body in &mut bodies {
+                optimise_debug(body, &tcx);
+            }
+        }
+        // Whole-program inlining is a release-only transformation. Keeping
+        // it here, rather than relying solely on LLVM, lets release simplify
+        // language-level ownership and bounds-check shapes before IR emission.
+        MirProfile::Release => {
+            inline_trivial_wrappers(&mut bodies);
+            inline_small_callees(&mut bodies);
+            inline_general(&mut bodies);
+            for body in &mut bodies {
+                optimise(body, &tcx);
+            }
         }
     }
     (bodies, tcx)
@@ -344,4 +356,32 @@ fn lower_to_mir_with_tcx(
     let file = map.add_file(unit_name, augmented.clone());
     let outcome = crate::frontend::check_frontend(&augmented, file);
     lower_to_mir_from_frontend(outcome.checked, profile)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MirProfile, lower_to_mir_with_tcx};
+
+    #[test]
+    fn release_mir_inlines_small_callees_while_debug_keeps_call_boundaries() {
+        let source = r#"
+            fn helper(x: i64) -> i64 { x + 1 }
+            fn main() { println!("{}", helper(41)) }
+        "#;
+        let (debug, _) = lower_to_mir_with_tcx(source, "profile.gos", MirProfile::Debug);
+        let (release, _) = lower_to_mir_with_tcx(source, "profile.gos", MirProfile::Release);
+        let debug_main = debug
+            .iter()
+            .find(|body| body.name == "main")
+            .expect("debug main");
+        let release_main = release
+            .iter()
+            .find(|body| body.name == "main")
+            .expect("release main");
+        assert_ne!(
+            format!("{debug_main:?}"),
+            format!("{release_main:?}"),
+            "debug and release MIR must retain distinct optimization contracts"
+        );
+    }
 }

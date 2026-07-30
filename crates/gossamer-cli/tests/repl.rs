@@ -9,6 +9,7 @@
 
 use std::env;
 use std::fmt::Write as _;
+use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -33,9 +34,19 @@ fn run_repl(input: &str) -> ReplOutput {
 }
 
 fn run_repl_args(input: &str, args: &[&str]) -> ReplOutput {
+    // REPL history is normally persistent. Every test gets a private path so
+    // history assertions never read or mutate a developer's real session.
+    let history_path = env::temp_dir().join(format!(
+        "gos-repl-history-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos()),
+    ));
     let mut child = Command::new(gos_bin())
         .arg("repl")
         .args(args)
+        .env("GOSSAMER_HISTORY", &history_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -61,11 +72,13 @@ fn run_repl_args(input: &str, args: &[&str]) -> ReplOutput {
         std::thread::sleep(Duration::from_millis(20));
     }
     let out = child.wait_with_output().expect("wait_with_output");
-    ReplOutput {
+    let output = ReplOutput {
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
         success: out.status.success(),
-    }
+    };
+    let _ = fs::remove_file(history_path);
+    output
 }
 
 #[test]
@@ -209,6 +222,28 @@ fn repl_history_search_does_not_match_itself() {
 }
 
 #[test]
+fn repl_clear_history_removes_prior_entries_and_is_not_recorded() {
+    let marker = format!("repl_clear_history_marker_{}", std::process::id());
+    let out = run_repl(&format!("{marker}\n%clear-history\n%h {marker}\n"));
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("history cleared"),
+        "%clear-history should confirm success: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.lines().any(|line| line == marker),
+        "%h after %clear-history must not return an earlier input: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.lines().any(|line| line == "%clear-history"),
+        "%clear-history must not add itself back to history: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_info_accepts_literals() {
     let out = run_repl("%i 42\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -230,8 +265,8 @@ fn repl_info_inspects_session_bindings_declarations_and_undefined_names() {
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("whatever\n  Undefined name."),
-        "%info should identify an undefined name: {}",
+        out.stdout.contains("nothing found for `whatever`"),
+        "%info should identify an undefined name after catalog search: {}",
         out.stdout
     );
     assert!(
@@ -242,6 +277,23 @@ fn repl_info_inspects_session_bindings_declarations_and_undefined_names() {
     assert!(
         out.stdout.contains("fn wow() { \"heyoooo\" }"),
         "%info should render a declaration as %declarations does: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_info_resolves_qualified_http_constructor_with_a_real_signature() {
+    let out = run_repl("%i http::Client::new\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("http::Client::new [assoc]")
+            && out.stdout.contains("fn new() -> http::Client"),
+        "%info should resolve the exact catalog path with its contract: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("cannot find `http`") && !out.stdout.contains("..."),
+        "%info must not evaluate a catalog path or show placeholder arguments: {}",
         out.stdout
     );
 }
@@ -1262,7 +1314,7 @@ fn repl_meta_help_preserves_base_banner() {
     let out = run_repl("%help\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     let banner = format!(
-        "gos 0.38.4 REPL [{}-{}]",
+        "gos 0.38.5 REPL [{}-{}]",
         std::env::consts::ARCH,
         std::env::consts::OS
     );
@@ -1284,6 +1336,7 @@ fn repl_meta_help_preserves_base_banner() {
             && out.stdout.contains("%help\n")
             && out.stdout.contains("%info (%i)")
             && out.stdout.contains("%history (%h) [regex]")
+            && out.stdout.contains("%clear-history")
             && out.stdout.contains("%find (%f)"),
         "bare %help should list the remaining shortcuts; stdout: {}",
         out.stdout

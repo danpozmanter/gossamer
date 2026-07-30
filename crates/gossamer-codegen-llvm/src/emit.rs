@@ -351,11 +351,12 @@ fn body_cache_key(body: &Body, triple: &str, profile: OptProfile) -> String {
 /// same body.
 fn codegen_configuration_fingerprint(triple: &str, profile: OptProfile) -> String {
     let mut text = format!(
-        "triple={triple}|profile={profile:?}|mcpu={}|dwarf={}|repro={}|race={}",
+        "triple={triple}|profile={profile:?}|mcpu={}|dwarf={}|repro={}|race={}|static_musl={}",
         mcpu_target(triple),
         want_dwarf(),
         want_reproducible(),
         want_race_instrumentation(),
+        static_musl_link_enabled(),
     );
     let selected_pgo = pgo_mode();
     match selected_pgo {
@@ -1486,11 +1487,19 @@ static RACE_INSTRUMENTATION: std::sync::atomic::AtomicBool =
 
 /// Process-wide optimisation-profile flag toggled by
 /// [`set_opt_profile`]. `0` = release (full `opt -O3 | llc -O3`
-/// pipeline); `1` = debug (skip the `opt` pre-pass, run `llc -O0`).
+/// pipeline); `1` = debug (minimal canonicalising `opt` passes followed by
+/// `llc -O0`).
 /// Default is release so callers that don't configure the profile
 /// see the historical behaviour. `gos build` flips this to debug
 /// when the user omits `--release`.
 static OPT_PROFILE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Linux musl used to need a global LLVM switch that disabled loop idiom
+/// recognition for every release target. Keep that measured workaround only
+/// for the static-musl link shape that motivated it. The CLI sets this before
+/// lowering, so a host GNU triple that will link statically is represented
+/// correctly too.
+static STATIC_MUSL_LINK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// LLVM profile-guided optimisation mode selected by the CLI. Environment
 /// variables remain a compatibility fallback for embedding callers.
@@ -1599,6 +1608,27 @@ pub fn set_opt_profile(profile: OptProfile) {
         OptProfile::Debug => 1,
     };
     OPT_PROFILE.store(v, std::sync::atomic::Ordering::Release);
+}
+
+/// Records whether the final artifact uses the static-musl linker path.
+///
+/// This affects a narrowly scoped LLVM workaround for tiny-copy loops. It is
+/// part of the object-cache fingerprint, so a dynamic object can never be
+/// reused for a static-musl link or vice versa.
+pub fn set_static_musl_link(enabled: bool) {
+    STATIC_MUSL_LINK.store(enabled, std::sync::atomic::Ordering::Release);
+}
+
+fn static_musl_link_enabled() -> bool {
+    STATIC_MUSL_LINK.load(std::sync::atomic::Ordering::Acquire)
+}
+
+fn disable_loop_idiom_for_target_with_static_musl(static_musl: bool, triple: &str) -> bool {
+    static_musl || triple.contains("-unknown-linux-musl")
+}
+
+fn disable_loop_idiom_for_target(triple: &str) -> bool {
+    disable_loop_idiom_for_target_with_static_musl(static_musl_link_enabled(), triple)
 }
 
 /// Reads the active optimisation profile.
@@ -2203,7 +2233,7 @@ fn invoke_llc_pipeline(
         // benchmarks. The narrower `disable-memcpy-idiom` flag
         // no longer takes effect under LLVM 18's new pass manager.
         ;
-    if matches!(profile, OptProfile::Release) {
+    if matches!(profile, OptProfile::Release) && disable_loop_idiom_for_target(triple) {
         opt_cmd.arg("--disable-loop-idiom-all");
     }
     // PGO instrumentation builds an instrumented binary that emits raw
@@ -2343,7 +2373,7 @@ fn invoke_clang_pipeline(
     if !triple.contains("windows") {
         cmd.arg("-fPIC");
     }
-    if matches!(profile, OptProfile::Release) {
+    if matches!(profile, OptProfile::Release) && disable_loop_idiom_for_target(triple) {
         cmd.arg("-mllvm").arg("-disable-loop-idiom-all");
     }
     if want_dwarf() {
@@ -2875,7 +2905,8 @@ mod shape_validation_tests {
 #[cfg(test)]
 mod host_triple_tests {
     use super::{
-        detect_host_triple, llvm_target_triple_for_with_deployment, mcpu_for, module_datalayout,
+        detect_host_triple, disable_loop_idiom_for_target_with_static_musl,
+        llvm_target_triple_for_with_deployment, mcpu_for, module_datalayout,
         normalized_macos_deployment_target, target_arch_from_triple,
     };
 
@@ -2968,6 +2999,28 @@ mod host_triple_tests {
             target_arch_from_triple("x86_64-unknown-linux-gnu"),
             "x86_64"
         );
+    }
+
+    #[test]
+    fn loop_idiom_workaround_is_scoped_to_static_musl() {
+        assert!(disable_loop_idiom_for_target_with_static_musl(
+            true,
+            "x86_64-unknown-linux-gnu"
+        ));
+        assert!(disable_loop_idiom_for_target_with_static_musl(
+            false,
+            "x86_64-unknown-linux-musl"
+        ));
+        for triple in [
+            "x86_64-unknown-linux-gnu",
+            "aarch64-apple-macosx15.0.0",
+            "x86_64-pc-windows-msvc",
+        ] {
+            assert!(
+                !disable_loop_idiom_for_target_with_static_musl(false, triple),
+                "{triple} must keep LLVM loop idiom recognition"
+            );
+        }
     }
 
     #[test]

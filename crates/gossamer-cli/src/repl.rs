@@ -28,6 +28,8 @@ REPL commands
     Show persistent declarations.
   %history (%h) [regex]
     Search inputs from this and previous sessions.
+  %clear-history
+    Delete all saved inputs and clear up/down history.
   %reset (%r)
     Clear persistent bindings and declarations.
   %quit (%q)
@@ -1246,6 +1248,30 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                 transcript.push(trimmed.to_string());
                 continue;
             }
+            // Clearing is deliberately handled before recording the current
+            // meta-command. It clears both the in-memory editor navigation
+            // and the persistent transcript, so `%h` immediately after it is
+            // empty and a later REPL session cannot resurrect old entries.
+            if command == "clear-history" {
+                if !arg.is_empty() {
+                    print_repl_error("usage: %clear-history");
+                    continue;
+                }
+                if let Err(err) = editor.clear_history() {
+                    print_repl_error(&format!("clear history: {err}"));
+                    continue;
+                }
+                transcript.clear();
+                if let Some(path) = &history_path
+                    && let Err(err) = std::fs::remove_file(path)
+                    && err.kind() != std::io::ErrorKind::NotFound
+                {
+                    print_repl_error(&format!("clear history: {err}"));
+                    continue;
+                }
+                println!("history cleared");
+                continue;
+            }
         }
         let _ = editor.add_history_entry(trimmed);
         transcript.push(trimmed.to_string());
@@ -1815,7 +1841,7 @@ fn repl_info(arg: &str) -> std::result::Result<String, String> {
         sections.push(listing);
     }
     if sections.is_empty() {
-        Ok(format!("{arg}\n  Undefined name."))
+        Ok(format!("nothing found for `{arg}`"))
     } else {
         Ok(sections.join("\n\n"))
     }
@@ -1828,24 +1854,26 @@ fn repl_info_for_session(
     bindings: &[ReplBinding],
 ) -> std::result::Result<Option<String>, String> {
     let query = normalize_query(arg);
-    // Catalog queries must not be evaluated as REPL expressions first. For
-    // example, `%info Result::map_err` would otherwise attempt execution and
-    // prevent the metadata fallback from ever running.
-    if repl_info_uses_catalog(query) {
+    // A session name wins over a same-named catalog entry. `%info` is an
+    // inspector for the current REPL first, then a fuzzy stdlib lookup.
+    if repl_is_identifier(query) {
+        if let Some(binding) = repl_info_binding(query, declarations, lets, bindings) {
+            return Ok(Some(binding));
+        }
+        if let Some(declaration) = repl_info_declaration(query, declarations) {
+            return Ok(Some(declaration));
+        }
         return Ok(None);
     }
-    if !repl_is_identifier(query) {
-        return repl_info_expression(arg, declarations, lets).map(Some);
-    }
 
-    if let Some(binding) = repl_info_binding(query, declarations, lets, bindings) {
-        return Ok(Some(binding));
+    // Catalog-shaped queries must not be evaluated as expressions first. For
+    // example, `%info Result::map_err` should search metadata rather than
+    // attempting to execute the path.
+    if repl_info_uses_catalog(query) {
+        Ok(None)
+    } else {
+        repl_info_expression(arg, declarations, lets).map(Some)
     }
-    if let Some(declaration) = repl_info_declaration(query, declarations) {
-        return Ok(Some(declaration));
-    }
-
-    Ok(None)
 }
 
 fn repl_info_binding(
@@ -2359,6 +2387,16 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
 }
 
 fn runtime_core_method_signature(owner: &str, name: &str, kind: &str) -> Option<String> {
+    // These runtime-backed handle constructors are registered by the
+    // interpreter rather than the stdlib function catalog. Keep their public
+    // contracts here so `%info` never fabricates an ellipsis signature.
+    if let Some(signature) = match (owner, name) {
+        ("http::Client", "new") => Some("fn new() -> http::Client"),
+        ("http::Client", "builder") => Some("fn builder() -> http::ClientBuilder"),
+        _ => None,
+    } {
+        return Some(signature.to_string());
+    }
     if owner == "String" && kind == "method" {
         if let Some(shape) = gossamer_types::stdlib_function_shape("std::strings", name) {
             let mut params = vec!["self: String".to_string()];
@@ -2637,6 +2675,12 @@ fn core_method_query_matches(method: &CoreMethodEntry, query: &str) -> bool {
     method.name == query
         || format!("{}::{}", method.owner, method.name) == query
         || core_lower_path(method) == query
+        // Fully qualified handle paths can be registered with a shortened
+        // canonical owner on some backends. The terminal owner/name pair is
+        // still unambiguous in the catalog and must behave like `%i new`.
+        || query
+            .rsplit_once("::")
+            .is_some_and(|(owner, name)| name == method.name && owner == method.owner)
 }
 
 fn core_lower_path(method: &CoreMethodEntry) -> String {

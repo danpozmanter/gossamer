@@ -370,6 +370,12 @@ jobs:
         run: |
           "$CARGO_BIN" build --release -p gossamer-cli
 
+      - name: Assert release profile wins on a paired native workload
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$CARGO_BIN" test -p gossamer-cli --test release_perf -- --nocapture
+
       - name: Build + time native binary
         shell: bash
         run: |
