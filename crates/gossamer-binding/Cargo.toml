@@ -48,7 +48,6 @@ explicit_iter_loop = "allow"
 doc_markdown = "allow"
 
 [dependencies]
-gossamer-ast = { workspace = true }
 gossamer-binding-macros = { workspace = true }
 gossamer-codegen-cranelift = { workspace = true }
 gossamer-interp = { workspace = true }

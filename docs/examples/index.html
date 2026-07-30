@@ -1948,6 +1948,8 @@ pipe form below is a stylistic choice, not the only spelling.)</p>
   Runs under <code>gos run</code> (bytecode VM + Cranelift JIT), <code>gos build</code>
   (LLVM <code>-O0</code>), and <code>gos build --release</code> (LLVM <code>-O3</code>); the
   tier_parity test confirms identical output across all three.</li>
+<li><strong><code>semicolon_separators.gos</code></strong> - shows semicolons replacing newlines between
+  statements on one line while keeping trailing terminators invalid.</li>
 <li><strong><code>generic_struct.gos</code></strong> - three generic struct shapes: <code>Pair&lt;A, B&gt;</code>
   (two independent parameters), <code>SameType&lt;T&gt;</code> (one parameter shared by
   both fields, enabling field arithmetic), and <code>Triple&lt;A, B, C&gt;</code> (three

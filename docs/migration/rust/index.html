@@ -2063,7 +2063,8 @@ concurrency, and which Rust features are intentionally absent.</p>
 implicit <code>fn main()</code>.</p>
 <h2 id="gossamer-037-syntax-at-a-glance">Gossamer 0.37 Syntax At A Glance<a class="headerlink" href="#gossamer-037-syntax-at-a-glance" title="Permanent link">&para;</a></h2>
 <p>Rust and Gossamer use similar delimiters, but not the same separators.
-Gossamer rejects semicolons. Commas are required inside a delimited list
+Gossamer accepts semicolons only between statements on the same line; trailing
+semicolons are rejected. Commas are required inside a delimited list
 written on one line; newlines are the canonical separators once the list is
 multiline. Multiline commas remain accepted for migration, but <code>gos fmt</code>
 removes them.</p>

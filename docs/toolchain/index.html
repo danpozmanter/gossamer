@@ -2277,10 +2277,10 @@ the implementation by a rev.</p>
 </tbody>
 </table>
 <h2 id="repl">REPL<a class="headerlink" href="#repl" title="Permanent link">&para;</a></h2>
-<p><code>gos</code> with no arguments - or <code>gos repl</code> - drops into an
-interactive session. The first-slice supports:</p>
+<p><code>gos</code> with no arguments - or <code>gos repl</code> - drops into an interactive session.
+It starts with <code>gos &lt;version&gt; REPL [&lt;architecture&gt;-&lt;os&gt;]</code>. The REPL supports:</p>
 <ul>
-<li>A <code>gos&gt;</code> input prompt; successful expressions print only their value, with
+<li>A <code>&gt;&gt;&gt;</code> input prompt; successful expressions print only their value, with
   no numbered input or output markers.</li>
 <li>Quiet declaration and binding updates by default. Pass <code>gos -v repl</code> or
   <code>gos repl -v</code> to show progress messages.</li>
@@ -2289,22 +2289,18 @@ interactive session. The first-slice supports:</p>
 <li><code>let</code> bindings persisting across inputs; every subsequent
   expression sees previously-bound locals in scope. <code>%bindings</code>
   lists the active set.</li>
-<li>Meta-commands <code>%quit</code>, <code>%history</code>, <code>%bindings</code>, <code>%reset</code>,
-  <code>%help</code>, and <code>%ls</code>.</li>
-<li><code>%help &lt;symbol&gt;</code> shows stdlib module/item, language-feature, prelude
-  builtin, or built-in macro documentation. Macro names retain their <code>!</code>,
-  for example <code>%help println!</code>; <code>%help /regex/</code> searches that same surface.</li>
-<li><code>%ls</code> lists stdlib modules; <code>%ls &lt;namespace-or-symbol&gt;</code> lists a
-  module's items or matching symbols; <code>%ls /regex/</code> filters stdlib
-  modules/items.</li>
-<li>Ctrl-D exits cleanly.</li>
+<li><code>%help</code> lists REPL commands.</li>
+<li><code>%info [anything]</code> (<code>%i</code>) shows item help and the relevant module or type
+  listing. <code>%find &lt;regex&gt;</code> (<code>%f</code>) searches public symbol names.</li>
+<li><code>%bindings [regex]</code> (<code>%b</code>), <code>%declarations [regex]</code> (<code>%d</code>), and
+  <code>%history [regex]</code> (<code>%h</code>) show persistent bindings, declarations, and input
+  history. <code>%reset</code> (<code>%r</code>) clears bindings and declarations.</li>
+<li>Up/down cycles history. Enter continues until braces close. Ctrl-D or
+  <code>%quit</code> (<code>%q</code>) exits.</li>
 </ul>
 <p>Meta-command output adapts to the current terminal width and is capped at 80
-columns, so <code>%help</code>, <code>%ls</code>, <code>%find</code>, <code>%bindings</code>, and <code>%declarations</code> remain
+columns, so <code>%help</code>, <code>%info</code>, <code>%find</code>, <code>%bindings</code>, and <code>%declarations</code> remain
 readable in narrow terminals.</p>
-<p>Stream K grows this to IPython parity (syntax highlighting, tab
-completion, persistent history file, <code>%time</code> / <code>%timeit</code> /
-<code>%load</code> / <code>%save</code> / <code>%edit</code> / <code>%debug</code>).</p>
 <h2 id="editor-integration">Editor integration<a class="headerlink" href="#editor-integration" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

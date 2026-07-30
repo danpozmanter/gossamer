@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.38.3 - REPL banner, %help output, dependency cleanup
+
+- Show the version and runtime architecture in the REPL banner.
+- Add history navigation to the `%help` output.
+- Remove the unused `gossamer-ast` dependency from `gossamer-binding`.
+
 ## 0.38.2 - Native lowering and REPL refinement
 
 - Lower integer `abs()` calls through `gos_rt_math_abs_i64` in both LLVM call

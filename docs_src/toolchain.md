@@ -67,8 +67,8 @@ the implementation by a rev.
 
 ## REPL
 
-`gos` with no arguments - or `gos repl` - drops into an
-interactive session. The first-slice supports:
+`gos` with no arguments - or `gos repl` - drops into an interactive session.
+It starts with `gos <version> REPL [<architecture>-<os>]`. The REPL supports:
 
 - A `>>>` input prompt; successful expressions print only their value, with
   no numbered input or output markers.
@@ -79,23 +79,18 @@ interactive session. The first-slice supports:
 - `let` bindings persisting across inputs; every subsequent
   expression sees previously-bound locals in scope. `%bindings`
   lists the active set.
-- Meta-commands `%quit`, `%history`, `%bindings`, `%reset`,
-  `%help`, and `%ls`.
-- `%help <symbol>` shows stdlib module/item, language-feature, prelude
-  builtin, or built-in macro documentation. Macro names retain their `!`,
-  for example `%help println!`; `%help /regex/` searches that same surface.
-- `%ls` lists stdlib modules; `%ls <namespace-or-symbol>` lists a
-  module's items or matching symbols; `%ls /regex/` filters stdlib
-  modules/items.
-- Ctrl-D exits cleanly.
+- `%help` lists REPL commands.
+- `%info [anything]` (`%i`) shows item help and the relevant module or type
+  listing. `%find <regex>` (`%f`) searches public symbol names.
+- `%bindings [regex]` (`%b`), `%declarations [regex]` (`%d`), and
+  `%history [regex]` (`%h`) show persistent bindings, declarations, and input
+  history. `%reset` (`%r`) clears bindings and declarations.
+- Up/down cycles history. Enter continues until braces close. Ctrl-D or
+  `%quit` (`%q`) exits.
 
 Meta-command output adapts to the current terminal width and is capped at 80
-columns, so `%help`, `%ls`, `%find`, `%bindings`, and `%declarations` remain
+columns, so `%help`, `%info`, `%find`, `%bindings`, and `%declarations` remain
 readable in narrow terminals.
-
-Stream K grows this to IPython parity (syntax highlighting, tab
-completion, persistent history file, `%time` / `%timeit` /
-`%load` / `%save` / `%edit` / `%debug`).
 
 ## Editor integration
 

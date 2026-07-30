@@ -30,9 +30,10 @@ Once `gos` is on your `PATH`, every subcommand takes either a
 | `gos update` | Update locked dependencies within declared ranges |
 | `gos tidy` | Remove unused project dependencies and canonicalise the manifest |
 | `gos fetch` / `gos vendor` | Populate the package cache / vendor tree |
-| `gos` (no args) | Interactive REPL |
-| `gos repl` then `%help strings::trim` | Show stdlib or language help from the manifest |
-| `gos repl` then `%ls strings` | List stdlib modules or module contents |
+| `gos` (no args) / `gos repl` | Start the interactive REPL |
+| `gos repl` then `%help` | List REPL commands |
+| `gos repl` then `%info strings::trim` | Show help and the relevant module or type listing |
+| `gos repl` then `%find trim` | Search public symbol names with a regex |
 
 ## Entry file
 

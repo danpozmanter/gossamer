@@ -33,7 +33,9 @@ REPL commands
   %quit (%q)
     Exit the REPL.
 
-Expressions print their value. Declarations and `let` bindings persist.";
+Expressions print their value. Declarations and `let` bindings persist.
+
+Up/down cycles history.";
 
 const REPL_FALLBACK_COLUMNS: usize = 80;
 
@@ -1162,8 +1164,11 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
     use crate::repl_helper::{GosReplHelper, ReplEnterHandler};
 
     println!(
-        "gos repl - type an expression or declaration\n\
-         up/down cycles history · Enter continues until braces close · Ctrl-D or %quit exits"
+        "gos {version} REPL [{arch}-{os}]\n\
+         %help for commands · Enter continues until braces close · Ctrl-D or %q exits",
+        version = env!("CARGO_PKG_VERSION"),
+        arch = std::env::consts::ARCH,
+        os = std::env::consts::OS,
     );
 
     let mut transcript: Vec<String> = Vec::new();
@@ -1194,14 +1199,6 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
     let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
     if tty {
         crate::style::force_enable();
-    }
-    // Greeting on a TTY only - keeps non-interactive consumers
-    // (`echo expr | gos`) clean.
-    if tty {
-        println!(
-            "\x1b[1mgos {ver}\x1b[0m  type expressions, or \x1b[36m%help\x1b[0m for meta commands",
-            ver = env!("CARGO_PKG_VERSION"),
-        );
     }
     loop {
         let prompt = if tty {

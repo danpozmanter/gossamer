@@ -2346,10 +2346,11 @@ Left-associative, very low precedence.</p>
   lines directly above an item is its documentation; <code>gos test</code> runs
   fenced code inside doc comments (mark non-runnable fences
   <code>```text</code>).</li>
-<li><strong>Semicolons are invalid</strong>; use one statement per line. A newline followed
-  by leading <code>&amp;</code>, <code>*</code>, or <code>-</code> starts a NEW statement - for multi-line
-  continuation, end the previous line with the operator or
-  parenthesize.</li>
+<li><strong>Semicolons are same-line separators only</strong>: <code>let a = 1; let b = 2</code>
+  replaces a newline between statements. A trailing semicolon, or one before
+  a newline or <code>}</code>, is invalid. A newline followed by leading <code>&amp;</code>, <code>*</code>, or <code>-</code>
+  starts a NEW statement; for multi-line continuation, end the previous line
+  with the operator or parenthesize.</li>
 <li><strong>Delimited lists</strong> use commas on one line and newlines when multiline.
   This covers function arguments and parameters, closure parameters,
   struct fields and literals, and enum variants and payload fields.
@@ -2592,10 +2593,14 @@ build</code>. Known sharp edges:</p>
 <h2 id="15-the-gos-toolchain">15. The <code>gos</code> toolchain<a class="headerlink" href="#15-the-gos-toolchain" title="Permanent link">&para;</a></h2>
 <p>Bare <code>gos</code> opens the REPL. In a project, <code>gos run</code> / <code>gos build</code>
 resolve the entry themselves.</p>
-<p>The REPL prompt is <code>gos&gt;</code>. Expression output is the value only, with no
-numbered markers. Binding and declaration progress is quiet unless <code>-v</code>
-is enabled. Meta-command output wraps to the terminal width, capped at
-80 columns.</p>
+<p>The REPL starts with <code>gos &lt;version&gt; REPL [&lt;architecture&gt;-&lt;os&gt;]</code> and uses the
+<code>&gt;&gt;&gt;</code> prompt. Expression output is the value only, with no numbered markers.
+Binding and declaration progress is quiet unless <code>-v</code> is enabled. <code>%help</code>
+lists commands. <code>%info</code>/<code>%i</code> shows item help, <code>%find</code>/<code>%f</code> searches public
+symbols, <code>%bindings</code>/<code>%b</code>, <code>%declarations</code>/<code>%d</code>, and <code>%history</code>/<code>%h</code> inspect
+the session, <code>%reset</code>/<code>%r</code> clears it, and <code>%quit</code>/<code>%q</code> exits. Up/down cycles
+history; Enter continues until braces close; Ctrl-D also exits. Meta-command
+output wraps to the terminal width, capped at 80 columns.</p>
 <table>
 <thead>
 <tr>

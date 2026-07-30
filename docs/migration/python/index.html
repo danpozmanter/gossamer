@@ -2082,7 +2082,8 @@ are returned as <code>Result&lt;T, E&gt;</code> instead of raised as exceptions.
 </table>
 <h2 id="gossamer-037-syntax-at-a-glance">Gossamer 0.37 Syntax At A Glance<a class="headerlink" href="#gossamer-037-syntax-at-a-glance" title="Permanent link">&para;</a></h2>
 <p>Python uses indentation and permits trailing commas in multiline literals and
-calls. Gossamer uses braces, rejects semicolons, and treats layout inside
+calls. Gossamer uses braces, permits semicolons only between statements on one
+line, and treats layout inside
 delimiters differently: one-line lists require commas; multiline lists use
 newlines. Multiline commas are accepted while porting code, but <code>gos fmt</code>
 removes them.</p>

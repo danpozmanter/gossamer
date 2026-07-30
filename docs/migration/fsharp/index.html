@@ -2108,8 +2108,9 @@ absence of F# metaprogramming features.</p>
 </tbody>
 </table>
 <h2 id="gossamer-037-syntax-at-a-glance">Gossamer 0.37 Syntax At A Glance<a class="headerlink" href="#gossamer-037-syntax-at-a-glance" title="Permanent link">&para;</a></h2>
-<p>F# uses indentation and separates list elements with semicolons. Gossamer
-rejects semicolons. Inside delimiters, commas are required on one line and
+<p>F# uses indentation and separates list elements with semicolons. Gossamer uses
+semicolons only between same-line statements. Inside delimiters, commas are
+required on one line and
 newlines are canonical across multiple lines. Multiline commas remain accepted
 for migration, but <code>gos fmt</code> removes them.</p>
 <div class="language-fsharp highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">type</span><span class="w"> </span><span class="nc">User</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">{</span>

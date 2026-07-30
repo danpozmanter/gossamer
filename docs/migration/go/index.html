@@ -2109,7 +2109,8 @@ more explicit types and errors.</p>
 statements become the body of an implicit <code>fn main()</code>.</p>
 <h2 id="gossamer-037-syntax-at-a-glance">Gossamer 0.37 Syntax At A Glance<a class="headerlink" href="#gossamer-037-syntax-at-a-glance" title="Permanent link">&para;</a></h2>
 <p>Go permits implicit statement termination but still uses commas in multiline
-composite literals. Gossamer has no semicolons and uses a stricter layout rule:
+composite literals. Gossamer permits semicolons only between same-line
+statements and uses a stricter layout rule:
 commas separate items on one line, while newlines separate items in a
 multiline delimited list. Legacy multiline commas parse, but <code>gos fmt</code> removes
 them.</p>

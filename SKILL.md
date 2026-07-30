@@ -465,10 +465,14 @@ build`. Known sharp edges:
 Bare `gos` opens the REPL. In a project, `gos run` / `gos build`
 resolve the entry themselves.
 
-The REPL prompt is `>>>`. Expression output is the value only, with no
-numbered markers. Binding and declaration progress is quiet unless `-v`
-is enabled. Meta-command output wraps to the terminal width, capped at
-80 columns.
+The REPL starts with `gos <version> REPL [<architecture>-<os>]` and uses the
+`>>>` prompt. Expression output is the value only, with no numbered markers.
+Binding and declaration progress is quiet unless `-v` is enabled. `%help`
+lists commands. `%info`/`%i` shows item help, `%find`/`%f` searches public
+symbols, `%bindings`/`%b`, `%declarations`/`%d`, and `%history`/`%h` inspect
+the session, `%reset`/`%r` clears it, and `%quit`/`%q` exits. Up/down cycles
+history; Enter continues until braces close; Ctrl-D also exits. Meta-command
+output wraps to the terminal width, capped at 80 columns.
 
 | Command | Purpose |
 |---------|---------|

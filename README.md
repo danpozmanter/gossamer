@@ -223,10 +223,14 @@ fn main() {
 
 ## REPL meta commands
 
-Commands such as `%help`, `%ls`, and `%find` help users navigate the language
-from the REPL. Input uses the `>>>` prompt and expression results print as
-plain values. Declaration and binding confirmations are hidden unless the REPL
-is started with `-v`; listings wrap to the full terminal width.
+The REPL starts with `gos <version> REPL [<architecture>-<os>]` and uses the
+`>>>` prompt. Use `%help` to list commands: `%info`/`%i` shows item help,
+`%find`/`%f` searches public symbols, `%bindings`/`%b`, `%declarations`/`%d`,
+and `%history`/`%h` inspect the session, `%reset`/`%r` clears it, and
+`%quit`/`%q` exits. Up/down cycles history; Enter continues until braces close;
+Ctrl-D also exits. Expression results print as plain values. Declaration and
+binding confirmations are hidden unless the REPL is started with `-v`; listings
+wrap to the terminal width.
 
 ## Toolchain commands
 

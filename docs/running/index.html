@@ -2003,16 +2003,20 @@
 <td>Populate the package cache / vendor tree</td>
 </tr>
 <tr>
-<td><code>gos</code> (no args)</td>
-<td>Interactive REPL</td>
+<td><code>gos</code> (no args) / <code>gos repl</code></td>
+<td>Start the interactive REPL</td>
 </tr>
 <tr>
-<td><code>gos repl</code> then <code>%help strings::trim</code></td>
-<td>Show stdlib or language help from the manifest</td>
+<td><code>gos repl</code> then <code>%help</code></td>
+<td>List REPL commands</td>
 </tr>
 <tr>
-<td><code>gos repl</code> then <code>%ls strings</code></td>
-<td>List stdlib modules or module contents</td>
+<td><code>gos repl</code> then <code>%info strings::trim</code></td>
+<td>Show help and the relevant module or type listing</td>
+</tr>
+<tr>
+<td><code>gos repl</code> then <code>%find trim</code></td>
+<td>Search public symbol names with a regex</td>
 </tr>
 </tbody>
 </table>

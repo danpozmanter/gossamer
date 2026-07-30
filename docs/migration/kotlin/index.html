@@ -2109,7 +2109,8 @@ JVM-hosted and does not use exceptions or <code>suspend</code>; it uses explicit
 </table>
 <h2 id="gossamer-037-syntax-at-a-glance">Gossamer 0.37 Syntax At A Glance<a class="headerlink" href="#gossamer-037-syntax-at-a-glance" title="Permanent link">&para;</a></h2>
 <p>Kotlin uses semicolons optionally and commas in parameter lists, data classes,
-and collection literals. Gossamer rejects semicolons. Commas are required in a
+and collection literals. Gossamer accepts semicolons only as same-line
+statement separators and rejects trailing semicolons. Commas are required in a
 delimited list on one line; newlines separate items in a multiline list.
 Multiline commas are accepted for migration, but <code>gos fmt</code> removes them.</p>
 <div class="language-kotlin highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">data</span><span class="w"> </span><span class="kd">class</span><span class="w"> </span><span class="nc">User</span><span class="p">(</span>
