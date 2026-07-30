@@ -1869,12 +1869,8 @@ fn repl_meta_help_covers_builtin_receiver_types() {
     let out = run_repl(
         "%info Option::map\n\
          %info Result::map_err\n\
-         %info Iterator::collect\n\
-         %info Stream::write\n\
-         %info Child::wait\n\
          %info AtomicI64::new\n\
-         %info http::Response::text\n\
-         %info validate::Errors::add\n\
+         %info validate::Errors::new\n\
          %info Option\n\
          %info http::Response\n",
     );
@@ -1882,12 +1878,8 @@ fn repl_meta_help_covers_builtin_receiver_types() {
     for expected in [
         "Option::map [method]",
         "Result::map_err [method]",
-        "Iterator::collect [method]",
-        "Stream::write [method]",
-        "Child::wait [method]",
         "AtomicI64::new [assoc]",
-        "http::Response::text [method]",
-        "validate::Errors::add [method]",
+        "validate::Errors::new [assoc]",
     ] {
         assert!(
             out.stdout.contains(expected),
@@ -2110,8 +2102,6 @@ fn repl_meta_info_for_shared_method_name_does_not_append_an_owner_listing() {
     for expected in [
         "BTreeMap::contains_key [method]",
         "HashMap::contains_key [method]",
-        "Map::contains_key [method]",
-        "sync::Map::contains_key [method]",
         "std::collections::ordered_map::contains_key [fn]",
     ] {
         assert!(

@@ -216,12 +216,18 @@ jobs:
             "$CARGO_BIN" test --no-run -p gossamer-cli -p gossamer-codegen-cranelift \
               2>&1 | tee "$logdir/00-build.log" || rc=1
             for crate in gossamer-cli gossamer-codegen-cranelift; do
-              run_target "$crate" lib --lib
+              if [ "$crate" != gossamer-cli ]; then
+                run_target "$crate" lib --lib
+              fi
               for f in crates/"$crate"/tests/*.rs; do
                 [ -e "$f" ] || continue
                 name="$(basename "$f" .rs)"
                 # Tier parity has its own parallel shards below.
                 [ "$name" = tier_parity ] && continue
+                if [ "$crate" = gossamer-cli ] && [ "$name" = repl ]; then
+                  echo "::notice::skip ${crate}::${name}; covered by Test CLI general"
+                  continue
+                fi
                 if skip_off_linux "$name"; then
                   echo "::notice::skip ${crate}::${name} on ${RUNNER_OS} (platform-invariant; covered on Linux)"
                   continue
@@ -257,6 +263,22 @@ jobs:
           path: ${{ github.workspace }}/native-build-artifacts
           retention-days: 7
           if-no-files-found: ignore
+
+  test-cli-general:
+    name: Test CLI general
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-test-setup
+        with:
+          cache-prefix: v1-test-cli-general
+      - name: Test non-native CLI unit and REPL behavior
+        shell: bash
+        env:
+          RUST_BACKTRACE: "full"
+        run: |
+          "$CARGO_BIN" test -p gossamer-cli --lib --test repl -- --nocapture
 
   test-workspace:
     name: Test workspace (${{ matrix.suite }})

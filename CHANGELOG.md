@@ -15,6 +15,8 @@
 - Make REPL `%info` prefer session bindings and declarations, then catalog
   lookup; add `%clear-history` and suppress untyped runtime entries rather
   than displaying fabricated `...` signatures.
+- Isolate REPL test history and run non-native CLI/REPL checks in Linux general
+  CI, reserving the cross-platform native matrix for generated-code coverage.
 
 ## 0.38.4 - REPL signature catalog & native aggregate iterator fix
 

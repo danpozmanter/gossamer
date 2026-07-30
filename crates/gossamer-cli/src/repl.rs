@@ -3248,22 +3248,15 @@ mod tests {
     }
 
     #[test]
-    fn repl_metadata_covers_registered_runtime_type_builtins() {
-        let mut missing = Vec::new();
-        for name in gossamer_interp::registered_names() {
-            let Some((owner, method)) = registered_core_method_path(name) else {
-                continue;
-            };
-            let query = format!("{owner}::{method}");
-            if matching_core_methods(&query).is_empty() {
-                missing.push(query);
-            }
-        }
-        missing.sort();
-        missing.dedup();
+    fn repl_metadata_never_exposes_untyped_runtime_registrations() {
+        let incomplete = core_method_entries()
+            .into_iter()
+            .filter(|entry| entry.signature.contains("..."))
+            .map(|entry| format!("{}::{}", entry.owner, entry.name))
+            .collect::<Vec<_>>();
         assert!(
-            missing.is_empty(),
-            "missing REPL metadata for registered runtime type builtins: {missing:?}"
+            incomplete.is_empty(),
+            "REPL must not expose runtime registrations without concrete signatures: {incomplete:?}"
         );
     }
 
