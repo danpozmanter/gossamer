@@ -183,27 +183,29 @@ jobs:
           # generated code at all (front-end check / parse / typecheck, the
           # `gos fmt` / `gos doc` / feature-status tooling text, static source
           # and symbol-registry scans, a pure-Rust unit test) or they construct
-          # a target object in memory deterministically (the COFF / Mach-O
-          # object-format checks cross-build their target's bytes on any host,
-          # so the Linux run already exercises them fully). Any failure they
-          # could surface is visible on Linux too, so running them on macOS and
-          # Windows reveals nothing the Linux job does not. They run on Linux;
-          # anything NOT listed here - in particular every test that runs `gos
-          # run` (which can JIT) or `gos build` - stays cross-platform, so a
-          # newly added test is cross-platform by default (drift can only
-          # over-test, never lose coverage). `rc_soundness` already self-skips
-          # off Linux at runtime; listing it drops the redundant build+spawn.
-          # `ecosystem_bindings` builds a separate temporary Cargo workspace
-          # and exercises bytecode-level binding conversion only. Its output
-          # does not depend on the host object format or native codegen, and
-          # compiling that nested workspace on hosted Windows consumes most
-          # of the native job without adding platform coverage.
-          linux_only="
-            client_error_display dispatch_consistency doc_emit_stdlib
-            ecosystem_bindings feature_status fmt_faithful stdlib_compiled_coverage
-            stdlib_export_drift rc_soundness
-            emit dispatch_parity coff_pic_reloc macho_dead_strip
+          # a target object in memory deterministically. Those tests run once
+          # in the non-native Ubuntu job below, instead of consuming four
+          # serial native lanes. Anything not in the lists below remains
+          # cross-platform by default, so new tests cannot silently lose
+          # native coverage. `rc_soundness` is Linux-only because it self-skips
+          # elsewhere.
+          non_native_cli="
+            client_error_display dispatch_consistency doc_emit_stdlib docs_assets
+            ecosystem_bindings feature_status fmt_faithful goroutine_worker_reuse
+            http_h2_alpn http_h2_conformance mcp stdlib_compiled_coverage
+            stdlib_export_drift
           "
+          non_native_cranelift="
+            coff_pic_reloc dispatch_parity emit macho_dead_strip
+          "
+          linux_only="
+            rc_soundness
+          "
+          in_list() {
+            local list="$1" name="$2" item
+            for item in $list; do [ "$item" = "$name" ] && return 0; done
+            return 1
+          }
           skip_off_linux() {
             case "${RUNNER_OS:-Linux}" in Linux) return 1 ;; esac
             local name
@@ -211,12 +213,18 @@ jobs:
             return 1
           }
           if [ "$suite" = general ]; then
-            # Build every general native test binary up front, so each run below
-            # is execution-only and a build failure is separately attributed.
-            "$CARGO_BIN" test --no-run -p gossamer-cli -p gossamer-codegen-cranelift \
-              2>&1 | tee "$logdir/00-build.log" || rc=1
+            # Pre-build only selected native binaries. The prior package-wide
+            # `--no-run` also compiled every non-native integration binary.
+            build_target() {
+              local crate="$1" label="$2"; shift 2
+              local log="$logdir/${crate}-${label}-build.log"
+              echo "::group::build ${crate} :: ${label}"
+              "$CARGO_BIN" test -p "$crate" --no-run "$@" 2>&1 | tee "$log" || rc=1
+              echo "::endgroup::"
+            }
             for crate in gossamer-cli gossamer-codegen-cranelift; do
               if [ "$crate" != gossamer-cli ]; then
+                build_target "$crate" lib --lib
                 run_target "$crate" lib --lib
               fi
               for f in crates/"$crate"/tests/*.rs; do
@@ -225,13 +233,22 @@ jobs:
                 # Tier parity has its own parallel shards below.
                 [ "$name" = tier_parity ] && continue
                 if [ "$crate" = gossamer-cli ] && [ "$name" = repl ]; then
-                  echo "::notice::skip ${crate}::${name}; covered by Test CLI general"
+                  echo "::notice::skip ${crate}::${name}; covered by Test non-native CLI and codegen"
+                  continue
+                fi
+                if [ "$crate" = gossamer-cli ] && in_list "$non_native_cli" "$name"; then
+                  echo "::notice::skip ${crate}::${name}; covered by Test non-native CLI and codegen"
+                  continue
+                fi
+                if [ "$crate" = gossamer-codegen-cranelift ] && in_list "$non_native_cranelift" "$name"; then
+                  echo "::notice::skip ${crate}::${name}; covered by Test non-native CLI and codegen"
                   continue
                 fi
                 if skip_off_linux "$name"; then
                   echo "::notice::skip ${crate}::${name} on ${RUNNER_OS} (platform-invariant; covered on Linux)"
                   continue
                 fi
+                build_target "$crate" "$name" --test "$name"
                 run_target "$crate" "$name" --test "$name"
               done
             done
@@ -265,20 +282,48 @@ jobs:
           if-no-files-found: ignore
 
   test-cli-general:
-    name: Test CLI general
+    name: Test non-native (${{ matrix.suite }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: repl-unit
+            command: >-
+              "$CARGO_BIN" test -p gossamer-cli --lib --test repl -- --nocapture
+          - suite: tooling-registry
+            command: >-
+              "$CARGO_BIN" test -p gossamer-cli
+              --test client_error_display --test dispatch_consistency
+              --test doc_emit_stdlib --test docs_assets --test feature_status
+              --test fmt_faithful --test mcp --test stdlib_compiled_coverage
+              --test stdlib_export_drift -- --nocapture
+          - suite: bindings-integration
+            command: >-
+              "$CARGO_BIN" test -p gossamer-cli
+              --test ecosystem_bindings -- --nocapture
+          - suite: protocol-integration
+            command: >-
+              "$CARGO_BIN" test -p gossamer-cli
+              --test goroutine_worker_reuse
+              --test http_h2_alpn --test http_h2_conformance -- --nocapture
+          - suite: cranelift-inspection
+            command: >-
+              "$CARGO_BIN" test -p gossamer-codegen-cranelift
+              --test coff_pic_reloc --test dispatch_parity --test emit
+              --test macho_dead_strip -- --nocapture
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/rust-test-setup
         with:
           cache-prefix: v1-test-cli-general
-      - name: Test non-native CLI unit and REPL behavior
+      - name: Test non-native behavior
         shell: bash
         env:
           RUST_BACKTRACE: "full"
         run: |
-          "$CARGO_BIN" test -p gossamer-cli --lib --test repl -- --nocapture
+          eval '${{ matrix.command }}'
 
   test-workspace:
     name: Test workspace (${{ matrix.suite }})

@@ -808,7 +808,14 @@ fn op_label(tag: usize) -> &'static str {
                 },
                 "NeF64",
             ),
-            (O::UnboxF64 { dst_f: 0, src_v: 0 }, "UnboxF64"),
+            (
+                O::UnboxF64 {
+                    dst_f: 0,
+                    src_v: 0,
+                    peer_v: None,
+                },
+                "UnboxF64",
+            ),
             (O::BoxF64 { dst_v: 0, src_f: 0 }, "BoxF64"),
             (O::SqrtF64 { dst_f: 0, src_f: 0 }, "SqrtF64"),
             (O::SinF64 { dst_f: 0, src_f: 0 }, "SinF64"),
@@ -982,7 +989,14 @@ fn op_label(tag: usize) -> &'static str {
                 },
                 "ShrI64",
             ),
-            (O::UnboxI64 { dst_i: 0, src_v: 0 }, "UnboxI64"),
+            (
+                O::UnboxI64 {
+                    dst_i: 0,
+                    src_v: 0,
+                    peer_v: None,
+                },
+                "UnboxI64",
+            ),
             (O::BoxI64 { dst_v: 0, src_i: 0 }, "BoxI64"),
             (O::MoveF64 { dst_f: 0, src_f: 0 }, "MoveF64"),
             (O::MoveI64 { dst_i: 0, src_i: 0 }, "MoveI64"),

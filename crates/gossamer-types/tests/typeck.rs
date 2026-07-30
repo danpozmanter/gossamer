@@ -675,7 +675,7 @@ fn mutable_reference_mismatch_renders_resolved_referent_type() {
         checked.diagnostics.iter().any(|diagnostic| matches!(
             &diagnostic.error,
             TypeError::TypeMismatch { expected, found }
-                if expected == "&mut i64" && found == "{integer}"
+                if expected == "&mut i64" && found == "i64"
         )),
         "expected concrete reference mismatch, got {:?}",
         checked.diagnostics
@@ -1015,7 +1015,7 @@ fn unsuffixed_integer_literal_rejected_in_string_position() {
         );
     };
     assert_eq!(expected, "String");
-    assert_eq!(found, "{integer}");
+    assert_eq!(found, "i64");
 }
 
 #[test]
@@ -2060,9 +2060,9 @@ fn strings_free_fn_rejects_integer_in_string_slot() {
         d.iter().any(
             |x| matches!(&x.error, TypeError::ArgumentTypeMismatch { callee, parameter, expected, found, .. }
                 if callee == "strings::contains" && parameter == "needle"
-                    && expected == "String | char" && found == "{integer}")
+                    && expected == "String | char" && found == "i64")
         ),
-        "expected String/{{integer}} mismatch, got {d:?}"
+        "expected String/i64 mismatch, got {d:?}"
     );
 }
 
@@ -2082,7 +2082,7 @@ fn strings_free_fn_rejects_misordered_integer_argument() {
 
 #[test]
 fn strings_free_fn_rejects_float_in_string_slot() {
-    // Preserve the source-facing `{float}` spelling for this mismatch.
+    // An unsuffixed float literal uses the standard `f64` diagnostic spelling.
     let d = diagnostics_for(
         "use std::strings\nfn main() { let r = strings::contains(&\"hi\", 1.5)\nprintln!(\"{}\", r) }\n",
     );
@@ -2090,9 +2090,9 @@ fn strings_free_fn_rejects_float_in_string_slot() {
         d.iter().any(
             |x| matches!(&x.error, TypeError::ArgumentTypeMismatch { callee, parameter, expected, found, .. }
                 if callee == "strings::contains" && parameter == "needle"
-                    && expected == "String | char" && found == "{float}")
+                    && expected == "String | char" && found == "f64")
         ),
-        "expected String/{{float}} mismatch, got {d:?}"
+        "expected String/f64 mismatch, got {d:?}"
     );
 }
 
@@ -2104,9 +2104,9 @@ fn user_fn_rejects_float_in_string_parameter() {
     assert!(
         d.iter().any(
             |x| matches!(&x.error, TypeError::TypeMismatch { expected, found }
-                if expected == "String" && found == "{float}")
+                if expected == "String" && found == "f64")
         ),
-        "expected String/{{float}} mismatch, got {d:?}"
+        "expected String/f64 mismatch, got {d:?}"
     );
 }
 
@@ -2121,9 +2121,9 @@ fn string_method_rejects_integer_in_string_slot() {
         d.iter().any(
             |x| matches!(&x.error, TypeError::ArgumentTypeMismatch { callee, parameter, expected, found, .. }
                 if callee == "String::contains" && parameter == "needle"
-                    && expected == "String | char" && found == "{integer}")
+                    && expected == "String | char" && found == "i64")
         ),
-        "expected String/{{integer}} mismatch, got {d:?}"
+        "expected String/i64 mismatch, got {d:?}"
     );
 }
 
@@ -2552,7 +2552,7 @@ fn named_string_argument_mismatch_includes_the_actual_literal_value() {
     }) else {
         panic!("missing named argument mismatch: {d:?}");
     };
-    assert_eq!(error.0, "{integer}");
+    assert_eq!(error.0, "i64");
     assert_eq!(error.1, "1");
     assert_eq!(
         d.len(),
@@ -2595,13 +2595,7 @@ fn strings_count_reports_exact_parameter_types_and_names() {
         vec![
             ("strings::count", "text", "String", "array", "[1, 2]"),
             ("strings::count", "text", "String", "char", "'a'"),
-            (
-                "strings::count",
-                "needle",
-                "String | char",
-                "{integer}",
-                "1"
-            ),
+            ("strings::count", "needle", "String | char", "i64", "1"),
         ],
         "diagnostics must match the source-facing signature: {d:?}"
     );

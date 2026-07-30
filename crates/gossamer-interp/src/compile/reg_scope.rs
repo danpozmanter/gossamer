@@ -169,6 +169,12 @@ impl<'tcx> FnBuilder<'tcx> {
 
     /// Coerces a typed-reg into the float register file.
     pub(crate) fn as_f64(&mut self, tr: TypedReg) -> Reg {
+        self.as_f64_with_peer(tr, None)
+    }
+
+    /// Coerces a typed-reg into the float register file and, for binary
+    /// operations, retains the peer value for a complete type diagnostic.
+    pub(crate) fn as_f64_with_peer(&mut self, tr: TypedReg, peer_v: Option<Reg>) -> Reg {
         if tr.kind == RegKind::F64 {
             tr.reg
         } else {
@@ -177,6 +183,7 @@ impl<'tcx> FnBuilder<'tcx> {
             self.emit(Op::UnboxF64 {
                 dst_f: dst,
                 src_v: v,
+                peer_v,
             });
             dst
         }
@@ -184,6 +191,12 @@ impl<'tcx> FnBuilder<'tcx> {
 
     /// Coerces a typed-reg into the int register file.
     pub(crate) fn as_i64(&mut self, tr: TypedReg) -> Reg {
+        self.as_i64_with_peer(tr, None)
+    }
+
+    /// Coerces a typed-reg into the integer register file and, for binary
+    /// operations, retains the peer value for a complete type diagnostic.
+    pub(crate) fn as_i64_with_peer(&mut self, tr: TypedReg, peer_v: Option<Reg>) -> Reg {
         if tr.kind == RegKind::I64 {
             tr.reg
         } else {
@@ -192,6 +205,7 @@ impl<'tcx> FnBuilder<'tcx> {
             self.emit(Op::UnboxI64 {
                 dst_i: dst,
                 src_v: v,
+                peer_v,
             });
             dst
         }

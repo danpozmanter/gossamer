@@ -1857,8 +1857,12 @@ fn repl_info_for_session(
     // A session name wins over a same-named catalog entry. `%info` is an
     // inspector for the current REPL first, then a fuzzy stdlib lookup.
     if repl_is_identifier(query) {
-        if let Some(binding) = repl_info_binding(query, declarations, lets, bindings) {
-            return Ok(Some(binding));
+        if let Some((binding, ty)) = repl_info_binding(query, declarations, lets, bindings) {
+            let type_info = repl_type_info(&ty)?;
+            return Ok(Some(match type_info {
+                Some(type_info) => format!("{binding}\n\n{type_info}"),
+                None => binding,
+            }));
         }
         if let Some(declaration) = repl_info_declaration(query, declarations) {
             return Ok(Some(declaration));
@@ -1881,7 +1885,7 @@ fn repl_info_binding(
     declarations: &[String],
     lets: &[String],
     bindings: &[ReplBinding],
-) -> Option<String> {
+) -> Option<(String, String)> {
     if !bindings
         .iter()
         .flat_map(|binding| &binding.vars)
@@ -1890,13 +1894,41 @@ fn repl_info_binding(
         return None;
     }
 
-    render_repl_bindings(declarations, lets, bindings)
+    let binding = render_repl_bindings(declarations, lets, bindings)
         .into_iter()
         .find(|line| {
             let line = line.strip_prefix("mut ").unwrap_or(line);
             line.strip_prefix(name)
                 .is_some_and(|remainder| remainder.starts_with(':'))
-        })
+        })?;
+    let ty = {
+        let (_, type_and_value) = binding.split_once(": ")?;
+        let (ty, _) = type_and_value.split_once(" = ")?;
+        ty.to_string()
+    };
+    Some((binding, ty))
+}
+
+/// Returns catalog information for a binding's receiver type. The binding
+/// summary remains first; this supplements it with the same output `%info`
+/// produces when the type itself is queried.
+fn repl_type_info(ty: &str) -> std::result::Result<Option<String>, String> {
+    let owner = ty
+        .trim()
+        .trim_start_matches("&mut ")
+        .trim_start_matches('&')
+        .split(['<', '[', ' '])
+        .next()
+        .unwrap_or_default();
+    if owner.is_empty() {
+        return Ok(None);
+    }
+    let info = repl_info(owner)?;
+    if info.starts_with("nothing found") {
+        Ok(None)
+    } else {
+        Ok(Some(info))
+    }
 }
 
 fn repl_info_declaration(name: &str, declarations: &[String]) -> Option<String> {

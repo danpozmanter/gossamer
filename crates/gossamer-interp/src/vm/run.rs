@@ -20,6 +20,24 @@ fn poll_vm_backedge(countdown: &mut u16) {
     }
 }
 
+fn incompatible_type_error(value: &Value, peer: Option<&Value>, expected: &str) -> RuntimeError {
+    let message = match peer {
+        Some(peer) => format!(
+            "incompatible types: `{}` ({}) and `{}` ({})",
+            peer.type_name(),
+            peer.repr(),
+            value.type_name(),
+            value.repr()
+        ),
+        None => format!(
+            "incompatible types: `{expected}` and `{}` ({})",
+            value.type_name(),
+            value.repr()
+        ),
+    };
+    RuntimeError::Type(message)
+}
+
 /// How a bytecode frame completed.
 ///
 /// A tail call is deliberately returned to [`Vm::apply`] rather than invoked
@@ -746,6 +764,13 @@ impl Vm {
                         _ => "panic".to_string(),
                     };
                     return Err(RuntimeError::Panic(message));
+                }
+                Op::TypeError { msg } => {
+                    let message = match &chunk.consts[msg as usize] {
+                        Value::String(s) => s.as_str().to_string(),
+                        _ => "type error".to_string(),
+                    };
+                    return Err(RuntimeError::Type(message));
                 }
                 Op::MethodCall {
                     dst,
@@ -2337,8 +2362,13 @@ impl Vm {
                             != *floats.get_unchecked(rhs_f as usize),
                     );
                 },
-                Op::UnboxF64 { dst_f, src_v } => {
+                Op::UnboxF64 {
+                    dst_f,
+                    src_v,
+                    peer_v,
+                } => {
                     let v = &registers[src_v as usize];
+                    let peer = peer_v.map(|peer_v| &registers[peer_v as usize]);
                     let f = match v {
                         Value::Float(f) => *f,
                         Value::Int(n) => *n as f64,
@@ -2349,16 +2379,12 @@ impl Vm {
                                 Some(Value::Float(f)) => f,
                                 Some(Value::Int(n)) => n as f64,
                                 _ => {
-                                    return Err(RuntimeError::Type(format!(
-                                        "expected f64 at register, got `{v}`"
-                                    )));
+                                    return Err(incompatible_type_error(v, peer, "f64"));
                                 }
                             }
                         }
                         _ => {
-                            return Err(RuntimeError::Type(format!(
-                                "expected f64 at register, got `{v}`"
-                            )));
+                            return Err(incompatible_type_error(v, peer, "f64"));
                         }
                     };
                     floats[dst_f as usize] = f;
@@ -2656,8 +2682,13 @@ impl Vm {
                             >= (*ints.get_unchecked(rhs_i as usize) as u64),
                     );
                 },
-                Op::UnboxI64 { dst_i, src_v } => {
+                Op::UnboxI64 {
+                    dst_i,
+                    src_v,
+                    peer_v,
+                } => {
                     let v = &registers[src_v as usize];
+                    let peer = peer_v.map(|peer_v| &registers[peer_v as usize]);
                     // 0.7.0 flag::Cell auto-deref. The typechecker
                     // pins `flags.number` as `Cell<i64>` and emits
                     // an UnboxI64 hoping to find a `Value::Int`;
@@ -2676,16 +2707,12 @@ impl Vm {
                                 Some(Value::Int(n)) => n,
                                 Some(Value::Uint(n)) => n as i64,
                                 _ => {
-                                    return Err(RuntimeError::Type(format!(
-                                        "expected i64 at register, got `{v}`"
-                                    )));
+                                    return Err(incompatible_type_error(v, peer, "i64"));
                                 }
                             }
                         }
                         _ => {
-                            return Err(RuntimeError::Type(format!(
-                                "expected i64 at register, got `{v}`"
-                            )));
+                            return Err(incompatible_type_error(v, peer, "i64"));
                         }
                     };
                     ints[dst_i as usize] = n;

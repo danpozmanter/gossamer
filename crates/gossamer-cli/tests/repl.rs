@@ -104,6 +104,41 @@ fn repl_prints_integer_division_result() {
 }
 
 #[test]
+fn repl_reports_mixed_numeric_types_without_vm_register_details() {
+    let out = run_repl("9 * 9.0\n9.0 * 9\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("incompatible types: `i64` (`9`) and `f64` (`9.0`)")
+            && out
+                .stderr
+                .contains("incompatible types: `f64` (`9.0`) and `i64` (`9`)"),
+        "both operand orders should preserve the source expressions and order; stderr: {}",
+        out.stderr
+    );
+    assert!(
+        !out.stderr.contains("register"),
+        "runtime diagnostics must not expose VM registers; stderr: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn repl_reports_the_computed_operand_in_chained_numeric_mismatches() {
+    let out = run_repl("0.38 * 40.0 * 50\n0.48 * 40.0 * 40\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("incompatible types: `f64` (`0.38 * 40.0`) and `i64` (`50`)")
+            && out
+                .stderr
+                .contains("incompatible types: `f64` (`0.48 * 40.0`) and `i64` (`40`)"),
+        "chained numeric errors must identify the source expressions involved: stderr={}",
+        out.stderr
+    );
+}
+
+#[test]
 fn repl_persists_bindings_across_lines() {
     let out = run_repl("let x = 5\nx * 2\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -277,6 +312,29 @@ fn repl_info_inspects_session_bindings_declarations_and_undefined_names() {
     assert!(
         out.stdout.contains("fn wow() { \"heyoooo\" }"),
         "%info should render a declaration as %declarations does: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_info_binding_includes_its_receiver_type_catalog() {
+    let out = run_repl("let x = \"Wow\"\n%i x\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    let binding = out
+        .stdout
+        .find("x: String = \"Wow\"")
+        .expect("%info should render the binding summary");
+    let type_info = out
+        .stdout
+        .find("String [type]")
+        .expect("%info should render the binding receiver type");
+    assert!(
+        binding < type_info
+            && out.stdout.contains("String::as_bytes [method]")
+            && out
+                .stdout
+                .contains("Returns the UTF-8 bytes of the string."),
+        "%info should append the complete type catalog after the binding: {}",
         out.stdout
     );
 }
@@ -683,7 +741,7 @@ fn repl_reference_assignment_error_shows_concrete_type() {
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr
-            .contains("type mismatch: expected `&mut i64`, found `{integer}`"),
+            .contains("type mismatch: expected `&mut i64`, found `i64`"),
         "reference mismatch must show the resolved type: {}",
         out.stderr
     );
@@ -1339,7 +1397,7 @@ fn repl_meta_help_preserves_base_banner() {
     let out = run_repl("%help\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     let banner = format!(
-        "gos 0.38.5 REPL [{}-{}]",
+        "gos 0.38.6 REPL [{}-{}]",
         std::env::consts::ARCH,
         std::env::consts::OS
     );
@@ -2166,7 +2224,7 @@ fn repl_reports_each_invalid_string_argument_once_with_its_value() {
         out.stderr
     );
     assert!(
-        out.stderr.contains("found `{integer}` (value `1`)"),
+        out.stderr.contains("found `i64` (value `1`)"),
         "the diagnostic must include the supplied literal: {}",
         out.stderr
     );
@@ -2416,7 +2474,7 @@ fn repl_reports_collection_argument_mismatches_in_expected_found_order() {
         out.stderr
     );
     assert!(
-        out.stderr.contains("expected `String`, found `{integer}`"),
+        out.stderr.contains("expected `String`, found `i64`"),
         "{}",
         out.stderr
     );
@@ -2426,7 +2484,7 @@ fn repl_reports_collection_argument_mismatches_in_expected_found_order() {
         out.stderr
     );
     assert!(
-        out.stderr.contains("expected `char`, found `{float}`"),
+        out.stderr.contains("expected `char`, found `f64`"),
         "{}",
         out.stderr
     );

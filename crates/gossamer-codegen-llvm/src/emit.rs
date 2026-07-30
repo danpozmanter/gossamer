@@ -379,7 +379,7 @@ fn codegen_configuration_fingerprint(triple: &str, profile: OptProfile) -> Strin
             }
         }
     }
-    if let Some(clang) = integrated_clang_path() {
+    if let Some(clang) = integrated_clang_path(triple) {
         text.push_str("|pipeline=clang|");
         text.push_str(&file_identity(&clang));
     } else {
@@ -2166,7 +2166,7 @@ fn invoke_llc_pipeline(
     }
     let profile = opt_profile();
     let mcpu = mcpu_target(triple);
-    if let Some(clang) = integrated_clang_path() {
+    if let Some(clang) = integrated_clang_path(triple) {
         return invoke_clang_pipeline(&clang, ll_path, obj_out, triple, profile, &mcpu);
     }
 
@@ -2630,13 +2630,18 @@ fn find_clang() -> Result<PathBuf> {
         .map_err(anyhow::Error::msg)
 }
 
-/// Selects the single-process IR-to-object route. Debug keeps the split path
-/// because its minimal `mem2reg` pass is essential for usable loop code, while
-/// Clang `-O0` leaves the emitted alloca-heavy IR in memory. PGO also keeps
-/// explicit `opt` because its pipeline flags and profile-file semantics are not
-/// interchangeable with the Clang driver's source-oriented PGO switches.
-fn integrated_clang_path() -> Option<PathBuf> {
+/// Selects the single-process IR-to-object route. Apple targets deliberately
+/// retain the explicit `opt -O3` then `llc -O3` pipeline: the system Apple
+/// Clang driver is not a substitute for the selected LLVM toolchain and made
+/// release performance indistinguishable from debug in issue #102. Debug keeps
+/// the split path because its minimal `mem2reg` pass is essential for usable
+/// loop code, while Clang `-O0` leaves the emitted alloca-heavy IR in memory.
+/// PGO also keeps explicit `opt` because its pipeline flags and profile-file
+/// semantics are not interchangeable with the Clang driver's source-oriented
+/// PGO switches.
+fn integrated_clang_path(triple: &str) -> Option<PathBuf> {
     if matches!(opt_profile(), OptProfile::Debug)
+        || triple.contains("apple")
         || std::env::var("GOS_LLVM_SPLIT_TOOLS").is_ok()
         || pgo_mode().is_some()
         || std::env::var("GOS_PGO_COLLECT").is_ok()
@@ -2905,7 +2910,7 @@ mod shape_validation_tests {
 #[cfg(test)]
 mod host_triple_tests {
     use super::{
-        detect_host_triple, disable_loop_idiom_for_target_with_static_musl,
+        detect_host_triple, disable_loop_idiom_for_target_with_static_musl, integrated_clang_path,
         llvm_target_triple_for_with_deployment, mcpu_for, module_datalayout,
         normalized_macos_deployment_target, target_arch_from_triple,
     };
@@ -3021,6 +3026,11 @@ mod host_triple_tests {
                 "{triple} must keep LLVM loop idiom recognition"
             );
         }
+    }
+
+    #[test]
+    fn apple_targets_keep_the_explicit_llvm_release_pipeline() {
+        assert!(integrated_clang_path("aarch64-apple-macosx15.0.0").is_none());
     }
 
     #[test]

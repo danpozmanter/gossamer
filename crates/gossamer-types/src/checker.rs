@@ -1276,7 +1276,7 @@ impl<'a> TypeChecker<'a> {
                 } else {
                     // The supplied expression is the integer literal.
                     self.deferred_literal_type_mismatches
-                        .push((lhs, "{integer}", span));
+                        .push((lhs, "i64", span));
                 }
             }
             UnifyError::FloatConstraint => {
@@ -1286,7 +1286,7 @@ impl<'a> TypeChecker<'a> {
                     self.deferred_type_mismatches.push((lhs, rhs, span));
                 } else {
                     self.deferred_literal_type_mismatches
-                        .push((lhs, "{float}", span));
+                        .push((lhs, "f64", span));
                 }
             }
             UnifyError::Occurs { .. } => {
@@ -3873,15 +3873,15 @@ impl<'a> TypeChecker<'a> {
             (None, Some((a, _))) => (param, a),
             _ => (param, arg_ty),
         };
-        // Preserve the source-facing `{float}` diagnostic for an unsuffixed
-        // float in a String slot. The unifier also rejects the constraint, but
-        // this parameter-specific path has the better spelling.
+        // Render an unsuffixed float literal as its default source type in a
+        // String slot. The unifier also rejects the constraint, but this
+        // parameter-specific path identifies the bad argument.
         if matches!(
             self.tcx.kind(self.infer.resolve(self.tcx, lhs)),
             Some(TyKind::String)
         ) && self.infer.is_float_literal_var(self.tcx, rhs)
         {
-            self.emit_str_slot_mismatch("{float}", arg.span);
+            self.emit_str_slot_mismatch("f64", arg.span);
         } else {
             self.unify(lhs, rhs, arg.span);
         }
@@ -4013,28 +4013,14 @@ impl<'a> TypeChecker<'a> {
             _ => resolved,
         };
         // Catch unsuffixed numeric literals up front in either slot shape so
-        // a `5` / `1.5` in a string position is rejected with
-        // the same `{integer}` / `{float}` rendering a user call shows.
+        // a `5` / `1.5` in a string position is rejected with the same
+        // `i64` / `f64` spelling used by every other type diagnostic.
         if self.infer.is_integer_constrained_var(self.tcx, inner) {
-            self.emit_named_str_slot_mismatch(
-                callee,
-                param.name,
-                param.expected,
-                "{integer}",
-                arg,
-                span,
-            );
+            self.emit_named_str_slot_mismatch(callee, param.name, param.expected, "i64", arg, span);
             return;
         }
         if self.infer.is_float_literal_var(self.tcx, inner) {
-            self.emit_named_str_slot_mismatch(
-                callee,
-                param.name,
-                param.expected,
-                "{float}",
-                arg,
-                span,
-            );
+            self.emit_named_str_slot_mismatch(callee, param.name, param.expected, "f64", arg, span);
             return;
         }
         match shape {

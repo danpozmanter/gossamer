@@ -280,9 +280,10 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
                      binding as a Rust crate consumed via `[rust-bindings]`."
         }
         "GX0001" => {
-            "A runtime value had the wrong shape for the operation. The\n\
-                     interpreter catches this at execution time; the native\n\
-                     backend aborts with the same code."
+            "An operation received a value of an incompatible type. The\n\
+                     diagnostic names the type that was required and the type\n\
+                     and value that were supplied. Add an explicit conversion\n\
+                     or use operands of the same type."
         }
         "GX0002" => {
             "A name resolved at parse/resolve time to nothing callable at\n\
@@ -294,8 +295,9 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
                      declared arity. Fix the call site or update the declaration."
         }
         "GX0004" => {
-            "An arithmetic operation overflowed, divided by zero, or produced\n\
-                     a value outside the representable range."
+            "A checked runtime bounds operation or numeric conversion could\n\
+                     not produce a valid result. Integer division and modulo\n\
+                     by zero are panics and use GX0005 instead."
         }
         "GX0005" => {
             "Explicit `panic!(...)` or an assertion failure aborted the\n\

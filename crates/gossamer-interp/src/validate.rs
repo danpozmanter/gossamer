@@ -492,6 +492,9 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
             Op::Panic { msg } => {
                 check_pool(op_idx, u32::from(msg), consts_len, PoolKind::Consts)?;
             }
+            Op::TypeError { msg } => {
+                check_pool(op_idx, u32::from(msg), consts_len, PoolKind::Consts)?;
+            }
             Op::MakeClosure { dst, proto } => {
                 check_v(op_idx, dst)?;
                 check_pool(op_idx, proto, closure_protos_len, PoolKind::ClosureProtos)?;
@@ -987,9 +990,16 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_f(op_idx, lhs_f)?;
                 check_f(op_idx, rhs_f)?;
             }
-            Op::UnboxF64 { dst_f, src_v } => {
+            Op::UnboxF64 {
+                dst_f,
+                src_v,
+                peer_v,
+            } => {
                 check_f(op_idx, dst_f)?;
                 check_v(op_idx, src_v)?;
+                if let Some(peer_v) = peer_v {
+                    check_v(op_idx, peer_v)?;
+                }
             }
             Op::BoxF64 { dst_v, src_f } => {
                 check_v(op_idx, dst_v)?;
@@ -1149,9 +1159,16 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_i(op_idx, lhs_i)?;
                 check_i(op_idx, rhs_i)?;
             }
-            Op::UnboxI64 { dst_i, src_v } => {
+            Op::UnboxI64 {
+                dst_i,
+                src_v,
+                peer_v,
+            } => {
                 check_i(op_idx, dst_i)?;
                 check_v(op_idx, src_v)?;
+                if let Some(peer_v) = peer_v {
+                    check_v(op_idx, peer_v)?;
+                }
             }
             Op::BoxI64 { dst_v, src_i } => {
                 check_v(op_idx, dst_v)?;
@@ -1442,7 +1459,7 @@ fn validate_control_flow(chunk: &FnChunk) -> Result<(), ValidationError> {
             }
         };
         match chunk.instrs[op_idx] {
-            Op::Return { .. } | Op::ReturnUnit | Op::Panic { .. } => {}
+            Op::Return { .. } | Op::ReturnUnit | Op::Panic { .. } | Op::TypeError { .. } => {}
             Op::Jump { target } => add_successor(target as usize),
             Op::BranchIf { target, .. }
             | Op::BranchIfNot { target, .. }
@@ -1598,7 +1615,7 @@ fn validate_register_initialization(chunk: &FnChunk) -> Result<(), ValidationErr
         };
 
         match chunk.instrs[op_idx] {
-            Op::Return { .. } | Op::ReturnUnit | Op::Panic { .. } => {}
+            Op::Return { .. } | Op::ReturnUnit | Op::Panic { .. } | Op::TypeError { .. } => {}
             Op::Jump { target } => propagate(target as usize, out),
             Op::BranchIf { target, .. }
             | Op::BranchIfNot { target, .. }
@@ -1984,7 +2001,12 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
         | Op::I64ToUint { src_i, .. }
         | Op::BoxI64 { src_i, .. } => effect.i_reads.push(src_i),
         Op::FloatToIntI64 { src_f, .. } | Op::BoxF64 { src_f, .. } => effect.f_reads.push(src_f),
-        Op::UnboxI64 { src_v, .. } | Op::UnboxF64 { src_v, .. } => effect.v_reads.push(src_v),
+        Op::UnboxI64 { src_v, peer_v, .. } | Op::UnboxF64 { src_v, peer_v, .. } => {
+            effect.v_reads.push(src_v);
+            if let Some(peer_v) = peer_v {
+                effect.v_reads.push(peer_v);
+            }
+        }
         Op::IntArrayGetI64 { base, index_i, .. } | Op::FloatVecGetF64 { base, index_i, .. } => {
             effect.v_reads.push(base);
             effect.i_reads.push(index_i);
@@ -2054,6 +2076,7 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
         | Op::Return { .. }
         | Op::ReturnUnit
         | Op::Panic { .. }
+        | Op::TypeError { .. }
         | Op::CovHit { .. }
         | Op::BuildIntMap { .. }
         | Op::BuildStrIntMap { .. }

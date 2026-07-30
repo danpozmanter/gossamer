@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.38.6 - Diagnostics, REPL inspection, and CI test partitioning
+
+- Clearer type errors: consistent `i64`/`f64` names and source expressions.
+- `%info name` now includes the binding, type documentation, and methods.
+- Native CI is partitioned by generated-code coverage; macOS releases use the
+  explicit LLVM `opt -O3` and `llc -O3` pipeline.
+
 ## 0.38.5 - Cross-platform release profile correctness and REPL refinement
 
 - Make native debug and release MIR pipelines genuinely distinct: debug keeps

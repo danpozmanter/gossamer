@@ -17,6 +17,47 @@ fn peel_ref_wrappers_expr(expr: &HirExpr) -> &HirExpr {
     cur
 }
 
+fn diagnostic_expr(expr: &HirExpr) -> String {
+    match &expr.kind {
+        HirExprKind::Literal(HirLiteral::Int(text) | HirLiteral::Float(text)) => text.clone(),
+        HirExprKind::Path { segments, .. } => segments
+            .iter()
+            .map(|segment| segment.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::"),
+        HirExprKind::Binary { op, lhs, rhs } => format!(
+            "{} {} {}",
+            diagnostic_expr(lhs),
+            diagnostic_binary_op(*op),
+            diagnostic_expr(rhs)
+        ),
+        _ => "<expression>".to_string(),
+    }
+}
+
+fn diagnostic_binary_op(op: HirBinaryOp) -> &'static str {
+    match op {
+        HirBinaryOp::Add => "+",
+        HirBinaryOp::Sub => "-",
+        HirBinaryOp::Mul => "*",
+        HirBinaryOp::Div => "/",
+        HirBinaryOp::Rem => "%",
+        HirBinaryOp::BitAnd => "&",
+        HirBinaryOp::BitOr => "|",
+        HirBinaryOp::BitXor => "^",
+        HirBinaryOp::Shl => "<<",
+        HirBinaryOp::Shr => ">>",
+        HirBinaryOp::Eq => "==",
+        HirBinaryOp::Ne => "!=",
+        HirBinaryOp::Lt => "<",
+        HirBinaryOp::Le => "<=",
+        HirBinaryOp::Gt => ">",
+        HirBinaryOp::Ge => ">=",
+        HirBinaryOp::And => "&&",
+        HirBinaryOp::Or => "||",
+    }
+}
+
 /// Collects, in source order, the distinct names a pattern binds.
 /// The or-pattern lowering uses this to allocate one shared register
 /// per name so every alternative writes the same destinations. For
@@ -76,6 +117,36 @@ pub(crate) fn collect_pattern_binding_names(pat: &HirPat, out: &mut Vec<String>)
 }
 
 impl<'tcx> FnBuilder<'tcx> {
+    fn emit_static_binary_type_error(
+        &mut self,
+        lhs: &HirExpr,
+        lhs_kind: RegKind,
+        rhs: &HirExpr,
+        rhs_kind: RegKind,
+    ) -> TypedReg {
+        let type_name = |kind| match kind {
+            RegKind::I64 => "i64",
+            RegKind::F64 => "f64",
+            RegKind::Value => "value",
+        };
+        let message = format!(
+            "incompatible types: `{}` (`{}`) and `{}` (`{}`)",
+            type_name(lhs_kind),
+            diagnostic_expr(lhs),
+            type_name(rhs_kind),
+            diagnostic_expr(rhs),
+        );
+        let msg = self.const_idx(
+            ConstKey::String(message.clone()),
+            Value::String(SmolStr::from(message)),
+        );
+        self.emit(Op::TypeError { msg });
+        TypedReg {
+            reg: self.alloc_reg(),
+            kind: RegKind::Value,
+        }
+    }
+
     /// Typed counterpart to [`Self::compile_expr`]. Returns
     /// whatever kind the expression naturally produces,
     /// skipping the `BoxF64` / `BoxI64` round-trip when the
@@ -1464,7 +1535,16 @@ impl<'tcx> FnBuilder<'tcx> {
             return Ok(None);
         }
         let lhs_tr = self.compile_expr_ex(lhs)?;
-        let lhs_i = self.as_i64(lhs_tr);
+        if matches!(lhs_tr.kind, RegKind::F64) {
+            return Ok(Some(self.emit_static_binary_type_error(
+                lhs,
+                lhs_tr.kind,
+                rhs,
+                RegKind::I64,
+            )));
+        }
+        let rhs_peer = (lhs_tr.kind != RegKind::I64).then(|| self.load_int_value(n));
+        let lhs_i = self.as_i64_with_peer(lhs_tr, rhs_peer);
         let dst = self.alloc_int();
         self.emit(Op::ArithImmI64 {
             kind,
@@ -1511,8 +1591,16 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             let lhs_tr = self.compile_expr_ex(lhs)?;
             let rhs_tr = self.compile_expr_ex(rhs)?;
-            let lhs_f = self.as_f64(lhs_tr);
-            let rhs_f = self.as_f64(rhs_tr);
+            if matches!(lhs_tr.kind, RegKind::I64 | RegKind::F64)
+                && matches!(rhs_tr.kind, RegKind::I64 | RegKind::F64)
+                && lhs_tr.kind != rhs_tr.kind
+            {
+                return Ok(self.emit_static_binary_type_error(lhs, lhs_tr.kind, rhs, rhs_tr.kind));
+            }
+            let lhs_peer = (rhs_tr.kind != RegKind::F64).then(|| self.as_value(lhs_tr));
+            let rhs_peer = (lhs_tr.kind != RegKind::F64).then(|| self.as_value(rhs_tr));
+            let lhs_f = self.as_f64_with_peer(lhs_tr, rhs_peer);
+            let rhs_f = self.as_f64_with_peer(rhs_tr, lhs_peer);
             return self.emit_binary_f64(op, lhs_f, rhs_f);
         }
         if lk == RegKind::I64 && rk == RegKind::I64 {
@@ -1526,8 +1614,26 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             let lhs_tr = self.compile_expr_ex(lhs)?;
             let rhs_tr = self.compile_expr_ex(rhs)?;
-            let lhs_i = self.as_i64(lhs_tr);
-            let rhs_i = self.as_i64(rhs_tr);
+            // Literal inference may retain an integer expectation on a
+            // binary expression even though both operands are float
+            // literals. The registers are the authoritative lowering
+            // contract: two floats are valid f64 arithmetic, not an i64
+            // mismatch between two f64 values.
+            if lhs_tr.kind == RegKind::F64 && rhs_tr.kind == RegKind::F64 {
+                let lhs_f = self.as_f64(lhs_tr);
+                let rhs_f = self.as_f64(rhs_tr);
+                return self.emit_binary_f64(op, lhs_f, rhs_f);
+            }
+            if matches!(lhs_tr.kind, RegKind::I64 | RegKind::F64)
+                && matches!(rhs_tr.kind, RegKind::I64 | RegKind::F64)
+                && lhs_tr.kind != rhs_tr.kind
+            {
+                return Ok(self.emit_static_binary_type_error(lhs, lhs_tr.kind, rhs, rhs_tr.kind));
+            }
+            let lhs_peer = (rhs_tr.kind != RegKind::I64).then(|| self.as_value(lhs_tr));
+            let rhs_peer = (lhs_tr.kind != RegKind::I64).then(|| self.as_value(rhs_tr));
+            let lhs_i = self.as_i64_with_peer(lhs_tr, rhs_peer);
+            let rhs_i = self.as_i64_with_peer(rhs_tr, lhs_peer);
             return self.emit_binary_i64(op, lhs_i, rhs_i, lhs_unsigned, rhs_unsigned);
         }
         // Struct `==` / `!=` routes to the derived `<Type>::eq` method,

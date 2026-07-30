@@ -155,6 +155,9 @@ pub enum Op {
     /// the compiled tiers' `Terminator::Panic` rather than returning a
     /// zero value.
     Panic { msg: ConstIdx },
+    /// Diverges with `RuntimeError::Type`, reading the source-level message
+    /// from the `Value::String` at `consts[msg]`.
+    TypeError { msg: ConstIdx },
     /// `dst = closure value` - builds a [`crate::value::Closure`]
     /// from the proto at `FnChunk::closure_protos[proto]`. The
     /// handler snapshots each register named in the proto's
@@ -911,8 +914,13 @@ pub enum Op {
     /// `registers[dst_v] = Bool(floats[lhs_f] != floats[rhs_f])`.
     NeF64 { dst_v: Reg, lhs_f: Reg, rhs_f: Reg },
     /// `floats[dst_f] = src_v.as_float()` - unbox an f64 out
-    /// of a `Value::Float` for use with the typed ops.
-    UnboxF64 { dst_f: Reg, src_v: Reg },
+    /// of a `Value::Float` for use with the typed ops. `peer_v` is present
+    /// for a binary operation so a type mismatch can report both operands.
+    UnboxF64 {
+        dst_f: Reg,
+        src_v: Reg,
+        peer_v: Option<Reg>,
+    },
     /// `registers[dst_v] = Value::Float(floats[src_f])` -
     /// re-box an f64 register for ABI-crossing use (calls,
     /// field stores, returns).
@@ -1010,8 +1018,13 @@ pub enum Op {
     /// (matches Rust's `u64 >> u64` semantics - zero-filling). Used when
     /// the shifted operand's declared type is unsigned.
     ShrU64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
-    /// `ints[dst_i] = src_v.as_int()`.
-    UnboxI64 { dst_i: Reg, src_v: Reg },
+    /// `ints[dst_i] = src_v.as_int()`. `peer_v` is present for a binary
+    /// operation so a type mismatch can report both operands.
+    UnboxI64 {
+        dst_i: Reg,
+        src_v: Reg,
+        peer_v: Option<Reg>,
+    },
     /// `registers[dst_v] = Value::Int(ints[src_i])`.
     BoxI64 { dst_v: Reg, src_i: Reg },
     /// `floats[dst_f] = floats[src_f]` - float-file copy,

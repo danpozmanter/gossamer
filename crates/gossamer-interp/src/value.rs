@@ -375,6 +375,42 @@ pub enum Value {
 }
 
 impl Value {
+    /// Returns the source-level type name most useful in a runtime diagnostic.
+    ///
+    /// This deliberately hides VM storage variants such as `IntArray` and
+    /// `FloatVec`: users wrote `Vec<i64>` and `Vec<f64>`, not those internal
+    /// representations.
+    #[must_use]
+    pub fn type_name(&self) -> String {
+        match self {
+            Self::Unit => "()".to_string(),
+            Self::Bool(_) => "bool".to_string(),
+            Self::Int(_) => "i64".to_string(),
+            Self::Float(_) => "f64".to_string(),
+            Self::Char(_) => "char".to_string(),
+            Self::String(_) => "String".to_string(),
+            Self::Json(_) => "json::Value".to_string(),
+            Self::Tuple(_) => "tuple".to_string(),
+            Self::Array(_) | Self::FloatArray(_) | Self::IntArray(_) => "Vec".to_string(),
+            Self::ByteArray(_) | Self::InlineByteArray(_) | Self::ByteVec(_) => {
+                "Vec<u8>".to_string()
+            }
+            Self::FloatVec(_) => "Vec<f64>".to_string(),
+            Self::LazyIter(_) => "iter::Iter".to_string(),
+            Self::Variant(inner) => inner.name.to_string(),
+            Self::Struct(inner) => inner.name.to_string(),
+            Self::NativeEnum(_) => "enum".to_string(),
+            Self::Closure(_) => "closure".to_string(),
+            Self::Builtin(_) | Self::Native(_) => "function".to_string(),
+            Self::Channel(_) => "Channel".to_string(),
+            Self::Map(_) | Self::IntMap(_) | Self::StrIntMap(_) => "HashMap".to_string(),
+            Self::Uint(_) => "u64".to_string(),
+            Self::Weak(_) => "Weak".to_string(),
+            Self::MutCell(cell) => cell.lock().type_name(),
+            Self::Void => "uninitialized value".to_string(),
+        }
+    }
+
     /// Renders this value as a source-like representation for interactive
     /// inspection. Unlike [`fmt::Display`], strings and chars are quoted.
     #[must_use]
@@ -2967,7 +3003,7 @@ pub type RuntimeResult<T> = Result<T, RuntimeError>;
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum RuntimeError {
     /// An operation was applied to a value of the wrong kind.
-    #[error("error[GX0001]: type error at runtime: {0}")]
+    #[error("error[GX0001]: type error: {0}")]
     Type(String),
     /// A name lookup failed when interpreting a path expression.
     #[error("error[GX0002]: name `{0}` is not bound in this scope")]
@@ -2980,7 +3016,7 @@ pub enum RuntimeError {
         /// Supplied argument count.
         found: usize,
     },
-    /// Integer division by zero or arithmetic overflow.
+    /// A numeric conversion or a checked runtime bounds operation failed.
     #[error("error[GX0004]: arithmetic error: {0}")]
     Arithmetic(String),
     /// `panic!(...)` invoked from user code or an exhausted match.

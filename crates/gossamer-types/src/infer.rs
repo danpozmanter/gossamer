@@ -295,7 +295,7 @@ impl InferCtxt {
 
     /// Whether `ty` resolves to an as-yet-unbound float-default
     /// inference variable - an unsuffixed float literal. Callers use this to
-    /// preserve the source-facing `{float}` spelling in diagnostics.
+    /// render the default `f64` spelling in diagnostics.
     #[must_use]
     pub fn is_float_literal_var(&mut self, tcx: &TyCtxt, ty: Ty) -> bool {
         let resolved = self.resolve(tcx, ty);
