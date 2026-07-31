@@ -184,9 +184,12 @@ impl<'tcx> FnBuilder<'tcx> {
                 Ok(())
             }
             HirPatKind::Wildcard | HirPatKind::Literal(_) | HirPatKind::Rest => Ok(()),
-            other => Err(RuntimeError::Type(format!(
-                "let-pattern shape {other:?} is not yet handled by the VM compiler"
-            ))),
+            HirPatKind::Ref { .. } => Err(RuntimeError::Unsupported(
+                "reference patterns in `let` are not supported yet; bind the reference directly with `let name = value`, or dereference it in the initializer with `let name = *value`",
+            )),
+            _ => Err(RuntimeError::Unsupported(
+                "this `let` pattern is not supported by the VM compiler",
+            )),
         }
     }
 

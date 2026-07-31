@@ -1407,10 +1407,10 @@ fn builtin_insert(args: &[Value]) -> RuntimeResult<Value> {
     ) {
         return builtin_map_insert(args);
     }
-    let idx = match args.get(1) {
-        Some(Value::Int(n)) => *n,
-        _ => return Err(RuntimeError::Type("index must be integer".to_string())),
-    };
+    let idx = args
+        .get(1)
+        .ok_or(RuntimeError::Type("index must be integer".to_string()))?;
+    let idx = crate::vm::index_value(idx)?;
     let value = args.get(2).cloned().unwrap_or(Value::Unit);
     match args.first() {
         Some(Value::Array(parts)) => {

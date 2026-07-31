@@ -303,6 +303,57 @@ fn repl_reports_a_missing_enum_body_once() {
 }
 
 #[test]
+fn repl_indexes_with_a_computed_usize_struct_field() {
+    let out = run_repl(
+        "struct Mem { mem: Vec<i64> pos: usize }\n\
+         impl Mem {\n\
+             fn set_memory(&mut self, offset: usize, value: i64) {\n\
+                 let pos = self.mem[self.pos + offset] as usize\n\
+                 self.mem[pos] = value\n\
+             }\n\
+             fn get_memory(self, index: usize) -> i64 { self.mem[index] }\n\
+         }\n\
+         let mut mem = Mem { mem: Vec::from([1, 2, 3, 4]) pos: 0 }\n\
+         mem.set_memory(1, 9)\n\
+         println(mem.get_memory(1))\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        !out.stderr.contains("index must be integer"),
+        "computed usize struct-field index should not reach the VM as a non-integer: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn repl_bindings_show_the_concrete_type_of_a_clone() {
+    let out = run_repl("let mut a = Vec::from([1, 2, 3])\nlet mut c = a.clone()\n%b\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("mut c: Vec<i64> = [1, 2, 3]"),
+        "a clone binding should retain its concrete type: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_explains_invalid_and_unsupported_reference_let_patterns() {
+    let out = run_repl("let mut &d = m\nlet mut value = 1\nlet &mut d = &mut value\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("reference patterns start with `&mut`, not `mut &`")
+            && out
+                .stderr
+                .contains("reference patterns in `let` are not supported yet")
+            && out.stderr.contains("let name = *value")
+            && !out.stderr.contains("let-pattern shape"),
+        "reference-pattern diagnostics should explain the valid alternatives: {}",
+        out.stderr
+    );
+}
+
+#[test]
 fn repl_info_does_not_inspect_session_state() {
     let out = run_repl(
         "let x = 9\n\

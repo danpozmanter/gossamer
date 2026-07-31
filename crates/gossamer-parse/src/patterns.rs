@@ -201,7 +201,7 @@ impl Parser<'_> {
         if !matches!(token.kind, TokenKind::Ident) {
             self.record(
                 ParseError::Unexpected {
-                    expected: "identifier in `mut` pattern".to_string(),
+                    expected: "an identifier after `mut`; reference patterns start with `&mut`, not `mut &`".to_string(),
                     found: self.peek_text(),
                 },
                 token.span,

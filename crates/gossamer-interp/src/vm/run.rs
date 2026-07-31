@@ -1592,12 +1592,7 @@ impl Vm {
                 Op::IndexSet { base, index, value } => {
                     let new_value = registers[value as usize].clone();
                     let i = &registers[index as usize];
-                    let raw = match i {
-                        Value::Int(n) => *n,
-                        _ => {
-                            return Err(RuntimeError::Type("index must be integer".to_string()));
-                        }
-                    };
+                    let raw = super::index_value(i)?;
                     crate::stdlib_builtins::iter::note_vec_element_replacement(
                         &registers[base as usize],
                         raw,
@@ -1900,10 +1895,7 @@ impl Vm {
                     index,
                     value,
                 } => {
-                    let idx = match &registers[index as usize] {
-                        Value::Int(n) => *n,
-                        _ => return Err(RuntimeError::Type("index must be integer".to_string())),
-                    };
+                    let idx = super::index_value(&registers[index as usize])?;
                     let len = match &registers[receiver as usize] {
                         Value::Array(items) => items.len() as i64,
                         Value::IntArray(data) => data.len() as i64,
@@ -1985,10 +1977,7 @@ impl Vm {
                     }
                 }
                 Op::VecRemove { receiver, index } => {
-                    let idx = match &registers[index as usize] {
-                        Value::Int(n) => *n,
-                        _ => return Err(RuntimeError::Type("index must be integer".to_string())),
-                    };
+                    let idx = super::index_value(&registers[index as usize])?;
                     let len = match &registers[receiver as usize] {
                         Value::Array(items) => items.len() as i64,
                         Value::IntArray(data) => data.len() as i64,
@@ -2041,12 +2030,7 @@ impl Vm {
                     receiver,
                     index,
                 } => {
-                    let idx = match &registers[index as usize] {
-                        Value::Int(n) => *n,
-                        _ => {
-                            return Err(RuntimeError::Type("index must be integer".to_string()));
-                        }
-                    };
+                    let idx = super::index_value(&registers[index as usize])?;
                     let len = match &registers[receiver as usize] {
                         Value::Array(items) => items.len() as i64,
                         Value::IntArray(data) => data.len() as i64,
@@ -2161,17 +2145,7 @@ impl Vm {
                     name_idx,
                     value,
                 } => {
-                    let idx = match &registers[index as usize] {
-                        Value::Int(n) if *n >= 0 => *n as usize,
-                        Value::Int(_) => {
-                            return Err(RuntimeError::Arithmetic(
-                                "negative index into sequence".to_string(),
-                            ));
-                        }
-                        _ => {
-                            return Err(RuntimeError::Type("index must be integer".to_string()));
-                        }
-                    };
+                    let idx = super::sequence_index(&registers[index as usize])?;
                     let field_name_arc = match &chunk.consts[name_idx as usize] {
                         Value::String(s) => s.clone(),
                         _ => {
@@ -2808,17 +2782,7 @@ impl Vm {
                     index,
                     name_idx,
                 } => {
-                    let idx = match &registers[index as usize] {
-                        Value::Int(n) if *n >= 0 => *n as usize,
-                        Value::Int(_) => {
-                            return Err(RuntimeError::Arithmetic(
-                                "negative index into sequence".to_string(),
-                            ));
-                        }
-                        _ => {
-                            return Err(RuntimeError::Type("index must be integer".to_string()));
-                        }
-                    };
+                    let idx = super::sequence_index(&registers[index as usize])?;
                     let Value::String(field_name) = &chunk.consts[name_idx as usize] else {
                         return Err(RuntimeError::Panic(
                             "IndexedFieldGet: name must be string const".to_string(),
@@ -2853,17 +2817,7 @@ impl Vm {
                     index,
                     name_idx,
                 } => {
-                    let idx = match &registers[index as usize] {
-                        Value::Int(n) if *n >= 0 => *n as usize,
-                        Value::Int(_) => {
-                            return Err(RuntimeError::Arithmetic(
-                                "negative index into sequence".to_string(),
-                            ));
-                        }
-                        _ => {
-                            return Err(RuntimeError::Type("index must be integer".to_string()));
-                        }
-                    };
+                    let idx = super::sequence_index(&registers[index as usize])?;
                     let Value::String(field_name) = &chunk.consts[name_idx as usize] else {
                         return Err(RuntimeError::Panic(
                             "IndexedFieldGetF64: name must be string const".to_string(),
@@ -2916,17 +2870,7 @@ impl Vm {
                     name_idx,
                     value_f,
                 } => {
-                    let idx = match &registers[index as usize] {
-                        Value::Int(n) if *n >= 0 => *n as usize,
-                        Value::Int(_) => {
-                            return Err(RuntimeError::Arithmetic(
-                                "negative index into sequence".to_string(),
-                            ));
-                        }
-                        _ => {
-                            return Err(RuntimeError::Type("index must be integer".to_string()));
-                        }
-                    };
+                    let idx = super::sequence_index(&registers[index as usize])?;
                     let field_name_arc = match &chunk.consts[name_idx as usize] {
                         Value::String(s) => s.clone(),
                         _ => {
@@ -2981,17 +2925,8 @@ impl Vm {
                     // compile-time allocated register slots,
                     // so the indexed accesses into `registers`
                     // and `floats` are always in bounds.
-                    let idx = match unsafe { registers.get_unchecked(index as usize) } {
-                        Value::Int(n) if *n >= 0 => *n as usize,
-                        Value::Int(_) => {
-                            return Err(RuntimeError::Arithmetic(
-                                "negative index into sequence".to_string(),
-                            ));
-                        }
-                        _ => {
-                            return Err(RuntimeError::Type("index must be integer".to_string()));
-                        }
-                    };
+                    let idx =
+                        super::sequence_index(unsafe { registers.get_unchecked(index as usize) })?;
                     let b = unsafe { registers.get_unchecked(base as usize) };
                     // Flat-f64 fast path: direct f64 load out
                     // of the flat data buffer, no `Value`
@@ -3041,17 +2976,8 @@ impl Vm {
                     offset,
                     value_f,
                 } => {
-                    let idx = match unsafe { registers.get_unchecked(index as usize) } {
-                        Value::Int(n) if *n >= 0 => *n as usize,
-                        Value::Int(_) => {
-                            return Err(RuntimeError::Arithmetic(
-                                "negative index into sequence".to_string(),
-                            ));
-                        }
-                        _ => {
-                            return Err(RuntimeError::Type("index must be integer".to_string()));
-                        }
-                    };
+                    let idx =
+                        super::sequence_index(unsafe { registers.get_unchecked(index as usize) })?;
                     // SAFETY: `value_f` and `base` are
                     // compile-allocated register slots.
                     let new_f = unsafe { *floats.get_unchecked(value_f as usize) };
@@ -3238,17 +3164,7 @@ impl Vm {
                     stride,
                     offset,
                 } => unsafe {
-                    let idx = match registers.get_unchecked(index as usize) {
-                        Value::Int(n) if *n >= 0 => *n as usize,
-                        Value::Int(_) => {
-                            return Err(RuntimeError::Arithmetic(
-                                "negative index into sequence".to_string(),
-                            ));
-                        }
-                        _ => {
-                            return Err(RuntimeError::Type("index must be integer".to_string()));
-                        }
-                    };
+                    let idx = super::sequence_index(registers.get_unchecked(index as usize))?;
                     let b = registers.get_unchecked(base as usize);
                     // Compiler-proven FloatArray: skip discriminant match.
                     let Value::FloatArray(fa_inner) = b else {
@@ -3269,17 +3185,7 @@ impl Vm {
                     offset,
                     value_f,
                 } => unsafe {
-                    let idx = match registers.get_unchecked(index as usize) {
-                        Value::Int(n) if *n >= 0 => *n as usize,
-                        Value::Int(_) => {
-                            return Err(RuntimeError::Arithmetic(
-                                "negative index into sequence".to_string(),
-                            ));
-                        }
-                        _ => {
-                            return Err(RuntimeError::Type("index must be integer".to_string()));
-                        }
-                    };
+                    let idx = super::sequence_index(registers.get_unchecked(index as usize))?;
                     let new_f = *floats.get_unchecked(value_f as usize);
                     let b = registers.get_unchecked_mut(base as usize);
                     let Value::FloatArray(fa_arc) = b else {

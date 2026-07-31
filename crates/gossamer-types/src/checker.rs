@@ -5268,6 +5268,9 @@ impl<'a> TypeChecker<'a> {
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = self.infer.resolve(self.tcx, *inner);
         }
+        if method == "clone" && args.is_empty() {
+            return resolved;
+        }
         if self.reject_collection_method_arity(resolved, method, args.len(), receiver.span) {
             return self.tcx.error_ty();
         }

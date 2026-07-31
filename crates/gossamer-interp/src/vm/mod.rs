@@ -1110,9 +1110,27 @@ fn index_get_checked(base: &Value, idx: &Value) -> RuntimeResult<Value> {
     index_get(base, idx)
 }
 
+pub(crate) fn index_value(idx: &Value) -> RuntimeResult<i64> {
+    match idx {
+        Value::Int(n) => Ok(*n),
+        Value::Uint(n) => i64::try_from(*n).map_err(|_| {
+            RuntimeError::Panic(format!(
+                "index {n} exceeds the maximum supported collection size"
+            ))
+        }),
+        _ => Err(RuntimeError::Type("index must be integer".to_string())),
+    }
+}
+
+pub(crate) fn sequence_index(idx: &Value) -> RuntimeResult<usize> {
+    let idx = index_value(idx)?;
+    usize::try_from(idx)
+        .map_err(|_| RuntimeError::Arithmetic("negative index into sequence".to_string()))
+}
+
 fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
     let raw = match idx {
-        Value::Int(n) => *n,
+        Value::Int(_) | Value::Uint(_) => index_value(idx)?,
         Value::LazyIter(id) => {
             let Some((start, end, inclusive, start_open, end_open)) =
                 crate::stdlib_builtins::iter::lazy_range_bounds(*id)

@@ -2,6 +2,7 @@
 
 ## 0.38.8 - REPL inspection, native builds, error messages, loop optimizations
 
+- Fix `usize` indexing through struct fields and computed expressions.
 - Make `%info`/`%i <target>` fall back to public-symbol substring search, avoid
   duplicate module entries, keep blank `%i` to the catalog directory, and
   remove keyword documentation from `%i`.

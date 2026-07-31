@@ -5,10 +5,10 @@ fn builtin_remove(args: &[Value]) -> RuntimeResult<Value> {
     ) {
         return builtin_map_remove(args);
     }
-    let idx = match args.get(1) {
-        Some(Value::Int(n)) => *n,
-        _ => return Err(RuntimeError::Type("index must be integer".to_string())),
-    };
+    let idx = args
+        .get(1)
+        .ok_or(RuntimeError::Type("index must be integer".to_string()))?;
+    let idx = crate::vm::index_value(idx)?;
     match args.first() {
         Some(Value::Array(parts)) => {
             let len = parts.len() as i64;
