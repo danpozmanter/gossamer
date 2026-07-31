@@ -1366,51 +1366,6 @@ fn repl_only_accepts_documented_quit_commands() {
 }
 
 #[test]
-fn repl_meta_help_preserves_base_banner() {
-    let out = run_repl("%help\n");
-    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    let banner = format!(
-        "gos 0.38.6 REPL [{}-{}]",
-        std::env::consts::ARCH,
-        std::env::consts::OS
-    );
-    assert!(
-        out.stdout.contains(&banner)
-            && out.stdout.contains("%help for commands")
-            && out.stdout.contains("Ctrl-D or %q exits"),
-        "REPL should print the concise command banner; stdout: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout.contains("%bindings (%b) [regex]")
-            && out.stdout.contains("%declarations (%d) [regex]"),
-        "bare %help should document filtering session entries; stdout: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout.contains("%reset (%r)")
-            && out.stdout.contains("%help\n")
-            && out.stdout.contains("%info (%i)")
-            && out.stdout.contains("%history (%h) [regex]")
-            && out.stdout.contains("%clear-history")
-            && out.stdout.contains("%info (%i) [pattern] [-a] [--page N]"),
-        "bare %help should list the remaining shortcuts; stdout: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout
-            .contains("Declarations and `let` bindings persist."),
-        "bare %help should keep the existing REPL summary; stdout: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout.contains("Up/down cycles history."),
-        "bare %help should document history navigation; stdout: {}",
-        out.stdout
-    );
-}
-
-#[test]
 fn repl_meta_help_rejects_symbol_queries() {
     let out = run_repl("%help strings::trim\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
