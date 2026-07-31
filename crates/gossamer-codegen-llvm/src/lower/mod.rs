@@ -352,7 +352,7 @@ fn llvm_vec_elem_bytes_from_local(body: &Body, tcx: &TyCtxt, dest_local: Local) 
         _ => return None,
     };
     let bytes = match tcx.kind(inner) {
-        Some(TyKind::Bool) => 1,
+        Some(TyKind::Bool | TyKind::Int(gossamer_types::IntTy::U8)) => 1,
         Some(TyKind::Char | TyKind::Int(_) | TyKind::Float(_) | TyKind::String) => 8,
         Some(TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. }) => {
             i64::from(tcx.slot_bytes(inner))

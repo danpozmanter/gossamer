@@ -1849,10 +1849,8 @@ mod tests {
         assert!(!v.is_null());
         let vec_ref = unsafe { &*v };
         assert_eq!(vec_ref.len, 4);
-        // Canonical byte-vec shape: one zero-extended i64 slot per
-        // byte, so compiled-tier word loads read the byte's value.
-        assert_eq!(vec_ref.elem_bytes, 8);
-        let got = unsafe { std::slice::from_raw_parts(vec_ref.ptr.as_ptr().cast::<i64>(), 4) };
+        assert_eq!(vec_ref.elem_bytes, 1);
+        let got = unsafe { std::slice::from_raw_parts(vec_ref.ptr.as_ptr(), 4) };
         assert_eq!(got, &[0x68, 0xFF, 0x00, 0x69]);
         unsafe { super::super::map::gos_rt_vec_free(v) };
 

@@ -55,10 +55,9 @@ pub unsafe extern "C" fn gos_rt_encoding_xml_escape(s: *const c_char) -> *mut c_
     })
 }
 
-/// Reads a `*mut GosVec` of `u8` into an owned `Vec<u8>`. A Gossamer
-/// `Vec<u8>` stores each byte as a zero-extended `i64` (8-byte slots)
-/// so `bytes[i]` indexing lowers through `gos_rt_vec_get_i64` - read
-/// each slot as an i64 and take the low byte.
+/// Reads a `*mut GosVec` of `u8` into an owned `Vec<u8>`. Canonical byte
+/// vectors use packed one-byte elements. The word-stride branch accepts legacy
+/// or foreign ABI values at runtime boundaries.
 pub(crate) unsafe fn gosvec_u8(v: *const super::vec::GosVec) -> Vec<u8> {
     if v.is_null() {
         return Vec::new();
@@ -75,15 +74,14 @@ pub(crate) unsafe fn gosvec_u8(v: *const super::vec::GosVec) -> Vec<u8> {
     words.iter().map(|&w| w as u8).collect()
 }
 
-/// Builds a Gossamer `Vec<u8>` (i64-per-element) from raw bytes.
+/// Builds a canonical packed Gossamer `Vec<u8>` from raw bytes.
 pub(crate) fn bytes_to_gosvec(bytes: &[u8]) -> *mut super::vec::GosVec {
-    let v = unsafe { super::vec::gos_rt_vec_with_capacity(8, bytes.len() as i64) };
+    let v = unsafe { super::vec::gos_rt_vec_with_capacity(1, bytes.len() as i64) };
     if !bytes.is_empty() {
         let vref = unsafe { &mut *v };
         if !vref.ptr.is_null() {
-            let dst = vref.ptr.as_ptr().cast::<i64>();
-            for (i, b) in bytes.iter().enumerate() {
-                unsafe { *dst.add(i) = i64::from(*b) };
+            unsafe {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), vref.ptr.as_ptr(), bytes.len());
             }
             vref.len = bytes.len() as i64;
         }
@@ -168,7 +166,7 @@ pub unsafe extern "C" fn gos_rt_encoding_base64_encode(
 
 /// `encoding::base64::decode(s)` - returns `Result<Vec<u8>,
 /// errors::Error>`. Ok payload is a `*mut GosVec` of bytes
-/// (i64-per-element); Err payload is a gos error handle.
+/// (packed bytes); Err payload is a gos error handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_encoding_base64_decode(s: *const c_char) -> i128 {
     ffi_entry!(0i128, {

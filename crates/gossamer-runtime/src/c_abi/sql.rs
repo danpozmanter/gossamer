@@ -1286,25 +1286,14 @@ pub unsafe extern "C" fn gos_rt_sql_row_get_blob(
     alloc_cstring(&bytes)
 }
 
-/// Blob column as a `[u8]` GosVec (one byte per i64 slot).
+/// Blob column as a canonical packed `[u8]` GosVec.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_sql_row_get_blob_vec(
     handle: i64,
     column: *const c_char,
 ) -> *mut super::vec::GosVec {
     let bytes = sql_row_get_blob(handle, &c_str_to_string(column));
-    let out = unsafe { super::vec::gos_rt_vec_with_capacity(8, bytes.len() as i64) };
-    // SAFETY: gos_rt_vec_with_capacity returns a live GosVec sized
-    // for `bytes.len()` 8-byte slots.
-    let vref = unsafe { &mut *out };
-    if !vref.ptr.is_null() {
-        let dst = vref.ptr.as_ptr().cast::<i64>();
-        for (idx, b) in bytes.iter().enumerate() {
-            unsafe { *dst.add(idx) = i64::from(*b) };
-        }
-        vref.len = bytes.len() as i64;
-    }
-    out
+    super::encoding::bytes_to_gosvec(&bytes)
 }
 
 #[unsafe(no_mangle)]
@@ -1519,18 +1508,7 @@ pub unsafe extern "C" fn gos_rt_sql_conn_copy_out_take(handle: i64) -> *mut supe
             .and_then(|m| m.remove(&handle))
             .unwrap_or_default()
     };
-    let out = unsafe { super::vec::gos_rt_vec_with_capacity(8, bytes.len() as i64) };
-    // SAFETY: gos_rt_vec_with_capacity returns a live GosVec sized
-    // for `bytes.len()` 8-byte slots.
-    let vref = unsafe { &mut *out };
-    if !vref.ptr.is_null() {
-        let dst = vref.ptr.as_ptr().cast::<i64>();
-        for (idx, b) in bytes.iter().enumerate() {
-            unsafe { *dst.add(idx) = i64::from(*b) };
-        }
-        vref.len = bytes.len() as i64;
-    }
-    out
+    super::encoding::bytes_to_gosvec(&bytes)
 }
 
 #[unsafe(no_mangle)]
@@ -2933,18 +2911,7 @@ pub unsafe extern "C" fn gos_rt_sql_native_value_blob_of(handle: i64) -> *mut su
 /// Materializes `bytes` as a one-byte-per-slot `[u8]` GosVec (the
 /// runtime's `[u8]` ABI), matching `gos_rt_sql_row_get_blob_vec`.
 fn bytes_to_gosvec(bytes: &[u8]) -> *mut super::vec::GosVec {
-    let out = unsafe { super::vec::gos_rt_vec_with_capacity(8, bytes.len() as i64) };
-    // SAFETY: gos_rt_vec_with_capacity returns a live GosVec sized for
-    // `bytes.len()` 8-byte slots.
-    let vref = unsafe { &mut *out };
-    if !vref.ptr.is_null() {
-        let dst = vref.ptr.as_ptr().cast::<i64>();
-        for (idx, b) in bytes.iter().enumerate() {
-            unsafe { *dst.add(idx) = i64::from(*b) };
-        }
-        vref.len = bytes.len() as i64;
-    }
-    out
+    super::encoding::bytes_to_gosvec(bytes)
 }
 
 #[cfg(test)]

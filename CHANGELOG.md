@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.38.8 - REPL inspection, native builds, error messages, loop optimizations
+## 0.38.8 - REPL inspection, native builds, error messages, optimizations/fixes
 
 - Fix `usize` indexing through struct fields and computed expressions.
 - Make `%info`/`%i <target>` fall back to public-symbol substring search, avoid
@@ -12,6 +12,9 @@
   builds remain fully static after Gossamer is installed.
 - Eliminate redundant allocations and missing drops in native
   `integer.to_string().chars()` loops.
+- Canonicalize native `Vec<u8>` values as packed bytes, fixing LLVM parity for
+  encoding, crypto, HTTP sessions, hashing, and file I/O.
+- Support reference and `name @ pattern` forms in interpreter `let` bindings.
 - Improve/tighten error message verbosity and clarity
 
 ## 0.38.7 - REPL standard-library discovery

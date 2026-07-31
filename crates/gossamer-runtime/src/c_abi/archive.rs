@@ -36,12 +36,7 @@ unsafe fn vec_u8(v: *const GosVec) -> Vec<u8> {
 }
 
 fn byte_vec(bytes: &[u8]) -> *mut GosVec {
-    let v = unsafe { gos_rt_vec_with_capacity(8, bytes.len() as i64) };
-    for &b in bytes {
-        let pv = i64::from(b);
-        unsafe { gos_rt_vec_push(v, std::ptr::addr_of!(pv).cast::<u8>()) };
-    }
-    v
+    super::encoding::bytes_to_gosvec(bytes)
 }
 
 /// Reads a `[(name: String, data: [u8])]` tuple-vec (16-byte inline

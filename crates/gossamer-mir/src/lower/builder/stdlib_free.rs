@@ -3627,8 +3627,8 @@ impl<'a> Builder<'a> {
         if let gossamer_types::TyKind::Array { elem, len } = self.tcx.kind_of(lt).clone() {
             self.coerce_array_to_vec(local, elem, len, span)
         } else if coerce_str_arg && matches!(self.tcx.kind_of(lt), gossamer_types::TyKind::String) {
-            let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-            let bytes_ty = self.tcx.intern(gossamer_types::TyKind::Vec(i64_ty));
+            let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+            let bytes_ty = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
             let dest = self.fresh(bytes_ty);
             let next = self.new_block(span);
             self.terminate(Terminator::Call {

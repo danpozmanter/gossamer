@@ -348,15 +348,8 @@ impl<'a> Builder<'a> {
             }
             "gos_rt_str_strip_prefix" | "gos_rt_str_strip_suffix" => self.option_string_adt_ty(),
             "gos_rt_str_as_bytes" => {
-                // Return shape is `Vec<i64>` - the runtime
-                // helper materialises one i64 slot per byte
-                // (zero-extended) so downstream `bytes[i]`
-                // indexing dispatches through the Slice/Vec
-                // path (`gos_rt_vec_get_ptr` + `gos_load`)
-                // instead of the flat-stride Place::Index
-                // walk that reads into the GosVec header.
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                self.tcx.intern(gossamer_types::TyKind::Vec(i))
+                let byte = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                self.tcx.intern(gossamer_types::TyKind::Vec(byte))
             }
             "gos_rt_http_response_raw_bytes" | "gos_rt_http_request_raw_body" => {
                 let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);

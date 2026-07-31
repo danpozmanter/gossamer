@@ -337,19 +337,47 @@ fn repl_bindings_show_the_concrete_type_of_a_clone() {
 }
 
 #[test]
-fn repl_explains_invalid_and_unsupported_reference_let_patterns() {
-    let out = run_repl("let mut &d = m\nlet mut value = 1\nlet &mut d = &mut value\n");
+fn repl_supports_reference_let_patterns_and_explains_invalid_syntax() {
+    let out = run_repl(
+        "let mut &d = m\n\
+         let value = 7\n\
+         let &shared = &value\n\
+         println(shared)\n\
+         let mut value = 9\n\
+         let &mut exclusive = &mut value\n\
+         println(exclusive)\n",
+    );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr
             .contains("reference patterns start with `&mut`, not `mut &`")
-            && out
-                .stderr
-                .contains("reference patterns in `let` are not supported yet")
-            && out.stderr.contains("let name = *value")
+            && !out.stderr.contains("does not yet support")
             && !out.stderr.contains("let-pattern shape"),
-        "reference-pattern diagnostics should explain the valid alternatives: {}",
+        "only invalid reference-pattern syntax should be diagnosed: {}",
         out.stderr
+    );
+    assert!(
+        out.stdout.contains("7\n9\n"),
+        "shared and mutable reference patterns should bind their inner values: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_supports_at_let_patterns() {
+    let out = run_repl(
+        "let mut whole @ inner = 7\n\
+         println(whole)\n\
+         println(inner)\n\
+         whole = 8\n\
+         println(whole)\n\
+         println(inner)\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("7\n7\n8\n7\n"),
+        "at-pattern bindings should be independent values: {}",
+        out.stdout
     );
 }
 

@@ -1,8 +1,7 @@
-// Defer Unwind Order (Simulated)
-// Gossamer's VM tier does not yet support the `defer` keyword.
-// This example implements the same LIFO-cleanup semantic explicitly
-// using a Vec<Fn()>-style deferred-actions stack so the correctness
-// of the ordering contract can be tested without the keyword.
+// Defer Unwind Order (Explicit Stack)
+// This example exercises the LIFO-cleanup contract through an explicit
+// Vec<Fn()>-style deferred-actions stack. Direct `defer` coverage lives in
+// the dedicated control-flow fixtures.
 
 fn run_with_cleanup(actions: [Fn() -> String]) -> [String] {
     // Execute actions in LIFO order, collecting their return values

@@ -278,15 +278,6 @@ pub unsafe extern "C" fn gos_rt_utf8_append_rune(
         let mut tmp = [0u8; 4];
         let n = ch.encode_utf8(&mut tmp).len();
         buf.extend_from_slice(&tmp[..n]);
-        let out = unsafe { super::vec::gos_rt_vec_with_capacity(8, buf.len() as i64) };
-        let vref = unsafe { &mut *out };
-        if !vref.ptr.is_null() {
-            let dst = vref.ptr.as_ptr().cast::<i64>();
-            for (idx, b) in buf.iter().enumerate() {
-                unsafe { *dst.add(idx) = i64::from(*b) };
-            }
-            vref.len = buf.len() as i64;
-        }
-        out
+        super::encoding::bytes_to_gosvec(&buf)
     })
 }

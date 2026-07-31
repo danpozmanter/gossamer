@@ -1,9 +1,9 @@
 // Mutex vs Channel Counter
 // Implement the same shared counter once with Mutex and once with
 // channels to compare concurrency correctness and deadlock risks.
-// Note: goroutine mutation of a captured &mut is not yet supported
-// in the tree-walker, so the mutex example runs single-threaded here
-// to avoid a hang on the VM backend.
+// The mutex example stays single-threaded because sharing a captured `&mut`
+// across goroutines would violate its exclusive-borrow contract. The channel
+// version demonstrates the safe concurrent ownership model.
 
 use std::sync::{Mutex, channel}
 use std::time

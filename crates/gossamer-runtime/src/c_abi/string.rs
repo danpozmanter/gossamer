@@ -866,31 +866,12 @@ pub unsafe extern "C" fn gos_rt_str_as_bytes(s: *const c_char) -> *mut GosVec {
         } else {
             unsafe { CStr::from_ptr(s).to_bytes().len() }
         };
-        // The returned Vec is consumed by `bytes[i]` indexing in
-        // user code, which the codegen lowers via the Vec/Slice
-        // dispatch (`gos_rt_vec_get_i64`) - every slot is i64-shaped.
-        // Materialise each byte as a zero-extended i64 so the load
-        // returns the byte's value rather than 8 packed buffer
-        // bytes. Use `gos_rt_vec_with_capacity` so the resulting
-        // header is `Box::from_raw`-compatible - the auto-emitted
-        // `gos_rt_vec_free` at scope-end relies on that
-        // provenance.
-        let v = unsafe { gos_rt_vec_with_capacity(8, len as i64) };
-        if v.is_null() {
-            return v;
-        }
-        if len > 0 && !s.is_null() {
-            unsafe {
-                let src = s.cast::<u8>();
-                let header = &mut *v;
-                let dst = header.ptr.cast::<i64>();
-                for i in 0..len {
-                    *dst.add(i) = i64::from(*src.add(i));
-                }
-                header.len = len as i64;
-            }
-        }
-        v
+        let bytes = if len == 0 || s.is_null() {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) }
+        };
+        super::encoding::bytes_to_gosvec(bytes)
     })
 }
 

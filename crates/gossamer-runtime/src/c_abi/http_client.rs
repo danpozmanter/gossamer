@@ -531,9 +531,8 @@ pub unsafe extern "C" fn gos_rt_http_request_body_str(req: *const GosHttpRequest
 /// Resolves the body region through `request_body_slice` - the
 /// same split `gos_rt_http_request_body_str` uses - so the h1
 /// lazy-buffer and h2/builder direct-body shapes both work. The
-/// returned vec is the canonical i64-slot-per-byte `Vec<u8>` shape
-/// (`bytes_to_gosvec`): compiled-tier for-loops and `bytes[i]`
-/// indexing both load word-width elements.
+/// returned vec is the canonical packed `Vec<u8>` shape produced by
+/// `bytes_to_gosvec`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_http_request_raw_body(
     req: *const GosHttpRequest,
@@ -770,9 +769,8 @@ pub unsafe extern "C" fn gos_rt_http_response_body(resp: *const GosHttpResponse)
 /// etc.). When the response was built without bytes (`text_new` /
 /// `json_new`), falls back to the c-string bytes.
 ///
-/// Representation contract: the returned vec is PACKED with
-/// `elem_bytes = 1` - one byte per element, not the canonical
-/// i64-per-element model `bytes_to_gosvec` produces. Every
+/// Representation contract: the returned vec is packed with
+/// `elem_bytes = 1`, matching `bytes_to_gosvec`. Every
 /// consumer must honor the stride: the codegen inline get/set
 /// fast paths and the `gos_rt_vec_*` element helpers (first /
 /// last / contains / count_of / index_of / loads / stores) are
@@ -2171,10 +2169,8 @@ mod tests {
         assert!(!v.is_null());
         let vec_ref = unsafe { &*v };
         assert_eq!(vec_ref.len, 4);
-        // Canonical byte-vec shape: one zero-extended i64 slot per
-        // byte, so compiled-tier word loads read the byte's value.
-        assert_eq!(vec_ref.elem_bytes, 8);
-        let got = unsafe { std::slice::from_raw_parts(vec_ref.ptr.as_ptr().cast::<i64>(), 4) };
+        assert_eq!(vec_ref.elem_bytes, 1);
+        let got = unsafe { std::slice::from_raw_parts(vec_ref.ptr.as_ptr(), 4) };
         assert_eq!(got, &[0x68, 0xFF, 0x00, 0x69]);
         unsafe { crate::c_abi::map::gos_rt_vec_free(v) };
     }

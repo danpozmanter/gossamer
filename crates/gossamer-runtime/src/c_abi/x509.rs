@@ -21,7 +21,7 @@ use rustls::pki_types::{CertificateDer, CertificateRevocationListDer, ServerName
 use sha2::{Digest, Sha256};
 
 use super::string::alloc_cstring;
-use super::vec::{GosVec, gos_rt_result_new, gos_rt_vec_push, gos_rt_vec_with_capacity};
+use super::vec::{GosVec, gos_rt_result_new, gos_rt_vec_push};
 
 unsafe fn cstr<'a>(p: *const c_char) -> &'a str {
     if p.is_null() {
@@ -34,12 +34,7 @@ unsafe fn cstr<'a>(p: *const c_char) -> &'a str {
 }
 
 fn byte_vec(bytes: &[u8]) -> *mut GosVec {
-    let v = unsafe { gos_rt_vec_with_capacity(8, bytes.len() as i64) };
-    for &b in bytes {
-        let pv = i64::from(b);
-        unsafe { gos_rt_vec_push(v, std::ptr::addr_of!(pv).cast::<u8>()) };
-    }
-    v
+    super::encoding::bytes_to_gosvec(bytes)
 }
 
 // STRING-typed: the vec owns each element, so `gos_rt_vec_free`

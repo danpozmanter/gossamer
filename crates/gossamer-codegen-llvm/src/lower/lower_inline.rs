@@ -405,7 +405,19 @@ impl<'a> Lowerer<'a> {
             self.tcx.kind(elem),
             Some(
                 TyKind::Char
-                    | TyKind::Int(_)
+                    | TyKind::Int(
+                        IntTy::I8
+                            | IntTy::I16
+                            | IntTy::I32
+                            | IntTy::I64
+                            | IntTy::I128
+                            | IntTy::Isize
+                            | IntTy::U16
+                            | IntTy::U32
+                            | IntTy::U64
+                            | IntTy::U128
+                            | IntTy::Usize
+                    )
                     | TyKind::Float(FloatTy::F64)
                     | TyKind::Vec(_)
                     | TyKind::Slice(_)
@@ -430,7 +442,10 @@ impl<'a> Lowerer<'a> {
             Some(TyKind::Vec(e) | TyKind::Slice(e)) => *e,
             _ => return false,
         };
-        matches!(self.tcx.kind(elem), Some(TyKind::Bool))
+        matches!(
+            self.tcx.kind(elem),
+            Some(TyKind::Bool | TyKind::Int(IntTy::U8))
+        )
     }
 
     /// True when `op` is a Vec/Slice whose element is itself a

@@ -126,6 +126,22 @@ impl<'tcx> FnBuilder<'tcx> {
                 }
                 Ok(())
             }
+            HirPatKind::At { name, sub, .. } => {
+                self.bind_pattern_locals_ex(sub, init_reg, consume)?;
+                let bound = self.alloc_reg();
+                self.emit(Op::Move {
+                    dst: bound,
+                    src: init_reg,
+                });
+                self.bind_local(
+                    &name.name,
+                    TypedReg {
+                        reg: bound,
+                        kind: RegKind::Value,
+                    },
+                );
+                Ok(())
+            }
             HirPatKind::Or(alts) => {
                 // Irrefutable let: the alternatives jointly cover the
                 // value's type, so exactly one matches at runtime and
@@ -184,9 +200,11 @@ impl<'tcx> FnBuilder<'tcx> {
                 Ok(())
             }
             HirPatKind::Wildcard | HirPatKind::Literal(_) | HirPatKind::Rest => Ok(()),
-            HirPatKind::Ref { .. } => Err(RuntimeError::Unsupported(
-                "reference patterns in `let` are not supported yet; bind the reference directly with `let name = value`, or dereference it in the initializer with `let name = *value`",
-            )),
+            // VM references preserve the underlying value representation, so
+            // destructuring `&pat` or `&mut pat` binds exactly as `pat` does.
+            // Match patterns and the native MIR lowerer use the same peeling
+            // rule.
+            HirPatKind::Ref { inner, .. } => self.bind_pattern_locals_ex(inner, init_reg, consume),
             _ => Err(RuntimeError::Unsupported(
                 "this `let` pattern is not supported by the VM compiler",
             )),

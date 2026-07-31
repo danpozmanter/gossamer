@@ -65,12 +65,12 @@ pub unsafe extern "C" fn gos_rt_gzip_decode(data: *const c_char) -> *mut c_char 
 // GosVec payload, disc 1 Err with a gos error handle).
 // ---------------------------------------------------------------
 
-/// Reads a Gossamer `Vec<u8>` (i64-per-element) into owned bytes.
+/// Reads a Gossamer `Vec<u8>` into owned bytes.
 unsafe fn gosvec_u8_to_vec(v: *const super::vec::GosVec) -> Vec<u8> {
     unsafe { super::encoding::gosvec_u8(v) }
 }
 
-/// Wraps `bytes` in an `Ok(Vec<u8>)` `GosResult` (i64-per-element).
+/// Wraps `bytes` in an `Ok(Vec<u8>)` `GosResult`.
 fn ok_bytes_result(bytes: &[u8]) -> i128 {
     let v = super::encoding::bytes_to_gosvec(bytes);
     unsafe { super::vec::gos_rt_result_new(0, v as i64) }
