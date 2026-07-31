@@ -2,7 +2,7 @@
 // (RFC 6455). An echo server is bound on a goroutine via
 // `websocket::serve`; a `websocket::connect` client then sends a text
 // message, `recv`s the echo, and verifies it. All three tiers - the
-// bytecode VM (`gos run`), the Cranelift JIT, and the LLVM AOT runtime
+// bytecode VM (`gos`), the Cranelift JIT, and the LLVM AOT runtime
 // (`gos build` / `--release`) - drive the same `gossamer_ws` framing
 // engine, so the output is bit-identical.
 //

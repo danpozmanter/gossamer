@@ -454,16 +454,16 @@ fn main() {
     )
     .unwrap();
 
-    // gos run (bytecode VM + Cranelift JIT): output only - RSS is dominated by
+    // gos (bytecode VM + Cranelift JIT): output only - RSS is dominated by
     // the interpreter baseline, but a per-iteration leak would still crash /
     // OOM, and this exercises the JIT single-slot / field-free paths.
     let run = Command::new(gos_bin())
         .arg(&source)
         .output()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     assert!(
         run.status.success() && String::from_utf8_lossy(&run.stdout).contains("total = 5700000"),
-        "gos run failed: stdout={} stderr={}",
+        "gos failed: stdout={} stderr={}",
         String::from_utf8_lossy(&run.stdout),
         String::from_utf8_lossy(&run.stderr)
     );

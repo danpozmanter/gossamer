@@ -34,7 +34,7 @@ pub(crate) fn init(id: &str) -> Result<()> {
     };
     if scaffolded {
         println!("init: created project.toml + src/main.gos for {project}");
-        println!("hint: try `gos run` or `gos test`");
+        println!("hint: try `gos` or `gos test`");
     } else {
         println!("init: created project.toml for {project}");
     }

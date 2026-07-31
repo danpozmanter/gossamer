@@ -27,7 +27,7 @@ COPY --from=build /src/target/x86_64-unknown-linux-musl/release/gos /usr/local/b
 # `gos build` resolves the runtime archive as <bin>/../lib/; ship the musl
 # archive matching the musl `gos`. NOTE: the distroless-static base has no C
 # compiler or linker, so `gos build` cannot link here - this image supports
-# `gos run` / `check` / `test`. Use a toolchain-equipped image for `gos build`.
+# `gos` / `check` / `test`. Use a toolchain-equipped image for `gos build`.
 COPY --from=build /src/target/x86_64-unknown-linux-musl/release/libgossamer_runtime.a /usr/local/lib/libgossamer_runtime.a
 COPY LICENSE /LICENSE
 USER nonroot:nonroot

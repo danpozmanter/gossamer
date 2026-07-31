@@ -1,8 +1,8 @@
 # Running Gossamer
 
-Once `gos` is on your `PATH`, every subcommand takes either a
-`.gos` source file, a project directory containing
-`project.toml`, or no argument at all (drops into the REPL).
+Once `gos` is on your `PATH`, run a program with `gos FILE [ARGS...]`.
+`FILE` may be a `.gos` source file or a project directory containing
+`project.toml`; `gos` with no arguments drops into the REPL.
 
 ## Cheat-sheet
 
@@ -10,8 +10,8 @@ Once `gos` is on your `PATH`, every subcommand takes either a
 |---------|--------------|
 | `gos new example.com/app --path ./app` | Scaffold a project |
 | `gos init example.com/app` | Scaffold just `project.toml` in the CWD |
-| `gos run src/main.gos` | Register-based bytecode VM with in-process Cranelift JIT |
-| `gos run --no-jit src/main.gos` | Same VM, pure bytecode dispatch (JIT off) |
+| `gos src/main.gos` | Register-based bytecode VM with in-process Cranelift JIT |
+| `gos --no-jit src/main.gos` | Same VM, pure bytecode dispatch (JIT off) |
 | `gos check src/main.gos` | Type-check + exhaustiveness |
 | `gos build src/main.gos` | Native build via LLVM AOT - lowers through MIR + LLVM (`llc -O0`), then links the user's object against the `gossamer-runtime` staticlib into an ELF/Mach-O/PE. |
 | `gos build --release src/main.gos` | Optimised native build - full LLVM `opt -O3 | llc -O3` pipeline, static musl on Linux. |
@@ -37,7 +37,7 @@ Once `gos` is on your `PATH`, every subcommand takes either a
 
 ## Entry file
 
-`gos run file.gos` and `gos build file.gos` accept a file with no
+`gos file.gos [ARGS...]` and `gos build file.gos` accept a file with no
 `fn main`: bare statements at the top of the entry file become the
 body of an implicit `fn main()`. So a one-line `println!("Hello
 World")` file runs as-is. See
@@ -48,7 +48,7 @@ entry file is `src/main.gos` by convention, or whatever
 `gos watch` is a restart-based development supervisor for HTTP services. It
 watches the project, its transitive local path dependencies, and manifests;
 after an edit it validates the revision in-process, gracefully terminates the
-old `gos run` child, waits for the port to be released, and starts a
+old `gos` child, waits for the port to be released, and starts a
 replacement. An invalid edit leaves the last known-good service running. It
 intentionally does not preserve in-memory state, WebSocket connections, or
 streaming responses, and is not a production zero-downtime deployment

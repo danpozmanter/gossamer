@@ -31,9 +31,9 @@ card:
   `doc` lists a file's items. This card ships as its
   `gossamer://skill-card` resource.
 - Without MCP: `gos check FILE` (rustc-class diagnostics with
-  did-you-mean), `gos run FILE`, `gos explain CODE`, `gos doc FILE`.
+  did-you-mean), `gos FILE`, `gos explain CODE`, `gos doc FILE`.
 - `gos check` is necessary, not sufficient - semantics are proven by
-  `gos run`, and compiled behavior by `gos build`.
+  `gos`, and compiled behavior by `gos build`.
 
 ## 3. Cheat sheet
 
@@ -340,7 +340,7 @@ are callable as methods/free functions and materialize results.
   is non-owning: `strong.downgrade() -> Weak<T>`,
   `w.upgrade() -> Option<T>`; `runtime::collect_cycles()` runs the
   collector on demand. TRAP: a `Weak` into a member of a genuinely
-  strong cycle reads `Some` under `gos run` but `None` under `gos
+  strong cycle reads `Some` under `gos` but `None` under `gos
   build` - break real cycles, cross-check with `gos build`.
 
 ## 11. Testing
@@ -442,9 +442,9 @@ entry file may carry top-level statements.
 
 ## 14. Sharp edges and tier notes
 
-The surface runs bit-identically across the VM (`gos run`/`gos
+The surface runs bit-identically across the VM (`gos`/`gos
 test`), the Cranelift JIT, and LLVM AOT (`gos build`); a divergence
-you can reduce is a bug - check against both `gos run` and `gos
+you can reduce is a bug - check against both `gos` and `gos
 build`. Known sharp edges:
 
 - `+` on `String` copies; heavy assembly wants `bytes::Builder` or a
@@ -462,8 +462,8 @@ build`. Known sharp edges:
 
 ## 15. The `gos` toolchain
 
-Bare `gos` opens the REPL. In a project, `gos run` / `gos build`
-resolve the entry themselves.
+Bare `gos` opens the REPL. `gos FILE [ARGS...]` runs a source file; in a
+project, `gos .` / `gos build` resolve the entry themselves.
 
 The REPL starts with `gos <version> REPL [<architecture>-<os>]` and uses the
 `>>>` prompt. Expression output is the value only, with no numbered markers.

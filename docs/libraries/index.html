@@ -2091,9 +2091,9 @@ dependent packages.</p>
 </code></pre></div>
 <p>A module reaches another by a navigation path: <code>crate::other::item</code>
 (rooted at the package), <code>super::other::item</code> (one level up), or
-<code>self::child::item</code> (a child of the current module). <code>gos run</code>,
+<code>self::child::item</code> (a child of the current module). <code>gos</code>,
 <code>gos build</code>, and <code>gos check</code> all assemble the package the same way, so
-a directory argument (<code>gos run my_project</code>) or <code>gos check src/</code> checks
+a directory argument (<code>gos my_project</code>) or <code>gos check src/</code> checks
 the whole package as one unit.</p>
 <h2 id="unit-integration-tests">Unit + integration tests<a class="headerlink" href="#unit-integration-tests" title="Permanent link">&para;</a></h2>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1">// inside src/widget.gos</span>
@@ -2147,7 +2147,7 @@ functions are <code>use</code>-able from <code>.gos</code> source like any other
 opaque handles, byte buffers, callbacks); a panic in a binding is
 caught and returned as <code>Result::Err</code>. This is the <strong>only</strong> FFI surface
 - a source-level <code>extern "C"</code> item form is rejected (<code>GP0016</code>) and the
-<code>extern</code> keyword stays reserved. Calls run end-to-end under <code>gos run</code>
+<code>extern</code> keyword stays reserved. Calls run end-to-end under <code>gos</code>
 and link into <code>gos build</code> binaries; direct compiled-tier dispatch into
 binding thunks lands incrementally as more binding shapes are wired.
 See the SPEC (section 12 in the repository root),

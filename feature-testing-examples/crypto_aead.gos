@@ -2,7 +2,7 @@
 // and crypto::ed25519. These were previously bound only in the
 // bytecode VM and failed to link under `gos build`. Each call now
 // routes through a `gos_rt_crypto_*` shim so the output matches
-// `gos run` bit-identically.
+// `gos` bit-identically.
 //
 // AEAD uses a fixed key / nonce / aad so the ciphertext is
 // deterministic across tiers and printable as hex; the round-trip

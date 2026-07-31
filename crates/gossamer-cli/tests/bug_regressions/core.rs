@@ -1,6 +1,6 @@
 // Regression tests covering shapes that previously crashed,
 // mis-dispatched, or surfaced wrong values. Each `#[test]` runs
-// a small Gossamer program through `gos run` (or `gos build`)
+// a small Gossamer program through `gos` (or `gos build`)
 // and asserts the user-visible output. A regression in any of
 // the underlying fixes turns the test red. Tests are named
 // after the property under test, not after a bug number - the
@@ -64,7 +64,7 @@ fn run_vm(src: &Path) -> (String, String, Option<i32>) {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     run_with_timeout(child)
 }
 

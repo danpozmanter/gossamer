@@ -15,7 +15,7 @@
 //! Bytecode-VM builtins for the stateless string/crypto surface of
 //! `std::http::cookie`, `std::http::csrf`, and `std::http::session`.
 //! These mirror the compiled-tier shims in
-//! `gossamer-runtime/src/c_abi/http_security.rs` so `gos run`,
+//! `gossamer-runtime/src/c_abi/http_security.rs` so `gos`,
 //! Cranelift, and LLVM produce bit-identical output.
 //!
 //! `cookie::*` and `csrf::*` delegate to `gossamer_std::http_{cookie,

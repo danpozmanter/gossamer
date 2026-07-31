@@ -7,7 +7,7 @@ server round-trip, no install. It powers the runnable examples on the
 [Tour of Gossamer](https://danpozmanter.github.io/gossamer/tour/), and the standalone
 Try Gossamer editor.
 
-Output is bit-identical to native `gos run` / `gos build`.
+Output is bit-identical to native `gos` / `gos build`.
 
 ## What runs
 
@@ -32,7 +32,7 @@ completion**:
   `while let Some(v) = rx.recv()`, works.
 - Programs that need two goroutines to **interleave mid-run** (unbuffered
   rendezvous, ping-pong, `select` over live producers) do not - run those with
-  native `gos run`.
+  native `gos`.
 
 This is the same limit every language has on single-threaded WebAssembly.
 Gossamer reports it as a clean panic rather than freezing the tab.
@@ -40,7 +40,7 @@ Gossamer reports it as a clean panic rather than freezing the tab.
 ## What is omitted (the browser sandbox)
 
 A browser tab cannot touch the filesystem, open sockets, or spawn processes, so
-these are unavailable in the playground. They work normally in native `gos run`
+these are unavailable in the playground. They work normally in native `gos`
 and `gos build`:
 
 | Area | In the browser |

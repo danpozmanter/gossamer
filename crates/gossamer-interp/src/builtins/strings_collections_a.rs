@@ -500,7 +500,7 @@ fn builtin_str_slice(args: &[Value]) -> RuntimeResult<Value> {
     let end = args.get(2).and_then(value_to_int).unwrap_or(0);
     let len = s.len() as i64;
     // Match the compiled `gos_rt_str_slice` bounds policy + message
-    // verbatim so `gos run` and `gos build` agree byte-for-byte.
+    // verbatim so `gos` and `gos build` agree byte-for-byte.
     if start < 0 || end < 0 || start > end || end > len {
         return Ok(slice_err(format!(
             "slice: range [{start}, {end}) out of bounds for length {len}"

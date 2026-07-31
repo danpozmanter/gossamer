@@ -22,7 +22,7 @@ fn capture_writer(text: &str) {
 
 fn run_main(source: &str) -> String {
     // Mirror the driver: synthesize `#[derive]` / serde impls before
-    // parsing so `<Type>::eq` resolves exactly as it does under `gos run`.
+    // parsing so `<Type>::eq` resolves exactly as it does under `gos`.
     let augmented = gossamer_parse::autoderive::augment_source(source);
     let mut map = SourceMap::new();
     let file = map.add_file("struct_eq.gos", augmented.clone());

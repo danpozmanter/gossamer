@@ -19,7 +19,7 @@ fn run_executes_every_terminating_example() {
 }
 
 /// End-to-end smoke test of the echo example. Spawns
-/// `gos run examples/web_server.gos` in a child process, connects,
+/// `gos examples/web_server.gos` in a child process, connects,
 /// drives a real HTTP/1.1 request, and inspects the response.
 ///
 /// The example hardcodes port 8080. If that port is already bound
@@ -49,7 +49,7 @@ fn web_server_example_binds_and_serves_real_requests() {
     {
         Ok(c) => c,
         Err(err) => {
-            eprintln!("skipping - could not spawn gos run: {err}");
+            eprintln!("skipping - could not spawn gos: {err}");
             return;
         }
     };

@@ -1,6 +1,6 @@
 //! Restart-based development supervisor for long-running Gossamer services.
 //!
-//! `gos watch` owns a child `gos run` process. On each relevant source or
+//! `gos watch` owns a child `gos` process. On each relevant source or
 //! manifest change it validates the next revision, gracefully stops the
 //! current child, then starts a replacement. A failed revision leaves the last
 //! known-good service running.

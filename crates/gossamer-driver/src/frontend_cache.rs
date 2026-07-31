@@ -1,6 +1,6 @@
 //! Infrastructure hook for per-source frontend caching.
 //!
-//! `gos run` / `gos check` / `gos test` currently re-parse and
+//! `gos` / `gos check` / `gos test` currently re-parse and
 //! re-typecheck every `.gos` source on every invocation. This
 //! module lays the groundwork for skipping that work when the
 //! source hasn't changed: it computes a content-addressed cache

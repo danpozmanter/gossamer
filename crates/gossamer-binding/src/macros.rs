@@ -109,7 +109,7 @@ macro_rules! register_module {
 
     // Backwards-compatible form without `symbol_prefix:` - only
     // the interpreter thunks are emitted, so binding fns from
-    // these modules are reachable from `gos run` but not
+    // these modules are reachable from `gos` but not
     // `gos build`. Documented as the legacy path; new bindings
     // should specify `symbol_prefix:` explicitly.
     (

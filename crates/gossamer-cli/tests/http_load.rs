@@ -13,7 +13,7 @@
 //! `wrk_loadgen.sh` example at the bottom of this file.
 //!
 //! The test deliberately uses the in-process server (the same
-//! one wired into the `gos run` interpreter and the compiled
+//! one wired into the `gos` interpreter and the compiled
 //! tier) because:
 //! - It avoids needing `gos build --release` machinery in
 //!   `gossamer-cli`'s test deps.

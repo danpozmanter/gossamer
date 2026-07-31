@@ -4,7 +4,7 @@ This page is the source-facing reference for inherent methods on core
 types such as `String`, `Vec`, `HashMap`, `HashSet`, `Option`, and
 `Result`.
 
-Items listed here resolve in `gos run` (interpreter), forced-JIT execution,
+Items listed here resolve in `gos` (interpreter), forced-JIT execution,
 and `gos build [--release]` (compiled) unless a row explicitly says
 otherwise. The implementation contract is that interpreter builtins, MIR
 lowering, compiled runtime ABI, docs, and parity tests all agree.

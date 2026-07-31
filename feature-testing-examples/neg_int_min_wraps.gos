@@ -1,5 +1,5 @@
 // Negating `i64::MIN` wraps to itself rather than overflowing, and the
-// result is bit-identical across the bytecode VM (`gos run` / `gos test`),
+// result is bit-identical across the bytecode VM (`gos` / `gos test`),
 // the Cranelift JIT, and the LLVM AOT tier (`gos build`). `2^63` wraps to
 // `i64::MIN`; negating it wraps back to `i64::MIN`.
 fn main() {

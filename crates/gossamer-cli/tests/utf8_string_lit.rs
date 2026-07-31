@@ -8,7 +8,7 @@
 //! first surfaced with an em dash; any 3-byte code point exercises
 //! the same path, so these tests use the euro sign (`€`, U+20AC,
 //! 3 UTF-8 bytes). Each test asserts that the same source produces
-//! byte-identical stdout across `gos run` (VM), `gos build`
+//! byte-identical stdout across `gos` (VM), `gos build`
 //! (Cranelift), and `gos build --release` (LLVM) and matches the
 //! expected UTF-8 output.
 
@@ -71,7 +71,7 @@ fn run_vm(src: &Path) -> (String, String, Option<i32>) {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     run_with_timeout(child)
 }
 

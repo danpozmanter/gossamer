@@ -7,7 +7,7 @@
 //!
 //! These cover the broken features found in the 0.9.0 LLVM-tier
 //! audit. Each test uses an API that has been verified to work in
-//! the bytecode VM (`gos run`), so a red light here means the
+//! the bytecode VM (`gos`), so a red light here means the
 //! LLVM-tier wiring has fallen behind.
 
 #![allow(missing_docs)]

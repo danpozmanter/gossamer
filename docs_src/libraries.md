@@ -127,9 +127,9 @@ pub fn greet(name: &String) -> String {
 
 A module reaches another by a navigation path: `crate::other::item`
 (rooted at the package), `super::other::item` (one level up), or
-`self::child::item` (a child of the current module). `gos run`,
+`self::child::item` (a child of the current module). `gos`,
 `gos build`, and `gos check` all assemble the package the same way, so
-a directory argument (`gos run my_project`) or `gos check src/` checks
+a directory argument (`gos my_project`) or `gos check src/` checks
 the whole package as one unit.
 
 ## Unit + integration tests
@@ -200,7 +200,7 @@ Values cross the boundary through the typed `gossamer-binding` ABI
 opaque handles, byte buffers, callbacks); a panic in a binding is
 caught and returned as `Result::Err`. This is the **only** FFI surface
 - a source-level `extern "C"` item form is rejected (`GP0016`) and the
-`extern` keyword stays reserved. Calls run end-to-end under `gos run`
+`extern` keyword stays reserved. Calls run end-to-end under `gos`
 and link into `gos build` binaries; direct compiled-tier dispatch into
 binding thunks lands incrementally as more binding shapes are wired.
 See the SPEC (section 12 in the repository root),

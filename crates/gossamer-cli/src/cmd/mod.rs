@@ -44,7 +44,7 @@ const VM_STACK_BYTES: usize = gossamer_interp::VM_THREAD_STACK_BYTES;
 /// ([`VM_STACK_BYTES`]) and returns its result, so the host's default
 /// main-thread stack never bounds a Gossamer program's recursion
 /// depth. A panic inside `f` is propagated to the caller unchanged.
-/// Used by every VM-execution entry point (`gos run` / `test` /
+/// Used by every VM-execution entry point (`gos` / `test` /
 /// `bench` / the REPL) and by the comptime fold, whose bytecode-VM
 /// evaluation runs on the `build` / `check` main thread.
 pub(crate) fn with_vm_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
@@ -57,7 +57,7 @@ pub(crate) fn with_vm_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 's
             // otherwise, so a program that spawns no goroutines runs the
             // bytecode VM and in-process JIT with no handler at all - a hard
             // fault inside JIT-compiled code (or a native stack overflow) then
-            // exits opaquely. Installing here gives every `gos run` / `test`
+            // exits opaquely. Installing here gives every `gos` / `test`
             // / `bench` / REPL execution the stack-overflow backstop and the
             // JIT fault breadcrumb. Idempotent and process-wide-safe.
             gossamer_runtime::stack_guard::install_stack_guard();
@@ -67,7 +67,7 @@ pub(crate) fn with_vm_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 's
             // - which grows the real OS stack rather than the heap frame pool
             // MAX_CALL_DEPTH bounds - raises a clean GX0008 before the guard
             // page instead of faulting opaquely. The goroutine workers arm
-            // their own; this covers the main `gos run` / `test` / `bench`
+            // their own; this covers the main `gos` / `test` / `bench`
             // execution thread.
             gossamer_coro::arm_stack_guard(VM_STACK_BYTES - gossamer_coro::STACK_GUARD_MARGIN);
             f()
@@ -80,7 +80,7 @@ pub(crate) fn with_vm_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 's
 /// Runs `f` directly on the calling (process main) thread, installing the
 /// native fault handler and arming the recursion guard for this thread's
 /// actual stack size rather than the large [`VM_STACK_BYTES`] reserve a
-/// spawned thread gets. Used by `gos run --main-thread` so native
+/// spawned thread gets. Used by `gos --main-thread` so native
 /// libraries that mandate the process main thread (GLFW / Cocoa / Metal
 /// on macOS, called through `[rust-bindings]`) can create windows and
 /// pump their event loop. The trade-off is the OS default main-thread

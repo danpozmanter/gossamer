@@ -114,7 +114,7 @@ fn run_vm_timed(src: &Path) -> TimedOutput {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     timed_output(start, out)
 }
 

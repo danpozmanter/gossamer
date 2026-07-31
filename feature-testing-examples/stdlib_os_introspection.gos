@@ -1,6 +1,6 @@
 // os::arch() / os::family() are flagship introspection functions
 // that had no compiled-tier shim. The native build's runtime archive
-// is compiled for the same target as the host running `gos run`, so
+// is compiled for the same target as the host running `gos`, so
 // all three tiers report the identical arch/family string.
 
 use std::os

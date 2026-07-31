@@ -2,7 +2,7 @@
 // unsigned by their declared type, so a value whose i64 bit pattern is
 // negative still reads as a large positive decimal. Signed `i64` keeps
 // signed comparison / arithmetic-shift / Display. Output is identical on
-// the bytecode VM (`gos run`), Cranelift JIT, and LLVM AOT tier (`gos build`).
+// the bytecode VM (`gos`), Cranelift JIT, and LLVM AOT tier (`gos build`).
 fn main() {
     let big: u64 = 18000000000000000000
     let small: u64 = 5

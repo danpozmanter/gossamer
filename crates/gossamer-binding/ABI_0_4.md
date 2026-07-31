@@ -280,7 +280,7 @@ JSON; the driver parses it. New JSON tags: `"bytes"`, `"map"`,
 
 ### Tier coverage matrix
 
-| Type | `gos run` (interp) | `gos build` (cranelift) | `gos build --release` (LLVM) |
+| Type | `gos` (interp) | `gos build` (cranelift) | `gos build --release` (LLVM) |
 |---|---|---|---|
 | Bytes        | works | works (typed `Vec<i64>` lowering) | works |
 | Map<K, V>    | works | works | works |

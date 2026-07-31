@@ -6,7 +6,7 @@
 // method, `dispatch(&self, op, h) -> i64`; all complex data flows
 // through the sql::native_* side-channel helpers keyed by the token
 // `h`. This must produce byte-identical output on the bytecode VM
-// (gos run), the Cranelift JIT, and the LLVM AOT tier (gos build /
+// (gos), the Cranelift JIT, and the LLVM AOT tier (gos build /
 // gos build --release).
 
 use std::database::sql

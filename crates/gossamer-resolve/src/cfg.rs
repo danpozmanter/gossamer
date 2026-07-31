@@ -9,7 +9,7 @@
 //!
 //! The active flags and key/value pairs come from the compilation
 //! host; `test` is never considered active from `gos check` /
-//! `gos run` / `gos build` (there is no separate test build path in
+//! `gos` / `gos build` (there is no separate test build path in
 //! the toolchain today, so `#[cfg(test)]` items are dropped).
 //!
 //! Unknown or malformed cfg expressions default to `true` so a

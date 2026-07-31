@@ -1344,7 +1344,7 @@ fn serve_builder_echo(listener: &TcpListener, count: usize) {
 }
 
 /// Tier-parity sentinel for the chained client builder: the same
-/// source must produce byte-identical stdout under `gos run` (VM)
+/// source must produce byte-identical stdout under `gos` (VM)
 /// and a `gos build` native binary, with the chained header + body
 /// honored and a transport failure surfacing as `Err` on both tiers.
 #[test]
@@ -1381,10 +1381,10 @@ fn vm_and_native_client_builder_chain_outputs_match() {
     let vm = Command::new(gos_bin())
         .arg(&source_path)
         .output()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     assert!(
         vm.status.success(),
-        "gos run failed: {}",
+        "gos failed: {}",
         String::from_utf8_lossy(&vm.stderr)
     );
 

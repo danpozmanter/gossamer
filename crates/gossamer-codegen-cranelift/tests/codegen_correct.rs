@@ -4,7 +4,7 @@
 //! a sibling `<name>.expected` containing the expected stdout, and
 //! runs the program three ways:
 //!
-//! 1. `gos run <name>.gos` (bytecode VM).
+//! 1. `gos <name>.gos` (bytecode VM).
 //! 2. `gos build <name>.gos` + execute (Cranelift debug).
 //! 3. `gos build --release <name>.gos` + execute (LLVM with
 //!    Cranelift fallback).
@@ -43,7 +43,7 @@ fn correct_dir() -> PathBuf {
 }
 
 fn gos_binary() -> PathBuf {
-    // The release binary is what `gos run` / `gos build` reach.
+    // The release binary is what `gos` / `gos build` reach.
     // Built once by the workspace, shared across tests.
     let mut p = workspace_root().join("target").join("release").join("gos");
     if !std::env::consts::EXE_EXTENSION.is_empty() {
@@ -86,7 +86,7 @@ fn run_interp(src: &Path) -> TierOutcome {
     let out = Command::new(gos_binary())
         .arg(src)
         .output()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     TierOutcome {
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),

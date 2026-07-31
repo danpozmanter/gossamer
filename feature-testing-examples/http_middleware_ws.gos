@@ -1,7 +1,7 @@
 // Cross-tier regression for the canonical middleware / websocket
 // classifier free functions `http::middleware::decode_basic_auth` and
 // `http::websocket::is_websocket_upgrade`. Both were interp-only; each
-// now lowers to a `gos_rt_*` shim so the bytecode VM (`gos run`) and
+// now lowers to a `gos_rt_*` shim so the bytecode VM (`gos`) and
 // LLVM AOT (`gos build`) classify bit-identically.
 //
 // `decode_basic_auth(header) -> Option<(String, String)>` decodes a

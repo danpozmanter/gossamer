@@ -5,7 +5,7 @@
 // per-verb wrappers were interp-only (BUILD-FAIL on `gos build`). Each
 // now lowers to its own `gos_rt_http_<verb>` shim so the method string
 // is fixed at the runtime boundary, bit-identically on the bytecode VM
-// (`gos run`) and LLVM AOT (`gos build`).
+// (`gos`) and LLVM AOT (`gos build`).
 //
 // The handler echoes the request method, body, and the inbound
 // Content-Type header. `post` / `put` carry the content type their

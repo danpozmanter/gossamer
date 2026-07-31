@@ -10,7 +10,7 @@
 //!   standard `cc` invocation to produce an executable.
 //! - [`compile_to_jit`] - MIR → in-process native code via the
 //!   `cranelift-jit` backend. Returns a [`JitArtifact`] of raw fn
-//!   pointers the bytecode VM dispatches into so `gos run --vm`
+//!   pointers the bytecode VM dispatches into so `gos --vm`
 //!   executes hot user functions natively while still falling back
 //!   to the bytecode interpreter for constructs the codegen does
 //!   not lower.

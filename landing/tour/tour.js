@@ -394,7 +394,7 @@ fn main() {
       <p>Here the producer runs to completion before the drain finishes,
       which is the subset the in-browser runtime supports.
       <strong>Full goroutine interleaving</strong> - goroutines that block
-      and hand off mid-run - runs natively with <code>gos run</code>.</p>`,
+      and hand off mid-run - runs natively with <code>gos</code>.</p>`,
     code: `use std::sync::channel
 
 // The producer sends every value, then closes - it runs to
@@ -426,7 +426,7 @@ fn main() {
       <p>Here two producers feed two channels and <code>select</code>
       merges their values as they arrive - the standard fan-in pattern.
       Full mid-run hand-off between goroutines that block and resume runs
-      natively with <code>gos run</code>.</p>`,
+      natively with <code>gos</code>.</p>`,
     code: `use std::sync::channel
 
 fn produce(tx: Sender<i64>, xs: [i64]) {
@@ -769,7 +769,7 @@ function fallbackNode(code) {
   pre.textContent = code;
   const note = el("p", "note");
   note.innerHTML =
-    "The interactive editor could not load. Copy this program and run it with <code>gos run</code>.";
+    "The interactive editor could not load. Copy this program and run it with <code>gos</code>.";
   return el("div", "tour-play-fallback", pre, note);
 }
 

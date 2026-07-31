@@ -44,11 +44,11 @@ fn main() {
 ## Running today
 
 - **`hello_world.gos`** - one-liner that prints via `println`.
-  Runs under `gos run`.
+  Runs under `gos`.
 - **`function_piping.gos`** - tour of the `|>` forward-pipe
   operator plus the `std::iter` / `std::option` combinator
   surface (`filter`, `sum_by`, `find`, `option::unwrap_or`, …).
-  Runs under `gos run` (bytecode VM + Cranelift JIT), `gos build`
+  Runs under `gos` (bytecode VM + Cranelift JIT), `gos build`
   (LLVM `-O0`), and `gos build --release` (LLVM `-O3`); the
   tier_parity test confirms identical output across all three.
 - **`semicolon_separators.gos`** - shows semicolons replacing newlines between
@@ -58,21 +58,21 @@ fn main() {
   both fields, enabling field arithmetic), and `Triple<A, B, C>` (three
   parameters). Each construction site is a separate monomorphisation;
   parameters are inferred from the field values at the call site.
-  Runs under `gos run` and `gos build`.
+  Runs under `gos` and `gos build`.
 - **`trait_bounds.gos`** - generic functions with trait bounds dispatched
   statically. One `report<T: Shape>(s: &T)` serves every type that
   implements `Shape`; the bound is enforced at compile time and each
   instantiation monomorphises to a direct call. Identical output under
-  `gos run`, the Cranelift JIT, and `gos build`.
+  `gos`, the Cranelift JIT, and `gos build`.
 - **`record_update.gos`** - functional record update
   (`Config { ..base, port: 443 }`): build a new struct from an existing
   one, overriding only the changed fields, with the base still usable
-  afterward. Runs under `gos run` and `gos build`.
+  afterward. Runs under `gos` and `gos build`.
 - **`go_spawn.gos`** - goroutine fan-out with no channels.
   Every construct lowers through native codegen, so `gos build`
   produces a working binary.
 - **`concurrency.gos`** - goroutines plus a `(Sender, Receiver)`
-  channel, producer / consumer shape. Runs under `gos run`
+  channel, producer / consumer shape. Runs under `gos`
   (bytecode VM) and `gos build` (native), with channel operations
   lowered natively on every tier.
 - **`line_count.gos`** - walks a directory via `fs::read_dir`,
@@ -80,7 +80,7 @@ fn main() {
   Uses goroutines and `select`.
 - **`web_server.gos`** - HTTP/1.1 echo server mirroring FastAPI's
   `/echo` handler. Accepts any method, returns method / path /
-  query / body as JSON. Runs under `gos run`; `curl
+  query / body as JSON. Runs under `gos`; `curl
   http://localhost:8080/echo?name=jane` exercises it.
 
 ## More in the tree
@@ -96,8 +96,8 @@ Each one passes `gos check`; see `examples/README.md` for the index.
 ## Try it
 
 ```sh
-gos run examples/hello_world.gos
-gos run examples/function_piping.gos
-gos run examples/web_server.gos &
+gos examples/hello_world.gos
+gos examples/function_piping.gos
+gos examples/web_server.gos &
 curl 'http://localhost:8080/echo?name=jane'
 ```

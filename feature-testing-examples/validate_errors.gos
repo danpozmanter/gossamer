@@ -3,7 +3,7 @@
 // Covers: FieldError::new + path/message/code accessors, Errors::new,
 // add, is_empty, len, count, get, collect. Errors are keyed by field
 // in sorted order, so stdout is bit-identical across the bytecode VM
-// (`gos run` / `gos test`), the Cranelift JIT, and the LLVM AOT tier
+// (`gos` / `gos test`), the Cranelift JIT, and the LLVM AOT tier
 // (`gos build`). Exercises the runtime-kind tagging path so method
 // dispatch on each handle picks the right runtime helper on every tier.
 

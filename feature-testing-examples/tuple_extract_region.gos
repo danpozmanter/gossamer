@@ -9,7 +9,7 @@
 //      extract and released when the binding dies. The `i64` element and any
 //      `Result`/`Option` element are by-value and never RC-accounted.
 //
-// Both paths must produce identical output under `gos run` and `gos build`.
+// Both paths must produce identical output under `gos` and `gos build`.
 
 enum Tree {
     Leaf(i64),

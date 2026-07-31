@@ -6,7 +6,7 @@
 // compiled tier wires `gos_rt_router_add_pattern` / `gos_rt_router_lookup`
 // over the same `GosRouter` route table the serving Router uses; the
 // interp tier keeps an id-keyed registry. Matching is bit-identical on
-// the bytecode VM (`gos run`) and LLVM AOT (`gos build`).
+// the bytecode VM (`gos`) and LLVM AOT (`gos build`).
 
 use std::http::router
 

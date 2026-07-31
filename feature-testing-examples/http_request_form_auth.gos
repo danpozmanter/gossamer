@@ -3,7 +3,7 @@
 // fields out of an `application/x-www-form-urlencoded` body and the
 // `(user, password)` out of an `Authorization: Basic` header, then
 // echoes them. Both reads lower identically on the bytecode VM
-// (`gos run`) and LLVM AOT (`gos build`): `form_value` returns a
+// (`gos`) and LLVM AOT (`gos build`): `form_value` returns a
 // `String` (empty when absent), `basic_auth` returns
 // `Option<(String, String)>` packed as the same 2-word shape
 // `split_once` uses.

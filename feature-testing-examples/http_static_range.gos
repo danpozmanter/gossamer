@@ -5,7 +5,7 @@
 // request yields 416 + `Content-Range: bytes */LEN`. Both the compiled
 // (gos_rt_file_server_serve) and interp (native_file_server_serve)
 // servers route through the shared gossamer-runtime Range helpers, so
-// every byte is identical across the bytecode VM (`gos run`) and LLVM
+// every byte is identical across the bytecode VM (`gos`) and LLVM
 // AOT (`gos build`).
 //
 // Self-terminating: the client runs in main and exits explicitly, so

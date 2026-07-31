@@ -2,7 +2,7 @@
 //!
 //! `register_module!` emits both the interpreter thunk and the C-ABI
 //! thunk (`gos_binding_addlib__add`), so the same crate is callable
-//! from `gos run`, `gos test`, and `gos build --release`.
+//! from `gos`, `gos test`, and `gos build --release`.
 //!
 //! Uses the 0.9.0 ergonomic form: `name: addlib` doubles as the
 //! Gossamer-side spelling AND the C-ABI symbol prefix; no

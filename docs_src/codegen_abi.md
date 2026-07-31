@@ -3,7 +3,7 @@
 Gossamer's compiled tiers (`gos build` and `gos build --release`)
 monomorphise every generic instantiation to a concrete function in
 MIR, then lower it through LLVM; the in-process Cranelift JIT behind
-`gos run` does the same. Monomorphisation specialises each
+`gos` does the same. Monomorphisation specialises each
 instantiation on its concrete type, so inner-loop ops are typed - an
 `i64` add is a single machine instruction, not a polymorphic dispatch.
 

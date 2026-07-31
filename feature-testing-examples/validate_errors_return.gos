@@ -6,7 +6,7 @@
 // handle is an opaque i64 with no construction-site tag once it crosses
 // a boundary, so dispatch must recover the handle kind from the
 // receiver's named type. Output is keyed by field in sorted order, so
-// it is bit-identical across the bytecode VM (`gos run`), the Cranelift
+// it is bit-identical across the bytecode VM (`gos`), the Cranelift
 // JIT, and the LLVM AOT tier (`gos build`).
 use std::validate
 

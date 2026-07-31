@@ -154,7 +154,7 @@ mio = { workspace = true }
 # `gos_rt_http_stream` uses ureq for the wire request so the
 # compiled tier matches the interp's `http::stream` semantics.
 # Same feature set as gossamer-std (TLS via rustls, gzip, cookies)
-# for parity with `gos run`.
+# for parity with `gos`.
 ureq = { workspace = true, features = ["cookies"] }
 png = { workspace = true }
 jpeg-decoder = "0.3"

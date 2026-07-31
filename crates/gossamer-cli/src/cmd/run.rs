@@ -1,7 +1,7 @@
-//! `gos run [PATH]` - execute a program through the bytecode VM.
+//! `gos [PATH]` - execute a program through the bytecode VM.
 //!
 //! The register-based bytecode VM is the only execution engine for
-//! `gos run`. The tree-walker interpreter was removed in 0.14.0 (the
+//! `gos`. The tree-walker interpreter was removed in 0.14.0 (the
 //! `--tree-walker` flag in 0.5.0); no CLI / env-var path selects an
 //! engine.
 

@@ -1,5 +1,5 @@
 // Cross-tier parity for four compiled-tier gaps that worked under
-// `gos run` but broke under `gos build`:
+// `gos` but broke under `gos build`:
 //   - thread::num_cpus (build-fail: no compiled shim)
 //   - strings::pad_left / pad_right (runtime-diverge: String pad char
 //     dropped, 2-arg default missing)

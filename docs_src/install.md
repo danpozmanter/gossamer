@@ -46,7 +46,7 @@ applies only to a `cargo build` binary you relocate yourself.
 gos --version
 gos new example.com/hello --path /tmp/hello
 cd /tmp/hello
-gos run src/main.gos
+gos src/main.gos
 ```
 
 You should see `hello from hello`.
@@ -68,7 +68,7 @@ armv7, riscv64, and wasm are not supported execution targets.
 
 `aarch64` Linux - including Raspberry Pi OS 64-bit - is exercised in CI
 across all three tiers (the bytecode VM, the in-process Cranelift JIT,
-and native `gos build`), not just cross-built. `gos run` is fully
+and native `gos build`), not just cross-built. `gos` is fully
 self-contained on a Pi; native compilation there uses the device's
 system LLVM (`llc`/`opt`) and C compiler (`sudo apt-get install -y llvm
 clang`).

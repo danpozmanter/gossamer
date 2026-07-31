@@ -5,7 +5,7 @@
 // shared with the iter / Once / RwLock combinators. A valid token
 // reaches the handler body (200); an invalid or absent one is rejected
 // (401). The 401-vs-body shaping is plain Gossamer code, so output is
-// bit-identical under `gos run` (bytecode VM) and `gos build` (LLVM
+// bit-identical under `gos` (bytecode VM) and `gos build` (LLVM
 // AOT).
 //
 // Self-terminating: the client runs in main and exits explicitly, so

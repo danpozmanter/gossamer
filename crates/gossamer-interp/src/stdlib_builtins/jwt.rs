@@ -6,7 +6,7 @@
 //! Each builtin delegates to a thin `gossamer_std::jwt::*_json` wrapper
 //! over the typed `Claims` API; the compiled tier mirrors the same
 //! algorithm in `gossamer-runtime/src/c_abi/crypto_jwt.rs`, producing
-//! byte-identical tokens across `gos run` / Cranelift / LLVM.
+//! byte-identical tokens across `gos` / Cranelift / LLVM.
 
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::missing_panics_doc)]

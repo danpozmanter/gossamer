@@ -40,7 +40,7 @@ Vegeta (Go) and wrk (C) are great but they pin extra runtime
 deps; CI runners that need to install them on every job spend
 more time installing than testing. The bundled harness is a
 Gossamer program - same toolchain - so the soak is one
-`gos run benchmarks/web_service_load/harness.gos` away. The
+`gos benchmarks/web_service_load/harness.gos` away. The
 `./run.sh --vegeta` path is wired for users who already have
 vegeta and want richer percentile output.
 

@@ -1,7 +1,7 @@
 //! Differential VM-vs-LLVM-AOT execution harness
 //!
 //! Generates small Gossamer programs from a deterministic grammar
-//! seeded by the test index, runs each through `gos run` (VM) and
+//! seeded by the test index, runs each through `gos` (VM) and
 //! `gos build` (LLVM AOT), then byte-compares stdout. Divergence
 //! is a tier-parity bug. The grammar is intentionally conservative
 //! (no I/O, bounded loops, no goroutines) so the harness can run
@@ -111,7 +111,7 @@ fn run_interp(source: &Path) -> Run {
     let out = Command::new(gos_bin())
         .arg(source)
         .output()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     Run {
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
         code: out.status.code(),

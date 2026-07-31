@@ -1,7 +1,7 @@
 # Runtime internals
 
 This page is a map - not a specification - of what happens between
-`gos run` and `main` returning. Each section links to the crate that
+`gos` and `main` returning. Each section links to the crate that
 owns the stage so a new contributor can find the real source.
 
 ## Stages
@@ -43,7 +43,7 @@ source.gos
 ## Evaluator
 
 The register-based bytecode VM in `gossamer-interp` is the sole
-`gos run` / `gos test` engine. It:
+`gos` / `gos test` engine. It:
 
 1. Accepts an `HirProgram`.
 2. Compiles every top-level function and inherent-impl method to a
@@ -77,7 +77,7 @@ model - reference counting plus arenas, and no tracing collector:
   (`runtime::collect_cycles()`) and automatically under allocation
   pressure. The bytecode VM backs values with `Arc` and does not
   collect cycles, so `collect_cycles()` is a no-op there: a strong
-  reference cycle leaks under `gos run` but is reclaimed under
+  reference cycle leaks under `gos` but is reclaimed under
   `gos build`.
 - **Aggregate reclamation.** Structs / tuples / arrays are
   heap-allocated via `gos_rt_aggr_alloc` (plain zeroed malloc) and

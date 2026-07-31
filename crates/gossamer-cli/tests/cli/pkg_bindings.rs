@@ -155,7 +155,7 @@ fn run_refuses_type_invalid_program_with_diagnostic() {
     let out = Command::new(gos_bin())
         .arg(&fixture)
         .output()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     assert!(
         !out.status.success(),
         "run should reject type-invalid source; stdout={} stderr={}",
@@ -237,7 +237,7 @@ fn runtime_panic_stderr_carries_gx_code_prefix() {
     let out = Command::new(gos_bin())
         .arg(&fixture)
         .output()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     assert!(!out.status.success(), "panic should exit non-zero");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -453,7 +453,7 @@ fn jit_compiled_binding_call_resolves_predeclared_symbol() {
     let _ = std::fs::remove_dir_all(&tmp);
     assert!(
         out.status.success(),
-        "gos run aborted on a JIT-compiled binding call\nstdout: {stdout}\nstderr: {stderr}"
+        "gos aborted on a JIT-compiled binding call\nstdout: {stdout}\nstderr: {stderr}"
     );
     // sum_{i=0}^{2999} add(i, 1) == sum(1..=3000) == 3000 * 3001 / 2.
     assert!(
@@ -464,7 +464,7 @@ fn jit_compiled_binding_call_resolves_predeclared_symbol() {
 
 #[test]
 fn run_main_thread_flag_executes_program() {
-    // `gos run --main-thread` runs the VM on the process main thread
+    // `gos --main-thread` runs the VM on the process main thread
     // (for native libraries that require it) instead of the spawned
     // `gos-vm` thread. The program must still execute correctly.
     let fixture = write_fixture("main-thread", "fn main() { println!(\"mt {}\", 40 + 2) }\n");
@@ -509,7 +509,7 @@ fn skill_prompt_subcommand_prints_skill_card() {
 fn discarded_result_is_a_type_error() {
     // SPEC §9: a `Result<T, E>` value used as a statement without
     // binding or propagating the result is a compile error (GT0007).
-    // `gos run` must refuse to execute and mention the error code.
+    // `gos` must refuse to execute and mention the error code.
     // `let _ = expr` is the explicit-discard exception and must NOT
     // trigger the diagnostic.
     let src = r#"
@@ -527,7 +527,7 @@ fn main() {
     let out = std::process::Command::new(gos_bin())
         .arg(&fixture)
         .output()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     let _ = std::fs::remove_file(&fixture);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -563,7 +563,7 @@ fn main() {
     let out = std::process::Command::new(gos_bin())
         .arg(&fixture)
         .output()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let _ = std::fs::remove_file(&fixture);

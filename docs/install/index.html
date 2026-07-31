@@ -2001,7 +2001,7 @@ applies only to a <code>cargo build</code> binary you relocate yourself.</p>
 <div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>gos<span class="w"> </span>--version
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>gos<span class="w"> </span>new<span class="w"> </span>example.com/hello<span class="w"> </span>--path<span class="w"> </span>/tmp/hello
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nb">cd</span><span class="w"> </span>/tmp/hello
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>gos<span class="w"> </span>run<span class="w"> </span>src/main.gos
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>gos<span class="w"> </span>src/main.gos
 </code></pre></div>
 <p>You should see <code>hello from hello</code>.</p>
 <h2 id="supported-platforms">Supported platforms<a class="headerlink" href="#supported-platforms" title="Permanent link">&para;</a></h2>
@@ -2018,7 +2018,7 @@ QEMU and compared with the pure bytecode VM. Intel macOS is artifact-only;
 armv7, riscv64, and wasm are not supported execution targets.</p>
 <p><code>aarch64</code> Linux - including Raspberry Pi OS 64-bit - is exercised in CI
 across all three tiers (the bytecode VM, the in-process Cranelift JIT,
-and native <code>gos build</code>), not just cross-built. <code>gos run</code> is fully
+and native <code>gos build</code>), not just cross-built. <code>gos</code> is fully
 self-contained on a Pi; native compilation there uses the device's
 system LLVM (<code>llc</code>/<code>opt</code>) and C compiler (<code>sudo apt-get install -y llvm
 clang</code>).</p>

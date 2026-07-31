@@ -1,5 +1,5 @@
 //! Stateful Router parity: same `.gos` source dispatches an
-//! HTTP server in both `gos run` (interp) and `gos build` →
+//! HTTP server in both `gos` (interp) and `gos build` →
 //! native, with multiple `impl Handler` types registered for
 //! different paths. Verifies the constructor + method-chain
 //! shape works identically across tiers.

@@ -1,7 +1,7 @@
 // Cross-tier regression for std::compress::bzip2 (worked under
-// `gos run` but BUILD-FAILED under `gos build` - manifest-advertised
+// `gos` but BUILD-FAILED under `gos build` - manifest-advertised
 // and interp-bound, but unwired on the compiled tiers). compress /
-// decompress must round-trip identically on `gos run` and `gos build`.
+// decompress must round-trip identically on `gos` and `gos build`.
 // A String argument is byte-coerced before the shim (the same
 // whitelist that gzip/zstd use), so this also guards the
 // String->bytes path.

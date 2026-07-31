@@ -10,7 +10,7 @@
 // exits explicitly, so the whole run is a plain stdout comparison.
 // Signing is deterministic (no nonce), the router matches Rust-side,
 // and the 401/200 shaping is plain Gossamer - so the output is
-// bit-identical under `gos run` (bytecode VM) and `gos build` (LLVM
+// bit-identical under `gos` (bytecode VM) and `gos build` (LLVM
 // AOT). Binds a fixed loopback port (serialized in CI).
 
 use std::http

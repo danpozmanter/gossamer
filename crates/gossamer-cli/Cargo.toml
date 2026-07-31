@@ -114,6 +114,6 @@ exhaustive_tests = []
 profile = ["gossamer-interp/profile"]
 # Inline Vec capacity passthroughs. Keep the runtime archive built by build.rs
 # in lock-step with the CLI/VM runtime feature so `gos build --release` and
-# `gos run` compare the same inline Vec capacity.
+# `gos` compare the same inline Vec capacity.
 inline-vec-words-6 = ["gossamer-runtime/inline-vec-words-6"]
 inline-vec-words-8 = ["gossamer-runtime/inline-vec-words-8"]

@@ -2,7 +2,7 @@
 //
 // Covers: Rng::new(seed), next_u64, next_u32, range_u64, next_f64.
 // A fixed seed makes the sequence reproducible, so stdout is
-// bit-identical across the bytecode VM (`gos run` / `gos test`),
+// bit-identical across the bytecode VM (`gos` / `gos test`),
 // the Cranelift JIT, and the LLVM AOT tier (`gos build`). Exercises
 // the runtime-kind tagging path so method dispatch on the handle
 // picks the right runtime helper on every tier.

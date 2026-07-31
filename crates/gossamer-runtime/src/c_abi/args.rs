@@ -296,7 +296,7 @@ pub unsafe extern "C" fn gos_rt_os_args() -> *mut GosVec {
 
 /// Overrides the program name returned by `os::program_name()`.
 /// The interpreter calls this via `gos_rt_set_program_name` when it
-/// knows the script path (e.g. `gos run examples/cat.gos`). The
+/// knows the script path (e.g. `gos examples/cat.gos`). The
 /// provided string is copied into a leaked `CString` so the pointer
 /// is process-lifetime safe.
 #[unsafe(no_mangle)]
@@ -313,7 +313,7 @@ pub unsafe extern "C" fn gos_rt_set_program_name(name: *const c_char) {
 }
 
 /// Returns the program name as a `*const c_char` (`argv[0]` for native
-/// binaries; the script path for `gos run`).
+/// binaries; the script path for `gos`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_os_program_name() -> *const c_char {
     ffi_entry!(std::ptr::null(), {

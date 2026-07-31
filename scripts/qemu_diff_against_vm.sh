@@ -1,6 +1,6 @@
 #!/bin/sh
 # Run cross-built Linux binaries and assert each produces output
-# bit-identical to the bytecode VM (`gos run`) for its source. Used by
+# bit-identical to the bytecode VM (`gos`) for its source. Used by
 # the Linux job that consumes the macOS/Windows host cross artifacts.
 # Usage: scripts/qemu_diff_against_vm.sh <bins-root>
 #   Layout: <bins-root>/<artifact>/<target-triple>/<stem>
@@ -50,7 +50,7 @@ for artifact in "$BINS_ROOT"/*/; do
             # must be restored before running.
             [ -f "$bin" ] && chmod +x "$bin"
             [ -x "$bin" ] || { echo "::error::missing binary $bin"; rc=1; continue; }
-            vm_out="$("$GOS" run "$ROOT/$src")"
+            vm_out="$("$GOS" "$ROOT/$src")"
             if [ -z "$runner" ]; then
                 run_out="$("$bin")"
             else

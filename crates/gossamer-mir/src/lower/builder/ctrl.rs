@@ -1033,7 +1033,7 @@ impl<'a> Builder<'a> {
                 //      becomes always-false. This compiles `?`
                 //      down to "take the success path"; programs
                 //      that depend on real error dispatch keep
-                //      working under `gos run`.
+                //      working under `gos`.
                 // A bare variant name resolves through the global
                 // `variant_index` map, so `None` / `Some` / `Ok` / `Err`
                 // collide with any user enum that reuses one (e.g. an

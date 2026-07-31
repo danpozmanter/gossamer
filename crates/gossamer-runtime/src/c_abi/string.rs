@@ -878,7 +878,7 @@ pub unsafe extern "C" fn gos_rt_str_as_bytes(s: *const c_char) -> *mut GosVec {
 /// `s.chars()` - materialises the string's Unicode scalar values as a
 /// fresh `*mut GosVec` of i64 codepoints (one 8-byte slot per char), so
 /// `for ch in s.chars()` reads each scalar via `gos_rt_vec_get_i64` and
-/// binds a `char`. Mirrors the interp builtin so `gos run` and
+/// binds a `char`. Mirrors the interp builtin so `gos` and
 /// `gos build` agree. The backing buffer + header are
 /// `Box::from_raw`-compatible (via `gos_rt_vec_with_capacity`) so the
 /// auto-emitted `gos_rt_vec_free` at scope-end reclaims them.
@@ -1013,7 +1013,7 @@ pub unsafe extern "C" fn gos_rt_os_read_dir(path: *const c_char) -> *mut GosVec 
 /// and `end` into `[0, len(s)]` and returns the indicated byte
 /// substring as a fresh `*mut c_char`. Mirrors the interp
 /// builtin so user code that calls `s.substring(a, b)` runs the
-/// same way under `gos run` and `gos build` - without this
+/// same way under `gos` and `gos build` - without this
 /// helper the compiled tier saw `s.substring(...)` as an
 /// undispatched method, fell through to a free-fn lookup, and
 /// resolved to a user-defined `pub fn substring` (askq's
@@ -2913,7 +2913,7 @@ pub unsafe extern "C" fn gos_rt_char_to_str(c: i32) -> *mut c_char {
 // ---------------------------------------------------------------
 // These back the `strings::*` free functions that previously only
 // existed in the bytecode VM. Each mirrors the corresponding
-// `gossamer_std::strings` helper so `gos run` and `gos build`
+// `gossamer_std::strings` helper so `gos` and `gos build`
 // produce identical output.
 
 unsafe fn cstr<'a>(p: *const c_char) -> &'a str {

@@ -2059,7 +2059,7 @@ addition.</p>
   compiled tiers add a Bacon-Rajan trial-deletion cycle collector (see
   below) that reclaims cycles with no annotation, so ownership cycles
   are not a leak you have to design around. The one exception is the
-  bytecode interpreter (<code>gos run</code>), which backs values with Rust's
+  bytecode interpreter (<code>gos</code>), which backs values with Rust's
   <code>Arc</code> and does <em>not</em> collect cycles - there a strong cycle leaks,
   matching Swift's behavior. This is the same cross-tier caveat noted
   under weak references.</li>
@@ -2148,10 +2148,10 @@ Across goroutines, shared mutation must be synchronized with channels,
   points at a member of a <em>strong</em> cycle (an unusual shape - weak
   references normally <em>break</em> cycles, in which case there is no strong
   cycle and every tier agrees) observes that member as live on the
-  interpreter (<code>gos run</code>, whose collector is a no-op and leaks the cycle)
+  interpreter (<code>gos</code>, whose collector is a no-op and leaks the cycle)
   but as <code>None</code> on the compiled tiers once the collector has run. Do not
   branch on <code>upgrade()</code> of a known strong-cycle member if you need
-  identical behavior under <code>gos run</code> and <code>gos build</code>.</li>
+  identical behavior under <code>gos</code> and <code>gos build</code>.</li>
 <li><strong>Compact representation.</strong> A heap enum node carries an 8-byte
   runtime header. Enums with at most 4 variants store their
   discriminant in pointer tag bits, so a two-pointer tree node costs

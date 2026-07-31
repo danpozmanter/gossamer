@@ -6,7 +6,7 @@
 //   - math::min / max / clamp qualified form: compiled BUILD-FAIL
 //     (only the bare prelude names routed to the shim).
 //   - encoding::json::valid: compiled BUILD-FAIL (no shim).
-// All must now agree bit-for-bit on `gos run` and `gos build`.
+// All must now agree bit-for-bit on `gos` and `gos build`.
 
 use std::encoding
 use std::utf8

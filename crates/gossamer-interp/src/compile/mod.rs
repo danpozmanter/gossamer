@@ -137,7 +137,7 @@ pub(crate) fn is_mut_ref_vec(tcx: &TyCtxt, ty: Ty) -> bool {
 /// / enum>` (the compiled tiers pass an aggregate `&mut` by pointer, so
 /// a field write or `*p = v` reaches the caller - the VM must match, or
 /// a free function mutating a `&mut Struct` param silently no-ops under
-/// `gos run` while writing back under `gos build`). Used to decide that
+/// `gos` while writing back under `gos build`). Used to decide that
 /// a call carrying such an argument participates in the `MutCell`
 /// write-back + `*p = …` deref-assign protocol. Fixed `[T; N]` arrays
 /// participate too: `&mut` aliases always write through.

@@ -696,7 +696,7 @@ impl<'tcx> FnBuilder<'tcx> {
             // `Placeholder` is the resolver's sentinel for forms it could
             // not rewrite; a well-typed program never carries one to
             // lowering. `LiftedClosure` exists only on the MIR-bound
-            // build path (the `lift_closures` pass), which `gos run`
+            // build path (the `lift_closures` pass), which `gos`
             // never runs. Either reaching here is a frontend invariant
             // violation, surfaced as a compile error.
             HirExprKind::Placeholder => Err(RuntimeError::Unsupported(

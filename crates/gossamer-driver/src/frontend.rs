@@ -1,13 +1,13 @@
 //! The single authoritative front-end gate.
 //!
 //! [`check_frontend`] runs parse + resolve + typecheck + exhaustiveness
-//! under one fatal-error policy. `gos check`, `gos run`, `gos build`,
+//! under one fatal-error policy. `gos check`, `gos`, `gos build`,
 //! `gos test`, and `gos bench` all call it and treat a non-empty
 //! diagnostic list identically: render the diagnostics and refuse to
 //! proceed. Centralising the policy here is what keeps the gates from
 //! drifting (`check` rejecting a program that `build` then miscompiles).
 //!
-//! The contract: anything `gos run` rejects dynamically or the LLVM
+//! The contract: anything `gos` rejects dynamically or the LLVM
 //! backend cannot lower must be rejected here, statically, on every
 //! tier. `check` is the strongest gate, never a weaker one.
 
@@ -170,7 +170,7 @@ pub fn check_frontend_with_edition(
 
     // The blob is the sole cache-validity marker. Rewriting it after a hit
     // used to add two atomic, fsync-backed writes (a redundant `.ok` marker
-    // and the same AST) to every successful `gos run`; that dominated small
+    // and the same AST) to every successful `gos`; that dominated small
     // process startup. Only a clean parse miss publishes a new advisory blob.
     if diagnostics.is_empty() && parsed_from_source {
         store_blob(&cache_key, &sf);

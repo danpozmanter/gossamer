@@ -52,7 +52,7 @@ windows-sys = { version = "0.61", features = [
 default = []
 profile = []
 # Execution budget for the dispatch loop (loop back-edge counting). Off by
-# default so native `gos run` pays nothing; the wasm playground enables it.
+# default so native `gos` pays nothing; the wasm playground enables it.
 fuel = []
 
 [dev-dependencies]

@@ -2,7 +2,7 @@
 // parsing and bare name=value serialization. These were previously
 // interp-tier only (rich Rust impl, no compiled-tier shim). Each call
 // now routes through a gos_rt_http_cookie_* shim so the output matches
-// `gos run` bit-identically on Cranelift and LLVM.
+// `gos` bit-identically on Cranelift and LLVM.
 //
 // parse_cookie_header is lenient: malformed pairs are skipped, quoted
 // values are unquoted, order is preserved. serialize renders a bare

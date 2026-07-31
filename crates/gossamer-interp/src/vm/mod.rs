@@ -134,7 +134,7 @@ pub struct Vm {
     /// Lowered MIR for the program, shared across goroutines via
     /// `Arc` so a child `Vm` can drive its own deferred JIT
     /// compile without reflowing HIR → MIR. `None` when the JIT
-    /// is disabled (`gos run --no-jit` / `GOS_JIT=0`).
+    /// is disabled (`gos --no-jit` / `GOS_JIT=0`).
     /// `RefCell` so the deferred JIT can release the bodies the
     /// instant `compile_to_jit` finishes (see [`Self::jit_droppable`])
     /// rather than holding them through the whole run.
@@ -265,7 +265,7 @@ pub struct Vm {
     /// [`crate::bytecode::Op::CovHit`] against a pre-registered counter
     /// slot, so the bytecode tier records line coverage into the same
     /// global table the LLVM AOT tier instruments. `None` for every
-    /// non-coverage path (`gos run`, plain `gos test`).
+    /// non-coverage path (`gos`, plain `gos test`).
     pub(crate) source_map: Option<Arc<gossamer_lex::SourceMap>>,
     /// When set before [`Vm::load`], the loader evaluates every
     /// `comptime { ... }` block and `comptime fn` call after compiling

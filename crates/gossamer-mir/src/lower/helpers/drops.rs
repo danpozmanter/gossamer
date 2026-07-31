@@ -3653,7 +3653,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 // backend (used by `gos build`) lowers aggregates
                 // to stack slots that die with the function frame
                 // - no leak. The Cranelift backend (used by the
-                // in-process JIT for `gos run`) routes them through
+                // in-process JIT for `gos`) routes them through
                 // `gos_rt_aggr_alloc`, which lives in the
                 // process-wide registry; long-running JIT bodies
                 // can call `gos_rt_gc_reset` at safepoints to

@@ -1,6 +1,6 @@
 // Bytecode user-function inliner coverage.
 //
-// `gos run` re-compiles small pure helpers (a single tail expression,
+// `gos` re-compiles small pure helpers (a single tail expression,
 // no control flow, no `&mut` write-back) directly at their call sites
 // instead of emitting a per-call `Op::Call`. The compiled tiers already
 // inline at the MIR level, so this fixture proves the bytecode inliner

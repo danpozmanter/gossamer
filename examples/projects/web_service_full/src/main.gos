@@ -2,7 +2,7 @@
  * web_service_full - a complete, runnable HTTP service.
  *
  * Demonstrates the production-stack shape that works identically on
- * every tier (bytecode VM via `gos run`, Cranelift JIT, and LLVM AOT
+ * every tier (bytecode VM via `gos`, Cranelift JIT, and LLVM AOT
  * via `gos build`):
  *
  *   - HTTP routing with path parameters via std::http::router

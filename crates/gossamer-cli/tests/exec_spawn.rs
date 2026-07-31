@@ -9,7 +9,7 @@
 //! `exec::spawn(prog, args) -> Result<i64, errors::Error>`
 //! returns the child PID immediately; `exec::kill(pid)` SIGTERMs
 //! the daemon. Each test asserts both spawn-then-kill and
-//! spawn-then-await-output across `gos run`, `gos build`, and
+//! spawn-then-await-output across `gos`, `gos build`, and
 //! `gos build --release`.
 
 #![allow(missing_docs)]
@@ -71,7 +71,7 @@ fn run_vm(src: &Path) -> (String, String, Option<i32>) {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     run_with_timeout(child)
 }
 

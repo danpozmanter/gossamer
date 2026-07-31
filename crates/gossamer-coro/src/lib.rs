@@ -470,7 +470,7 @@ pub fn suspend() {
 pub fn suspend() {
     panic!(
         "goroutine blocking/suspension is not supported in the Gossamer wasm playground; \
-         run concurrent programs with `gos run` locally",
+         run concurrent programs with `gos` locally",
     );
 }
 

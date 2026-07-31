@@ -1,6 +1,6 @@
 #!/bin/sh
 # Asserts the runtime stays mostly asleep when user code does nothing.
-# Boots `gos run empty.gos`, which calls `time::sleep(2000)`. The
+# Boots `gos empty.gos`, which calls `time::sleep(2000)`. The
 # acceptance threshold is the total user+system CPU consumed during
 # those two wall-clock seconds.
 #

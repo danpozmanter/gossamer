@@ -1,6 +1,6 @@
 // Cross-tier coverage for free functions that were bound in the
 // bytecode VM but lacked a compiled-tier dispatch arm (they passed
-// `gos run` and failed `gos build` with `opt: use of undefined
+// `gos` and failed `gos build` with `opt: use of undefined
 // value`). Each now routes through a `gos_rt_*` shim so the output is
 // bit-identical across the VM, Cranelift, and LLVM tiers.
 

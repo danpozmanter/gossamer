@@ -1907,7 +1907,7 @@
 <p>Gossamer's compiled tiers (<code>gos build</code> and <code>gos build --release</code>)
 monomorphise every generic instantiation to a concrete function in
 MIR, then lower it through LLVM; the in-process Cranelift JIT behind
-<code>gos run</code> does the same. Monomorphisation specialises each
+<code>gos</code> does the same. Monomorphisation specialises each
 instantiation on its concrete type, so inner-loop ops are typed - an
 <code>i64</code> add is a single machine instruction, not a polymorphic dispatch.</p>
 <p>This page documents what the ABI represents and the one type it

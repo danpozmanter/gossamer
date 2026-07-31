@@ -2,7 +2,7 @@
 // context.WithValue / ctx.Value analog). A handler attaches identity
 // data with `r.set_value(key, value)` and reads it back with
 // `r.value(key)`; an absent key yields "". Re-setting a key overwrites
-// the prior value (replace-then-push). Bit-identical under `gos run`
+// the prior value (replace-then-push). Bit-identical under `gos`
 // (bytecode VM) and `gos build` (LLVM AOT).
 //
 // `set_value` mutates the request in place and returns it on the

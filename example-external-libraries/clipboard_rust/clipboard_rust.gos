@@ -9,7 +9,7 @@
  *
  * Run from this directory (the manifest is found via the cwd):
  *
- *   gos run clipboard_rust.gos -- this is cool
+ *   gos clipboard_rust.gos -- this is cool
  *
  * The first run inside a fresh checkout takes a while because
  * Cargo builds the binding runner; later runs reuse the cache.

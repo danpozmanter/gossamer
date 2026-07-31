@@ -5,7 +5,7 @@
 //! back to Cranelift would silently zero precision-formatted floats)
 //! and any future regression that lands the same way.
 //!
-//! Each test runs the same program through `gos run` (interp) and
+//! Each test runs the same program through `gos` (interp) and
 //! `gos build && ./bin` (native - Cranelift / LLVM depending on the
 //! build), asserting byte-identical stdout. Skips silently when the
 //! `gos` binary, `cc`, or the LLVM toolchain isn't available.
@@ -42,10 +42,10 @@ fn run_interp(source: &Path) -> String {
     let out = Command::new(gos_bin())
         .arg(source)
         .output()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     assert!(
         out.status.success(),
-        "gos run failed: {}\n{}",
+        "gos failed: {}\n{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr),
     );

@@ -1,7 +1,7 @@
 //! Per-project Rust-binding runner.
 //!
 //! When a `project.toml` declares a non-empty `[rust-bindings]`
-//! section, `gos run` / `gos build` re-execs into a *runner*
+//! section, `gos` / `gos build` re-execs into a *runner*
 //! binary that statically links every binding's Cargo crate. The
 //! runner is built on demand by Cargo and cached under
 //! `$XDG_CACHE_HOME/gossamer/runners/<fp>` keyed by the manifest's
@@ -9,7 +9,7 @@
 //!
 //! Three artefacts can be materialised under the same workdir:
 //!
-//! - `runner/` - the executable runner used by `gos run`.
+//! - `runner/` - the executable runner used by `gos`.
 //! - `staticlib/` - `libgos_static_bindings.a` (or
 //!   `gos_static_bindings.lib` on Windows MSVC) used by the
 //!   compiled-mode link step.

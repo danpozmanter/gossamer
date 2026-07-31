@@ -115,7 +115,7 @@ pub fn clear_jit_breadcrumb() {
 
 /// Total stack size in bytes of the calling thread, or `None` when the
 /// platform cannot report it. The byte-budget recursion guard uses this
-/// to size itself when the VM runs on the process main thread (`gos run
+/// to size itself when the VM runs on the process main thread (`gos
 /// --main-thread`), whose stack is the OS default rather than the large
 /// reserve a spawned VM thread receives.
 #[must_use]

@@ -3629,13 +3629,13 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// CLI override for the JIT default. `Vm::load` consults this
-/// flag so `gos run --no-jit` can disable the JIT without mutating
+/// flag so `gos --no-jit` can disable the JIT without mutating
 /// the process environment. The JIT is on by default per Tier D
 /// of the interp wow plan; this flag (or `GOS_JIT=0`) is the only
 /// way to turn it back off.
 static JIT_DISABLED: AtomicBool = AtomicBool::new(false);
 
-/// CLI hook used by `gos run --no-jit` to suppress every JIT
+/// CLI hook used by `gos --no-jit` to suppress every JIT
 /// compile attempt regardless of `GOS_JIT`. Pair with
 /// [`force_jit_enable`] to scope the disable to a defined region in
 /// long-lived processes (REPL, test runners, etc.) - see the
@@ -3650,7 +3650,7 @@ pub fn force_jit_disabled() {
 /// previously lost the JIT permanently once any caller flipped the
 /// flag; this companion lets them restore it.
 ///
-/// `gos run --no-jit` does not call this - the flag stays set for the
+/// `gos --no-jit` does not call this - the flag stays set for the
 /// process lifetime in CLI mode. Test code that installs a custom
 /// stdout writer should bracket the override with
 /// `force_jit_disabled` / `force_jit_enable` if it wants to recover
@@ -3670,7 +3670,7 @@ pub fn jit_force_disabled_state() -> bool {
 /// Returns `true` when JIT compilation is permitted in this
 /// process. Default is `true` (Tier D promoted JIT to the steady-
 /// state execution path); the only ways to suppress it are
-/// `gos run --no-jit` (which calls [`force_jit_disabled`]) or
+/// `gos --no-jit` (which calls [`force_jit_disabled`]) or
 /// setting `GOS_JIT=0` / `GOS_JIT=false` in the environment.
 /// This is intentionally not memoised so tests can flip the env
 /// between runs.

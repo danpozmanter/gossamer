@@ -39,7 +39,7 @@ Where Gossamer diverges from Swift ARC:
   compiled tiers add a Bacon-Rajan trial-deletion cycle collector (see
   below) that reclaims cycles with no annotation, so ownership cycles
   are not a leak you have to design around. The one exception is the
-  bytecode interpreter (`gos run`), which backs values with Rust's
+  bytecode interpreter (`gos`), which backs values with Rust's
   `Arc` and does *not* collect cycles - there a strong cycle leaks,
   matching Swift's behavior. This is the same cross-tier caveat noted
   under weak references.
@@ -138,10 +138,10 @@ Across goroutines, shared mutation must be synchronized with channels,
   points at a member of a *strong* cycle (an unusual shape - weak
   references normally *break* cycles, in which case there is no strong
   cycle and every tier agrees) observes that member as live on the
-  interpreter (`gos run`, whose collector is a no-op and leaks the cycle)
+  interpreter (`gos`, whose collector is a no-op and leaks the cycle)
   but as `None` on the compiled tiers once the collector has run. Do not
   branch on `upgrade()` of a known strong-cycle member if you need
-  identical behavior under `gos run` and `gos build`.
+  identical behavior under `gos` and `gos build`.
 - **Compact representation.** A heap enum node carries an 8-byte
   runtime header. Enums with at most 4 variants store their
   discriminant in pointer tag bits, so a two-pointer tree node costs

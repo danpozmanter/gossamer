@@ -34,7 +34,7 @@ handler with `r.path_int("id") -> Option<i64>`.
 ## Running
 
 ```
-gos run                    # bytecode VM
+gos                    # bytecode VM
 gos build --release && ./web_service_full
 
 curl -i http://localhost:8080/health

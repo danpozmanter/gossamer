@@ -95,7 +95,7 @@ fn run_vm(src: &std::path::Path) -> String {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     assert!(
         out.status.success(),
         "vm run failed: {}",

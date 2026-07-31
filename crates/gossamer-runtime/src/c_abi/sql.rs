@@ -6,7 +6,7 @@
 //! pointers behind opaque `i64` handles so the compiled tier
 //! never sees a Rust trait fat-pointer.
 //!
-//! The shims share one process-global registry with `gos run`:
+//! The shims share one process-global registry with `gos`:
 //! the interpreter's `__gos_sql_*_raw` builtins call the same safe
 //! core functions (`sql_open_handle`, `sql_conn_execute_params`, …)
 //! that these shims marshal to, so handles round-trip across tier

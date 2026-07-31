@@ -61,7 +61,7 @@ fn run_gos(src: &Path) -> (String, String, Option<i32>) {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     drive(child)
 }
 

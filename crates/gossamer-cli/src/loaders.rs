@@ -1,5 +1,5 @@
 //! Shared "parse + check + lower" helpers reused across `gos check`,
-//! `gos run`, `gos test`, `gos bench`, etc.
+//! `gos`, `gos test`, `gos bench`, etc.
 //!
 //! These functions exist to give every subcommand the same
 //! diagnostic rendering and the same "refuse to execute on

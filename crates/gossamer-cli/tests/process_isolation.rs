@@ -1,7 +1,7 @@
 //! Process isolation: a panic in a spawned goroutine terminates only that
 //! goroutine - the process keeps running and exits cleanly - while a panic on
 //! the main goroutine stays fatal (isolation is goroutine-scoped, not
-//! panic-swallowing). Verified on BOTH the bytecode VM (`gos run`) and the
+//! panic-swallowing). Verified on BOTH the bytecode VM (`gos`) and the
 //! native binary (`gos build`), since isolation is a runtime/scheduler
 //! property that must hold identically on every tier.
 
@@ -66,7 +66,7 @@ fn run_vm(source: &Path) -> Output {
     Command::new(gos_bin())
         .arg(source)
         .output()
-        .expect("spawn gos run")
+        .expect("spawn gos")
 }
 
 fn build_and_run(dir: &Path, source: &Path) -> Output {

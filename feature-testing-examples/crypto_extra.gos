@@ -2,7 +2,7 @@
 // and crypto::kdf (PBKDF2, scrypt, Argon2id). These were previously
 // bound only in the bytecode VM and failed to link under `gos build`.
 // Each call now routes through a `gos_rt_crypto_*` shim so the output
-// matches `gos run` bit-identically.
+// matches `gos` bit-identically.
 //
 // Digest / KDF outputs use known test vectors so the bytes are
 // deterministic across tiers. Argon2id carries a random salt, so the

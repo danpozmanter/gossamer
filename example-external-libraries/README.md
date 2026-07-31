@@ -52,8 +52,8 @@ builtins or repository-specific bridge.
 cargo build -p gossamer-cli
 
 # Either run them one at a time…
-( cd 01-gossamer-aware && /path/to/gos run src/main.gos )
-( cd 02-plain-rust-wrapped && /path/to/gos run src/main.gos )
+( cd 01-gossamer-aware && /path/to/gos src/main.gos )
+( cd 02-plain-rust-wrapped && /path/to/gos src/main.gos )
 
 # …or use the helper script which does both.
 bash run_examples.sh
@@ -69,7 +69,7 @@ under `$XDG_CACHE_HOME/gossamer/runners/`.
 `libgos_static_bindings.a` (built per-project from the same
 binding spec) into a single static binary. Codegen lowering for
 binding calls is incremental - the binary builds and runs, and
-calls that go through the runtime VM (the `gos run` path) work
+calls that go through the runtime VM (the `gos` path) work
 end-to-end. Direct compiled-tier dispatch into binding C-ABI
 thunks is wired through cranelift / LLVM as more binding shapes
 land.

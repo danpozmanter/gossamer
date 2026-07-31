@@ -155,7 +155,7 @@ pub fn wait_io_until<S: ?Sized>(
 
 /// Returns immediately. Cooperative single-threaded time cannot block
 /// the only thread; programs that depend on real sleeping should run
-/// with `gos run` locally.
+/// with `gos` locally.
 pub fn sleep_until(_deadline: Instant) {}
 
 /// Wasm has no worker threads. Run the closure inline; callers that need true

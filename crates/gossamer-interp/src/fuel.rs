@@ -1,7 +1,7 @@
 //! Execution budget for the bytecode VM.
 //!
 //! Compiled in only under the `fuel` feature (the wasm playground enables
-//! it). Native `gos run` builds without the feature, so the dispatch loop
+//! it). Native `gos` builds without the feature, so the dispatch loop
 //! carries none of this - no per-instruction tracking, no budget check.
 //!
 //! The budget counts loop back-edges (one per loop iteration). A thread-local

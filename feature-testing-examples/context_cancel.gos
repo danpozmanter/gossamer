@@ -5,7 +5,7 @@
 // child tree and is_cancelled walks up the parent chain. A 0 ms
 // timeout is already expired; a 600 s timeout is not - both decided by
 // a monotonic clock comparison, so stdout is bit-identical across the
-// bytecode VM (`gos run` / `gos test`), the Cranelift JIT, and the
+// bytecode VM (`gos` / `gos test`), the Cranelift JIT, and the
 // LLVM AOT tier (`gos build`). No sleeps: every assertion is decided
 // at the instant it runs.
 

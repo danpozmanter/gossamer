@@ -94,7 +94,7 @@ The language is designed so that:
   evaluation of sizeof-like queries).
 - Compile-speed goals are measured by the checked-in performance suite. Native
   debug and release builds both use LLVM; Cranelift is reserved for in-process
-  JIT tier-up under `gos run`.
+  JIT tier-up under `gos`.
 
 Notation follows the Go specification's EBNF conventions. Lowercase
 productions are lexical terminals; CamelCase productions are grammatical
@@ -347,7 +347,7 @@ overflow behaviour.
 
 `i128` and `u128` are not supported on any tier. The checker rejects
 every spelling of these types at the declaration site with a
-compile-time error (`GT0014`), so `gos run`, the JIT, and `gos build`
+compile-time error (`GT0014`), so `gos`, the JIT, and `gos build`
 all fail identically - there is no interpreter-only acceptance and no
 silent 64-bit narrowing.
 
@@ -1459,7 +1459,7 @@ an explicit `fn main` is an error. Top-level statements are accepted only at
 the entry file's top level, never inside a `mod { }` body.
 
 The entry file is `src/main.gos` by convention, or whatever `[project] entry`
-names (§6.4); a file passed directly to `gos run` / `gos build` is the entry.
+names (§6.4); a file passed directly to `gos` / `gos build` is the entry.
 
 ### 6.11 Rationale
 
@@ -2098,7 +2098,7 @@ default when the host-architecture musl rustup target
 installed; pass `--dynamic` to force the dynamic-glibc link path. The
 `--target` flag selects a cross-compilation triple (see §11.4).
 
-On a Raspberry Pi (any `aarch64` Linux), `gos run` is fully
+On a Raspberry Pi (any `aarch64` Linux), `gos` is fully
 self-contained - the bytecode VM and its in-process Cranelift JIT need
 no external tools. `gos build` shells out to the device's system LLVM
 (`llc`/`opt`) and a C compiler (`cc`) for codegen and linking, so those
@@ -2108,7 +2108,7 @@ must be installed to compile natively on the Pi.
 
 | Mode | Command | Backend | Pipeline | Speed | Output quality |
 |---|---|---|---|---|---|
-| Interpret | `gos run file.gos` | Bytecode VM | Direct dispatch; in-process Cranelift JIT tiers up hot bodies | Fastest cold start | No native codegen |
+| Interpret | `gos file.gos` | Bytecode VM | Direct dispatch; in-process Cranelift JIT tiers up hot bodies | Fastest cold start | No native codegen |
 | Debug build | `gos build` | LLVM | minimal `opt` (`mem2reg`, `instcombine`, `simplifycfg`) then `llc -O0` | Sub-second for small programs | ~2x slower than release |
 | Release build | `gos build --release` | LLVM | `opt -O3 \| llc -O3 -mcpu=native -mattr=+prefer-256-bit` | Seconds for thousands of LoC | Vectorised, inlined |
 
@@ -2410,7 +2410,7 @@ package sources, and legacy build artifacts.
 - `gos add ID[@VERSION]` - add a dependency entry.
 - `gos remove ID` - remove a dependency entry.
 - `gos build` - compile the current project.
-- `gos run` - interpret the current project.
+- `gos` - interpret the current project.
 - `gos test` - run the project's tests.
 - `gos fetch` - resolve and download (but do not build) all deps.
 - `gos update` - update deps within their declared ranges.

@@ -164,7 +164,7 @@ pub struct StackFrame {
 ///
 /// Pre-1.0 caveat: under `gos build` without DWARF, the
 /// returned frame contains the function name only; `file` is
-/// empty and `line` is 0. Under `gos run` (interpreter), full
+/// empty and `line` is 0. Under `gos` (interpreter), full
 /// frame info is available from the bytecode line tables.
 #[must_use]
 pub fn caller(skip: usize) -> Option<StackFrame> {

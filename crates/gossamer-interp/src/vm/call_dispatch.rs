@@ -396,7 +396,7 @@ impl Vm {
     /// worker holding the union of every task's high-water mark.
     ///
     /// Tasks queue if every worker is busy; the spawning thread does
-    /// not block. Programs that mix `gos run` invocations within one
+    /// not block. Programs that mix `gos` invocations within one
     /// process would see stale per-worker state here; the bench-game
     /// shape (one program per process) does not.
     fn spawn_on_pool<F>(&self, task: F)

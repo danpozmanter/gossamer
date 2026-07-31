@@ -6,7 +6,7 @@
  * auto-generated `--help`.
  *
  * Run:
- *     gos run examples/cli_args.gos -- --name jane --verbose --port 9000 alpha beta
+ *     gos examples/cli_args.gos -- --name jane --verbose --port 9000 alpha beta
  */
 
 use std::env

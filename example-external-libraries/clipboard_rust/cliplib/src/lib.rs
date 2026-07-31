@@ -4,7 +4,7 @@
 //!
 //! `register_module!` emits both the interpreter thunk and the C-ABI
 //! thunk (`gos_binding_clipboard__get_text`, ...), so the same crate
-//! is callable from `gos run`, `gos test`, and `gos build --release`.
+//! is callable from `gos`, `gos test`, and `gos build --release`.
 //!
 //! On Linux the native arboard path (X11 protocol) is tried first;
 //! when it fails (Wayland-only session, Termux, headless), the

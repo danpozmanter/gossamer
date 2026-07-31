@@ -1138,7 +1138,7 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("upgrade", builtin("upgrade", builtin_upgrade)));
     // String surface that the MIR method-dispatch table already
     // wires for compiled mode. Keep the interpreter's coverage
-    // in lockstep so `gos run` and `gos build` agree. The canonical
+    // in lockstep so `gos` and `gos build` agree. The canonical
     // casing spellings are `to_lower` / `to_upper` (registered under
     // the `String::` key below); the longer Rust-style aliases are
     // not exposed.

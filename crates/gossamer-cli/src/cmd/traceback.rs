@@ -1,6 +1,6 @@
 //! Shared rendering of the bytecode VM's call-stack traceback.
 //!
-//! Both `gos run` (on a fatal runtime error) and `gos test` (on a
+//! Both `gos` (on a fatal runtime error) and `gos test` (on a
 //! failing `#[test]`) surface the VM's preserved call chain via
 //! [`gossamer_interp::Vm::call_stack_snapshot`]. Keeping the format
 //! in one place means the two commands render an identical trailer.

@@ -29,7 +29,7 @@ pub(crate) fn fold_comptime(augmented: String, file_label: &str) -> Result<Strin
 
     // Comptime evaluation runs the bytecode VM during compilation, whose
     // native dispatch and in-process JIT grow the real machine stack just
-    // as `gos run` does. Run it on a VM-sized stack so the host
+    // as `gos` does. Run it on a VM-sized stack so the host
     // main-thread stack (roughly 1 MiB on Windows) never bounds comptime
     // recursion: the `build` and `check` paths reach here on the main
     // thread, unlike `run` / `test`, which already execute inside

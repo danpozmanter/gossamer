@@ -284,7 +284,7 @@ fn spec_3_1_overflow_does_not_panic() {
     // Integer overflow wraps at 64-bit width on every tier; no build
     // mode emits an overflow panic. The invariant we pin here is
     // "no panic" - the program completes. We use i64::MAX so the
-    // host-Rust arithmetic (which `gos run` uses under the bytecode
+    // host-Rust arithmetic (which `gos` uses under the bytecode
     // VM) actually wraps rather than silently widening to a wider
     // integer.
     let src = r#"
@@ -295,10 +295,7 @@ fn main() {
 }
 "#;
     let (ok, stdout, stderr) = run_program("spec_3_1_wrap", src, &[]);
-    assert!(
-        ok,
-        "i64 overflow must not panic in `gos run`; stderr: {stderr}",
-    );
+    assert!(ok, "i64 overflow must not panic in `gos`; stderr: {stderr}");
     // The spec does not require a specific value, only that the
     // program completes without an overflow panic.
     assert!(

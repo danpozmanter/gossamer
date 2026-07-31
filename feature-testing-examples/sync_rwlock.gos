@@ -4,7 +4,7 @@
 // with_read / with_write combinators. with_read returns the callback
 // result and leaves the value unchanged; with_write stores the
 // callback result back and returns it. Fixed values make stdout
-// bit-identical across the bytecode VM (`gos run` / `gos test`), the
+// bit-identical across the bytecode VM (`gos` / `gos test`), the
 // Cranelift JIT, and the LLVM AOT tier (`gos build`).
 
 use std::sync

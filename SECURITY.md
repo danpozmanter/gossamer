@@ -33,7 +33,7 @@ unfixed vulnerabilities.
   (`std::http::server`) and HTTP client.
 - Dependency-resolution or manifest-parser issues that let a
   malicious package compromise `gos build` or `gos tidy`.
-- Code-execution issues in `gos run` / `gos build` on attacker-
+- Code-execution issues in `gos` / `gos build` on attacker-
   controlled source files.
 - Launcher-script injection via crafted paths or file names.
 

@@ -46,7 +46,7 @@ fn run_interpreter(source: &Path) -> Run {
     let out = Command::new(gos_bin())
         .arg(source)
         .output()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     Run {
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -275,7 +275,7 @@ mod full {
 
     /// Examples deliberately excluded from the parity walks because
     /// they are non-terminating, require external state, or depend
-    /// on CLI args / a live server that the bare `gos run <path>`
+    /// on CLI args / a live server that the bare `gos <path>`
     /// shape can't supply. Each is covered by a dedicated
     /// integration test elsewhere.
     const NON_TERMINATING_EXAMPLES: &[&str] = &[

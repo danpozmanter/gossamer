@@ -320,7 +320,7 @@ fn render_empty_cookbook_catalog() -> String {
 /// Generates the small root LLM discovery index rather than a second primer.
 fn render_llms_index(catalogue: &PublicApiCatalog) -> String {
     format!(
-        "# Gossamer\n\nGossamer is a Rust-flavoured language with goroutines and deterministic memory management; use `gos` to check, run, build, test, format, and query programs. This generated index points models and agents at the reviewed primer and canonical API data.\n\n- [Compact LLM reference](llms-full.txt)\n- [Reviewed skill card](SKILL.md)\n- [Machine-readable stdlib API catalog](docs/api/stdlib.json) ({entries} entries)\n- [Cookbook registry](docs/api/cookbook.json) (recipes appear only after fixture verification)\n- [Language specification](SPEC.md)\n- [Examples](examples/)\n- [Examples guide](docs_src/examples.md)\n\n## Tooling\n\nUse `gos check FILE` before `gos run FILE`; validate compiled behavior with `gos build FILE`. For agent integration, run `gos mcp` over stdio, then use its `check`, `run`, `build`, `doc`, `explain`, and semantic-navigation tools.\n",
+        "# Gossamer\n\nGossamer is a Rust-flavoured language with goroutines and deterministic memory management; use `gos` to check, run, build, test, format, and query programs. This generated index points models and agents at the reviewed primer and canonical API data.\n\n- [Compact LLM reference](llms-full.txt)\n- [Reviewed skill card](SKILL.md)\n- [Machine-readable stdlib API catalog](docs/api/stdlib.json) ({entries} entries)\n- [Cookbook registry](docs/api/cookbook.json) (recipes appear only after fixture verification)\n- [Language specification](SPEC.md)\n- [Examples](examples/)\n- [Examples guide](docs_src/examples.md)\n\n## Tooling\n\nUse `gos check FILE` before `gos FILE`; validate compiled behavior with `gos build FILE`. For agent integration, run `gos mcp` over stdio, then use its `check`, `run`, `build`, `doc`, `explain`, and semantic-navigation tools.\n",
         entries = catalogue.entries.len()
     )
 }
@@ -344,7 +344,7 @@ fn render_llms_full(catalogue: &PublicApiCatalog, skill_card: &str) -> Result<St
     if verified_entries == 0 {
         out.push_str(
             "No stdlib entry is eligible for this section yet. Consult the structured \
-             [`docs/api/stdlib.json`](docs/api/stdlib.json) catalog with `gos check`/`gos run`; \
+             [`docs/api/stdlib.json`](docs/api/stdlib.json) catalog with `gos check`/`gos`; \
              its entries are deliberately quarantined until their fixtures and tier evidence land.\n",
         );
     }

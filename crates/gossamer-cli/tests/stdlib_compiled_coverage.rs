@@ -3,7 +3,7 @@
 //! A stdlib function is bound in the bytecode VM (place 1: the interp
 //! builtin registry) AND lowered by the compiled tiers (place 5: a MIR
 //! dispatch arm). When the second is missing a program calls the
-//! function fine under `gos run` but fails `gos build` with
+//! function fine under `gos` but fails `gos build` with
 //! `opt: use of undefined value '@module::fn'`. Nothing used to
 //! cross-check the two, so the drift accumulated silently.
 //!
@@ -194,7 +194,7 @@ fn stdlib_compiled_coverage() {
     assert!(
         vm_only.is_empty(),
         "{n} stdlib free function(s) are bound in the interp (VM) but have no \
-         compiled-tier dispatch - they pass `gos run` and fail `gos build` with \
+         compiled-tier dispatch - they pass `gos` and fail `gos build` with \
          `opt: use of undefined value`.\nWire a MIR dispatch arm in \
          crates/gossamer-mir/src/lower/builder/stdlib_free.rs (and the rt! \
          registry + gos_rt_* shim + symbol_table entry), or - if the function is \

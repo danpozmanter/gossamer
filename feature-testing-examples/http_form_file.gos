@@ -4,7 +4,7 @@
 // file part as `{ name, filename, content_type, content: [u8] }`. The
 // handler echoes the uploaded file's metadata and a byte checksum of
 // its content. Must read back bit-identically on the bytecode VM
-// (`gos run`), Cranelift JIT, and LLVM AOT (incl. `gos build
+// (`gos`), Cranelift JIT, and LLVM AOT (incl. `gos build
 // --release`).
 //
 // Self-terminating: the client runs in main and exits explicitly, so

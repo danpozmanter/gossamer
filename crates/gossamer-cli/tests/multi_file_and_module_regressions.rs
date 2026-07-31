@@ -81,7 +81,7 @@ fn run_vm(src: &Path) -> (String, String, Option<i32>) {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     run_with_timeout(child)
 }
 
@@ -151,7 +151,7 @@ fn project_run_vm(dir: &Path) -> (String, String, Option<i32>) {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     run_with_timeout(child)
 }
 
@@ -255,7 +255,7 @@ fn cross_file_chained_sibling_module_calls() {
     )
     .unwrap();
 
-    // VM tier (`gos run`).
+    // VM tier (`gos`).
     let run_out = Command::new(gos_bin())
         .arg(".")
         .current_dir(&dir)
@@ -263,10 +263,10 @@ fn cross_file_chained_sibling_module_calls() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .expect("gos run");
+        .expect("gos");
     assert!(
         run_out.status.success(),
-        "gos run failed:\nstderr: {}",
+        "gos failed:\nstderr: {}",
         String::from_utf8_lossy(&run_out.stderr),
     );
     let run_stdout = String::from_utf8_lossy(&run_out.stdout);
@@ -739,7 +739,7 @@ fn slice_of_tuples_indexing_works_in_native_build() {
     // a flat-array aggregate before the unified `coerce_to_vec_arg`
     // landed\n the callee's `gos_rt_vec_len` then read the first
     // tuple element as the length and segfaulted on the
-    // subsequent index dispatch. Asserting on both `gos run` and
+    // subsequent index dispatch. Asserting on both `gos` and
     // a native build guards the path against future regressions.
     let src = r#"
 fn first_key(vars: &[(String, String)]) -> String {
@@ -1396,10 +1396,10 @@ fn cross_module_struct_field_access_resolves_on_all_tiers() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .expect("gos run");
+        .expect("gos");
     assert!(
         run_out.status.success(),
-        "gos run failed:\nstderr: {}",
+        "gos failed:\nstderr: {}",
         String::from_utf8_lossy(&run_out.stderr),
     );
     assert_eq!(
@@ -1559,7 +1559,7 @@ fn gos_test_discovers_tests_in_cross_referencing_files() {
     // isolation - only against the bundled whole-package source. Test
     // discovery must parse for `#[test]` names rather than fully checking
     // each file alone, and execution bundles siblings the same way
-    // `gos run` / `gos build` do, so the test resolves and runs.
+    // `gos` / `gos build` do, so the test resolves and runs.
     let dir = write_project(
         "gos-test-discovery",
         "example.com/testdisc",
@@ -1604,8 +1604,8 @@ fn gos_test_discovers_tests_in_cross_referencing_files() {
 
 #[test]
 fn relative_entry_path_bundles_siblings() {
-    // `gos run main.gos` from inside the project directory must bundle
-    // sibling modules exactly like `gos run .` does. A bare relative
+    // `gos main.gos` from inside the project directory must bundle
+    // sibling modules exactly like `gos .` does. A bare relative
     // entry has an empty `parent()`, and an unabsolutized path made
     // the module scan read from the empty dir and silently bundle
     // nothing, so qualified sibling calls failed with GR0001.
@@ -1633,7 +1633,7 @@ fn relative_entry_path_bundles_siblings() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     let out = run_with_timeout(child);
     let _ = fs::remove_dir_all(&dir);
     assert_eq!(out.2, Some(0), "stderr: {}", out.1);

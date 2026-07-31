@@ -36,7 +36,7 @@ pub(crate) fn dispatch(
     }
     // A project directory is checked as one bundled unit (the entry plus
     // its auto-bundled sibling / subdirectory modules), so cross-module
-    // references resolve exactly as they do under `gos run` / `gos
+    // references resolve exactly as they do under `gos` / `gos
     // build`. Without this, each file is type-checked in isolation and a
     // valid `crate::other::item` call reports a false unresolved-name
     // error. A directory without a single resolvable entry falls back to
@@ -89,7 +89,7 @@ pub(crate) fn run(
     let user_source = read_entry_source(file)?;
     // Augment with the synthesized serde free functions (`__gos_serde_*`)
     // so `to_json::<T>(..)` / `from_json::<T>(..)` resolve, exactly as
-    // `gos run` / `gos build` do before reaching the source map.
+    // `gos` / `gos build` do before reaching the source map.
     let source = gossamer_parse::autoderive::augment_source(&user_source);
     // Comptime fold makes `gos check` authoritative for comptime: a
     // region that is not compile-time-known is reported here, not

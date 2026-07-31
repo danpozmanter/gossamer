@@ -91,7 +91,7 @@ fn aggregate_capture_is_copy_on_write_like_the_walker() {
     // The VM's `Value` model is copy-on-write: a push through the
     // captured aggregate rebinds the closure's own share and is not
     // visible to the original binding. This matches the tree-walker's
-    // `gos run` semantics exactly (the contract Phase 1 preserves).
+    // `gos` semantics exactly (the contract Phase 1 preserves).
     let src = r#"
 fn run(f: Fn()) { f() }
 fn main() {

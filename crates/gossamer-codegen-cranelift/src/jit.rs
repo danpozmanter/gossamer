@@ -1,4 +1,4 @@
-//! In-process Cranelift JIT used by `gos run --vm`.
+//! In-process Cranelift JIT used by `gos --vm`.
 //!
 //! Reuses the [`super::native::lower_program_serial`] HIR → MIR → CLIF
 //! pipeline that the AOT object backend drives, swapping the
@@ -1249,7 +1249,7 @@ fn body_calls_jit_unsafe(
 ///   default-returning stub (e.g. `iter::fold` yielding its seed).
 /// - A goroutine-spawn site or a cross-goroutine sync primitive
 ///   (channel / `WaitGroup` / Mutex / Atomic / ... - see
-///   [`is_cross_goroutine_rt`]). Under `gos run` the spawned side runs
+///   [`is_cross_goroutine_rt`]). Under `gos` the spawned side runs
 ///   on the VM scheduler against the interpreter's own handle
 ///   registries; a native body would mint and wait on the *runtime*
 ///   registries instead, so the two sides never observe each other

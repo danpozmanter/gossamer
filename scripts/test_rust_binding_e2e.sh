@@ -118,12 +118,12 @@ fi
 # Force the runner to build synchronously and forward output so a
 # cargo failure surfaces immediately. The first invocation
 # typically takes ~30-60s; cached runs are sub-second.
-OUT="$( cd "${PROJECT}" && "${GOS}" run src/main.gos 2>&1 )"
+OUT="$( cd "${PROJECT}" && "${GOS}" src/main.gos 2>&1 )"
 STATUS=$?
 
 echo "${OUT}"
 if [[ ${STATUS} -ne 0 ]]; then
-    echo "test_rust_binding_e2e.sh: gos run failed (exit ${STATUS})" >&2
+    echo "test_rust_binding_e2e.sh: gos failed (exit ${STATUS})" >&2
     exit 1
 fi
 

@@ -4,7 +4,7 @@
 # Builds each example with `gos build`, runs the produced
 # binary in a scrubbed environment with no Rust toolchain on
 # PATH, and asserts the same stdout markers that the runner
-# (`gos run`) produces.
+# (`gos`) produces.
 #
 # Compiled binaries link `libgos_static_bindings.a` plus the
 # gossamer runtime, and the cranelift codegen lowers binding

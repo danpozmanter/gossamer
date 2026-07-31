@@ -97,7 +97,7 @@ fn stack_overflow_diagnostic_or_clean_abort() {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         match child.try_wait() {

@@ -104,7 +104,7 @@ fn configured_purge_delay() -> std::os::raw::c_long {
 /// Compiled Gossamer programs reach this from their generated `main` via
 /// `gos_rt_set_args` -> `runtime_init`; the `gos` binary (which links
 /// this crate as an rlib and so shares the same mimalloc) calls it once
-/// at startup so `gos run` and the toolchain benefit too. Safe wrapper so
+/// at startup so `gos` and the toolchain benefit too. Safe wrapper so
 /// callers under `#![forbid(unsafe_code)]` (the `gos` `main`) can invoke
 /// it. No-op under `ThreadSanitizer` and Miri, where the system
 /// allocator is used.

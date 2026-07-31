@@ -55,7 +55,7 @@ unsafe fn str_range_of<'a>(s: *const c_char, start: i64, end: i64) -> Result<&'a
 
 /// Renders a `std::num` integer parse failure exactly as
 /// `gossamer_std::strconv::ParseError` Displays it, so the compiled
-/// tier's error text is byte-identical to `gos run` (which formats
+/// tier's error text is byte-identical to `gos` (which formats
 /// the `ParseError` returned by `gossamer_std`). `value` is the
 /// trimmed input the parser saw.
 fn int_err_text(value: &str, err: &std::num::ParseIntError) -> String {
@@ -74,7 +74,7 @@ fn int_err_text(value: &str, err: &std::num::ParseIntError) -> String {
 /// payload is the parsed integer, the Err payload is a
 /// `*mut GosError` describing the parse failure. Mirrors
 /// `gossamer_std::strconv::parse_i64` (trim, decimal `i64`, the
-/// `ParseError` Display text) so it agrees with `gos run`.
+/// `ParseError` Display text) so it agrees with `gos`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_strconv_parse_i64(s: *const c_char) -> i128 {
     ffi_entry!(0i128, {
@@ -147,7 +147,7 @@ pub unsafe extern "C" fn gos_rt_strconv_atoi(s: *const c_char) -> i128 {
 /// unsigned 64-bit decimal so a leading `-` is rejected and values up
 /// to `u64::MAX` are accepted; the i64-typed Ok payload saturates at
 /// `i64::MAX` for values above it. Mirrors `gossamer_std::strconv::
-/// parse_u64` so it agrees with `gos run` (which rejects negatives and
+/// parse_u64` so it agrees with `gos` (which rejects negatives and
 /// clamps the i64 result identically).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_strconv_parse_u64(s: *const c_char) -> i128 {
@@ -393,7 +393,7 @@ pub unsafe extern "C" fn gos_rt_strconv_unquote(s: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         // Mirrors `gossamer_std::strconv::unquote`: every failure mode
         // surfaces as `ParseError::Invalid(original_input)`, so the
-        // error text matches `gos run` byte-for-byte.
+        // error text matches `gos` byte-for-byte.
         let text = unsafe { str_of(s) };
         if text.len() < 2 || !text.starts_with('"') || !text.ends_with('"') {
             return unsafe { strconv_err(&format!("invalid input: {text:?}")) };

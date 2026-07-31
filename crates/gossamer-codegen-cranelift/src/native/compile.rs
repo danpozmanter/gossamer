@@ -443,7 +443,7 @@ pub(crate) fn lower_program(
     lower_program_with_linkage(module, bodies, tcx, entry_symbol_for_main, Linkage::Local)
 }
 
-/// JIT-specific lowerer: build CLIF serially so short `gos run`
+/// JIT-specific lowerer: build CLIF serially so short `gos`
 /// promotions do not instantiate rayon's global worker pool.
 pub(crate) fn lower_program_serial(
     module: &mut dyn Module,

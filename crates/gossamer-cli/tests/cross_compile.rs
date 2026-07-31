@@ -104,8 +104,8 @@ fn cross_one(root: &Path, triple: &str) {
         let vm = Command::new(gos_bin())
             .arg(&src_path)
             .output()
-            .expect("spawn gos run");
-        assert!(vm.status.success(), "gos run failed for {src}");
+            .expect("spawn gos");
+        assert!(vm.status.success(), "gos failed for {src}");
 
         let mut build = Command::new(gos_bin());
         build

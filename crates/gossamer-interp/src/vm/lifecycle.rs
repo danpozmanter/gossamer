@@ -379,7 +379,7 @@ impl Vm {
                         wrappers.insert(decl.name.name.clone(), target);
                     }
                     // The user-function inliner is a performance optimization
-                    // for `gos run` / `gos build` / `gos bench`. `gos test`
+                    // for `gos` / `gos build` / `gos bench`. `gos test`
                     // loads with `enable_inlining == false` so a failed test's
                     // call-chain traceback preserves every intermediate frame.
                     let inlinable = if enable_inlining {

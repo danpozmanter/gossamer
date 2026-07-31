@@ -3,7 +3,7 @@
 // `static_files::serve_file`. Each was interp-only (the canonical
 // compiled shims were unwired or, for `native_client::get`, mapped with
 // the wrong arity). They now lower to dedicated `gos_rt_*` shims so the
-// bytecode VM (`gos run`) and LLVM AOT (`gos build`) behave identically.
+// bytecode VM (`gos`) and LLVM AOT (`gos build`) behave identically.
 //
 // `native_client` + `proxy::forward` issue one-shot requests against an
 // in-process echo server; `static_files::serve_file` reads a temp file

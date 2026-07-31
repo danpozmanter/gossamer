@@ -65,7 +65,7 @@ fn run_vm(src: &Path) -> (String, String, Option<i32>) {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     run_with_timeout(child)
 }
 

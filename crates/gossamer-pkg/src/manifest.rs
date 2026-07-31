@@ -163,7 +163,7 @@ pub enum RustBindingSpec {
     },
     /// `{ prebuilt = "path/to/lib.a", abi = "1.0" }` - a
     /// pre-built static archive (Phase 4 of rustergo.md). `gos
-    /// build` links the archive directly; `gos run` requires
+    /// build` links the archive directly; `gos` requires
     /// the JIT-resolvable `gos_binding_*` thunks to be exposed
     /// from the produced binary.
     Prebuilt {

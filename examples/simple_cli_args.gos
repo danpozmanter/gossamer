@@ -2,7 +2,7 @@
   * Simple Command-line argument parsing.
   *
   * Run:
-  *     gos run examples/simple_cli_args.gos -- alpha beta
+  *     gos examples/simple_cli_args.gos -- alpha beta
   */
 
 use std::{env, iter}

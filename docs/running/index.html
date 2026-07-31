@@ -1902,9 +1902,9 @@
 
 
 <h1 id="running-gossamer">Running Gossamer<a class="headerlink" href="#running-gossamer" title="Permanent link">&para;</a></h1>
-<p>Once <code>gos</code> is on your <code>PATH</code>, every subcommand takes either a
-<code>.gos</code> source file, a project directory containing
-<code>project.toml</code>, or no argument at all (drops into the REPL).</p>
+<p>Once <code>gos</code> is on your <code>PATH</code>, run a program with <code>gos FILE [ARGS...]</code>.
+<code>FILE</code> may be a <code>.gos</code> source file or a project directory containing
+<code>project.toml</code>; <code>gos</code> with no arguments drops into the REPL.</p>
 <h2 id="cheat-sheet">Cheat-sheet<a class="headerlink" href="#cheat-sheet" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1923,11 +1923,11 @@
 <td>Scaffold just <code>project.toml</code> in the CWD</td>
 </tr>
 <tr>
-<td><code>gos run src/main.gos</code></td>
+<td><code>gos src/main.gos</code></td>
 <td>Register-based bytecode VM with in-process Cranelift JIT</td>
 </tr>
 <tr>
-<td><code>gos run --no-jit src/main.gos</code></td>
+<td><code>gos --no-jit src/main.gos</code></td>
 <td>Same VM, pure bytecode dispatch (JIT off)</td>
 </tr>
 <tr>
@@ -2021,7 +2021,7 @@
 </tbody>
 </table>
 <h2 id="entry-file">Entry file<a class="headerlink" href="#entry-file" title="Permanent link">&para;</a></h2>
-<p><code>gos run file.gos</code> and <code>gos build file.gos</code> accept a file with no
+<p><code>gos file.gos [ARGS...]</code> and <code>gos build file.gos</code> accept a file with no
 <code>fn main</code>: bare statements at the top of the entry file become the
 body of an implicit <code>fn main()</code>. So a one-line <code>println!("Hello
 World")</code> file runs as-is. See
@@ -2031,7 +2031,7 @@ entry file is <code>src/main.gos</code> by convention, or whatever
 <p><code>gos watch</code> is a restart-based development supervisor for HTTP services. It
 watches the project, its transitive local path dependencies, and manifests;
 after an edit it validates the revision in-process, gracefully terminates the
-old <code>gos run</code> child, waits for the port to be released, and starts a
+old <code>gos</code> child, waits for the port to be released, and starts a
 replacement. An invalid edit leaves the last known-good service running. It
 intentionally does not preserve in-memory state, WebSocket connections, or
 streaming responses, and is not a production zero-downtime deployment

@@ -4,7 +4,7 @@
 //! component:
 //!
 //! - [`run`] compiles `source` through the same parse -> resolve ->
-//!   typecheck -> exhaustiveness -> lower pipeline `gos run` uses, then
+//!   typecheck -> exhaustiveness -> lower pipeline `gos` uses, then
 //!   executes `main` on the bytecode VM with stdout / stderr captured
 //!   into buffers.
 //! - [`check`] runs only the front-end gate and returns the structured
@@ -137,7 +137,7 @@ pub fn check(source: &str) -> JsValue {
 /// return value.
 fn run_pipeline(user_source: &str) -> Result<(), String> {
     // Synthesize `from_json` / `to_json` and other derives as real
-    // source so the program has genuine methods, exactly as `gos run`
+    // source so the program has genuine methods, exactly as `gos`
     // does before checking.
     let source = gossamer_parse::autoderive::augment_source(user_source);
 
@@ -146,7 +146,7 @@ fn run_pipeline(user_source: &str) -> Result<(), String> {
 
     // Comptime fold: evaluate `comptime { ... }` / `comptime fn` calls
     // on the VM and splice their result literals in, exactly as the
-    // `gos run` pre-pass does. A front-end rejection skips the fold so
+    // `gos` pre-pass does. A front-end rejection skips the fold so
     // the authoritative gate below reports it.
     let source = if source.contains("comptime") {
         let mut fold_map = SourceMap::new();

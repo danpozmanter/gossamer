@@ -1908,7 +1908,7 @@ server round-trip, no install. It powers the runnable examples on the
 <a href="https://danpozmanter.github.io/gossamer/">home page</a>, the
 <a href="https://danpozmanter.github.io/gossamer/tour/">Tour of Gossamer</a>, and the standalone
 Try Gossamer editor.</p>
-<p>Output is bit-identical to native <code>gos run</code> / <code>gos build</code>.</p>
+<p>Output is bit-identical to native <code>gos</code> / <code>gos build</code>.</p>
 <h2 id="what-runs">What runs<a class="headerlink" href="#what-runs" title="Permanent link">&para;</a></h2>
 <p>The whole language plus the pure standard library work unchanged:</p>
 <ul>
@@ -1930,13 +1930,13 @@ completion</strong>:</p>
   <code>while let Some(v) = rx.recv()</code>, works.</li>
 <li>Programs that need two goroutines to <strong>interleave mid-run</strong> (unbuffered
   rendezvous, ping-pong, <code>select</code> over live producers) do not - run those with
-  native <code>gos run</code>.</li>
+  native <code>gos</code>.</li>
 </ul>
 <p>This is the same limit every language has on single-threaded WebAssembly.
 Gossamer reports it as a clean panic rather than freezing the tab.</p>
 <h2 id="what-is-omitted-the-browser-sandbox">What is omitted (the browser sandbox)<a class="headerlink" href="#what-is-omitted-the-browser-sandbox" title="Permanent link">&para;</a></h2>
 <p>A browser tab cannot touch the filesystem, open sockets, or spawn processes, so
-these are unavailable in the playground. They work normally in native <code>gos run</code>
+these are unavailable in the playground. They work normally in native <code>gos</code>
 and <code>gos build</code>:</p>
 <table>
 <thead>

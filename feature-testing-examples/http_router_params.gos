@@ -4,7 +4,7 @@
 // handler through `r.path_value(name)`. Before this was wired the
 // VM returned the capture while the compiled tiers had no accessor
 // at all. This fixture asserts a single-segment capture and a
-// trailing rest-capture round-trip identically under `gos run`
+// trailing rest-capture round-trip identically under `gos`
 // (bytecode VM) and `gos build` (LLVM AOT).
 //
 // Self-terminating: the client runs in main and exits explicitly, so

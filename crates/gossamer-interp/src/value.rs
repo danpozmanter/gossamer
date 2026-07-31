@@ -3033,7 +3033,7 @@ pub enum RuntimeError {
     StackOverflow(usize),
     /// Execution budget exhausted (the playground caps loop iterations so an
     /// unbounded loop fails cleanly instead of hanging). Only exists under the
-    /// `fuel` feature; native `gos run` has no budget and never raises it.
+    /// `fuel` feature; native `gos` has no budget and never raises it.
     #[cfg(feature = "fuel")]
     #[error("error[GX0009]: execution limit reached - the program ran too long")]
     FuelExhausted,

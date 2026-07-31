@@ -312,7 +312,7 @@ struct Shared {
     /// Idle signal - workers notify when they reach a quiescent
     /// state (deque empty + no peer work + no parked tasks). The
     /// orchestrator's `wait_until_idle` parks on this Condvar
-    /// instead of polling, so an empty `gos run` does not consume
+    /// instead of polling, so an empty `gos` does not consume
     /// CPU on the main thread while the workers are idle.
     idle_mu: Mutex<()>,
     idle_cv: Condvar,

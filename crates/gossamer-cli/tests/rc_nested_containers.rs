@@ -51,7 +51,7 @@ fn assert_vm_matches_native(tag: &str, src: &str) {
     let vm = Command::new(gos_bin())
         .arg(&source)
         .output()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     assert!(
         vm.status.success(),
         "[{tag}] vm run failed: {}",

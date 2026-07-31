@@ -2,7 +2,7 @@
 //!
 //! `abi04_export.rs` exercises the binding's `extern "C"` thunks
 //! directly from Rust. This test goes through the full pipeline:
-//! `gos run` (VM + Cranelift JIT) and `gos build` (LLVM AOT)
+//! `gos` (VM + Cranelift JIT) and `gos build` (LLVM AOT)
 //! against a small `.gos` program that calls the binding. Byte-
 //! compare the stdout to catch tier divergence.
 //!
@@ -63,17 +63,14 @@ fn external_binding_runs_identically_via_gos_run() {
         .arg(example_dir().join("src").join("main.gos"))
         .current_dir(example_dir())
         .output()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     if !out.status.success() {
         // Skip rather than fail: the test infrastructure may
         // lack the external-bindings fixture under some build
         // matrices (cargo-fuzz, sanitizer rebuilds). A genuine
         // ABI regression shows up as a stdout mismatch in the
         // parity test below, not as a build failure here.
-        eprintln!(
-            "gos run skipped: {:?}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        eprintln!("gos skipped: {:?}", String::from_utf8_lossy(&out.stderr));
         return;
     }
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -100,7 +97,7 @@ fn external_binding_run_and_build_produce_identical_stdout() {
         .arg(&main_path)
         .current_dir(example_dir())
         .output()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     if !run_out.status.success() {
         return;
     }

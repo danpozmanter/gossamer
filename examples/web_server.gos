@@ -9,7 +9,7 @@
  * unmatched paths fall through to a built-in 404 response.
  *
  * Run:
- *     gos run examples/web_server.gos
+ *     gos examples/web_server.gos
  *     curl -i http://localhost:8080/
  *     curl -i http://localhost:8080/health
  *     curl -i http://localhost:8080/users

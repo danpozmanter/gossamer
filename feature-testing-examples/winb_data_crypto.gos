@@ -1,6 +1,6 @@
 // Win B DATA: cross-tier parity for the deterministic crypto surface.
 // Hashes / MACs / KDFs / AEAD with fixed inputs must be bit-identical
-// under `gos run` (VM) and `gos build --release` (LLVM AOT).
+// under `gos` (VM) and `gos build --release` (LLVM AOT).
 
 use std::crypto
 use std::encoding

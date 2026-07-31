@@ -78,7 +78,7 @@ impl Tier {
 struct Spec {
     /// Path relative to the workspace root.
     path: &'static str,
-    /// Args appended after the source on `gos run`, or passed
+    /// Args appended after the source on `gos`, or passed
     /// directly to the compiled binary.
     args: &'static [&'static str],
     /// Stdin to feed to every tier's run.
@@ -147,7 +147,7 @@ const SPECS: &[Spec] = &[
     spec("examples/environment.gos"),
     spec("examples/errors.gos"),
     // Entry-point `Err` must print to stderr and exit nonzero identically on
-    // every tier (not silently succeed on `gos run` while `gos build` exits 1).
+    // every tier (not silently succeed on `gos` while `gos build` exits 1).
     Spec {
         allow_nonzero: true,
         ..spec("feature-testing-examples/entry_result_err.gos")
@@ -1264,14 +1264,14 @@ fn tier_report_shows_exit_ntstatus_and_streams() {
         exit_text: Some("exit 0".to_string()),
         timed_out: false,
         exe: PathBuf::from("/tmp/gos"),
-        cmdline: "/tmp/gos run examples/hello.gos".to_string(),
+        cmdline: "/tmp/gos examples/hello.gos".to_string(),
         workdir: PathBuf::from("/home/daniel/dev/gossamer"),
     };
     let report = tier_report("vm", &run);
     assert!(report.starts_with("vm:\n  exit=0 (exit 0)"));
     assert!(report.contains("timed_out=no"));
     assert!(report.contains("exe=/tmp/gos"));
-    assert!(report.contains("cmdline=/tmp/gos run examples/hello.gos"));
+    assert!(report.contains("cmdline=/tmp/gos examples/hello.gos"));
     assert!(report.contains("workdir=/home/daniel/dev/gossamer"));
     assert!(report.contains("stdout=\"ok\\n\""));
     assert!(report.contains("stderr=\"\""));
@@ -1320,7 +1320,7 @@ fn run_vm(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn gos run");
+        .expect("spawn gos");
     run_with_timeout(
         child,
         stdin,
@@ -1355,7 +1355,7 @@ fn run_jit(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn gos run with JIT");
+        .expect("spawn gos with JIT");
     run_with_timeout(
         child,
         stdin,

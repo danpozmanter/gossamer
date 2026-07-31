@@ -841,7 +841,7 @@ fn run_tests_filtered_inner(
     quiet: bool,
 ) -> Vec<TestRecord> {
     // Bundle sibling `*.gos` modules into the compilation, exactly as
-    // `gos run` / `gos build` do, so a `#[test]` can reach a sibling
+    // `gos` / `gos build` do, so a `#[test]` can reach a sibling
     // module (`super::helper::triple` where `src/helper.gos` is declared
     // `mod helper;`). Test-name collection stays unbundled so sibling
     // tests are not double-counted against this file.
@@ -1434,7 +1434,7 @@ mod tier_parity {
                 .to_string();
             let vm = tier_outcome(run_vm(file));
             let llvm = tier_outcome(run_llvm(file));
-            // Cranelift is the in-process JIT under `gos run`; tier
+            // Cranelift is the in-process JIT under `gos`; tier
             // outcome maps to the VM outcome until a separate
             // dispatch lands.
             let cranelift = vm.clone();

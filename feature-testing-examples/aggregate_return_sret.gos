@@ -2,7 +2,7 @@
 // calls four functions returning by-value aggregates: a 3-element tuple, a
 // two-field struct, a fixed `[i64; 4]` array, and a monomorphised generic
 // method returning a struct. Each result is summed, so the output pins the
-// exact values across the bytecode VM, the Cranelift JIT (`gos run`), and the
+// exact values across the bytecode VM, the Cranelift JIT (`gos`), and the
 // LLVM AOT tier. Because the caller is JIT-promoted, its calls lower through
 // the structural-return (sret) ABI: the caller allocates one correctly-sized
 // stack slot per call site (reused across iterations) and the callee writes the

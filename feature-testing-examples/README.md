@@ -7,11 +7,11 @@ and LLVM AOT release.
 ## Quick start
 
 ```
-gos check *.gos       # type-check everything
-gos run *.gos         # run on the VM
-gos run --no-jit *.gos   # run on the VM without JIT
-gos test .            # run #[test] functions
-gos build *.gos       # compile to native (non-channel examples only)
+gos check *.gos              # type-check everything
+gos example.gos              # run one example on the VM
+gos --no-jit example.gos     # run one example on the VM without JIT
+gos test .                   # run #[test] functions
+gos build example.gos        # compile one non-channel example to native
 ```
 
 ## Examples

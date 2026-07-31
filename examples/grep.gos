@@ -6,8 +6,8 @@
  * `grep` convention.
  *
  * Run:
- *     gos run examples/grep.gos -- needle < input.txt
- *     gos run examples/grep.gos -- --count needle < input.txt
+ *     gos examples/grep.gos -- needle < input.txt
+ *     gos examples/grep.gos -- --count needle < input.txt
  */
 
 use std::bufio

@@ -13,7 +13,7 @@
 //! Stmt, Tx, Rows, Row}` are convenience layers on top of those
 //! trait objects; the C-ABI shims in [`crate::c_abi::sql`] operate on
 //! the trait objects directly through handle registries so compiled
-//! Gossamer code sees the same surface as `gos run`.
+//! Gossamer code sees the same surface as `gos`.
 
 #![forbid(unsafe_code)]
 

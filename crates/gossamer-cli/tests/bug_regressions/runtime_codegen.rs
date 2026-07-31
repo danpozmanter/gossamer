@@ -705,7 +705,7 @@ fn aggregate_alloc_loop_reclaims_deterministically() {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("spawn gos run");
+            .expect("spawn gos");
         run_with_timeout(child)
     };
     assert_eq!(
@@ -838,7 +838,7 @@ fn aggregate_return_chain_outlives_callee_frame() {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("spawn gos run");
+            .expect("spawn gos");
         run_with_timeout(child)
     };
     assert_eq!(

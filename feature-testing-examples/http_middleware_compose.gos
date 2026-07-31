@@ -10,7 +10,7 @@
 // `gos_fn_addr`); `http::serve` serves the handle through
 // `gos_rt_middleware_serve`. Interp: `tag` builds a `Middleware` value
 // whose `Middleware::serve` native runs the inner serve + body
-// transform. Bit-identical on the bytecode VM (`gos run`) and LLVM AOT
+// transform. Bit-identical on the bytecode VM (`gos`) and LLVM AOT
 // (`gos build`).
 //
 // Self-terminating: the client runs in main and exits explicitly, so

@@ -671,7 +671,7 @@ fn server_smoke(tier: Tier) {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
-                .expect("spawn gos run web_server");
+                .expect("spawn gos web_server");
             (child, None)
         }
         compiled => {
@@ -945,7 +945,7 @@ fn forced_jit_matches_bytecode_on_unlowerable_shapes() {
                 .arg(&path)
                 .env(key, val)
                 .output()
-                .unwrap_or_else(|e| panic!("spawn gos run {rel}: {e}"));
+                .unwrap_or_else(|e| panic!("spawn gos {rel}: {e}"));
             (
                 out.status.code(),
                 String::from_utf8_lossy(&out.stdout).into_owned(),

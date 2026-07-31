@@ -16,7 +16,7 @@
  * recursively.
  *
  * Run:
- *     gos run examples/json_structs.gos
+ *     gos examples/json_structs.gos
  */
 
 use std::errors

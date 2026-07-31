@@ -3,8 +3,8 @@
 # `~/dev/contexts/lang/external_libs.md` §10.
 #
 # For each example, exercises:
-#   - `gos run` against the source
-#   - cache-hit on the second `gos run`
+#   - `gos` against the source
+#   - cache-hit on the second `gos`
 #   - the no-bindings fast path (no cargo invocation)
 #
 # Compiled-mode (gos build) parity is exercised by
@@ -38,7 +38,7 @@ run_in() {
     echo "=> ${label}"
     cd "${proj}"
     local out
-    out="$( "${GOS}" run "${entry}" 2>&1 )"
+    out="$( "${GOS}" "${entry}" 2>&1 )"
     echo "${out}"
     for m in "${expected_markers[@]}"; do
         if ! grep -Fq "${m}" <<<"${out}"; then
@@ -91,7 +91,7 @@ fn main() {
     println("plain-project ok")
 }
 EOF
-( cd "${NOBIND}" && "${GOS}" run src/main.gos 2>&1 ) | tee /tmp/no-bindings-run.txt
+( cd "${NOBIND}" && "${GOS}" src/main.gos 2>&1 ) | tee /tmp/no-bindings-run.txt
 if ! grep -Fq "plain-project ok" /tmp/no-bindings-run.txt; then
     echo "test_external_libs_full.sh: no-bindings project did not produce expected stdout" >&2
     exit 1

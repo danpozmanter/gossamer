@@ -1,5 +1,5 @@
 //! Parity check across the 0.4.0 HTTP-module bridges. Runs the
-//! same `.gos` source in `gos run` (interp) and `gos build` →
+//! same `.gos` source in `gos` (interp) and `gos build` →
 //! native, asserts byte-identical stdout. Covers the surfaces
 //! that exist in BOTH tiers - stateful types (`Router`,
 //! `FileServer` method chains, `Proxy`, full `NativeClient`,
@@ -55,7 +55,7 @@ fn write_source() -> PathBuf {
 #[test]
 fn http_bridge_interp_matches_compiled() {
     let src = write_source();
-    let interp = Command::new(gos_bin()).arg(&src).output().expect("gos run");
+    let interp = Command::new(gos_bin()).arg(&src).output().expect("gos");
     assert!(
         interp.status.success(),
         "interp failed: {}",
