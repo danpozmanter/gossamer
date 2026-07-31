@@ -50,6 +50,7 @@ fi
 # (see find_runtime_lib in gossamer-cli), so install it into the sibling lib/.
 LIB_DIR="$(dirname "$BIN_DIR")/lib"
 RUNTIME_LIB="libgossamer_runtime.a"
+MUSL_RUNTIME_LIB="libgossamer_runtime-musl.a"
 
 uname_s=$(uname -s 2>/dev/null || echo unknown)
 uname_m=$(uname -m 2>/dev/null || echo unknown)
@@ -161,6 +162,11 @@ if [ -f "$script_dir/gos" ]; then
         install_lib "$script_dir/$RUNTIME_LIB" "$LIB_DIR/$RUNTIME_LIB"
         printf 'Installed %s to %s\n' "$RUNTIME_LIB" "$LIB_DIR/$RUNTIME_LIB"
     fi
+    if [ "$os" = "linux" ] && [ -f "$script_dir/$MUSL_RUNTIME_LIB" ]; then
+        ensure_dir "$LIB_DIR"
+        install_lib "$script_dir/$MUSL_RUNTIME_LIB" "$LIB_DIR/$MUSL_RUNTIME_LIB"
+        printf 'Installed %s to %s\n' "$MUSL_RUNTIME_LIB" "$LIB_DIR/$MUSL_RUNTIME_LIB"
+    fi
     "$BIN_DIR/gos" --version 2>/dev/null || true
     exit 0
 fi
@@ -221,6 +227,10 @@ install_file "$extracted_dir/gos" "$BIN_DIR/gos"
 if [ -f "$extracted_dir/$RUNTIME_LIB" ]; then
     ensure_dir "$LIB_DIR"
     install_lib "$extracted_dir/$RUNTIME_LIB" "$LIB_DIR/$RUNTIME_LIB"
+fi
+if [ "$os" = "linux" ] && [ -f "$extracted_dir/$MUSL_RUNTIME_LIB" ]; then
+    ensure_dir "$LIB_DIR"
+    install_lib "$extracted_dir/$MUSL_RUNTIME_LIB" "$LIB_DIR/$MUSL_RUNTIME_LIB"
 fi
 
 printf 'Installed gos %s to %s\n' "$TAG" "$BIN_DIR/gos"

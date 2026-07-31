@@ -290,12 +290,24 @@ fn repl_info_is_limited_to_language_and_standard_library_catalogs() {
 }
 
 #[test]
+fn repl_reports_a_missing_enum_body_once() {
+    let out = run_repl("enum Nothing\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("1 parse error:")
+            && out.stderr.contains("expected `{` to open enum body")
+            && !out.stderr.contains("unexpected keyword `fn`"),
+        "missing enum body should have one clear diagnostic: {}",
+        out.stderr
+    );
+}
+
+#[test]
 fn repl_info_does_not_inspect_session_state() {
     let out = run_repl(
         "let x = 9\n\
          fn wow() { \"heyoooo\" }\n\
          %i whatever\n\
-         %i x\n\
          %i wow\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -305,13 +317,31 @@ fn repl_info_does_not_inspect_session_state() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("nothing found for `x`"),
-        "%info should leave bindings to %bindings: {}",
-        out.stdout
-    );
-    assert!(
         out.stdout.contains("nothing found for `wow`"),
         "%info should leave declarations to %declarations: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_info_empty_shows_only_the_catalog_directory() {
+    let out = run_repl("%i\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("std::archive::tar [module]")
+            && !out.stdout.contains("String::len [method]"),
+        "blank %i should not emit every help entry: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_info_does_not_render_keyword_documentation() {
+    let out = run_repl("%i async_await\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("nothing found for `async_await`"),
+        "%i should not render language keyword documentation: {}",
         out.stdout
     );
 }
@@ -1622,6 +1652,46 @@ fn repl_meta_info_shows_complete_signatures_for_string_methods() {
 }
 
 #[test]
+fn repl_meta_info_plain_text_searches_public_symbol_paths() {
+    let out = run_repl("%i start\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for expected in [
+        "std::strings::starts_with [fn]",
+        "String::starts_with [method]",
+        "std::strings::trim_start [fn]",
+    ] {
+        assert!(
+            out.stdout.contains(expected),
+            "%i start omitted `{expected}`: {}",
+            out.stdout
+        );
+    }
+}
+
+#[test]
+fn repl_meta_info_renders_matching_modules_once() {
+    let out = run_repl("%i gzip\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert_eq!(
+        out.stdout.matches("std::compress::gzip [module]").count(),
+        1,
+        "%i should not duplicate matching module entries: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_listing_commands_accept_long_all_option() {
+    let out = run_repl("let answer = 42\n%i iter --all\n%b --all\n%d --all\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        !out.stderr.contains("unknown option") && !out.stderr.contains("usage:"),
+        "--all should be accepted by listing commands: {}",
+        out.stderr
+    );
+}
+
+#[test]
 fn repl_meta_help_ls_and_find_cover_core_string_parse() {
     let out = run_repl(
         "%info string::parse\n\
@@ -1849,12 +1919,12 @@ fn repl_meta_info_distinguishes_same_leaf_function_names_by_type() {
 }
 
 #[test]
-fn repl_meta_info_searches_regex() {
+fn repl_meta_info_regex_does_not_search_keyword_documentation() {
     let out = run_repl("%info /question_mark/\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("lang::question_mark (shipped)"),
-        "expected feature-status regex match; stdout: {}",
+        out.stdout.contains("nothing found for `/question_mark/`"),
+        "%info regex should not search keyword documentation; stdout: {}",
         out.stdout
     );
 }

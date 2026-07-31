@@ -2044,7 +2044,10 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
 fn mints_owned_string(name: &str) -> bool {
     matches!(
         name,
-        "gos_rt_str_with_capacity"
+        "gos_rt_i64_to_str"
+            | "gos_rt_u64_to_str"
+            | "gos_rt_f64_to_str"
+            | "gos_rt_str_with_capacity"
             | "gos_rt_str_repeat"
             | "gos_rt_str_to_upper"
             | "gos_rt_str_to_lower"

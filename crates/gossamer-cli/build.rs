@@ -162,6 +162,7 @@ fn main() {
         if rustup_target_installed(musl_triple) {
             let musl_lib_path =
                 build_runtime_into(&workspace_root, &target_dir, &profile, Some(musl_triple));
+            publish_archive(&musl_lib_path, &lib_dir.join("libgossamer_runtime-musl.a"));
             println!(
                 "cargo:rustc-env=GOSSAMER_RUNTIME_LIB_PATH_MUSL={}",
                 musl_lib_path.display()
@@ -321,16 +322,25 @@ fn build_runtime_into(
     // linker fails with "file truncated". `rename` is atomic on the same
     // filesystem, so a reader always sees either the old or the new
     // complete archive, never a half-written one.
-    let tmp = outer_artifact.with_extension(format!("a.tmp-{}", std::process::id()));
-    std::fs::copy(&inner_artifact, &tmp).unwrap_or_else(|e| {
+    publish_archive(&inner_artifact, &outer_artifact);
+    outer_artifact
+}
+
+/// Copies a runtime archive atomically so concurrent package/build readers
+/// never observe a partially-written static library.
+fn publish_archive(source: &Path, destination: &Path) {
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent).expect("create runtime archive directory");
+    }
+    let tmp = destination.with_extension(format!("a.tmp-{}", std::process::id()));
+    std::fs::copy(source, &tmp).unwrap_or_else(|e| {
         panic!(
             "copy staticlib {} -> {}: {e}",
-            inner_artifact.display(),
+            source.display(),
             tmp.display()
         )
     });
-    std::fs::rename(&tmp, &outer_artifact).expect("atomically publish staticlib");
-    outer_artifact
+    std::fs::rename(&tmp, destination).expect("atomically publish staticlib");
 }
 
 /// Fails the build if any `gos_rt_*` symbol declared in `c_abi.rs`

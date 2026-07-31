@@ -2500,6 +2500,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_json_value_array"    => rt::gos_rt_json_value_array,
         "gos_rt_json_value_object"   => rt::gos_rt_json_value_object,
         "gos_rt_parse_f64"           => rt::gos_rt_parse_f64,
+        "gos_rt_i64_chars"           => rt::gos_rt_i64_chars,
         "gos_rt_i64_to_str"          => rt::gos_rt_i64_to_str,
         "gos_rt_u64_to_str"          => rt::gos_rt_u64_to_str,
         "gos_rt_uuid_v4"             => rt::gos_rt_uuid_v4,

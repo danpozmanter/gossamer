@@ -185,6 +185,28 @@ mod top_level_stmt_tests {
     }
 
     #[test]
+    fn missing_item_bodies_do_not_consume_following_items() {
+        for source in [
+            "enum Nothing\nfn next() {}\n",
+            "trait Missing\nfn next() {}\n",
+            "impl Missing\nfn next() {}\n",
+            "mod missing\nfn next() {}\n",
+        ] {
+            let (sf, diags) = parse(source);
+            assert_eq!(
+                diags.len(),
+                1,
+                "a missing item body should report only its opening delimiter: {source:?}; {diags:?}"
+            );
+            assert_eq!(
+                sf.items.len(),
+                2,
+                "following item should still parse: {source:?}"
+            );
+        }
+    }
+
+    #[test]
     fn piped_format_with_an_extra_placeholder_reports_only_arity() {
         let (_sf, diags) = parse("\"two\" |> println!(\"one\", _)\n");
         assert!(

@@ -211,8 +211,13 @@ pub(super) fn lower_intrinsic_call_collections(
         // path needs enum-with-payload support.
         // Numeric-to-String formatters (used by `42.to_string()`
         // and `3.14.to_string()`).
-        "gos_rt_i64_to_str" => {
-            let rt_fn = intrinsics.extern_fn_by_name(module, "gos_rt_i64_to_str")?;
+        "gos_rt_i64_to_str" | "gos_rt_i64_chars" => {
+            let symbol = if name == "gos_rt_i64_chars" {
+                "gos_rt_i64_chars"
+            } else {
+                "gos_rt_i64_to_str"
+            };
+            let rt_fn = intrinsics.extern_fn_by_name(module, symbol)?;
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let n = match args.first() {
                 Some(a) => lower_operand(

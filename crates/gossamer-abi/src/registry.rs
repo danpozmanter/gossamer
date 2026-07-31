@@ -495,6 +495,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_http_stream_next_chunk", (Ptr, I64) -> I128, Cranelift, "Read the next byte chunk (at most max_bytes long) from a streaming HTTP response."),
     rt!("gos_rt_http_stream_next_line", (Ptr) -> I128, Cranelift, "Read the next line from a streaming HTTP response."),
     rt!("gos_rt_httptest_server", (I64, Ptr) -> Ptr, Cranelift, "Start a test-process-scoped loopback HTTP static-response server and return its base URL."),
+    rt!("gos_rt_i64_chars", (I64) -> Ptr, Both, "Format an i64 directly as a Vec<char>."),
     rt!("gos_rt_i64_to_str", (I64) -> Ptr, Both, "Convert an i64 to its decimal string representation."),
     rt!("gos_rt_image_decode_base64", (Ptr) -> I64, Cranelift, "image::decode_base64(data) -> opaque image handle or zero."),
     rt!("gos_rt_image_encode_jpeg_base64", (I64, I64) -> Ptr, Cranelift, "image::encode_jpeg_base64(handle, quality) -> String."),

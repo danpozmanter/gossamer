@@ -4,15 +4,24 @@
 #![forbid(unsafe_code)]
 
 use gossamer_ast::{
-    Attribute, Attrs, ConstDecl, EnumDecl, EnumVariant, Expr, ExprKind, FnDecl, FnParam, Ident,
-    ImplDecl, ImplItem, Item, ItemKind, ModBody, ModDecl, Mutability, Receiver, StaticDecl,
+    Attribute, Attrs, ConstDecl, EnumDecl, EnumVariant, Expr, ExprKind, FnDecl, FnParam, Generics,
+    Ident, ImplDecl, ImplItem, Item, ItemKind, ModBody, ModDecl, Mutability, Receiver, StaticDecl,
     StructBody, StructDecl, StructField, TraitBound, TraitDecl, TraitItem, TupleField,
-    TypeAliasDecl, TypePath, TypePathSegment, Visibility,
+    TypeAliasDecl, TypePath, TypePathSegment, Visibility, WhereClause,
 };
 use gossamer_lex::{Keyword, Punct, TokenKind};
 
 use crate::diagnostic::ParseError;
 use crate::parser::Parser;
+
+fn empty_enum_decl(name: Ident, generics: Generics, where_clause: WhereClause) -> EnumDecl {
+    EnumDecl {
+        name,
+        generics,
+        where_clause,
+        variants: Vec::new(),
+    }
+}
 
 impl Parser<'_> {
     /// Parses a single top-level item.
@@ -410,7 +419,9 @@ impl Parser<'_> {
         let name = self.parse_ident_required("enum name");
         let generics = self.parse_generics();
         let where_clause = self.parse_where_clause();
-        self.expect_punct(Punct::LBrace, "to open enum body");
+        if !self.expect_punct(Punct::LBrace, "to open enum body") {
+            return empty_enum_decl(name, generics, where_clause);
+        }
         let mut variants = Vec::new();
         while !self.at_punct(Punct::RBrace) && !self.at_eof() {
             let before_variant = self.tokens.checkpoint();
@@ -512,7 +523,15 @@ impl Parser<'_> {
             Vec::new()
         };
         let where_clause = self.parse_where_clause();
-        self.expect_punct(Punct::LBrace, "to open trait body");
+        if !self.expect_punct(Punct::LBrace, "to open trait body") {
+            return TraitDecl {
+                name,
+                generics,
+                supertraits,
+                where_clause,
+                items: Vec::new(),
+            };
+        }
         let mut items = Vec::new();
         while !self.at_punct(Punct::RBrace) && !self.at_eof() {
             let attrs = self.parse_attrs();
@@ -587,7 +606,15 @@ impl Parser<'_> {
             (None, first_type)
         };
         let where_clause = self.parse_where_clause();
-        self.expect_punct(Punct::LBrace, "to open impl body");
+        if !self.expect_punct(Punct::LBrace, "to open impl body") {
+            return ImplDecl {
+                generics,
+                trait_ref,
+                self_ty,
+                where_clause,
+                items: Vec::new(),
+            };
+        }
         let mut items = Vec::new();
         while !self.at_punct(Punct::RBrace) && !self.at_eof() {
             items.push(self.parse_impl_item());
@@ -680,7 +707,12 @@ impl Parser<'_> {
                 body: ModBody::External,
             };
         }
-        self.expect_punct(Punct::LBrace, "to open inline module");
+        if !self.expect_punct(Punct::LBrace, "to open inline module") {
+            return ModDecl {
+                name,
+                body: ModBody::Inline(Vec::new()),
+            };
+        }
         let mut items = Vec::new();
         while !self.at_punct(Punct::RBrace) && !self.at_eof() {
             let before = self.checkpoint_public();

@@ -909,18 +909,46 @@ pub unsafe extern "C" fn gos_rt_str_chars(s: *const c_char) -> *mut GosVec {
         } else {
             unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
         };
-        let codepoints: Vec<i64> = st.chars().map(|c| i64::from(u32::from(c))).collect();
-        let v = unsafe { gos_rt_vec_with_capacity(8, codepoints.len() as i64) };
+        // A UTF-8 string has at most one scalar per byte, so its byte length is
+        // a safe capacity upper bound. Allocate once and discover the exact
+        // scalar count while filling instead of scanning the string twice.
+        let v = unsafe { gos_rt_vec_with_capacity(8, st.len() as i64) };
         if v.is_null() {
             return v;
         }
         unsafe {
             let header = &mut *v;
             let dst = header.ptr.cast::<i64>();
-            for (i, cp) in codepoints.iter().enumerate() {
-                *dst.add(i) = *cp;
+            let mut char_count = 0;
+            for (i, ch) in st.chars().enumerate() {
+                *dst.add(i) = i64::from(u32::from(ch));
+                char_count = i + 1;
             }
-            header.len = codepoints.len() as i64;
+            header.len = char_count as i64;
+        }
+        v
+    })
+}
+
+/// Formats a signed integer directly as a fresh `Vec<char>`. Decimal integer
+/// text is ASCII, so each formatted byte is also its Unicode scalar value.
+/// This is the allocation-fused implementation of `n.to_string().chars()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_i64_chars(n: i64) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let mut buffer = itoa::Buffer::new();
+        let bytes = buffer.format(n).as_bytes();
+        let v = unsafe { gos_rt_vec_with_capacity(8, bytes.len() as i64) };
+        if v.is_null() {
+            return v;
+        }
+        unsafe {
+            let header = &mut *v;
+            let dst = header.ptr.cast::<i64>();
+            for (i, byte) in bytes.iter().copied().enumerate() {
+                *dst.add(i) = i64::from(byte);
+            }
+            header.len = bytes.len() as i64;
         }
         v
     })

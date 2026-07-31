@@ -91,11 +91,7 @@ impl LinkOptions {
     /// removed-since-build musl target degrades to the gnu link instead
     /// of failing.
     fn want_static_musl(self) -> bool {
-        self.release
-            && !self.dynamic
-            && cfg!(target_os = "linux")
-            && MUSL_RUNTIME_LIB.is_some()
-            && musl_runtime_available()
+        self.release && !self.dynamic && cfg!(target_os = "linux") && musl_runtime_available()
     }
 
     /// Whether to strip symbols from the linked binary. Enabled
@@ -159,16 +155,20 @@ fn musl_self_contained_dir(sysroot: &Path, musl_triple: &str) -> PathBuf {
 fn musl_runtime_available() -> bool {
     static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *AVAILABLE.get_or_init(|| {
-        let present = rustc_sysroot().is_ok_and(|sysroot| {
+        let crt_present = rustc_sysroot().is_ok_and(|sysroot| {
             musl_self_contained_dir(&sysroot, musl_triple_for_arch(std::env::consts::ARCH)).exists()
         });
+        let runtime_present =
+            find_runtime_lib_for_target(musl_triple_for_arch(std::env::consts::ARCH)).is_ok();
+        let present = crt_present && runtime_present;
         if !present {
             eprintln!(
                 "warning: the static-musl release link is unavailable \
-                 (rustup target x86_64-unknown-linux-musl is not installed); \
+                 (the musl target or matching Gossamer runtime is not installed); \
                  linking dynamically against the host libc instead. Run \
-                 `rustup target add x86_64-unknown-linux-musl` to restore \
-                 self-contained release binaries."
+                 `rustup target add {target}` and reinstall Gossamer to restore \
+                 self-contained release binaries.",
+                target = musl_triple_for_arch(std::env::consts::ARCH),
             );
         }
         present
@@ -812,9 +812,11 @@ fn resolve_link_target(target: Option<&str>) -> LinkTarget {
 /// 1. `GOS_RUNTIME_LIB_<TRIPLE>` env override (path must exist).
 /// 2. The baked host-arch musl archive, only when `triple` is the
 ///    host arch's musl triple (the host == target musl case).
-/// 3. `<gos-bin>/../lib/<triple>/libgossamer_runtime.a` (installed
-///    toolchain layout).
-/// 4. `target/<triple>/{release,debug}/libgossamer_runtime.a` (dev
+/// 3. `<gos-bin>/../lib/libgossamer_runtime-musl.a` for the installed
+///    host-architecture musl runtime.
+/// 4. `<gos-bin>/../lib/<triple>/libgossamer_runtime.a` (installed
+///    cross-toolchain layout).
+/// 5. `target/<triple>/{release,debug}/libgossamer_runtime.a` (dev
 ///    tree).
 fn find_runtime_lib_for_target(triple: &str) -> std::result::Result<PathBuf, NativeBuildError> {
     let env_key = format!(
@@ -833,6 +835,15 @@ fn find_runtime_lib_for_target(triple: &str) -> std::result::Result<PathBuf, Nat
         let p = PathBuf::from(baked);
         if p.exists() {
             return Ok(p);
+        }
+    }
+    if triple == musl_triple_for_arch(std::env::consts::ARCH)
+        && let Ok(exe) = std::env::current_exe()
+        && let Some(libdir) = exe.parent().and_then(Path::parent).map(|gp| gp.join("lib"))
+    {
+        let cand = libdir.join("libgossamer_runtime-musl.a");
+        if cand.exists() {
+            return Ok(cand);
         }
     }
     if let Ok(exe) = std::env::current_exe()
@@ -948,16 +959,10 @@ fn try_native_build(
     profile_rss_stage("build_backend_emitted");
     // Static-musl is chosen for a cross musl target (musl links
     // statically by construction) or for a host release that opted in.
-    let runtime_lib = if lt.is_cross {
+    let runtime_lib = if static_musl {
+        find_runtime_lib_for_target(musl_triple_for_arch(lt.arch))?
+    } else if lt.is_cross {
         find_runtime_lib_for_target(&lt.triple)?
-    } else if opts.want_static_musl() {
-        // The musl runtime archive lives at a baked path emitted by
-        // `gossamer-cli/build.rs`. If `option_env!` resolved at cli
-        // build time but the file has since been deleted, fall back
-        // to the dynamic-glibc path so the build still produces a
-        // working (just-not-portable) binary.
-        let p = PathBuf::from(MUSL_RUNTIME_LIB.unwrap());
-        if p.exists() { p } else { find_runtime_lib()? }
     } else {
         find_runtime_lib()?
     };

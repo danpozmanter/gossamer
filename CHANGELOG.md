@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.38.8 - REPL inspection, native builds, loop optimizations
+
+- Make `%info`/`%i <target>` fall back to public-symbol substring search, avoid
+  duplicate module entries, keep blank `%i` to the catalog directory, and
+  remove keyword documentation from `%i`.
+- Move `%help` to the top of the command list, make pagination notices
+  flush-left, and accept `--all` as an alias for `-a`.
+- Ship and select the matching musl runtime archive so default Linux release
+  builds remain fully static after Gossamer is installed.
+- Eliminate redundant allocations and missing drops in native
+  `integer.to_string().chars()` loops.
+
 ## 0.38.7 - REPL standard-library discovery
 
 - List all standard-library modules and parent namespaces in `%i std`, and let

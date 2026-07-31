@@ -170,6 +170,66 @@ fn ct(url: &String) -> i64 {
     );
 }
 
+/// Signed integer `to_string().chars()` is allocation-fused into a fresh
+/// chars vector. It must not materialise an intermediate String or deep-clone
+/// the vector when moving it into the binding.
+#[test]
+fn numeric_to_string_chars_fuses_formatting_without_cloning_vec() {
+    let source = r"
+fn digits_len(n: i64) -> i64 {
+    let digits = n.to_string().chars()
+    digits.len()
+}
+
+fn inferred_range_digits() -> i64 {
+    let mut total = 0
+    for n in 1..=3 {
+        let digits = n.to_string().chars()
+        total += digits.len()
+    }
+    total
+}
+";
+    let (bodies, _) = build(source);
+    for function in ["digits_len", "inferred_range_digits"] {
+        let body = bodies
+            .iter()
+            .find(|body| body.name == function)
+            .unwrap_or_else(|| panic!("missing {function} body"));
+
+        assert!(
+            body.blocks.iter().any(|block| matches!(
+                &block.terminator,
+                Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(name)),
+                    ..
+                } if name == "gos_rt_i64_chars"
+            )),
+            "{function}: numeric formatting and chars conversion must be fused"
+        );
+        assert!(
+            body.blocks.iter().all(|block| !matches!(
+                &block.terminator,
+                Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(name)),
+                    ..
+                } if matches!(name.as_str(), "gos_rt_i64_to_str" | "gos_rt_str_chars")
+            )),
+            "{function}: fused conversion must not materialise an intermediate String"
+        );
+        assert!(
+            body.blocks.iter().all(|block| !matches!(
+                &block.terminator,
+                Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(name)),
+                    ..
+                } if name == "gos_rt_vec_clone"
+            )),
+            "{function}: fresh chars vector must move directly into its binding"
+        );
+    }
+}
+
 /// C18 - drop pass keeps unconditional drops intact.
 ///
 /// When a `HashMap` is allocated at the top of the function and

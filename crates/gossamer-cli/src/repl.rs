@@ -16,10 +16,10 @@ use crate::paths::repl_history_path;
 const REPL_HELP_TEXT: &str = "\
 REPL commands
 
-  %info (%i) [pattern] [-a] [--page N]
-    Search standard-library and language documentation.
   %help
     Show this list of REPL commands.
+  %info (%i) [pattern] [-a] [--page N]
+    Search standard-library and language documentation.
   %bindings (%b) [regex] [-a] [--page N]
     Show persistent `let` bindings.
   %declarations (%d) [regex] [-a] [--page N]
@@ -35,8 +35,9 @@ REPL commands
 
 Expressions print their value. Declarations and `let` bindings persist.
 
-Listings show 20 entries at a time. Use `--page N` for another page or `-a`
-for all results; either option may appear before or after a pattern.
+Listings show 20 entries at a time. Use `--page N` for another page or
+`-a`/`--all` for all results; either option may appear before or after a
+pattern.
 
 Up/down cycles history.";
 
@@ -1801,7 +1802,7 @@ fn strip_leading_outer_attributes(mut input: &str) -> &str {
     }
 }
 
-fn repl_help(arg: &str) -> std::result::Result<String, String> {
+fn repl_help_with_modules(arg: &str, include_modules: bool) -> std::result::Result<String, String> {
     if arg.is_empty() {
         return Ok(REPL_HELP_TEXT.to_string());
     }
@@ -1809,27 +1810,31 @@ fn repl_help(arg: &str) -> std::result::Result<String, String> {
         return Ok(render_help_matches(&pattern));
     }
 
-    let query = normalize_query(arg);
+    let query = info_search_query(arg);
     let mut out = String::new();
-    for builtin in matching_builtin_macros(query) {
+    for builtin in matching_builtin_macros(&query) {
         push_builtin_macro_help(&mut out, builtin);
     }
-    for builtin in matching_prelude_builtins(query) {
+    for builtin in matching_prelude_builtins(&query) {
         push_prelude_builtin_help(&mut out, builtin);
     }
-    for method in matching_core_methods(query) {
+    for method in matching_core_methods(&query) {
         push_core_method_help(&mut out, &method);
     }
-    for module in matching_modules(query) {
-        push_module_help(&mut out, &module);
+    if include_modules {
+        for module in matching_modules(&query) {
+            push_module_help(&mut out, &module);
+        }
     }
-    for (module, item) in matching_items(query) {
+    for (module, item) in matching_items(&query) {
+        // A matching module is rendered by the catalog listing, which also
+        // includes its items. Avoid rendering those items a second time as
+        // individual help entries.
+        if !include_modules && module_query_matches(&module, &query) {
+            continue;
+        }
         push_item_help(&mut out, &module, &item);
     }
-    for feature in matching_features(query) {
-        push_feature_help(&mut out, feature);
-    }
-
     if out.is_empty() {
         Ok(format!("no help found for `{arg}`"))
     } else {
@@ -1838,23 +1843,32 @@ fn repl_help(arg: &str) -> std::result::Result<String, String> {
 }
 
 fn repl_info(arg: &str) -> std::result::Result<String, String> {
-    let query = normalize_query(arg);
-    if matches!(query, "std" | "std::") {
+    let normalized = normalize_query(arg);
+    if matches!(normalized, "std" | "std::") {
         return Ok(render_stdlib_dir());
     }
-    if matching_modules(query).is_empty() {
-        if let Some(namespace) = canonical_stdlib_namespace(query) {
+    if normalized.is_empty() {
+        return repl_info_listing("");
+    }
+    let query = info_search_query(arg);
+    if matching_modules(&query).is_empty() {
+        if let Some(namespace) = canonical_stdlib_namespace(normalized) {
             let children = stdlib_namespace_children(&namespace);
             return Ok(render_stdlib_namespace_dir(&namespace, &children));
         }
     }
-    let help = repl_help(arg)?;
+    // The catalog listing is the canonical module rendering. Omitting module
+    // help here prevents `%i gzip` from printing the same module twice while
+    // retaining matching items, methods, and types from the search.
+    let help = repl_help_with_modules(arg, false)?;
     let listing = repl_info_listing(arg)?;
     let mut sections = Vec::new();
-    if !help.starts_with("no help found") {
+    if !matches!(help.as_str(), "no help matches") && !help.starts_with("no help found") {
         sections.push(help);
     }
-    if !listing.starts_with("no catalog listing") {
+    if !matches!(listing.as_str(), "no stdlib modules match")
+        && !listing.starts_with("no catalog listing")
+    {
         sections.push(listing);
     }
     if sections.is_empty() {
@@ -1872,25 +1886,25 @@ fn repl_info_listing(arg: &str) -> std::result::Result<String, String> {
         return Ok(render_dir_matches(&pattern));
     }
 
-    let query = normalize_query(arg);
-    let core_namespaces = matching_core_namespaces(query);
+    let query = info_search_query(arg);
+    let core_namespaces = matching_core_namespaces(&query);
     if !core_namespaces.is_empty() {
         return Ok(render_core_method_dir(&core_namespaces));
     }
 
-    let modules = matching_modules(query);
+    let modules = matching_modules(&query);
     if !modules.is_empty() {
         return Ok(render_module_dir(&modules));
     }
 
-    if !matching_core_methods(query).is_empty() {
+    if !matching_core_methods(&query).is_empty() {
         // A method name can match several receiver types. `repl_help` has
         // already rendered every match, so choosing the first owner here
         // would append an arbitrary and unrelated type listing.
         return Ok(format!("no catalog listing found for `{arg}`"));
     }
 
-    if !matching_items(query).is_empty() {
+    if !matching_items(&query).is_empty() {
         // `%info` for a specific stdlib item should stay focused on that
         // item's documentation. Module listings are useful when the query
         // names a module, but turn an item lookup into a noisy full dump.
@@ -1957,10 +1971,10 @@ fn parse_listing_options(command: &str, arg: &str) -> std::result::Result<Listin
     let mut words = arg.split_whitespace();
     while let Some(word) = words.next() {
         match word {
-            "-a" => all = true,
+            "-a" | "--all" => all = true,
             "--page" | "-p" => {
                 let Some(value) = words.next() else {
-                    return Err(format!("usage: %{command} [pattern] [-a] [--page N]"));
+                    return Err(format!("usage: %{command} [pattern] [-a|--all] [--page N]"));
                 };
                 page = value
                     .parse()
@@ -1993,7 +2007,7 @@ fn paginate_listing<T: std::fmt::Display + ?Sized>(
     let start = (options.page - 1).saturating_mul(REPL_PAGE_SIZE);
     if start >= total {
         return vec![format!(
-            "    no results on page {} ({} total)",
+            "no results on page {} ({} total)",
             options.page, total
         )];
     }
@@ -2008,7 +2022,7 @@ fn paginate_listing<T: std::fmt::Display + ?Sized>(
         format!(" {}", options.pattern)
     };
     page.push(format!(
-        "    ({}-{} of {}) Use `{command}{pattern} --page {}` or `{command}{pattern} -a`.",
+        "({}-{} of {}) Use `{command}{pattern} --page {}` or `{command}{pattern} -a`.",
         start + 1,
         end,
         total,
@@ -2071,13 +2085,6 @@ fn render_help_matches(pattern: &Regex) -> String {
             if item_matches_regex(pattern, module, item) {
                 push_item_help(&mut out, module, item);
             }
-        }
-    }
-    for feature in gossamer_std::manifest::feature_status::all_entries() {
-        if !is_stdlib_module_path(feature.path)
-            && (pattern.is_match(feature.path) || pattern.is_match(feature.doc))
-        {
-            push_feature_help(&mut out, feature);
         }
     }
     if out.is_empty() {
@@ -2259,11 +2266,6 @@ fn push_prelude_builtin_help(out: &mut String, builtin: &PreludeBuiltinHelp) {
     out.push_str(&format!("{} [builtin]\n", builtin.name));
     out.push_str(&format!("  {}\n", builtin.signature));
     out.push_str(&format!("  {}\n\n", builtin.doc));
-}
-
-fn push_feature_help(out: &mut String, feature: gossamer_std::manifest::FeatureStatus) {
-    out.push_str(&format!("{} ({})\n", feature.path, feature.status.tag()));
-    out.push_str(&format!("  {}\n\n", feature.doc));
 }
 
 fn push_module_dir_line(out: &mut String, module: &StdModule) {
@@ -2606,56 +2608,56 @@ fn matching_core_methods(query: &str) -> Vec<CoreMethodEntry> {
         .collect()
 }
 
-fn matching_features(query: &str) -> Vec<gossamer_std::manifest::FeatureStatus> {
-    gossamer_std::manifest::feature_status::all_entries()
-        .into_iter()
-        .filter(|entry| !is_stdlib_module_path(entry.path))
-        .filter(|entry| feature_query_matches(entry.path, query))
-        .collect()
-}
-
 fn matching_builtin_macros(query: &str) -> Vec<&'static BuiltinMacro> {
     BUILTIN_MACROS
         .iter()
-        .filter(|builtin| builtin.name == query)
+        .filter(|builtin| symbol_query_matches(builtin.name, query))
         .collect()
 }
 
 fn matching_prelude_builtins(query: &str) -> Vec<&'static PreludeBuiltinHelp> {
     PRELUDE_BUILTINS
         .iter()
-        .filter(|builtin| builtin.name == query)
+        .filter(|builtin| symbol_query_matches(builtin.name, query))
         .collect()
 }
 
-fn is_stdlib_module_path(path: &str) -> bool {
-    gossamer_std::registry::module(path).is_some()
-}
-
 fn module_query_matches(module: &StdModule, query: &str) -> bool {
-    module_aliases(module.path).contains(&query)
+    module_aliases(module.path)
+        .iter()
+        .any(|alias| symbol_query_matches(alias, query))
 }
 
 fn core_namespace_matches(owner: &str, query: &str) -> bool {
-    owner == query || owner.eq_ignore_ascii_case(query)
+    let (query, substring) = split_symbol_query(query);
+    if substring {
+        owner
+            .to_ascii_lowercase()
+            .contains(&query.to_ascii_lowercase())
+    } else {
+        owner == query || owner.eq_ignore_ascii_case(query)
+    }
 }
 
 fn item_query_matches(module: &StdModule, item: &StdItem, query: &str) -> bool {
-    if item.name == query {
+    if symbol_query_matches(item.name, query) {
         return true;
     }
     module_aliases(module.path)
         .iter()
-        .any(|alias| format!("{alias}::{}", item.name) == query)
+        .any(|alias| symbol_query_matches(&format!("{alias}::{}", item.name), query))
 }
 
 fn core_method_query_matches(method: &CoreMethodEntry, query: &str) -> bool {
+    let (query, substring) = split_symbol_query(query);
+    if substring {
+        return method.name.contains(query)
+            || format!("{}::{}", method.owner, method.name).contains(query)
+            || core_lower_path(method).contains(query);
+    }
     method.name == query
         || format!("{}::{}", method.owner, method.name) == query
         || core_lower_path(method) == query
-        // Fully qualified handle paths can be registered with a shortened
-        // canonical owner on some backends. The terminal owner/name pair is
-        // still unambiguous in the catalog and must behave like `%i new`.
         || query
             .rsplit_once("::")
             .is_some_and(|(owner, name)| name == method.name && owner == method.owner)
@@ -2665,15 +2667,37 @@ fn core_lower_path(method: &CoreMethodEntry) -> String {
     format!("{}::{}", method.owner.to_ascii_lowercase(), method.name)
 }
 
-fn feature_query_matches(path: &str, query: &str) -> bool {
-    if path == query {
-        return true;
+fn info_search_query(arg: &str) -> String {
+    let query = normalize_query(arg);
+    if catalog_has_exact_match(query) {
+        query.to_string()
+    } else {
+        format!("\0{query}")
     }
-    let stripped = path
-        .strip_prefix("lang::")
-        .or_else(|| path.strip_prefix("std::"))
-        .unwrap_or(path);
-    stripped == query || path.rsplit("::").next().is_some_and(|last| last == query)
+}
+
+fn catalog_has_exact_match(query: &str) -> bool {
+    !matching_builtin_macros(query).is_empty()
+        || !matching_prelude_builtins(query).is_empty()
+        || !matching_core_namespaces(query).is_empty()
+        || !matching_core_methods(query).is_empty()
+        || !matching_modules(query).is_empty()
+        || !matching_items(query).is_empty()
+}
+
+fn symbol_query_matches(candidate: &str, query: &str) -> bool {
+    let (query, substring) = split_symbol_query(query);
+    if substring {
+        candidate.contains(query)
+    } else {
+        candidate == query
+    }
+}
+
+fn split_symbol_query(query: &str) -> (&str, bool) {
+    query
+        .strip_prefix('\0')
+        .map_or((query, false), |query| (query, true))
 }
 
 fn module_matches_regex(pattern: &Regex, module: &StdModule) -> bool {
@@ -2992,6 +3016,25 @@ fn repl_callee_is_mutating_name(callee: &gossamer_ast::Expr) -> bool {
 /// this is purely a probe: `Ok(())` means the declaration set is
 /// loadable, `Err` rolls back the just-added declaration.
 fn rebuild_session(declarations: &[String]) -> std::result::Result<(), String> {
+    // Parse declarations before appending the synthetic probe function. A
+    // missing item body must point at the user's end of input, not at the
+    // generated `fn __irepl_probe` that follows it.
+    let declarations_source = declarations.join("\n");
+    let mut declarations_map = gossamer_lex::SourceMap::new();
+    let declarations_file = declarations_map.add_file(
+        "irepl-declarations".to_string(),
+        declarations_source.clone(),
+    );
+    let (_, declaration_diags) =
+        gossamer_parse::parse_source_file(&declarations_source, declarations_file);
+    if !declaration_diags.is_empty() {
+        return Err(format_parse_diags(
+            &declaration_diags,
+            &declarations_map,
+            declarations_file,
+        ));
+    }
+
     let source = declarations.join("\n") + "\nfn __irepl_probe() { }\n";
     let source = gossamer_parse::autoderive::augment_source(&source);
     let mut map = gossamer_lex::SourceMap::new();

@@ -404,7 +404,8 @@ impl<'a> Lowerer<'a> {
         matches!(
             self.tcx.kind(elem),
             Some(
-                TyKind::Int(IntTy::I64 | IntTy::U64 | IntTy::Isize | IntTy::Usize)
+                TyKind::Char
+                    | TyKind::Int(_)
                     | TyKind::Float(FloatTy::F64)
                     | TyKind::Vec(_)
                     | TyKind::Slice(_)

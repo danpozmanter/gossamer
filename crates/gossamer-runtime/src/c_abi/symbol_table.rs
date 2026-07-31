@@ -1674,6 +1674,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_http_stream_next_line as *const u8,
         ),
         (
+            "gos_rt_i64_chars",
+            crate::c_abi::gos_rt_i64_chars as *const u8,
+        ),
+        (
             "gos_rt_i64_to_str",
             crate::c_abi::gos_rt_i64_to_str as *const u8,
         ),

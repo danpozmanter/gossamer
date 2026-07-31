@@ -78,6 +78,12 @@ jobs:
             cargo build --release --target x86_64-unknown-linux-musl --bin gos
           CC_x86_64_unknown_linux_musl=musl-gcc \
             cargo build --release --target x86_64-unknown-linux-musl -p gossamer-runtime
+          cp target/x86_64-unknown-linux-musl/release/libgossamer_runtime.a \
+             target/release/libgossamer_runtime-musl.a
+          BASE="gos-${VERSION}-linux-x86_64"
+          cp target/release/libgossamer_runtime-musl.a \
+             "$BASE/libgossamer_runtime-musl.a"
+          tar -czf "${BASE}.tar.gz" "$BASE"
 
       - name: Stage static musl tarball
         run: |
@@ -85,6 +91,8 @@ jobs:
           mkdir "$BASE"
           cp target/x86_64-unknown-linux-musl/release/gos "$BASE/"
           cp target/x86_64-unknown-linux-musl/release/libgossamer_runtime.a "$BASE/"
+          cp target/x86_64-unknown-linux-musl/release/libgossamer_runtime.a \
+             "$BASE/libgossamer_runtime-musl.a"
           cp README.md LICENSE "$BASE/"
           cp scripts/install.sh "$BASE/"
           chmod +x "$BASE/install.sh"
@@ -173,6 +181,8 @@ jobs:
           # Pi (the gnu cross gcc only knows the glibc sysroot, so this leg
           # needs zig's bundled musl sysroot instead).
           cargo zigbuild --release --target aarch64-unknown-linux-musl -p gossamer-runtime
+          cp target/aarch64-unknown-linux-musl/release/libgossamer_runtime.a \
+             target/aarch64-unknown-linux-gnu/release/libgossamer_runtime-musl.a
 
       # Install packaging tools as prebuilt binaries (cargo-deb from
       # GitHub Releases, cargo-generate-rpm via cargo-binstall) - avoids

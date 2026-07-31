@@ -74,6 +74,45 @@ impl<'a> Builder<'a> {
         ty: Ty,
         span: Span,
     ) -> Option<Local> {
+        // Fuse signed-integer `n.to_string().chars()` into one runtime call.
+        // The unfused form allocated a C string, scanned it into a second
+        // allocation, then released the temporary string. Numeric text is
+        // ASCII, so the runtime can format directly into the `Vec<char>`.
+        let numeric_chars_receiver = if method.name == "chars" && args.is_empty() {
+            match &receiver.kind {
+                HirExprKind::MethodCall {
+                    receiver: numeric,
+                    name: stringify,
+                    args: stringify_args,
+                } if stringify.name == "to_string" && stringify_args.is_empty() => {
+                    match self.tcx.kind_of(numeric.ty) {
+                        TyKind::Int(int_ty) if int_ty.is_signed() => Some(numeric.as_ref()),
+                        // Unconstrained integer expressions default to signed
+                        // i64, which is also how the ordinary `to_string`
+                        // dispatch resolves this HIR shape.
+                        TyKind::Var(_) => Some(numeric.as_ref()),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(numeric) = numeric_chars_receiver {
+            let numeric = self.lower_expr(numeric)?;
+            let dest = self.fresh(ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_i64_chars".to_string())),
+                args: vec![Operand::Copy(Place::local(numeric))],
+                destination: Place::local(dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+            return Some(dest);
+        }
+
         // `x.into()` converts to the inferred target type `B` via its `B::from`
         // impl; the call's result type is `B`, so route to `B::from(x)` (the
         // tiers resolve free functions by mangled name). `x.try_into()` is the
