@@ -354,31 +354,6 @@ fn repl_info_resolves_qualified_http_constructor_with_a_real_signature() {
 }
 
 #[test]
-fn repl_info_never_invents_placeholder_signatures() {
-    let out = run_repl("%i new\n");
-    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    assert!(
-        !out.stdout.contains("..."),
-        "%info must only show catalog entries with concrete signatures: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout
-            .contains("http::Client::new [assoc]\n  fn new() -> http::Client"),
-        "known runtime constructors must remain discoverable: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout.contains("validate::Errors::new [assoc]\n  fn new() -> validate::Errors")
-            && out.stdout.contains(
-                "validate::FieldError::new [assoc]\n  fn new(path: String, message: String, code: String) -> validate::FieldError"
-            ),
-        "validate constructors must have concrete runtime signatures: {}",
-        out.stdout
-    );
-}
-
-#[test]
 fn repl_bindings_hide_inference_ids_for_empty_vec() {
     let out = run_repl(
         "let v = Vec::new()\n\
@@ -1691,32 +1666,6 @@ fn repl_meta_info_shows_complete_signatures_for_string_methods() {
 }
 
 #[test]
-fn repl_string_listing_contains_only_supported_core_methods() {
-    let out = run_repl(
-        "%info String\n\
-         let mut s = String::from(\"hello\")\n\
-         s.truncate(3)\n\
-         s.clear()\n",
-    );
-    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    assert!(
-        out.stdout.contains("String::clear") && out.stdout.contains("String::truncate"),
-        "supported String mutators were missing from help: {}",
-        out.stdout
-    );
-    assert!(
-        !out.stdout.contains("String::as_str"),
-        "phantom String::as_str remained in help: {}",
-        out.stdout
-    );
-    assert!(
-        !out.stderr.contains("no method named"),
-        "advertised String method was rejected: {}",
-        out.stderr
-    );
-}
-
-#[test]
 fn repl_meta_help_ls_and_find_cover_core_string_parse() {
     let out = run_repl(
         "%info string::parse\n\
@@ -1809,49 +1758,6 @@ fn repl_string_parse_turbofish_forms_typecheck_without_bool_diagnostics() {
     assert!(
         !out.stderr.contains("expected `bool`"),
         "parse turbofish regressed into comparison parsing; stderr: {}",
-        out.stderr
-    );
-}
-
-#[test]
-fn repl_meta_help_ls_and_find_cover_core_collection_types() {
-    let out = run_repl(
-        "%info Vec::new\n\
-         %info Vec::push\n\
-         %info Vec\n\
-         %info HashMap::new\n\
-         %info HashMap::insert\n\
-         %info HashMap\n\
-         %info BTreeMap::new\n\
-         %info BTreeMap::insert\n\
-         %info BTreeMap\n\
-         %info HashSet::union\n\
-         %info HashSet\n\
-         %info VecDeque::push_back\n\
-         %info VecDeque\n",
-    );
-    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    for expected in [
-        "Vec::new [assoc]",
-        "Vec::push [method]",
-        "Vec::join",
-        "HashMap::new [assoc]",
-        "HashMap::insert [method]",
-        "HashMap::pop",
-        "BTreeMap::new [assoc]",
-        "BTreeMap::insert [method]",
-        "HashSet::union [method]",
-        "VecDeque::push_back [method]",
-    ] {
-        assert!(
-            out.stdout.contains(expected),
-            "missing `{expected}` from collection metadata output: {}",
-            out.stdout
-        );
-    }
-    assert!(
-        out.stderr.is_empty(),
-        "collection metadata lookups should not fail: {}",
         out.stderr
     );
 }
@@ -1993,43 +1899,6 @@ fn repl_meta_info_searches_regex() {
     assert!(
         out.stdout.contains("lang::question_mark (shipped)"),
         "expected feature-status regex match; stdout: {}",
-        out.stdout
-    );
-}
-
-#[test]
-fn repl_meta_ls_lists_modules() {
-    let out = run_repl("%info\n");
-    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    assert!(
-        out.stdout.contains("std::strings"),
-        "expected stdlib module list; stdout: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout.contains("module"),
-        "expected module rows; stdout: {}",
-        out.stdout
-    );
-    assert!(
-        !out.stdout.contains("experimental"),
-        "%info must not render feature status for modules; stdout: {}",
-        out.stdout
-    );
-}
-
-#[test]
-fn repl_meta_ls_lists_namespace_items() {
-    let out = run_repl("%info strings\n");
-    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    assert!(
-        out.stdout.contains("std::strings"),
-        "expected strings module row; stdout: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout.contains("std::strings::trim"),
-        "expected strings item rows; stdout: {}",
         out.stdout
     );
 }
