@@ -13,6 +13,8 @@
   type is inferred at the call site.
 - Avoid temporary HashSet intersection allocations during immediate iteration,
   and inline word-sized Vec field indexing in native hot helpers.
+- Fix `usize` and `u64` iterator reductions in the VM, which previously
+  skipped unsigned mapped values and could return zero.
 
 ## 0.38.8 - REPL inspection, native builds, error messages, optimizations/fixes
 

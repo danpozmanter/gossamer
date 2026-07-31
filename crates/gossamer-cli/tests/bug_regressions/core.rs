@@ -903,6 +903,29 @@ fn main() {
 }
 
 #[test]
+fn iterator_sum_preserves_usize_result_type() {
+    let src = r#"
+fn main() {
+    let values: Vec<i64> = [9, 18, 27]
+    let total: usize = values.map(|value| value as usize).sum()
+    println!("total={}", total)
+}
+"#;
+    let dir = fresh_dir("iterator_sum_usize");
+    let path = write_source(&dir, "iterator_sum_usize", src);
+    let vm = run_vm(&path);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, "total=54\n");
+    let cl_dir = dir.join("cl");
+    fs::create_dir_all(&cl_dir).unwrap();
+    let bin = build_native(&path, &cl_dir).expect("native build");
+    let native = run_native(&bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(native.0, "total=54\n");
+}
+
+#[test]
 fn str_find_returns_option_in_compiled_mode() {
     // `s.find("missing")` previously returned Some(_) instead
     // of None in cranelift - the dispatch routed straight to

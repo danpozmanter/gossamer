@@ -1465,14 +1465,24 @@ pub(crate) fn builtin_iter_sum(args: &[Value]) -> RuntimeResult<Value> {
         Some(Value::IntArray(arr)) => Ok(Value::Int(arr.iter().sum())),
         Some(Value::FloatVec(arr)) => Ok(Value::Float(arr.iter().sum())),
         Some(Value::Array(arr)) => {
-            // Try i64 first, then f64.
+            // Integer arrays use the signed or unsigned runtime value that
+            // their element type selected. Keep `Uint` values in the unsigned
+            // accumulator rather than silently skipping them.
             let mut int_sum: i64 = 0;
+            let mut uint_sum: u64 = 0;
             let mut float_sum: f64 = 0.0;
             let mut is_float = false;
+            let mut is_uint = false;
             for v in arr.iter() {
                 match v {
                     Value::Int(n) => {
                         int_sum += n;
+                        uint_sum = uint_sum.wrapping_add(*n as u64);
+                        float_sum += *n as f64;
+                    }
+                    Value::Uint(n) => {
+                        is_uint = true;
+                        uint_sum = uint_sum.wrapping_add(*n);
                         float_sum += *n as f64;
                     }
                     Value::Float(f) => {
@@ -1484,6 +1494,8 @@ pub(crate) fn builtin_iter_sum(args: &[Value]) -> RuntimeResult<Value> {
             }
             if is_float {
                 Ok(Value::Float(float_sum))
+            } else if is_uint {
+                Ok(Value::Uint(uint_sum))
             } else {
                 Ok(Value::Int(int_sum))
             }
@@ -2125,12 +2137,20 @@ pub(crate) fn builtin_iter_product(args: &[Value]) -> RuntimeResult<Value> {
         Some(Value::FloatVec(arr)) => Ok(Value::Float(arr.iter().product())),
         Some(Value::Array(arr)) => {
             let mut int_prod: i64 = 1;
+            let mut uint_prod: u64 = 1;
             let mut float_prod: f64 = 1.0;
             let mut is_float = false;
+            let mut is_uint = false;
             for v in arr.iter() {
                 match v {
                     Value::Int(n) => {
                         int_prod = int_prod.wrapping_mul(*n);
+                        uint_prod = uint_prod.wrapping_mul(*n as u64);
+                        float_prod *= *n as f64;
+                    }
+                    Value::Uint(n) => {
+                        is_uint = true;
+                        uint_prod = uint_prod.wrapping_mul(*n);
                         float_prod *= *n as f64;
                     }
                     Value::Float(f) => {
@@ -2142,6 +2162,8 @@ pub(crate) fn builtin_iter_product(args: &[Value]) -> RuntimeResult<Value> {
             }
             Ok(if is_float {
                 Value::Float(float_prod)
+            } else if is_uint {
+                Value::Uint(uint_prod)
             } else {
                 Value::Int(int_prod)
             })
