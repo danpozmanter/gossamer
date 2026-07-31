@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.38.8 - REPL inspection, native builds, loop optimizations
+## 0.38.8 - REPL inspection, native builds, error messages, loop optimizations
 
 - Make `%info`/`%i <target>` fall back to public-symbol substring search, avoid
   duplicate module entries, keep blank `%i` to the catalog directory, and
@@ -11,6 +11,7 @@
   builds remain fully static after Gossamer is installed.
 - Eliminate redundant allocations and missing drops in native
   `integer.to_string().chars()` loops.
+- Improve/tighten error message verbosity and clarity
 
 ## 0.38.7 - REPL standard-library discovery
 
