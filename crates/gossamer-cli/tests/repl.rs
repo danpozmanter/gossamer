@@ -279,18 +279,18 @@ fn repl_clear_history_removes_prior_entries_and_is_not_recorded() {
 }
 
 #[test]
-fn repl_info_accepts_literals() {
+fn repl_info_is_limited_to_language_and_standard_library_catalogs() {
     let out = run_repl("%i 42\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("42: i64 = 42"),
-        "%info should evaluate literals: {}",
+        out.stdout.contains("nothing found for `42`"),
+        "%info should not evaluate arbitrary REPL expressions: {}",
         out.stdout
     );
 }
 
 #[test]
-fn repl_info_inspects_session_bindings_declarations_and_undefined_names() {
+fn repl_info_does_not_inspect_session_state() {
     let out = run_repl(
         "let x = 9\n\
          fn wow() { \"heyoooo\" }\n\
@@ -305,36 +305,33 @@ fn repl_info_inspects_session_bindings_declarations_and_undefined_names() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("x: i64 = 9"),
-        "%info should render a binding as %bindings does: {}",
+        out.stdout.contains("nothing found for `x`"),
+        "%info should leave bindings to %bindings: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("fn wow() { \"heyoooo\" }"),
-        "%info should render a declaration as %declarations does: {}",
+        out.stdout.contains("nothing found for `wow`"),
+        "%info should leave declarations to %declarations: {}",
         out.stdout
     );
 }
 
 #[test]
-fn repl_info_binding_includes_its_receiver_type_catalog() {
-    let out = run_repl("let x = \"Wow\"\n%i x\n");
+fn repl_info_lists_stdlib_namespaces_and_catalog_types() {
+    let out = run_repl("%i std\n%i std::archive\n%i String\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    let binding = out
-        .stdout
-        .find("x: String = \"Wow\"")
-        .expect("%info should render the binding summary");
-    let type_info = out
-        .stdout
-        .find("String [type]")
-        .expect("%info should render the binding receiver type");
     assert!(
-        binding < type_info
+        out.stdout.contains("std::bufio [module]")
+            && out.stdout.contains("(1-20 of 44)")
+            && out.stdout.contains("std::archive [module]")
+            && out.stdout.contains("std::archive::tar [module]")
+            && out.stdout.contains("std::archive::zip [module]")
+            && out.stdout.contains("String [type]")
             && out.stdout.contains("String::as_bytes [method]")
             && out
                 .stdout
                 .contains("Returns the UTF-8 bytes of the string."),
-        "%info should append the complete type catalog after the binding: {}",
+        "%info should expose standard-library namespaces and language types: {}",
         out.stdout
     );
 }
@@ -1420,7 +1417,7 @@ fn repl_meta_help_preserves_base_banner() {
             && out.stdout.contains("%info (%i)")
             && out.stdout.contains("%history (%h) [regex]")
             && out.stdout.contains("%clear-history")
-            && out.stdout.contains("%find (%f)"),
+            && out.stdout.contains("%info (%i) [pattern] [-a] [--page N]"),
         "bare %help should list the remaining shortcuts; stdout: {}",
         out.stdout
     );
@@ -1461,7 +1458,6 @@ fn repl_meta_command_shortcuts_match_their_long_forms() {
          %b\n\
          %d\n\
          %i strings\n\
-         %f strings.*trim\n\
          %info strings::trim\n\
          %r\n\
          %b\n\
@@ -1483,7 +1479,7 @@ fn repl_meta_command_shortcuts_match_their_long_forms() {
     );
     assert!(
         out.stdout.contains("std::strings::trim"),
-        "%i, %f, or %help did not reach stdlib discovery: {}",
+        "%i or %help did not reach stdlib discovery: {}",
         out.stdout
     );
     assert!(
@@ -1501,71 +1497,12 @@ fn repl_meta_command_shortcuts_match_their_long_forms() {
 }
 
 #[test]
-fn repl_meta_find_regex_searches_modules_functions_and_types() {
-    let out = run_repl("%find http.*serv\n%find json.*Valu\n");
+fn repl_meta_find_is_removed() {
+    let out = run_repl("%find String::parse\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("std::http::serve") && out.stdout.contains("fn"),
-        "regex function lookup should find http::serve: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout.contains("std::encoding::json::Value") && out.stdout.contains("type"),
-        "regex public-type lookup should find json::Value: {}",
-        out.stdout
-    );
-}
-
-#[test]
-fn repl_meta_find_plain_text_is_a_name_substring() {
-    let out = run_repl("%find part\n");
-    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    assert!(
-        out.stdout.contains("std::iter::partition")
-            && out.stdout.contains("std::http::multipart::Part"),
-        "plain text should match contiguous symbol-name text: {}",
-        out.stdout
-    );
-    assert!(
-        !out.stdout.contains("std::strings::pad_right")
-            && !out.stdout.contains("std::path::parent")
-            && !out.stdout.contains("std::process::abort")
-            && !out.stdout.contains("std::net::netip::join_addr_port"),
-        "plain text should not use fuzzy subsequence matching: {}",
-        out.stdout
-    );
-}
-
-#[test]
-fn repl_meta_find_accepts_regex_operators() {
-    let out = run_repl("%find p.*rt\n");
-    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    assert!(
-        out.stdout.contains("std::iter::partition")
-            && out.stdout.contains("std::net::netip::join_addr_port"),
-        "regex operators should broaden find matches: {}",
-        out.stdout
-    );
-}
-
-#[test]
-fn repl_meta_find_reports_invalid_regex() {
-    let out = run_repl("%find [\n");
-    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    assert!(
-        out.stderr.contains("invalid find regex `[`"),
-        "invalid regex should produce a useful error: {}",
-        out.stderr
-    );
-}
-
-#[test]
-fn repl_meta_find_requires_a_query() {
-    let out = run_repl("%find\n");
-    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    assert!(
-        out.stderr.contains("usage: %find"),
-        "empty find should show usage: {}",
+        out.stderr.contains("unknown meta-command: %find"),
+        "%find should no longer be a REPL command: {}",
         out.stderr
     );
 }
@@ -1786,7 +1723,6 @@ fn repl_meta_help_ls_and_find_cover_core_string_parse() {
          %info String::parse\n\
          %info strings::parse\n\
          %info string\n\
-         %find String::parse\n\
          \"123\".parse<i64>()\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -1814,7 +1750,7 @@ fn repl_meta_help_ls_and_find_cover_core_string_parse() {
             && out
                 .stdout
                 .contains("Parses the string into the expected result type."),
-        "expected %info and %find to expose String::parse; stdout: {}",
+        "expected %info to expose String::parse; stdout: {}",
         out.stdout
     );
     assert!(
@@ -1883,11 +1819,9 @@ fn repl_meta_help_ls_and_find_cover_core_collection_types() {
         "%info Vec::new\n\
          %info Vec::push\n\
          %info Vec\n\
-         %find Vec::join\n\
          %info HashMap::new\n\
          %info HashMap::insert\n\
          %info HashMap\n\
-         %find HashMap::pop\n\
          %info BTreeMap::new\n\
          %info BTreeMap::insert\n\
          %info BTreeMap\n\

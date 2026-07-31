@@ -16,15 +16,13 @@ use crate::paths::repl_history_path;
 const REPL_HELP_TEXT: &str = "\
 REPL commands
 
-  %info (%i) [anything]
-    Show help and the relevant module or type listing.
+  %info (%i) [pattern] [-a] [--page N]
+    Search standard-library and language documentation.
   %help
     Show this list of REPL commands.
-  %find (%f) <regex>
-    Search public symbol names.
-  %bindings (%b) [regex]
+  %bindings (%b) [regex] [-a] [--page N]
     Show persistent `let` bindings.
-  %declarations (%d) [regex]
+  %declarations (%d) [regex] [-a] [--page N]
     Show persistent declarations.
   %history (%h) [regex]
     Search inputs from this and previous sessions.
@@ -36,6 +34,9 @@ REPL commands
     Exit the REPL.
 
 Expressions print their value. Declarations and `let` bindings persist.
+
+Listings show 20 entries at a time. Use `--page N` for another page or `-a`
+for all results; either option may appear before or after a pattern.
 
 Up/down cycles history.";
 
@@ -155,7 +156,7 @@ const PRELUDE_BUILTINS: &[PreludeBuiltinHelp] = &[
 
 // Core receiver and associated methods are runtime builtins, not stdlib module
 // exports. Keep them visible to REPL discovery so working calls such as
-// `"123".parse()` are not hidden from `%help`, `%info`, and `%find`.
+// `"123".parse()` are not hidden from `%help` and `%info`.
 const CORE_METHODS: &[CoreMethodHelp] = &[
     CoreMethodHelp {
         owner: "Buffer",
@@ -1288,16 +1289,23 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     return Ok(());
                 }
                 "bindings" | "b" => {
+                    let options = match parse_listing_options("bindings", arg) {
+                        Ok(options) => options,
+                        Err(message) => {
+                            print_repl_error(&message);
+                            continue;
+                        }
+                    };
                     if bindings.is_empty() {
                         println!(
                             "{}",
                             crate::style::repl_meta_detail("    no `let` bindings yet")
                         );
                     } else {
-                        let pattern = if arg.is_empty() {
+                        let pattern = if options.pattern.is_empty() {
                             None
                         } else {
-                            match compile_search_regex("bindings", arg) {
+                            match compile_search_regex("bindings", &options.pattern) {
                                 Ok(pattern) => Some(pattern),
                                 Err(message) => {
                                     print_repl_error(&message);
@@ -1314,28 +1322,36 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                             println!(
                                 "{}",
                                 crate::style::repl_meta_detail(&format!(
-                                    "    no bindings match `{arg}`"
+                                    "    no bindings match `{}`",
+                                    options.pattern
                                 ))
                             );
                             continue;
                         }
-                        for line in matches {
-                            println!("{}", crate::style::repl_meta_heading(line));
+                        for line in paginate_listing(matches, &options, "%b") {
+                            println!("{}", crate::style::repl_meta_heading(&line));
                         }
                     }
                     continue;
                 }
                 "declarations" | "decls" | "d" => {
+                    let options = match parse_listing_options("declarations", arg) {
+                        Ok(options) => options,
+                        Err(message) => {
+                            print_repl_error(&message);
+                            continue;
+                        }
+                    };
                     if declarations.is_empty() {
                         println!(
                             "{}",
                             crate::style::repl_meta_detail("    no declarations yet")
                         );
                     } else {
-                        let pattern = if arg.is_empty() {
+                        let pattern = if options.pattern.is_empty() {
                             None
                         } else {
-                            match compile_search_regex("declarations", arg) {
+                            match compile_search_regex("declarations", &options.pattern) {
                                 Ok(pattern) => Some(pattern),
                                 Err(message) => {
                                     print_repl_error(&message);
@@ -1351,13 +1367,14 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                             println!(
                                 "{}",
                                 crate::style::repl_meta_detail(&format!(
-                                    "    no declarations match `{arg}`"
+                                    "    no declarations match `{}`",
+                                    options.pattern
                                 ))
                             );
                             continue;
                         }
-                        for line in matches {
-                            println!("{}", crate::style::repl_meta_heading(line));
+                        for line in paginate_listing(matches, &options, "%d") {
+                            println!("{}", crate::style::repl_meta_heading(&line));
                         }
                     }
                     continue;
@@ -1381,26 +1398,16 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     continue;
                 }
                 "info" | "i" => {
-                    let result = match repl_info_for_session(arg, &declarations, &lets, &bindings) {
-                        Ok(Some(text)) => Ok(text),
-                        Ok(None) => {
-                            let binding_receiver =
-                                editor.helper().and_then(|helper| helper.receiver_type(arg));
-                            binding_receiver.map_or_else(
-                                || repl_info(arg),
-                                |owner| repl_info_for_receiver(arg, owner),
-                            )
+                    let options = match parse_listing_options("info", arg) {
+                        Ok(options) => options,
+                        Err(message) => {
+                            print_repl_error(&message);
+                            continue;
                         }
-                        Err(message) => Err(message),
                     };
+                    let result =
+                        repl_info(&options.pattern).map(|text| paginate_info(&text, &options));
                     match result {
-                        Ok(text) => print_repl_output(&text),
-                        Err(msg) => print_repl_error(&msg),
-                    }
-                    continue;
-                }
-                "find" | "f" => {
-                    match repl_find(arg) {
                         Ok(text) => print_repl_output(&text),
                         Err(msg) => print_repl_error(&msg),
                     }
@@ -1831,6 +1838,16 @@ fn repl_help(arg: &str) -> std::result::Result<String, String> {
 }
 
 fn repl_info(arg: &str) -> std::result::Result<String, String> {
+    let query = normalize_query(arg);
+    if matches!(query, "std" | "std::") {
+        return Ok(render_module_dir(&top_level_stdlib_modules()));
+    }
+    if matching_modules(query).is_empty() {
+        let children = stdlib_namespace_children(query);
+        if !children.is_empty() {
+            return Ok(render_stdlib_namespace_dir(query, &children));
+        }
+    }
     let help = repl_help(arg)?;
     let listing = repl_info_listing(arg)?;
     let mut sections = Vec::new();
@@ -1844,173 +1861,6 @@ fn repl_info(arg: &str) -> std::result::Result<String, String> {
         Ok(format!("nothing found for `{arg}`"))
     } else {
         Ok(sections.join("\n\n"))
-    }
-}
-
-fn repl_info_for_session(
-    arg: &str,
-    declarations: &[String],
-    lets: &[String],
-    bindings: &[ReplBinding],
-) -> std::result::Result<Option<String>, String> {
-    let query = normalize_query(arg);
-    // A session name wins over a same-named catalog entry. `%info` is an
-    // inspector for the current REPL first, then a fuzzy stdlib lookup.
-    if repl_is_identifier(query) {
-        if let Some((binding, ty)) = repl_info_binding(query, declarations, lets, bindings) {
-            let type_info = repl_type_info(&ty)?;
-            return Ok(Some(match type_info {
-                Some(type_info) => format!("{binding}\n\n{type_info}"),
-                None => binding,
-            }));
-        }
-        if let Some(declaration) = repl_info_declaration(query, declarations) {
-            return Ok(Some(declaration));
-        }
-        return Ok(None);
-    }
-
-    // Catalog-shaped queries must not be evaluated as expressions first. For
-    // example, `%info Result::map_err` should search metadata rather than
-    // attempting to execute the path.
-    if repl_info_uses_catalog(query) {
-        Ok(None)
-    } else {
-        repl_info_expression(arg, declarations, lets).map(Some)
-    }
-}
-
-fn repl_info_binding(
-    name: &str,
-    declarations: &[String],
-    lets: &[String],
-    bindings: &[ReplBinding],
-) -> Option<(String, String)> {
-    if !bindings
-        .iter()
-        .flat_map(|binding| &binding.vars)
-        .any(|binding| binding.name == name)
-    {
-        return None;
-    }
-
-    let binding = render_repl_bindings(declarations, lets, bindings)
-        .into_iter()
-        .find(|line| {
-            let line = line.strip_prefix("mut ").unwrap_or(line);
-            line.strip_prefix(name)
-                .is_some_and(|remainder| remainder.starts_with(':'))
-        })?;
-    let ty = {
-        let (_, type_and_value) = binding.split_once(": ")?;
-        let (ty, _) = type_and_value.split_once(" = ")?;
-        ty.to_string()
-    };
-    Some((binding, ty))
-}
-
-/// Returns catalog information for a binding's receiver type. The binding
-/// summary remains first; this supplements it with the same output `%info`
-/// produces when the type itself is queried.
-fn repl_type_info(ty: &str) -> std::result::Result<Option<String>, String> {
-    let owner = ty
-        .trim()
-        .trim_start_matches("&mut ")
-        .trim_start_matches('&')
-        .split(['<', '[', ' '])
-        .next()
-        .unwrap_or_default();
-    if owner.is_empty() {
-        return Ok(None);
-    }
-    let info = repl_info(owner)?;
-    if info.starts_with("nothing found") {
-        Ok(None)
-    } else {
-        Ok(Some(info))
-    }
-}
-
-fn repl_info_declaration(name: &str, declarations: &[String]) -> Option<String> {
-    declarations
-        .iter()
-        .rev()
-        .find(|declaration| repl_declaration_name(declaration).as_deref() == Some(name))
-        .cloned()
-}
-
-fn repl_declaration_name(declaration: &str) -> Option<String> {
-    use gossamer_ast::ItemKind;
-
-    let mut map = gossamer_lex::SourceMap::new();
-    let file = map.add_file(
-        "irepl-info-declaration".to_string(),
-        declaration.to_string(),
-    );
-    let (source_file, diagnostics) = gossamer_parse::parse_source_file(declaration, file);
-    if !diagnostics.is_empty() {
-        return None;
-    }
-    let item = source_file.items.first()?;
-    let name = match &item.kind {
-        ItemKind::Fn(item) => &item.name.name,
-        ItemKind::Struct(item) => &item.name.name,
-        ItemKind::Enum(item) => &item.name.name,
-        ItemKind::Trait(item) => &item.name.name,
-        ItemKind::TypeAlias(item) => &item.name.name,
-        ItemKind::Const(item) => &item.name.name,
-        ItemKind::Static(item) => &item.name.name,
-        ItemKind::Mod(item) => &item.name.name,
-        ItemKind::Impl(_) | ItemKind::AttrItem(_) => return None,
-    };
-    Some(name.clone())
-}
-
-fn repl_info_expression(
-    arg: &str,
-    declarations: &[String],
-    lets: &[String],
-) -> std::result::Result<String, String> {
-    let let_body = if lets.is_empty() {
-        String::new()
-    } else {
-        format!("{}\n    ", lets.join("\n    "))
-    };
-    let source = format!(
-        "{}\nfn __irepl_info() {{ {lets}{arg}\n}}\n",
-        declarations.join("\n"),
-        lets = let_body,
-    );
-    let (value, ty) = build_and_call_with_type(&source, "__irepl_info")?;
-    Ok(format!("{arg}: {ty} = {}", render_repl_value(&value)))
-}
-
-fn repl_is_identifier(value: &str) -> bool {
-    let mut chars = value.chars();
-    chars
-        .next()
-        .is_some_and(|ch| ch == '_' || ch.is_alphabetic())
-        && chars.all(|ch| ch == '_' || ch.is_alphanumeric())
-}
-
-fn repl_info_uses_catalog(query: &str) -> bool {
-    query.is_empty()
-        || (query.starts_with('/') && query.ends_with('/') && query.len() >= 2)
-        || !matching_builtin_macros(query).is_empty()
-        || !matching_prelude_builtins(query).is_empty()
-        || !matching_core_methods(query).is_empty()
-        || !matching_modules(query).is_empty()
-        || !matching_items(query).is_empty()
-        || !matching_features(query).is_empty()
-}
-
-fn repl_info_for_receiver(arg: &str, owner: &str) -> std::result::Result<String, String> {
-    let help = repl_help(arg)?;
-    let listing = render_core_method_dir(&[owner.to_string()]);
-    if help.starts_with("no help found") {
-        Ok(listing)
-    } else {
-        Ok(format!("{help}\n\n{listing}"))
     }
 }
 
@@ -2049,6 +1899,33 @@ fn repl_info_listing(arg: &str) -> std::result::Result<String, String> {
     Ok(format!("no catalog listing found for `{arg}`"))
 }
 
+fn top_level_stdlib_modules() -> Vec<StdModule> {
+    gossamer_std::registry::modules()
+        .iter()
+        .copied()
+        .filter(|module| {
+            module
+                .path
+                .strip_prefix("std::")
+                .is_some_and(|path| !path.contains("::"))
+        })
+        .collect()
+}
+
+fn stdlib_namespace_children(namespace: &str) -> Vec<StdModule> {
+    let prefix = format!("{namespace}::");
+    gossamer_std::registry::modules()
+        .iter()
+        .copied()
+        .filter(|module| {
+            module
+                .path
+                .strip_prefix(&prefix)
+                .is_some_and(|path| !path.contains("::"))
+        })
+        .collect()
+}
+
 fn render_repl_history(
     transcript: &[String],
     arg: &str,
@@ -2065,89 +1942,91 @@ fn render_repl_history(
         .collect())
 }
 
-/// Searches public symbol paths with a regular expression. Plain text remains
-/// a substring search, while regex operators can broaden or constrain the
-/// match.
-fn repl_find(arg: &str) -> std::result::Result<String, String> {
-    let query = normalize_query(arg);
-    if query.is_empty() {
-        return Err("usage: %find <name-regex>".to_string());
-    }
-    let pattern = compile_search_regex("find", query)?;
-
-    let mut matches = Vec::new();
-    for module in gossamer_std::registry::modules() {
-        let candidate = FindCandidate {
-            path: module.path.to_string(),
-            kind: "module",
-            doc: module.summary.to_string(),
-        };
-        if pattern.is_match(&candidate.path) {
-            matches.push(candidate);
-        }
-        for item in module.items {
-            let candidate = FindCandidate {
-                path: format!("{}::{}", module.path, item.name),
-                kind: item_kind_label(item.kind),
-                doc: item.doc.to_string(),
-            };
-            if pattern.is_match(&candidate.path) {
-                matches.push(candidate);
-            }
-        }
-    }
-    for builtin in BUILTIN_MACROS {
-        let candidate = FindCandidate {
-            path: builtin.name.to_string(),
-            kind: "macro",
-            doc: builtin.doc.to_string(),
-        };
-        if pattern.is_match(&candidate.path) {
-            matches.push(candidate);
-        }
-    }
-    for builtin in PRELUDE_BUILTINS {
-        let candidate = FindCandidate {
-            path: builtin.name.to_string(),
-            kind: "builtin",
-            doc: builtin.doc.to_string(),
-        };
-        if pattern.is_match(&candidate.path) {
-            matches.push(candidate);
-        }
-    }
-    for method in core_method_entries() {
-        let candidate = FindCandidate {
-            path: format!("{}::{}", method.owner, method.name),
-            kind: method.kind,
-            doc: method.doc.clone(),
-        };
-        if pattern.is_match(&candidate.path) || pattern.is_match(&core_lower_path(&method)) {
-            matches.push(candidate);
-        }
-    }
-
-    matches.sort_by(|left, right| left.path.cmp(&right.path));
-    matches.dedup_by(|left, right| left.path == right.path && left.kind == right.kind);
-
-    if matches.is_empty() {
-        return Ok(format!("no public symbols found for `{query}`"));
-    }
-    let mut out = String::new();
-    for candidate in matches.into_iter().take(50) {
-        push_catalog_entry(&mut out, &candidate.path, candidate.kind, &candidate.doc);
-    }
-    Ok(out.trim_end().to_string())
-}
-
-struct FindCandidate<'a> {
-    path: String,
-    kind: &'a str,
-    doc: String,
-}
-
 fn compile_search_regex(command: &str, query: &str) -> std::result::Result<Regex, String> {
     Regex::new(query).map_err(|error| format!("invalid {command} regex `{query}`: {error}"))
+}
+
+const REPL_PAGE_SIZE: usize = 20;
+
+struct ListingOptions {
+    pattern: String,
+    all: bool,
+    page: usize,
+}
+
+fn parse_listing_options(command: &str, arg: &str) -> std::result::Result<ListingOptions, String> {
+    let mut all = false;
+    let mut page = 1usize;
+    let mut pattern = Vec::new();
+    let mut words = arg.split_whitespace();
+    while let Some(word) = words.next() {
+        match word {
+            "-a" => all = true,
+            "--page" | "-p" => {
+                let Some(value) = words.next() else {
+                    return Err(format!("usage: %{command} [pattern] [-a] [--page N]"));
+                };
+                page = value
+                    .parse()
+                    .ok()
+                    .filter(|page: &usize| *page > 0)
+                    .ok_or_else(|| format!("%{command}: page must be a positive integer"))?;
+            }
+            _ => pattern.push(word),
+        }
+    }
+    if all && page != 1 {
+        return Err(format!("%{command}: use either -a or --page N"));
+    }
+    Ok(ListingOptions {
+        pattern: pattern.join(" "),
+        all,
+        page,
+    })
+}
+
+fn paginate_listing<T: std::fmt::Display + ?Sized>(
+    entries: Vec<&T>,
+    options: &ListingOptions,
+    command: &str,
+) -> Vec<String> {
+    let total = entries.len();
+    if options.all || total <= REPL_PAGE_SIZE {
+        return entries.into_iter().map(ToString::to_string).collect();
+    }
+    let start = (options.page - 1).saturating_mul(REPL_PAGE_SIZE);
+    if start >= total {
+        return vec![format!(
+            "    no results on page {} ({} total)",
+            options.page, total
+        )];
+    }
+    let end = (start + REPL_PAGE_SIZE).min(total);
+    let mut page: Vec<String> = entries[start..end]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    let pattern = if options.pattern.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", options.pattern)
+    };
+    page.push(format!(
+        "    ({}-{} of {}) Use `{command}{pattern} --page {}` or `{command}{pattern} -a`.",
+        start + 1,
+        end,
+        total,
+        options.page + 1,
+    ));
+    page
+}
+
+fn paginate_info(text: &str, options: &ListingOptions) -> String {
+    let entries: Vec<&str> = text
+        .split("\n\n")
+        .filter(|entry| !entry.is_empty())
+        .collect();
+    paginate_listing(entries, options, "%i").join("\n\n")
 }
 
 fn regex_argument(arg: &str) -> std::result::Result<Option<Regex>, String> {
@@ -2284,6 +2163,25 @@ fn render_module_dir(modules: &[StdModule]) -> String {
     entries.concat().trim_end().to_string()
 }
 
+fn render_stdlib_namespace_dir(namespace: &str, modules: &[StdModule]) -> String {
+    let mut entries = Vec::with_capacity(modules.len() + 1);
+    let mut namespace_entry = String::new();
+    push_catalog_entry(
+        &mut namespace_entry,
+        namespace,
+        "module",
+        "Standard-library namespace.",
+    );
+    entries.push(namespace_entry);
+    for module in modules {
+        let mut entry = String::new();
+        push_module_dir_line(&mut entry, module);
+        entries.push(entry);
+    }
+    entries.sort_unstable();
+    entries.concat().trim_end().to_string()
+}
+
 fn push_module_items(entries: &mut Vec<String>, module: &StdModule) {
     for item in module.items {
         let mut entry = String::new();
@@ -2369,7 +2267,7 @@ fn push_core_method_dir(out: &mut String, method: &CoreMethodEntry) {
 }
 
 fn push_catalog_entry(out: &mut String, path: &str, kind: &str, description: &str) {
-    out.push_str(&format!("{path} [{kind}]\n  {description}\n"));
+    out.push_str(&format!("{path} [{kind}]\n  {description}\n\n"));
 }
 
 fn core_method_entries() -> Vec<CoreMethodEntry> {

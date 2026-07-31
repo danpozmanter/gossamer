@@ -12,13 +12,24 @@ fn gos_bin() -> PathBuf {
 }
 
 fn tmp(tag: &str) -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let pid = std::process::id();
     let n = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.subsec_nanos());
-    let p = std::env::temp_dir().join(format!("gos-doc-{tag}-{pid}-{n}"));
+        .map_or(0, |d| d.as_nanos());
+    let root = std::env::temp_dir().join(format!(
+        "gos-doc-{tag}-{pid}-{n}-{}",
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    // `gos doc --emit-stdlib DIR` places language pages beside DIR. Give each
+    // test its own parent so parallel test threads never share `/tmp/language`.
+    let p = root.join("stdlib");
     std::fs::create_dir_all(&p).unwrap();
     p
+}
+
+fn cleanup(dir: &std::path::Path) {
+    let _ = std::fs::remove_dir_all(dir.parent().expect("test output has parent"));
 }
 
 #[test]
@@ -43,7 +54,7 @@ fn emit_stdlib_writes_one_page_per_module_plus_index() {
     assert!(dir.join("crypto_sha256.md").exists());
     let index = std::fs::read_to_string(dir.join("index.md")).unwrap();
     assert!(index.contains("std::http"));
-    let _ = std::fs::remove_dir_all(&dir);
+    cleanup(&dir);
 }
 
 #[test]
@@ -69,7 +80,7 @@ fn emit_stdlib_check_passes_on_fresh_emit() {
         String::from_utf8_lossy(&check.stderr)
     );
     assert!(String::from_utf8_lossy(&check.stdout).contains("in sync"));
-    let _ = std::fs::remove_dir_all(&dir);
+    cleanup(&dir);
 }
 
 #[test]
@@ -93,7 +104,7 @@ fn emit_stdlib_check_fails_on_drift() {
     assert!(!check.status.success(), "check must fail on drift");
     let stderr = String::from_utf8_lossy(&check.stderr);
     assert!(stderr.contains("drift") || stderr.contains("io.md"));
-    let _ = std::fs::remove_dir_all(&dir);
+    cleanup(&dir);
 }
 
 #[test]
@@ -138,7 +149,7 @@ fn emit_stdlib_preserves_handwritten_tail_and_check_ignores_it() {
         after.contains("Handwritten prose."),
         "handwritten tail must survive re-emit"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    cleanup(&dir);
 }
 
 #[test]

@@ -2,8 +2,13 @@
 
 ## 0.38.6 - Diagnostics, REPL inspection, and CI test partitioning
 
-- Clearer type errors: consistent `i64`/`f64` names and source expressions.
-- `%info name` now includes the binding, type documentation, and methods.
+- Make type errors name both incompatible types and point to the authored
+  expressions that produced them.
+- Refine REPL discovery: `%info` searches language and standard-library
+  documentation only, `%b` and `%d` own session state, `%find` is removed,
+  and long listings page at 20 entries with `--page` or `-a`.
+- Make `%i std` list top-level standard-library modules and support namespace
+  paths such as `%i std::archive`.
 - Native CI is partitioned by generated-code coverage; macOS releases use the
   explicit LLVM `opt -O3` and `llc -O3` pipeline.
 

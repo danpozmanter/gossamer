@@ -56,11 +56,6 @@ impl GosReplHelper {
     pub(crate) fn reset_session(&mut self) {
         self.hash_set_bindings.clear();
     }
-
-    /// Returns the documented built-in receiver type for a session binding.
-    pub(crate) fn receiver_type(&self, name: &str) -> Option<&'static str> {
-        self.hash_set_bindings.contains(name).then_some("HashSet")
-    }
 }
 
 impl Helper for GosReplHelper {}
@@ -445,7 +440,7 @@ mod repl_helper_tests {
 
     #[test]
     fn meta_command_regex_is_never_treated_as_incomplete_source() {
-        assert_eq!(incomplete_reason("%find ["), None);
+        assert_eq!(incomplete_reason("%info ["), None);
         assert_eq!(incomplete_reason("%bindings foo("), None);
     }
 
