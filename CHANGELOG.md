@@ -14,7 +14,9 @@
   `integer.to_string().chars()` loops.
 - Canonicalize native `Vec<u8>` values as packed bytes, fixing LLVM parity for
   encoding, crypto, HTTP sessions, hashing, and file I/O.
-- Support reference and `name @ pattern` forms in interpreter `let` bindings.
+- Support reference and `name @ pattern` forms in interpreter `let` bindings,
+  preserving exact pointee and destructured field types in REPL `%bindings`;
+  `%info name` now shows a binding's type, capability, and available methods.
 - Improve/tighten error message verbosity and clarity
 
 ## 0.38.7 - REPL standard-library discovery

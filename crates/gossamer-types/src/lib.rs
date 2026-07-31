@@ -32,8 +32,8 @@ pub use arena_escape::{
     ArenaEscapeDiagnostic, ArenaEscapeError, ArenaEscapeKind, check_arena_escapes,
 };
 pub use checker::{
-    typecheck_source_file, typecheck_source_file_with_edition,
-    typecheck_source_file_with_lazy_iterators,
+    is_fixed_array_incompatible_vec_method, typecheck_source_file,
+    typecheck_source_file_with_edition, typecheck_source_file_with_lazy_iterators,
 };
 pub use context::TyCtxt;
 pub use error::{TypeDiagnostic, TypeError};

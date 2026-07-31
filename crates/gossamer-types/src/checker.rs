@@ -5611,7 +5611,7 @@ impl<'a> TypeChecker<'a> {
             resolved = self.infer.resolve(self.tcx, *inner);
         }
         if !matches!(self.tcx.kind(resolved), Some(TyKind::Array { .. }))
-            || !is_vec_only_fixed_array_method(method)
+            || !is_fixed_array_incompatible_vec_method(method)
         {
             return false;
         }
@@ -9963,11 +9963,7 @@ impl<'a> TypeChecker<'a> {
                     self.bind_pattern(part, elem_ty);
                 }
             }
-            PatternKind::Struct { fields, .. } => {
-                for field in fields {
-                    self.bind_field_pattern(field);
-                }
-            }
+            PatternKind::Struct { fields, .. } => self.bind_struct_pattern(fields, ty),
             PatternKind::TupleStruct { path, elems } => {
                 // For built-in generic enums (`Option<T>`,
                 // `Result<T, E>`) pull the payload type out of the
@@ -10003,7 +9999,16 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             PatternKind::Ref { inner, .. } => {
-                let inner_ty = self.fresh();
+                let resolved = self.infer.resolve(self.tcx, ty);
+                let inner_ty = match self.tcx.kind(resolved).cloned() {
+                    Some(TyKind::Ref { inner, .. }) => self.infer.resolve(self.tcx, inner),
+                    // Plain `let` reference patterns are transparent when
+                    // the initializer is already a value. This language
+                    // accepts both `let &x = &value` and `let &x = value`,
+                    // so the latter binds `x` to the initializer's exact
+                    // type instead of disconnecting it behind a fresh var.
+                    _ => resolved,
+                };
                 self.bind_pattern(inner, inner_ty);
             }
             PatternKind::Wildcard
@@ -10051,8 +10056,41 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn bind_field_pattern(&mut self, field: &FieldPattern) {
-        let ty = self.fresh();
+    fn bind_struct_pattern(&mut self, fields: &[FieldPattern], ty: Ty) {
+        let mut resolved = self.infer.resolve(self.tcx, ty);
+        let mut ref_mutability = None;
+        if let Some(TyKind::Ref { inner, mutability }) = self.tcx.kind(resolved).cloned() {
+            resolved = self.infer.resolve(self.tcx, inner);
+            ref_mutability = Some(mutability);
+        }
+        let declared = match self.tcx.kind(resolved).cloned() {
+            Some(TyKind::Adt { def, substs }) => {
+                let names = self.struct_fields.get(&def).cloned().unwrap_or_default();
+                let tys = self.tcx.adt_field_tys(def, &substs).unwrap_or_default();
+                names
+                    .into_iter()
+                    .zip(tys.iter().copied())
+                    .map(|((name, _), ty)| (name, ty))
+                    .collect::<HashMap<_, _>>()
+            }
+            _ => HashMap::new(),
+        };
+        for field in fields {
+            let mut field_ty = declared
+                .get(&field.name.name)
+                .copied()
+                .unwrap_or_else(|| self.fresh());
+            if let Some(mutability) = ref_mutability {
+                field_ty = self.tcx.intern(TyKind::Ref {
+                    inner: field_ty,
+                    mutability,
+                });
+            }
+            self.bind_field_pattern(field, field_ty);
+        }
+    }
+
+    fn bind_field_pattern(&mut self, field: &FieldPattern, ty: Ty) {
         if let Some(pattern) = &field.pattern {
             self.bind_pattern(pattern, ty);
         } else {
@@ -11171,7 +11209,10 @@ fn is_string_method(name: &str) -> bool {
     )
 }
 
-fn is_vec_only_fixed_array_method(name: &str) -> bool {
+/// Returns whether a `Vec` method changes capacity or length and therefore
+/// cannot be called on a fixed-size array receiver.
+#[must_use]
+pub fn is_fixed_array_incompatible_vec_method(name: &str) -> bool {
     matches!(
         name,
         "push"

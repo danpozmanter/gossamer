@@ -762,7 +762,7 @@ fn repl_reference_rebind_to_temporary_does_not_mutate_old_referent() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("mut c: &[i64; 2] = [5, 6]"),
+        out.stdout.contains("mut c: &[i64; 2] = &[5, 6]"),
         "reference binding did not move to the new temporary referent: {}",
         out.stdout
     );
@@ -778,7 +778,7 @@ fn repl_reference_rebind_to_temporary_does_not_mutate_old_referent() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("mut r: &mut [i64; 2] = [50, 60]"),
+        out.stdout.contains("mut r: &mut [i64; 2] = &mut [50, 60]"),
         "mutable reference binding did not move to the new temporary referent: {}",
         out.stdout
     );
@@ -917,6 +917,79 @@ fn repl_bindings_show_full_inferred_types() {
             .lines()
             .any(|line| line == "words: Vec<String> = [\"a\", \"b\"]"),
         "Vec<String> binding should show full annotated type; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_bindings_preserve_reference_and_destructured_types() {
+    let out = run_repl(
+        "struct Pair { left: i64, right: String }\n\
+         let mut m = [1, 2, 3, 4]\n\
+         let &mut d = m\n\
+         let shared = &[5, 6]\n\
+         let mut n = [7, 8]\n\
+         let exclusive = &mut n\n\
+         let &(a, b) = &(9, \"ten\")\n\
+         let p = Pair { left: 11, right: \"twelve\" }\n\
+         let Pair { left, right } = p\n\
+         %b\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for expected in [
+        "mut m: [i64; 4] = [1, 2, 3, 4]",
+        "d: [i64; 4] = [1, 2, 3, 4]",
+        "shared: &[i64; 2] = &[5, 6]",
+        "exclusive: &mut [i64; 2] = &mut [7, 8]",
+        "a: i64 = 9",
+        "b: String = \"ten\"",
+        "left: i64 = 11",
+        "right: String = \"twelve\"",
+    ] {
+        assert!(
+            out.stdout.lines().any(|line| line == expected),
+            "missing exact binding `{expected}`; stdout: {}",
+            out.stdout
+        );
+    }
+    assert!(
+        !out.stdout.contains(": _ =") && !out.stdout.contains("<void>"),
+        "valid reference bindings must not lose type or value information: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_info_resolves_binding_types_and_callable_method_capabilities() {
+    let out = run_repl(
+        "let mut m = [1, 2, 3, 4]\n\
+         let &mut d = m\n\
+         let r = &mut m\n\
+         %i m -a\n\
+         %i d -a\n\
+         %i r -a\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for expected in [
+        "m [binding]\n  type: [i64; 4]\n  capability: mutable binding",
+        "d [binding]\n  type: [i64; 4]\n  capability: immutable binding",
+        "r [binding]\n  type: &mut [i64; 4]\n  capability: mutable referent",
+        "m.len [method]",
+        "m.reverse [method]",
+        "d.len [method]",
+        "r.reverse [method]",
+    ] {
+        assert!(
+            out.stdout.contains(expected),
+            "missing binding-aware info `{expected}`; stdout: {}",
+            out.stdout
+        );
+    }
+    assert!(
+        !out.stdout.contains("d.reverse [method]")
+            && !out.stdout.contains("m.push [method]")
+            && !out.stdout.contains("r.push [method]"),
+        "info exposed methods unavailable to the binding or fixed array: {}",
         out.stdout
     );
 }

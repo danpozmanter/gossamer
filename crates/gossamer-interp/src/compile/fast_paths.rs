@@ -200,11 +200,18 @@ impl<'tcx> FnBuilder<'tcx> {
                 Ok(())
             }
             HirPatKind::Wildcard | HirPatKind::Literal(_) | HirPatKind::Rest => Ok(()),
-            // VM references preserve the underlying value representation, so
-            // destructuring `&pat` or `&mut pat` binds exactly as `pat` does.
-            // Match patterns and the native MIR lowerer use the same peeling
-            // rule.
-            HirPatKind::Ref { inner, .. } => self.bind_pattern_locals_ex(inner, init_reg, consume),
+            // VM references preserve the underlying value representation.
+            // Give the peeled value its own register before binding it so a
+            // bare-path initializer (`let &x = value`) cannot be cleared as
+            // the old name's last use while `x` still aliases that register.
+            HirPatKind::Ref { inner, .. } => {
+                let peeled = self.alloc_reg();
+                self.emit(Op::Move {
+                    dst: peeled,
+                    src: init_reg,
+                });
+                self.bind_pattern_locals_ex(inner, peeled, consume)
+            }
             _ => Err(RuntimeError::Unsupported(
                 "this `let` pattern is not supported by the VM compiler",
             )),

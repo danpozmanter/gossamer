@@ -19,7 +19,7 @@ REPL commands
   %help
     Show this list of REPL commands.
   %info (%i) [pattern] [-a] [--page N]
-    Search standard-library and language documentation.
+    Inspect an exact binding name, or search language and standard-library docs.
   %bindings (%b) [regex] [-a] [--page N]
     Show persistent `let` bindings.
   %declarations (%d) [regex] [-a] [--page N]
@@ -1407,7 +1407,9 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                         }
                     };
                     let result =
-                        repl_info(&options.pattern).map(|text| paginate_info(&text, &options));
+                        repl_binding_info(&declarations, &lets, &bindings, &options.pattern)
+                            .unwrap_or_else(|| repl_info(&options.pattern))
+                            .map(|text| paginate_info(&text, &options));
                     match result {
                         Ok(text) => print_repl_output(&text),
                         Err(msg) => print_repl_error(&msg),
@@ -1546,6 +1548,65 @@ fn render_repl_value(value: &gossamer_interp::Value) -> String {
     value.repr()
 }
 
+struct ReplValueType {
+    rendered: String,
+    references: Vec<gossamer_types::Mutbl>,
+    method_owner: Option<String>,
+    fixed_array: bool,
+}
+
+impl ReplValueType {
+    fn from_ty(tcx: &gossamer_types::TyCtxt, ty: gossamer_types::Ty) -> Self {
+        let rendered = gossamer_types::render_public_ty(tcx, ty);
+        let mut references = Vec::new();
+        let mut current = ty;
+        while let Some(gossamer_types::TyKind::Ref { mutability, inner }) = tcx.kind(current) {
+            references.push(*mutability);
+            current = *inner;
+        }
+        let (method_owner, fixed_array) = match tcx.kind(current) {
+            Some(gossamer_types::TyKind::Array { .. }) => (Some("Vec".to_string()), true),
+            Some(gossamer_types::TyKind::Slice(_) | gossamer_types::TyKind::Vec(_)) => {
+                (Some("Vec".to_string()), false)
+            }
+            Some(gossamer_types::TyKind::String) => (Some("String".to_string()), false),
+            Some(gossamer_types::TyKind::HashMap { .. }) => (Some("HashMap".to_string()), false),
+            Some(gossamer_types::TyKind::Sender(_)) => (Some("Sender".to_string()), false),
+            Some(gossamer_types::TyKind::Receiver(_)) => (Some("Receiver".to_string()), false),
+            Some(gossamer_types::TyKind::JoinHandle(_)) => (Some("JoinHandle".to_string()), false),
+            Some(gossamer_types::TyKind::Duration) => (Some("Duration".to_string()), false),
+            Some(gossamer_types::TyKind::Instant) => (Some("Instant".to_string()), false),
+            Some(gossamer_types::TyKind::Adt { def, .. }) => {
+                (tcx.def_name(*def).map(str::to_string), false)
+            }
+            _ => (None, false),
+        };
+        Self {
+            rendered,
+            references,
+            method_owner,
+            fixed_array,
+        }
+    }
+
+    fn unknown() -> Self {
+        Self {
+            rendered: "<unknown>".to_string(),
+            references: Vec::new(),
+            method_owner: None,
+            fixed_array: false,
+        }
+    }
+}
+
+fn render_repl_binding_value(value: &gossamer_interp::Value, ty: &ReplValueType) -> String {
+    let mut rendered = render_repl_value(value);
+    for mutability in ty.references.iter().rev() {
+        rendered = format!("{}{rendered}", mutability.prefix());
+    }
+    rendered
+}
+
 fn print_repl_result(value: &gossamer_interp::Value) {
     println!("{}", render_repl_value(value));
     std::io::stdout()
@@ -1598,7 +1659,7 @@ fn render_repl_bindings(
                 name = var.name,
             );
             let (value, ty) = match build_and_call_with_type(&source, &entry) {
-                Ok((value, ty)) => (render_repl_value(&value), ty),
+                Ok((value, ty)) => (render_repl_binding_value(&value, &ty), ty.rendered),
                 Err(msg) => (
                     format!("<error: {}>", msg.lines().next().unwrap_or("unknown")),
                     "<unknown>".to_string(),
@@ -1609,6 +1670,81 @@ fn render_repl_bindings(
         }
     }
     lines
+}
+
+fn repl_binding_info(
+    declarations: &[String],
+    lets: &[String],
+    bindings: &[ReplBinding],
+    name: &str,
+) -> Option<std::result::Result<String, String>> {
+    let var = bindings
+        .iter()
+        .flat_map(|binding| &binding.vars)
+        .find(|var| var.name == name)?;
+    Some(resolve_repl_binding(declarations, lets, name).map(|(_, ty)| {
+        let can_mutate = if ty.references.is_empty() {
+            var.mutable
+        } else {
+            ty.references
+                .iter()
+                .all(|mutability| *mutability == gossamer_types::Mutbl::Mut)
+        };
+        let capability = match (var.mutable, ty.references.as_slice(), can_mutate) {
+            (_, [], true) => "mutable binding",
+            (_, [], false) => "immutable binding",
+            (_, _, true) => "mutable referent",
+            (_, _, false) => "shared referent",
+        };
+        let mut out = format!("{} [binding]\n  type: {}\n  capability: {capability}\n", var.name, ty.rendered);
+        let Some(owner) = ty.method_owner else {
+            out.push_str("\nNo cataloged methods for this binding's type.");
+            return out;
+        };
+        if ty.fixed_array {
+            out.push_str(
+                "  method surface: fixed array (non-resizing Vec methods; mutable methods require writable access)\n",
+            );
+        }
+        let methods = core_method_entries().into_iter().filter(|method| {
+            method.kind == "method"
+                && method.owner == owner
+                && (!ty.fixed_array
+                    || !gossamer_types::is_fixed_array_incompatible_vec_method(&method.name))
+                && (can_mutate || !gossamer_types::is_mutating_method_name(&method.name))
+        });
+        let mut found = false;
+        for method in methods {
+            found = true;
+            out.push('\n');
+            out.push_str(&format!("{}.{} [method]\n", var.name, method.name));
+            out.push_str(&format!("  {}\n", method.signature));
+            out.push_str(&format!("  {}\n", method.doc));
+        }
+        if !found {
+            out.push_str("\nNo methods are available with this binding's capability.");
+        }
+        out.trim_end().to_string()
+    }))
+}
+
+fn resolve_repl_binding(
+    declarations: &[String],
+    lets: &[String],
+    name: &str,
+) -> std::result::Result<(gossamer_interp::Value, ReplValueType), String> {
+    let let_body = if lets.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n    ", lets.join("\n    "))
+    };
+    let entry = "__irepl_binding_info";
+    let source = format!(
+        "{}\nfn {entry}() {{ {lets}{name} }}\n",
+        declarations.join("\n"),
+        lets = let_body,
+    );
+    build_and_call_with_type(&source, entry)
 }
 
 fn repl_binding_from_let_source(input: &str) -> std::result::Result<ReplBinding, String> {
@@ -3068,7 +3204,7 @@ fn build_and_call(
 fn build_and_call_with_type(
     source: &str,
     entry: &str,
-) -> std::result::Result<(gossamer_interp::Value, String), String> {
+) -> std::result::Result<(gossamer_interp::Value, ReplValueType), String> {
     let source = gossamer_parse::autoderive::augment_source(source);
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file("irepl".to_string(), source.clone());
@@ -3096,10 +3232,9 @@ fn build_and_call_with_type(
         return Err(format_semantic_diags("type", &user_type_diags));
     }
     let tail_ty_id = repl_generated_tail_expr(&sf).and_then(|expr| tbl.get(expr.id));
-    let tail_ty = tail_ty_id.map_or_else(
-        || "<unknown>".to_string(),
-        |ty| gossamer_types::render_public_ty(&tcx, ty),
-    );
+    let tail_ty = tail_ty_id.map_or_else(ReplValueType::unknown, |ty| {
+        ReplValueType::from_ty(&tcx, ty)
+    });
     let mut program = gossamer_hir::lower_source_file(&sf, &res, &tbl, &mut tcx);
     // Generated REPL functions intentionally return their tail even though
     // the user did not write a return annotation. Keep the HIR signature in
