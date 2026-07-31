@@ -1552,7 +1552,6 @@ mod tier_parity {
 
     fn run_vm(file: &Path) -> Outcome {
         let result = Command::new(gos_bin())
-            .arg("run")
             .arg(file)
             .stdin(Stdio::null())
             .stdout(Stdio::null())

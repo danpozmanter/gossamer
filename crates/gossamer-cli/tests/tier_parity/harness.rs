@@ -1304,12 +1304,11 @@ fn tier_report_handles_crash_and_timeout() {
 fn run_vm(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
     let gos = gos_bin();
     let mut cmd = Command::new(&gos);
-    cmd.arg("run").arg(src);
-    let mut parts: Vec<String> = vec![gos.display().to_string(), "run".to_string()];
+    cmd.arg(src);
+    let mut parts: Vec<String> = vec![gos.display().to_string()];
     parts.push(src.display().to_string());
     if !args.is_empty() {
-        cmd.arg("--").args(args);
-        parts.push("--".to_string());
+        cmd.args(args);
         parts.extend(args.iter().map(std::string::ToString::to_string));
     }
     let workdir = cmd.get_current_dir().map_or_else(
@@ -1335,19 +1334,16 @@ fn run_vm(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
 fn run_jit(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
     let gos = gos_bin();
     let mut cmd = Command::new(&gos);
-    cmd.arg("run")
-        .arg(src)
+    cmd.arg(src)
         .env("GOSSAMER_JIT_THRESHOLD", "1")
         .env_remove("GOS_JIT");
     let mut parts: Vec<String> = vec![
         "GOSSAMER_JIT_THRESHOLD=1".to_string(),
         gos.display().to_string(),
-        "run".to_string(),
     ];
     parts.push(src.display().to_string());
     if !args.is_empty() {
-        cmd.arg("--").args(args);
-        parts.push("--".to_string());
+        cmd.args(args);
         parts.extend(args.iter().map(std::string::ToString::to_string));
     }
     let workdir = cmd.get_current_dir().map_or_else(

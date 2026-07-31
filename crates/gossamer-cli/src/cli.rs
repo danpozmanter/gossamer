@@ -10,7 +10,7 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
-use crate::cmd::{self, RunMode, TestOpts};
+use crate::cmd::{self, TestOpts};
 use crate::style;
 use crate::{doc, repl};
 
@@ -21,6 +21,9 @@ pub(crate) struct Cli {
     /// Print additional progress information for the command being run.
     #[arg(short, long, global = true)]
     verbose: bool,
+    /// Execute inline Gossamer source.
+    #[arg(short = 'c', long = "command")]
+    eval: Option<String>,
     /// Subcommand to dispatch; omit for a bare no-op that still
     /// prints `--version`.
     #[command(subcommand)]
@@ -57,43 +60,6 @@ enum Command {
         /// `gossamer_diagnostics::render_json`.
         #[arg(long, value_enum, default_value_t = MessageFormat::Plain)]
         message_format: MessageFormat,
-    },
-    /// Execute a program by invoking its `main` function.
-    ///
-    /// The execution path is the register-based bytecode VM, which
-    /// lowers every language construct to native bytecode. The
-    /// historical `--tree-walker` / `--vm` flags were retired in
-    /// 0.5.0 - there is one `gos run` engine and it is not a
-    /// user-selectable tier.
-    ///
-    /// With no path: defaults to `<project-root>/src/main.gos`
-    /// when a `project.toml` is reachable.
-    Run {
-        /// Path to a `.gos` source file. Optional: defaults to the
-        /// project's `src/main.gos`.
-        file: Option<PathBuf>,
-        /// Disable the cranelift JIT (deferred whole-program
-        /// compile triggered by per-chunk hot-counter tier-up).
-        /// The JIT is on by default - pass `--no-jit` to fall back
-        /// to pure bytecode dispatch. Equivalent to setting
-        /// `GOS_JIT=0` in the environment.
-        #[arg(long)]
-        no_jit: bool,
-        /// Run the VM on the process main thread instead of a spawned
-        /// thread. Required for `[rust-bindings]` that call native
-        /// libraries which must run on the main thread (GLFW / OpenGL /
-        /// Cocoa / Metal on macOS). The main thread's OS-default stack is
-        /// smaller than the spawned thread's reserve, so deeply recursive
-        /// programs have less headroom.
-        #[arg(long = "main-thread")]
-        main_thread: bool,
-        /// Arguments forwarded to the interpreted program (after `--`).
-        #[arg(last = true)]
-        args: Vec<String>,
-        /// Require `project.lock` to be present and match the
-        /// resolver's output for every dep. Drift is a hard error.
-        #[arg(long)]
-        locked: bool,
     },
     /// Restart a development program whenever local project inputs change.
     #[command(alias = "dev")]
@@ -635,7 +601,7 @@ enum Command {
 /// `Err` into a non-zero exit code with a styled `error:` prefix.
 pub(crate) fn run() -> ExitCode {
     let cli = parse_cli();
-    match dispatch(cli.command, cli.verbose) {
+    match dispatch(cli.command, cli.verbose, cli.eval) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("{}: {err:#}", style::error("error"));
@@ -644,25 +610,26 @@ pub(crate) fn run() -> ExitCode {
     }
 }
 
-/// Executes an unambiguous common `gos run` command without constructing
-/// Clap's full, deeply recursive schema. Commands outside this deliberately
-/// narrow grammar return `None` and retain the authoritative Clap path.
-///
-/// Accepted grammar: `gos run [--no-jit] [--main-thread] [--locked] [FILE]
-/// [-- ARGS...]`, with flags and `FILE` in either order. Duplicate flags,
-/// unknown options, help, and more than one path fall back so diagnostics and
-/// edge-case behavior remain owned by Clap.
+/// Returns whether `args` are a direct program invocation such as
+/// `gos ./tool`, `gos ./tool.gos`, or `gos ./project`. This is the form the
+/// kernel uses for a `#!/usr/bin/env gos` hashbang.
 #[must_use]
-pub fn try_fast_run(args: &[std::ffi::OsString]) -> Option<ExitCode> {
-    let parsed = parse_fast_run(args)?;
+pub fn is_direct_script_invocation(args: &[std::ffi::OsString]) -> bool {
+    parse_direct_script(args).is_some()
+}
+
+/// Executes a program passed directly to `gos`, forwarding every remaining
+/// argument to its `main` function. Execution options must precede the path,
+/// so program arguments beginning with `-` are forwarded unchanged.
+#[must_use]
+pub fn try_script_run(args: &[std::ffi::OsString]) -> Option<ExitCode> {
+    let parsed = parse_direct_script(args)?;
     let result = (|| {
         crate::cmd::pkg::enforce_lockfile_if_requested(parsed.locked)?;
-        dispatch_run(
-            parsed.file,
-            parsed.no_jit,
-            parsed.main_thread,
-            &parsed.forwarded,
-        )
+        if parsed.no_jit {
+            gossamer_interp::set_jit_disabled();
+        }
+        cmd::run::dispatch(Some(parsed.file), parsed.main_thread, &parsed.forwarded)
     })();
     Some(match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -673,42 +640,55 @@ pub fn try_fast_run(args: &[std::ffi::OsString]) -> Option<ExitCode> {
     })
 }
 
-struct FastRun {
-    file: Option<PathBuf>,
+struct DirectScript {
+    file: PathBuf,
     no_jit: bool,
     main_thread: bool,
     locked: bool,
     forwarded: Vec<String>,
 }
 
-fn parse_fast_run(args: &[std::ffi::OsString]) -> Option<FastRun> {
-    if args.get(1)?.to_str()? != "run" {
-        return None;
-    }
-    let mut parsed = FastRun {
-        file: None,
-        no_jit: false,
-        main_thread: false,
-        locked: false,
-        forwarded: Vec::new(),
-    };
-    let mut forwarded = false;
-    for arg in &args[2..] {
-        if forwarded {
-            parsed.forwarded.push(arg.to_str()?.to_owned());
-            continue;
+/// Parses the narrow direct-invocation grammar without taking ownership of
+/// ordinary subcommands. The path may name a source file or a project
+/// directory; the latter resolves through `project.toml` in `cmd::run`.
+fn parse_direct_script(args: &[std::ffi::OsString]) -> Option<DirectScript> {
+    let mut no_jit = false;
+    let mut main_thread = false;
+    let mut locked = false;
+    let mut index = 1;
+
+    while let Some(arg) = args.get(index) {
+        let text = arg.to_str()?;
+        match text {
+            "--no-jit" if !no_jit => no_jit = true,
+            "--main-thread" if !main_thread => main_thread = true,
+            "--locked" if !locked => locked = true,
+            _ if text.starts_with('-') => return None,
+            _ => {
+                let file = PathBuf::from(arg);
+                let path = Path::new(&file);
+                if !path.is_file()
+                    && !path.is_dir()
+                    && path.extension().is_none_or(|extension| extension != "gos")
+                {
+                    return None;
+                }
+                let forwarded = args[index + 1..]
+                    .iter()
+                    .map(|arg| arg.to_str().map(str::to_owned))
+                    .collect::<Option<Vec<_>>>()?;
+                return Some(DirectScript {
+                    file,
+                    no_jit,
+                    main_thread,
+                    locked,
+                    forwarded,
+                });
+            }
         }
-        match arg.to_str() {
-            Some("--") => forwarded = true,
-            Some("--no-jit") if !parsed.no_jit => parsed.no_jit = true,
-            Some("--main-thread") if !parsed.main_thread => parsed.main_thread = true,
-            Some("--locked") if !parsed.locked => parsed.locked = true,
-            Some(text) if text.starts_with('-') => return None,
-            _ if parsed.file.is_none() => parsed.file = Some(PathBuf::from(arg)),
-            _ => return None,
-        }
+        index += 1;
     }
-    Some(parsed)
+    None
 }
 
 fn parse_cli() -> Cli {
@@ -740,7 +720,10 @@ fn cli_help_width() -> usize {
     clippy::too_many_lines,
     reason = "intentional flat dispatch - one arm per subcommand keeps grep-ability"
 )]
-fn dispatch(command: Option<Command>, verbose: bool) -> anyhow::Result<()> {
+fn dispatch(command: Option<Command>, verbose: bool, eval: Option<String>) -> anyhow::Result<()> {
+    if let Some(source) = eval {
+        return cmd::run::command(source);
+    }
     match command {
         None | Some(Command::Repl) => repl::cmd_repl(verbose),
         Some(Command::Parse { file }) => cmd::parse::run(&file),
@@ -749,16 +732,6 @@ fn dispatch(command: Option<Command>, verbose: bool) -> anyhow::Result<()> {
             timings,
             message_format,
         }) => cmd::check::dispatch(file, timings, message_format),
-        Some(Command::Run {
-            file,
-            no_jit,
-            main_thread,
-            args,
-            locked,
-        }) => {
-            crate::cmd::pkg::enforce_lockfile_if_requested(locked)?;
-            dispatch_run(file, no_jit, main_thread, &args)
-        }
         Some(Command::Watch {
             file,
             debounce,
@@ -1077,21 +1050,6 @@ fn dispatch_feature_status(
     })
 }
 
-fn dispatch_run(
-    file: Option<PathBuf>,
-    no_jit: bool,
-    main_thread: bool,
-    args: &[String],
-) -> anyhow::Result<()> {
-    // The register-based bytecode VM is the only `gos run` engine;
-    // the CLI exposes no engine selection.
-    let mode = RunMode::Vm;
-    if no_jit {
-        gossamer_interp::set_jit_disabled();
-    }
-    cmd::run::dispatch(file, mode, main_thread, args)
-}
-
 /// Codegen optimisation level. Both modes go through the LLVM
 /// backend; the difference is the MIR and LLVM optimization profile.
 /// `Debug` uses the lightweight pipeline plus minimal `opt` and `llc -O0`;
@@ -1166,7 +1124,7 @@ fn dispatch_build(
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, configure_pgo, parse_fast_run};
+    use super::{Cli, configure_pgo, is_direct_script_invocation};
     use clap::Parser;
 
     fn os_args(args: &[&str]) -> Vec<std::ffi::OsString> {
@@ -1174,35 +1132,14 @@ mod tests {
     }
 
     #[test]
-    fn fast_run_accepts_only_the_unambiguous_common_grammar() {
-        let args = os_args(&[
-            "gos",
-            "run",
-            "--no-jit",
-            "src/main.gos",
-            "--locked",
-            "--",
-            "--port",
-            "8080",
-        ]);
-        let parsed = parse_fast_run(&args).expect("common run command should use fast path");
-        assert_eq!(parsed.file, Some(std::path::PathBuf::from("src/main.gos")));
-        assert!(parsed.no_jit);
-        assert!(parsed.locked);
-        assert!(!parsed.main_thread);
-        assert_eq!(parsed.forwarded, ["--port", "8080"]);
+    fn direct_gos_file_is_reserved_for_script_execution() {
+        assert!(is_direct_script_invocation(&os_args(&["gos", "tool.gos"])));
+        assert!(!is_direct_script_invocation(&os_args(&["gos", "run"])));
     }
 
     #[test]
-    fn fast_run_defers_edge_cases_to_clap() {
-        for args in [
-            &["gos", "run", "--help"][..],
-            &["gos", "run", "--no-jit", "--no-jit"][..],
-            &["gos", "run", "a.gos", "b.gos"][..],
-            &["gos", "build", "a.gos"][..],
-        ] {
-            assert!(parse_fast_run(&os_args(args)).is_none(), "args={args:?}");
-        }
+    fn run_subcommand_is_removed() {
+        assert!(Cli::try_parse_from(["gos", "run", "hello.gos"]).is_err());
     }
 
     #[test]
@@ -1214,12 +1151,6 @@ mod tests {
     fn parse_subcommand_requires_file() {
         assert!(Cli::try_parse_from(["gos", "parse"]).is_err());
         assert!(Cli::try_parse_from(["gos", "parse", "hello.gos"]).is_ok());
-    }
-
-    #[test]
-    fn run_subcommand_parses_without_extra_flags() {
-        let ok = Cli::try_parse_from(["gos", "run", "hello.gos"]);
-        assert!(ok.is_ok());
     }
 
     #[test]
@@ -1240,26 +1171,6 @@ mod tests {
         assert!(ok.is_ok());
         assert!(Cli::try_parse_from(["gos", "watch", "--debounce", "nope"]).is_err());
         assert!(Cli::try_parse_from(["gos", "dev", "src/main.gos"]).is_ok());
-    }
-
-    #[test]
-    fn run_subcommand_rejects_removed_tree_walker_flag() {
-        // `--tree-walker` was the legacy "force the walker" flag
-        // before the walker became an internal-only oracle.
-        // `gos run` is bytecode-VM-only in 0.5.0; the flag must
-        // produce a clap error so an outdated invocation is not
-        // silently ignored.
-        let err = Cli::try_parse_from(["gos", "run", "hello.gos", "--tree-walker"]);
-        assert!(err.is_err());
-    }
-
-    #[test]
-    fn run_subcommand_rejects_removed_vm_flag() {
-        // `--vm` was the strict-VM opt-in before VM became the
-        // default. Keep an explicit rejection test so a future
-        // resurrection of the flag is a deliberate decision.
-        let err = Cli::try_parse_from(["gos", "run", "hello.gos", "--vm"]);
-        assert!(err.is_err());
     }
 
     #[test]

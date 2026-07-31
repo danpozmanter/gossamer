@@ -40,7 +40,6 @@ fn write_source(name: &str, body: &str) -> PathBuf {
 
 fn run_interp(source: &Path) -> String {
     let out = Command::new(gos_bin())
-        .arg("run")
         .arg(source)
         .output()
         .expect("spawn gos run");

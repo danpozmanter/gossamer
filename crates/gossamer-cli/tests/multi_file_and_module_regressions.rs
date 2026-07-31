@@ -76,7 +76,6 @@ fn is_executable(p: &Path) -> bool {
 
 fn run_vm(src: &Path) -> (String, String, Option<i32>) {
     let child = Command::new(gos_bin())
-        .arg("run")
         .arg(src)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -143,10 +142,10 @@ fn write_project(tag: &str, id: &str, files: &[(&str, &str)]) -> PathBuf {
     dir
 }
 
-/// Runs `gos run` at the project root (VM tier), resolving the entry itself.
+/// Runs `gos .` at the project root (VM tier), resolving the entry itself.
 fn project_run_vm(dir: &Path) -> (String, String, Option<i32>) {
     let child = Command::new(gos_bin())
-        .arg("run")
+        .arg(".")
         .current_dir(dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -258,7 +257,7 @@ fn cross_file_chained_sibling_module_calls() {
 
     // VM tier (`gos run`).
     let run_out = Command::new(gos_bin())
-        .arg("run")
+        .arg(".")
         .current_dir(&dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -1391,7 +1390,7 @@ fn cross_module_struct_field_access_resolves_on_all_tiers() {
     .unwrap();
 
     let run_out = Command::new(gos_bin())
-        .arg("run")
+        .arg(".")
         .current_dir(&dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -1628,7 +1627,6 @@ fn relative_entry_path_bundles_siblings() {
     )
     .unwrap();
     let child = Command::new(gos_bin())
-        .arg("run")
         .arg("main.gos")
         .current_dir(&dir)
         .stdin(Stdio::null())

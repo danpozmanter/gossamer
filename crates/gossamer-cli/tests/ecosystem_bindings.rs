@@ -107,7 +107,7 @@ fn main() {
     .expect("write Gossamer source");
 
     let out = Command::new(gos_bin())
-        .args(["run", "src/main.gos"])
+        .arg("src/main.gos")
         .current_dir(&dir)
         .env("GOSSAMER_ROOT", &root)
         .env("GOSSAMER_CACHE", dir.join("cache"))

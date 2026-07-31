@@ -172,14 +172,13 @@ fn stable_fixture_manifest_runs_on_every_execution_tier() {
         let (source, edition_dir) = source_for_edition(&source, edition.as_deref(), name);
 
         let vm = Command::new(gos_binary())
-            .args(["run", "--no-jit"])
+            .arg("--no-jit")
             .arg(&source)
             .output()
             .expect("run pure bytecode VM");
         assert_success(&format!("VM fixture {name}"), vm, &expected);
 
         let jit = Command::new(gos_binary())
-            .arg("run")
             .arg(&source)
             .env("GOSSAMER_JIT_THRESHOLD", "1")
             .env("GOSSAMER_JIT_MIN_WORK", "1")

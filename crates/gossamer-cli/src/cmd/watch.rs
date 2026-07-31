@@ -186,7 +186,7 @@ fn start_child(entry: &Path, options: &Options, generation: u64, status: &Status
     if let Some(root) = crate::paths::project_root_for_entry(entry) {
         command.current_dir(root);
     }
-    command.arg("run").arg(entry);
+    command.arg(entry);
     if options.locked {
         command.arg("--locked");
     }

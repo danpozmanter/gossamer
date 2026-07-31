@@ -102,7 +102,6 @@ fn cross_one(root: &Path, triple: &str) {
     for src in FIXTURES {
         let src_path = root.join(src);
         let vm = Command::new(gos_bin())
-            .arg("run")
             .arg(&src_path)
             .output()
             .expect("spawn gos run");

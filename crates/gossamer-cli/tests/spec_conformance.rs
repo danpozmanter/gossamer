@@ -87,7 +87,7 @@ fn run_check(stem: &str, source: &str) -> (bool, String, String) {
 fn run_program(stem: &str, source: &str, args: &[&str]) -> (bool, String, String) {
     let path = write_temp_file(stem, source);
     let mut cmd = Command::new(gos_binary());
-    cmd.arg("run").arg(&path);
+    cmd.arg(&path);
     for arg in args {
         cmd.arg(arg);
     }

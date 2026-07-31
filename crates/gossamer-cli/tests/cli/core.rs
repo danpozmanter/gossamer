@@ -50,6 +50,38 @@ fn version_flag_prints_package_version() {
 }
 
 #[test]
+fn direct_gos_script_accepts_a_hashbang() {
+    let fixture = write_fixture(
+        "hashbang",
+        "#!/usr/bin/env gos\nfn main() { println(\"hashbang works\") }\n",
+    );
+    let out = Command::new(gos_bin())
+        .arg(&fixture)
+        .output()
+        .expect("spawn direct script");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("hashbang works"));
+}
+
+#[test]
+fn command_flag_executes_inline_source() {
+    let out = Command::new(gos_bin())
+        .args(["-c", "println(\"inline works\")"])
+        .output()
+        .expect("spawn inline command");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("inline works"));
+}
+
+#[test]
 fn help_wraps_to_narrow_terminal_width() {
     let out = Command::new(gos_bin())
         .arg("--help")
@@ -220,7 +252,6 @@ fn check_subcommand_reports_type_mismatch() {
 fn run_subcommand_executes_via_vm() {
     let fixture = write_fixture("run", "fn main() { println(\"cli-vm-run\") }\n");
     let out = Command::new(gos_bin())
-        .args(["run"])
         .arg(&fixture)
         .output()
         .expect("spawn run");
@@ -408,7 +439,6 @@ fn run_absolute_project_uses_entry_edition_for_lazy_iterators() {
     .expect("write manifest");
     std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_TIER_SOURCE).expect("write source");
     let out = Command::new(gos_bin())
-        .args(["run"])
         .arg(&dir)
         .output()
         .expect("spawn run");
@@ -419,7 +449,6 @@ fn run_absolute_project_uses_entry_edition_for_lazy_iterators() {
     );
     assert_eq!(String::from_utf8_lossy(&out.stdout), LAZY_ITERATOR_TIER_OUTPUT);
     let jit_out = Command::new(gos_bin())
-        .args(["run"])
         .arg(&dir)
         .env("GOSSAMER_JIT_THRESHOLD", "1")
         .output()
@@ -515,7 +544,6 @@ fn eager_iterator_migration_aliases_run_on_vm_jit_and_llvm() {
     std::fs::write(dir.join("main.gos"), EAGER_ITERATOR_ALIAS_SOURCE).expect("write source");
 
     let vm = Command::new(gos_bin())
-        .args(["run"])
         .arg(&dir)
         .output()
         .expect("spawn VM run");
@@ -523,7 +551,6 @@ fn eager_iterator_migration_aliases_run_on_vm_jit_and_llvm() {
     assert_eq!(String::from_utf8_lossy(&vm.stdout), EAGER_ITERATOR_ALIAS_OUTPUT);
 
     let jit = Command::new(gos_bin())
-        .args(["run"])
         .arg(&dir)
         .env("GOSSAMER_JIT_THRESHOLD", "1")
         .output()
@@ -582,13 +609,12 @@ fn edition_2026_iterator_surface_remains_eager_on_all_tiers() {
     for mut command in [
         {
             let mut command = Command::new(gos_bin());
-            command.args(["run"]).arg(&dir);
+            command.arg(&dir);
             command
         },
         {
             let mut command = Command::new(gos_bin());
             command
-                .args(["run"])
                 .arg(&dir)
                 .env("GOSSAMER_JIT_THRESHOLD", "1");
             command
@@ -690,13 +716,12 @@ fn borrowed_lazy_vec_structural_mutation_fails_on_all_tiers() {
     for mut command in [
         {
             let mut command = Command::new(gos_bin());
-            command.args(["run"]).arg(&dir);
+            command.arg(&dir);
             command
         },
         {
             let mut command = Command::new(gos_bin());
             command
-                .args(["run"])
                 .arg(&dir)
                 .env("GOSSAMER_JIT_THRESHOLD", "1");
             command
@@ -754,13 +779,12 @@ fn lazy_adapter_panic_propagates_on_all_tiers() {
     for mut command in [
         {
             let mut command = Command::new(gos_bin());
-            command.args(["run", "--no-jit"]).arg(&dir);
+            command.arg("--no-jit").arg(&dir);
             command
         },
         {
             let mut command = Command::new(gos_bin());
             command
-                .args(["run"])
                 .arg(&dir)
                 .env("GOSSAMER_JIT_THRESHOLD", "1")
                 .env("GOSSAMER_JIT_MIN_WORK", "1");
@@ -816,7 +840,6 @@ fn main() {
 "#,
     );
     let mut child = Command::new(gos_bin())
-        .args(["run"])
         .arg(&fixture)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -861,7 +884,6 @@ fn main() {
     );
 
     let mut vm = Command::new(gos_bin())
-        .args(["run"])
         .arg(&fixture)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -940,7 +962,6 @@ fn intcode_day2_native_matches_vm() {
     let expected = "pos0=3500\nsample=30 2\n";
 
     let vm = Command::new(gos_bin())
-        .args(["run"])
         .arg(&fixture)
         .output()
         .expect("spawn vm run");
@@ -990,7 +1011,6 @@ fn intcode_day2_mut_slice_matches_vm_debug_and_release() {
     let expected = "sample=30\npos0=3500\ncopy=99, base=1\npart2=22\npart2_base=1\n";
 
     let vm = Command::new(gos_bin())
-        .args(["run"])
         .arg(&fixture)
         .output()
         .expect("spawn vm run");
@@ -1049,7 +1069,6 @@ fn intcode_day2_mut_slice_matches_vm_debug_and_release() {
 fn run_subcommand_executes_via_vm_by_default() {
     let fixture = write_fixture("runvm", "fn main() { println(\"cli-vm\") }\n");
     let out = Command::new(gos_bin())
-        .arg("run")
         .arg(&fixture)
         .output()
         .expect("spawn run");
@@ -1360,7 +1379,6 @@ fn vm_and_native_client_builder_chain_outputs_match() {
     std::fs::write(&source_path, source).unwrap();
 
     let vm = Command::new(gos_bin())
-        .arg("run")
         .arg(&source_path)
         .output()
         .expect("spawn gos run");

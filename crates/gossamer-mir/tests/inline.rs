@@ -127,6 +127,36 @@ fn callee_that_calls_another_fn_is_inlined() {
 }
 
 #[test]
+fn intcode_style_indexed_helpers_inline_into_the_hot_loop() {
+    let (mut bodies, tcx) = lower(
+        "struct Computer { memory: Vec<i64>, position: i64 }\n\
+         impl Computer {\n\
+           fn get_param(self, offset: i64, mode: i64) -> i64 {\n\
+             let value = self.memory[self.position + offset]\n\
+             if mode == 0 { self.memory[value] } else { value }\n\
+           }\n\
+           fn set_memory(&mut self, offset: i64, value: i64) {\n\
+             let pos = self.memory[self.position + offset]\n\
+             self.memory[pos] = value\n\
+           }\n\
+           fn run(&mut self) {\n\
+             let value = self.get_param(1, 0)\n\
+             self.set_memory(3, value)\n\
+           }\n\
+         }\n",
+    );
+    gossamer_mir::inline_general(&mut bodies);
+    for body in &mut bodies {
+        optimise(body, &tcx);
+    }
+    assert_eq!(
+        call_count(&bodies, "Computer::run"),
+        0,
+        "small indexed helpers should not remain calls in the hot interpreter loop"
+    );
+}
+
+#[test]
 fn aggregate_returning_callee_inlines_and_keeps_field_types() {
     let (mut bodies, tcx) = lower(
         "struct P { x: i64, y: i64 }\n\

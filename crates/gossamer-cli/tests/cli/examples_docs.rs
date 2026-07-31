@@ -7,7 +7,6 @@ fn run_executes_every_terminating_example() {
     for name in ["hello_world.gos", "line_count.gos"] {
         let path = examples_dir().join(name);
         let out = Command::new(gos_bin())
-            .arg("run")
             .arg(&path)
             .output()
             .expect("spawn run");
@@ -43,7 +42,6 @@ fn web_server_example_binds_and_serves_real_requests() {
     // connection failures below as "skip" rather than "fail".
 
     let mut child = match std::process::Command::new(gos_bin())
-        .arg("run")
         .arg(examples_dir().join("web_server.gos"))
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -714,7 +712,6 @@ fn panic_error_includes_call_stack() {
         "fn inner() { panic(\"boom\") }\nfn main() { inner() }\n",
     );
     let out = Command::new(gos_bin())
-        .arg("run")
         .arg(&fixture)
         .output()
         .expect("spawn run");
@@ -736,7 +733,6 @@ fn every_terminating_example_executes_cleanly() {
     for name in examples {
         let path = examples_dir().join(name);
         let out = Command::new(gos_bin())
-            .arg("run")
             .arg(&path)
             .output()
             .expect("spawn run");

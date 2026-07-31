@@ -244,7 +244,7 @@ cd hello
 
 # Type-check, run, build.
 gos check src/main.gos
-gos run src/main.gos
+gos src/main.gos
 gos build src/main.gos
 
 # Lint, format, test.
@@ -304,7 +304,7 @@ and wasm are not supported execution targets.
 ### Raspberry Pi
 
 Raspberry Pi OS 64-bit (and any `aarch64` Linux) is first-class. Install
-the `linux-aarch64` release, then `gos run` works out of the box (the VM
+the `linux-aarch64` release, then `gos` works out of the box (the VM
 and its in-process JIT are self-contained). To compile natively on the
 Pi, also install system LLVM and a C compiler:
 

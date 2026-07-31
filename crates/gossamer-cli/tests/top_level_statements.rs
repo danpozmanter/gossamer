@@ -24,7 +24,7 @@ fn write_file(dir: &Path, name: &str, body: &str) -> PathBuf {
 fn run_hello_without_main() {
     let dir = scratch("hello");
     let path = write_file(&dir, "hello.gos", "println!(\"Hello World\")\n");
-    let out = gos().arg("run").arg(&path).output().unwrap();
+    let out = gos().arg(&path).output().unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -38,7 +38,7 @@ fn run_question_propagation_without_main() {
     let dir = scratch("question");
     let src = "use std::strconv\nlet n = strconv::parse_i64(&\"41\")?\nprintln!(\"{}\", n + 1)\n";
     let path = write_file(&dir, "q.gos", src);
-    let out = gos().arg("run").arg(&path).output().unwrap();
+    let out = gos().arg(&path).output().unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -71,7 +71,7 @@ fn manifest_entry_selects_top_level_file() {
     );
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src").join("app.gos"), "println!(\"from app\")\n").unwrap();
-    let out = gos().arg("run").current_dir(&dir).output().unwrap();
+    let out = gos().arg(".").current_dir(&dir).output().unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",

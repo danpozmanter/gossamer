@@ -180,6 +180,7 @@ fn main() {
     let _ = folded
     let _ = borrowed_out
 }
+
 ";
     let (bodies, _) = build_with_edition(source, Edition::E2027);
     let main = bodies.iter().find(|body| body.name == "main").expect("main");
@@ -204,6 +205,37 @@ fn main() {
             "expected {expected} in MIR calls: {names:?}"
         );
     }
+}
+
+#[test]
+fn hashset_intersection_iter_snapshots_directly_to_a_vec() {
+    let source = r"use std::collections::HashSet
+
+fn main() {
+    let mut left: HashSet<i64> = HashSet::new()
+    let mut right: HashSet<i64> = HashSet::new()
+    left.insert(1)
+    right.insert(1)
+    let mut total = 0
+    for value in left.intersection(right).iter() { total += value }
+    let _ = total
+}
+";
+    let (bodies, _) = build(source);
+    let main = bodies.iter().find(|body| body.name == "main").expect("main");
+    let names = call_symbol_names(main);
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "gos_rt_set_intersection_to_vec_i64"),
+        "intersection iteration should avoid a temporary set: {names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|name| name == "gos_rt_set_intersection"),
+        "the eager intersection helper should not remain: {names:?}"
+    );
 }
 
 #[test]

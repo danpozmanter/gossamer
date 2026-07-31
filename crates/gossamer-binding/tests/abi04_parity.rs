@@ -60,7 +60,6 @@ fn gos_bin_or_skip() -> Option<PathBuf> {
 fn external_binding_runs_identically_via_gos_run() {
     let Some(gos) = gos_bin_or_skip() else { return };
     let out = Command::new(&gos)
-        .arg("run")
         .arg(example_dir().join("src").join("main.gos"))
         .current_dir(example_dir())
         .output()
@@ -98,7 +97,6 @@ fn external_binding_run_and_build_produce_identical_stdout() {
     let main_path = example_dir().join("src").join("main.gos");
 
     let run_out = Command::new(&gos)
-        .arg("run")
         .arg(&main_path)
         .current_dir(example_dir())
         .output()

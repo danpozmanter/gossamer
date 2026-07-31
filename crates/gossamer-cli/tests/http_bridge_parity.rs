@@ -55,11 +55,7 @@ fn write_source() -> PathBuf {
 #[test]
 fn http_bridge_interp_matches_compiled() {
     let src = write_source();
-    let interp = Command::new(gos_bin())
-        .arg("run")
-        .arg(&src)
-        .output()
-        .expect("gos run");
+    let interp = Command::new(gos_bin()).arg(&src).output().expect("gos run");
     assert!(
         interp.status.success(),
         "interp failed: {}",

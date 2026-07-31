@@ -56,7 +56,6 @@ fn drive(mut child: std::process::Child) -> (String, String, Option<i32>) {
 
 fn run_gos(src: &Path) -> (String, String, Option<i32>) {
     let child = Command::new(gos_bin())
-        .arg("run")
         .arg(src)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -1080,7 +1079,6 @@ fn main() {{
         .write_all(source.as_bytes())
         .unwrap();
     let output = Command::new(gos_bin())
-        .args(["run"])
         .arg(&path)
         .env("GOSSAMER_JIT_THRESHOLD", "1")
         .env("GOSSAMER_JIT_MIN_WORK", "1")

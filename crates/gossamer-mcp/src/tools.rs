@@ -256,9 +256,8 @@ pub(crate) fn call(
         },
         "run" => match field_str(args, "file") {
             Some(file) => {
-                let mut command = vec!["run".to_string(), file.to_string()];
+                let mut command = vec![file.to_string()];
                 if let Some(extra) = json::as_array(field(args, "args")) {
-                    command.push("--".to_string());
                     command.extend(extra.iter().filter_map(json::as_str).map(String::from));
                 }
                 exec_tool(config, command, args)

@@ -8872,6 +8872,20 @@ impl<'a> TypeChecker<'a> {
                     };
                     let init_ty = self.check_expr_expecting(init, init_expected);
                     self.unify(binding_ty, init_ty, init.span);
+                    if let PatternKind::Ref { mutability, .. } = &pattern.kind {
+                        let resolved = self.infer.resolve(self.tcx, init_ty);
+                        if !matches!(
+                            self.tcx.kind(resolved),
+                            Some(TyKind::Ref { .. } | TyKind::Var(_) | TyKind::Error)
+                        ) {
+                            self.emit(
+                                TypeError::ReferencePatternRequiresReference {
+                                    pattern: if mutability.is_mutable() { "&mut" } else { "&" },
+                                },
+                                pattern.span,
+                            );
+                        }
+                    }
                 }
                 if ty.is_none() && forced.is_none() {
                     self.infer.default_numeric_vars_in_ty(self.tcx, binding_ty);

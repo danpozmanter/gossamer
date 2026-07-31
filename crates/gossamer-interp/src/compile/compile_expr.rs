@@ -2996,13 +2996,22 @@ impl<'tcx> FnBuilder<'tcx> {
         if self.lookup_local(&seg.name).is_none() {
             return Ok(None);
         }
-        let Some(type_name) = self.adt_type_name(place.ty) else {
+        let qual = self
+            .adt_type_name(place.ty)
+            .map(|type_name| format!("{type_name}::{}", name.name))
+            .filter(|qual| self.method_muts.contains(qual))
+            .or_else(|| {
+                let suffix = format!("::{}", name.name);
+                let mut matches = self
+                    .method_muts
+                    .iter()
+                    .filter(|qual| qual.ends_with(&suffix));
+                let qual = matches.next()?.clone();
+                matches.next().is_none().then_some(qual)
+            });
+        let Some(qual) = qual else {
             return Ok(None);
         };
-        let qual = format!("{type_name}::{}", name.name);
-        if !self.method_muts.contains(&qual) {
-            return Ok(None);
-        }
         let total = args.len() + 1;
         let argc = u16::try_from(total).map_err(|_| RuntimeError::Arity {
             expected: u16::MAX as usize,

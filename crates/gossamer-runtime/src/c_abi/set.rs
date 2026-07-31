@@ -183,6 +183,53 @@ pub unsafe extern "C" fn gos_rt_set_to_vec_i64(s: *const GosSet) -> *mut crate::
     })
 }
 
+/// Snapshots the intersection of two string sets without first allocating a
+/// temporary `HashSet`. This is the native lowering for
+/// `left.intersection(right).iter()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_intersection_to_vec(
+    a: *const GosSet,
+    b: *const GosSet,
+) -> *mut crate::c_abi::vec::GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe {
+            crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::STRING)
+        };
+        let (a, b) = unsafe { set_pair(a, b) };
+        let mut keys: Vec<&str> = a.intersection(b).map(String::as_str).collect();
+        keys.sort_unstable();
+        for key in keys {
+            let cstr = crate::c_abi::string::alloc_cstring(key.as_bytes());
+            let slot = (cstr as usize as i64).to_ne_bytes();
+            unsafe { crate::c_abi::vec::gos_rt_vec_push(out, slot.as_ptr()) };
+        }
+        out
+    })
+}
+
+/// i64 counterpart of [`gos_rt_set_intersection_to_vec`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_intersection_to_vec_i64(
+    a: *const GosSet,
+    b: *const GosSet,
+) -> *mut crate::c_abi::vec::GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe {
+            crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::PRIMITIVE)
+        };
+        let (a, b) = unsafe { set_pair(a, b) };
+        let mut keys: Vec<i64> = a
+            .intersection(b)
+            .filter_map(|key| key.parse::<i64>().ok())
+            .collect();
+        keys.sort_unstable();
+        for key in keys {
+            unsafe { crate::c_abi::vec::gos_rt_vec_push_i64(out, key) };
+        }
+        out
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_clear(s: *mut GosSet) -> *mut GosSet {
     ffi_entry!(s, {
@@ -311,6 +358,43 @@ pub unsafe extern "C" fn gos_rt_set_to_vec_skey(
         }
         let s = unsafe { &*s };
         let mut entries: Vec<_> = s.struct_inner.iter().collect();
+        entries.sort_unstable_by_key(|(key, _)| *key);
+        for (_, slots) in entries {
+            unsafe { crate::c_abi::vec::gos_rt_vec_push(out, slots.as_ptr()) };
+        }
+        out
+    })
+}
+
+/// Aggregate-key counterpart of [`gos_rt_set_intersection_to_vec`]. It keeps
+/// the sorted deterministic iteration order while avoiding the cloned keys
+/// and slots of an intermediate intersection set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_intersection_to_vec_skey(
+    a: *const GosSet,
+    b: *const GosSet,
+    desc: *const c_char,
+) -> *mut crate::c_abi::vec::GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        if desc.is_null() {
+            return std::ptr::null_mut();
+        }
+        let width = unsafe { CStr::from_ptr(desc) }.to_bytes().len() * 8;
+        let out = unsafe {
+            crate::c_abi::vec::gos_rt_vec_new_typed(
+                width as u32,
+                crate::c_abi::vec::vec_elem_kind::PRIMITIVE,
+            )
+        };
+        if a.is_null() || b.is_null() {
+            return out;
+        }
+        let (a, b) = unsafe { (&*a, &*b) };
+        let mut entries: Vec<_> = a
+            .struct_inner
+            .iter()
+            .filter(|(key, _)| b.struct_inner.contains_key(key.as_ref()))
+            .collect();
         entries.sort_unstable_by_key(|(key, _)| *key);
         for (_, slots) in entries {
             unsafe { crate::c_abi::vec::gos_rt_vec_push(out, slots.as_ptr()) };

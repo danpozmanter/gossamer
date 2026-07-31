@@ -13,28 +13,13 @@ use gossamer_pkg::Edition;
 use crate::loaders::{load_and_check_with_edition, profile_rss_stage};
 use crate::paths::{read_entry_source, resolve_entry_arg};
 
-/// How `gos run` executes a program. Single-variant marker kept so
-/// the cli dispatcher's call sites do not need to be rewritten; the
-/// only legitimate mode is `Vm`.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RunMode {
-    /// Register-based bytecode VM.
-    Vm,
-}
-
-/// `gos run` dispatcher: walks the project root for a default entry
-/// point when no path is supplied.
-pub(crate) fn dispatch(
-    path: Option<PathBuf>,
-    mode: RunMode,
-    main_thread: bool,
-    args: &[String],
-) -> Result<()> {
+/// Runs a source file through the bytecode VM.
+pub(crate) fn dispatch(path: Option<PathBuf>, main_thread: bool, args: &[String]) -> Result<()> {
     let resolved = resolve_entry_arg(path)?;
-    run(&resolved, mode, main_thread, args)
+    run(&resolved, main_thread, args)
 }
 
-fn run(file: &Path, _mode: RunMode, main_thread: bool, forwarded: &[String]) -> Result<()> {
+fn run(file: &Path, main_thread: bool, forwarded: &[String]) -> Result<()> {
     let file = file.to_path_buf();
     let forwarded = forwarded.to_vec();
     if main_thread {
@@ -53,19 +38,35 @@ fn run(file: &Path, _mode: RunMode, main_thread: bool, forwarded: &[String]) -> 
 
 fn run_on_vm(file: &PathBuf, forwarded: &[String]) -> Result<()> {
     let edition = crate::paths::project_edition_for_entry(file);
-    let lazy_iterators = edition == Edition::E2027;
+    let file_label = file.to_string_lossy();
     let user_source = read_entry_source(file)?;
+    run_source_on_vm(&user_source, &file_label, forwarded, edition)
+}
+
+/// Executes inline source passed through `gos -c` / `gos --command`.
+pub(crate) fn command(source: String) -> Result<()> {
+    let edition = crate::paths::project_edition();
+    crate::cmd::with_vm_stack(move || run_source_on_vm(&source, "<command>", &[], edition))
+}
+
+fn run_source_on_vm(
+    user_source: &str,
+    file_label: &str,
+    forwarded: &[String],
+    edition: Edition,
+) -> Result<()> {
+    let lazy_iterators = edition == Edition::E2027;
     // Compile-time codegen pass: synthesize `from_json` / `to_json`
     // for every user struct so the resulting program has real
     // methods (no VM-only intercept).
-    let source = gossamer_parse::autoderive::augment_source(&user_source);
+    let source = gossamer_parse::autoderive::augment_source(user_source);
     // Comptime fold: evaluate `comptime { ... }` / `comptime fn` calls
     // now and splice their result literals in, so the VM compiles a
     // constant identical to what the compiled tiers see.
-    let source = crate::comptime_fold::fold_comptime(source, &file.to_string_lossy())?;
+    let source = crate::comptime_fold::fold_comptime(source, file_label)?;
     profile_rss_stage("source_prepared");
     let mut map = gossamer_lex::SourceMap::new();
-    let file_id = map.add_file(file.to_string_lossy().into_owned(), source);
+    let file_id = map.add_file(file_label, source);
     // Static checks always run first. A program with parse / resolve /
     // type errors has no business reaching the VM - execution would
     // either crash or produce unsound output.
@@ -78,7 +79,7 @@ fn run_on_vm(file: &PathBuf, forwarded: &[String]) -> Result<()> {
     // not this compile-time map.
     drop(map);
     profile_rss_stage("frontend_released");
-    gossamer_interp::set_program_name(&file.to_string_lossy());
+    gossamer_interp::set_program_name(file_label);
     gossamer_interp::set_program_args(forwarded);
     gossamer_interp::set_lazy_iterators_enabled(lazy_iterators);
     let mut vm = gossamer_interp::Vm::new();

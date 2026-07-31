@@ -44,7 +44,6 @@ struct Run {
 
 fn run_interpreter(source: &Path) -> Run {
     let out = Command::new(gos_bin())
-        .arg("run")
         .arg(source)
         .output()
         .expect("spawn gos run");

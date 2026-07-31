@@ -540,6 +540,10 @@ pub(super) fn lower_generic_rt_call(
         }
         "gos_rt_set_to_vec_skey" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_set_intersection_skey" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_set_intersection_to_vec" | "gos_rt_set_intersection_to_vec_i64" => {
+            (&[ptr_ty, ptr_ty], Some(ptr_ty))
+        }
+        "gos_rt_set_intersection_to_vec_skey" => (&[ptr_ty, ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_url_query_escape" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_url_path_escape" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_url_query_unescape" => (&[ptr_ty], Some(ptr_ty)),

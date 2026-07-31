@@ -84,7 +84,6 @@ struct TierOutcome {
 
 fn run_interp(src: &Path) -> TierOutcome {
     let out = Command::new(gos_binary())
-        .args(["run"])
         .arg(src)
         .output()
         .expect("spawn gos run");

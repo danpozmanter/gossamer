@@ -28,7 +28,6 @@ pub(crate) mod test;
 pub(crate) mod traceback;
 pub(crate) mod watch;
 
-pub(crate) use run::RunMode;
 pub(crate) use test::TestOpts;
 
 /// Native stack reserved for the main thread that runs the bytecode VM.

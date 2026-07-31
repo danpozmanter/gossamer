@@ -3705,6 +3705,18 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_set_intersection_skey as *const u8,
         ),
         (
+            "gos_rt_set_intersection_to_vec",
+            crate::c_abi::gos_rt_set_intersection_to_vec as *const u8,
+        ),
+        (
+            "gos_rt_set_intersection_to_vec_i64",
+            crate::c_abi::gos_rt_set_intersection_to_vec_i64 as *const u8,
+        ),
+        (
+            "gos_rt_set_intersection_to_vec_skey",
+            crate::c_abi::gos_rt_set_intersection_to_vec_skey as *const u8,
+        ),
+        (
             "gos_rt_set_difference",
             crate::c_abi::gos_rt_set_difference as *const u8,
         ),

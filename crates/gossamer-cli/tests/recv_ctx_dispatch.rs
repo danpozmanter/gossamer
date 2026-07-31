@@ -89,7 +89,7 @@ fn recv_ctx_typechecks_runs_and_compiles_across_every_tier() {
     assert_eq!(check_code, Some(0), "check must succeed");
 
     let mut vm_cmd = Command::new(gos_bin());
-    vm_cmd.arg("run").arg(&src);
+    vm_cmd.arg(&src);
     let (vm_out, vm_code) = run_with_timeout(vm_cmd, "vm");
     assert_eq!(vm_code, Some(0), "vm run must succeed (stdout={vm_out:?})");
 

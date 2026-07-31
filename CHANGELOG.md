@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.39.0 - Direct scripts, REPL discovery, optimizations
+
+- Run `gos FILE [ARGS...]` directly, including executable `#!` scripts; the
+  legacy `gos run` command is removed. Add `-c`/`--command` for inline code.
+- Make `%i` and `%e` list callable signatures by default; `-d` adds descriptions.
+- Restore `%i` module-member listings and 20-entry pagination, without a
+  redundant next-page prompt on the final page.
+- Reject `let &mut name = value` when `value` is not already a mutable reference,
+  with guidance for borrowing or creating a mutable binding.
+- Preserve `&mut self` writes through indexed `Vec` fields when the receiver's
+  type is inferred at the call site.
+- Avoid temporary HashSet intersection allocations during immediate iteration,
+  and inline word-sized Vec field indexing in native hot helpers.
+
 ## 0.38.8 - REPL inspection, native builds, error messages, optimizations/fixes
 
 - Fix `usize` indexing through struct fields and computed expressions.

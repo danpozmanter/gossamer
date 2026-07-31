@@ -700,7 +700,6 @@ fn aggregate_alloc_loop_reclaims_deterministically() {
     // VM tier
     let run = {
         let child = Command::new(gos_bin())
-            .arg("run")
             .arg(&path)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -834,7 +833,6 @@ fn aggregate_return_chain_outlives_callee_frame() {
 
     let run = {
         let child = Command::new(gos_bin())
-            .arg("run")
             .arg(&path)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

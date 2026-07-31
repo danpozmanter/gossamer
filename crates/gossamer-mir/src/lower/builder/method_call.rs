@@ -113,6 +113,54 @@ impl<'a> Builder<'a> {
             return Some(dest);
         }
 
+        // `HashSet::intersection` is eager in Gossamer so its ordinary
+        // `.iter()` path used to allocate a whole temporary set and clone
+        // every matching aggregate. Recognise the immediate snapshot and
+        // emit one runtime call that writes the sorted Vec directly.
+        if method.name == "iter"
+            && args.is_empty()
+            && let HirExprKind::MethodCall {
+                receiver: left,
+                name: intersection,
+                args: intersection_args,
+            } = &receiver.kind
+            && intersection.name == "intersection"
+            && intersection_args.len() == 1
+            && self.runtime_kind_from_ty(left.ty) == Some("collections::HashSet")
+        {
+            let right = &intersection_args[0];
+            let left_local = self.lower_expr(left)?;
+            let right_local = self.lower_expr(right)?;
+            let aggregate_desc = self
+                .first_generic_of(left.ty)
+                .filter(|elem| self.is_aggregate_key(*elem))
+                .and_then(|elem| self.key_descriptor(elem));
+            let symbol = if aggregate_desc.is_some() {
+                "gos_rt_set_intersection_to_vec_skey"
+            } else if matches!(self.set_elem_kind_of(left), MapKeyKind::I64) {
+                "gos_rt_set_intersection_to_vec_i64"
+            } else {
+                "gos_rt_set_intersection_to_vec"
+            };
+            let mut call_args = vec![
+                Operand::Copy(Place::local(left_local)),
+                Operand::Copy(Place::local(right_local)),
+            ];
+            if let Some(desc) = aggregate_desc {
+                call_args.push(Operand::Const(ConstValue::Str(desc)));
+            }
+            let dest = self.fresh(ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(symbol.to_string())),
+                args: call_args,
+                destination: Place::local(dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+            return Some(dest);
+        }
+
         // `x.into()` converts to the inferred target type `B` via its `B::from`
         // impl; the call's result type is `B`, so route to `B::from(x)` (the
         // tiers resolve free functions by mangled name). `x.try_into()` is the

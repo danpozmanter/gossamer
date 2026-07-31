@@ -173,6 +173,30 @@ fn line_comment_stops_at_newline() {
     );
 }
 
+/// A leading hashbang is a source-file comment without swallowing attributes.
+#[test]
+fn leading_hashbang_is_a_line_comment() {
+    let kinds = kinds_of("#!/usr/bin/env gos\nfn main() {}");
+    assert_eq!(
+        kinds,
+        vec![
+            TokenKind::LineComment,
+            TokenKind::Keyword(Keyword::Fn),
+            TokenKind::Ident,
+            TokenKind::Punct(Punct::LParen),
+            TokenKind::Punct(Punct::RParen),
+            TokenKind::Punct(Punct::LBrace),
+            TokenKind::Punct(Punct::RBrace),
+        ],
+    );
+}
+
+#[test]
+fn leading_attribute_is_not_a_hashbang() {
+    let kinds = kinds_of("#[derive(Debug)] struct Point {}");
+    assert_eq!(kinds[0], TokenKind::Punct(Punct::Hash));
+}
+
 /// Block comments require a closing `*/`; the unterminated case is
 /// reported but the lexer still makes progress.
 #[test]

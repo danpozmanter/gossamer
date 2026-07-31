@@ -69,6 +69,13 @@ impl<'src> Lexer<'src> {
             self.cursor.bump_while(is_whitespace);
             return TokenKind::Whitespace;
         }
+        // Permit a Unix hashbang at the beginning of a source file. Treat it
+        // exactly like a line comment so its newline stays in the source and
+        // all following spans retain their on-disk line numbers.
+        if start == 0 && first == '#' && self.cursor.peek_nth(1) == '!' {
+            self.cursor.bump_while(|character| character != '\n');
+            return TokenKind::LineComment;
+        }
         if first == '/'
             && let Some(kind) = self.try_comment(start)
         {

@@ -141,6 +141,31 @@ fn main() {
 }
 
 #[test]
+fn mut_self_writes_through_a_vec_field_indexed_by_usize() {
+    // Regression for #110: the method receiver was written back, but a
+    // Vec field mutation performed through that receiver was lost.
+    let src = r#"
+struct Mem { mem: Vec<i64>, pos: usize }
+impl Mem {
+    fn new(arr: Vec<i64>) -> Self {
+        Mem { mem: arr.clone(), pos: 0 }
+    }
+    fn set_memory(&mut self, offset: usize, value: i64) {
+        let pos = self.mem[self.pos + offset] as usize
+        self.mem[pos] = value
+    }
+    fn get_memory(self, index: usize) -> i64 { self.mem[index] }
+}
+fn main() {
+    let mut mem = Mem::new(Vec::from([1, 2, 3, 4]))
+    mem.set_memory(1, 9)
+    println!("{} {}", mem.get_memory(1), mem.get_memory(2))
+}
+"#;
+    assert_eq!(run_main(src), "2 9\n");
+}
+
+#[test]
 fn mut_self_on_enum_receiver_persists() {
     let src = r#"
 enum State { Idle, Running(i64) }

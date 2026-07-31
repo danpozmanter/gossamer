@@ -101,6 +101,14 @@ pub enum TypeError {
     /// A plain `let` used a pattern that might not match its value.
     #[error("this `let` pattern might not match its value")]
     LetPatternMayNotMatch,
+    /// A `let &...` pattern tried to destructure a non-reference value.
+    #[error(
+        "`let {pattern} name = value` requires an `{pattern}` initializer; write `let name = {pattern} value` to borrow, or remove `{pattern}` to bind the value directly"
+    )]
+    ReferencePatternRequiresReference {
+        /// Source spelling of the reference pattern.
+        pattern: &'static str,
+    },
     /// A nominal struct or enum was destructured with an anonymous tuple
     /// pattern, which would bypass its declared name and field labels.
     #[error("destructuring `{ty}` requires its struct or variant name")]
@@ -505,6 +513,9 @@ impl TypeError {
             Self::NonExhaustiveMatch { .. } => "non-exhaustive-match",
             Self::CannotAssignToLiteral => "cannot-assign-to-literal",
             Self::LetPatternMayNotMatch => "let-pattern-may-not-match",
+            Self::ReferencePatternRequiresReference { .. } => {
+                "reference-pattern-requires-reference"
+            }
             Self::StructPatternNameRequired { .. } => "struct-pattern-name-required",
             Self::StructConstructorBracesRequired { .. } => "struct-constructor-braces-required",
             Self::TupleStructConstructorParenthesesRequired { .. } => {
@@ -560,6 +571,7 @@ impl TypeError {
             Self::UnresolvedOp { .. } | Self::UnresolvedOpImpl { .. } => "GT0003",
             Self::NonExhaustiveMatch { .. } => "GT0004",
             Self::CannotAssignToLiteral | Self::LetPatternMayNotMatch => "GT0047",
+            Self::ReferencePatternRequiresReference { .. } => "GT0048",
             Self::StructPatternNameRequired { .. } => "GT0033",
             Self::StructConstructorBracesRequired { .. }
             | Self::TupleStructConstructorParenthesesRequired { .. }
@@ -778,6 +790,15 @@ impl TypeDiagnostic {
                         "use a name or `_` to bind every value, or use `if let`, `match`, or `let ... else` to test the pattern",
                     )
                     .with_note("a plain `let` must accept every possible initializer value");
+            }
+            TypeError::ReferencePatternRequiresReference { pattern } => {
+                out = out
+                    .with_help(format!(
+                        "write `let name = {pattern} value` to borrow the value, or remove `{pattern}` to bind it directly"
+                    ))
+                    .with_note(format!(
+                        "`let {pattern} name = value` can only destructure an existing {pattern} reference"
+                    ));
             }
             TypeError::StructPatternNameRequired { ty } => {
                 out = out

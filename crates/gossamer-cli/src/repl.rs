@@ -18,11 +18,13 @@ REPL commands
 
   %help
     Show this list of REPL commands.
-  %info (%i) [pattern] [-a] [--page N]
-    Inspect an exact binding name, or search language and standard-library docs.
-  %bindings (%b) [regex] [-a] [--page N]
+  %info (%i) [pattern] [-d|--details] [-a|--all] [-p N|--page N]
+    List language and standard-library matches; use -d for documentation.
+  %explain (%e) NAME [-d|--details]
+    Inspect a persistent `let` binding; use -d for methods and capability.
+  %bindings (%b) [regex] [-a|--all] [-p N|--page N]
     Show persistent `let` bindings.
-  %declarations (%d) [regex] [-a] [--page N]
+  %declarations (%d) [regex] [-a|--all] [-p N|--page N]
     Show persistent declarations.
   %history (%h) [regex]
     Search inputs from this and previous sessions.
@@ -1406,13 +1408,42 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                             continue;
                         }
                     };
-                    let result =
-                        repl_binding_info(&declarations, &lets, &bindings, &options.pattern)
-                            .unwrap_or_else(|| repl_info(&options.pattern))
-                            .map(|text| paginate_info(&text, &options));
+                    let result = if options.details {
+                        repl_info(&options.pattern)
+                    } else {
+                        repl_info_listing(&options.pattern)
+                    }
+                    .map(|text| paginate_info(&text, &options));
                     match result {
                         Ok(text) => print_repl_output(&text),
                         Err(msg) => print_repl_error(&msg),
+                    }
+                    continue;
+                }
+                "explain" | "e" => {
+                    let options = match parse_listing_options("explain", arg) {
+                        Ok(options) => options,
+                        Err(message) => {
+                            print_repl_error(&message);
+                            continue;
+                        }
+                    };
+                    if options.pattern.is_empty() {
+                        print_repl_error("usage: %explain NAME [-d|--details]");
+                        continue;
+                    }
+                    let result = if options.details {
+                        repl_binding_info(&declarations, &lets, &bindings, &options.pattern)
+                    } else {
+                        repl_binding_listing(&declarations, &lets, &bindings, &options.pattern)
+                    };
+                    match result {
+                        Some(Ok(text)) => print_repl_output(&text),
+                        Some(Err(msg)) => print_repl_error(&msg),
+                        None => print_repl_error(&format!(
+                            "no persistent binding named `{}`",
+                            options.pattern
+                        )),
                     }
                     continue;
                 }
@@ -1683,13 +1714,7 @@ fn repl_binding_info(
         .flat_map(|binding| &binding.vars)
         .find(|var| var.name == name)?;
     Some(resolve_repl_binding(declarations, lets, name).map(|(_, ty)| {
-        let can_mutate = if ty.references.is_empty() {
-            var.mutable
-        } else {
-            ty.references
-                .iter()
-                .all(|mutability| *mutability == gossamer_types::Mutbl::Mut)
-        };
+        let can_mutate = binding_can_mutate(var, &ty);
         let capability = match (var.mutable, ty.references.as_slice(), can_mutate) {
             (_, [], true) => "mutable binding",
             (_, [], false) => "immutable binding",
@@ -1697,7 +1722,7 @@ fn repl_binding_info(
             (_, _, false) => "shared referent",
         };
         let mut out = format!("{} [binding]\n  type: {}\n  capability: {capability}\n", var.name, ty.rendered);
-        let Some(owner) = ty.method_owner else {
+        let Some(ref owner) = ty.method_owner else {
             out.push_str("\nNo cataloged methods for this binding's type.");
             return out;
         };
@@ -1706,26 +1731,76 @@ fn repl_binding_info(
                 "  method surface: fixed array (non-resizing Vec methods; mutable methods require writable access)\n",
             );
         }
-        let methods = core_method_entries().into_iter().filter(|method| {
-            method.kind == "method"
-                && method.owner == owner
-                && (!ty.fixed_array
-                    || !gossamer_types::is_fixed_array_incompatible_vec_method(&method.name))
-                && (can_mutate || !gossamer_types::is_mutating_method_name(&method.name))
-        });
+        let methods = available_repl_binding_methods(&ty, owner, can_mutate);
         let mut found = false;
         for method in methods {
             found = true;
+            let signature = signature_suffix(&method.signature, &method.name);
             out.push('\n');
-            out.push_str(&format!("{}.{} [method]\n", var.name, method.name));
-            out.push_str(&format!("  {}\n", method.signature));
-            out.push_str(&format!("  {}\n", method.doc));
+            out.push_str(&format!(
+                "{}.{}{signature} [method]\n    {}\n",
+                var.name, method.name, method.doc
+            ));
         }
         if !found {
             out.push_str("\nNo methods are available with this binding's capability.");
         }
         out.trim_end().to_string()
     }))
+}
+
+fn repl_binding_listing(
+    declarations: &[String],
+    lets: &[String],
+    bindings: &[ReplBinding],
+    name: &str,
+) -> Option<std::result::Result<String, String>> {
+    let var = bindings
+        .iter()
+        .flat_map(|binding| &binding.vars)
+        .find(|var| var.name == name)?;
+    Some(
+        resolve_repl_binding(declarations, lets, name).map(|(_value, ty)| {
+            let prefix = if var.mutable { "mut " } else { "" };
+            let mut out = format!("{prefix}{name}: {} [binding]\n", ty.rendered);
+            let Some(ref owner) = ty.method_owner else {
+                return out.trim_end().to_string();
+            };
+            let can_mutate = binding_can_mutate(var, &ty);
+            for method in available_repl_binding_methods(&ty, owner, can_mutate) {
+                let signature = signature_suffix(&method.signature, &method.name);
+                out.push_str(&format!("{name}.{}{signature} [method]\n", method.name));
+            }
+            out.trim_end().to_string()
+        }),
+    )
+}
+
+fn binding_can_mutate(var: &ReplBindingVar, ty: &ReplValueType) -> bool {
+    if ty.references.is_empty() {
+        var.mutable
+    } else {
+        ty.references
+            .iter()
+            .all(|mutability| *mutability == gossamer_types::Mutbl::Mut)
+    }
+}
+
+fn available_repl_binding_methods(
+    ty: &ReplValueType,
+    owner: &str,
+    can_mutate: bool,
+) -> Vec<CoreMethodEntry> {
+    core_method_entries()
+        .into_iter()
+        .filter(|method| {
+            method.kind == "method"
+                && method.owner == owner
+                && (!ty.fixed_array
+                    || !gossamer_types::is_fixed_array_incompatible_vec_method(&method.name))
+                && (can_mutate || !gossamer_types::is_mutating_method_name(&method.name))
+        })
+        .collect()
 }
 
 fn resolve_repl_binding(
@@ -1938,46 +2013,6 @@ fn strip_leading_outer_attributes(mut input: &str) -> &str {
     }
 }
 
-fn repl_help_with_modules(arg: &str, include_modules: bool) -> std::result::Result<String, String> {
-    if arg.is_empty() {
-        return Ok(REPL_HELP_TEXT.to_string());
-    }
-    if let Some(pattern) = regex_argument(arg)? {
-        return Ok(render_help_matches(&pattern));
-    }
-
-    let query = info_search_query(arg);
-    let mut out = String::new();
-    for builtin in matching_builtin_macros(&query) {
-        push_builtin_macro_help(&mut out, builtin);
-    }
-    for builtin in matching_prelude_builtins(&query) {
-        push_prelude_builtin_help(&mut out, builtin);
-    }
-    for method in matching_core_methods(&query) {
-        push_core_method_help(&mut out, &method);
-    }
-    if include_modules {
-        for module in matching_modules(&query) {
-            push_module_help(&mut out, &module);
-        }
-    }
-    for (module, item) in matching_items(&query) {
-        // A matching module is rendered by the catalog listing, which also
-        // includes its items. Avoid rendering those items a second time as
-        // individual help entries.
-        if !include_modules && module_query_matches(&module, &query) {
-            continue;
-        }
-        push_item_help(&mut out, &module, &item);
-    }
-    if out.is_empty() {
-        Ok(format!("no help found for `{arg}`"))
-    } else {
-        Ok(out.trim_end().to_string())
-    }
-}
-
 fn repl_info(arg: &str) -> std::result::Result<String, String> {
     let normalized = normalize_query(arg);
     if matches!(normalized, "std" | "std::") {
@@ -1996,57 +2031,36 @@ fn repl_info(arg: &str) -> std::result::Result<String, String> {
     // The catalog listing is the canonical module rendering. Omitting module
     // help here prevents `%i gzip` from printing the same module twice while
     // retaining matching items, methods, and types from the search.
-    let help = repl_help_with_modules(arg, false)?;
-    let listing = repl_info_listing(arg)?;
-    let mut sections = Vec::new();
-    if !matches!(help.as_str(), "no help matches") && !help.starts_with("no help found") {
-        sections.push(help);
-    }
-    if !matches!(listing.as_str(), "no stdlib modules match")
-        && !listing.starts_with("no catalog listing")
-    {
-        sections.push(listing);
-    }
-    if sections.is_empty() {
-        Ok(format!("nothing found for `{arg}`"))
-    } else {
-        Ok(sections.join("\n\n"))
-    }
+    repl_info_matches(arg, true)
 }
 
 fn repl_info_listing(arg: &str) -> std::result::Result<String, String> {
+    repl_info_matches(arg, false)
+}
+
+fn repl_info_matches(arg: &str, details: bool) -> std::result::Result<String, String> {
     if arg.is_empty() {
-        return Ok(render_module_dir(gossamer_std::registry::modules()));
+        return Ok(render_module_matches(
+            gossamer_std::registry::modules(),
+            details,
+        ));
     }
     if let Some(pattern) = regex_argument(arg)? {
-        return Ok(render_dir_matches(&pattern));
+        let matches = render_catalog_matches(&pattern, details);
+        return Ok(if matches == "no catalog matches" {
+            format!("nothing found for `{arg}`")
+        } else {
+            matches
+        });
     }
 
     let query = info_search_query(arg);
-    let core_namespaces = matching_core_namespaces(&query);
-    if !core_namespaces.is_empty() {
-        return Ok(render_core_method_dir(&core_namespaces));
+    let matches = render_catalog_query_matches(&query, details);
+    if matches.is_empty() {
+        Ok(format!("nothing found for `{arg}`"))
+    } else {
+        Ok(matches)
     }
-
-    let modules = matching_modules(&query);
-    if !modules.is_empty() {
-        return Ok(render_module_dir(&modules));
-    }
-
-    if !matching_core_methods(&query).is_empty() {
-        // A method name can match several receiver types. `repl_help` has
-        // already rendered every match, so choosing the first owner here
-        // would append an arbitrary and unrelated type listing.
-        return Ok(format!("no catalog listing found for `{arg}`"));
-    }
-
-    if !matching_items(&query).is_empty() {
-        // `%info` for a specific stdlib item should stay focused on that
-        // item's documentation. Module listings are useful when the query
-        // names a module, but turn an item lookup into a noisy full dump.
-        return Ok(format!("no catalog listing found for `{arg}`"));
-    }
-    Ok(format!("no catalog listing found for `{arg}`"))
 }
 
 fn stdlib_namespace_children(namespace: &str) -> Vec<StdModule> {
@@ -2098,16 +2112,19 @@ struct ListingOptions {
     pattern: String,
     all: bool,
     page: usize,
+    details: bool,
 }
 
 fn parse_listing_options(command: &str, arg: &str) -> std::result::Result<ListingOptions, String> {
     let mut all = false;
     let mut page = 1usize;
+    let mut details = false;
     let mut pattern = Vec::new();
     let mut words = arg.split_whitespace();
     while let Some(word) = words.next() {
         match word {
             "-a" | "--all" => all = true,
+            "-d" | "--details" => details = true,
             "--page" | "-p" => {
                 let Some(value) = words.next() else {
                     return Err(format!("usage: %{command} [pattern] [-a|--all] [--page N]"));
@@ -2128,6 +2145,7 @@ fn parse_listing_options(command: &str, arg: &str) -> std::result::Result<Listin
         pattern: pattern.join(" "),
         all,
         page,
+        details,
     })
 }
 
@@ -2157,13 +2175,15 @@ fn paginate_listing<T: std::fmt::Display + ?Sized>(
     } else {
         format!(" {}", options.pattern)
     };
-    page.push(format!(
-        "({}-{} of {}) Use `{command}{pattern} --page {}` or `{command}{pattern} -a`.",
-        start + 1,
-        end,
-        total,
-        options.page + 1,
-    ));
+    if end < total {
+        page.push(format!(
+            "({}-{} of {}) Use `{command}{pattern} -p {}` or `{command}{pattern} -a`.",
+            start + 1,
+            end,
+            total,
+            options.page + 1,
+        ));
+    }
     page
 }
 
@@ -2184,14 +2204,23 @@ fn regex_argument(arg: &str) -> std::result::Result<Option<Regex>, String> {
         .map_err(|e| format!("invalid regex `{arg}`: {e}"))
 }
 
-fn render_help_matches(pattern: &Regex) -> String {
-    let mut out = String::new();
+fn render_catalog_matches(pattern: &Regex, details: bool) -> String {
+    let mut entries = Vec::new();
     for builtin in BUILTIN_MACROS {
         if pattern.is_match(builtin.name)
             || pattern.is_match(builtin.signature)
             || pattern.is_match(builtin.doc)
         {
-            push_builtin_macro_help(&mut out, builtin);
+            let mut entry = String::new();
+            push_catalog_match(
+                &mut entry,
+                builtin.name,
+                "macro",
+                builtin.signature,
+                builtin.doc,
+                details,
+            );
+            entries.push(entry);
         }
     }
     for builtin in PRELUDE_BUILTINS {
@@ -2199,107 +2228,209 @@ fn render_help_matches(pattern: &Regex) -> String {
             || pattern.is_match(builtin.signature)
             || pattern.is_match(builtin.doc)
         {
-            push_prelude_builtin_help(&mut out, builtin);
+            let mut entry = String::new();
+            push_catalog_match(
+                &mut entry,
+                builtin.name,
+                "builtin",
+                builtin.signature,
+                builtin.doc,
+                details,
+            );
+            entries.push(entry);
+        }
+    }
+    for owner in all_core_namespaces() {
+        if pattern.is_match(&owner) {
+            let mut entry = String::new();
+            push_catalog_match(
+                &mut entry,
+                &owner,
+                "type",
+                "",
+                "Built-in receiver and associated methods.",
+                details,
+            );
+            entries.push(entry);
         }
     }
     for method in core_method_entries() {
         let path = format!("{}::{}", method.owner, method.name);
         if pattern.is_match(&path)
-            || pattern.is_match(&core_lower_path(&method))
-            || pattern.is_match(&method.name)
             || pattern.is_match(&method.signature)
             || pattern.is_match(&method.doc)
         {
-            push_core_method_help(&mut out, &method);
-        }
-    }
-    for module in gossamer_std::registry::modules() {
-        if module_matches_regex(pattern, module) {
-            push_module_help(&mut out, module);
-        }
-        for item in module.items {
-            if item_matches_regex(pattern, module, item) {
-                push_item_help(&mut out, module, item);
-            }
-        }
-    }
-    if out.is_empty() {
-        "no help matches".to_string()
-    } else {
-        out.trim_end().to_string()
-    }
-}
-
-fn render_dir_matches(pattern: &Regex) -> String {
-    let mut lines = Vec::new();
-    for owner in all_core_namespaces() {
-        if pattern.is_match(&owner) || pattern.is_match(&owner.to_ascii_lowercase()) {
-            let mut line = String::new();
-            push_core_namespace_dir_line(&mut line, &owner);
-            lines.push(line);
-        }
-    }
-    for module in gossamer_std::registry::modules() {
-        if module_matches_regex(pattern, module) {
-            let mut line = String::new();
-            push_module_dir_line(&mut line, module);
-            lines.push(line);
-        }
-    }
-    if lines.is_empty() {
-        "no stdlib modules match".to_string()
-    } else {
-        lines.sort_unstable();
-        lines.concat().trim_end().to_string()
-    }
-}
-
-fn render_core_method_dir(owners: &[String]) -> String {
-    let mut entries = Vec::new();
-    for owner in owners {
-        let mut entry = String::new();
-        push_core_namespace_dir_line(&mut entry, owner);
-        entries.push(entry);
-        for method in core_method_entries()
-            .into_iter()
-            .filter(|method| method.owner == **owner)
-        {
             let mut entry = String::new();
-            push_core_method_dir(&mut entry, &method);
+            push_core_method_match(&mut entry, &method, details);
             entries.push(entry);
         }
     }
-    entries.sort_unstable();
-    entries.concat().trim_end().to_string()
-}
-
-fn render_module_dir(modules: &[StdModule]) -> String {
-    let mut entries = Vec::new();
-    for module in modules {
-        let mut entry = String::new();
-        push_module_dir_line(&mut entry, module);
-        entries.push(entry);
-        if modules.len() == 1 {
-            // A directory command names a module, so render its complete
-            // namespace tree: the module's own members plus every registered
-            // descendant module and its members. A plain `%info` deliberately
-            // stays shallow; recursively expanding the entire standard
-            // library there would make the useful module overview unusable.
-            push_module_items(&mut entries, module);
-            let prefix = format!("{}::", module.path);
-            for child in gossamer_std::registry::modules()
-                .iter()
-                .filter(|child| child.path.starts_with(&prefix))
-            {
+    for module in gossamer_std::registry::modules() {
+        if module_matches_regex(pattern, module) {
+            let mut entry = String::new();
+            push_module_match(&mut entry, module, details);
+            entries.push(entry);
+        }
+        for item in module.items {
+            if item_matches_regex(pattern, module, item) {
                 let mut entry = String::new();
-                push_module_dir_line(&mut entry, child);
+                push_item_match(&mut entry, module, item, details);
                 entries.push(entry);
-                push_module_items(&mut entries, child);
             }
         }
     }
+    render_catalog_entries(entries, "no catalog matches")
+}
+
+fn render_catalog_query_matches(query: &str, details: bool) -> String {
+    let mut entries = Vec::new();
+    for builtin in matching_builtin_macros(query) {
+        let mut entry = String::new();
+        push_catalog_match(
+            &mut entry,
+            builtin.name,
+            "macro",
+            builtin.signature,
+            builtin.doc,
+            details,
+        );
+        entries.push(entry);
+    }
+    for builtin in matching_prelude_builtins(query) {
+        let mut entry = String::new();
+        push_catalog_match(
+            &mut entry,
+            builtin.name,
+            "builtin",
+            builtin.signature,
+            builtin.doc,
+            details,
+        );
+        entries.push(entry);
+    }
+    for owner in matching_core_namespaces(query) {
+        let mut entry = String::new();
+        push_catalog_match(
+            &mut entry,
+            &owner,
+            "type",
+            "",
+            "Built-in receiver and associated methods.",
+            details,
+        );
+        entries.push(entry);
+        for method in core_method_entries()
+            .into_iter()
+            .filter(|method| method.owner == owner)
+        {
+            let mut entry = String::new();
+            push_core_method_match(&mut entry, &method, details);
+            entries.push(entry);
+        }
+    }
+    for method in matching_core_methods(query) {
+        let mut entry = String::new();
+        push_core_method_match(&mut entry, &method, details);
+        entries.push(entry);
+    }
+    for module in matching_modules(query) {
+        let mut entry = String::new();
+        push_module_match(&mut entry, &module, details);
+        entries.push(entry);
+        // A matching module name is a namespace query, so include its public
+        // contents. A qualified item query does not enter this branch and
+        // remains focused on the requested symbol.
+        for item in module.items {
+            let mut entry = String::new();
+            push_item_match(&mut entry, &module, item, details);
+            entries.push(entry);
+        }
+    }
+    for (module, item) in matching_items(query) {
+        let mut entry = String::new();
+        push_item_match(&mut entry, &module, &item, details);
+        entries.push(entry);
+    }
+    render_catalog_entries(entries, "")
+}
+
+fn render_module_matches(modules: &[StdModule], details: bool) -> String {
+    let mut entries = Vec::new();
+    for module in modules {
+        let mut entry = String::new();
+        push_module_match(&mut entry, module, details);
+        entries.push(entry);
+    }
+    render_catalog_entries(entries, "")
+}
+
+fn push_catalog_match(
+    out: &mut String,
+    path: &str,
+    kind: &str,
+    signature: &str,
+    description: &str,
+    details: bool,
+) {
+    out.push_str(path);
+    if !signature.is_empty() {
+        if let Some(suffix) = signature.strip_prefix(path) {
+            out.push_str(suffix.trim_start());
+        } else {
+            out.push_str(signature);
+        }
+    }
+    out.push_str(&format!(" [{kind}]\n"));
+    if details {
+        out.push_str(&format!("    {description}\n"));
+    }
+}
+
+fn signature_suffix<'a>(signature: &'a str, name: &str) -> &'a str {
+    signature
+        .strip_prefix(&format!("fn {name}"))
+        .or_else(|| signature.strip_prefix(name))
+        .unwrap_or(signature)
+        .trim_start()
+}
+
+fn push_module_match(out: &mut String, module: &StdModule, details: bool) {
+    push_catalog_match(out, module.path, "module", "", module.summary, details);
+}
+
+fn push_item_match(out: &mut String, module: &StdModule, item: &StdItem, details: bool) {
+    let signature = gossamer_types::stdlib_function_signature(module.path, item.name)
+        .map(|signature| signature_suffix(signature, item.name).to_string())
+        .unwrap_or_default();
+    push_catalog_match(
+        out,
+        &format!("{}::{}", module.path, item.name),
+        item_kind_label(item.kind),
+        &signature,
+        item.doc,
+        details,
+    );
+}
+
+fn push_core_method_match(out: &mut String, method: &CoreMethodEntry, details: bool) {
+    let signature = signature_suffix(&method.signature, &method.name);
+    push_catalog_match(
+        out,
+        &format!("{}::{}", method.owner, method.name),
+        method.kind,
+        signature,
+        &method.doc,
+        details,
+    );
+}
+
+fn render_catalog_entries(mut entries: Vec<String>, empty: &str) -> String {
+    if entries.is_empty() {
+        return empty.to_string();
+    }
     entries.sort_unstable();
-    entries.concat().trim_end().to_string()
+    entries.dedup();
+    entries.join("\n").trim_end().to_string()
 }
 
 fn render_stdlib_dir() -> String {
@@ -2316,7 +2447,7 @@ fn render_stdlib_dir() -> String {
     }
     for module in gossamer_std::registry::modules() {
         let mut entry = String::new();
-        push_module_dir_line(&mut entry, module);
+        push_catalog_entry(&mut entry, module.path, "module", module.summary);
         entries.push(entry);
     }
     entries.sort_unstable();
@@ -2349,90 +2480,11 @@ fn render_stdlib_namespace_dir(namespace: &str, modules: &[StdModule]) -> String
     entries.push(namespace_entry);
     for module in modules {
         let mut entry = String::new();
-        push_module_dir_line(&mut entry, module);
+        push_catalog_entry(&mut entry, module.path, "module", module.summary);
         entries.push(entry);
     }
     entries.sort_unstable();
     entries.concat().trim_end().to_string()
-}
-
-fn push_module_items(entries: &mut Vec<String>, module: &StdModule) {
-    for item in module.items {
-        let mut entry = String::new();
-        push_item_dir(&mut entry, module, item);
-        entries.push(entry);
-    }
-}
-
-fn push_module_help(out: &mut String, module: &StdModule) {
-    out.push_str(&format!("{}\n", module.path));
-    out.push_str(&format!("  {}\n", module.summary));
-    out.push_str(&format!("  items: {}\n\n", module.items.len()));
-}
-
-fn push_item_help(out: &mut String, module: &StdModule, item: &StdItem) {
-    out.push_str(&format!(
-        "{}::{} [{}]\n",
-        module.path,
-        item.name,
-        item_kind_label(item.kind)
-    ));
-    if let Some(signature) = gossamer_types::stdlib_function_signature(module.path, item.name) {
-        out.push_str(&format!("  {signature}\n"));
-    }
-    out.push_str(&format!("  {}\n\n", item.doc));
-}
-
-fn push_core_method_help(out: &mut String, method: &CoreMethodEntry) {
-    out.push_str(&format!(
-        "{}::{} [{}]\n",
-        method.owner, method.name, method.kind
-    ));
-    out.push_str(&format!("  {}\n", method.signature));
-    out.push_str(&format!("  {}\n\n", method.doc));
-}
-
-fn push_builtin_macro_help(out: &mut String, builtin: &BuiltinMacro) {
-    out.push_str(&format!("{} [macro]\n", builtin.name));
-    out.push_str(&format!("  {}\n", builtin.signature));
-    out.push_str(&format!("  {}\n\n", builtin.doc));
-}
-
-fn push_prelude_builtin_help(out: &mut String, builtin: &PreludeBuiltinHelp) {
-    out.push_str(&format!("{} [builtin]\n", builtin.name));
-    out.push_str(&format!("  {}\n", builtin.signature));
-    out.push_str(&format!("  {}\n\n", builtin.doc));
-}
-
-fn push_module_dir_line(out: &mut String, module: &StdModule) {
-    push_catalog_entry(out, module.path, "module", module.summary);
-}
-
-fn push_core_namespace_dir_line(out: &mut String, owner: &str) {
-    push_catalog_entry(
-        out,
-        owner,
-        "type",
-        "Built-in receiver and associated methods.",
-    );
-}
-
-fn push_item_dir(out: &mut String, module: &StdModule, item: &StdItem) {
-    push_catalog_entry(
-        out,
-        &format!("{}::{}", module.path, item.name),
-        item_kind_label(item.kind),
-        item.doc,
-    );
-}
-
-fn push_core_method_dir(out: &mut String, method: &CoreMethodEntry) {
-    push_catalog_entry(
-        out,
-        &format!("{}::{}", method.owner, method.name),
-        method.kind,
-        &method.doc,
-    );
 }
 
 fn push_catalog_entry(out: &mut String, path: &str, kind: &str, description: &str) {

@@ -29,9 +29,9 @@ pub fn run_main() -> std::process::ExitCode {
     cli::run()
 }
 
-/// Uses the allocation-light common `gos run` path when its argument grammar
-/// is unambiguous, otherwise delegates to the complete Clap command surface.
+/// Runs an unambiguous direct script invocation before falling back to the
+/// complete Clap command surface.
 #[must_use]
 pub fn run_main_with_args(args: &[std::ffi::OsString]) -> std::process::ExitCode {
-    cli::try_fast_run(args).unwrap_or_else(cli::run)
+    cli::try_script_run(args).unwrap_or_else(cli::run)
 }

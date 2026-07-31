@@ -666,7 +666,6 @@ fn server_smoke(tier: Tier) {
     let (mut child, scratch) = match tier {
         Tier::Vm => {
             let child = Command::new(gos_bin())
-                .arg("run")
                 .arg(&src)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
@@ -943,7 +942,6 @@ fn forced_jit_matches_bytecode_on_unlowerable_shapes() {
         let path = root.join(rel);
         let run = |key: &str, val: &str| {
             let out = Command::new(gos_bin())
-                .arg("run")
                 .arg(&path)
                 .env(key, val)
                 .output()

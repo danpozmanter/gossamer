@@ -340,6 +340,8 @@ fn repl_bindings_show_the_concrete_type_of_a_clone() {
 fn repl_supports_reference_let_patterns_and_explains_invalid_syntax() {
     let out = run_repl(
         "let mut &d = m\n\
+         let mut m = [1, 2, 3, 4]\n\
+         let &mut d = m\n\
          let value = 7\n\
          let &shared = &value\n\
          println(shared)\n\
@@ -351,6 +353,10 @@ fn repl_supports_reference_let_patterns_and_explains_invalid_syntax() {
     assert!(
         out.stderr
             .contains("reference patterns start with `&mut`, not `mut &`")
+            && out
+                .stderr
+                .contains("`let &mut name = value` requires an `&mut` initializer")
+            && out.stderr.contains("write `let name = &mut value`")
             && !out.stderr.contains("does not yet support")
             && !out.stderr.contains("let-pattern shape"),
         "only invalid reference-pattern syntax should be diagnosed: {}",
@@ -403,6 +409,66 @@ fn repl_info_does_not_inspect_session_state() {
 }
 
 #[test]
+fn repl_explain_owns_persistent_binding_inspection() {
+    let catalog = run_repl("let x = 9\n%i x\n");
+    assert!(
+        catalog.success,
+        "repl should exit zero; stderr: {}",
+        catalog.stderr
+    );
+    assert!(
+        !catalog.stdout.contains("x [binding]") && !catalog.stdout.contains("x: i64 = 9"),
+        "%i must remain catalog-only: {}",
+        catalog.stdout
+    );
+    let explained = run_repl("let x = 9\n%e x\n%explain x -d\n");
+    assert!(
+        explained.success,
+        "repl should exit zero; stderr: {}",
+        explained.stderr
+    );
+    assert!(
+        explained.stdout.contains("x: i64 [binding]")
+            && explained.stdout.contains("x [binding]")
+            && explained.stdout.contains("type: i64"),
+        "%e must inspect bindings: {}",
+        explained.stdout
+    );
+}
+
+#[test]
+fn repl_explain_lists_all_available_methods() {
+    let out = run_repl("let mut values = Vec::from([1, 2])\n%e values\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("mut values: Vec<i64> [binding]")
+            && out
+                .stdout
+                .contains("values.push<T>(self: &mut Vec<T>, value: T) -> () [method]")
+            && out
+                .stdout
+                .contains("values.len<T>(self: Vec<T>) -> i64 [method]"),
+        "%e should list every method available to the binding: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_info_lists_matches_unless_details_are_requested() {
+    let out = run_repl("%i strings::trim\n%i strings::trim -d\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout
+            .contains("std::strings::trim(text: String) -> String [fn]")
+            && out
+                .stdout
+                .contains("Removes leading and trailing whitespace."),
+        "%i should show signatures by default and documentation with -d: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_meta_info_empty_shows_only_the_catalog_directory() {
     let out = run_repl("%i\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -427,17 +493,15 @@ fn repl_meta_info_does_not_render_keyword_documentation() {
 
 #[test]
 fn repl_info_lists_stdlib_namespaces_and_catalog_types() {
-    let out = run_repl("%i std -a\n%i std::archive\n%i database\n%i String\n");
+    let out = run_repl("%i std -a\n%i std::archive\n%i database\n%i String -d\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("std::bufio [module]")
-            && out.stdout.contains("std::database [module]")
             && out.stdout.contains("std::database::sql [module]")
-            && out.stdout.contains("std::archive [module]")
             && out.stdout.contains("std::archive::tar [module]")
             && out.stdout.contains("std::archive::zip [module]")
             && out.stdout.contains("String [type]")
-            && out.stdout.contains("String::as_bytes [method]")
+            && out.stdout.contains("String::as_bytes(")
             && out
                 .stdout
                 .contains("Returns the UTF-8 bytes of the string."),
@@ -448,11 +512,11 @@ fn repl_info_lists_stdlib_namespaces_and_catalog_types() {
 
 #[test]
 fn repl_info_resolves_qualified_http_constructor_with_a_real_signature() {
-    let out = run_repl("%i http::Client::new\n");
+    let out = run_repl("%i http::Client::new -d\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("http::Client::new [assoc]")
-            && out.stdout.contains("fn new() -> http::Client"),
+        out.stdout
+            .contains("http::Client::new() -> http::Client [assoc]"),
         "%info should resolve the exact catalog path with its contract: {}",
         out.stdout
     );
@@ -607,7 +671,7 @@ fn repl_byte_buffer_has_a_public_type_and_strict_mutation_contract() {
          b.len()\n\
          b.to_string()\n\
          %b\n\
-         %info push\n",
+         %info push -d\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     let diagnostics = format!("{}\n{}", out.stdout, out.stderr);
@@ -632,8 +696,9 @@ fn repl_byte_buffer_has_a_public_type_and_strict_mutation_contract() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("fn push(&mut self, byte: u8) -> ()")
-            && !out.stdout.contains("fn push(self, ...) -> ..."),
+        out.stdout
+            .contains("Buffer::push(&mut self, byte: u8) -> () [method]")
+            && !out.stdout.contains("push(self, ...) -> ..."),
         "Buffer help lacks its public method contract: {}",
         out.stdout
     );
@@ -926,7 +991,6 @@ fn repl_bindings_preserve_reference_and_destructured_types() {
     let out = run_repl(
         "struct Pair { left: i64, right: String }\n\
          let mut m = [1, 2, 3, 4]\n\
-         let &mut d = m\n\
          let shared = &[5, 6]\n\
          let mut n = [7, 8]\n\
          let exclusive = &mut n\n\
@@ -938,7 +1002,6 @@ fn repl_bindings_preserve_reference_and_destructured_types() {
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
         "mut m: [i64; 4] = [1, 2, 3, 4]",
-        "d: [i64; 4] = [1, 2, 3, 4]",
         "shared: &[i64; 2] = &[5, 6]",
         "exclusive: &mut [i64; 2] = &mut [7, 8]",
         "a: i64 = 9",
@@ -960,24 +1023,20 @@ fn repl_bindings_preserve_reference_and_destructured_types() {
 }
 
 #[test]
-fn repl_info_resolves_binding_types_and_callable_method_capabilities() {
+fn repl_explain_resolves_binding_types_and_callable_method_capabilities() {
     let out = run_repl(
         "let mut m = [1, 2, 3, 4]\n\
-         let &mut d = m\n\
          let r = &mut m\n\
-         %i m -a\n\
-         %i d -a\n\
-         %i r -a\n",
+         %e m -d\n\
+         %e r -d\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
         "m [binding]\n  type: [i64; 4]\n  capability: mutable binding",
-        "d [binding]\n  type: [i64; 4]\n  capability: immutable binding",
         "r [binding]\n  type: &mut [i64; 4]\n  capability: mutable referent",
-        "m.len [method]",
-        "m.reverse [method]",
-        "d.len [method]",
-        "r.reverse [method]",
+        "m.len<T>(self: Vec<T>) -> i64 [method]",
+        "m.reverse<T>(self: &mut Vec<T>) -> () [method]",
+        "r.reverse<T>(self: &mut Vec<T>) -> () [method]",
     ] {
         assert!(
             out.stdout.contains(expected),
@@ -986,9 +1045,7 @@ fn repl_info_resolves_binding_types_and_callable_method_capabilities() {
         );
     }
     assert!(
-        !out.stdout.contains("d.reverse [method]")
-            && !out.stdout.contains("m.push [method]")
-            && !out.stdout.contains("r.push [method]"),
+        !out.stdout.contains("m.push(") && !out.stdout.contains("r.push("),
         "info exposed methods unavailable to the binding or fixed array: {}",
         out.stdout
     );
@@ -1447,7 +1504,7 @@ fn repl_hash_set_bindings_show_and_iterate_stored_structs() {
          set.insert(p2)\n\
          %bindings\n\
          for point in set { println(point) }\n\
-         %info set\n\
+         %explain set\n\
          set.map(|point| point.x)\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -1470,7 +1527,7 @@ fn repl_hash_set_bindings_show_and_iterate_stored_structs() {
     }
     assert!(
         out.stdout.contains("mut set: HashSet<_> ="),
-        "`%info set` should render the binding as `%bindings` does: {}",
+        "`%explain set` should render the binding as `%bindings` does: {}",
         out.stdout
     );
     assert!(
@@ -1762,10 +1819,11 @@ fn repl_vec_slice_rejects_bad_arity_and_argument_types() {
 
 #[test]
 fn repl_meta_info_finds_stdlib_symbol() {
-    let out = run_repl("%info strings::trim\n");
+    let out = run_repl("%info strings::trim -d\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("std::strings::trim [fn]"),
+        out.stdout
+            .contains("std::strings::trim(text: String) -> String [fn]"),
         "expected qualified stdlib item help; stdout: {}",
         out.stdout
     );
@@ -1779,11 +1837,11 @@ fn repl_meta_info_finds_stdlib_symbol() {
 
 #[test]
 fn repl_meta_info_shows_complete_signatures_for_string_methods() {
-    let out = run_repl("%i starts_with\n");
+    let out = run_repl("%i starts_with -d\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout
-            .contains("fn starts_with(self: String, needle: String | char) -> bool"),
+            .contains("String::starts_with(self: String, needle: String | char) -> bool [method]"),
         "String method signature should name every parameter and return type: {}",
         out.stdout
     );
@@ -1793,11 +1851,11 @@ fn repl_meta_info_shows_complete_signatures_for_string_methods() {
         out.stdout
     );
     assert!(
-        out.stdout
-            .contains("fn starts_with(text: String, needle: String | char) -> bool")
-            && out
-                .stdout
-                .contains("fn starts_with(path: String, prefix: String) -> bool"),
+        out.stdout.contains(
+            "std::strings::starts_with(text: String, needle: String | char) -> bool [fn]"
+        ) && out
+            .stdout
+            .contains("std::path::starts_with(path: String, prefix: String) -> bool [fn]"),
         "stdlib overloads should retain their complete signatures: {}",
         out.stdout
     );
@@ -1808,9 +1866,9 @@ fn repl_meta_info_plain_text_searches_public_symbol_paths() {
     let out = run_repl("%i start\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
-        "std::strings::starts_with [fn]",
-        "String::starts_with [method]",
-        "std::strings::trim_start [fn]",
+        "std::strings::starts_with(",
+        "String::starts_with(",
+        "std::strings::trim_start(",
     ] {
         assert!(
             out.stdout.contains(expected),
@@ -1830,6 +1888,62 @@ fn repl_meta_info_renders_matching_modules_once() {
         "%i should not duplicate matching module entries: {}",
         out.stdout
     );
+    for expected in [
+        "std::compress::gzip::encode(",
+        "std::compress::gzip::decode(",
+        "std::compress::gzip::Level [type]",
+    ] {
+        assert!(
+            out.stdout.contains(expected),
+            "%i should list members of a matching module, omitting `{expected}`: {}",
+            out.stdout
+        );
+    }
+}
+
+#[test]
+fn repl_info_paginates_at_twenty_entries_without_a_final_page_prompt() {
+    let first = run_repl("%i String\n");
+    assert!(
+        first.success,
+        "repl should exit zero; stderr: {}",
+        first.stderr
+    );
+    assert!(
+        first.stdout.contains("(1-20 of "),
+        "first page should report its range: {}",
+        first.stdout
+    );
+    assert!(
+        first.stdout.contains("%i String -p 2"),
+        "first page should provide its next-page command: {}",
+        first.stdout
+    );
+
+    let all = run_repl("%i String -a\n");
+    assert!(all.success, "repl should exit zero; stderr: {}", all.stderr);
+    let total = all
+        .stdout
+        .lines()
+        .filter(|line| line.ends_with(']') && line.contains(" ["))
+        .count();
+    assert!(
+        total > 20,
+        "String should require multiple pages: {}",
+        all.stdout
+    );
+    let last_page = total.div_ceil(20);
+    let last = run_repl(&format!("%i String -p {last_page}\n"));
+    assert!(
+        last.success,
+        "repl should exit zero; stderr: {}",
+        last.stderr
+    );
+    assert!(
+        !last.stdout.contains("Use `%i String -p"),
+        "the final page must not offer another page: {}",
+        last.stdout
+    );
 }
 
 #[test]
@@ -1846,29 +1960,31 @@ fn repl_listing_commands_accept_long_all_option() {
 #[test]
 fn repl_meta_help_ls_and_find_cover_core_string_parse() {
     let out = run_repl(
-        "%info string::parse\n\
-         %info String::parse\n\
-         %info strings::parse\n\
-         %info string\n\
+        "%info string::parse -d\n\
+         %info String::parse -d\n\
+         %info strings::parse -d\n\
+         %info string -d\n\
          \"123\".parse<i64>()\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("String::parse [method]"),
+        out.stdout
+            .contains("String::parse<T>(self: String) -> Result<T, errors::Error> [method]"),
         "expected core method help; stdout: {}",
         out.stdout
     );
     assert!(
         out.stdout
-            .contains("fn parse<T>(self: String) -> Result<T, errors::Error>"),
+            .contains("String::parse<T>(self: String) -> Result<T, errors::Error> [method]"),
         "expected parse signature; stdout: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("std::strings::parse [fn]")
+        out.stdout
+            .contains("std::strings::parse<T>(text: String) -> Result<T, errors::Error> [fn]")
             && out
                 .stdout
-                .contains("fn parse<T>(text: String) -> Result<T, errors::Error>"),
+                .contains("std::strings::parse<T>(text: String) -> Result<T, errors::Error> [fn]"),
         "expected strings::parse help; stdout: {}",
         out.stdout
     );
@@ -1943,19 +2059,19 @@ fn repl_string_parse_turbofish_forms_typecheck_without_bool_diagnostics() {
 #[test]
 fn repl_meta_help_covers_builtin_receiver_types() {
     let out = run_repl(
-        "%info Option::map\n\
-         %info Result::map_err\n\
-         %info AtomicI64::new\n\
-         %info validate::Errors::new\n\
-         %info Option\n\
-         %info http::Response\n",
+        "%info Option::map -d\n\
+         %info Result::map_err -d\n\
+         %info AtomicI64::new -d\n\
+         %info validate::Errors::new -d\n\
+         %info Option -d\n\
+         %info http::Response -d\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
-        "Option::map [method]",
-        "Result::map_err [method]",
-        "AtomicI64::new [assoc]",
-        "validate::Errors::new [assoc]",
+        "Option::map<",
+        "Result::map_err<",
+        "AtomicI64::new(",
+        "validate::Errors::new(",
     ] {
         assert!(
             out.stdout.contains(expected),
@@ -1997,14 +2113,14 @@ fn repl_question_mark_rejects_invalid_contexts_before_execution() {
 fn repl_meta_help_covers_every_builtin_macro_and_prelude_assertion() {
     let mut input = String::new();
     for builtin in gossamer_parse::builtin_macros::BUILTIN_MACROS {
-        writeln!(&mut input, "%info {}", builtin.name).expect("write macro-info input");
+        writeln!(&mut input, "%info {} -d", builtin.name).expect("write macro-info input");
     }
-    input.push_str("%info assert\n%info assert_eq\n");
+    input.push_str("%info assert -d\n%info assert_eq -d\n");
     let out = run_repl(&input);
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for builtin in gossamer_parse::builtin_macros::BUILTIN_MACROS {
         assert!(
-            out.stdout.contains(&format!("{} [macro]", builtin.name)),
+            out.stdout.contains(builtin.signature),
             "missing help for {}: {}",
             builtin.name,
             out.stdout
@@ -2017,7 +2133,11 @@ fn repl_meta_help_covers_every_builtin_macro_and_prelude_assertion() {
         );
     }
     assert!(
-        out.stdout.contains("assert [builtin]") && out.stdout.contains("assert_eq [builtin]"),
+        out.stdout
+            .contains("assert(condition: bool, message?: String) [builtin]")
+            && out
+                .stdout
+                .contains("assert_eq(left, right, message?: String) [builtin]"),
         "missing prelude assertion help: {}",
         out.stdout
     );
@@ -2025,12 +2145,11 @@ fn repl_meta_help_covers_every_builtin_macro_and_prelude_assertion() {
 
 #[test]
 fn repl_meta_info_shows_a_function_signature_and_docs() {
-    let out = run_repl("%info strings::slice\n");
+    let out = run_repl("%info strings::slice -d\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains(
-            "fn slice(text: String, start: i64, end: i64) -> Result<String, errors::Error>"
-        ),
+        out.stdout
+            .contains("std::strings::slice(text: String, start: i64, end: i64)"),
         "function help must include the complete public signature: {}",
         out.stdout
     );
@@ -2043,11 +2162,11 @@ fn repl_meta_info_shows_a_function_signature_and_docs() {
 
 #[test]
 fn repl_meta_info_uses_checker_exposed_stdlib_signatures() {
-    let out = run_repl("%info fs::read\n");
+    let out = run_repl("%info fs::read -d\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout
-            .contains("fn read(path: String) -> Result<Vec<u8>, io::Error>"),
+            .contains("std::fs::read(path: String) -> Result<Vec<u8>, io::Error> [fn]"),
         "expected generated catalog signature for fs::read: {}",
         out.stdout
     );
@@ -2055,16 +2174,17 @@ fn repl_meta_info_uses_checker_exposed_stdlib_signatures() {
 
 #[test]
 fn repl_meta_info_distinguishes_same_leaf_function_names_by_type() {
-    let out = run_repl("%info count\n");
+    let out = run_repl("%info count -d\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout
-            .contains("fn count(text: String, needle: String | char) -> i64"),
+            .contains("std::strings::count(text: String, needle: String | char) -> i64 [fn]"),
         "strings count signature missing: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("fn count<T>(items: Vec<T>) -> i64"),
+        out.stdout
+            .contains("std::iter::count<T>(items: Vec<T>) -> i64 [fn]"),
         "iter count signature missing: {}",
         out.stdout
     );
@@ -2083,15 +2203,14 @@ fn repl_meta_info_regex_does_not_search_keyword_documentation() {
 
 #[test]
 fn repl_meta_ls_lists_the_complete_io_namespace() {
-    let out = run_repl("%info io\n");
+    let out = run_repl("%info io -d\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    for item in ["stdin", "stdout", "stderr", "ReadAll", "Copy"] {
-        assert!(
-            out.stdout.contains(&format!("std::io::{item}")),
-            "%info io omitted {item}; stdout: {}",
-            out.stdout
-        );
-    }
+    assert!(
+        out.stdout.contains("std::io [module]")
+            && out.stdout.contains("Stream-oriented I/O abstractions"),
+        "%info io should show the matching module and its documentation: {}",
+        out.stdout
+    );
 }
 
 #[test]
@@ -2112,7 +2231,7 @@ fn repl_meta_info_combines_regex_help_and_listing() {
 
 #[test]
 fn repl_meta_info_for_qualified_function_is_focused() {
-    let out = run_repl("%i strings::trim_start_matches\n");
+    let out = run_repl("%i strings::trim_start_matches -d\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr.is_empty(),
@@ -2120,15 +2239,13 @@ fn repl_meta_info_for_qualified_function_is_focused() {
         out.stderr
     );
     assert!(
-        out.stdout.contains("std::strings::trim_start_matches")
-            && out
-                .stdout
-                .contains("fn trim_start_matches(text: String, cutset: String | char) -> String"),
+        out.stdout
+            .contains("std::strings::trim_start_matches(text: String, cutset: String | char)"),
         "%i should render help for the qualified function: {}",
         out.stdout
     );
     assert!(
-        !out.stdout.contains("std::strings::bytes [fn]"),
+        !out.stdout.contains("std::strings::bytes("),
         "%i should not dump the function's module listing: {}",
         out.stdout
     );
@@ -2139,9 +2256,9 @@ fn repl_meta_info_for_shared_method_name_does_not_append_an_owner_listing() {
     let out = run_repl("%i contains_key\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
-        "BTreeMap::contains_key [method]",
-        "HashMap::contains_key [method]",
-        "std::collections::ordered_map::contains_key [fn]",
+        "BTreeMap::contains_key<",
+        "HashMap::contains_key<",
+        "std::collections::ordered_map::contains_key(",
     ] {
         assert!(
             out.stdout.contains(expected),
@@ -2150,7 +2267,7 @@ fn repl_meta_info_for_shared_method_name_does_not_append_an_owner_listing() {
         );
     }
     assert!(
-        !out.stdout.contains("BTreeMap::get [method]"),
+        !out.stdout.contains("BTreeMap::get<"),
         "%i should not append the arbitrary BTreeMap listing: {}",
         out.stdout
     );

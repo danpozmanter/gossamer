@@ -1145,10 +1145,11 @@ fn vec_operand_has_word_elem(body: &Body, tcx: &TyCtxt, op: &Operand) -> bool {
     let Operand::Copy(pl) = op else {
         return false;
     };
-    if !pl.projection.is_empty() {
-        return false;
-    }
-    let mut ty = body.local_ty(pl.local);
+    // Method helpers commonly index a Vec field (`self.memory[i]`). Resolve
+    // the projected leaf type instead of rejecting it as non-local, so the
+    // JIT and native paths retain the same direct word load/store fast path
+    // for Intcode-style state machines.
+    let mut ty = resolve_place_ty(tcx, body, pl);
     while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
         ty = *inner;
     }
