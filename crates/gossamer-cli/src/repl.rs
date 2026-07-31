@@ -1840,12 +1840,12 @@ fn repl_help(arg: &str) -> std::result::Result<String, String> {
 fn repl_info(arg: &str) -> std::result::Result<String, String> {
     let query = normalize_query(arg);
     if matches!(query, "std" | "std::") {
-        return Ok(render_module_dir(&top_level_stdlib_modules()));
+        return Ok(render_stdlib_dir());
     }
     if matching_modules(query).is_empty() {
-        let children = stdlib_namespace_children(query);
-        if !children.is_empty() {
-            return Ok(render_stdlib_namespace_dir(query, &children));
+        if let Some(namespace) = canonical_stdlib_namespace(query) {
+            let children = stdlib_namespace_children(&namespace);
+            return Ok(render_stdlib_namespace_dir(&namespace, &children));
         }
     }
     let help = repl_help(arg)?;
@@ -1899,19 +1899,6 @@ fn repl_info_listing(arg: &str) -> std::result::Result<String, String> {
     Ok(format!("no catalog listing found for `{arg}`"))
 }
 
-fn top_level_stdlib_modules() -> Vec<StdModule> {
-    gossamer_std::registry::modules()
-        .iter()
-        .copied()
-        .filter(|module| {
-            module
-                .path
-                .strip_prefix("std::")
-                .is_some_and(|path| !path.contains("::"))
-        })
-        .collect()
-}
-
 fn stdlib_namespace_children(namespace: &str) -> Vec<StdModule> {
     let prefix = format!("{namespace}::");
     gossamer_std::registry::modules()
@@ -1924,6 +1911,15 @@ fn stdlib_namespace_children(namespace: &str) -> Vec<StdModule> {
                 .is_some_and(|path| !path.contains("::"))
         })
         .collect()
+}
+
+fn canonical_stdlib_namespace(query: &str) -> Option<String> {
+    let canonical = if query.starts_with("std::") {
+        query.to_string()
+    } else {
+        format!("std::{query}")
+    };
+    (!stdlib_namespace_children(&canonical).is_empty()).then_some(canonical)
 }
 
 fn render_repl_history(
@@ -2161,6 +2157,41 @@ fn render_module_dir(modules: &[StdModule]) -> String {
     }
     entries.sort_unstable();
     entries.concat().trim_end().to_string()
+}
+
+fn render_stdlib_dir() -> String {
+    let mut entries = Vec::new();
+    for namespace in stdlib_namespaces() {
+        let mut entry = String::new();
+        push_catalog_entry(
+            &mut entry,
+            &namespace,
+            "module",
+            "Standard-library namespace.",
+        );
+        entries.push(entry);
+    }
+    for module in gossamer_std::registry::modules() {
+        let mut entry = String::new();
+        push_module_dir_line(&mut entry, module);
+        entries.push(entry);
+    }
+    entries.sort_unstable();
+    entries.concat().trim_end().to_string()
+}
+
+fn stdlib_namespaces() -> Vec<String> {
+    let modules = gossamer_std::registry::modules();
+    let mut namespaces = modules
+        .iter()
+        .filter_map(|module| module.path.rsplit_once("::").map(|(parent, _)| parent))
+        .filter(|parent| *parent != "std")
+        .filter(|parent| !modules.iter().any(|module| module.path == *parent))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    namespaces.sort_unstable();
+    namespaces.dedup();
+    namespaces
 }
 
 fn render_stdlib_namespace_dir(namespace: &str, modules: &[StdModule]) -> String {

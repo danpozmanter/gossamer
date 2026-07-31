@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.38.7 - REPL standard-library discovery
+
+- List all standard-library modules and parent namespaces in `%i std`, and let
+  shortened namespace queries such as `%i database` resolve to `std::database`.
+
 ## 0.38.6 - Diagnostics, REPL inspection, and CI test partitioning
 
 - Make type errors name both incompatible types and point to the authored

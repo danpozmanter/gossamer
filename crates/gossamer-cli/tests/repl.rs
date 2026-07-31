@@ -318,11 +318,12 @@ fn repl_info_does_not_inspect_session_state() {
 
 #[test]
 fn repl_info_lists_stdlib_namespaces_and_catalog_types() {
-    let out = run_repl("%i std\n%i std::archive\n%i String\n");
+    let out = run_repl("%i std -a\n%i std::archive\n%i database\n%i String\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("std::bufio [module]")
-            && out.stdout.contains("(1-20 of 44)")
+            && out.stdout.contains("std::database [module]")
+            && out.stdout.contains("std::database::sql [module]")
             && out.stdout.contains("std::archive [module]")
             && out.stdout.contains("std::archive::tar [module]")
             && out.stdout.contains("std::archive::zip [module]")
