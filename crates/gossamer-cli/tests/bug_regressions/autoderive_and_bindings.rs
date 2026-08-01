@@ -444,10 +444,16 @@ fn return_array_literal_coerces_to_slice() {
 fn cols() -> [String] {
     return ["id", "name", "value"]
 }
+fn modes() -> Vec<i64> {
+    let values = [7, 8, 9]
+    values
+}
 fn main() {
     let xs = cols()
     println!("len={}", xs.len())
     for s in xs { println!("{}", s) }
+    let ms = modes()
+    println!("modes={} sum={}", ms.len(), ms[0] + ms[1] + ms[2])
 }
 "#;
     let dir = fresh_dir("return_array_to_slice");
@@ -459,8 +465,11 @@ fn main() {
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(out.2, Some(0), "stderr: {}", out.1);
     assert!(
-        out.0.contains("len=3") && out.0.contains("id") && out.0.contains("value"),
-        "expected len=3 + all 3 strings, got: {:?}",
+        out.0.contains("len=3")
+            && out.0.contains("id")
+            && out.0.contains("value")
+            && out.0.contains("modes=3 sum=24"),
+        "expected both explicit and tail array returns to be Vec values, got: {:?}",
         out.0
     );
 }

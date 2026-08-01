@@ -298,6 +298,7 @@ pub fn compile_fn(
     consts: &ConstValues,
     method_muts: &MutSelfMethods,
     mut_statics: &MutStatics,
+    source_map: Option<&gossamer_lex::SourceMap>,
     cov: Option<&gossamer_lex::SourceMap>,
 ) -> RuntimeResult<FnChunk> {
     let name = crate::value::intern_type_name(&decl.name.name);
@@ -309,6 +310,7 @@ pub fn compile_fn(
             float_count: 0,
             int_count: 0,
             instrs: Vec::new(),
+            instruction_locations: Vec::new(),
             consts: Vec::new(),
             f64_consts: Vec::new(),
             i64_consts: Vec::new(),
@@ -333,6 +335,7 @@ pub fn compile_fn(
         consts,
         method_muts,
         mut_statics,
+        source_map,
         cov,
     );
     builder.consumable = consume::consumable_locals(decl);
@@ -399,6 +402,7 @@ pub fn compile_initializer(
     consts: &ConstValues,
     method_muts: &MutSelfMethods,
     mut_statics: &MutStatics,
+    source_map: Option<&gossamer_lex::SourceMap>,
     cov: Option<&gossamer_lex::SourceMap>,
 ) -> RuntimeResult<FnChunk> {
     let name = crate::value::intern_type_name("__init");
@@ -412,6 +416,7 @@ pub fn compile_initializer(
         consts,
         method_muts,
         mut_statics,
+        source_map,
         cov,
     );
     let reg = builder.compile_expr(expr)?;
@@ -563,6 +568,9 @@ pub(crate) struct FnBuilder<'tcx> {
     /// Names of `static mut` items. Used to lower a static-rooted
     /// assignment into an [`Op::StoreStatic`] instead of deferring it.
     pub(crate) mut_statics: &'tcx MutStatics,
+    /// Source map used to resolve bytecode instruction positions for runtime
+    /// tracebacks. This is independent of coverage instrumentation.
+    pub(crate) source_map: Option<&'tcx gossamer_lex::SourceMap>,
     /// Source map for `gos test --coverage`. `Some` only when the VM
     /// loaded the program with coverage active (see
     /// [`crate::vm::Vm::coverage_active`]); each `compile_stmt` then
@@ -570,6 +578,9 @@ pub(crate) struct FnBuilder<'tcx> {
     /// counter slot, and emits [`Op::CovHit`]. `None` everywhere else,
     /// so non-coverage compiles pay nothing.
     pub(crate) cov: Option<&'tcx gossamer_lex::SourceMap>,
+    /// Source position for each emitted instruction while the chunk is being
+    /// built. [`Self::finish`](FnBuilder::finish) run-length encodes it.
+    pub(crate) instruction_locations: Vec<Option<crate::bytecode::SourceLocation>>,
     /// Local names this function may consume (move) at their single
     /// use - see [`consume::consumable_locals`]. Read at the
     /// consuming sites to emit `*Consume` ops in place of the cloning

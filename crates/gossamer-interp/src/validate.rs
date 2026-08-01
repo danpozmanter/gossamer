@@ -2380,6 +2380,7 @@ mod tests {
             float_count: 1,
             int_count: 1,
             instrs: Vec::new(),
+            instruction_locations: Vec::new(),
             wide_ops: Vec::new(),
             consts: vec![Value::Int(0)],
             f64_consts: vec![0.0],

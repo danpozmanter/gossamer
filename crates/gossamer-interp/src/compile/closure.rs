@@ -88,6 +88,7 @@ impl<'tcx> FnBuilder<'tcx> {
             self.module_consts,
             self.method_muts,
             self.mut_statics,
+            self.source_map,
             self.cov,
         );
         // The closure body is a distinct function frame; carry the active

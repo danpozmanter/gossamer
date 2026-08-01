@@ -867,12 +867,13 @@ fn run_tests_filtered_inner(
         return Vec::new();
     };
     let mut vm = gossamer_interp::Vm::new();
-    // Publish the source map before `load` so the VM compiler can emit
+    // Publish the source map before `load` for runtime traceback locations and
     // per-statement coverage hits when `gos test --coverage` is active.
     vm.set_source_map(std::sync::Arc::new(map));
     if vm.load(&program, tcx, false).is_err() {
         return Vec::new();
     }
+    vm.clear_source_map();
     let mut records = Vec::new();
     if !quiet && !tests.is_empty() {
         let header = format!("=== {} ===", file.display());
@@ -886,7 +887,7 @@ fn run_tests_filtered_inner(
         // Snapshot the VM call chain immediately: a failing test
         // preserves its frames, and the next `vm.call` clears them.
         let call_trace = if outcome.is_err() {
-            crate::cmd::traceback::render_call_stack(&vm.call_stack_snapshot())
+            crate::cmd::traceback::render_call_stack(&vm.call_stack_frames())
         } else {
             String::new()
         };
@@ -1339,6 +1340,7 @@ fn run_doc_tests_in_file(file: &std::path::Path, style: &TestStyle) -> DocTestFi
             failures += 1;
             continue;
         }
+        vm.clear_source_map();
         match vm.call("main", Vec::new()) {
             Ok(_) => {
                 println!("  {} doc-test {}", style.pass(), doc.name);

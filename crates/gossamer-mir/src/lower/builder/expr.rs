@@ -49,6 +49,40 @@ use super::*;
 use super::Builder;
 
 impl<'a> Builder<'a> {
+    /// Coerces a source value to the function's declared return ABI shape.
+    /// Both explicit `return value` and an implicit tail expression must pass
+    /// through this single path so their caller-facing representations agree.
+    pub(crate) fn coerce_return_value(
+        &mut self,
+        mut local: Local,
+        ret_ty: Ty,
+        span: Span,
+    ) -> Local {
+        use gossamer_types::TyKind;
+
+        let value_ty = self.locals[local.0 as usize].ty;
+        let dest_callable = matches!(
+            self.tcx.kind_of(ret_ty),
+            TyKind::FnPtr(_) | TyKind::FnTrait(_)
+        );
+        let src_is_fn_def = matches!(self.tcx.kind_of(value_ty), TyKind::FnDef { .. });
+        let src_names_fn = self.local_fn_name.contains_key(&local);
+        if dest_callable && (src_is_fn_def || src_names_fn) {
+            local = self.coerce_to_fn_trait_if_needed(local, ret_ty, span);
+        }
+
+        if let TyKind::Array { elem, len } = self.tcx.kind_of(value_ty).clone() {
+            let target_elem = match self.tcx.kind_of(ret_ty) {
+                TyKind::Vec(elem) | TyKind::Slice(elem) => Some(*elem),
+                _ => None,
+            };
+            if target_elem == Some(elem) {
+                local = self.coerce_array_to_vec(local, elem, len, span);
+            }
+        }
+        local
+    }
+
     pub(crate) fn lower_expr(&mut self, expr: &HirExpr) -> Option<Local> {
         match &expr.kind {
             HirExprKind::Literal(lit) => Some(self.lower_literal(lit, expr.ty, expr.span)),
@@ -93,47 +127,9 @@ impl<'a> Builder<'a> {
             HirExprKind::Block(block) => self.lower_block(block),
             HirExprKind::Return(value) => {
                 if let Some(value) = value {
-                    if let Some(mut local) = self.lower_expr(value) {
-                        // When the function's declared return type
-                        // is a callable shape (`fn(...) -> ...` /
-                        // `Fn(...) -> ...`) and the returned value
-                        // is a bare fn item, wrap it in the env+
-                        // code blob so the caller's slot uniformly
-                        // carries an env_ptr.
-                        use gossamer_types::TyKind;
+                    if let Some(local) = self.lower_expr(value) {
                         let ret_ty = self.locals[Local::RETURN.0 as usize].ty;
-                        let value_ty = self.locals[local.0 as usize].ty;
-                        let dest_callable = matches!(
-                            self.tcx.kind_of(ret_ty),
-                            TyKind::FnPtr(_) | TyKind::FnTrait(_)
-                        );
-                        let src_is_fn_def =
-                            matches!(self.tcx.kind_of(value_ty), TyKind::FnDef { .. });
-                        let src_names_fn = self.local_fn_name.contains_key(&local);
-                        if dest_callable && (src_is_fn_def || src_names_fn) {
-                            local = self.coerce_to_fn_trait_if_needed(local, ret_ty, expr.span);
-                        }
-                        // Array-literal → Vec coercion. `fn cols()
-                        // -> [String] { return ["a", "b"] }` lowers
-                        // the literal as a flat `Array<String; 2>`
-                        // because `lower_array_list` only takes the
-                        // Vec path when `expr.ty` is already
-                        // `Vec(_)`/`Slice(_)`. Without an explicit
-                        // coercion at the return site, the caller
-                        // reads the stack-Array bytes as a GosVec
-                        // header and sees len=0 / segfaults. Detect
-                        // the (Array, Vec) shape mismatch and route
-                        // the value through `coerce_array_to_vec`
-                        // (which calls `gos_rt_vec_from_arr`).
-                        if let TyKind::Array { elem, len } = self.tcx.kind_of(value_ty).clone() {
-                            let target_elem = match self.tcx.kind_of(ret_ty) {
-                                TyKind::Vec(e) | TyKind::Slice(e) => Some(*e),
-                                _ => None,
-                            };
-                            if target_elem == Some(elem) {
-                                local = self.coerce_array_to_vec(local, elem, len, expr.span);
-                            }
-                        }
+                        let local = self.coerce_return_value(local, ret_ty, expr.span);
                         self.emit_assign(
                             Place::local(Local::RETURN),
                             Rvalue::Use(Operand::Copy(Place::local(local))),

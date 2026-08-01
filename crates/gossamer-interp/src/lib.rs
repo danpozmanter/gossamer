@@ -153,7 +153,7 @@ pub fn flush_runtime_stdout() {
         gossamer_runtime::c_abi::gos_rt_flush_stdout();
     }
 }
-pub use bytecode::{FnChunk, Op};
+pub use bytecode::{FnChunk, InstructionLocation, Op, SourceLocation};
 pub use comptime::fold_into_source;
 pub use external_natives::{
     clear_external_natives_for_test, external_natives_snapshot, register_external_native,
@@ -164,7 +164,7 @@ pub use value::{
 };
 pub use vm::VM_THREAD_STACK_BYTES;
 pub use vm::goroutine::join_outstanding_goroutines;
-pub use vm::{JitMetrics, Vm};
+pub use vm::{CallStackFrame, JitMetrics, Vm};
 
 /// Process-wide panic hook value registered by
 /// `runtime::set_panic_hook` on the interpreter tier. The report

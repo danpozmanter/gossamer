@@ -137,6 +137,7 @@ mod elide_unit_load_tests {
             &HashSet::new(),
             &HashSet::new(),
             None,
+            None,
         )
         .expect("compile_fn");
         (chunk, decl)

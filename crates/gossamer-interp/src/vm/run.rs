@@ -224,6 +224,10 @@ impl Vm {
         let _prof_dump = ProfDump(chunk.name);
         let instrs: &[Op] = &chunk.instrs;
         let instr_count = instrs.len();
+        let locations = &chunk.instruction_locations;
+        let mut location_cursor = 0usize;
+        let mut previous_location_pc = None;
+        let mut active_location = None;
         let mut preempt_countdown = VM_PREEMPT_INTERVAL;
         // Several specialized opcodes have a generic method-call fallback.
         // A user-defined method resolves to `Global::Fn`; it must use the
@@ -282,6 +286,25 @@ impl Vm {
             // without invoking `<Op as Clone>::clone`.
             debug_assert!((pc as usize) < instr_count, "fell off end of bytecode");
             let _ = instr_count;
+            let sequential = previous_location_pc.is_some_and(|previous| pc == previous + 1);
+            if !sequential {
+                location_cursor = locations.partition_point(|entry| entry.instruction <= pc);
+            } else if locations
+                .get(location_cursor)
+                .is_some_and(|entry| entry.instruction == pc)
+            {
+                location_cursor += 1;
+            }
+            let location = location_cursor
+                .checked_sub(1)
+                .and_then(|idx| locations[idx].location);
+            if active_location != Some(location) {
+                if let Some(frame) = self.call_stack.borrow_mut().last_mut() {
+                    frame.location = location;
+                }
+                active_location = Some(location);
+            }
+            previous_location_pc = Some(pc);
             let op = unsafe { *instrs.get_unchecked(pc as usize) };
             crate::profile::record_op(op);
             pc += 1;

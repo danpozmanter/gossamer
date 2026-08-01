@@ -1665,6 +1665,29 @@ pub struct SelectArmMeta {
     pub body_block: InstrIdx,
 }
 
+/// Source position associated with a bytecode instruction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceLocation {
+    /// Display name of the source file.
+    pub file: &'static str,
+    /// One-based source line.
+    pub line: u32,
+    /// One-based source column.
+    pub column: u32,
+}
+
+/// A change point in a chunk's source-location table.
+///
+/// Entries are sorted by instruction index. A location applies until the next
+/// entry, avoiding a full-width source position beside every bytecode op.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InstructionLocation {
+    /// First instruction carrying `location`.
+    pub instruction: InstrIdx,
+    /// Source position for this run of instructions.
+    pub location: Option<SourceLocation>,
+}
+
 /// Compiled function - the unit of bytecode the VM can call.
 #[derive(Debug, Default)]
 pub struct FnChunk {
@@ -1682,6 +1705,8 @@ pub struct FnChunk {
     pub int_count: u16,
     /// Linear instruction stream.
     pub instrs: Vec<Op>,
+    /// Run-length encoded source positions for [`Self::instrs`].
+    pub instruction_locations: Vec<InstructionLocation>,
     /// Side-table for op payloads that don't fit in the in-line
     /// `Op` variant width without forcing every other op to
     /// pay the worst-case slot. Indexed by `Op::Wide(idx)`. The
@@ -1865,6 +1890,7 @@ impl FnChunk {
     /// allocation beyond what the bytecode actually requires.
     pub fn compact(&mut self) {
         self.instrs.shrink_to_fit();
+        self.instruction_locations.shrink_to_fit();
         self.wide_ops.shrink_to_fit();
         self.consts.shrink_to_fit();
         self.f64_consts.shrink_to_fit();
@@ -1874,6 +1900,18 @@ impl FnChunk {
         self.mut_ref_params.shrink_to_fit();
         self.closure_protos.shrink_to_fit();
         self.select_arms.shrink_to_fit();
+    }
+
+    /// Returns the source position for `instruction`, when the compiler could
+    /// associate that bytecode with a source expression.
+    #[must_use]
+    pub fn source_location(&self, instruction: InstrIdx) -> Option<SourceLocation> {
+        let after = self
+            .instruction_locations
+            .partition_point(|entry| entry.instruction <= instruction);
+        after
+            .checked_sub(1)
+            .and_then(|idx| self.instruction_locations[idx].location)
     }
 
     /// Produces a `Arc<Self>` so multiple callers share the same chunk.

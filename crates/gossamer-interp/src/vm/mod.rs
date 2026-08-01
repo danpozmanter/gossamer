@@ -103,6 +103,34 @@ use crate::value::{MapKey, RuntimeError, RuntimeResult, SmolStr, ThreadConfinedC
 /// not compile-time-known).
 pub type ComptimeFold = (gossamer_lex::Span, bool, Result<Value, String>);
 
+/// One frame in a runtime-error call-stack snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallStackFrame {
+    /// Source-level function name.
+    pub function: String,
+    /// Display name of the source file, when available.
+    pub file: Option<String>,
+    /// One-based source line, when available.
+    pub line: Option<u32>,
+    /// One-based source column, when available.
+    pub column: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct VmCallStackFrame {
+    pub(crate) function: &'static str,
+    pub(crate) location: Option<crate::bytecode::SourceLocation>,
+}
+
+impl VmCallStackFrame {
+    pub(crate) const fn new(function: &'static str) -> Self {
+        Self {
+            function,
+            location: None,
+        }
+    }
+}
+
 /// The VM compiles HIR directly to bytecode and lowers every
 /// construct natively; there is no fallback evaluator. The global
 /// table holds the built-in intrinsics plus every compiled function,
@@ -251,21 +279,17 @@ pub struct Vm {
     /// `call_stack_snapshot` reports the failing chain.
     /// Names are interned `&'static str`; recursive programs do not
     /// allocate a heap String per frame.
-    pub(crate) call_stack: RefCell<Vec<&'static str>>,
+    pub(crate) call_stack: RefCell<Vec<VmCallStackFrame>>,
     /// Current Gossamer call depth for this goroutine's VM. Incremented
     /// on every `apply` entry, decremented on return. When it reaches
     /// `MAX_CALL_DEPTH` the call is refused with `RuntimeError::StackOverflow`
     /// so unbounded mutual or direct recursion aborts instead of spinning
     /// the CPU indefinitely through heap-allocated frame allocation.
     pub(crate) call_depth: Cell<usize>,
-    /// Source map published by `gos test --coverage` (via
-    /// [`Vm::set_source_map`]) before [`Vm::load`]. When set and
-    /// `gossamer_runtime::coverage` is enabled, the compiler resolves
-    /// each statement's span to `(file, line)` and emits an
-    /// [`crate::bytecode::Op::CovHit`] against a pre-registered counter
-    /// slot, so the bytecode tier records line coverage into the same
-    /// global table the LLVM AOT tier instruments. `None` for every
-    /// non-coverage path (`gos`, plain `gos test`).
+    /// Source map published before [`Vm::load`]. The compiler resolves
+    /// expression locations for runtime tracebacks whenever it is present.
+    /// When runtime coverage is also enabled, statement spans additionally
+    /// produce [`crate::bytecode::Op::CovHit`] instructions.
     pub(crate) source_map: Option<Arc<gossamer_lex::SourceMap>>,
     /// When set before [`Vm::load`], the loader evaluates every
     /// `comptime { ... }` block and `comptime fn` call after compiling
@@ -2314,6 +2338,7 @@ mod tests {
             float_count: 0,
             int_count: 0,
             instrs: Vec::new(),
+            instruction_locations: Vec::new(),
             wide_ops: Vec::new(),
             consts: vec![Value::Int(0)],
             f64_consts: Vec::new(),

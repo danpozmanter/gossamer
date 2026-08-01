@@ -9,7 +9,9 @@ impl Vm {
             .ok_or_else(|| RuntimeError::UnresolvedName(name.to_string()))?;
         let interned = crate::value::intern_type_name(name);
         self.call_stack.borrow_mut().clear();
-        self.call_stack.borrow_mut().push(interned);
+        self.call_stack
+            .borrow_mut()
+            .push(VmCallStackFrame::new(interned));
         let result = self.apply(callee, args);
         if result.is_ok() {
             self.call_stack.borrow_mut().pop();
@@ -25,7 +27,23 @@ impl Vm {
         self.call_stack
             .borrow()
             .iter()
-            .map(|s| (*s).to_string())
+            .map(|frame| frame.function.to_string())
+            .collect()
+    }
+
+    /// Snapshot of the in-flight (or last failing) call stack with source
+    /// positions for frames whose bytecode was compiled with a source map.
+    #[must_use]
+    pub fn call_stack_frames(&self) -> Vec<CallStackFrame> {
+        self.call_stack
+            .borrow()
+            .iter()
+            .map(|frame| CallStackFrame {
+                function: frame.function.to_string(),
+                file: frame.location.map(|location| location.file.to_string()),
+                line: frame.location.map(|location| location.line),
+                column: frame.location.map(|location| location.column),
+            })
             .collect()
     }
 
@@ -96,9 +114,11 @@ impl Vm {
                     .call_stack
                     .borrow()
                     .last()
-                    .is_none_or(|top| *top != chunk.name);
+                    .is_none_or(|top| top.function != chunk.name);
                 if pushed_frame {
-                    self.call_stack.borrow_mut().push(chunk.name);
+                    self.call_stack
+                        .borrow_mut()
+                        .push(VmCallStackFrame::new(chunk.name));
                 }
                 // Tail calls reuse the native frame but retain their logical
                 // frames for panic diagnostics. Successful completion removes
@@ -325,7 +345,9 @@ impl Vm {
                                     .set(self.call_depth.get().saturating_sub(released));
                                 return Err(RuntimeError::StackOverflow(MAX_TAIL_CALL_DEPTH));
                             }
-                            self.call_stack.borrow_mut().push(next_chunk.name);
+                            self.call_stack
+                                .borrow_mut()
+                                .push(VmCallStackFrame::new(next_chunk.name));
                             tail_frames += 1;
                             chunk = next_chunk;
                             args = tail_args;
@@ -344,7 +366,9 @@ impl Vm {
                                 return Err(RuntimeError::StackOverflow(MAX_CALL_DEPTH));
                             }
                             self.call_depth.set(depth + 1);
-                            self.call_stack.borrow_mut().push(next_chunk.name);
+                            self.call_stack
+                                .borrow_mut()
+                                .push(VmCallStackFrame::new(next_chunk.name));
                             suspended.push((dst, parent));
                             chunk = next_chunk;
                             args = call_args;

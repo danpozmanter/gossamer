@@ -1,10 +1,15 @@
 # Changelog
 
-## 0.39.1 - Native Vec tail returns
+## 0.39.1 - Native Vec tail returns, error messages, CI testing
 
 - Coerce fixed-array tail expressions to `Vec` when returned from a
   Vec-returning function, preventing compiled programs from treating stack
   array storage as a Vec header.
+- Include source file, line, and column positions in bytecode runtime call
+  stacks, including the call site and the expression that failed.
+- Split each cross-platform native general test lane in two and run the
+  platform-invariant Cranelift correctness corpus once on Linux. Cross-platform
+  tier-parity shards continue to exercise generated code on every native OS.
 
 ## 0.39.0 - Direct scripts, REPL discovery, optimizations
 

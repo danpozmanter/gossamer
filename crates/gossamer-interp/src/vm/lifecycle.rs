@@ -142,14 +142,17 @@ impl Vm {
         }
     }
 
-    /// Publishes the source map `gos test --coverage` uses to resolve
-    /// statement spans to `(file, line)` for line-coverage recording.
-    /// Must be called before [`Self::load`] so the compiler can emit
-    /// [`crate::bytecode::Op::CovHit`] at each statement boundary;
-    /// leaving it unset (the default) compiles without any coverage
-    /// instrumentation.
+    /// Publishes the source map used to resolve runtime traceback locations
+    /// and, when coverage is active, statement coverage positions. Must be
+    /// called before [`Self::load`].
     pub fn set_source_map(&mut self, map: Arc<gossamer_lex::SourceMap>) {
         self.source_map = Some(map);
+    }
+
+    /// Releases the full source map after bytecode loading. Chunks retain only
+    /// their compact, resolved traceback locations.
+    pub fn clear_source_map(&mut self) {
+        self.source_map = None;
     }
 
     /// True when coverage recording should be instrumented for this
@@ -172,6 +175,12 @@ impl Vm {
         } else {
             None
         }
+    }
+
+    /// Source map used for runtime traceback locations. Unlike the coverage
+    /// view, this is available whenever a caller published a map before load.
+    fn diagnostic_source_map(&self) -> Option<Arc<gossamer_lex::SourceMap>> {
+        self.source_map.clone()
     }
 
     /// Two-tier global lookup: per-Vm overlay first, then shared
@@ -1044,6 +1053,7 @@ impl Vm {
         method_muts: &crate::compile::MutSelfMethods,
         mut_statics: &crate::compile::MutStatics,
     ) -> RuntimeResult<Value> {
+        let source_map = self.diagnostic_source_map();
         let cov_map = self.coverage_source_map();
         let chunk = Arc::new(crate::compile::compile_initializer(
             expr,
@@ -1055,6 +1065,7 @@ impl Vm {
             module_consts,
             method_muts,
             mut_statics,
+            source_map.as_deref(),
             cov_map.as_deref(),
         )?);
         validate_chunk_for_execution(&chunk)?;
@@ -1788,6 +1799,7 @@ impl Vm {
         // (the helper takes `&self`, which would conflict with the
         // `&mut self.globals` borrow held below). An owned `Arc` clone
         // keeps no borrow of `self` outstanding.
+        let source_map = self.diagnostic_source_map();
         let cov_map = self.coverage_source_map();
         // Loading an item mutates the globals map. Bump the
         // generation so any IC slots already populated against an
@@ -1835,6 +1847,7 @@ impl Vm {
                     module_consts,
                     method_muts,
                     mut_statics,
+                    source_map.as_deref(),
                     cov_map.as_deref(),
                 )?;
                 validate_chunk_for_execution(&chunk)?;
@@ -1857,6 +1870,7 @@ impl Vm {
                         module_consts,
                         method_muts,
                         mut_statics,
+                        source_map.as_deref(),
                         cov_map.as_deref(),
                     )?;
                     validate_chunk_for_execution(&chunk)?;
@@ -1889,6 +1903,7 @@ impl Vm {
                             module_consts,
                             method_muts,
                             mut_statics,
+                            source_map.as_deref(),
                             cov_map.as_deref(),
                         )?;
                         validate_chunk_for_execution(&chunk)?;

@@ -154,6 +154,15 @@ impl<'tcx> FnBuilder<'tcx> {
     /// need a `Value` register invoke [`Self::compile_expr`],
     /// which wraps this method and coerces via `as_value`.
     pub(crate) fn compile_expr_ex(&mut self, expr: &HirExpr) -> RuntimeResult<TypedReg> {
+        let start = self.instrs.len();
+        let result = self.compile_expr_ex_inner(expr);
+        if result.is_ok() {
+            self.annotate_instructions(start, expr.span);
+        }
+        result
+    }
+
+    fn compile_expr_ex_inner(&mut self, expr: &HirExpr) -> RuntimeResult<TypedReg> {
         match &expr.kind {
             // Numeric literals land in their typed reg file so
             // adjacent typed ops can consume them directly.
@@ -426,6 +435,15 @@ impl<'tcx> FnBuilder<'tcx> {
     }
 
     pub(crate) fn compile_expr(&mut self, expr: &HirExpr) -> RuntimeResult<Reg> {
+        let start = self.instrs.len();
+        let result = self.compile_expr_inner(expr);
+        if result.is_ok() {
+            self.annotate_instructions(start, expr.span);
+        }
+        result
+    }
+
+    fn compile_expr_inner(&mut self, expr: &HirExpr) -> RuntimeResult<Reg> {
         match &expr.kind {
             HirExprKind::Literal(lit) => self.compile_literal(lit),
             HirExprKind::Path { segments, def, .. } => self.compile_path(segments, *def),

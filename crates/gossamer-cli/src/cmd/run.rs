@@ -6,6 +6,7 @@
 //! engine.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use gossamer_pkg::Edition;
@@ -71,22 +72,20 @@ fn run_source_on_vm(
     // type errors has no business reaching the VM - execution would
     // either crash or produce unsound output.
     let (program, tcx) = load_and_check_with_edition(map.source(file_id), file_id, &map, edition)?;
-    // The VM keeps the HIR and type context it needs for bytecode/JIT loading,
-    // but it neither renders source diagnostics nor consults the SourceMap at
-    // runtime. Release the augmented source and parse-time map before the VM
-    // is created so their peak does not overlap bytecode chunks, MIR, and a
-    // deferred Cranelift artifact. Runtime tracebacks use the VM call stack,
-    // not this compile-time map.
-    drop(map);
-    profile_rss_stage("frontend_released");
     gossamer_interp::set_program_name(file_label);
     gossamer_interp::set_program_args(forwarded);
     gossamer_interp::set_lazy_iterators_enabled(lazy_iterators);
     let mut vm = gossamer_interp::Vm::new();
+    // The bytecode compiler resolves expression spans into compact chunk-local
+    // locations during load. The full source map can then be released before
+    // execution, preserving the old frontend/runtime peak-memory boundary.
+    vm.set_source_map(Arc::new(map));
     profile_rss_stage("vm_created");
     // `load` consumes `tcx` (moves the interner into the JIT snapshot).
     vm.load(&program, tcx, true)
         .map_err(|err| anyhow!("vm load failed: {err}"))?;
+    vm.clear_source_map();
+    profile_rss_stage("frontend_released");
     profile_rss_stage("vm_loaded");
     drop(program);
     let r = vm.call("main", Vec::new());
@@ -113,7 +112,7 @@ fn run_source_on_vm(
             Ok(())
         }
         Err(err) => {
-            let trace = crate::cmd::traceback::render_call_stack(&vm.call_stack_snapshot());
+            let trace = crate::cmd::traceback::render_call_stack(&vm.call_stack_frames());
             if gossamer_interp::is_panic_error(&err) {
                 // A user hook replaces the default report; either way a
                 // main-goroutine panic exits with the pinned code 101

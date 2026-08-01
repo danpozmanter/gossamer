@@ -26,7 +26,25 @@ impl<'tcx> FnBuilder<'tcx> {
     pub(crate) fn emit(&mut self, op: Op) -> InstrIdx {
         let idx = u32::try_from(self.instrs.len()).expect("instruction overflow");
         self.instrs.push(op);
+        self.instruction_locations.push(None);
         idx
+    }
+
+    pub(crate) fn annotate_instructions(&mut self, start: usize, span: gossamer_lex::Span) {
+        let Some(map) = self.source_map else {
+            return;
+        };
+        let line_col = map.line_col(span.file, span.start);
+        let location = crate::bytecode::SourceLocation {
+            file: crate::value::intern_type_name(map.file_name(span.file)),
+            line: line_col.line,
+            column: line_col.column,
+        };
+        for slot in &mut self.instruction_locations[start..] {
+            if slot.is_none() {
+                *slot = Some(location);
+            }
+        }
     }
 
     pub(crate) fn cur_idx(&self) -> InstrIdx {

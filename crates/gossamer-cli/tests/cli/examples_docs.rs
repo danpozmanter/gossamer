@@ -719,7 +719,9 @@ fn panic_error_includes_call_stack() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("call stack"));
     assert!(stderr.contains("at main"));
+    assert!(stderr.contains(".gos:2:13)"), "stderr: {stderr}");
     assert!(stderr.contains("at inner"));
+    assert!(stderr.contains(".gos:1:14)"), "stderr: {stderr}");
     let _ = std::fs::remove_file(&fixture);
 }
 

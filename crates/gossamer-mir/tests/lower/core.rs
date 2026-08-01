@@ -109,6 +109,32 @@ fn identity_function_produces_return_only_body() {
 }
 
 #[test]
+fn array_to_vec_return_coercion_covers_explicit_and_tail_returns() {
+    let (bodies, _) = build(
+        r"
+fn explicit() -> Vec<i64> {
+    let values = [1, 2, 3]
+    return values
+}
+
+fn tail() -> Vec<i64> {
+    let values = [4, 5, 6]
+    values
+}
+",
+    );
+    for name in ["explicit", "tail"] {
+        let body = bodies.iter().find(|body| body.name == name).expect("body");
+        assert!(
+            call_symbol_names(body)
+                .iter()
+                .any(|symbol| symbol == "gos_rt_vec_from_arr"),
+            "{name} must coerce its fixed array to the declared Vec ABI"
+        );
+    }
+}
+
+#[test]
 fn binary_op_produces_binary_rvalue() {
     let (bodies, _) = build("fn add(a: i64, b: i64) -> i64 { a + b }\n");
     let body = &bodies[0];

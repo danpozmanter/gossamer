@@ -1266,38 +1266,10 @@ pub(crate) fn lower_fn(
     let entry = builder.new_block(span);
     builder.set_current(entry);
     let result_local = builder.lower_block(&body.block);
-    if let Some(mut result) = result_local {
+    if let Some(result) = result_local {
         if builder.current.is_some() {
-            // Same callable-coercion as the explicit `return`
-            // arm: a tail-expression that yields a bare fn item
-            // when the function declares a callable-shape return
-            // gets wrapped into the env+code blob so the caller's
-            // slot is uniformly env-shaped.
-            use gossamer_types::TyKind;
             let ret_ty = builder.locals[Local::RETURN.0 as usize].ty;
-            let value_ty = builder.locals[result.0 as usize].ty;
-            let dest_callable = matches!(
-                builder.tcx.kind_of(ret_ty),
-                TyKind::FnPtr(_) | TyKind::FnTrait(_)
-            );
-            let src_is_fn_def = matches!(builder.tcx.kind_of(value_ty), TyKind::FnDef { .. });
-            let src_names_fn = builder.local_fn_name.contains_key(&result);
-            if dest_callable && (src_is_fn_def || src_names_fn) {
-                result = builder.coerce_to_fn_trait_if_needed(result, ret_ty, span);
-            }
-            // Mirror the explicit `return` coercion above for a tail array
-            // expression. A function declared as `-> Vec<T>` may end with a
-            // fixed array literal or binding; its caller must receive a
-            // GosVec, not a pointer to stack array storage.
-            if let TyKind::Array { elem, len } = builder.tcx.kind_of(value_ty).clone() {
-                let target_elem = match builder.tcx.kind_of(ret_ty) {
-                    TyKind::Vec(e) | TyKind::Slice(e) => Some(*e),
-                    _ => None,
-                };
-                if target_elem == Some(elem) {
-                    result = builder.coerce_array_to_vec(result, elem, len, span);
-                }
-            }
+            let result = builder.coerce_return_value(result, ret_ty, span);
             builder.emit_assign(
                 Place::local(Local::RETURN),
                 Rvalue::Use(Operand::Copy(Place::local(result))),
