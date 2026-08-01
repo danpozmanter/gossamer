@@ -202,6 +202,14 @@ fn match_arm_commas_before_trailing_comments_are_removed() {
 }
 
 #[test]
+fn multiline_parameters_align_after_generic_types() {
+    let source = "fn many_params(\n    one: Vec<i64>\n    two: i64\n    three: Vec<Vec<String>>\n    four: i64\n) {\n    one[0] + two + four\n}\n";
+    let once = fmt(source);
+    assert_eq!(once, source);
+    assert_eq!(fmt(&once), once);
+}
+
+#[test]
 fn println_and_format_macros_never_rewritten() {
     let source = "fn main() {\n    let name = \"jane\"\n    let msg = format!(\"hello, {name}!\")\n    println!(\"{} -> {}\", name, msg)\n    eprintln!(\"warn: {msg}\")\n}\n";
     let out = fmt(source);

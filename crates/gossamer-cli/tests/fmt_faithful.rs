@@ -112,6 +112,36 @@ fn fmt_removes_match_arm_commas_before_trailing_comments() {
 }
 
 #[test]
+fn fmt_aligns_parameters_after_generic_types() {
+    let source = "fn many_params(\n    one: Vec<i64>\n        two: i64\n    three: Vec<Vec<String>>\n        four: i64\n) {\n    one[0] + two + four\n}\n";
+    let expected = "fn many_params(\n    one: Vec<i64>\n    two: i64\n    three: Vec<Vec<String>>\n    four: i64\n) {\n    one[0] + two + four\n}\n";
+    let fixture = write_fixture("generic-parameters", source);
+    let out = Command::new(gos_bin())
+        .arg("fmt")
+        .arg(&fixture)
+        .output()
+        .expect("spawn fmt");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(std::fs::read_to_string(&fixture).unwrap(), expected);
+
+    let check = Command::new(gos_bin())
+        .args(["fmt", "--check"])
+        .arg(&fixture)
+        .output()
+        .expect("spawn fmt --check");
+    assert!(
+        check.status.success(),
+        "formatted file was not idempotent: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_file(&fixture);
+}
+
+#[test]
 fn fmt_refuses_unparseable_input_and_leaves_file_untouched() {
     let broken = "fn broken( {\n";
     let fixture = write_fixture("broken", broken);

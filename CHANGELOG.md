@@ -11,7 +11,7 @@
 - Match Rust reference-pattern mutability, preserve aggregate values and types
   through reference bindings, and add a comprehensive assignment matrix.
 - Format multiline match arms correctly when optional commas precede line or
-  block comments.
+  block comments, and keep multiline parameters aligned after generic types.
 - Return bounds failures from Vec insertion, removal, and swapping as `Result`
   without replacing the receiver, return the previous value from
   `HashMap::insert`, and add

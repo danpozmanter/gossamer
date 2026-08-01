@@ -305,12 +305,7 @@ fn render(lines: &[Line<'_>], file: FileId) -> String {
             &mut stack,
             &mut prev_sig,
         );
-        cont_after_prev_line = line
-            .toks
-            .iter()
-            .rev()
-            .find(|t| !t.is_comment())
-            .is_some_and(|t| trailing_continuation(t.kind));
+        cont_after_prev_line = line_has_trailing_continuation(line);
         prev_code_level = line_level;
         prev_code_was_cont = line_was_cont;
         let is_top_use = line_level == 0
@@ -809,8 +804,68 @@ fn starts_continuation(kind: TokenKind) -> bool {
     matches!(kind, TokenKind::Punct(Punct::PipeGt | Punct::Dot))
 }
 
-/// `true` when a line ending with this token continues onto the next
-/// line (trailing operator form).
+/// `true` when a line ends in an operator that continues onto the next
+/// line. Generic type closers are excluded even though the lexer uses
+/// the same `>` and `>>` tokens for them.
+fn line_has_trailing_continuation(line: &Line<'_>) -> bool {
+    let Some((index, token)) = line
+        .toks
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, token)| !token.is_comment())
+    else {
+        return false;
+    };
+    if matches!(token.kind, TokenKind::Punct(Punct::Gt | Punct::ShiftR))
+        && closes_generic_type(line, index)
+    {
+        return false;
+    }
+    trailing_continuation(token.kind)
+}
+
+/// Recognises a final `>` / `>>` as the balanced close of a type
+/// argument list in a type annotation. Requiring a type-context token
+/// before the matching `<` keeps compact comparisons such as `x<y>`
+/// in the operator path.
+fn closes_generic_type(line: &Line<'_>, close_index: usize) -> bool {
+    let mut depth = match line.toks[close_index].kind {
+        TokenKind::Punct(Punct::Gt) => 1,
+        TokenKind::Punct(Punct::ShiftR) => 2,
+        _ => return false,
+    };
+
+    for (index, token) in line.toks[..close_index].iter().enumerate().rev() {
+        match token.kind {
+            TokenKind::Punct(Punct::Gt) => depth += 1,
+            TokenKind::Punct(Punct::ShiftR) => depth += 2,
+            TokenKind::Punct(Punct::Lt) if depth == 1 => {
+                let context = &line.toks[..index];
+                let Some(context_index) = context.iter().rposition(|candidate| {
+                    matches!(
+                        candidate.kind,
+                        TokenKind::Punct(Punct::Colon | Punct::Arrow)
+                            | TokenKind::Keyword(Keyword::Fn)
+                    )
+                }) else {
+                    return false;
+                };
+                return !context[context_index + 1..].iter().any(|candidate| {
+                    matches!(
+                        candidate.kind,
+                        TokenKind::Punct(Punct::Eq | Punct::FatArrow)
+                    )
+                });
+            }
+            TokenKind::Punct(Punct::Lt) => depth -= 1,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// `true` when a token can trail a continued expression.
 fn trailing_continuation(kind: TokenKind) -> bool {
     matches!(
         kind,
@@ -980,6 +1035,21 @@ mod tests {
         let once = fmt(source);
         assert_eq!(once, source);
         assert_eq!(fmt(&once), once);
+    }
+
+    #[test]
+    fn generic_parameter_type_does_not_indent_the_next_parameter() {
+        let source = "fn many_params(\n    one: Vec<i64>\n    two: i64\n    three: Vec<Vec<String>>\n    four: i64\n) {\n    one[0] + two + four\n}\n";
+        let once = fmt(source);
+        assert_eq!(once, source);
+        assert_eq!(fmt(&once), once);
+    }
+
+    #[test]
+    fn compact_shift_operator_still_continues_the_expression() {
+        let source = "fn shifted(value: i64) -> i64 {\n    value>>\n    1\n}\n";
+        let expected = "fn shifted(value: i64) -> i64 {\n    value>>\n        1\n}\n";
+        assert_eq!(fmt(source), expected);
     }
 
     #[test]
