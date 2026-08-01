@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.39.1 - Native Vec tail returns
+
+- Coerce fixed-array tail expressions to `Vec` when returned from a
+  Vec-returning function, preventing compiled programs from treating stack
+  array storage as a Vec header.
+
 ## 0.39.0 - Direct scripts, REPL discovery, optimizations
 
 - Run `gos FILE [ARGS...]` directly, including executable `#!` scripts; the

@@ -1285,6 +1285,19 @@ pub(crate) fn lower_fn(
             if dest_callable && (src_is_fn_def || src_names_fn) {
                 result = builder.coerce_to_fn_trait_if_needed(result, ret_ty, span);
             }
+            // Mirror the explicit `return` coercion above for a tail array
+            // expression. A function declared as `-> Vec<T>` may end with a
+            // fixed array literal or binding; its caller must receive a
+            // GosVec, not a pointer to stack array storage.
+            if let TyKind::Array { elem, len } = builder.tcx.kind_of(value_ty).clone() {
+                let target_elem = match builder.tcx.kind_of(ret_ty) {
+                    TyKind::Vec(e) | TyKind::Slice(e) => Some(*e),
+                    _ => None,
+                };
+                if target_elem == Some(elem) {
+                    result = builder.coerce_array_to_vec(result, elem, len, span);
+                }
+            }
             builder.emit_assign(
                 Place::local(Local::RETURN),
                 Rvalue::Use(Operand::Copy(Place::local(result))),
