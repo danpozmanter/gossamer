@@ -86,7 +86,7 @@ fn initialize_result(params: &Value) -> Value {
         (
             "instructions",
             s(
-                "Gossamer toolchain server. Run `check` before `run`; read the \
+                "Gossamer toolchain server. Run `check` before `execute`; read the \
                gossamer://skill-card resource (or the skill-card prompt) to learn \
                idiomatic Gossamer before writing .gos code. Prefer receiver methods \
                and metadata fields already returned by standard library records over \

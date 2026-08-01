@@ -124,6 +124,28 @@ fn repl_reports_mixed_numeric_types_without_vm_register_details() {
 }
 
 #[test]
+fn vec_insert_results_do_not_corrupt_persistent_repl_bindings() {
+    let out = run_repl(
+        "let mut values: Vec<i64> = [1, 2, 3]\nlet ok = values.insert(1, 9)\nlet failure = values.insert(99, 8)\n%b\n",
+    );
+    assert!(out.success, "stderr: {}", out.stderr);
+    assert!(out.stderr.is_empty(), "stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("mut values: Vec<i64> = [1, 9, 2, 3]"),
+        "stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout
+            .contains("ok: Result<(), errors::Error> = Ok(())")
+    );
+    assert!(
+        out.stdout
+            .contains("failure: Result<(), errors::Error> = Err(")
+    );
+}
+
+#[test]
 fn repl_reports_the_computed_operand_in_chained_numeric_mismatches() {
     let out = run_repl("0.38 * 40.0 * 50\n0.48 * 40.0 * 40\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);

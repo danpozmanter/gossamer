@@ -2034,30 +2034,29 @@ impl<'a> Builder<'a> {
             "insert" => match &receiver_kind_flat {
                 TyKind::HashMap { .. } => match self.hash_map_value_kind(receiver_ty) {
                     Some(MapValueKind::I64) => match self.hash_map_key_kind(receiver_ty) {
-                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_i64"),
-                        _ => Some("gos_rt_map_insert_i64_i64"),
+                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_i64_opt"),
+                        _ => Some("gos_rt_map_insert_i64_i64_opt"),
                     },
                     Some(MapValueKind::String) => match self.hash_map_key_kind(receiver_ty) {
-                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_str"),
-                        _ => Some("gos_rt_map_insert_i64_str"),
+                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_str_opt"),
+                        _ => Some("gos_rt_map_insert_i64_str_opt"),
                     },
                     Some(MapValueKind::Bytes) => match self.hash_map_key_kind(receiver_ty) {
-                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_i64"),
-                        _ => Some("gos_rt_map_insert_i64_i64"),
+                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_i64_opt"),
+                        _ => Some("gos_rt_map_insert_i64_i64_opt"),
                     },
                     // Aggregate value (Vec / struct): stored as an
                     // 8-byte handle word, so route by KEY kind - a
                     // String key must still use the str path, not the
                     // i64/i64 path that reinterprets the key pointer.
                     _ => match self.hash_map_key_kind(receiver_ty) {
-                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_i64"),
-                        _ => Some("gos_rt_map_insert_i64_i64"),
+                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_i64_opt"),
+                        _ => Some("gos_rt_map_insert_i64_i64_opt"),
                     },
                 },
-                // Vec insertion mutates in place and panics on invalid indices
-                // in both method and qualified form.
+                // Vec insertion mutates in place and returns a bounds error.
                 TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => {
-                    Some("gos_rt_vec_insert_at")
+                    Some("gos_rt_vec_insert_safe")
                 }
                 _ => None,
             },
@@ -2109,13 +2108,12 @@ impl<'a> Builder<'a> {
             },
             "remove" => match &receiver_kind_flat {
                 TyKind::HashMap { .. } => match self.hash_map_key_kind(receiver_ty) {
-                    Some(MapKeyKind::String) => Some("gos_rt_map_remove_str"),
-                    _ => Some("gos_rt_map_remove_i64"),
+                    Some(MapKeyKind::String) => Some("gos_rt_map_pop_str"),
+                    _ => Some("gos_rt_map_pop_i64"),
                 },
-                // Vec removal mutates in place and panics on invalid indices
-                // in both method and qualified form.
+                // Vec removal mutates in place and returns a bounds error.
                 TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => {
-                    Some("gos_rt_vec_remove_at")
+                    Some("gos_rt_vec_remove_safe")
                 }
                 _ => None,
             },
@@ -3546,7 +3544,7 @@ impl<'a> Builder<'a> {
         // it only describes conditional Option/Result copy-blob payloads.
         if matches!(
             runtime_symbol,
-            Some("gos_rt_map_insert_i64_i64" | "gos_rt_map_insert_str_i64")
+            Some("gos_rt_map_insert_i64_i64_opt" | "gos_rt_map_insert_str_i64_opt")
         ) && let TyKind::HashMap { value, .. } = self.tcx.kind_of(lowered_recv_ty)
             && self.type_slot_bytes(*value) > 8
         {
@@ -3637,6 +3635,8 @@ impl<'a> Builder<'a> {
             Some(
                 "gos_rt_map_insert_i64_i64"
                     | "gos_rt_map_insert_str_i64"
+                    | "gos_rt_map_insert_i64_i64_opt"
+                    | "gos_rt_map_insert_str_i64_opt"
                     | "gos_rt_map_or_insert_i64_i64"
                     | "gos_rt_map_or_insert_str_i64"
             )

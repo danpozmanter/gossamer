@@ -967,3 +967,69 @@ fn process_spawn_piped_round_trips_across_tiers() {
     assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
     assert_eq!(native.0, expected, "native output drift");
 }
+
+#[test]
+fn vec_insert_result_and_receiver_match_across_tiers() {
+    let src = r#"
+fn main() {
+    let mut values: Vec<i64> = [1, 2, 3]
+    println!("{}", values.insert(1, 9).is_ok())
+    println!("{} {} {} {}", values[0], values[1], values[2], values[3])
+    println!("{}", values.insert(99, 8).is_err())
+    println!("{} {} {} {}", values[0], values[1], values[2], values[3])
+    println!("{}", values.swap(0, 3).is_ok())
+    println!("{} {} {} {}", values[0], values[1], values[2], values[3])
+    println!("{}", values.swap(0, 99).is_err())
+    println!("{}", values.remove(1).unwrap_or(-1))
+    println!("{}", values.remove(99).is_err())
+}
+"#;
+    let dir = fresh_dir("vec_insert_result");
+    let path = write_source(&dir, "vec_insert_result", src);
+    let expected = "true\n1 9 2 3\ntrue\n1 9 2 3\ntrue\n3 9 2 1\ntrue\n9\ntrue\n";
+
+    let vm = run_vm(&path);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, expected, "vm output drift");
+
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(native.0, expected, "native output drift");
+}
+
+#[test]
+fn hashmap_insert_option_matches_across_tiers() {
+    let src = r#"
+fn main() {
+    let mut values: HashMap<i64, i64> = HashMap::from({})
+    println!("{}", values.insert(4, 10).is_none())
+    println!("{}", values.insert(4, 12).unwrap_or(-1))
+    println!("{}", values.get(4).unwrap_or(-1))
+    println!("{}", values.remove(4).unwrap_or(-1))
+    println!("{}", values.remove(4).is_none())
+    let mut words: HashMap<String, String> = HashMap::new()
+    println!("{}", words.insert("key", "first").is_none())
+    println!("{}", words.insert("key", "second").unwrap_or("missing"))
+    println!("{}", words.get("key").unwrap_or("missing"))
+}
+"#;
+    let dir = fresh_dir("hashmap_insert_option");
+    let path = write_source(&dir, "hashmap_insert_option", src);
+    let expected = "true\n10\n12\n12\ntrue\ntrue\nfirst\nsecond\n";
+
+    let vm = run_vm(&path);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, expected, "vm output drift");
+
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(native.0, expected, "native output drift");
+}

@@ -1914,6 +1914,7 @@ impl Vm {
                     };
                 }
                 Op::VecInsert {
+                    dst,
                     receiver,
                     index,
                     value,
@@ -1929,9 +1930,10 @@ impl Vm {
                         _ => 0,
                     };
                     if idx < 0 || idx > len {
-                        return Err(RuntimeError::Panic(format!(
+                        registers[dst as usize] = crate::builtins::slice_err(format!(
                             "insert: index {idx} out of bounds for length {len}"
-                        )));
+                        ));
+                        continue;
                     }
                     crate::stdlib_builtins::iter::note_vec_structural_mutation(
                         &registers[receiver as usize],
@@ -1998,6 +2000,54 @@ impl Vm {
                         }
                         _ => {}
                     }
+                    registers[dst as usize] = Value::variant("Ok", vec![Value::Unit]);
+                }
+                Op::VecSwap {
+                    dst,
+                    receiver,
+                    a,
+                    b,
+                } => {
+                    let a = super::index_value(&registers[a as usize])?;
+                    let b = super::index_value(&registers[b as usize])?;
+                    let len = match &registers[receiver as usize] {
+                        Value::Array(values) => values.len(),
+                        Value::IntArray(values) => values.len(),
+                        Value::ByteArray(values) => values.len(),
+                        Value::InlineByteArray(values) => values.len(),
+                        Value::ByteVec(values) => values.len(),
+                        Value::FloatVec(values) => values.len(),
+                        _ => 0,
+                    };
+                    let valid = a >= 0
+                        && b >= 0
+                        && usize::try_from(a).is_ok_and(|index| index < len)
+                        && usize::try_from(b).is_ok_and(|index| index < len);
+                    if !valid {
+                        registers[dst as usize] = crate::builtins::slice_err(format!(
+                            "swap: indexes {a} and {b} out of bounds for length {len}"
+                        ));
+                        continue;
+                    }
+                    let (a, b) = (a as usize, b as usize);
+                    match &mut registers[receiver as usize] {
+                        Value::Array(values) => Arc::make_mut(values).swap(a, b),
+                        Value::IntArray(values) => Arc::make_mut(values).swap(a, b),
+                        Value::ByteArray(values) => {
+                            let mut owned = values.to_vec();
+                            owned.swap(a, b);
+                            registers[receiver as usize] = Value::ByteVec(Arc::new(owned));
+                        }
+                        Value::InlineByteArray(values) => {
+                            let mut owned = values.to_vec();
+                            owned.swap(a, b);
+                            registers[receiver as usize] = Value::ByteVec(Arc::new(owned));
+                        }
+                        Value::ByteVec(values) => Arc::make_mut(values).swap(a, b),
+                        Value::FloatVec(values) => Arc::make_mut(values).swap(a, b),
+                        _ => {}
+                    }
+                    registers[dst as usize] = Value::variant("Ok", vec![Value::Unit]);
                 }
                 Op::VecRemove { receiver, index } => {
                     let idx = super::index_value(&registers[index as usize])?;
@@ -2064,9 +2114,10 @@ impl Vm {
                         _ => 0,
                     };
                     if idx < 0 || idx >= len {
-                        return Err(RuntimeError::Panic(format!(
+                        registers[dst as usize] = crate::builtins::slice_err(format!(
                             "remove: index {idx} out of bounds for length {len}"
-                        )));
+                        ));
+                        continue;
                     }
                     crate::stdlib_builtins::iter::note_vec_structural_mutation(
                         &registers[receiver as usize],
@@ -2106,7 +2157,7 @@ impl Vm {
                             ));
                         }
                     };
-                    registers[dst as usize] = removed;
+                    registers[dst as usize] = Value::variant("Ok", vec![removed]);
                 }
                 Op::TupleIndex {
                     dst,
@@ -3886,9 +3937,11 @@ impl Vm {
                             "IntMapInsert: receiver lost typed invariant".to_string(),
                         ));
                     };
-                    map.lock().insert(key, val);
-                    let cloned = Arc::clone(map);
-                    registers[dst_v as usize] = Value::IntMap(cloned);
+                    let previous = map.lock().insert(key, val);
+                    registers[dst_v as usize] = match previous {
+                        Some(value) => Value::variant("Some", vec![Value::Int(value)]),
+                        None => Value::variant("None", Vec::new()),
+                    };
                 },
                 Op::IntMapLen { dst_i, map_reg } => unsafe {
                     let m = registers.get_unchecked(map_reg as usize);

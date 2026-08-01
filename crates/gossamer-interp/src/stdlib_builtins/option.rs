@@ -132,6 +132,22 @@ pub(crate) fn install_option(globals: &mut Vec<(&'static str, Value)>) {
         let qualified: &'static str = Box::leak(format!("option::{short}").into_boxed_str());
         globals.push((qualified, Value::native(qualified, *call)));
     }
+    globals.push((
+        "Option::iter",
+        Value::native("Option::iter", native_option_iter),
+    ));
+    globals.push((
+        "flatten",
+        crate::builtins::builtin_pub("flatten", builtin_option_flatten),
+    ));
+    globals.push((
+        "zip",
+        crate::builtins::builtin_pub("zip", builtin_option_zip),
+    ));
+    globals.push((
+        "or",
+        crate::builtins::builtin_pub("or", builtin_option_or_method),
+    ));
 }
 
 pub(crate) fn is_some_variant(v: &Value) -> bool {
@@ -164,6 +180,12 @@ pub(crate) fn builtin_option_or(args: &[Value]) -> RuntimeResult<Value> {
     let alt = args.first().cloned().unwrap_or_else(none_variant);
     let opt = args.get(1).cloned().unwrap_or_else(none_variant);
     Ok(if is_some_variant(&opt) { opt } else { alt })
+}
+
+fn builtin_option_or_method(args: &[Value]) -> RuntimeResult<Value> {
+    let opt = args.first().cloned().unwrap_or_else(none_variant);
+    let fallback = args.get(1).cloned().unwrap_or_else(none_variant);
+    Ok(if is_some_variant(&opt) { opt } else { fallback })
 }
 
 pub(crate) fn builtin_option_flatten(args: &[Value]) -> RuntimeResult<Value> {

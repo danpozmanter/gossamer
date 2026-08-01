@@ -9,7 +9,7 @@ use crate::exec::{self, ExecOutcome};
 use crate::nav::NavSession;
 use crate::protocol::{field, field_str, obj, response_err, response_ok, s};
 
-/// Default bound on `run` / `build` / `test` subprocess time.
+/// Default bound on `execute` / `build` / `test` subprocess time.
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 
 /// One argument in a tool's input schema.
@@ -79,7 +79,7 @@ const TOOLS: &[Tool] = &[
         }],
     },
     Tool {
-        name: "run",
+        name: "execute",
         description: "Execute a Gossamer program on the bytecode VM (with JIT). Returns \
                       exit code, stdout, and stderr.",
         args: &[
@@ -254,7 +254,7 @@ pub(crate) fn call(
             Some(code) => exec_tool(config, vec!["explain".into(), code.into()], args),
             None => Err("`code` is required".to_string()),
         },
-        "run" => match field_str(args, "file") {
+        "execute" => match field_str(args, "file") {
             Some(file) => {
                 let mut command = vec![file.to_string()];
                 if let Some(extra) = json::as_array(field(args, "args")) {

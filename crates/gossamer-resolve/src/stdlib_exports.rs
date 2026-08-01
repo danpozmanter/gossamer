@@ -258,6 +258,7 @@ pub const STDLIB_QUALIFIED: &[&str] = &[
     "chunked::encode",
     "collections::BTreeMap::new",
     "collections::HashMap::pop",
+    "collections::HashSet::from",
     "collections::HashSet::new",
     "collections::Vec::from",
     "collections::Vec::insert",

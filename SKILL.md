@@ -10,8 +10,9 @@ A goroutine-powered, fast-compiling language with automatic,
 deterministic memory management (reference counting with cycle
 collection, plus `arena { }` regions - no borrow checker, no
 lifetimes, no tracing-GC pauses). Syntax is Rust-flavoured; the
-runtime is Go-shaped (goroutines, channels). Source files end in
-`.gos`, the toolchain binary is `gos`, projects carry a
+runtime is Go-shaped (goroutines, channels). Source files conventionally end
+in `.gos`, but `gos TARGET` runs an existing file with any extension. The
+toolchain binary is `gos`, and projects carry a
 `project.toml` manifest. Pre-1.0.0: APIs may change. Most documented
 surface is available on the bytecode VM, in-process JIT, and LLVM AOT,
 but support is item- and platform-specific; check `gos feature-status`
@@ -23,7 +24,7 @@ Run code early and often - the toolchain is the reference, not this
 card:
 
 - `gos mcp` (stdio MCP server, e.g. `claude mcp add gossamer -- gos
-  mcp`) exposes `check` (structured diagnostics), `run`, `build`,
+  mcp`) exposes `check` (structured diagnostics), `execute`, `build`,
   `test`, `fmt`, `doc`, `explain`, and semantic navigation (`hover`,
   `definition`, `references`, `workspace_symbols`). Prefer these to
   memorized API detail: `hover` answers "what is this and its type",
@@ -94,10 +95,9 @@ Write clear, low-complexity, concise code.
   `0`, `1`, `2`). A range can also be stored and consumed later:
   `let a = 0..3`, then `for i in a { println(i) }`.
 - **Bare integer indices** - `arr[i]` takes `i64`, no `as usize`.
-  Reads and writes outside `[0, len)` panic on every tier. Method-form
-  Vec `insert` accepts `0..=len`; `remove` accepts `0..len`; invalid
-  indices panic in method and qualified forms. Use `len()` guards when
-  absence is recoverable.
+  Indexed reads and writes outside `[0, len)` panic on every tier. Vec
+  `insert` accepts `0..=len` and returns `Result<(), errors::Error>`;
+  `remove` accepts `0..len` and returns `Result<T, errors::Error>`.
 - **`m.inc(k)` / `m.inc(k, by)`** for counters; `m.or_insert(k,
   default)` for get-or-fill (`m.or_insert(k, d).method(args)` writes
   the mutation back into the stored value). `arr.swap(i, j)`.
@@ -120,7 +120,9 @@ Write clear, low-complexity, concise code.
 - **`[v; n]` with runtime `n` builds a Vec** - never write a push loop
   for a constant fill.
 - **Collection constructors infer**: `let mut m = HashMap::new()`,
-  `let mut xs = []` ground from first use.
+  `let empty: HashMap<String, i64> = HashMap::from({})`, and
+  `let mut xs = []` ground from first use. `HashMap::from` also accepts
+  a collection of `(key, value)` pairs; `HashSet::from` accepts values.
 - **Byte reads**: `s[i]` is the byte as `i64`; compare with byte
   literals (`s[i] >= b'0'`), render with `s[i] as char`. Prefer this
   over per-byte `substring`.
@@ -323,8 +325,8 @@ are callable as methods/free functions and materialize results.
 - `[T]` growable (push/pop/swap/sort/sort_by, `contains`, `index_of`,
   `first`/`last`, `rev`, `slice(a, b) -> Result`); `[T; N]`
   fixed; tuples `.0`/`.1`; tuple structs fully usable. Method-call
-  `xs.insert/remove` mutate in place and panic when the index is out of
-  bounds. Qualified calls use the same contract:
+  `xs.insert/remove/swap` mutate in place and return `Result`, with an
+  `Err` for an out-of-bounds index. Qualified calls use the same contract:
   `Vec::insert(&mut xs, i, v)` / `Vec::remove(&mut xs, i)`.
 - `std::collections`: `Vec`, `HashMap` (struct/tuple keys by value;
   aggregate-key maps use `iter()` rather than `keys()` until typed key
@@ -468,15 +470,15 @@ project, `gos .` / `gos build` resolve the entry themselves.
 The REPL starts with `gos <version> REPL [<architecture>-<os>]` and uses the
 `>>>` prompt. Expression output is the value only, with no numbered markers.
 Binding and declaration progress is quiet unless `-v` is enabled. `%help`
-lists commands. `%info`/`%i` shows item help, `%find`/`%f` searches public
-symbols, `%bindings`/`%b`, `%declarations`/`%d`, and `%history`/`%h` inspect
+lists commands. `%info`/`%i` searches public symbols and shows item help,
+`%bindings`/`%b`, `%declarations`/`%d`, and `%history`/`%h` inspect
 the session, `%reset`/`%r` clears it, and `%quit`/`%q` exits. Up/down cycles
 history; Enter continues until braces close; Ctrl-D also exits. Meta-command
 output wraps to the terminal width, capped at 80 columns.
 
 | Command | Purpose |
 |---------|---------|
-| `gos check / parse / run / build FILE` | Typecheck; AST dump; VM+JIT run; fast native build. |
+| `gos check / parse / build FILE`; `gos FILE` | Typecheck; AST dump; fast native build; VM+JIT execution. |
 | `gos build --release [--target T]` | Full LLVM `-O3` (static-musl on Linux); cross to `{x86_64,aarch64}-unknown-linux-{gnu,musl}`. |
 | `gos test / bench PATH` | `#[test]` / `#[bench]`; `--coverage`, `--parallel N`, `--format junit`, `--tier-parity`. |
 | `gos fmt [--check] / lint / doc / explain CODE` | Format; lints; item docs; diagnostic rationale. |

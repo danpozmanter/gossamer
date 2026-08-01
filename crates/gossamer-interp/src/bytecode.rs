@@ -601,11 +601,9 @@ pub enum Op {
         default_i: Reg,
     },
     /// `map.insert(key, value)` for `Value::IntMap`. The map handle
-    /// stays in `map_reg`; `dst_v` receives a clone of the handle
-    /// so callers using the result `m.insert(...)` form get the
-    /// same semantics as `Op::MapInc`'s generic counterpart.
+    /// stays in `map_reg`; `dst_v` receives the previous value as Option<i64>.
     IntMapInsert {
-        /// Destination `Value` register receiving the map handle.
+        /// Destination `Value` register receiving `Option<i64>`.
         dst_v: Reg,
         /// `Value` register holding the `Value::IntMap`.
         map_reg: Reg,
@@ -804,18 +802,28 @@ pub enum Op {
         /// Register holding the Vec, mutated in place.
         receiver: Reg,
     },
-    /// `receiver.insert(index, value)` - in-place insert at `index`.
-    /// Mutates the receiver register's backing storage in place and
-    /// panics when `index` is outside `0..=len`.
-    /// Emitted only for a bare-local Vec receiver in statement
-    /// position.
+    /// `dst = receiver.insert(index, value)` - bounds-checked in-place insert.
+    /// Mutates the receiver only on success and writes `Result<(), Error>`.
     VecInsert {
+        /// Register receiving `Ok(())` or `Err(errors::Error)`.
+        dst: Reg,
         /// Register holding the Vec, mutated in place.
         receiver: Reg,
         /// Register holding the insertion index.
         index: Reg,
         /// Register holding the value to insert.
         value: Reg,
+    },
+    /// `dst = receiver.swap(a, b)` with checked indexes.
+    VecSwap {
+        /// Register receiving `Ok(())` or `Err(errors::Error)`.
+        dst: Reg,
+        /// Register holding the Vec, mutated only on success.
+        receiver: Reg,
+        /// First index.
+        a: Reg,
+        /// Second index.
+        b: Reg,
     },
     /// `receiver.remove(index)` - in-place removal at `index`. Mutates
     /// the receiver register's backing storage in place and panics when
@@ -828,8 +836,7 @@ pub enum Op {
         index: Reg,
     },
     /// `dst = Vec::remove(&mut receiver, index)` - qualified in-place
-    /// removal. Writes the removed element into `dst` and panics when the
-    /// index is outside `0..len`.
+    /// removal. Writes `Result<T, Error>` into `dst`.
     VecRemoveAt {
         /// Register receiving the removed element.
         dst: Reg,

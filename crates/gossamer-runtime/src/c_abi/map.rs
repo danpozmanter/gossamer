@@ -2403,6 +2403,63 @@ pub unsafe extern "C" fn gos_rt_map_remove(m: *mut GosMap, key: *const u8) -> i3
     })
 }
 
+/// Inserts into an i64-keyed, word-valued map and returns the previous value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_insert_i64_i64_opt(m: *mut GosMap, key: i64, val: i64) -> i128 {
+    let previous = unsafe { gos_rt_map_get_i64_opt(m, key) };
+    unsafe { gos_rt_map_insert_i64_i64(m, key, val) };
+    previous
+}
+
+/// Inserts into a string-keyed, word-valued map and returns the previous value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_insert_str_i64_opt(
+    m: *mut GosMap,
+    key: *const c_char,
+    val: i64,
+) -> i128 {
+    let previous = unsafe { gos_rt_map_get_str_opt(m, key) };
+    unsafe { gos_rt_map_insert_str_i64(m, key, val) };
+    previous
+}
+
+/// Inserts into an i64-keyed string map and returns the previous value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_insert_i64_str_opt(
+    m: *mut GosMap,
+    key: i64,
+    val: *const c_char,
+) -> i128 {
+    let previous = unsafe { gos_rt_map_get_i64_opt(m, key) };
+    unsafe { gos_rt_map_insert_i64_str(m, key, val) };
+    previous
+}
+
+/// Inserts into a string-keyed string map and returns the previous value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_insert_str_str_opt(
+    m: *mut GosMap,
+    key: *const c_char,
+    val: *const c_char,
+) -> i128 {
+    let previous = unsafe { gos_rt_map_get_str_opt(m, key) };
+    unsafe { gos_rt_map_insert_str_str(m, key, val) };
+    previous
+}
+
+/// Inserts into an aggregate-keyed map and returns the previous value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_insert_skey_opt(
+    m: *mut GosMap,
+    key: *const u8,
+    desc: *const c_char,
+    val: i64,
+) -> i128 {
+    let previous = unsafe { gos_rt_map_get_skey_opt(m, key, desc) };
+    unsafe { gos_rt_map_insert_skey(m, key, desc, val) };
+    previous
+}
+
 #[cfg(test)]
 mod map_iter_tests {
     use super::*;

@@ -591,7 +591,12 @@ impl<'a> Builder<'a> {
             // to recover V for the Some-binding's payload type, so
             // struct-valued maps bind `p: &Struct` instead of `i64` and
             // `p.field` lowers as a Ref<Struct> field projection.
-            "gos_rt_map_get_i64_opt" | "gos_rt_map_get_str_opt" => {
+            "gos_rt_map_get_i64_opt"
+            | "gos_rt_map_get_str_opt"
+            | "gos_rt_map_insert_i64_i64_opt"
+            | "gos_rt_map_insert_i64_str_opt"
+            | "gos_rt_map_insert_str_i64_opt"
+            | "gos_rt_map_insert_str_str_opt" => {
                 use gossamer_types::TyKind;
                 let ty_kind = self.tcx.kind_of(ty).clone();
                 if matches!(ty_kind, TyKind::Adt { .. }) {
@@ -615,11 +620,20 @@ impl<'a> Builder<'a> {
             }
             // `path::extension` returns `Option<String>`.
             "gos_rt_path_ext" => self.option_string_adt_ty(),
-            "gos_rt_vec_slice_result" | "gos_rt_vec_insert_safe" | "gos_rt_intarr_slice_result" => {
+            "gos_rt_vec_slice_result" | "gos_rt_intarr_slice_result" => {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let v = self.tcx.intern(gossamer_types::TyKind::Vec(i));
                 let e = self.tcx.dyn_error_ty();
                 let substs = gossamer_types::Substs::from_types([v, e]);
+                self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX),
+                    substs,
+                })
+            }
+            "gos_rt_vec_insert_safe" | "gos_rt_vec_swap_safe" => {
+                let unit = self.tcx.unit();
+                let error = self.tcx.dyn_error_ty();
+                let substs = gossamer_types::Substs::from_types([unit, error]);
                 self.tcx.intern(gossamer_types::TyKind::Adt {
                     def: gossamer_resolve::DefId::local(u32::MAX),
                     substs,
@@ -636,9 +650,9 @@ impl<'a> Builder<'a> {
                 })
             }
             "gos_rt_vec_remove_safe" => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let elem = self.vec_receiver_elem_ty(receiver_ty);
                 let e = self.tcx.dyn_error_ty();
-                let substs = gossamer_types::Substs::from_types([i, e]);
+                let substs = gossamer_types::Substs::from_types([elem, e]);
                 self.tcx.intern(gossamer_types::TyKind::Adt {
                     def: gossamer_resolve::DefId::local(u32::MAX),
                     substs,

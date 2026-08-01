@@ -300,9 +300,9 @@ pub(crate) fn builtin_contains(args: &[Value]) -> RuntimeResult<Value> {
 /// Normalises any array-shaped `Value` (boxed `Array`, flat `IntArray`
 /// / `FloatVec`, or all-f64 `FloatArray`) into a `Vec<Value>` for the
 /// read-only collection helpers below.
-fn array_as_values(recv: &Value) -> Option<Vec<Value>> {
+pub(crate) fn array_as_values(recv: &Value) -> Option<Vec<Value>> {
     match recv {
-        Value::Array(items) => Some(items.as_ref().clone()),
+        Value::Array(items) | Value::Tuple(items) => Some(items.as_ref().clone()),
         Value::IntArray(items) => Some(items.iter().map(|n| Value::Int(*n)).collect()),
         Value::ByteArray(items) => Some(
             items
@@ -808,6 +808,34 @@ fn builtin_map_new(_args: &[Value]) -> RuntimeResult<Value> {
     ))))
 }
 
+fn builtin_map_from(args: &[Value]) -> RuntimeResult<Value> {
+    let map = Arc::new(parking_lot::Mutex::new(dense_map_with_capacity(16)));
+    if let Some(source) = args.first()
+        && !matches!(source, Value::Unit)
+    {
+        let Some(entries) = array_as_values(source) else {
+            return Err(RuntimeError::Type(
+                "HashMap::from expects {} or a collection of (key, value) pairs".to_string(),
+            ));
+        };
+        let mut output = map.lock();
+        for entry in entries {
+            let Some(parts) = array_as_values(&entry) else {
+                return Err(RuntimeError::Type(
+                    "HashMap::from expects (key, value) pairs".to_string(),
+                ));
+            };
+            let [key, value] = parts.as_slice() else {
+                return Err(RuntimeError::Type(
+                    "HashMap::from expects (key, value) pairs".to_string(),
+                ));
+            };
+            output.insert(MapKey::from_value(key), value.clone());
+        }
+    }
+    Ok(Value::Map(map))
+}
+
 /// `HashMap::with_capacity(cap)`: pre-sizes generic map storage so the
 /// doubling chain doesn't fire on a hot insert loop. The VM cannot infer the
 /// key/value specialization from this constructor call, so it must preserve
@@ -1070,36 +1098,42 @@ fn builtin_map_insert(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
         Some(Value::Map(map)) => {
             let Some(v) = args.get(1) else {
-                return Ok(Value::Map(Arc::clone(map)));
+                return Ok(none_variant());
             };
             let key = MapKey::from_value(v);
             let value = args.get(2).cloned().unwrap_or(Value::Unit);
-            map.lock().insert(key, value);
-            Ok(Value::Map(Arc::clone(map)))
+            Ok(match map.lock().insert(key, value) {
+                Some(previous) => some_variant(previous),
+                None => none_variant(),
+            })
         }
         Some(Value::IntMap(map)) => {
             let Some(Value::Int(k)) = args.get(1) else {
-                return Ok(Value::IntMap(Arc::clone(map)));
+                return Ok(none_variant());
             };
             let v = match args.get(2) {
                 Some(Value::Int(n)) => *n,
                 _ => 0,
             };
-            map.lock().insert(*k, v);
-            Ok(Value::IntMap(Arc::clone(map)))
+            Ok(match map.lock().insert(*k, v) {
+                Some(previous) => some_variant(Value::Int(previous)),
+                None => none_variant(),
+            })
         }
         Some(Value::StrIntMap(map)) => {
             let Some(Value::String(k)) = args.get(1) else {
-                return Ok(Value::StrIntMap(Arc::clone(map)));
+                return Ok(none_variant());
             };
             let v = match args.get(2) {
                 Some(Value::Int(n)) => *n,
                 _ => 0,
             };
-            map.lock().insert(k.clone(), v);
-            Ok(Value::StrIntMap(Arc::clone(map)))
+            Ok(match map.lock().insert(k.clone(), v) {
+                Some(previous) => some_variant(Value::Int(previous)),
+                None => none_variant(),
+            })
         }
-        _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
+        _ => Ok(none_variant()),
     }
 }
 
@@ -1107,27 +1141,33 @@ fn builtin_map_remove(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
         Some(Value::Map(map)) => {
             let Some(v) = args.get(1) else {
-                return Ok(Value::Map(Arc::clone(map)));
+                return Ok(none_variant());
             };
             let key = MapKey::from_value(v);
-            map.lock().swap_remove(&key);
-            Ok(Value::Map(Arc::clone(map)))
+            Ok(match map.lock().swap_remove(&key) {
+                Some(previous) => some_variant(previous),
+                None => none_variant(),
+            })
         }
         Some(Value::IntMap(map)) => {
             let Some(Value::Int(k)) = args.get(1) else {
-                return Ok(Value::IntMap(Arc::clone(map)));
+                return Ok(none_variant());
             };
-            map.lock().swap_remove(k);
-            Ok(Value::IntMap(Arc::clone(map)))
+            Ok(match map.lock().swap_remove(k) {
+                Some(previous) => some_variant(Value::Int(previous)),
+                None => none_variant(),
+            })
         }
         Some(Value::StrIntMap(map)) => {
             let Some(Value::String(k)) = args.get(1) else {
-                return Ok(Value::StrIntMap(Arc::clone(map)));
+                return Ok(none_variant());
             };
-            map.lock().swap_remove(k);
-            Ok(Value::StrIntMap(Arc::clone(map)))
+            Ok(match map.lock().swap_remove(k) {
+                Some(previous) => some_variant(Value::Int(previous)),
+                None => none_variant(),
+            })
         }
-        _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
+        _ => Ok(none_variant()),
     }
 }
 

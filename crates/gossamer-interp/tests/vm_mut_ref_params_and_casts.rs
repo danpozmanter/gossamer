@@ -166,7 +166,7 @@ fn mut_slice_param_swap_writes_through() {
         r#"
 fn swap_ends(v: &mut [i64]) {
     let n = v.len()
-    v.swap(0, n - 1)
+    let _ = v.swap(0, n - 1)
 }
 
 fn main() {

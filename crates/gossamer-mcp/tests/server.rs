@@ -118,7 +118,7 @@ fn tools_list_names_every_tool_with_schemas() {
     for expected in [
         "check",
         "explain",
-        "run",
+        "execute",
         "build",
         "test",
         "fmt",

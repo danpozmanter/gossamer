@@ -1022,7 +1022,9 @@ mod tests {
     fn hashmap_with_capacity_preserves_string_key_semantics() {
         let map = builtin_map_with_capacity(&[Value::Int(4)]).expect("constructor");
         let key = Value::String(SmolStr::from("present"));
-        let map = builtin_map_insert(&[map, key.clone(), Value::Int(42)]).expect("insert");
+        let inserted =
+            builtin_map_insert(&[map.clone(), key.clone(), Value::Int(42)]).expect("insert");
+        assert!(matches!(inserted, Value::Variant(ref variant) if variant.name.as_str() == "None"));
         let value = builtin_map_get_or(&[map, key, Value::Int(-1)]).expect("get_or");
         assert!(matches!(value, Value::Int(42)));
     }

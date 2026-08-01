@@ -108,6 +108,7 @@ enum BuiltinReceiver {
     String,
     HashMap,
     HashSet,
+    Iterator,
     Option,
     Result,
     Unknown,
@@ -215,6 +216,12 @@ fn classify_type_string(ty: &str) -> ReceiverDescriptor {
         return ReceiverDescriptor {
             builtin: BuiltinReceiver::Option,
             type_name: Some("Option".to_string()),
+        };
+    }
+    if head.starts_with("Iterator<") || head == "Iterator" {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::Iterator,
+            type_name: Some("Iterator".to_string()),
         };
     }
     if head.starts_with("Result<") || head == "Result" {
@@ -525,6 +532,24 @@ const HASHMAP_METHODS: &[BuiltinMethod] = &[
 
 const OPTION_METHODS: &[BuiltinMethod] = &[
     BuiltinMethod {
+        name: "and_then",
+        signature: "fn and_then<U>(self, f: fn(T) -> Option<U>) -> Option<U>",
+        doc: "Chains the contained value through an Option-returning function.",
+        snippet: "and_then(|value| $0)",
+    },
+    BuiltinMethod {
+        name: "filter",
+        signature: "fn filter(self, predicate: fn(T) -> bool) -> Option<T>",
+        doc: "Keeps the value only when the predicate accepts it.",
+        snippet: "filter(|value| $0)",
+    },
+    BuiltinMethod {
+        name: "flatten",
+        signature: "fn flatten(self) -> Option<T>",
+        doc: "Flattens one nested Option level.",
+        snippet: "flatten()$0",
+    },
+    BuiltinMethod {
         name: "is_some",
         signature: "fn is_some(&self) -> bool",
         doc: "Returns `true` when the option is `Some`.",
@@ -537,16 +562,16 @@ const OPTION_METHODS: &[BuiltinMethod] = &[
         snippet: "is_none()$0",
     },
     BuiltinMethod {
-        name: "unwrap",
-        signature: "fn unwrap(self) -> T",
-        doc: "Returns the contained value, panicking if `None`.",
-        snippet: "unwrap()$0",
-    },
-    BuiltinMethod {
         name: "unwrap_or",
         signature: "fn unwrap_or(self, default: T) -> T",
         doc: "Returns the contained value, or `default` if `None`.",
         snippet: "unwrap_or($0)",
+    },
+    BuiltinMethod {
+        name: "iter",
+        signature: "fn iter(self) -> Vec<T>",
+        doc: "Returns a zero-or-one element sequence.",
+        snippet: "iter()$0",
     },
     BuiltinMethod {
         name: "map",
@@ -554,6 +579,48 @@ const OPTION_METHODS: &[BuiltinMethod] = &[
         doc: "Maps the contained value through `f`.",
         snippet: "map(|x| $0)",
     },
+    BuiltinMethod {
+        name: "or",
+        signature: "fn or(self, fallback: Option<T>) -> Option<T>",
+        doc: "Returns this option when present, otherwise the fallback.",
+        snippet: "or($0)",
+    },
+    BuiltinMethod {
+        name: "or_else",
+        signature: "fn or_else(self, fallback: fn() -> Option<T>) -> Option<T>",
+        doc: "Computes a fallback only when this option is None.",
+        snippet: "or_else(|| $0)",
+    },
+    BuiltinMethod {
+        name: "unwrap_or_else",
+        signature: "fn unwrap_or_else(self, fallback: fn() -> T) -> T",
+        doc: "Computes a fallback only when this option is None.",
+        snippet: "unwrap_or_else(|| $0)",
+    },
+    BuiltinMethod {
+        name: "zip",
+        signature: "fn zip<U>(self, other: Option<U>) -> Option<(T, U)>",
+        doc: "Pairs the values when both options are present.",
+        snippet: "zip($0)",
+    },
+];
+
+const ITERATOR_METHODS: &[BuiltinMethod] = &[
+    BuiltinMethod { name: "map", signature: "fn map<U>(self, f: fn(T) -> U) -> Iterator<U>", doc: "Transforms each item.", snippet: "map(|value| $0)" },
+    BuiltinMethod { name: "filter", signature: "fn filter(self, predicate: fn(T) -> bool) -> Iterator<T>", doc: "Keeps accepted items.", snippet: "filter(|value| $0)" },
+    BuiltinMethod { name: "fold", signature: "fn fold<U>(self, initial: U, f: fn(U, T) -> U) -> U", doc: "Folds items into one value.", snippet: "fold($1, |acc, value| $0)" },
+    BuiltinMethod { name: "collect", signature: "fn collect(self) -> Vec<T>", doc: "Materializes all items.", snippet: "collect()$0" },
+    BuiltinMethod { name: "count", signature: "fn count(self) -> i64", doc: "Counts all items.", snippet: "count()$0" },
+    BuiltinMethod { name: "sum", signature: "fn sum(self) -> T", doc: "Sums all items.", snippet: "sum()$0" },
+    BuiltinMethod { name: "min", signature: "fn min(self) -> Option<T>", doc: "Returns the minimum item.", snippet: "min()$0" },
+    BuiltinMethod { name: "max", signature: "fn max(self) -> Option<T>", doc: "Returns the maximum item.", snippet: "max()$0" },
+    BuiltinMethod { name: "take", signature: "fn take(self, count: i64) -> Iterator<T>", doc: "Yields at most count items.", snippet: "take($0)" },
+    BuiltinMethod { name: "skip", signature: "fn skip(self, count: i64) -> Iterator<T>", doc: "Skips the first count items.", snippet: "skip($0)" },
+    BuiltinMethod { name: "enumerate", signature: "fn enumerate(self) -> Iterator<(i64, T)>", doc: "Pairs items with indexes.", snippet: "enumerate()$0" },
+    BuiltinMethod { name: "chain", signature: "fn chain(self, other: Iterator<T>) -> Iterator<T>", doc: "Yields this iterator then another.", snippet: "chain($0)" },
+    BuiltinMethod { name: "zip", signature: "fn zip<U>(self, other: Iterator<U>) -> Iterator<(T, U)>", doc: "Pairs items from two iterators.", snippet: "zip($0)" },
+    BuiltinMethod { name: "flatten", signature: "fn flatten(self) -> Iterator<T>", doc: "Flattens one nested iterator level.", snippet: "flatten()$0" },
+    BuiltinMethod { name: "rev", signature: "fn rev(self) -> Iterator<T>", doc: "Reverses iteration order.", snippet: "rev()$0" },
 ];
 
 const RESULT_METHODS: &[BuiltinMethod] = &[
@@ -615,6 +682,7 @@ fn builtin_methods_for(receiver: &ReceiverDescriptor) -> &'static [BuiltinMethod
         BuiltinReceiver::Vec => VEC_METHODS,
         BuiltinReceiver::String => STRING_METHODS,
         BuiltinReceiver::HashMap | BuiltinReceiver::HashSet => HASHMAP_METHODS,
+        BuiltinReceiver::Iterator => ITERATOR_METHODS,
         BuiltinReceiver::Option => OPTION_METHODS,
         BuiltinReceiver::Result => RESULT_METHODS,
         BuiltinReceiver::Unknown => &[],
@@ -831,4 +899,3 @@ fn workspace_completion_item(item: &WorkspaceItem) -> Value {
 fn short_uri(uri: &str) -> String {
     uri.rsplit('/').next().unwrap_or(uri).to_string()
 }
-

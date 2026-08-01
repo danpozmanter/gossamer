@@ -81,10 +81,12 @@ fn main() {
     }
 
     // ---- Qualified in-place Vec::insert / Vec::remove forms ----
-    Vec::insert(&mut nums, 1, 99)
+    let _ = Vec::insert(&mut nums, 1, 99)
     println!("after insert: len={} [0]={} [1]={}", nums.len(), nums[0], nums[1])
-    let removed = Vec::remove(&mut nums, 0)
-    println!("removed = {}", removed)
+    match Vec::remove(&mut nums, 0) {
+        Ok(removed) => println!("removed = {}", removed),
+        Err(e) => println!("remove err: {}", e.message()),
+    }
 
     // ---- Vec<String>.contains ----
     let langs: Vec<String> = ["text", "json"]

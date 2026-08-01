@@ -877,13 +877,26 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, receiver)?;
             }
             Op::VecInsert {
+                dst,
                 receiver,
                 index,
                 value,
             } => {
+                check_v(op_idx, dst)?;
                 check_v(op_idx, receiver)?;
                 check_v(op_idx, index)?;
                 check_v(op_idx, value)?;
+            }
+            Op::VecSwap {
+                dst,
+                receiver,
+                a,
+                b,
+            } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, receiver)?;
+                check_v(op_idx, a)?;
+                check_v(op_idx, b)?;
             }
             Op::VecRemove { receiver, index } => {
                 check_v(op_idx, receiver)?;
@@ -1958,10 +1971,23 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
             effect.v_writes.push(dst);
         }
         Op::VecInsert {
+            dst,
             receiver,
             index,
             value,
-        } => effect.v_reads.extend([receiver, index, value]),
+        } => {
+            effect.v_reads.extend([receiver, index, value]);
+            effect.v_writes.push(dst);
+        }
+        Op::VecSwap {
+            dst,
+            receiver,
+            a,
+            b,
+        } => {
+            effect.v_reads.extend([receiver, a, b]);
+            effect.v_writes.push(dst);
+        }
         Op::VecRemove { receiver, index }
         | Op::VecRemoveAt {
             receiver, index, ..

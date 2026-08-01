@@ -682,6 +682,22 @@ pub unsafe extern "C" fn gos_rt_vec_swap_i64(v: *mut GosVec, i: i64, j: i64) {
     });
 }
 
+/// Bounds-checked in-place swap returning `Result<(), errors::Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_swap_safe(v: *mut GosVec, i: i64, j: i64) -> i128 {
+    ffi_entry!(0i128, {
+        let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
+        if v.is_null() || i < 0 || i >= len || j < 0 || j >= len {
+            let msg = format!("swap: indices {i} and {j} out of bounds for length {len}");
+            let cs = std::ffi::CString::new(msg).unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            return unsafe { gos_rt_result_new(1, err as i64) };
+        }
+        unsafe { gos_rt_vec_swap_i64(v, i, j) };
+        unsafe { gos_rt_result_new(0, 0) }
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_get_ptr(v: *const GosVec, idx: i64) -> *mut u8 {
     ffi_entry!(std::ptr::null_mut(), {
@@ -1156,10 +1172,9 @@ pub unsafe extern "C" fn gos_rt_floatarr_slice_result(
     })
 }
 
-/// Legacy internal bounds-checked insert helper retained for ABI compatibility.
-/// Type-checked Gossamer calls use [`gos_rt_vec_insert_at`].
+/// Bounds-checked in-place insert returning `Result<(), errors::Error>`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_insert_safe(v: *const GosVec, idx: i64, value: i64) -> i128 {
+pub unsafe extern "C" fn gos_rt_vec_insert_safe(v: *mut GosVec, idx: i64, value: i64) -> i128 {
     ffi_entry!(0i128, {
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if idx < 0 || idx > len {
@@ -1168,30 +1183,8 @@ pub unsafe extern "C" fn gos_rt_vec_insert_safe(v: *const GosVec, idx: i64, valu
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let elem_bytes = if v.is_null() {
-            8u32
-        } else {
-            unsafe { (*v).elem_bytes }
-        };
-        let out = unsafe { gos_rt_vec_with_capacity(elem_bytes, len + 1) };
-        let val_ptr = std::ptr::addr_of!(value).cast::<u8>();
-        // Push elements [0, idx) verbatim, then the inserted value,
-        // then [idx, len). One straight-line build of the output Vec.
-        if v.is_null() {
-            unsafe { gos_rt_vec_push(out, val_ptr) };
-        } else {
-            let src = unsafe { &*v };
-            for i in 0..idx {
-                let src_ptr = unsafe { src.ptr.add((i as usize) * (elem_bytes as usize)) };
-                unsafe { gos_rt_vec_push(out, src_ptr) };
-            }
-            unsafe { gos_rt_vec_push(out, val_ptr) };
-            for i in idx..len {
-                let src_ptr = unsafe { src.ptr.add((i as usize) * (elem_bytes as usize)) };
-                unsafe { gos_rt_vec_push(out, src_ptr) };
-            }
-        }
-        unsafe { gos_rt_result_new(0, out as i64) }
+        unsafe { gos_rt_vec_insert_at(v, idx, value) };
+        unsafe { gos_rt_result_new(0, 0) }
     })
 }
 
@@ -1223,8 +1216,7 @@ pub unsafe extern "C" fn gos_rt_vec_insert_at(v: *mut GosVec, idx: i64, value: i
     });
 }
 
-/// Legacy internal bounds-checked remove helper retained for ABI compatibility.
-/// Type-checked Gossamer calls use [`gos_rt_vec_remove_at`].
+/// Bounds-checked in-place removal returning `Result<T, errors::Error>`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *mut GosVec, idx: i64) -> i128 {
     ffi_entry!(0i128, {

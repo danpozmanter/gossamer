@@ -90,7 +90,12 @@ fn significant(source: &str) -> Vec<(TokenKind, String)> {
             }
             let next_start = tokens[index + 1..]
                 .iter()
-                .find(|next| !matches!(next.kind, TokenKind::Whitespace))
+                .find(|next| {
+                    !matches!(
+                        next.kind,
+                        TokenKind::Whitespace | TokenKind::LineComment | TokenKind::BlockComment
+                    )
+                })
                 .map_or(source.len(), |next| next.span.start as usize);
             !source[token.span.end as usize..next_start].contains('\n')
         })
@@ -184,6 +189,15 @@ fn block_comments_survive_inline_and_standalone() {
 fn comments_inside_match_arms_and_chains() {
     let source = "fn label(n: i64) -> String {\n    match n {\n        // negative side\n        x if x < 0 => \"neg\",\n        // everything else\n        _ => \"pos\",\n    }\n}\n\nfn chain(input: [i64]) -> i64 {\n    input\n        // keep evens only\n        |> filter(|n: i64| n % 2 == 0)\n        |> count\n}\n";
     let expected = "fn label(n: i64) -> String {\n    match n {\n        // negative side\n        x if x < 0 => \"neg\"\n        // everything else\n        _ => \"pos\"\n    }\n}\n\nfn chain(input: [i64]) -> i64 {\n    input\n        // keep evens only\n        |> filter(|n: i64| n % 2 == 0)\n        |> count\n}\n";
+    assert_eq!(fmt(source), expected);
+}
+
+#[test]
+fn match_arm_commas_before_trailing_comments_are_removed() {
+    let source =
+        "match a {\n    1 => a + 1, // line comment\n    2 => a + 2, /* block comment */\n}\n";
+    let expected =
+        "match a {\n    1 => a + 1 // line comment\n    2 => a + 2 /* block comment */\n}\n";
     assert_eq!(fmt(source), expected);
 }
 

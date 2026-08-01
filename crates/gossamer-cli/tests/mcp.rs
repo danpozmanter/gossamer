@@ -79,7 +79,7 @@ fn json_path(path: &std::path::Path) -> String {
 }
 
 #[test]
-fn check_run_and_timeout_work_end_to_end() {
+fn check_execute_and_timeout_work_end_to_end() {
     let dir = std::env::temp_dir().join(format!("gos-mcp-e2e-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
 
@@ -101,15 +101,15 @@ fn check_run_and_timeout_work_end_to_end() {
     // A clean program runs and its stdout comes back.
     let ok = dir.join("ok.gos");
     std::fs::write(&ok, "fn main() { println!(\"mcp says {}\", 21 * 2) }\n").unwrap();
-    let text = client.call_tool("run", &format!("{{\"file\":\"{}\"}}", json_path(&ok)));
-    assert!(text.contains("exit code: 0"), "run output was: {text}");
-    assert!(text.contains("mcp says 42"), "run output was: {text}");
+    let text = client.call_tool("execute", &format!("{{\"file\":\"{}\"}}", json_path(&ok)));
+    assert!(text.contains("exit code: 0"), "execute output was: {text}");
+    assert!(text.contains("mcp says 42"), "execute output was: {text}");
 
     // An infinite loop is killed at the timeout instead of hanging.
     let spin = dir.join("spin.gos");
     std::fs::write(&spin, "fn main() { loop { } }\n").unwrap();
     let text = client.call_tool(
-        "run",
+        "execute",
         &format!("{{\"file\":\"{}\",\"timeout_ms\":500}}", json_path(&spin)),
     );
     assert!(text.contains("timed out"), "timeout output was: {text}");

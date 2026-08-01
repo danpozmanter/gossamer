@@ -93,6 +93,25 @@ fn fmt_rewrite_preserves_comments_and_macros() {
 }
 
 #[test]
+fn fmt_removes_match_arm_commas_before_trailing_comments() {
+    let source = "fn main() {\n    let a = 1\n    let value = match a {\n        1 => a + 1, // line comment\n        2 => a + 2, /* block comment */\n    }\n    println(value)\n}\n";
+    let expected = "fn main() {\n    let a = 1\n    let value = match a {\n        1 => a + 1 // line comment\n        2 => a + 2 /* block comment */\n    }\n    println(value)\n}\n";
+    let fixture = write_fixture("match-arm-comments", source);
+    let out = Command::new(gos_bin())
+        .arg("fmt")
+        .arg(&fixture)
+        .output()
+        .expect("spawn fmt");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(std::fs::read_to_string(&fixture).unwrap(), expected);
+    let _ = std::fs::remove_file(&fixture);
+}
+
+#[test]
 fn fmt_refuses_unparseable_input_and_leaves_file_untouched() {
     let broken = "fn broken( {\n";
     let fixture = write_fixture("broken", broken);

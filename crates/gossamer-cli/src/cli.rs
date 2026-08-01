@@ -5,10 +5,11 @@
 //! `run` to a single line that delegates to a `crate::cmd::*`
 //! module.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use clap::{Arg, CommandFactory, FromArgMatches, Parser, Subcommand, ValueHint};
 
 use crate::cmd::{self, TestOpts};
 use crate::style;
@@ -498,7 +499,7 @@ enum Command {
     /// to be invoked by an editor, not a human.
     Lsp,
     /// Start the model-context-protocol server on stdio. Exposes the
-    /// toolchain (check / explain / run / build / test / fmt / doc)
+    /// toolchain (check / explain / execute / build / test / fmt / doc)
     /// and semantic navigation as MCP tools for AI coding agents;
     /// intended to be launched by an MCP client, not a human.
     Mcp,
@@ -669,6 +670,7 @@ fn parse_direct_script(args: &[std::ffi::OsString]) -> Option<DirectScript> {
                 let path = Path::new(&file);
                 if !path.is_file()
                     && !path.is_dir()
+                    && !crate::paths::resolve_gos_source(&file).is_file()
                     && path.extension().is_none_or(|extension| extension != "gos")
                 {
                     return None;
@@ -689,6 +691,42 @@ fn parse_direct_script(args: &[std::ffi::OsString]) -> Option<DirectScript> {
         index += 1;
     }
     None
+}
+
+/// Builds the command tree used for generated shell completions.
+///
+/// Direct script execution is recognized before Clap parses the command line,
+/// so it does not otherwise appear in Clap's schema. Adding a file-path
+/// positional here teaches shells that `gos <TAB>` accepts any path while
+/// retaining completion for the ordinary subcommands.
+fn completion_command() -> clap::Command {
+    Cli::command().arg(
+        Arg::new("script")
+            .help("Path to a Gossamer script or project directory")
+            .value_name("TARGET")
+            .value_hint(ValueHint::FilePath)
+            .index(1),
+    )
+}
+
+fn completion_script(shell: clap_complete::Shell) -> Vec<u8> {
+    let mut output = Vec::new();
+    clap_complete::generate(shell, &mut completion_command(), "gos", &mut output);
+    if shell == clap_complete::Shell::Bash {
+        let script = String::from_utf8(output).expect("Clap emits UTF-8 completion text");
+        let script = script.replacen(
+            "if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then",
+            "if [[ ${cur} == -* ]] ; then",
+            1,
+        );
+        let script = script.replacen(
+            "COMPREPLY=( $(compgen -W \"${opts}\" -- \"${cur}\") )\n            return 0",
+            "COMPREPLY=( $(compgen -W \"${opts}\" -- \"${cur}\") $(compgen -f -- \"${cur}\") )\n            return 0",
+            2,
+        );
+        return script.into_bytes();
+    }
+    output
 }
 
 fn parse_cli() -> Cli {
@@ -924,8 +962,7 @@ fn dispatch(command: Option<Command>, verbose: bool, eval: Option<String>) -> an
             Ok(())
         }
         Some(Command::Completion { shell }) => {
-            use clap::CommandFactory;
-            clap_complete::generate(shell, &mut Cli::command(), "gos", &mut std::io::stdout());
+            std::io::stdout().write_all(&completion_script(shell))?;
             Ok(())
         }
         Some(Command::Cache {
@@ -1124,7 +1161,7 @@ fn dispatch_build(
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, configure_pgo, is_direct_script_invocation};
+    use super::{Cli, completion_script, configure_pgo, is_direct_script_invocation};
     use clap::Parser;
 
     fn os_args(args: &[&str]) -> Vec<std::ffi::OsString> {
@@ -1135,6 +1172,34 @@ mod tests {
     fn direct_gos_file_is_reserved_for_script_execution() {
         assert!(is_direct_script_invocation(&os_args(&["gos", "tool.gos"])));
         assert!(!is_direct_script_invocation(&os_args(&["gos", "repl"])));
+    }
+
+    #[test]
+    fn direct_script_accepts_existing_files_with_any_extension() {
+        let root =
+            std::env::temp_dir().join(format!("gossamer-direct-script-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create fixture directory");
+        let extensionless = root.join("extensionless");
+        let arbitrary = root.join("program.txt");
+        let inferred = root.join("inferred.gos");
+        for path in [&extensionless, &arbitrary, &inferred] {
+            std::fs::write(path, "fn main() {}\n").expect("write fixture");
+        }
+
+        for path in [&extensionless, &arbitrary, &root.join("inferred")] {
+            assert!(is_direct_script_invocation(&[
+                "gos".into(),
+                path.as_os_str().to_owned(),
+            ]));
+        }
+    }
+
+    #[test]
+    fn generated_completion_offers_current_directory_filenames() {
+        let output = completion_script(clap_complete::Shell::Bash);
+        let output = String::from_utf8(output).expect("completion is utf8");
+        assert!(output.contains("compgen -f -- \"${cur}\""), "{output}");
+        assert!(!output.contains("gos__run"), "{output}");
     }
 
     #[test]

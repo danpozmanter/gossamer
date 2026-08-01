@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.39.2 - Consistent built-ins, REPL discovery, and direct execution
+
+- Run existing source files through `gos TARGET` regardless of filename
+  extension, infer a neighboring `.gos` source when the extension is omitted,
+  and complete every current-directory filename alongside subcommands.
+- Make `%info` and `%explain` expose the complete Option and Iterator method
+  surfaces from one signature catalog, and cover every standard-library type
+  with discovery tests. Keep LSP completion aligned with these methods.
+- Match Rust reference-pattern mutability, preserve aggregate values and types
+  through reference bindings, and add a comprehensive assignment matrix.
+- Format multiline match arms correctly when optional commas precede line or
+  block comments.
+- Return bounds failures from Vec insertion, removal, and swapping as `Result`
+  without replacing the receiver, return the previous value from
+  `HashMap::insert`, and add
+  `HashMap::from({})`, pair collection, and `HashSet::from` constructors.
+- Refresh the skill card, README, MCP execution tool, and command descriptions
+  for the direct-execution CLI and current REPL surface.
+
 ## 0.39.1 - Native Vec tail returns, error messages, CI testing
 
 - Coerce fixed-array tail expressions to `Vec` when returned from a

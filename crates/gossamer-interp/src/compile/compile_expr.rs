@@ -2260,7 +2260,9 @@ impl<'tcx> FnBuilder<'tcx> {
             ("insert", 2) => {
                 let index = self.compile_expr(&args[0])?;
                 let value = self.compile_expr(&args[1])?;
+                let dst = self.alloc_reg();
                 self.emit(Op::VecInsert {
+                    dst,
                     receiver: target_reg,
                     index,
                     value,
@@ -2293,6 +2295,49 @@ impl<'tcx> FnBuilder<'tcx> {
         // `swap`, `insert`) routes to the user method.
         if let Some(reg) = self.try_compile_mut_self_method(receiver, name, args)? {
             return Ok(reg);
+        }
+        // Vec::insert is fallible and returns a Result independently from the
+        // updated receiver. Keep those two values separate so an `Ok` or
+        // `Err` can never replace the Vec binding in expression position.
+        if name.name == "insert" && args.len() == 2 {
+            let mut kind = self.tcx.kind(receiver.ty).cloned();
+            while let Some(TyKind::Ref { inner, .. }) = kind {
+                kind = self.tcx.kind(inner).cloned();
+            }
+            if matches!(kind, Some(TyKind::Vec(_) | TyKind::Slice(_))) {
+                let receiver_reg = self.compile_expr(receiver)?;
+                let index = self.compile_expr(&args[0])?;
+                let value = self.compile_expr(&args[1])?;
+                let dst = self.alloc_reg();
+                self.emit(Op::VecInsert {
+                    dst,
+                    receiver: receiver_reg,
+                    index,
+                    value,
+                });
+                self.compile_place_store(receiver, receiver_reg)?;
+                return Ok(dst);
+            }
+        }
+        // Vec::remove is fallible and returns the removed value independently
+        // from the updated receiver.
+        if name.name == "remove" && args.len() == 1 {
+            let mut kind = self.tcx.kind(receiver.ty).cloned();
+            while let Some(TyKind::Ref { inner, .. }) = kind {
+                kind = self.tcx.kind(inner).cloned();
+            }
+            if matches!(kind, Some(TyKind::Vec(_) | TyKind::Slice(_))) {
+                let receiver_reg = self.compile_expr(receiver)?;
+                let index = self.compile_expr(&args[0])?;
+                let dst = self.alloc_reg();
+                self.emit(Op::VecRemoveAt {
+                    dst,
+                    receiver: receiver_reg,
+                    index,
+                });
+                self.compile_place_store(receiver, receiver_reg)?;
+                return Ok(dst);
+            }
         }
         // `s.byte_at(i)` on a statically-`String` receiver: emit the
         // dedicated `Op::StrByteAt` rather than routing through the
@@ -2537,83 +2582,18 @@ impl<'tcx> FnBuilder<'tcx> {
             self.emit(Op::Wide { idx: wide_idx });
             return Ok(dst);
         }
-        // `arr.swap(i, j)` super-instruction. The generic
-        // `MethodCall` dispatch routes through the `swap` builtin
-        // which returns a fresh aggregate, then the writeback `Op::Move`
-        // copies it back into the receiver's slot. That works under
-        // pure bytecode but the cranelift JIT lowers MIR for the
-        // function body and has no intrinsic for the writeback -
-        // the JIT silently drops the mutation, leaving callers
-        // looping on stale data. Inlining the swap as
-        // `t = recv[i]; recv[i] = recv[j]; recv[j] = t` keeps the
-        // semantics identical between bytecode and JIT and turns a
-        // value-clone-per-swap into two index reads + two index
-        // writes (in place).
         if name.name == "swap" && args.len() == 2 {
-            let recv_reg = self.compile_expr(receiver)?;
-            // Typed-storage fast paths: when the receiver is a
-            // tracked `flat_int_locals` / `flat_float_locals` we
-            // emit the fused `IntArraySwap` / `FloatVecSwap` op
-            // (one dispatch + one `Vec::swap` in place) instead of
-            // the four-op generic IndexGet/IndexSet dance. fannkuch
-            // hits this on `[i64; 16]`.
-            if self.flat_int_locals.contains(&recv_reg) {
-                let i_tr = self.compile_expr_ex(&args[0])?;
-                let i_i = self.as_i64(i_tr);
-                let j_tr = self.compile_expr_ex(&args[1])?;
-                let j_i = self.as_i64(j_tr);
-                self.emit(Op::IntArraySwap {
-                    base: recv_reg,
-                    i_i,
-                    j_i,
-                });
-                let dst = self.alloc_reg();
-                let unit_idx = self.const_idx(ConstKey::Unit, Value::Unit);
-                self.emit(Op::LoadConst { dst, idx: unit_idx });
-                return Ok(dst);
-            }
-            if self.flat_float_locals.contains(&recv_reg) {
-                let i_tr = self.compile_expr_ex(&args[0])?;
-                let i_i = self.as_i64(i_tr);
-                let j_tr = self.compile_expr_ex(&args[1])?;
-                let j_i = self.as_i64(j_tr);
-                self.emit(Op::FloatVecSwap {
-                    base: recv_reg,
-                    i_i,
-                    j_i,
-                });
-                let dst = self.alloc_reg();
-                let unit_idx = self.const_idx(ConstKey::Unit, Value::Unit);
-                self.emit(Op::LoadConst { dst, idx: unit_idx });
-                return Ok(dst);
-            }
-            let i_reg = self.compile_expr(&args[0])?;
-            let j_reg = self.compile_expr(&args[1])?;
-            let temp_i = self.alloc_reg();
-            self.emit(Op::IndexGet {
-                dst: temp_i,
-                base: recv_reg,
-                index: i_reg,
-            });
-            let temp_j = self.alloc_reg();
-            self.emit(Op::IndexGet {
-                dst: temp_j,
-                base: recv_reg,
-                index: j_reg,
-            });
-            self.emit(Op::IndexSet {
-                base: recv_reg,
-                index: i_reg,
-                value: temp_j,
-            });
-            self.emit(Op::IndexSet {
-                base: recv_reg,
-                index: j_reg,
-                value: temp_i,
-            });
+            let receiver_reg = self.compile_expr(receiver)?;
+            let a = self.compile_expr(&args[0])?;
+            let b = self.compile_expr(&args[1])?;
             let dst = self.alloc_reg();
-            let unit_idx = self.const_idx(ConstKey::Unit, Value::Unit);
-            self.emit(Op::LoadConst { dst, idx: unit_idx });
+            self.emit(Op::VecSwap {
+                dst,
+                receiver: receiver_reg,
+                a,
+                b,
+            });
+            self.compile_place_store(receiver, receiver_reg)?;
             return Ok(dst);
         }
         // Typed-IntMap method dispatch fast paths. Skip the
@@ -2965,9 +2945,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 name.name.as_str(),
                 "sort" | "sort_by" | "sort_by_key" | "reverse" | "swap"
             ),
-            Some(TyKind::HashMap { .. }) => {
-                matches!(name.name.as_str(), "insert" | "remove" | "clear")
-            }
+            Some(TyKind::HashMap { .. }) => name.name == "clear",
             Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 9 => {
                 matches!(name.name.as_str(), "push_back" | "push_front")
             }
@@ -3135,13 +3113,15 @@ impl<'tcx> FnBuilder<'tcx> {
             let index = self.compile_expr(&args[1])?;
             if method.name == "insert" {
                 let value = self.compile_expr(&args[2])?;
+                let dst = self.alloc_reg();
                 self.emit(Op::VecInsert {
+                    dst,
                     receiver,
                     index,
                     value,
                 });
                 self.compile_place_store(place, receiver)?;
-                return Ok(self.load_unit());
+                return Ok(dst);
             }
             let dst = self.alloc_reg();
             self.emit(Op::VecRemoveAt {
@@ -3203,24 +3183,32 @@ impl<'tcx> FnBuilder<'tcx> {
         // `HashMap::new` and the result type is `HashMap<i64, i64>`,
         // emit a dedicated `Op::BuildIntMap` so the receiver lands
         // as `Value::IntMap` and downstream typed ops fire.
-        if args.is_empty() {
+        if args.len() <= 1 {
             if let HirExprKind::Path { segments, .. } = &callee.kind {
                 let segs: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
                 // `BTreeMap` resolves to `TyKind::HashMap` and shares the map
                 // runtime, so an i64-keyed `BTreeMap::new` lands as a typed
                 // `IntMap` / `StrIntMap` exactly like `HashMap::new`. IntMap
                 // iteration is key-sorted, matching BTreeMap's ordering.
-                let is_map_new = matches!(
-                    segs.as_slice(),
-                    ["HashMap" | "BTreeMap", "new"]
-                        | ["collections", "HashMap" | "BTreeMap", "new"]
-                );
-                if is_map_new && self.is_int_map_ty(result_ty) {
+                let is_map_new = args.is_empty()
+                    && matches!(
+                        segs.as_slice(),
+                        ["HashMap" | "BTreeMap", "new"]
+                            | ["collections", "HashMap" | "BTreeMap", "new"]
+                    );
+                let is_empty_map_from = args.len() == 1
+                    && matches!(self.tcx.kind(args[0].ty), Some(TyKind::Unit))
+                    && matches!(
+                        segs.as_slice(),
+                        ["HashMap" | "BTreeMap", "from"]
+                            | ["collections", "HashMap" | "BTreeMap", "from"]
+                    );
+                if (is_map_new || is_empty_map_from) && self.is_int_map_ty(result_ty) {
                     let dst = self.alloc_reg();
                     self.emit(Op::BuildIntMap { dst_v: dst });
                     return Ok(dst);
                 }
-                if is_map_new && self.is_str_int_map_ty(result_ty) {
+                if (is_map_new || is_empty_map_from) && self.is_str_int_map_ty(result_ty) {
                     let dst = self.alloc_reg();
                     self.emit(Op::BuildStrIntMap { dst_v: dst });
                     return Ok(dst);

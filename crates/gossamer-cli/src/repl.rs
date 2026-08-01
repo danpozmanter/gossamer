@@ -795,8 +795,8 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "HashMap",
         name: "insert",
         kind: "method",
-        signature: "fn insert<K, V>(self: &mut HashMap<K, V>, key: K, value: V) -> ()",
-        doc: "Inserts or replaces a key-value pair.",
+        signature: "fn insert<K, V>(self: &mut HashMap<K, V>, key: K, value: V) -> Option<V>",
+        doc: "Inserts a pair and returns the previous value when present.",
     },
     CoreMethodHelp {
         owner: "HashMap",
@@ -823,8 +823,8 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "HashMap",
         name: "remove",
         kind: "method",
-        signature: "fn remove<K, V>(self: &mut HashMap<K, V>, key: K) -> ()",
-        doc: "Removes a key in place.",
+        signature: "fn remove<K, V>(self: &mut HashMap<K, V>, key: K) -> Option<V>",
+        doc: "Removes a key and returns its previous value when present.",
     },
     CoreMethodHelp {
         owner: "HashMap",
@@ -893,8 +893,8 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "BTreeMap",
         name: "insert",
         kind: "method",
-        signature: "fn insert<K, V>(self: &mut BTreeMap<K, V>, key: K, value: V) -> ()",
-        doc: "Inserts or replaces a key-value pair.",
+        signature: "fn insert<K, V>(self: &mut BTreeMap<K, V>, key: K, value: V) -> Option<V>",
+        doc: "Inserts a pair and returns the previous value when present.",
     },
     CoreMethodHelp {
         owner: "BTreeMap",
@@ -1098,34 +1098,6 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         kind: "method",
         signature: "fn peek_back<T>(self: VecDeque<T>) -> Option<T>",
         doc: "Returns the back value without removing it.",
-    },
-    CoreMethodHelp {
-        owner: "Option",
-        name: "map",
-        kind: "method",
-        signature: "fn map<T, U>(self: Option<T>, f: fn(T) -> U) -> Option<U>",
-        doc: "Maps Some through a closure and leaves None unchanged.",
-    },
-    CoreMethodHelp {
-        owner: "Option",
-        name: "and_then",
-        kind: "method",
-        signature: "fn and_then<T, U>(self: Option<T>, f: fn(T) -> Option<U>) -> Option<U>",
-        doc: "Chains an Option-returning closure.",
-    },
-    CoreMethodHelp {
-        owner: "Option",
-        name: "is_some",
-        kind: "method",
-        signature: "fn is_some<T>(self: Option<T>) -> bool",
-        doc: "Returns true for Some.",
-    },
-    CoreMethodHelp {
-        owner: "Option",
-        name: "is_none",
-        kind: "method",
-        signature: "fn is_none<T>(self: Option<T>) -> bool",
-        doc: "Returns true for None.",
     },
     CoreMethodHelp {
         owner: "Result",
@@ -1602,6 +1574,7 @@ impl ReplValueType {
             }
             Some(gossamer_types::TyKind::String) => (Some("String".to_string()), false),
             Some(gossamer_types::TyKind::HashMap { .. }) => (Some("HashMap".to_string()), false),
+            Some(gossamer_types::TyKind::Iterator(_)) => (Some("Iterator".to_string()), false),
             Some(gossamer_types::TyKind::Sender(_)) => (Some("Sender".to_string()), false),
             Some(gossamer_types::TyKind::Receiver(_)) => (Some("Receiver".to_string()), false),
             Some(gossamer_types::TyKind::JoinHandle(_)) => (Some("JoinHandle".to_string()), false),
@@ -2505,6 +2478,8 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
             },
         );
     }
+    add_data_last_std_methods(&mut entries, "Option", "std::option");
+    add_data_last_std_methods(&mut entries, "Iterator", "std::iter");
     for registered in gossamer_interp::registered_names() {
         if let Some((owner, name)) = registered_core_method_path(registered) {
             let kind = if runtime_assoc_name(&name) {
@@ -2512,15 +2487,12 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
             } else {
                 "method"
             };
-            // Registration provides a dispatch name, not a callable type
-            // contract. Never invent `...` parameters from that incomplete
-            // information: an omitted catalog entry is preferable to a
-            // confidently false signature. New runtime methods must add
-            // checker-owned metadata through this function before `%info`
-            // exposes them.
-            let Some(signature) = runtime_core_method_signature(&owner, &name, kind) else {
-                continue;
-            };
+            // A runtime registration is authoritative evidence that the
+            // option exists. Keep it visible even while its richer checker
+            // signature metadata is being filled in. An empty signature is
+            // truthful and renders as a method name, unlike the old `...`
+            // placeholder that pretended to know an argument contract.
+            let signature = runtime_core_method_signature(&owner, &name, kind).unwrap_or_default();
             let doc = runtime_core_method_doc(&owner, &name)
                 .map_or_else(|| format!("Built-in {kind} on {owner}."), str::to_string);
             insert_core_method_entry(
@@ -2536,6 +2508,68 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
         }
     }
     entries.into_values().collect()
+}
+
+/// Exposes a data-last standard module as receiver methods without maintaining
+/// a second signature or documentation table. Constructors whose final
+/// parameter is not the collection value are excluded automatically.
+fn add_data_last_std_methods(
+    entries: &mut BTreeMap<(String, String), CoreMethodEntry>,
+    owner: &str,
+    module_path: &str,
+) {
+    let Some(module) = gossamer_std::registry::modules()
+        .iter()
+        .find(|module| module.path == module_path)
+    else {
+        return;
+    };
+    for item in module.items {
+        if item.kind != StdItemKind::Function {
+            continue;
+        }
+        let Some(signature) = data_last_method_signature(owner, module_path, item.name) else {
+            continue;
+        };
+        insert_core_method_entry(
+            entries,
+            CoreMethodEntry {
+                owner: owner.to_string(),
+                name: item.name.to_string(),
+                kind: "method",
+                signature,
+                doc: item.doc.to_string(),
+            },
+        );
+    }
+}
+
+fn data_last_method_signature(owner: &str, module_path: &str, name: &str) -> Option<String> {
+    let row = gossamer_types::stdlib_function_signature(module_path, name)?;
+    let shape = gossamer_types::stdlib_function_shape(module_path, name)?;
+    let (receiver, leading) = shape.params.split_last()?;
+    let receiver_matches = match owner {
+        "Option" => receiver.ty.starts_with("Option<"),
+        "Iterator" => receiver.ty.starts_with("Vec<"),
+        _ => false,
+    };
+    if !receiver_matches {
+        return None;
+    }
+    let name_start = row.find(name)?;
+    let open = row[name_start..].find('(')? + name_start;
+    let generics = row.get(name_start + name.len()..open)?;
+    let mut params = vec![format!("self: {}", receiver.ty)];
+    params.extend(
+        leading
+            .iter()
+            .map(|param| format!("{}: {}", param.name, param.ty)),
+    );
+    Some(format!(
+        "fn {name}{generics}({}) -> {}",
+        params.join(", "),
+        shape.return_ty
+    ))
 }
 
 fn runtime_core_method_signature(owner: &str, name: &str, kind: &str) -> Option<String> {
@@ -3521,6 +3555,88 @@ mod tests {
                 "missing REPL metadata for {query}"
             );
         }
+    }
+
+    #[test]
+    fn every_std_defined_type_is_available_to_info() {
+        let mut missing = Vec::new();
+        for module in gossamer_std::registry::modules() {
+            for item in module.items {
+                if item.kind == StdItemKind::Type
+                    && matching_items(&format!("{}::{}", module.path, item.name)).is_empty()
+                {
+                    missing.push(format!("{}::{}", module.path, item.name));
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "std types missing from %info: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn every_runtime_method_on_a_std_defined_type_is_available_to_explain() {
+        let std_type_names = gossamer_std::registry::modules()
+            .iter()
+            .flat_map(|module| module.items)
+            .filter(|item| item.kind == StdItemKind::Type)
+            .map(|item| item.name)
+            .collect::<std::collections::BTreeSet<_>>();
+        let catalog = core_method_entries();
+        let mut missing = Vec::new();
+        for registered in gossamer_interp::registered_names() {
+            let Some((owner, name)) = registered_core_method_path(registered) else {
+                continue;
+            };
+            let short_owner = owner.rsplit("::").next().unwrap_or(&owner);
+            if std_type_names.contains(short_owner)
+                && !catalog
+                    .iter()
+                    .any(|entry| entry.owner == owner && entry.name == name)
+            {
+                missing.push(format!("{owner}::{name}"));
+            }
+        }
+        missing.sort();
+        missing.dedup();
+        assert!(
+            missing.is_empty(),
+            "runtime methods on std types missing from %explain: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn option_has_one_complete_method_surface() {
+        let expected = gossamer_std::registry::module("std::option")
+            .expect("std::option module")
+            .items
+            .iter()
+            .filter(|item| item.kind == StdItemKind::Function)
+            .map(|item| item.name)
+            .collect::<std::collections::BTreeSet<_>>();
+        let entries = core_method_entries()
+            .into_iter()
+            .filter(|entry| entry.owner == "Option")
+            .collect::<Vec<_>>();
+        let actual = entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(actual, expected);
+        assert_eq!(entries.len(), expected.len(), "duplicate Option metadata");
+        assert!(entries.iter().all(|entry| !entry.signature.contains("...")));
+    }
+
+    #[test]
+    fn iterator_info_and_explain_have_complete_methods() {
+        assert!(!matching_core_namespaces("Iterator").is_empty());
+        let entries = core_method_entries()
+            .into_iter()
+            .filter(|entry| entry.owner == "Iterator")
+            .collect::<Vec<_>>();
+        assert!(!entries.is_empty(), "Iterator has no %explain methods");
+        assert!(entries.iter().all(|entry| !entry.signature.contains("...")));
     }
 
     #[test]

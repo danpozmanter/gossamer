@@ -68,6 +68,57 @@ fn direct_gos_script_accepts_a_hashbang() {
 }
 
 #[test]
+fn direct_script_executes_existing_files_with_any_extension() {
+    for suffix in ["", ".txt"] {
+        let fixture = env::temp_dir().join(format!(
+            "gossamer-cli-any-extension-{}{}",
+            std::process::id(),
+            suffix
+        ));
+        std::fs::write(
+            &fixture,
+            format!("fn main() {{ println(\"extension:{suffix}\") }}\n"),
+        )
+        .expect("write fixture");
+        let out = Command::new(gos_bin())
+            .arg(&fixture)
+            .output()
+            .expect("spawn direct script");
+        assert!(
+            out.status.success(),
+            "{}: {}",
+            fixture.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(String::from_utf8_lossy(&out.stdout).contains(&format!("extension:{suffix}")));
+        let _ = std::fs::remove_file(fixture);
+    }
+}
+
+#[test]
+fn direct_script_infers_a_gos_extension_when_omitted() {
+    let fixture = env::temp_dir().join(format!(
+        "gossamer-cli-inferred-extension-{}.gos",
+        std::process::id()
+    ));
+    std::fs::write(&fixture, "fn main() { println(\"inferred extension\") }\n")
+        .expect("write fixture");
+    let mut omitted = fixture.clone();
+    omitted.set_extension("");
+    let out = Command::new(gos_bin())
+        .arg(&omitted)
+        .output()
+        .expect("spawn direct script");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("inferred extension"));
+    let _ = std::fs::remove_file(fixture);
+}
+
+#[test]
 fn command_flag_executes_inline_source() {
     let out = Command::new(gos_bin())
         .args(["-c", "println(\"inline works\")"])

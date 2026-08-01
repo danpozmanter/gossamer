@@ -662,6 +662,7 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "HashMap",
         &[
             ("new", builtin_map_new),
+            ("from", builtin_map_from),
             ("with_capacity", builtin_map_with_capacity),
             ("get", builtin_map_get),
             ("get_or", builtin_map_get_or),

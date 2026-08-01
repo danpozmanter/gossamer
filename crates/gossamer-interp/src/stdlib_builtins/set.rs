@@ -97,8 +97,8 @@ use gossamer_std::iter as iter_std;
 use gossamer_std::utf16 as utf16_std;
 
 use crate::builtins::{
-    BuiltinFnPub, as_str, err_variant, install_module_pub, none_variant, ok_variant, some_variant,
-    value_to_int,
+    BuiltinFnPub, array_as_values, as_str, err_variant, install_module_pub, none_variant,
+    ok_variant, some_variant, value_to_int,
 };
 use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
 
@@ -108,6 +108,7 @@ use super::*;
 pub(crate) fn install_set(globals: &mut Vec<(&'static str, Value)>) {
     let entries: &[(&str, BuiltinFnPub)] = &[
         ("HashSet::new", builtin_set_new),
+        ("HashSet::from", builtin_set_from),
         ("HashSet::insert", builtin_set_insert),
         ("HashSet::remove", builtin_set_remove),
         ("HashSet::contains", builtin_set_contains),
@@ -127,6 +128,7 @@ pub(crate) fn install_set(globals: &mut Vec<(&'static str, Value)>) {
         ("HashSet::is_superset", builtin_set_is_superset),
         ("HashSet::is_disjoint", builtin_set_is_disjoint),
         ("collections::HashSet::new", builtin_set_new),
+        ("collections::HashSet::from", builtin_set_from),
     ];
     for (name, call) in entries {
         globals.push((*name, crate::builtins::builtin_pub(name, *call)));
@@ -170,6 +172,17 @@ pub(crate) fn builtin_set_new(_args: &[Value]) -> RuntimeResult<Value> {
         r.borrow_mut().insert(id, StdHashMap::default());
     });
     Ok(set_handle(id))
+}
+
+fn builtin_set_from(args: &[Value]) -> RuntimeResult<Value> {
+    let handle = builtin_set_new(&[])?;
+    let Some(values) = args.first().and_then(array_as_values) else {
+        return Ok(handle);
+    };
+    for value in values {
+        builtin_set_insert(&[handle.clone(), value])?;
+    }
+    Ok(handle)
 }
 
 pub(crate) fn builtin_set_insert(args: &[Value]) -> RuntimeResult<Value> {

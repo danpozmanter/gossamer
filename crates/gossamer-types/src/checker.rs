@@ -3508,15 +3508,24 @@ impl<'a> TypeChecker<'a> {
             inner: vec_ty,
         });
         let i64_ty = self.tcx.int_ty(IntTy::I64);
+        let error_ty = self.tcx.dyn_error_ty();
+        let unit_ty = self.tcx.unit();
+        let vec_result_ty = self.tcx.intern(TyKind::Vec(elem));
         let (params, ret) = match method {
-            "push" => (vec![mutable, elem], self.tcx.unit()),
-            "insert" => (vec![mutable, i64_ty, elem], self.tcx.unit()),
-            "remove" => (vec![mutable, i64_ty], elem),
+            "push" => (vec![mutable, elem], unit_ty),
+            "insert" => (
+                vec![mutable, i64_ty, elem],
+                self.result_adt_ty(unit_ty, error_ty),
+            ),
+            "remove" => (vec![mutable, i64_ty], self.result_adt_ty(elem, error_ty)),
             "sort" | "reverse" => (vec![mutable], self.tcx.unit()),
-            "swap" => (vec![mutable, i64_ty, i64_ty], self.tcx.unit()),
+            "swap" => (
+                vec![mutable, i64_ty, i64_ty],
+                self.result_adt_ty(unit_ty, error_ty),
+            ),
             "slice" => (
                 vec![shared, i64_ty, i64_ty],
-                self.tcx.intern(TyKind::Vec(elem)),
+                self.result_adt_ty(vec_result_ty, error_ty),
             ),
             "first" | "last" => (vec![shared], self.option_adt_ty(elem)),
             "rev" => (vec![shared], self.tcx.intern(TyKind::Vec(elem))),
@@ -3785,7 +3794,7 @@ impl<'a> TypeChecker<'a> {
         if !matches!(
             module,
             ["HashMap"] | ["collections", "HashMap"] | ["std", "collections", "HashMap"]
-        ) || !matches!(last, "pop" | "get")
+        ) || !matches!(last, "pop" | "get" | "insert" | "remove")
         {
             return None;
         }
@@ -4180,18 +4189,48 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn collection_from_ty(&mut self, module: &[&str], source: Ty) -> Option<Ty> {
-        if !matches!(
-            module,
-            ["Vec"] | ["collections", "Vec"] | ["std", "collections", "Vec"]
-        ) {
-            return None;
-        }
-        let source = self.infer.resolve(self.tcx, source);
-        let elem = match self.tcx.kind(source) {
-            Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => *elem,
+        let owner = match module {
+            [owner] | ["collections", owner] | ["std", "collections", owner] => *owner,
             _ => return None,
         };
-        Some(self.tcx.intern(TyKind::Vec(elem)))
+        let source = self.infer.resolve(self.tcx, source);
+        match owner {
+            "Vec" => {
+                let elem = match self.tcx.kind(source) {
+                    Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => {
+                        *elem
+                    }
+                    _ => return None,
+                };
+                Some(self.tcx.intern(TyKind::Vec(elem)))
+            }
+            "HashSet" => {
+                let elem = match self.tcx.kind(source) {
+                    Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => {
+                        *elem
+                    }
+                    _ => return None,
+                };
+                let substs = crate::Substs::from_types([elem]);
+                let def = gossamer_resolve::DefId::local(u32::MAX - 7);
+                self.tcx.register_def_name(def, "HashSet");
+                Some(self.tcx.intern(TyKind::Adt { def, substs }))
+            }
+            "HashMap" | "BTreeMap" => {
+                let (key, value) = match self.tcx.kind(source) {
+                    Some(TyKind::Unit) => (self.fresh(), self.fresh()),
+                    Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => {
+                        match self.tcx.kind(*elem) {
+                            Some(TyKind::Tuple(parts)) if parts.len() == 2 => (parts[0], parts[1]),
+                            _ => return None,
+                        }
+                    }
+                    _ => return None,
+                };
+                Some(self.tcx.intern(TyKind::HashMap { key, value }))
+            }
+            _ => None,
+        }
     }
 
     fn collection_call_ret_ty(
@@ -6191,7 +6230,7 @@ impl<'a> TypeChecker<'a> {
                 Some(self.tcx.intern(TyKind::Vec(key)))
             }
             "values" => Some(self.tcx.intern(TyKind::Vec(value))),
-            "get" | "pop" => Some(self.option_adt_ty(value)),
+            "get" | "pop" | "insert" | "remove" => Some(self.option_adt_ty(value)),
             "get_or" | "or_insert" => Some(value),
             "contains" | "contains_key" | "is_empty" => Some(self.tcx.bool_ty()),
             "len" => Some(self.tcx.int_ty(IntTy::I64)),
@@ -6259,11 +6298,24 @@ impl<'a> TypeChecker<'a> {
         }
         match (method, args.len()) {
             (
-                "push" | "insert" | "clear" | "truncate" | "extend" | "extend_from_slice"
-                | "reserve" | "reserve_exact" | "sort" | "sort_by" | "sort_by_key" | "reverse"
-                | "swap",
+                "push" | "clear" | "truncate" | "extend" | "extend_from_slice" | "reserve"
+                | "reserve_exact" | "sort" | "sort_by" | "sort_by_key" | "reverse",
                 _,
             ) => Some(self.tcx.unit()),
+            ("insert", 2) => {
+                let error_ty = self.tcx.dyn_error_ty();
+                let unit_ty = self.tcx.unit();
+                Some(self.result_adt_ty(unit_ty, error_ty))
+            }
+            ("remove", 1) => {
+                let error_ty = self.tcx.dyn_error_ty();
+                Some(self.result_adt_ty(elem, error_ty))
+            }
+            ("swap", 2) => {
+                let error_ty = self.tcx.dyn_error_ty();
+                let unit_ty = self.tcx.unit();
+                Some(self.result_adt_ty(unit_ty, error_ty))
+            }
             ("capacity" | "len", 0) => Some(self.tcx.int_ty(IntTy::I64)),
             ("iter", 0) => {
                 let item = self.tcx.intern(TyKind::Ref {
@@ -6274,7 +6326,6 @@ impl<'a> TypeChecker<'a> {
             }
             ("is_empty", 0) => Some(self.tcx.bool_ty()),
             ("pop", 0) => Some(self.option_adt_ty(elem)),
-            ("remove", 1) => Some(elem),
             ("first" | "last", 0) => Some(self.option_adt_ty(elem)),
             ("get", 1) => {
                 if let Some(arg_ty) = arg_tys.first() {
@@ -8873,11 +8924,21 @@ impl<'a> TypeChecker<'a> {
                     let init_ty = self.check_expr_expecting(init, init_expected);
                     self.unify(binding_ty, init_ty, init.span);
                     if let PatternKind::Ref { mutability, .. } = &pattern.kind {
+                        self.infer.default_numeric_vars_in_ty(self.tcx, init_ty);
                         let resolved = self.infer.resolve(self.tcx, init_ty);
-                        if !matches!(
-                            self.tcx.kind(resolved),
-                            Some(TyKind::Ref { .. } | TyKind::Var(_) | TyKind::Error)
-                        ) {
+                        let expected_mutability = if mutability.is_mutable() {
+                            Mutbl::Mut
+                        } else {
+                            Mutbl::Not
+                        };
+                        let valid = match self.tcx.kind(resolved) {
+                            Some(TyKind::Ref {
+                                mutability: actual, ..
+                            }) => *actual == expected_mutability,
+                            Some(TyKind::Var(_) | TyKind::Error) => true,
+                            _ => false,
+                        };
+                        if !valid {
                             self.emit(
                                 TypeError::ReferencePatternRequiresReference {
                                     pattern: if mutability.is_mutable() { "&mut" } else { "&" },
@@ -10016,12 +10077,7 @@ impl<'a> TypeChecker<'a> {
                 let resolved = self.infer.resolve(self.tcx, ty);
                 let inner_ty = match self.tcx.kind(resolved).cloned() {
                     Some(TyKind::Ref { inner, .. }) => self.infer.resolve(self.tcx, inner),
-                    // Plain `let` reference patterns are transparent when
-                    // the initializer is already a value. This language
-                    // accepts both `let &x = &value` and `let &x = value`,
-                    // so the latter binds `x` to the initializer's exact
-                    // type instead of disconnecting it behind a fresh var.
-                    _ => resolved,
+                    _ => self.tcx.error_ty(),
                 };
                 self.bind_pattern(inner, inner_ty);
             }

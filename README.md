@@ -224,8 +224,8 @@ fn main() {
 ## REPL meta commands
 
 The REPL starts with `gos <version> REPL [<architecture>-<os>]` and uses the
-`>>>` prompt. Use `%help` to list commands: `%info`/`%i` shows item help,
-`%find`/`%f` searches public symbols, `%bindings`/`%b`, `%declarations`/`%d`,
+`>>>` prompt. Use `%help` to list commands: `%info`/`%i` searches public symbols
+and shows item help, `%bindings`/`%b`, `%declarations`/`%d`,
 and `%history`/`%h` inspect the session, `%reset`/`%r` clears it, and
 `%quit`/`%q` exits. Up/down cycles history; Enter continues until braces close;
 Ctrl-D also exits. Expression results print as plain values. Declaration and

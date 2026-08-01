@@ -2223,8 +2223,16 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_map_insert_i64_i64 as *const u8,
         ),
         (
+            "gos_rt_map_insert_i64_i64_opt",
+            crate::c_abi::gos_rt_map_insert_i64_i64_opt as *const u8,
+        ),
+        (
             "gos_rt_map_insert_skey",
             crate::c_abi::gos_rt_map_insert_skey as *const u8,
+        ),
+        (
+            "gos_rt_map_insert_skey_opt",
+            crate::c_abi::gos_rt_map_insert_skey_opt as *const u8,
         ),
         (
             "gos_rt_map_get_skey_opt",
@@ -2243,12 +2251,24 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_map_insert_i64_str as *const u8,
         ),
         (
+            "gos_rt_map_insert_i64_str_opt",
+            crate::c_abi::gos_rt_map_insert_i64_str_opt as *const u8,
+        ),
+        (
             "gos_rt_map_insert_str_i64",
             crate::c_abi::gos_rt_map_insert_str_i64 as *const u8,
         ),
         (
+            "gos_rt_map_insert_str_i64_opt",
+            crate::c_abi::gos_rt_map_insert_str_i64_opt as *const u8,
+        ),
+        (
             "gos_rt_map_insert_str_str",
             crate::c_abi::gos_rt_map_insert_str_str as *const u8,
+        ),
+        (
+            "gos_rt_map_insert_str_str_opt",
+            crate::c_abi::gos_rt_map_insert_str_str_opt as *const u8,
         ),
         (
             "gos_rt_map_keys_i64",
@@ -5441,6 +5461,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_vec_swap_i64",
             crate::c_abi::gos_rt_vec_swap_i64 as *const u8,
+        ),
+        (
+            "gos_rt_vec_swap_safe",
+            crate::c_abi::gos_rt_vec_swap_safe as *const u8,
         ),
         (
             "gos_rt_vec_slice",

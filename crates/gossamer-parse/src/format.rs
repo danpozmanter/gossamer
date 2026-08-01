@@ -394,7 +394,7 @@ fn render_code_line<'src>(
         });
         if in_optional_comma_list
             && tok.kind == TokenKind::Punct(Punct::Comma)
-            && tok_index + 1 == line.toks.len()
+            && line.toks[tok_index + 1..].iter().all(Tok::is_comment)
         {
             *prev_sig = Some(tok.kind);
             continue;
@@ -933,7 +933,12 @@ fn significant_tokens(source: &str, file: FileId) -> Vec<(TokenKind, &str)> {
             }
             let next_start = tokens[index + 1..]
                 .iter()
-                .find(|next| !matches!(next.kind, TokenKind::Whitespace))
+                .find(|next| {
+                    !matches!(
+                        next.kind,
+                        TokenKind::Whitespace | TokenKind::LineComment | TokenKind::BlockComment
+                    )
+                })
                 .map_or(source.len(), |next| next.span.start as usize);
             !source[token.span.end as usize..next_start].contains('\n')
         })
@@ -1046,6 +1051,15 @@ mod tests {
     fn match_arms_drop_optional_trailing_commas() {
         let source = "fn main() {\n    let p = Point { x: 1.0, y: 2.0 }\n    match shape {\n        Shape::Circle(r) => r * r,\n        Shape::Rect { w, h } => w * h,\n    }\n}\n";
         let expected = "fn main() {\n    let p = Point { x: 1.0, y: 2.0 }\n    match shape {\n        Shape::Circle(r) => r * r\n        Shape::Rect { w, h } => w * h\n    }\n}\n";
+        assert_eq!(fmt(source), expected);
+    }
+
+    #[test]
+    fn match_arms_drop_commas_before_trailing_comments() {
+        let source =
+            "match a {\n    1 => a + 1, // line comment\n    2 => a + 2, /* block comment */\n}\n";
+        let expected =
+            "match a {\n    1 => a + 1 // line comment\n    2 => a + 2 /* block comment */\n}\n";
         assert_eq!(fmt(source), expected);
     }
 

@@ -285,6 +285,17 @@ impl<'a> Builder<'a> {
             &names[..]
         };
         let joined = strip_std.join("::");
+        // `HashMap::from({})` is the typed empty-map constructor. Lower it to
+        // the same zero-argument intrinsic as `HashMap::new` so no unit value
+        // reaches the native call ABI.
+        if matches!(
+            joined.as_str(),
+            "HashMap::from" | "collections::HashMap::from"
+        ) && matches!(args, [arg] if matches!(self.tcx.kind(arg.ty), Some(gossamer_types::TyKind::Unit)))
+        {
+            let map_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+            return self.emit_stdlib_free_call("HashMap::new", map_ty, &[], span);
+        }
         // A loop region proves every region-owned allocation dies at the
         // iteration boundary. Collection while the region is still active is
         // at best redundant and at worst makes the collector inspect pointers
@@ -2948,13 +2959,27 @@ impl<'a> Builder<'a> {
         args: &[HirExpr],
     ) -> Option<(&'static str, gossamer_types::Ty)> {
         Some(match joined {
-            // Qualified Vec mutators use the same Rust-style in-place
-            // contract as method calls. `Vec::slice` remains the
-            // bounds-checked Result-returning operation.
-            "Vec::insert" if args.len() == 3 => ("gos_rt_vec_insert_at", self.tcx.unit()),
+            // Qualified Vec mutators use the same checked in-place contract
+            // as method calls.
+            "Vec::insert" if args.len() == 3 => {
+                let unit = self.tcx.unit();
+                let error = self.tcx.dyn_error_ty();
+                let substs = gossamer_types::Substs::from_types([unit, error]);
+                let result = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX),
+                    substs,
+                });
+                ("gos_rt_vec_insert_safe", result)
+            }
             "Vec::remove" if args.len() == 2 => {
                 let elem = self.vec_receiver_elem_ty(args[0].ty);
-                ("gos_rt_vec_remove_at", elem)
+                let error = self.tcx.dyn_error_ty();
+                let substs = gossamer_types::Substs::from_types([elem, error]);
+                let result = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX),
+                    substs,
+                });
+                ("gos_rt_vec_remove_safe", result)
             }
             "Vec::slice" if args.len() == 3 => {
                 // The slice preserves the receiver's element type: a

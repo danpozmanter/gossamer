@@ -508,7 +508,7 @@ fn replace() -> i64 {
                 callee: Operand::Const(ConstValue::Str(name)),
                 args,
                 ..
-            } if name == "gos_rt_map_insert_i64_i64" => args.get(2).and_then(|arg| match arg {
+            } if name == "gos_rt_map_insert_i64_i64_opt" => args.get(2).and_then(|arg| match arg {
                 Operand::Copy(place) if place.projection.is_empty() => Some(place.local),
                 _ => None,
             }),

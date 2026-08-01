@@ -1323,6 +1323,11 @@ impl Vm {
             }
             Value::Channel(_) => Some(self.intern_qualified("Channel", method)),
             Value::String(_) => Some(self.intern_qualified("String", method)),
+            Value::Variant(inner)
+                if matches!(inner.name.as_str(), "Some" | "None") && method == "iter" =>
+            {
+                Some(self.intern_qualified("Option", method))
+            }
             // `Vec`-receiver methods resolve by type so a bare name shared
             // with another module's free function cannot override the builtin.
             Value::Array(_)

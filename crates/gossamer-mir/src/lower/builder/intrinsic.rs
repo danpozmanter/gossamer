@@ -190,7 +190,7 @@ impl<'a> Builder<'a> {
         receiver: &HirExpr,
         i_expr: &HirExpr,
         j_expr: &HirExpr,
-        _ty: Ty,
+        ty: Ty,
         span: Span,
     ) -> Option<Local> {
         // Build a Place that names the receiver as a place
@@ -217,15 +217,13 @@ impl<'a> Builder<'a> {
             _ => return None,
         };
         if is_vec_or_slice && recv_place.projection.is_empty() {
-            // Vec/Slice swap goes through a dedicated helper so the GosVec
-            // header is not mis-treated as a flat element buffer. Keep the
-            // existing scalar get/set semantics (null/OOB => no-op) while
-            // avoiding four separate helper calls in heap-shaped hot loops.
-            let unit_ty = self.tcx.unit();
-            let swap = self.fresh(unit_ty);
+            // Vec/Slice swap goes through a checked helper so the GosVec
+            // header is not mis-treated as a flat element buffer and invalid
+            // indices are returned as an error.
+            let swap = self.fresh(ty);
             let next = self.new_block(span);
             self.terminate(Terminator::Call {
-                callee: Operand::Const(ConstValue::Str("gos_rt_vec_swap_i64".to_string())),
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_swap_safe".to_string())),
                 args: vec![
                     Operand::Copy(Place::local(recv_place.local)),
                     Operand::Copy(Place::local(i_local)),
@@ -235,8 +233,7 @@ impl<'a> Builder<'a> {
                 target: Some(next),
             });
             self.set_current(next);
-            let unit_local = self.lower_unit(span);
-            return Some(unit_local);
+            return Some(swap);
         }
         let mut at_i = recv_place.clone();
         at_i.projection.push(crate::ir::Projection::Index(i_local));
@@ -288,8 +285,8 @@ impl<'a> Builder<'a> {
             "insert" if args.len() == 2 => {
                 let val_local = self.lower_expr(&args[1])?;
                 (
-                    "gos_rt_map_insert_skey",
-                    self.tcx.unit(),
+                    "gos_rt_map_insert_skey_opt",
+                    self.option_payload_adt_ty(val_ty),
                     Some(Operand::Copy(Place::local(val_local))),
                 )
             }

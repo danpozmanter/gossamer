@@ -494,7 +494,10 @@ impl<'a> Lowerer<'a> {
         // a c_char ptr to a heap-allocated string, no copy needed.
         let map_insert_heap_copy = matches!(
             symbol,
-            "gos_rt_map_insert_i64_i64" | "gos_rt_map_insert_str_i64"
+            "gos_rt_map_insert_i64_i64"
+                | "gos_rt_map_insert_str_i64"
+                | "gos_rt_map_insert_i64_i64_opt"
+                | "gos_rt_map_insert_str_i64_opt"
         );
         let mut arg_text = String::new();
         let mut arg_tys_for_decl: Vec<String> = Vec::new();

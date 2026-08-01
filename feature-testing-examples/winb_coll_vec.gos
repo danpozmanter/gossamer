@@ -70,7 +70,7 @@ fn main() {
 
     // swap.
     let mut sw = [1, 2, 3]
-    sw.swap(0, 2)
+    let _ = sw.swap(0, 2)
     print!("swapped ")
     for v in sw { print!("{} ", v) }
     println!("")
@@ -90,13 +90,12 @@ fn main() {
         Err(_) => println!("slice oob err"),
     }
 
-    // Qualified Vec::insert / Vec::remove mirror the Rust method contract:
-    // both mutate through &mut, insert returns (), and remove returns T.
+    // Qualified Vec::insert / Vec::remove are checked and mutate through &mut.
     let mut iv: Vec<i64> = Vec::new()
     iv.push(1)
     iv.push(2)
     iv.push(3)
-    Vec::insert(&mut iv, 1, 99)
+    let _ = Vec::insert(&mut iv, 1, 99)
     print!("insert ")
     for v in iv { print!("{} ", v) }
     println!("")
@@ -105,8 +104,10 @@ fn main() {
     rv.push(2)
     rv.push(3)
     rv.push(4)
-    let removed = Vec::remove(&mut rv, 0)
-    println!("removed {}", removed)
+    match Vec::remove(&mut rv, 0) {
+        Ok(removed) => println!("removed {}", removed),
+        Err(_) => println!("remove failed"),
+    }
     print!("after remove ")
     for v in rv { print!("{} ", v) }
     println!("")

@@ -266,10 +266,15 @@ fn terminator_inserts_map(term: &Terminator, map_local: Local) -> bool {
     if !matches!(callee, Operand::Const(ConstValue::Str(name)) if matches!(name.as_str(),
         "gos_rt_map_insert"
             | "gos_rt_map_insert_i64_i64"
+            | "gos_rt_map_insert_i64_i64_opt"
             | "gos_rt_map_insert_str_i64"
+            | "gos_rt_map_insert_str_i64_opt"
             | "gos_rt_map_insert_i64_str"
+            | "gos_rt_map_insert_i64_str_opt"
             | "gos_rt_map_insert_str_str"
-            | "gos_rt_map_insert_skey"))
+            | "gos_rt_map_insert_str_str_opt"
+            | "gos_rt_map_insert_skey"
+            | "gos_rt_map_insert_skey_opt"))
     {
         return false;
     }
