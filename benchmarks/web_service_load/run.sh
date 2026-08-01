@@ -72,9 +72,8 @@ GET https://127.0.0.1:$PORT/notes
 TARGETS
 else
     echo "[bench] running bundled harness"
-    "$REPO_ROOT/target/release/gos" run \
-        "$ROOT/harness.gos" \
-        -- --port "$PORT" --connections "$CONNECTIONS" --duration "$DURATION_SEC"
+    "$REPO_ROOT/target/release/gos" "$ROOT/harness.gos" \
+        --port "$PORT" --connections "$CONNECTIONS" --duration "$DURATION_SEC"
 fi
 
 PEAK_THREADS=$(ps -o nlwp= -p "$SVC_PID" | tr -d ' ')

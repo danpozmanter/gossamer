@@ -1134,12 +1134,12 @@ mod tests {
     #[test]
     fn direct_gos_file_is_reserved_for_script_execution() {
         assert!(is_direct_script_invocation(&os_args(&["gos", "tool.gos"])));
-        assert!(!is_direct_script_invocation(&os_args(&["gos", "run"])));
+        assert!(!is_direct_script_invocation(&os_args(&["gos", "repl"])));
     }
 
     #[test]
-    fn run_subcommand_is_removed() {
-        assert!(Cli::try_parse_from(["gos", "run", "hello.gos"]).is_err());
+    fn unknown_subcommand_is_rejected() {
+        assert!(Cli::try_parse_from(["gos", "execute", "hello.gos"]).is_err());
     }
 
     #[test]

@@ -85,7 +85,7 @@ jobs:
         # no longer exists. `ubuntu-24.04-arm` is the exception:
         # GitHub ships Linux arm64 hosted runners only in pinned-major
         # form (no `*-arm-latest` yet), and this is the native aarch64
-        # runner that executes `gos run`, the Cranelift JIT, and `gos
+        # runner that executes direct `gos FILE`, the Cranelift JIT, and `gos
         # build` on real ARM Linux - the Raspberry Pi target.
         os: [ubuntu-latest, macos-latest, windows-latest, ubuntu-24.04-arm]
         suite: [general, parity-0-1, parity-2-3, parity-4-5]
@@ -97,7 +97,7 @@ jobs:
       # `crates/gossamer-cli/build.rs` ensures the runtime
       # staticlib is emitted into `target/<profile>/` for both
       # debug and release; no explicit pre-build step needed.
-      # Native build/run crates (`gos build` + `gos run`) run FIRST, serially,
+      # Native build/run crates (`gos build` + direct `gos FILE`) run FIRST, serially,
       # with live output and full diagnostics - ALWAYS, not only on failure.
       # These crates fork llc/linkers and execute freshly-built native
       # binaries, so a miscompile manifests as a test process killed by a

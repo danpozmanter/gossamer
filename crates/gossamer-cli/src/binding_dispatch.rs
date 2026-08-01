@@ -311,8 +311,8 @@ mod tests {
 
     #[test]
     fn first_subcommand_skips_flags() {
-        let a = argv(&["gos", "--quiet", "run", "x.gos"]);
-        assert_eq!(first_subcommand(&a).as_deref(), Some("run"));
+        let a = argv(&["gos", "--quiet", "build", "x.gos"]);
+        assert_eq!(first_subcommand(&a).as_deref(), Some("build"));
     }
 
     #[test]
@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn profile_release_only_for_build_release() {
         assert!(matches!(
-            profile_for_args(&argv(&["gos", "run", "x.gos"])),
+            profile_for_args(&argv(&["gos", "x.gos"])),
             RunnerProfile::Debug
         ));
         assert!(matches!(

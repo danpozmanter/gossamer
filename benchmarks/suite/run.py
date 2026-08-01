@@ -178,8 +178,8 @@ def main() -> None:
                 raise RuntimeError(f"native output missing for {workload}")
 
             tiers = (
-                ("vm-no-jit", [str(gos), "run", "--no-jit", str(directory / "main.gos")], 0, gos),
-                ("vm-jit", [str(gos), "run", str(directory / "main.gos")], 0, gos),
+                ("vm-no-jit", [str(gos), "--no-jit", str(directory / "main.gos")], 0, gos),
+                ("vm-jit", [str(gos), str(directory / "main.gos")], 0, gos),
                 ("llvm-debug", [str(debug_binary)], debug_compile, debug_binary),
                 ("llvm-release", [str(release_binary)], release_compile, release_binary),
                 ("go-release", [str(go_binary)], go_compile, go_binary),

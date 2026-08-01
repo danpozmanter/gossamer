@@ -39,7 +39,7 @@ Thumbs.db
 
 # --- Local-only configuration ---
 
-# `gos run` ad-hoc env files. Keep `.env.example` checked in,
+# Direct `gos FILE` ad-hoc env files. Keep `.env.example` checked in,
 # ignore the live secret-bearing copy.
 .env
 .env.local

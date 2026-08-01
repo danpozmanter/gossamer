@@ -32,7 +32,7 @@ trap 'rm -f "$out"' EXIT
 # format. Capture stderr only and ignore the program's stdout.
 time_output="$(bash -c "
 TIMEFORMAT='%U %S'
-{ time '$gos' run '$here/empty.gos' >'$out'; } 2>&1
+{ time '$gos' '$here/empty.gos' >'$out'; } 2>&1
 " 2>&1)"
 
 # Parse the trailing "<user> <sys>" line emitted by bash time.
