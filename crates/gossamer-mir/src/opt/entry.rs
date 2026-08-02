@@ -67,22 +67,27 @@ fn callee_body_name(callee: &Operand, def_to_name: &HashMap<u32, String>) -> Opt
 /// into the two-constant form folding recognises. A second copy-prop
 /// pass after folding propagates the newly-created constants.
 pub fn optimise(body: &mut Body, tcx: &TyCtxt) {
-    optimise_with_bounds_limit(body, tcx, Some(versioning_candidate_limit()));
+    optimise_with_bounds_limit(body, tcx, Some(versioning_candidate_limit()), false);
 }
 
 /// JIT preparation optimises for Cranelift promotion admission and hot-loop
 /// dispatch, where the unchecked clone is often required to make a body
 /// lowerable. Keep the general versioning pass aggressive for this path.
 pub fn optimise_for_jit(body: &mut Body, tcx: &TyCtxt) {
-    optimise_with_bounds_limit(body, tcx, None);
+    optimise_with_bounds_limit(body, tcx, None, true);
 }
 
-fn optimise_with_bounds_limit(body: &mut Body, tcx: &TyCtxt, versioning_candidate_limit: Option<usize>) {
+fn optimise_with_bounds_limit(
+    body: &mut Body,
+    tcx: &TyCtxt,
+    versioning_candidate_limit: Option<usize>,
+    checked_overflow: bool,
+) {
     crate::verify::debug_verify_body(body);
     copy_propagate(body, tcx);
     elide_vec_clone_in_three_way_swaps(body);
     crate::verify::debug_verify_body(body);
-    const_fold(body);
+    const_fold_typed(body, tcx, checked_overflow);
     crate::verify::debug_verify_body(body);
     copy_propagate(body, tcx);
     crate::verify::debug_verify_body(body);
@@ -149,7 +154,7 @@ pub fn optimise_debug(body: &mut Body, tcx: &TyCtxt) {
     crate::verify::debug_verify_body(body);
     copy_propagate(body, tcx);
     crate::verify::debug_verify_body(body);
-    const_fold(body);
+    const_fold_typed(body, tcx, true);
     crate::verify::debug_verify_body(body);
     copy_propagate(body, tcx);
     crate::verify::debug_verify_body(body);

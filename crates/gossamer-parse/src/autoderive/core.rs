@@ -141,8 +141,7 @@ impl FieldKind {
             Self::F64 => "0.0".to_string(),
             Self::Bool => "false".to_string(),
             Self::String => "\"\"".to_string(),
-            // Empty literal; the struct field's declared type pins the element.
-            Self::Vec(_) => "[]".to_string(),
+            Self::Vec(_) => "Vec::from([])".to_string(),
             Self::Struct(name) => format!("{name}::default()"),
             Self::Option(_) => "None".to_string(),
             Self::Tuple(elems) => format!(
@@ -158,7 +157,7 @@ impl FieldKind {
         }
     }
 
-    /// Source-level type spelling for a `let mut acc: ... = []`
+    /// Source-level type spelling for a `let mut acc: ... = Vec::from([])`
     /// declaration used while accumulating a Vec field.
     fn type_spelling(&self) -> String {
         match self {
@@ -167,7 +166,7 @@ impl FieldKind {
             Self::F64 => "f64".to_string(),
             Self::Bool => "bool".to_string(),
             Self::String => "String".to_string(),
-            Self::Vec(inner) => format!("[{}]", inner.type_spelling()),
+            Self::Vec(inner) => format!("Vec<{}>", inner.type_spelling()),
             Self::Struct(name) => name.clone(),
             Self::Option(inner) => format!("Option<{}>", inner.type_spelling()),
             Self::Tuple(elems) => format!(
@@ -278,7 +277,7 @@ fn extract_vec_strict(value_expr: &str, inner: &FieldKind, path: &str) -> String
     let inner_extract = inner.extract_strict("__elem", &elem_path);
     let elem_ty = inner.type_spelling();
     format!(
-        "match json::as_array({value_expr}) {{\n                Some(__arr) => {{\n                    let mut __out: [{elem_ty}] = []\n                    for __elem in __arr {{\n                        let __converted = {inner_extract}\n                        __out.push(__converted)\n                    }}\n                    __out\n                }}\n                None => return Err(errors::new(\"{path}: expected array\")),\n            }}"
+        "match json::as_array({value_expr}) {{\n                Some(__arr) => {{\n                    let mut __out: Vec<{elem_ty}> = Vec::from([])\n                    for __elem in __arr {{\n                        let __converted = {inner_extract}\n                        __out.push(__converted)\n                    }}\n                    __out\n                }}\n                None => return Err(errors::new(\"{path}: expected array\")),\n            }}"
     )
 }
 
@@ -445,4 +444,3 @@ fn collect_flat_items<'a>(items: &'a [Item], out: &mut Vec<&'a Item>) {
         }
     }
 }
-

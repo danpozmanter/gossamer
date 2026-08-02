@@ -39,8 +39,8 @@ mod autoderive_tests {
     #[test]
     fn fully_serializable_struct_is_silent() {
         let src = "struct Inner { n: i64 }\n\
-                   struct Outer { id: i64, tags: [String], inner: Inner }\n\
-                   fn main() { let _ = to_json::<Outer>(Outer { id: 1, tags: [\"a\"], inner: Inner { n: 2 } }); }";
+                   struct Outer { id: i64, tags: Vec<String>, inner: Inner }\n\
+                   fn main() { let _ = to_json::<Outer>(Outer { id: 1, tags: Vec::from([\"a\"]), inner: Inner { n: 2 } }); }";
         assert!(serde_field_errors(src).is_empty());
     }
 

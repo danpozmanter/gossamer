@@ -171,7 +171,7 @@ fn empty_document_returns_array() {
 fn method_completion_on_vec_receiver() {
     let server = server_with(
         "file:///v.gos",
-        "fn main() {\n    let xs: Vec<i64> = Vec::new()\n    xs.p\n}\n",
+        "fn main() {\n    let mut xs: Vec<i64> = Vec::new()\n    xs.p\n}\n",
     );
     // Cursor after `xs.p` on line 2, column 8.
     let params = position_params("file:///v.gos", 2, 8);
@@ -184,6 +184,56 @@ fn method_completion_on_vec_receiver() {
         has_p_method,
         "expected `push`/`pop` on Vec receiver, got {labels:?}"
     );
+}
+
+#[test]
+fn array_and_slice_completion_exclude_vec_only_methods() {
+    for (uri, source, line) in [
+        (
+            "file:///array.gos",
+            "fn main() {\n    let xs: [i64; 3] = [1, 2, 3]\n    xs.\n}\n",
+            2,
+        ),
+        (
+            "file:///slice.gos",
+            "fn main() {\n    let xs: &[i64] = &[1, 2, 3]\n    xs.\n}\n",
+            2,
+        ),
+    ] {
+        let server = server_with(uri, source);
+        let params = position_params(uri, line, 7);
+        let labels = completion_labels(&server.completion(&params));
+        assert!(labels.iter().any(|label| label == "len"), "{labels:?}");
+        assert!(labels.iter().any(|label| label == "contains"), "{labels:?}");
+        for vec_only in ["push", "pop", "clear", "sort", "reverse", "swap", "fill"] {
+            assert!(
+                !labels.iter().any(|label| label == vec_only),
+                "{vec_only} leaked into {uri}: {labels:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn mutable_slice_completion_includes_non_resizing_mutation() {
+    let uri = "file:///mutable-slice.gos";
+    let server = server_with(
+        uri,
+        "fn main() {\n    let xs: &mut [i64] = &mut [1, 2, 3]\n    xs.\n}\n",
+    );
+    let labels = completion_labels(&server.completion(&position_params(uri, 2, 7)));
+    for method in ["sort", "reverse", "swap", "fill"] {
+        assert!(
+            labels.iter().any(|label| label == method),
+            "{method}: {labels:?}"
+        );
+    }
+    for method in ["push", "pop", "clear", "capacity"] {
+        assert!(
+            !labels.iter().any(|label| label == method),
+            "{method} leaked into mutable slice: {labels:?}"
+        );
+    }
 }
 
 #[test]

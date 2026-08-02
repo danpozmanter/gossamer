@@ -629,7 +629,7 @@ mod tests {
         let mut state = ServerState::new();
         let labels = complete_at(
             &mut state,
-            "fn main() { let v: Vec<i64> = vec![]\n    v.p| }\n",
+            "fn main() {\n    let mut v: Vec<i64> = Vec::new()\n    v.p|\n}\n",
             "file:///vec.gos",
         );
         assert!(

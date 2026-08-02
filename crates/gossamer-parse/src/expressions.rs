@@ -783,6 +783,9 @@ impl Parser<'_> {
             return self.parse_array_expr();
         }
         if self.eat_punct(Punct::LBrace) {
+            if let Some(map) = self.try_parse_map_literal() {
+                return map;
+            }
             return ExprKind::Block(self.parse_block_body());
         }
         if let Some(literal) = self.try_parse_literal() {
@@ -858,6 +861,89 @@ impl Parser<'_> {
         );
         self.bump();
         ExprKind::Error
+    }
+
+    /// Parses `{key: value, ...}` as the key-value pair array accepted by
+    /// `HashMap::from`. The AST desugaring keeps every existing backend on the
+    /// same constructor path while giving source code a dedicated map syntax.
+    /// If the contents are an ordinary block, the token stream and diagnostics
+    /// are restored and the caller parses a block normally.
+    fn try_parse_map_literal(&mut self) -> Option<ExprKind> {
+        if self.at_punct(Punct::RBrace) || !self.first_brace_entry_has_top_level_colon() {
+            return None;
+        }
+        let checkpoint = self.tokens.checkpoint();
+        let diagnostic_count = self.diagnostics.len();
+        let first_key = self.with_struct_literals_allowed(Self::parse_expr_no_assign);
+        if !self.eat_punct(Punct::Colon) {
+            self.tokens.rewind(checkpoint);
+            self.diagnostics.truncate(diagnostic_count);
+            return None;
+        }
+
+        let mut entries = Vec::new();
+        let mut key = first_key;
+        loop {
+            if self.at_eof() {
+                break;
+            }
+            let value = self.with_struct_literals_allowed(Self::parse_expr_no_assign);
+            let span = self.join(key.span, value.span);
+            let id = self.alloc_id();
+            entries.push(Expr::new(id, span, ExprKind::Tuple(vec![key, value])));
+            if self.at_punct(Punct::RBrace) {
+                break;
+            }
+            if self.at_eof() {
+                break;
+            }
+            if !self.expect_punct(Punct::Comma, "between map entries") {
+                break;
+            }
+            if self.at_punct(Punct::RBrace) {
+                break;
+            }
+            key = self.with_struct_literals_allowed(Self::parse_expr_no_assign);
+            if !self.expect_punct(Punct::Colon, "between a map key and value") {
+                break;
+            }
+        }
+        self.expect_punct(Punct::RBrace, "to close map literal");
+        Some(ExprKind::Array(ArrayExpr::List(entries)))
+    }
+
+    /// Checks the first brace-delimited entry for a map separator without
+    /// recursively parsing it. This keeps ordinary nested blocks linear:
+    /// speculatively parsing each nested block as a map and then rewinding
+    /// made malformed runs of `{` take exponential time.
+    fn first_brace_entry_has_top_level_colon(&self) -> bool {
+        let mut parens = 0usize;
+        let mut brackets = 0usize;
+        let mut braces = 0usize;
+        let mut offset = 0usize;
+        loop {
+            let token = self.peek_nth(offset);
+            match token.kind {
+                TokenKind::Eof => return false,
+                TokenKind::Punct(Punct::LParen) => parens += 1,
+                TokenKind::Punct(Punct::RParen) => parens = parens.saturating_sub(1),
+                TokenKind::Punct(Punct::LBracket) => brackets += 1,
+                TokenKind::Punct(Punct::RBracket) => brackets = brackets.saturating_sub(1),
+                TokenKind::Punct(Punct::LBrace) => braces += 1,
+                TokenKind::Punct(Punct::RBrace) if braces == 0 => return false,
+                TokenKind::Punct(Punct::RBrace) => braces -= 1,
+                TokenKind::Punct(Punct::Colon) if parens == 0 && brackets == 0 && braces == 0 => {
+                    return true;
+                }
+                TokenKind::Punct(Punct::Comma | Punct::Semi)
+                    if parens == 0 && brackets == 0 && braces == 0 =>
+                {
+                    return false;
+                }
+                _ => {}
+            }
+            offset += 1;
+        }
     }
 
     fn parse_paren_or_tuple(&mut self) -> ExprKind {
@@ -2206,11 +2292,19 @@ impl Parser<'_> {
                 self.bump();
                 continue;
             }
-            if let gossamer_ast::StmtKind::Expr { expr, has_semi } = &stmt.kind {
-                if !has_semi && self.at_punct(Punct::RBrace) {
-                    tail = Some(expr.clone());
-                    break;
+            let is_tail = matches!(
+                &stmt.kind,
+                gossamer_ast::StmtKind::Expr {
+                    has_semi: false,
+                    ..
                 }
+            ) && self.at_punct(Punct::RBrace);
+            if is_tail {
+                let gossamer_ast::StmtKind::Expr { expr, .. } = stmt.kind else {
+                    unreachable!("is_tail only accepts expression statements");
+                };
+                tail = Some(expr);
+                break;
             }
             stmts.push(stmt);
         }

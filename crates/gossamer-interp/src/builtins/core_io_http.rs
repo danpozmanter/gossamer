@@ -35,6 +35,51 @@ fn math_arg(args: &[Value]) -> f64 {
     }
 }
 
+fn wrapping_int_arg(args: &[Value], index: usize) -> u64 {
+    args.get(index)
+        .and_then(|value| match value {
+            Value::Int(value) => Some(*value as u64),
+            _ => None,
+        })
+        .unwrap_or(0)
+}
+
+fn normalize_wrapping_int(value: u64, bits: u32, signed: bool) -> i64 {
+    let masked = if bits == 64 {
+        value
+    } else {
+        value & ((1_u64 << bits) - 1)
+    };
+    if signed && bits < 64 && masked & (1_u64 << (bits - 1)) != 0 {
+        (masked | (!0_u64 << bits)) as i64
+    } else {
+        masked as i64
+    }
+}
+
+macro_rules! wrapping_int_builtins {
+    ($add:ident, $mul:ident, $bits:expr, $signed:expr) => {
+        fn $add(args: &[Value]) -> RuntimeResult<Value> {
+            let value = wrapping_int_arg(args, 0).wrapping_add(wrapping_int_arg(args, 1));
+            Ok(Value::Int(normalize_wrapping_int(value, $bits, $signed)))
+        }
+
+        fn $mul(args: &[Value]) -> RuntimeResult<Value> {
+            let value = wrapping_int_arg(args, 0).wrapping_mul(wrapping_int_arg(args, 1));
+            Ok(Value::Int(normalize_wrapping_int(value, $bits, $signed)))
+        }
+    };
+}
+
+wrapping_int_builtins!(builtin_i8_wrapping_add, builtin_i8_wrapping_mul, 8, true);
+wrapping_int_builtins!(builtin_i16_wrapping_add, builtin_i16_wrapping_mul, 16, true);
+wrapping_int_builtins!(builtin_i32_wrapping_add, builtin_i32_wrapping_mul, 32, true);
+wrapping_int_builtins!(builtin_i64_wrapping_add, builtin_i64_wrapping_mul, 64, true);
+wrapping_int_builtins!(builtin_u8_wrapping_add, builtin_u8_wrapping_mul, 8, false);
+wrapping_int_builtins!(builtin_u16_wrapping_add, builtin_u16_wrapping_mul, 16, false);
+wrapping_int_builtins!(builtin_u32_wrapping_add, builtin_u32_wrapping_mul, 32, false);
+wrapping_int_builtins!(builtin_u64_wrapping_add, builtin_u64_wrapping_mul, 64, false);
+
 fn builtin_math_sqrt(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Float(math_arg(args).sqrt()))
 }

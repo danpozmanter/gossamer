@@ -16,7 +16,7 @@ are returned as `Result<T, E>` instead of raised as exceptions.
 | `None` | `Option<T>` with `Some(v)` or `None` |
 | `try` / `except` | `Result<T, E>` with `?` or `match` |
 | `isinstance` dispatch | `enum` plus `match`, or traits |
-| list | `[T]` / `Vec<T>` |
+| list | `Vec<T>`; use `[T; N]` for a fixed array and `&[T]` for a borrowed slice |
 | dict | `HashMap<K, V>` |
 | set | `HashSet<T>` |
 | `asyncio.create_task` | `go fn() { ... }()` |

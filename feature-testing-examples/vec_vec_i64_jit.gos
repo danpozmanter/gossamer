@@ -1,10 +1,10 @@
-// Vec<Vec<i64>> JIT marshalling: a function taking `&[[i64]]` is called in a
+// Vec<Vec<i64>> JIT marshalling: a function taking `&[Vec<i64>]` is called in a
 // hot loop so it JIT-promotes; the marshalled native nested graph is built
 // once and reused via the Arc-identity cache across every call. Exercises
 // `g[i]` (inner-vec load) and `for nb in g[i]` (inner-vec iteration), the
 // same shapes graph-bfs drives. Bit-identical across VM / Cranelift / LLVM.
 
-fn sum_graph(g: &[[i64]], n: i64) -> i64 {
+fn sum_graph(g: &[Vec<i64>], n: i64) -> i64 {
     let mut total: i64 = 0
     let mut i: i64 = 0
     while i < n {
@@ -17,10 +17,10 @@ fn sum_graph(g: &[[i64]], n: i64) -> i64 {
 }
 
 fn main() {
-    let mut g: [[i64]] = []
+    let mut g: Vec<Vec<i64>> = Vec::from([])
     let mut i: i64 = 0
     while i < 100 {
-        let mut row: [i64] = []
+        let mut row: Vec<i64> = Vec::from([])
         let mut j: i64 = 0
         while j < 5 {
             row.push(i * 10 + j)

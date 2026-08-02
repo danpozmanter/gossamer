@@ -587,7 +587,12 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/mut_ref_string_writeback.gos"),
     spec("feature-testing-examples/mutability_explicit_parity.gos"),
     spec("feature-testing-examples/fixed_array_mut_param_copy.gos"),
-    spec("feature-testing-examples/byte_vec_i64_model.gos"),
+    Spec {
+        skip_all: Some(
+            "contains an intentional narrow-integer overflow whose debug panic and release wrapping are tested directly by spec_conformance",
+        ),
+        ..spec("feature-testing-examples/byte_vec_i64_model.gos")
+    },
     spec("feature-testing-examples/map_iteration_order.gos"),
     spec("feature-testing-examples/usize_compare.gos"),
     spec("feature-testing-examples/u64_unsigned.gos"),
@@ -686,7 +691,12 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/http_router_lookup.gos"),
     spec("feature-testing-examples/http_serve_err_binding.gos"),
     spec("feature-testing-examples/http3_serve_err_binding.gos"),
-    spec("feature-testing-examples/integer_overflow_edges.gos"),
+    Spec {
+        skip_all: Some(
+            "contains an intentional unsigned underflow whose debug panic and release wrapping are tested directly by spec_conformance",
+        ),
+        ..spec("feature-testing-examples/integer_overflow_edges.gos")
+    },
     spec("feature-testing-examples/intcode_day2_mut_slice_native.gos"),
     spec("feature-testing-examples/intcode_day2_native.gos"),
     spec("feature-testing-examples/iter_combinator_chain.gos"),
@@ -840,7 +850,15 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/flag_cell_duration.gos"),
     spec("feature-testing-examples/instant_methods.gos"),
     spec("feature-testing-examples/time_param_dispatch.gos"),
-    spec("feature-testing-examples/neg_int_min_wraps.gos"),
+    Spec {
+        // Debug execution intentionally checks overflow while an optimised
+        // release build wraps, matching Rust's profile-dependent arithmetic.
+        // `spec_conformance::spec_3_1_native_profiles_check_then_wrap_overflow`
+        // exercises both profiles directly, so comparing this fixture's VM
+        // result with LLVM release would assert a behavior that must differ.
+        skip_all: Some("debug overflow checks intentionally differ from release wrapping"),
+        ..spec("feature-testing-examples/neg_int_min_wraps.gos")
+    },
     spec("feature-testing-examples/stdlib_net_dns.gos"),
     spec("feature-testing-examples/stdlib_json_dynamic.gos"),
     spec("feature-testing-examples/stdlib_netip.gos"),

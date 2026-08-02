@@ -246,6 +246,12 @@ impl<'a> Lowerer<'a> {
         let operand_ty = self.operand_ty(lhs);
         let mut kind = numeric_kind(self.tcx, operand_ty);
         let mut operand_llvm = render_ty(self.tcx, operand_ty);
+        if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul)
+            && let NumericKind::Int(dest_int_ty) =
+                numeric_kind(self.tcx, self.body.local_ty(dest_local))
+        {
+            kind = NumericKind::Int(dest_int_ty);
+        }
         // Width mismatch correction: when one operand is the
         // narrower `i1` form (most often a `Copy(bool_place)`) but
         // `operand_ty(lhs)` resolved to `i64` (typical when the
@@ -485,6 +491,96 @@ impl<'a> Lowerer<'a> {
             rhs_v = masked;
         }
         let tmp = self.fresh();
+        let checked_integer = matches!(crate::emit::opt_profile(), crate::emit::OptProfile::Debug)
+            && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul)
+            && matches!(kind, NumericKind::Int(_));
+        if checked_integer {
+            let NumericKind::Int(int_ty) = kind else {
+                unreachable!();
+            };
+            let signedness = if int_signed(int_ty) { "s" } else { "u" };
+            let operation = match op {
+                BinOp::Add => "add",
+                BinOp::Sub => "sub",
+                BinOp::Mul => "mul",
+                _ => unreachable!(),
+            };
+            let checked_llvm = format!("i{}", int_width(int_ty).min(64));
+            let checked_lhs = if operand_llvm == checked_llvm {
+                lhs_v.clone()
+            } else {
+                let narrowed = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {narrowed} = trunc {operand_llvm} {lhs_v} to {checked_llvm}"
+                )
+                .unwrap();
+                narrowed
+            };
+            let checked_rhs = if operand_llvm == checked_llvm {
+                rhs_v.clone()
+            } else {
+                let narrowed = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {narrowed} = trunc {operand_llvm} {rhs_v} to {checked_llvm}"
+                )
+                .unwrap();
+                narrowed
+            };
+            let intrinsic = format!("llvm.{signedness}{operation}.with.overflow.{checked_llvm}");
+            self.runtime_refs.insert(format!(
+                "declare {{ {checked_llvm}, i1 }} @{intrinsic}({checked_llvm}, {checked_llvm})"
+            ));
+            let pair = self.fresh();
+            writeln!(
+                self.out,
+                "  {pair} = call {{ {checked_llvm}, i1 }} @{intrinsic}({checked_llvm} {checked_lhs}, {checked_llvm} {checked_rhs})"
+            )
+            .unwrap();
+            let checked_result = if operand_llvm == checked_llvm {
+                tmp.clone()
+            } else {
+                self.fresh()
+            };
+            writeln!(
+                self.out,
+                "  {checked_result} = extractvalue {{ {checked_llvm}, i1 }} {pair}, 0"
+            )
+            .unwrap();
+            if checked_result != tmp {
+                let extension = if int_signed(int_ty) { "sext" } else { "zext" };
+                writeln!(
+                    self.out,
+                    "  {tmp} = {extension} {checked_llvm} {checked_result} to {operand_llvm}"
+                )
+                .unwrap();
+            }
+            let overflow = self.fresh();
+            writeln!(
+                self.out,
+                "  {overflow} = extractvalue {{ {checked_llvm}, i1 }} {pair}, 1"
+            )
+            .unwrap();
+            let fail_label = format!("overflow_fail_{}", self.next_ssa);
+            self.next_ssa += 1;
+            let continue_label = format!("overflow_ok_{}", self.next_ssa);
+            self.next_ssa += 1;
+            writeln!(
+                self.out,
+                "  br i1 {overflow}, label %{fail_label}, label %{continue_label}"
+            )
+            .unwrap();
+            writeln!(self.out, "{fail_label}:").unwrap();
+            let panic_operation = match op {
+                BinOp::Add => "add",
+                BinOp::Sub => "subtract",
+                BinOp::Mul => "multiply",
+                _ => unreachable!(),
+            };
+            self.lower_panic(&format!("attempt to {panic_operation} with overflow\n"));
+            writeln!(self.out, "{continue_label}:").unwrap();
+        }
         let instr = match (op, kind) {
             (BinOp::Add, NumericKind::Int(_)) => format!("add {operand_llvm}"),
             (BinOp::Sub, NumericKind::Int(_)) => format!("sub {operand_llvm}"),
@@ -569,7 +665,9 @@ impl<'a> Lowerer<'a> {
                 ));
             }
         };
-        writeln!(self.out, "  {tmp} = {instr} {lhs_v}, {rhs_v}").unwrap();
+        if !checked_integer {
+            writeln!(self.out, "  {tmp} = {instr} {lhs_v}, {rhs_v}").unwrap();
+        }
         // Coerce the result back to the destination type.
         //
         // * Comparison ops (Eq/Ne/Lt/Le/Gt/Ge): result is

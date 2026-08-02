@@ -49,6 +49,212 @@ use super::*;
 use super::Builder;
 
 impl<'a> Builder<'a> {
+    /// Lowers Rust-style `fill` for fixed arrays, slices, and Vec values as a
+    /// typed element-store loop. Using MIR places preserves aggregate and RC
+    /// element semantics instead of copying an erased machine word.
+    pub(crate) fn try_lower_sequence_fill(
+        &mut self,
+        receiver: &HirExpr,
+        value: &HirExpr,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::{IntTy, Mutbl, TyKind};
+
+        let recv_place = self.lower_place_expr(receiver)?;
+        let recv_ty = self.locals[recv_place.local.0 as usize].ty;
+        let recv_kind = match self.tcx.kind_of(recv_ty) {
+            TyKind::Ref { inner, .. } => self.tcx.kind_of(*inner).clone(),
+            kind => kind.clone(),
+        };
+        let elem = match &recv_kind {
+            TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => *elem,
+            _ => return None,
+        };
+        let uses_vec_storage = matches!(recv_kind, TyKind::Slice(_) | TyKind::Vec(_));
+        let value_local = self.lower_expr(value)?;
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        let len_local = self.fresh(i64_ty);
+        match recv_kind {
+            TyKind::Array { len, .. } => self.emit_assign(
+                Place::local(len_local),
+                Rvalue::Use(Operand::Const(ConstValue::Int(
+                    i128::try_from(len.to_usize()).unwrap_or(0),
+                ))),
+                span,
+            ),
+            TyKind::Vec(_) | TyKind::Slice(_) => {
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".to_string())),
+                    args: vec![Operand::Copy(recv_place.clone())],
+                    destination: Place::local(len_local),
+                    target: Some(next),
+                });
+                self.set_current(next);
+            }
+            _ => unreachable!(),
+        }
+
+        let index = self.push_local(i64_ty, None, true);
+        self.emit_assign(
+            Place::local(index),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        let header = self.new_block(span);
+        let body = self.new_block(span);
+        let exit = self.new_block(span);
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(header);
+        let bool_ty = self.tcx.bool_ty();
+        let condition = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(condition),
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(index)),
+                rhs: Operand::Copy(Place::local(len_local)),
+            },
+            span,
+        );
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(condition)),
+            arms: vec![(0, exit)],
+            default: body,
+        });
+
+        self.set_current(body);
+        let element = if uses_vec_storage {
+            // Vec and slice locals hold a GosVec header pointer, not an inline
+            // element buffer. Resolve the actual element address before the
+            // store. A flat Index projection would overwrite header fields,
+            // including `elem_bytes`, and corrupt every later access.
+            let ref_ty = self.tcx.intern(TyKind::Ref {
+                mutability: Mutbl::Mut,
+                inner: elem,
+            });
+            let ptr = self.fresh(ref_ty);
+            let after_ptr = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_ptr".to_string())),
+                args: vec![
+                    Operand::Copy(recv_place),
+                    Operand::Copy(Place::local(index)),
+                ],
+                destination: Place::local(ptr),
+                target: Some(after_ptr),
+            });
+            self.set_current(after_ptr);
+            let mut place = Place::local(ptr);
+            place.projection.push(crate::ir::Projection::Deref);
+            place
+        } else {
+            let mut place = recv_place;
+            place.projection.push(crate::ir::Projection::Index(index));
+            place
+        };
+        self.emit_assign(
+            element,
+            Rvalue::Use(Operand::Copy(Place::local(value_local))),
+            span,
+        );
+        let one = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(one),
+            Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+            span,
+        );
+        let next_index = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(next_index),
+            Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(index)),
+                rhs: Operand::Copy(Place::local(one)),
+            },
+            span,
+        );
+        self.emit_assign(
+            Place::local(index),
+            Rvalue::Use(Operand::Copy(Place::local(next_index))),
+            span,
+        );
+        self.terminate(Terminator::Goto { target: header });
+        self.set_current(exit);
+        Some(self.lower_unit(span))
+    }
+
+    pub(crate) fn try_lower_fixed_array_ordering(
+        &mut self,
+        receiver: &HirExpr,
+        method: &str,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::{IntTy, TyKind};
+
+        let recv_place = self.lower_place_expr(receiver)?;
+        let recv_ty = self.locals[recv_place.local.0 as usize].ty;
+        let TyKind::Array { elem, len } = self.tcx.kind_of(recv_ty).clone() else {
+            return None;
+        };
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        let len_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(len_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(
+                i128::try_from(len.to_usize()).unwrap_or(0),
+            ))),
+            span,
+        );
+        let (helper, mut args) = match method {
+            "sort" => {
+                let helper = if matches!(self.tcx.kind_of(elem), TyKind::String) {
+                    "gos_rt_arr_sort_str"
+                } else {
+                    "gos_rt_arr_sort_i64"
+                };
+                (
+                    helper,
+                    vec![
+                        Operand::Copy(Place::local(recv_place.local)),
+                        Operand::Copy(Place::local(len_local)),
+                    ],
+                )
+            }
+            "reverse" => {
+                let bytes_local = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(bytes_local),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(
+                        self.type_slot_bytes(elem).max(1),
+                    )))),
+                    span,
+                );
+                (
+                    "gos_rt_arr_reverse",
+                    vec![
+                        Operand::Copy(Place::local(recv_place.local)),
+                        Operand::Copy(Place::local(len_local)),
+                        Operand::Copy(Place::local(bytes_local)),
+                    ],
+                )
+            }
+            _ => return None,
+        };
+        let unit_ty = self.tcx.unit();
+        let dest = self.fresh(unit_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(helper.to_string())),
+            args: std::mem::take(&mut args),
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(self.lower_unit(span))
+    }
+
     pub(crate) fn try_lower_sort_by(
         &mut self,
         receiver: &HirExpr,
@@ -886,6 +1092,24 @@ impl<'a> Builder<'a> {
             }
             ("iter::step_by", 2) => {
                 let step = self.lower_expr(&args[0])?;
+                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(_)) {
+                    let iter = self.lower_lazy_iter_i64_arg(&args[1])?;
+                    let dest = self.fresh(ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_lazy_iter_step_by_i64".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(step)),
+                            Operand::Copy(Place::local(iter)),
+                        ],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
                 let v = self.lower_iter_vec_arg(&args[1])?;
                 let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_) | TyKind::Slice(_)) {
                     ty

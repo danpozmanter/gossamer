@@ -171,11 +171,11 @@ use std::errors
 struct Bag {
     pub content: String,
     pub count: i64,
-    pub items: [String],
+    pub items: Vec<String>,
 }
 
 fn build() -> Result<Bag, errors::Error> {
-    let mut v: [String] = [].to_vec()
+    let mut v: Vec<String> = Vec::from([]).to_vec()
     v.push("hello world".to_string())
     Ok(Bag { content: "ok".to_string(), count: 1, items: v })
 }
@@ -195,11 +195,11 @@ fn string_len_on_indexed_struct_vec_field_via_question_mark() {
 use std::errors
 
 struct Bag {
-    pub items: [String],
+    pub items: Vec<String>,
 }
 
 fn build() -> Result<Bag, errors::Error> {
-    let mut v: [String] = [].to_vec()
+    let mut v: Vec<String> = Vec::from([]).to_vec()
     v.push("hi there".to_string())
     Ok(Bag { items: v })
 }
@@ -216,4 +216,43 @@ fn main() {
 }
 "#;
     assert_three_tier_stdout("idx_field_str_len_qmark", src, "len=8");
+}
+
+#[test]
+fn user_methods_on_indexed_vec_elements_match_across_tiers() {
+    // Regression for #124. Native lowering previously emitted a call to an
+    // undeclared `@is_halted` symbol for the shared method and failed to
+    // write a mutable method receiver back through `amplifiers[index]`.
+    let src = r#"
+struct Amplifier {
+    pub halted: bool,
+    pub output: i64,
+}
+
+impl Amplifier {
+    fn run(&mut self, input: i64) {
+        self.output = input + 1
+        self.halted = true
+    }
+
+    fn is_halted(self) -> bool {
+        self.halted
+    }
+}
+
+fn main() {
+    let mut amplifiers: Vec<Amplifier> = Vec::from([
+        Amplifier { halted: false, output: 0 },
+        Amplifier { halted: false, output: 0 },
+    ])
+    let index = 1
+    amplifiers[index].run(41)
+    println!("halted={} output={}", amplifiers[index].is_halted(), amplifiers[index].output)
+}
+"#;
+    assert_three_tier_stdout(
+        "user_methods_on_indexed_vec_elements",
+        src,
+        "halted=true output=42",
+    );
 }

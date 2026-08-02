@@ -115,6 +115,93 @@ fn main() {
 }
 
 #[test]
+fn explicit_wrapping_integer_methods_match_across_tiers() {
+    let src = r"
+fn main() {
+    let max: i64 = 9223372036854775807
+    println(max.wrapping_add(1))
+    println(max.wrapping_mul(2))
+    println(127i8.wrapping_add(1i8))
+    println(200u8.wrapping_add(100u8))
+}
+";
+    let expected = "-9223372036854775808\n-2\n-128\n44\n";
+    let dir = fresh_dir("wrapping_integer_methods");
+    let path = write_source(&dir, "wrapping_integer_methods", src);
+
+    let vm = run_vm(&path);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, expected);
+
+    let jit = Command::new(gos_bin())
+        .env("GOS_JIT_ONLY", "main")
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn forced JIT");
+    let jit = run_with_timeout(jit);
+    assert_eq!(jit.2, Some(0), "jit stderr: {}", jit.1);
+    assert_eq!(jit.0, expected);
+
+    for release in [false, true] {
+        let scratch = dir.join(if release { "release" } else { "debug" });
+        fs::create_dir_all(&scratch).unwrap();
+        let bin = build_native_with_flag(&path, &scratch, release).expect("native build");
+        let native = run_native(&bin);
+        assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+        assert_eq!(native.0, expected);
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn shared_borrow_of_indexed_string_passes_the_string_value() {
+    let src = r"
+use std::env
+use std::strconv
+
+fn main() {
+    let args = env::args()
+    println(strconv::parse_i64(&args[0]).unwrap_or(9))
+}
+";
+    let dir = fresh_dir("indexed_string_shared_borrow");
+    let path = write_source(&dir, "indexed_string_shared_borrow", src);
+
+    let vm = Command::new(gos_bin())
+        .env("GOS_JIT", "0")
+        .arg(&path)
+        .arg("123")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn VM");
+    let vm = run_with_timeout(vm);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, "123\n");
+
+    for release in [false, true] {
+        let scratch = dir.join(if release { "release" } else { "debug" });
+        fs::create_dir_all(&scratch).unwrap();
+        let bin = build_native_with_flag(&path, &scratch, release).expect("native build");
+        let native = Command::new(bin)
+            .arg("123")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn native");
+        let native = run_with_timeout(native);
+        assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+        assert_eq!(native.0, "123\n");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn static_mut_assignment_does_not_error_at_runtime() {
     // `static mut COUNTER: i64 = 0; COUNTER = 100` previously
     // failed in the VM with "name `COUNTER` is not bound in
@@ -234,7 +321,7 @@ fn continue_in_for_vec_iter_advances_index() {
     // and the back-edge.
     let src = r#"
 fn main() {
-    let xs: [i64] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].to_vec()
+    let xs: Vec<i64> = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].to_vec()
     let mut acc: i64 = 0
     for x in xs.iter() {
         if x % 3 == 0 {
@@ -416,7 +503,7 @@ fn llvm_vec_of_tuples_index_returns_both_fields() {
     // surfaced garbage in the f64 field.
     let src = r#"
 fn main() {
-    let mut xs: [(i64, f64)] = [].to_vec()
+    let mut xs: Vec<(i64, f64)> = [].to_vec()
     xs.push((1, 1.5))
     xs.push((2, 2.5))
     let i: i64 = 1

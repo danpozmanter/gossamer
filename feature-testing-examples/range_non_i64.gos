@@ -10,7 +10,7 @@ fn main() {
 
     // i32 range bounds with variable end
     let n: i32 = 5
-    let mut parts: [String] = []
+    let mut parts: Vec<String> = Vec::from([])
     for j in 0i32..n {
         parts.push(format!("{}", j))
     }

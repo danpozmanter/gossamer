@@ -37,7 +37,7 @@ fn main() {
     }
 
     // ---- strings::* free fns ----
-    let parts: Vec<String> = ["a", "b", "c"]
+    let parts: Vec<String> = Vec::from(["a", "b", "c"])
     println!("join = {}", strings::join(&parts, &"-"))
     match strings::rfind(&"foo/bar/baz", &"/") {
         Some(i) => println!("rfind = {}", i),
@@ -53,7 +53,7 @@ fn main() {
     }
 
     // ---- Vec method surface ----
-    let mut nums: Vec<i64> = [10, 20, 30, 20]
+    let mut nums: Vec<i64> = Vec::from([10, 20, 30, 20])
     match nums.first() {
         Some(v) => println!("first = {}", v),
         None => println!("first = none"),
@@ -89,7 +89,7 @@ fn main() {
     }
 
     // ---- Vec<String>.contains ----
-    let langs: Vec<String> = ["text", "json"]
+    let langs: Vec<String> = Vec::from(["text", "json"])
     if langs.contains(&"json") {
         println!("langs has json")
     }

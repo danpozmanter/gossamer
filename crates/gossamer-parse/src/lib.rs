@@ -235,4 +235,18 @@ mod top_level_stmt_tests {
         let (_ast, diagnostics) = parse_source_file(source, file);
         assert!(!diagnostics.is_empty());
     }
+
+    #[test]
+    fn malformed_map_value_at_eof_does_not_loop() {
+        let source = "upb {\na, \0\0\0\0\u{e} {\na>x:>>";
+        let mut map = SourceMap::new();
+        let file = map.add_file("map-eof-oom-repro.gos", source.to_owned());
+        let (ast, diagnostics) = parse_source_file(source, file);
+        assert!(!diagnostics.is_empty());
+        assert!(
+            ast.next_node_id < 100,
+            "malformed input synthesized too many AST nodes: {}",
+            ast.next_node_id
+        );
+    }
 }

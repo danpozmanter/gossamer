@@ -1,7 +1,7 @@
-// Negating `i64::MIN` wraps to itself rather than overflowing, and the
-// result is bit-identical across the bytecode VM (`gos` / `gos test`),
-// the Cranelift JIT, and the LLVM AOT tier (`gos build`). `2^63` wraps to
-// `i64::MIN`; negating it wraps back to `i64::MIN`.
+// Optimised release arithmetic wraps like Rust release arithmetic.
+// Debug execution intentionally panics while constructing `i64::MIN`, so
+// profile-specific coverage lives in `spec_conformance.rs` rather than the
+// ordinary VM-versus-release parity walk.
 fn main() {
     let mut n = 1
     for _ in 0..63 {

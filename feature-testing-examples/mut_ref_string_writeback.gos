@@ -14,7 +14,7 @@ fn append(s: &mut String, v: String) {
 // Multi-block body (while + branch) above the inliner's statement budget, so
 // the call is NOT inlined: the `&mut String` slot genuinely crosses the call
 // boundary and must round-trip via the Ref slot + post-call reload.
-fn serialize_into(s: &mut String, xs: [i64]) {
+fn serialize_into(s: &mut String, xs: Vec<i64>) {
     *s += "["
     let mut i = 0
     while i < xs.len() {
@@ -38,7 +38,7 @@ fn main() {
     println!("{}", b)
 
     let mut c = ""
-    serialize_into(&mut c, [1, 2, 3, 40, 500])
+    serialize_into(&mut c, Vec::from([1, 2, 3, 40, 500]))
     println!("{}", c)
 
     let mut d = "x"

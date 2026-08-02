@@ -275,6 +275,16 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
             });
         }
     }
+    for &(param, int_reg) in &chunk.i64_params {
+        if param >= chunk.arity || int_reg >= chunk.int_count {
+            return Err(ValidationError::InvalidChunkShape {
+                reason: format!(
+                    "typed integer parameter ({param}, {int_reg}) is outside arity {} or integer register count {}",
+                    chunk.arity, chunk.int_count
+                ),
+            });
+        }
+    }
 
     let check_v = |op_idx: usize, r: Reg| -> Result<(), ValidationError> {
         let r = u32::from(r);
@@ -487,6 +497,24 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v_span(op_idx, args, argc)?;
                 check_cache(op_idx, cache_idx, call_cache_count, CacheKind::Call)?;
             }
+            Op::CallGlobal {
+                dst,
+                global_idx,
+                args,
+                argc,
+                cache_idx,
+                ..
+            } => {
+                check_v(op_idx, dst)?;
+                check_pool(
+                    op_idx,
+                    u32::from(global_idx),
+                    globals_len,
+                    PoolKind::Globals,
+                )?;
+                check_v_span(op_idx, args, argc)?;
+                check_cache(op_idx, cache_idx, call_cache_count, CacheKind::Call)?;
+            }
             Op::Return { value } => check_v(op_idx, value)?,
             Op::ReturnUnit => {}
             Op::Panic { msg } => {
@@ -672,6 +700,28 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, start)?;
                 check_v(op_idx, end)?;
             }
+            Op::BuildVariant1 {
+                dst,
+                name_idx,
+                field,
+                ..
+            } => {
+                check_v(op_idx, dst)?;
+                check_pool(op_idx, u32::from(name_idx), consts_len, PoolKind::Consts)?;
+                check_v(op_idx, field)?;
+            }
+            Op::BuildVariant2 {
+                dst,
+                name_idx,
+                first,
+                second,
+                ..
+            } => {
+                check_v(op_idx, dst)?;
+                check_pool(op_idx, u32::from(name_idx), consts_len, PoolKind::Consts)?;
+                check_v(op_idx, first)?;
+                check_v(op_idx, second)?;
+            }
             Op::IntToFloatF64 { dst_f, src_i } => {
                 check_f(op_idx, dst_f)?;
                 check_i(op_idx, src_i)?;
@@ -826,6 +876,26 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, recv)?;
                 check_v(op_idx, idx)?;
+            }
+            Op::StrByteAtI64 { dst_i, recv, idx_i } => {
+                check_i(op_idx, dst_i)?;
+                check_v(op_idx, recv)?;
+                check_i(op_idx, idx_i)?;
+            }
+            Op::StrByteAtAddI64 {
+                dst_i,
+                lhs_i,
+                recv,
+                idx_i,
+            } => {
+                check_i(op_idx, dst_i)?;
+                check_i(op_idx, lhs_i)?;
+                check_v(op_idx, recv)?;
+                check_i(op_idx, idx_i)?;
+            }
+            Op::StrLenI64 { dst_i, recv } => {
+                check_i(op_idx, dst_i)?;
+                check_v(op_idx, recv)?;
             }
             Op::IndexSet { base, index, value } => {
                 check_v(op_idx, base)?;
@@ -1046,15 +1116,33 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 lhs_i,
                 rhs_i,
             }
+            | Op::CheckedAddI64 {
+                dst_i,
+                lhs_i,
+                rhs_i,
+                ..
+            }
             | Op::SubI64 {
                 dst_i,
                 lhs_i,
                 rhs_i,
             }
+            | Op::CheckedSubI64 {
+                dst_i,
+                lhs_i,
+                rhs_i,
+                ..
+            }
             | Op::MulI64 {
                 dst_i,
                 lhs_i,
                 rhs_i,
+            }
+            | Op::CheckedMulI64 {
+                dst_i,
+                lhs_i,
+                rhs_i,
+                ..
             }
             | Op::DivI64 {
                 dst_i,
@@ -1539,10 +1627,14 @@ impl RegisterInitialization {
     fn entry(chunk: &FnChunk) -> Self {
         let mut values = vec![false; usize::from(chunk.register_count)];
         values[..usize::from(chunk.arity)].fill(true);
+        let mut ints = vec![false; usize::from(chunk.int_count)];
+        for &(_, int_reg) in &chunk.i64_params {
+            ints[usize::from(int_reg)] = true;
+        }
         Self {
             values,
             floats: vec![false; usize::from(chunk.float_count)],
-            ints: vec![false; usize::from(chunk.int_count)],
+            ints,
         }
     }
 
@@ -1702,6 +1794,8 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
         | Op::BuildArray { dst, .. }
         | Op::BuildArrayRepeat { dst, .. }
         | Op::BuildRange { dst, .. }
+        | Op::BuildVariant1 { dst, .. }
+        | Op::BuildVariant2 { dst, .. }
         | Op::CastScalar { dst, .. }
         | Op::CellNew { dst, .. }
         | Op::CellNewMove { dst, .. }
@@ -1730,6 +1824,7 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
         | Op::MapInc { dst, .. }
         | Op::MethodCall { dst, .. }
         | Op::Call { dst, .. }
+        | Op::CallGlobal { dst, .. }
         | Op::AddInt { dst, .. }
         | Op::SubInt { dst, .. }
         | Op::MulInt { dst, .. }
@@ -1813,6 +1908,9 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
         | Op::UnboxI64 { dst_i, .. }
         | Op::U8VecGetByte { dst_i, .. }
         | Op::IntArrayGetI64 { dst_i, .. }
+        | Op::StrByteAtI64 { dst_i, .. }
+        | Op::StrByteAtAddI64 { dst_i, .. }
+        | Op::StrLenI64 { dst_i, .. }
         | Op::IntMapInc { dst_i, .. }
         | Op::IntMapGetOr { dst_i, .. }
         | Op::IntMapLen { dst_i, .. }
@@ -1822,8 +1920,11 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
         | Op::MoveI64 { dst_i, .. }
         | Op::ArithImmI64 { dst_i, .. }
         | Op::AddI64 { dst_i, .. }
+        | Op::CheckedAddI64 { dst_i, .. }
         | Op::SubI64 { dst_i, .. }
+        | Op::CheckedSubI64 { dst_i, .. }
         | Op::MulI64 { dst_i, .. }
+        | Op::CheckedMulI64 { dst_i, .. }
         | Op::DivI64 { dst_i, .. }
         | Op::RemI64 { dst_i, .. }
         | Op::DivU64 { dst_i, .. }
@@ -1870,6 +1971,9 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
             callee, args, argc, ..
         } => {
             effect.v_reads.push(callee);
+            add_v_span(&mut effect.v_reads, args, argc);
+        }
+        Op::CallGlobal { args, argc, .. } => {
             add_v_span(&mut effect.v_reads, args, argc);
         }
         Op::MethodCall {
@@ -1926,6 +2030,8 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
             first_i, second_i, ..
         } => effect.i_reads.extend([first_i, second_i]),
         Op::BuildRange { start, end, .. } => effect.v_reads.extend([start, end]),
+        Op::BuildVariant1 { field, .. } => effect.v_reads.push(field),
+        Op::BuildVariant2 { first, second, .. } => effect.v_reads.extend([first, second]),
         Op::CellTake { cell, .. } => effect.v_reads.push(cell),
         Op::IndexGet { base, index, .. }
         | Op::IndexGetChecked { base, index, .. }
@@ -2037,6 +2143,17 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
             effect.v_reads.push(base);
             effect.i_reads.push(index_i);
         }
+        Op::StrByteAtI64 { recv, idx_i, .. } => {
+            effect.v_reads.push(recv);
+            effect.i_reads.push(idx_i);
+        }
+        Op::StrByteAtAddI64 {
+            lhs_i, recv, idx_i, ..
+        } => {
+            effect.v_reads.push(recv);
+            effect.i_reads.extend([lhs_i, idx_i]);
+        }
+        Op::StrLenI64 { recv, .. } => effect.v_reads.push(recv),
         Op::IntArraySetI64 {
             base,
             index_i,
@@ -2134,8 +2251,11 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
             effect.f_reads.extend([a_f, b_f, c_f]);
         }
         Op::AddI64 { lhs_i, rhs_i, .. }
+        | Op::CheckedAddI64 { lhs_i, rhs_i, .. }
         | Op::SubI64 { lhs_i, rhs_i, .. }
+        | Op::CheckedSubI64 { lhs_i, rhs_i, .. }
         | Op::MulI64 { lhs_i, rhs_i, .. }
+        | Op::CheckedMulI64 { lhs_i, rhs_i, .. }
         | Op::DivI64 { lhs_i, rhs_i, .. }
         | Op::RemI64 { lhs_i, rhs_i, .. }
         | Op::DivU64 { lhs_i, rhs_i, .. }
@@ -2417,6 +2537,7 @@ mod tests {
             arith_cache_count: 0,
             field_cache_count: 0,
             mut_ref_params: Vec::new(),
+            i64_params: Vec::new(),
             closure_protos: Vec::new(),
             select_arms: Vec::new(),
         }

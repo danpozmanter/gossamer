@@ -85,7 +85,7 @@ fn drop_pass_releases_http_response_content_type_string() {
 use std::http
 
 fn ct(url: &String) -> i64 {
-    match http::get(url, []) {
+    match http::get(url, Vec::new()) {
         Ok(r) => {
             let c = r.content_type
             if c == "x" { 1 } else { 0 }
@@ -605,7 +605,7 @@ struct App { }
 
 impl http::Handler for App {
     fn serve(&self, _r: http::Request) -> Result<http::Response, http::Error> {
-        match http::stream("GET", "http://127.0.0.1:1/x", "", []) {
+        match http::stream("GET", "http://127.0.0.1:1/x", "", Vec::new()) {
             Ok(up) => Ok(http::Response::stream(up.status, up.content_type, up)),
             Err(e) => Err(e),
         }
@@ -750,7 +750,7 @@ fn lifted_map_err_closure_param_keeps_string_type() {
 #[test]
 fn lifted_iter_map_closure_param_keeps_string_type() {
     let source = "use std::iter\n\
-                  fn main() { let xs: Vec<String> = [\"a\", \"b\"]\n\
+                  fn main() { let xs: Vec<String> = Vec::from([\"a\", \"b\"])\n\
                   let ys = iter::map(|s| format!(\"[{s}]\"), xs)\n\
                   let _ = ys }\n";
     let (bodies, tcx) = build_with_lift(source);
@@ -1137,7 +1137,7 @@ fn http_response_literal_full_lowers_to_constructor_and_setters() {
     let source = "use std::http\n\
                   fn h() -> http::Response {\n\
                   http::Response { status: 201, body: \"x\", content_type: \"t\",\n\
-                  headers: [(\"a\", \"b\"), (\"c\", \"d\")] } }\n";
+                  headers: Vec::from([(\"a\", \"b\"), (\"c\", \"d\")]) } }\n";
     let (bodies, _) = build(source);
     let h = bodies.iter().find(|b| b.name == "h").expect("h body");
     let names = call_names(h);
@@ -1160,8 +1160,8 @@ fn http_response_literal_full_lowers_to_constructor_and_setters() {
         .filter(|n| n.as_str() == "gos_rt_http_response_with_header")
         .count();
     assert_eq!(
-        with_header_count, 2,
-        "literal header arrays unroll one with_header per pair: {names:?}"
+        with_header_count, 1,
+        "Vec headers must lower through one loop body call: {names:?}"
     );
 }
 
@@ -1197,7 +1197,7 @@ fn http_response_literal_omitted_fields_use_constructor_defaults() {
 #[test]
 fn http_response_literal_dynamic_headers_emit_vec_loop() {
     let source = "use std::http\n\
-                  fn h(hs: [(String, String)]) -> http::Response {\n\
+                  fn h(hs: Vec<(String, String)>) -> http::Response {\n\
                   http::Response { status: 200, body: \"x\", headers: hs } }\n";
     let (bodies, _) = build(source);
     let h = bodies.iter().find(|b| b.name == "h").expect("h body");
@@ -1378,7 +1378,7 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
     ),
     (
         "Vec::collect",
-        "fn main() { let xs = [1, 2].collect()\nlet _ = xs }",
+        "fn main() { let xs = Vec::from([1, 2]).collect()\nlet _ = xs }",
         "gos_rt_vec_clone",
     ),
     (
@@ -1497,7 +1497,9 @@ fn combinator_free_calls_lower_to_runtime_shims() {
             "{label}: expected `{shim}` call, got {names:?}"
         );
         assert!(
-            !names.iter().any(|n| n.contains("::")),
+            !names
+                .iter()
+                .any(|n| n.contains("::") && n != "Vec::new"),
             "{label}: undefined high-level callee leaked into MIR: {names:?}"
         );
     }
@@ -1563,5 +1565,81 @@ fn std_fn_value_iter_map_resolves_to_runtime_symbol() {
     assert!(
         !strings.iter().any(|s| s == "strings::to_uppercase"),
         "source path must not leak into MIR: {strings:?}"
+    );
+}
+
+#[test]
+fn rebindable_recursive_enum_borrow_has_distinct_non_owning_cursor_local() {
+    let source = r"
+enum ListNode { Link(ListNode, i64), End }
+
+fn walk(n: i64) -> i64 {
+    let mut head = ListNode::End
+    for i in 0..n { head = ListNode::Link(head, i) }
+    let mut count = 0
+    let mut cursor = &head
+    loop {
+        match cursor {
+            ListNode::Link(next, _) => { count += 1; cursor = next },
+            ListNode::End => break,
+        }
+    }
+    count
+}
+";
+    let (bodies, _) = build(source);
+    let body = bodies.iter().find(|body| body.name == "walk").expect("walk");
+    let named = |wanted: &str| {
+        body.locals
+            .iter()
+            .enumerate()
+            .find(|(_, local)| {
+                local
+                    .debug_name
+                    .as_ref()
+                    .is_some_and(|name| name.name.as_str() == wanted)
+            })
+            .map_or_else(
+                || panic!("missing local {wanted}"),
+                |(index, _)| Local(u32::try_from(index).unwrap()),
+            )
+    };
+    let head = named("head");
+    let cursor = named("cursor");
+    assert_ne!(head, cursor, "a rebindable borrow must not alias its owner slot");
+    assert!(body.blocks.iter().flat_map(|block| &block.stmts).any(|stmt| {
+        matches!(
+            &stmt.kind,
+            StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Ref { place: borrowed, .. },
+            } if place.local == cursor && borrowed.local == head
+        )
+    }));
+    assert!(
+        body.blocks.iter().flat_map(|block| &block.stmts).all(|stmt| {
+            !matches!(
+                &stmt.kind,
+                StatementKind::Assign {
+                    rvalue: Rvalue::CallIntrinsic { name, args },
+                    ..
+                } if matches!(*name, "gos_rt_rc_retain" | "gos_rt_rc_release")
+                    && matches!(args.first(), Some(Operand::Copy(place)) if place.local == cursor)
+            )
+        }),
+        "the pointer-valued cursor is a borrow, not another strong owner"
+    );
+    assert!(
+        body.blocks.iter().flat_map(|block| &block.stmts).any(|stmt| {
+            matches!(
+                &stmt.kind,
+                StatementKind::Assign {
+                    rvalue: Rvalue::CallIntrinsic { name, args },
+                    ..
+                } if *name == "gos_rt_rc_release"
+                    && matches!(args.first(), Some(Operand::Copy(place)) if place.local == head)
+            )
+        }),
+        "the pinned owner must still be released at function exit"
     );
 }

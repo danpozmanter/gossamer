@@ -39,7 +39,7 @@ fn main() {
     }
 
     // ELIGIBLE for-over-vec of a Copy element: build + discard per element.
-    let depths: Vec<i64> = [3, 4, 5, 6]
+    let depths: Vec<i64> = Vec::from([3, 4, 5, 6])
     let mut churn3: i64 = 0
     for d in depths {
         churn3 += count(&make(d))
@@ -50,7 +50,7 @@ fn main() {
     // regioned - the trees have to survive. A wrong escape decision here
     // would free `kept`'s nodes mid-build (the `push` method call already
     // makes the body ineligible; this asserts the survivors are intact).
-    let mut kept: Vec<Tree> = []
+    let mut kept: Vec<Tree> = Vec::from([])
     for _ in 0..50 {
         kept.push(make(3))
     }

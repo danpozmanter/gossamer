@@ -11,7 +11,7 @@ fn main() {
         Ok(blocks) => println!("all {} {} {}", blocks.len(), blocks[0].block_type, blocks[1].block_type),
         Err(_e) => println!("allerr"),
     }
-    let b = encoding::pem::Block { block_type: "MSG", bytes: [104, 105] }
+    let b = encoding::pem::Block { block_type: "MSG", bytes: Vec::from([104, 105]) }
     let out = encoding::pem::encode(b)
     println!("encode {} {}", out.contains("BEGIN MSG"), out.contains("END MSG"))
 }

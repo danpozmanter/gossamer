@@ -12,7 +12,7 @@ use std::env
 fn main() {
     let args = env::args()
     let mut first = ""
-    let mut rest: [String] = [].to_vec()
+    let mut rest: Vec<String> = [].to_vec()
     let argc = args.len() as i64
     let mut i: i64 = 0
     while i < argc {

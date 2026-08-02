@@ -557,8 +557,8 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "Vec",
         name: "sort_by_key",
         kind: "method",
-        signature: "fn sort_by_key<T, K>(self: Vec<T>, f: fn(T) -> K) -> Vec<T>",
-        doc: "Returns values sorted by a derived key.",
+        signature: "fn sort_by_key<T, K>(self: &mut Vec<T>, f: fn(T) -> K) -> ()",
+        doc: "Sorts the vector in place by a derived key.",
     },
     CoreMethodHelp {
         owner: "Vec",
@@ -566,6 +566,13 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         kind: "method",
         signature: "fn reverse<T>(self: &mut Vec<T>) -> ()",
         doc: "Reverses the vector in place.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "fill",
+        kind: "method",
+        signature: "fn fill<T>(self: &mut [T], value: T) -> ()",
+        doc: "Clones a value into every existing element without resizing.",
     },
     CoreMethodHelp {
         owner: "Vec",
@@ -795,8 +802,8 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "HashMap",
         name: "from",
         kind: "assoc",
-        signature: "fn from<K, V>(entries: {} | [(K, V)]) -> HashMap<K, V>",
-        doc: "Creates a hash map from `{}` or key-value pairs.",
+        signature: "fn from<K, V>(entries: {K: V}) -> HashMap<K, V>",
+        doc: "Creates a hash map from a map literal.",
     },
     CoreMethodHelp {
         owner: "HashMap",
@@ -956,7 +963,7 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "HashSet",
         name: "from",
         kind: "assoc",
-        signature: "fn from<T>(values: [T]) -> HashSet<T>",
+        signature: "fn from<T, const N: usize>(values: [T; N]) -> HashSet<T>",
         doc: "Creates a hash set from a collection, removing duplicate values.",
     },
     CoreMethodHelp {
@@ -1587,10 +1594,9 @@ impl ReplValueType {
             current = *inner;
         }
         let (method_owner, fixed_array) = match tcx.kind(current) {
-            Some(gossamer_types::TyKind::Array { .. }) => (Some("Vec".to_string()), true),
-            Some(gossamer_types::TyKind::Slice(_) | gossamer_types::TyKind::Vec(_)) => {
-                (Some("Vec".to_string()), false)
-            }
+            Some(gossamer_types::TyKind::Array { .. }) => (Some("Array".to_string()), true),
+            Some(gossamer_types::TyKind::Slice(_)) => (Some("Slice".to_string()), true),
+            Some(gossamer_types::TyKind::Vec(_)) => (Some("Vec".to_string()), false),
             Some(gossamer_types::TyKind::String) => (Some("String".to_string()), false),
             Some(gossamer_types::TyKind::HashMap { .. }) => (Some("HashMap".to_string()), false),
             Some(gossamer_types::TyKind::Iterator(_)) => (Some("Iterator".to_string()), false),
@@ -1723,7 +1729,7 @@ fn repl_binding_info(
         };
         if ty.fixed_array {
             out.push_str(&format!(
-                "  method surface: fixed array (non-resizing Vec methods; mutable methods require writable access)\n  Example: let first = {}[0]\n",
+                "  method surface: fixed array (array and slice methods only; mutable methods require writable access)\n  Example: let first = {}[0]\n",
                 var.name
             ));
         }
@@ -1800,8 +1806,7 @@ fn available_repl_binding_methods(
         .filter(|method| {
             method.kind == "method"
                 && method.owner == owner
-                && (!ty.fixed_array
-                    || !gossamer_types::is_fixed_array_incompatible_vec_method(&method.name))
+                && (!ty.fixed_array || !gossamer_types::is_vec_only_sequence_method(&method.name))
                 && (can_mutate || !gossamer_types::is_mutating_method_name(&method.name))
         })
         .collect()
@@ -2398,7 +2403,7 @@ fn push_catalog_match(
 fn catalog_example(path: &str, kind: &str, signature: &str) -> String {
     match path {
         "HashMap::from" => {
-            return "let empty: HashMap<String, i64> = HashMap::from({}); let map: HashMap<String, i64> = HashMap::from([(\"one\", 1), (\"two\", 2)])".to_string();
+            return "let empty: HashMap<String, i64> = HashMap::from({}); let map: HashMap<String, i64> = HashMap::from({\"one\": 1, \"two\": 2})".to_string();
         }
         "HashSet::from" => {
             return "let set: HashSet<i64> = HashSet::from([1, 2, 2, 3])".to_string();
@@ -2641,7 +2646,48 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
             );
         }
     }
+    // Arrays and slices inherit only the canonical slice surface, not every
+    // non-resizing Vec convenience or eager iterator combinator.
+    let shared_sequence_methods: Vec<CoreMethodEntry> = entries
+        .values()
+        .filter(|method| {
+            method.owner == "Vec"
+                && method.kind == "method"
+                && gossamer_types::is_slice_sequence_method(&method.name)
+        })
+        .cloned()
+        .collect();
+    for method in shared_sequence_methods {
+        for owner in ["Array", "Slice"] {
+            let mut derived = method.clone();
+            derived.owner = owner.to_string();
+            derived.signature = sequence_owner_signature(&derived.signature, owner);
+            insert_core_method_entry(&mut entries, derived);
+        }
+    }
+    insert_core_method_entry(
+        &mut entries,
+        CoreMethodEntry {
+            owner: "Array".to_string(),
+            name: "clone".to_string(),
+            kind: "method",
+            signature: "fn clone<T, const N: i64>(self: &[T; N]) -> [T; N]".to_string(),
+            doc: "Returns a fixed-size copy of the array.".to_string(),
+        },
+    );
     entries.into_values().collect()
+}
+
+fn sequence_owner_signature(signature: &str, owner: &str) -> String {
+    let shared_receiver = if owner == "Array" { "&[T; N]" } else { "&[T]" };
+    let mutable_receiver = if owner == "Array" {
+        "&mut [T; N]"
+    } else {
+        "&mut [T]"
+    };
+    signature
+        .replace("self: &mut Vec<T>", &format!("self: {mutable_receiver}"))
+        .replace("self: Vec<T>", &format!("self: {shared_receiver}"))
 }
 
 /// Exposes a data-last standard module as receiver methods without maintaining
@@ -2710,6 +2756,13 @@ fn runtime_core_method_signature(owner: &str, name: &str, kind: &str) -> Option<
     // These runtime-backed handle constructors are registered by the
     // interpreter rather than the stdlib function catalog. Keep their public
     // contracts here so `%info` never fabricates an ellipsis signature.
+    if matches!(
+        owner,
+        "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
+    ) && matches!(name, "wrapping_add" | "wrapping_mul")
+    {
+        return Some(format!("fn {name}(self: {owner}, rhs: {owner}) -> {owner}"));
+    }
     if let Some(signature) = match (owner, name) {
         ("Arc", "new") => Some("fn new<T>(value: T) -> Arc<T>"),
         ("Rc", "new") => Some("fn new<T>(value: T) -> Rc<T>"),
@@ -2766,6 +2819,20 @@ fn runtime_core_method_signature(owner: &str, name: &str, kind: &str) -> Option<
     reason = "flat metadata table keeps REPL core-method docs auditable"
 )]
 fn runtime_core_method_doc(owner: &str, name: &str) -> Option<&'static str> {
+    if matches!(
+        owner,
+        "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
+    ) {
+        return match name {
+            "wrapping_add" => {
+                Some("Adds with two's-complement wrapping at this integer type's width.")
+            }
+            "wrapping_mul" => {
+                Some("Multiplies with two's-complement wrapping at this integer type's width.")
+            }
+            _ => None,
+        };
+    }
     match (owner, name) {
         ("String", "byte_at") => Some("Returns the byte at an index, or -1 when out of range."),
         ("String", "byte_len") => Some("Returns the byte length of the string."),
@@ -2885,6 +2952,12 @@ fn canonical_runtime_owner(owner: &str) -> Option<String> {
         "bytes::Builder" => "Builder",
         other => other,
     };
+    if matches!(
+        owner,
+        "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
+    ) {
+        return Some(owner.to_string());
+    }
     let last = owner.rsplit("::").next().unwrap_or(owner);
     if last.chars().next().is_some_and(char::is_uppercase) {
         Some(owner.to_string())
@@ -3903,6 +3976,7 @@ mod tests {
             "sort_by_key",
             "reverse",
             "swap",
+            "fill",
             "map",
             "filter",
             "fold",
@@ -3929,6 +4003,57 @@ mod tests {
         assert!(
             missing.is_empty(),
             "missing REPL metadata for typechecked Vec methods: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn sequence_catalogs_match_the_canonical_type_surfaces() {
+        let catalog = core_method_entries();
+        for owner in ["Array", "Slice"] {
+            let methods = catalog
+                .iter()
+                .filter(|entry| entry.owner == owner && entry.kind == "method")
+                .collect::<Vec<_>>();
+            assert!(!methods.is_empty(), "{owner} catalog is empty");
+            for method in methods {
+                let expected = if owner == "Array" {
+                    gossamer_types::is_array_sequence_method(&method.name)
+                } else {
+                    gossamer_types::is_slice_sequence_method(&method.name)
+                };
+                assert!(expected, "{owner} unexpectedly exposes {}", method.name);
+                assert!(
+                    !gossamer_types::is_vec_only_sequence_method(&method.name),
+                    "{owner} exposes Vec-only method {}",
+                    method.name
+                );
+            }
+        }
+
+        for name in ["push", "pop", "capacity", "reserve", "map", "fold", "sum"] {
+            assert!(
+                catalog
+                    .iter()
+                    .any(|entry| entry.owner == "Vec" && entry.name == name),
+                "Vec is missing {name}"
+            );
+            assert!(
+                !catalog.iter().any(|entry| {
+                    matches!(entry.owner.as_str(), "Array" | "Slice") && entry.name == name
+                }),
+                "{name} leaked from Vec into Array or Slice"
+            );
+        }
+
+        let array_clone = catalog
+            .iter()
+            .find(|entry| entry.owner == "Array" && entry.name == "clone")
+            .expect("Array::clone metadata");
+        assert!(array_clone.signature.ends_with("-> [T; N]"));
+        assert!(
+            !catalog
+                .iter()
+                .any(|entry| entry.owner == "Slice" && entry.name == "clone")
         );
     }
 }

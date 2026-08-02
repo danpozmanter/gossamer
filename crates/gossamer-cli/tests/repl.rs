@@ -126,7 +126,7 @@ fn repl_reports_mixed_numeric_types_without_vm_register_details() {
 #[test]
 fn vec_insert_results_do_not_corrupt_persistent_repl_bindings() {
     let out = run_repl(
-        "let mut values: Vec<i64> = [1, 2, 3]\nlet ok = values.insert(1, 9)\nlet failure = values.insert(99, 8)\n%b\n",
+        "let mut values: Vec<i64> = Vec::from([1, 2, 3])\nlet ok = values.insert(1, 9)\nlet failure = values.insert(99, 8)\n%b\n",
     );
     assert!(out.success, "stderr: {}", out.stderr);
     assert!(out.stderr.is_empty(), "stderr: {}", out.stderr);
@@ -517,6 +517,107 @@ fn repl_explain_lists_all_available_methods() {
 }
 
 #[test]
+fn repl_sequence_help_respects_type_and_receiver_capability() {
+    let array = run_repl("let a: [i64; 3] = [1, 2, 3]\n%e a\n");
+    assert!(array.success, "stderr: {}", array.stderr);
+    assert!(array.stdout.contains("a.len<T>(self: &[T; N])"));
+    assert!(array.stdout.contains("a.clone<T, const N: i64>"));
+    for unavailable in ["a.push", "a.capacity", "a.map", "a.sort", "a.swap"] {
+        assert!(
+            !array.stdout.contains(unavailable),
+            "immutable fixed array exposed {unavailable}: {}",
+            array.stdout
+        );
+    }
+
+    let shared_slice =
+        run_repl("let storage: [i64; 3] = [1, 2, 3]\nlet values: &[i64] = &storage\n%e values\n");
+    assert!(shared_slice.success, "stderr: {}", shared_slice.stderr);
+    assert!(shared_slice.stdout.contains("values.len<T>(self: &[T])"));
+    for unavailable in [
+        "values.clone",
+        "values.push",
+        "values.capacity",
+        "values.map",
+        "values.sort",
+        "values.swap",
+    ] {
+        assert!(
+            !shared_slice.stdout.contains(unavailable),
+            "shared slice exposed {unavailable}: {}",
+            shared_slice.stdout
+        );
+    }
+
+    let mutable_slice = run_repl(
+        "let mut storage: [i64; 3] = [1, 2, 3]\nlet values: &mut [i64] = &mut storage\n%e values\n",
+    );
+    assert!(mutable_slice.success, "stderr: {}", mutable_slice.stderr);
+    assert!(
+        mutable_slice
+            .stdout
+            .contains("values.sort<T>(self: &mut [T])")
+    );
+    assert!(
+        mutable_slice
+            .stdout
+            .contains("values.swap<T>(self: &mut [T]")
+    );
+    for unavailable in [
+        "values.push",
+        "values.capacity",
+        "values.map",
+        "values.clone",
+    ] {
+        assert!(
+            !mutable_slice.stdout.contains(unavailable),
+            "mutable slice exposed {unavailable}: {}",
+            mutable_slice.stdout
+        );
+    }
+
+    let immutable_vec = run_repl("let values: Vec<i64> = Vec::from([1, 2, 3])\n%e values\n");
+    assert!(immutable_vec.success, "stderr: {}", immutable_vec.stderr);
+    assert!(
+        immutable_vec
+            .stdout
+            .contains("values.capacity<T>(self: Vec<T>)")
+    );
+    assert!(
+        immutable_vec
+            .stdout
+            .contains("values.map<T, U>(self: Vec<T>")
+    );
+    for unavailable in [
+        "values.push",
+        "values.reserve",
+        "values.sort",
+        "values.swap",
+    ] {
+        assert!(
+            !immutable_vec.stdout.contains(unavailable),
+            "immutable Vec exposed {unavailable}: {}",
+            immutable_vec.stdout
+        );
+    }
+
+    let mutable_vec = run_repl("let mut values: Vec<i64> = Vec::from([1, 2, 3])\n%e values\n");
+    assert!(mutable_vec.success, "stderr: {}", mutable_vec.stderr);
+    for available in [
+        "values.push",
+        "values.reserve",
+        "values.sort",
+        "values.swap",
+    ] {
+        assert!(
+            mutable_vec.stdout.contains(available),
+            "mutable Vec omitted {available}: {}",
+            mutable_vec.stdout
+        );
+    }
+}
+
+#[test]
 fn repl_info_lists_matches_unless_details_are_requested() {
     let out = run_repl("%i strings::trim\n%i strings::trim -d\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -537,11 +638,11 @@ fn repl_info_and_explain_details_always_follow_descriptions_with_examples() {
     assert!(info.success, "stderr: {}", info.stderr);
     assert!(
         info.stdout.contains(
-            "HashMap::from<K, V>(entries: {} | [(K, V)]) -> HashMap<K, V> [assoc]\n    Creates a hash map from `{}` or key-value pairs.\n    Example: let empty: HashMap<String, i64> = HashMap::from({});"
+            "HashMap::from<K, V>(entries: {K: V}) -> HashMap<K, V> [assoc]\n    Creates a hash map from a map literal.\n    Example: let empty: HashMap<String, i64> = HashMap::from({});"
         ) && info.stdout.contains("let map:")
-            && info.stdout.contains("HashMap<String, i64> = HashMap::from([")
-            && info.stdout.contains("(\"one\", 1), (\"two\",")
-            && info.stdout.contains("2)])"),
+            && info.stdout.contains("HashMap<String, i64> = HashMap::from({")
+            && info.stdout.contains("\"one\": 1, \"two\":")
+            && info.stdout.contains("2})"),
         "HashMap::from help is incomplete: {}",
         info.stdout
     );
@@ -723,7 +824,7 @@ fn repl_vec_from_fixed_array_creates_growable_vec() {
 
 #[test]
 fn repl_rejects_out_of_range_vec_elements() {
-    let out = run_repl("let mut v: Vec<i8> = [1, 567]\n%b\n");
+    let out = run_repl("let mut v: [i8; 2] = [1, 567]\n%b\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr
@@ -743,7 +844,7 @@ fn repl_later_assignment_cannot_retype_an_immutable_binding() {
     let out = run_repl(
         "let a = 256\n\
          let mut b: i8 = 1\n\
-         let mut v: Vec<i8> = [1, 2]\n\
+         let mut v: Vec<i8> = Vec::from([1, 2])\n\
          b = a\n\
          v[0] = a\n\
          %b\n",
@@ -1075,7 +1176,9 @@ fn repl_bindings_show_immutable_values_without_let_prefix() {
 
 #[test]
 fn repl_bindings_show_full_inferred_types() {
-    let out = run_repl("let x = [1,2,3]\nlet words: Vec<String> = [\"a\", \"b\"]\n%bindings\n");
+    let out = run_repl(
+        "let x = [1,2,3]\nlet words: Vec<String> = Vec::from([\"a\", \"b\"])\n%bindings\n",
+    );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout
@@ -1141,9 +1244,9 @@ fn repl_explain_resolves_binding_types_and_callable_method_capabilities() {
     for expected in [
         "m [binding]\n  type: [i64; 4]\n  capability: mutable binding",
         "r [binding]\n  type: &mut [i64; 4]\n  capability: mutable referent",
-        "m.len<T>(self: Vec<T>) -> i64 [method]",
-        "m.reverse<T>(self: &mut Vec<T>) -> () [method]",
-        "r.reverse<T>(self: &mut Vec<T>) -> () [method]",
+        "m.len<T>(self: &[T; N]) -> i64 [method]",
+        "m.reverse<T>(self: &mut [T; N]) -> () [method]",
+        "r.reverse<T>(self: &mut [T; N]) -> () [method]",
     ] {
         assert!(
             out.stdout.contains(expected),
@@ -1221,7 +1324,7 @@ fn repl_rejects_push_on_fixed_array_binding() {
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr
-            .contains("no method named `push` found for type `[i64; 3]`"),
+            .contains("method `push` changes sequence length or capacity and requires `Vec<T>`"),
         "fixed array push should be rejected; stderr: {}",
         out.stderr
     );
@@ -1788,17 +1891,17 @@ fn repl_meta_find_is_removed() {
 fn repl_iter_receiver_methods_pipe_dotdot_and_range_index_work() {
     let out = run_repl(
         "use std::iter\n\
-         let a = [1, 2, 3, 4, 5]\n\
+         let a: Vec<i64> = Vec::from([1, 2, 3, 4, 5])\n\
          a.skip(2)\n\
          a.enumerate()\n\
          a.zip(0..).collect()\n\
          a |> iter::zip(..) |> _.collect()\n\
          a[..2]\n\
-         [1, 1, 2, 2].dedup()\n\
+         Vec::from([1, 1, 2, 2]).dedup()\n\
          a.windows(2)\n\
          a.chunks(2)\n\
          a.pairwise()\n\
-         [[1, 2], [3]].flatten()\n\
+         Vec::from([Vec::from([1, 2]), Vec::from([3])]).flatten()\n\
          a.rev()\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -1825,7 +1928,7 @@ fn repl_iter_receiver_methods_pipe_dotdot_and_range_index_work() {
 
 #[test]
 fn repl_iter_take_rejects_negative_counts() {
-    let out = run_repl("let a = [1, 2, 3]\na.take(-2)\n");
+    let out = run_repl("let a: Vec<i64> = Vec::from([1, 2, 3])\na.take(-2)\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr.contains("count must be non-negative"),
@@ -1847,7 +1950,7 @@ fn repl_rejects_negative_size_arguments_across_stdlib() {
          strings::splitn(\"a,b\", -1, \",\")\n\
          strings::pad_left(\"x\", -1, ' ')\n\
          strings::replacen(\"aaa\", \"a\", \"b\", -1)\n\
-         let xs = [1, 2, 3]\n\
+         let xs: Vec<i64> = Vec::from([1, 2, 3])\n\
          xs.take(-1)\n\
          xs.step_by(-1)\n\
          xs.windows(-1)\n\

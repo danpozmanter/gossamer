@@ -370,7 +370,7 @@ fn native_binary_exec_run_returns_subprocess_output() {
 use std::os::exec
 fn main() {
     println!("calling exec::run")
-    let mut argv: [String] = [].to_vec()
+    let mut argv: Vec<String> = Vec::from([]).to_vec()
     argv.push("hello-via-echo".to_string())
     match exec::run(&"echo".to_string(), &argv) {
         Ok(o) => println!("code={} stdout={}", o.code, o.stdout),
@@ -416,7 +416,7 @@ fn native_binary_exec_run_with_literal_array_args() {
     let src = r#"
 use std::os::exec
 fn main() {
-    let args: [String] = [
+    let args: Vec<String> = [
         "-n".to_string(),
         "from-literal-array".to_string(),
     ].to_vec()
@@ -606,7 +606,7 @@ fn main() {
 fn native_binary_vec_string_indexed_assign_and_scalar_unwrap_or() {
     let src = r#"
 fn main() {
-    let mut xs: [String] = [].to_vec()
+    let mut xs: Vec<String> = Vec::from([]).to_vec()
     xs.push("a".to_string())
     xs.push("b".to_string())
     xs[0] = "X".to_string()
@@ -643,11 +643,11 @@ fn main() {
 fn native_binary_literal_array_to_vec_does_not_segfault() {
     let src = r#"
 fn main() {
-    let xs: [i64] = [10, 20, 30].to_vec()
+    let xs: Vec<i64> = [10, 20, 30].to_vec()
     println!("i64 len={} 0={} 1={} 2={}", xs.len(), xs[0], xs[1], xs[2])
-    let ys: [String] = ["a".to_string(), "b".to_string(), "c".to_string()].to_vec()
+    let ys: Vec<String> = ["a".to_string(), "b".to_string(), "c".to_string()].to_vec()
     println!("str len={} 0={} 1={} 2={}", ys.len(), ys[0], ys[1], ys[2])
-    let zs: [String] = ["aa", "bb", "cc"].to_vec()
+    let zs: Vec<String> = ["aa", "bb", "cc"].to_vec()
     println!("lit len={} 0={} 1={} 2={}", zs.len(), zs[0], zs[1], zs[2])
 }
 "#;

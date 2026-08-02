@@ -4,10 +4,10 @@
 // inner length (push), and dropping the whole structure. The outer vec owns its
 // inner rows and deep-frees them; the compiled tiers must match the VM exactly.
 
-fn build(rows: i64, cols: i64) -> [[i64]] {
-    let mut g: [[i64]] = []
+fn build(rows: i64, cols: i64) -> Vec<Vec<i64>> {
+    let mut g: Vec<Vec<i64>> = Vec::from([])
     for i in 0..rows {
-        let mut row: [i64] = []
+        let mut row: Vec<i64> = Vec::from([])
         for j in 0..cols {
             row.push(i * cols + j)
         }
@@ -16,7 +16,7 @@ fn build(rows: i64, cols: i64) -> [[i64]] {
     g
 }
 
-fn sum_double_index(g: &[[i64]], rows: i64, cols: i64) -> i64 {
+fn sum_double_index(g: &[Vec<i64>], rows: i64, cols: i64) -> i64 {
     let mut acc = 0
     for i in 0..rows {
         for j in 0..cols {
@@ -26,7 +26,7 @@ fn sum_double_index(g: &[[i64]], rows: i64, cols: i64) -> i64 {
     acc
 }
 
-fn sum_row_iter(g: &[[i64]], rows: i64) -> i64 {
+fn sum_row_iter(g: &[Vec<i64>], rows: i64) -> i64 {
     let mut acc = 0
     for i in 0..rows {
         for x in g[i] {
@@ -57,7 +57,7 @@ fn main() {
     }
 
     // An `[[i64]]` array literal coerced to a nested vec.
-    let lit: [[i64]] = [[1, 2, 3], [4, 5], [6]]
+    let lit: Vec<Vec<i64>> = Vec::from([Vec::from([1, 2, 3]), Vec::from([4, 5]), Vec::from([6])])
     let mut d = 0
     for i in 0..lit.len() {
         for x in lit[i] {

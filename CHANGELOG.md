@@ -1,27 +1,134 @@
 # Changelog
 
-## 0.39.2 - Consistent built-ins, REPL discovery, and direct execution
+## 0.40.0 - Rust-like sequences, safer execution, and complete discovery
 
 - Run existing source files through `gos TARGET` regardless of filename
   extension, infer a neighboring `.gos` source when the extension is omitted,
   complete every current-directory filename alongside subcommands, and make
-  `gos -h` distinguish default file execution from `-e/--eval` inline source.
+  `gos -h` distinguish default file execution from `-e` or `--eval` inline source.
 - Make `%info` and `%explain` expose the complete Option and Iterator method
   surfaces from one signature catalog, render their default listings with the
   same compact newline spacing, include an example after every detailed
   description, and cover every standard-library type with discovery tests.
   Keep LSP completion aligned with these methods.
 - Match Rust reference-pattern mutability, preserve aggregate values and types
-  through reference bindings, and add a comprehensive assignment matrix.
+  through reference bindings, add a comprehensive assignment matrix, and
+  reject overlapping named mutable references and repeated mutable-reference
+  roots within one call using a lightweight lexical exclusivity check.
+- Match Rust's profile-sensitive integer overflow behavior for `+`, `-`, and
+  `*` at each declared integer width. VM, JIT, and native debug execution now
+  panic on overflow, including narrow values such as `200u8 + 200u8`, while
+  optimized release binaries retain width-correct wrapping arithmetic.
+  Add explicit width-correct `wrapping_add` and `wrapping_mul` methods to every
+  supported signed and unsigned integer type across execution and discovery.
+  Keep checked and explicitly wrapping arithmetic in distinct VM opcodes so
+  the wrapping path remains branch-free, and fold signed literal operands such
+  as `wrapping_add(-1)` into one immediate operation.
 - Format multiline match arms correctly when optional commas precede line or
   block comments, and keep multiline parameters aligned after generic types.
 - Return bounds failures from Vec insertion, removal, and swapping as `Result`
   without replacing the receiver, preserve direct mutating `Result` calls
   across later REPL inputs without poisoning session replay, return the
   previous value from `HashMap::insert`, and add
-  `HashMap::from({})`, pair collection, and `HashSet::from` constructors.
+  `HashMap::from({})`, non-empty map literals such as
+  `HashMap::from({"one": 1, "two": 2})`, and `HashSet::from`
+  constructors. `%info` and `%explain` now show the map-literal signature and
+  example instead of the opaque pair-array form.
+- Separate fixed arrays, unsized slices, and Vec throughout type inference and
+  discovery. `[T; N]` remains an owned fixed-size array, bare `[T]` is rejected
+  as an unsized owned value, and array literals no longer silently become Vec.
+  Use `Vec::from([...])` for growable storage. Preserve the Rust-like
+  `&[T; N]`/`&Vec<T>` to `&[T]` and mutable equivalents, reject resizing and
+  capacity methods on arrays and slices with GT0050, and reject non-constant
+  array lengths with GT0051. Array, Slice, and Vec now have distinct `%info`
+  and `%explain` method surfaces. The catalog and checker now share one
+  canonical slice-method classification: Array and Slice no longer inherit
+  Vec-only eager combinators, immutable bindings hide mutable methods, mutable
+  slices show only non-resizing mutation, fixed-array `clone` preserves
+  `[T; N]`, and `sort_by_key` is documented with its actual in-place contract.
+  Remove the remaining MIR growth-use scan that promoted mutable array
+  literals to Vec storage, keep slice and array repeat lowering out of Vec
+  allocation paths, and add Rust-style in-place `fill` to mutable arrays,
+  slices, and Vec across every execution and discovery tier. Vec and slice
+  fill now resolves each backing element slot instead of indexing and
+  corrupting the collection header, including for reference-counted values.
+- Lower fixed-array and mutable-slice `sort` and `reverse` as direct in-place
+  operations on native tiers instead of sorting a temporary Vec or emitting an
+  unresolved method call. Reference iteration over a named fixed-array slice
+  now binds a real element reference rather than treating the element value as
+  an address.
+- Inline the successful scalar `Vec::swap` path in LLVM builds while retaining
+  the checked runtime error path. This restores fannkuch and spectral-norm
+  native performance without weakening the method's `Result` contract.
+- Add lazy `Iterator::step_by` to the checker, VM, JIT, LLVM runtime ABI, and
+  discovery catalogs. Array values continue to require `.iter()` before
+  iterator combinators, matching Rust.
+- Generate explicit Vec types and constructors in serde derives, type-info
+  reflection, and standard-library wrappers, and migrate shipped examples and
+  the complete feature-parity and native regression corpora away from the
+  former owned-slice spelling. Update archive and HTTP session wrapper
+  boundaries so owned byte buffers and borrowed byte slices cross their APIs
+  explicitly.
+- Lower `Vec::from([..])` and array-literal `.to_vec()` directly into typed Vec
+  pushes, fixing packed `u8` corruption in optimized LLVM builds.
+- Preserve `&mut self` writes through local-rooted field and indexed receivers
+  in the VM, pass the actual place address to borrowed user methods in native
+  builds, and resolve shared indexed methods to their mangled impl symbols.
+  This fixes the amplifier method-call failures reported in issue 124 across
+  the VM, Cranelift, and LLVM tiers.
+- Pass a shared borrow of an indexed `String` as the selected string value in
+  LLVM builds instead of deriving an invalid address from the containing Vec
+  header. Native argument parsing no longer faults on `&args[0]`.
+- Borrow fluent temporary receivers before calling user `&self` methods,
+  coerce fixed-array method arguments to declared slice parameters, and retain
+  projected Vec temporaries after their field copy. These changes fix silent
+  zero aggregates in chained builders, array-to-slice impl calls, and native
+  teardown hangs caused by one missing Vec share.
+- Specialize generic impl methods from the concrete receiver borrow instead of
+  the impl template type. Native `Wrapper<Point>::get` and mixed generic method
+  instantiations now use distinct, layout-correct ABIs. JIT admission also
+  preserves pre-inline rejection of unsupported aggregate-boundary callees, so
+  inlining cannot turn a safe bytecode fallback into a malformed native call.
+- Fix compiled ownership for recursive enums and recursive structs rebuilt by
+  whole-local assignment. Mutable aggregate borrows now use non-owning cursor
+  locals, constructor payloads are retained before the previous owner is
+  released, and reference destinations never retain the referent. This keeps
+  repeated linked-list construction and bounded traversal linear and exact in
+  the VM, forced Cranelift JIT, and optimized LLVM output.
+- Lower payload enum constructors directly in bytecode, moving
+  compiler-proven temporary payloads instead of cloning them, and keep plain
+  integer parameters in the typed register file for the full frame. Deep tree
+  construction and traversal no longer pay generic constructor dispatch or
+  repeated parameter boxing in the VM.
+- Fuse statically named bytecode calls into a direct global-call opcode. This
+  removes the separate global-load dispatch and caches the resolved function
+  while preserving global-generation invalidation and dynamic callable calls.
+  Direct-call misses now return GX0002 instead of asserting, so early comptime
+  initializer probes can retry after functions are registered. Typed bytecode
+  expressions also retain the dedicated `into` and `try_into` conversion path.
+- Add typed VM paths for String byte length, indexed byte reads, and wrapping
+  byte-checksum accumulation. String scanning loops avoid generic method
+  dispatch and integer box/unbox churn while preserving byte indexing and
+  out-of-range behavior. Keep the chunked HTTP bridge's interpreter result on
+  its declared `String` contract so typed length and native output agree.
+- Register every width-specific integer wrapping method in the resolver's
+  generated primitive-type surface while keeping those language methods out
+  of the unrelated standard-module manifest audit.
+- Replace the cycle collector's linear candidate deletion with an indexed root
+  buffer and immediately reclaim queued candidates that later reach zero.
+  Deep acyclic list teardown no longer accumulates stale cycle pins or performs
+  quadratic candidate scans, while real cycles retain the existing collector
+  path.
+- Reject promotion of the currently bytecode-only user-iterator MIR marker.
+  Custom iterator loops continue through the correct VM `next()` protocol
+  instead of becoming an empty native back-edge.
+- Make VM `Vec::with_capacity` reject impossible allocation sizes with the same
+  `capacity overflow` panic as native execution.
 - Refresh the skill card, README, MCP execution tool, and command descriptions
   for the direct-execution CLI and current REPL surface.
+- Replace the former `check.sh` with `quick-check.sh`, which runs every local
+  validation gate except the complete workspace test suite, and
+  `full-check.sh`, which runs the quick gate first and then the workspace tests.
 
 ## 0.39.1 - Native Vec tail returns, error messages, CI testing
 

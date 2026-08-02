@@ -27,7 +27,7 @@ fn main() {
     // fold / reduce (+ empty reduce -> None).
     println!("fold {}", xs |> iter::fold(1000, |a: i64, b: i64| a + b))
     println!("reduce {}", xs |> iter::reduce(|a: i64, b: i64| a * b) |> option::unwrap_or(0))
-    let empty: Vec<i64> = []
+    let empty: Vec<i64> = Vec::from([])
     println!("reduce empty {}", empty |> iter::reduce(|a: i64, b: i64| a + b) |> option::unwrap_or(-1))
 
     // find present + absent.
@@ -53,11 +53,11 @@ fn main() {
     let groups = [1, 2, 3, 4, 5, 6] |> iter::chunk_by(|n: i64| n % 3)
     println!("group_by buckets {}", groups.len())
     let mut g0 = 0
-    for x in groups.get_or(0, []) { g0 += x }
+    for x in groups.get_or(0, Vec::from([])) { g0 += x }
     let mut g1 = 0
-    for x in groups.get_or(1, []) { g1 += x }
+    for x in groups.get_or(1, Vec::from([])) { g1 += x }
     let mut g2 = 0
-    for x in groups.get_or(2, []) { g2 += x }
+    for x in groups.get_or(2, Vec::from([])) { g2 += x }
     println!("group sums {} {} {}", g0, g1, g2)
     let (evens, odds) = [1, 2, 3, 4, 5, 6] |> iter::partition(|n: i64| n % 2 == 0)
     let mut es = 0

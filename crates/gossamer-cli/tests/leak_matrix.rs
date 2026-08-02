@@ -142,7 +142,7 @@ fn main() {
     let mut total: i64 = 0
     let mut i: i64 = 0
     while i < 1500000 {
-        let mut v: [String] = []
+        let mut v: Vec<String> = Vec::from([])
         v.push(format!("key-{}", i))
         v.push(format!("val-{}", i))
         total += v[0].len() + v[1].len()
@@ -159,8 +159,8 @@ fn main() {
     let mut total: i64 = 0
     let mut i: i64 = 0
     while i < 1000000 {
-        let mut outer: [[String]] = []
-        let mut inner: [String] = []
+        let mut outer: Vec<Vec<String>> = Vec::from([])
+        let mut inner: Vec<String> = Vec::from([])
         inner.push(format!("value-{}", i))
         outer.push(inner)
         total += outer[0][0].len()

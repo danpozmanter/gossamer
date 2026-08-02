@@ -38,7 +38,7 @@ fn main() {
     )
 
     // Mutation across many iterations on a heap-field struct.
-    let mut bag = Bag { items: [], total: 0 }
+    let mut bag = Bag { items: Vec::from([]), total: 0 }
     let mut i = 1
     while i <= 6 {
         bag.add(i * i)

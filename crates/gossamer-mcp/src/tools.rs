@@ -37,7 +37,7 @@ const POSITION_ARGS: &[Arg] = &[
     Arg {
         name: "file",
         ty: "string",
-        description: "Path to a .gos source file.",
+        description: "Path to a Gossamer source file.",
         required: true,
     },
     Arg {
@@ -86,7 +86,7 @@ const TOOLS: &[Tool] = &[
             Arg {
                 name: "file",
                 ty: "string",
-                description: "Entry .gos file or project directory.",
+                description: "Entry source file, with any filename extension, or project directory.",
                 required: true,
             },
             Arg {

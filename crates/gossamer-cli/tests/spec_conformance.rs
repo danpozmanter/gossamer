@@ -6,9 +6,10 @@
 //! enforced).
 //!
 //! Behaviours covered:
-//!   §3.1   integer overflow wraps at 64-bit width with no panic;
+//!   §3.1   debug integer overflow panics at the declared type width;
+//!          release integer overflow wraps at that width;
 //!          `i128`/`u128` are rejected on every tier.
-//!   §7.5   reference mutability is checked; aliasing `&mut` compiles.
+//!   §7.5   reference mutability and scope-local `&mut` exclusivity are checked.
 //!   §8.6   `extern "C"` is not an `unsafe` power; it is rejected.
 //!   §11.2  linking - musl-static is the Linux default, `--dynamic`
 //!          opts out.
@@ -95,6 +96,40 @@ fn run_program(stem: &str, source: &str, args: &[&str]) -> (bool, String, String
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     (out.status.success(), stdout, stderr)
+}
+
+fn build_and_run_program(stem: &str, source: &str, release: bool) -> (bool, String, String) {
+    let path = write_temp_file(stem, source);
+    let out_dir = path.parent().expect("fixture parent").join(if release {
+        "native-release"
+    } else {
+        "native-debug"
+    });
+    let mut build_command = Command::new(gos_binary());
+    build_command.arg("build");
+    if release {
+        build_command.arg("--release");
+    }
+    build_command
+        .arg("--dynamic")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg(&path);
+    let build_output = run_with_timeout(build_command, Duration::from_mins(2));
+    if !build_output.status.success() {
+        return (
+            false,
+            String::from_utf8_lossy(&build_output.stdout).into_owned(),
+            String::from_utf8_lossy(&build_output.stderr).into_owned(),
+        );
+    }
+    let executable = out_dir.join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
+    let run = run_with_timeout(Command::new(executable), Duration::from_secs(30));
+    (
+        run.status.success(),
+        String::from_utf8_lossy(&run.stdout).into_owned(),
+        String::from_utf8_lossy(&run.stderr).into_owned(),
+    )
 }
 
 // ---------- diagnostics: --message-format json ----------
@@ -280,28 +315,59 @@ fn spec_14_unimplemented_macro_rejected() {
 // ---------- §3.1: integer overflow / i128 ----------
 
 #[test]
-fn spec_3_1_overflow_does_not_panic() {
-    // Integer overflow wraps at 64-bit width on every tier; no build
-    // mode emits an overflow panic. The invariant we pin here is
-    // "no panic" - the program completes. We use i64::MAX so the
-    // host-Rust arithmetic (which `gos` uses under the bytecode
-    // VM) actually wraps rather than silently widening to a wider
-    // integer.
-    let src = r#"
+fn spec_3_1_debug_overflow_panics_at_the_declared_width() {
+    let cases = [
+        ("u8_add", "200u8 + 200u8", "add"),
+        ("i8_sub", "-127i8 - 2i8", "subtract"),
+        ("u16_mul", "300u16 * 300u16", "multiply"),
+        ("i32_add", "2147483647i32 + 1i32", "add"),
+        ("i64_add", "9223372036854775807i64 + 1i64", "add"),
+        ("u64_add", "18446744073709551615u64 + 1u64", "add"),
+    ];
+    for (name, expression, operation) in cases {
+        let src = format!("fn main() {{ println!(\"{{}}\", {expression}) }}\n");
+        let (ok, _stdout, stderr) = run_program(name, &src, &[]);
+        assert!(!ok, "debug overflow case {name} must panic");
+        assert!(
+            stderr.contains(&format!("attempt to {operation} with overflow")),
+            "expected an overflow panic for {name}, got: {stderr}",
+        );
+    }
+
+    let safe = r#"
 fn main() {
-    let mut x: i64 = 9223372036854775807
-    x = x + 1
-    println!("{}", x)
+    println!("{} {} {}", 100u8 + 20u8, -100i8 - 20i8, 200u16 * 300u16)
 }
 "#;
-    let (ok, stdout, stderr) = run_program("spec_3_1_wrap", src, &[]);
-    assert!(ok, "i64 overflow must not panic in `gos`; stderr: {stderr}");
-    // The spec does not require a specific value, only that the
-    // program completes without an overflow panic.
+    let (ok, stdout, stderr) = run_program("checked_arithmetic_safe", safe, &[]);
+    assert!(ok, "in-range arithmetic must succeed: {stderr}");
+    assert_eq!(stdout.trim(), "120 -120 60000");
+}
+
+#[test]
+fn spec_3_1_native_profiles_check_then_wrap_overflow() {
+    let src = r#"
+fn main() {
+    let a: u8 = 200u8
+    let b: u8 = 200u8
+    println!("{}", a + b)
+}
+"#;
+    let (debug_ok, _debug_stdout, debug_stderr) =
+        build_and_run_program("spec_3_1_native_debug", src, false);
+    assert!(!debug_ok, "native debug overflow must panic");
     assert!(
-        stdout.contains('-') || !stdout.is_empty(),
-        "expected wrap result, got {stdout:?}",
+        debug_stderr.contains("attempt to add with overflow"),
+        "expected native debug overflow panic, got: {debug_stderr}",
     );
+
+    let (release_ok, release_stdout, release_stderr) =
+        build_and_run_program("spec_3_1_native_release", src, true);
+    assert!(
+        release_ok,
+        "native release wrapping program failed: {release_stderr}",
+    );
+    assert_eq!(release_stdout.trim(), "144");
 }
 
 // ---------- §11.2: static-musl is the default link mode ----------
@@ -422,5 +488,19 @@ fn main() {
 "#;
     let (ok, _stdout, stderr) = run_check("spec_7_5_borrow", src);
     assert!(!ok, "overlapping named mutable borrows must be rejected");
+    assert!(stderr.contains("GT0043"), "expected GT0043, got: {stderr}");
+}
+
+#[test]
+fn spec_7_5_repeated_mutable_call_argument_is_rejected() {
+    let src = r"
+fn use_two(a: &mut i64, b: &mut i64) { *a += *b }
+fn main() {
+    let mut counter = 1i64
+    use_two(&mut counter, &mut counter)
+}
+";
+    let (ok, _stdout, stderr) = run_check("spec_7_5_call_alias", src);
+    assert!(!ok, "one call must not borrow the same root mutably twice");
     assert!(stderr.contains("GT0043"), "expected GT0043, got: {stderr}");
 }

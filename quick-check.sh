@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Pre-commit gate. Mirrors the CI workflows in `.github/workflows/`
+# Fast pre-commit gate. Mirrors every CI validation except the complete
+# workspace test suite in `.github/workflows/`:
 # so failures surface locally before they hit a runner:
 #
-#   ci.yml          → fmt, clippy, test, doctests, rustdoc (broken
+#   ci.yml          → fmt, clippy, rustdoc (broken
 #                     intra-doc-links), cross-target check (wasm32 +
 #                     musl-via-zigbuild), audit, deny
 #   sanitizers.yml  → ASan + TSan on the unsafe-touching crates
@@ -18,7 +19,6 @@
 #   --no-cross        skip the wasm32 cross-target check + musl zigbuild check
 #   --no-audit        skip cargo-audit (needs cargo-audit installed)
 #   --no-deny         skip cargo-deny  (needs cargo-deny installed)
-#   --no-doctests     skip `cargo test --doc --workspace --release`
 #   --no-rustdoc      skip `cargo doc -D rustdoc::broken_intra_doc_links`
 #
 # Missing optional tools cause a clean skip rather than a failure;
@@ -36,7 +36,6 @@ run_fuzz=1
 run_cross=1
 run_audit=1
 run_deny=1
-run_doctests=1
 run_rustdoc=1
 for arg in "$@"; do
     case "$arg" in
@@ -46,7 +45,6 @@ for arg in "$@"; do
         --no-cross)      run_cross=0 ;;
         --no-audit)      run_audit=0 ;;
         --no-deny)       run_deny=0 ;;
-        --no-doctests)   run_doctests=0 ;;
         --no-rustdoc)    run_rustdoc=0 ;;
         -h|--help)
             sed -n '/^# Pre-commit gate/,/^set -euo pipefail/p' "$0" | sed 's/^# \{0,1\}//' | head -n -1
@@ -149,16 +147,6 @@ if [[ $run_rustdoc -eq 1 ]]; then
         run_step "cargo doc --workspace --no-deps --document-private-items" \
         cargo doc --workspace --no-deps --document-private-items
 fi
-
-# Doctest gate - mirrors `cargo test --doc --workspace --release`
-# in ci.yml. Catches stale `///` examples that don't compile.
-if [[ $run_doctests -eq 1 ]]; then
-    run_step "cargo test --doc --workspace --release" \
-        cargo test --doc --workspace --release
-fi
-
-phase "test gate"
-run_step "cargo test --workspace --no-fail-fast"           cargo test --workspace --no-fail-fast -- --test-threads=1
 
 # Cross-target check - mirrors the cross-targets job's wasm32 leg.
 # Just the wasm-portable crates: rustls / corosensei / mio aren't
@@ -283,7 +271,7 @@ fi
 # inputs that CI would flag also fail locally. Each target runs
 # briefly (10 s by default; override with GOSSAMER_FUZZ_SECS) and
 # replays its seed corpus. Skip cleanly when cargo-fuzz or the
-# nightly toolchain isn't installed so the rest of `check.sh`
+# nightly toolchain isn't installed so the rest of `quick-check.sh`
 # stays useful on dev machines that haven't set the harness up.
 fuzz_secs="${GOSSAMER_FUZZ_SECS:-10}"
 if [[ $run_fuzz -eq 1 ]] && command -v cargo-fuzz >/dev/null 2>&1 && rustup toolchain list 2>/dev/null | grep -q '^nightly'; then
@@ -314,7 +302,7 @@ fi
 
 # `set -e` aborts on the first failing step, so reaching here means every gate
 # that ran passed. Print an explicit terminal banner: a non-zero exit already
-# signals failure, but piping this script (e.g. `./check.sh | tail`) discards
+# signals failure, but piping this script (e.g. `./quick-check.sh | tail`) discards
 # its exit code, so the banner is the in-stream success/failure signal.
 echo
-echo "check.sh: ALL GATES PASSED"
+echo "quick-check.sh: ALL QUICK GATES PASSED"

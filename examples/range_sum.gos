@@ -17,17 +17,17 @@ fn product(xs: &[i64]) -> i64 {
 }
 
 fn maximum(xs: &[i64]) -> Option<i64> {
-    xs.max()
+    xs |> iter::max
 }
 
 fn main() {
-    let xs: [i64] = [4, 9, 1, 7, 3, 8, 2, 6, 5]
+    let xs: [i64; 9] = [4, 9, 1, 7, 3, 8, 2, 6, 5]
     println!("sum     = {}", sum(&xs))
     println!("product = {}", product(&xs))
 
     if let Some(v) = maximum(&xs) { println!("maximum = {}", v) }
 
-    let empty: [i64] = []
+    let empty: Vec<i64> = Vec::from([])
     if let Some(v) = maximum(&empty) {
         println!("maximum of empty = {}", v)
     } else {

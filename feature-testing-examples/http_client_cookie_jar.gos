@@ -59,7 +59,7 @@ fn serve_app() {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, []) {
+        if let Ok(_) = http::get(url, Vec::from([])) {
             return
         }
         time::sleep(25)

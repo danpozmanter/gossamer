@@ -1,27 +1,19 @@
 /*
  * FNV-1a hashing - a fast, non-cryptographic hash function.
  *
- * Demonstrates byte-level hashing with bitwise operators. The
- * hashing function is pure: each call returns the digest of
- * its input, the caller binds the result with `let`. Two
+ * Demonstrates the standard library's explicitly wrapping FNV
+ * implementation. The hashing function is pure: each call returns the
+ * digest of its input, the caller binds the result with `let`. Two
  * identical inputs always produce the same digest; small
  * changes produce wildly different ones.
  *
  * For real cryptographic hashing reach for `std::crypto::sha256`.
  */
 
-const FNV_OFFSET: i64 = -3750763034362895579   // 0xcbf29ce484222325
-const FNV_PRIME: i64 = 1099511628211           // 0x100000001b3
+use std::hash
 
 fn fnv1a(bytes: &[u8]) -> i64 {
-    let mut h: i64 = FNV_OFFSET
-    for byte in bytes {
-        h ^= *byte as i64
-        // Multiply mod 2^64 - wrapping is the spec; we let Gossamer's
-        // i64 arithmetic wrap and take the low bits.
-        h *= FNV_PRIME
-    }
-    h
+    hash::fnv::hash64(bytes.to_vec())
 }
 
 fn main() {

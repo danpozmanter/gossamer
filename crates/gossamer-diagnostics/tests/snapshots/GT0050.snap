@@ -1,0 +1,13 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+assertion_line: 86
+expression: rendered
+---
+--- plain ---
+error[GT0050]: A method that changes sequence length or capacity was called on a fixed array or slice. Those operations require `Vec<T>`. Arrays and mutable slices can still mutate existing elements and use non-resizing methods. - here
+--- framed ---
+error[GT0050]: A method that changes sequence length or capacity was called on a fixed array or slice. Those operations require `Vec<T>`. Arrays and mutable slices can still mutate existing elements and use non-resizing methods.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

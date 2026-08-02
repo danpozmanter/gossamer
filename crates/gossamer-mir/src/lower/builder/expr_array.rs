@@ -63,15 +63,13 @@ impl<'a> Builder<'a> {
         // copy only the first 8 bytes of each tuple - every i64 in
         // a `(String, i64)` element is then lost on push and reread
         // as the next entry's String pointer on iteration. Extract
-        // the inner element type from the binding's `Vec(_)` /
-        // `Slice(_)` kind and route through `elem_bytes_of` (which
+        // the inner element type from the binding's `Vec(_)` kind and
+        // route through `elem_bytes_of` (which
         // returns the correct stride for each element type, including
         // 1 for bool and larger counts for multi-slot aggregates).
         let binding_ty = self.locals[local.0 as usize].ty;
         let elem_bytes_val: i128 = match self.tcx.kind_of(binding_ty) {
-            gossamer_types::TyKind::Vec(elem) | gossamer_types::TyKind::Slice(elem) => {
-                i128::from(self.elem_bytes_of(*elem).max(1))
-            }
+            gossamer_types::TyKind::Vec(elem) => i128::from(self.elem_bytes_of(*elem).max(1)),
             _ => 8,
         };
         let elem_bytes = self.fresh(i64_ty);
@@ -101,7 +99,7 @@ impl<'a> Builder<'a> {
         // corrupt every read.
         let binding_elem_is_fixed_array = matches!(
             self.tcx.kind_of(binding_ty),
-            gossamer_types::TyKind::Vec(e) | gossamer_types::TyKind::Slice(e)
+            gossamer_types::TyKind::Vec(e)
                 if matches!(self.tcx.kind_of(*e), gossamer_types::TyKind::Array { .. })
         );
         for elem in elems {
@@ -146,12 +144,12 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
-        // When the context expects a Vec/Slice (dynamic array), build a
+        // When the context expects a Vec, build a
         // proper GosVec via gos_rt_vec_push rather than a flat aggregate
         // that codegen can't distinguish from a fixed-size array.  This
         // fixes [[i64]] (Vec-of-Vec) shapes where flat aggregates were
         // stored as elements and then mis-read as GosVec structs.
-        if matches!(self.tcx.kind_of(ty), TyKind::Vec(_) | TyKind::Slice(_)) {
+        if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
             let local = self.fresh(ty);
             if self.lower_let_array_as_vec(local, elems, span) {
                 return Some(local);
@@ -243,11 +241,11 @@ impl<'a> Builder<'a> {
         destination: Option<Local>,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
-        // A `[value; N]` literal whose context wants a growable Vec/Slice
+        // A `[value; N]` literal whose context wants a growable Vec
         // builds a heap GosVec of N copies, byte-correct for the element
         // type - not a fixed inline array. Mirrors `lower_array_list`'s
         // Vec promotion and covers both a literal and a runtime count.
-        let wants_vec = matches!(self.tcx.kind_of(ty), TyKind::Vec(_) | TyKind::Slice(_));
+        let wants_vec = matches!(self.tcx.kind_of(ty), TyKind::Vec(_));
         if !wants_vec {
             if let Some(count_u64) = literal_u64(count) {
                 let value_local = self.lower_expr(value)?;
@@ -263,10 +261,12 @@ impl<'a> Builder<'a> {
                 return Some(dest);
             }
         }
-        // Build a heap `GosVec` of `count` copies of `value`. Used when
-        // the target type is a growable Vec/Slice, and as the fallback
-        // for a runtime (non-literal) count where an inline fixed array
-        // is impossible.
+        // Build a heap `GosVec` of `count` copies of `value` only when the
+        // target type is Vec. A slice is unsized and a fixed array requires a
+        // compile-time length, so neither may silently acquire Vec storage.
+        if !wants_vec {
+            return None;
+        }
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let value_local = self.lower_expr(value)?;
         let count_local = self.lower_expr(count)?;
@@ -274,7 +274,7 @@ impl<'a> Builder<'a> {
         // multi-slot elements (tuples, String, fixed arrays) copies the
         // whole element on every push rather than truncating to 8 bytes.
         let elem_src_ty = match self.tcx.kind_of(ty) {
-            TyKind::Vec(e) | TyKind::Slice(e) => *e,
+            TyKind::Vec(e) => *e,
             _ => self.locals[value_local.0 as usize].ty,
         };
         let elem_bytes_val = i128::from(self.elem_bytes_of(elem_src_ty).max(1));

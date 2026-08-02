@@ -44,7 +44,7 @@ fn serve_app() {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, []) {
+        if let Ok(_) = http::get(url, Vec::from([])) {
             return
         }
         time::sleep(25)
@@ -61,11 +61,11 @@ fn main() {
         Ok(r) => println!("nc_get status={} body={}", r.status, r.body),
         Err(e) => println!("nc_get error: {}", e),
     }
-    match native_client::post(&url, [112], "text/plain") {
+    match native_client::post(&url, Vec::from([112]), "text/plain") {
         Ok(r) => println!("nc_post status={} body={}", r.status, r.body),
         Err(e) => println!("nc_post error: {}", e),
     }
-    match native_client::put(&url, [113], "text/plain") {
+    match native_client::put(&url, Vec::from([113]), "text/plain") {
         Ok(r) => println!("nc_put status={} body={}", r.status, r.body),
         Err(e) => println!("nc_put error: {}", e),
     }
@@ -74,11 +74,11 @@ fn main() {
         Err(e) => println!("nc_delete error: {}", e),
     }
 
-    match proxy::forward(&url, "GET", []) {
+    match proxy::forward(&url, "GET", Vec::from([])) {
         Ok(r) => println!("proxy_get status={} body={}", r.status, r.body),
         Err(e) => println!("proxy_get error: {}", e),
     }
-    match proxy::forward(&url, "POST", [102]) {
+    match proxy::forward(&url, "POST", Vec::from([102])) {
         Ok(r) => println!("proxy_post status={} body={}", r.status, r.body),
         Err(e) => println!("proxy_post error: {}", e),
     }

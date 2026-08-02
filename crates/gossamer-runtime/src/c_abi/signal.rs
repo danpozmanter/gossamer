@@ -224,6 +224,62 @@ pub unsafe extern "C" fn gos_rt_arr_sort_by_i64(p: *mut i64, len: i64, env: *con
     });
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_sort_i64(p: *mut i64, len: i64) {
+    ffi_entry!((), {
+        if p.is_null() || len <= 1 {
+            return;
+        }
+        unsafe { std::slice::from_raw_parts_mut(p, len as usize) }.sort_unstable();
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_sort_str(p: *mut usize, len: i64) {
+    ffi_entry!((), {
+        if p.is_null() || len <= 1 {
+            return;
+        }
+        let slots = unsafe { std::slice::from_raw_parts_mut(p, len as usize) };
+        slots.sort_by(|&a, &b| {
+            let a = if a == 0 {
+                ""
+            } else {
+                unsafe { CStr::from_ptr(a as *const c_char) }
+                    .to_str()
+                    .unwrap_or("")
+            };
+            let b = if b == 0 {
+                ""
+            } else {
+                unsafe { CStr::from_ptr(b as *const c_char) }
+                    .to_str()
+                    .unwrap_or("")
+            };
+            a.cmp(b)
+        });
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_reverse(p: *mut u8, len: i64, elem_bytes: i64) {
+    ffi_entry!((), {
+        if p.is_null() || len <= 1 || elem_bytes <= 0 {
+            return;
+        }
+        let width = elem_bytes as usize;
+        for i in 0..(len as usize / 2) {
+            unsafe {
+                std::ptr::swap_nonoverlapping(
+                    p.add(i * width),
+                    p.add((len as usize - 1 - i) * width),
+                    width,
+                );
+            }
+        }
+    });
+}
+
 /// Sorts a `Vec<i64>` (heap `GosVec`) in place using the closure
 /// callback at `env`. Mirrors [`gos_rt_arr_sort_by_i64`] for the
 /// growable-vec receiver shape.
@@ -295,6 +351,22 @@ pub unsafe extern "C" fn gos_rt_vec_sort_str(v: *mut GosVec) {
             };
             sa.cmp(sb)
         });
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_reverse(v: *mut GosVec) {
+    ffi_entry!((), {
+        if v.is_null() {
+            return;
+        }
+        let vec = unsafe { &mut *v };
+        if vec.ptr.is_null() || vec.len <= 1 || vec.elem_bytes == 0 {
+            return;
+        }
+        unsafe {
+            gos_rt_arr_reverse(vec.ptr.as_ptr(), vec.len, i64::from(vec.elem_bytes));
+        }
     });
 }
 

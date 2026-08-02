@@ -465,7 +465,11 @@ fn iter_flatten() {
         r#"
 use std::iter
 fn main() {
-    let xs = iter::flatten([[1, 2], [3], [4, 5]])
+    let xs = iter::flatten(Vec::from([
+        Vec::from([1, 2]),
+        Vec::from([3]),
+        Vec::from([4, 5]),
+    ]))
     println!("{}", xs.len())
 }
 "#,
@@ -501,7 +505,7 @@ fn encoding_csv_read_write() {
         r#"
 use std::encoding
 fn main() {
-    let rows = encoding::csv::read("a,b,c\n1,2,3\n").unwrap_or([[]])
+    let rows = encoding::csv::read("a,b,c\n1,2,3\n").unwrap_or(Vec::from([Vec::from([])]))
     println!("{}", rows.len())
     println!("{}", rows[1][2])
 }
@@ -521,7 +525,7 @@ fn encoding_binary_u64_roundtrip() {
 use std::encoding
 fn main() {
     let n = 72623859790382856
-    let buf = encoding::binary::put_u64_be([0; 8], n)
+    let buf = encoding::binary::put_u64_be(Vec::from([0; 8]), n)
     match encoding::binary::get_u64_be(buf) {
         Ok(back) => println!("{}", back == n),
         Err(e) => println!("err: {}", e),
@@ -598,7 +602,7 @@ fn compress_gzip_roundtrip() {
         r#"
 use std::compress
 fn main() {
-    let data: Vec<u8> = [104, 101, 108, 108, 111]
+    let data: Vec<u8> = Vec::from([104, 101, 108, 108, 111])
     match compress::gzip::encode(data, 6) {
         Ok(enc) => {
             match compress::gzip::decode(enc) {
@@ -621,7 +625,7 @@ fn compress_flate_roundtrip() {
         r#"
 use std::compress
 fn main() {
-    let data: Vec<u8> = [104, 101, 108, 108, 111]
+    let data: Vec<u8> = Vec::from([104, 101, 108, 108, 111])
     match compress::flate::compress(data, 6) {
         Ok(enc) => {
             match compress::flate::decompress(enc) {
@@ -644,7 +648,7 @@ fn compress_zlib_roundtrip() {
         r#"
 use std::compress
 fn main() {
-    let data: Vec<u8> = [104, 101, 108, 108, 111]
+    let data: Vec<u8> = Vec::from([104, 101, 108, 108, 111])
     match compress::zlib::compress(data, 6) {
         Ok(enc) => {
             match compress::zlib::decompress(enc) {
@@ -688,7 +692,7 @@ fn hash_fnv_hash64_bytes() {
         r#"
 use std::hash
 fn main() {
-    let h = hash::fnv::hash64([])
+    let h = hash::fnv::hash64(Vec::from([]))
     println!("{}", h != 0)
 }
 "#,
@@ -706,7 +710,7 @@ fn archive_zip_roundtrip() {
         r#"
 use std::archive
 fn main() {
-    let files = [("hello.txt", [104, 101, 108, 108, 111])]
+    let files = Vec::from([("hello.txt", Vec::from([104, 101, 108, 108, 111]))])
     match archive::zip::write(files) {
         Ok(zip_bytes) => {
             match archive::zip::read(zip_bytes) {
@@ -732,7 +736,7 @@ fn archive_tar_roundtrip() {
         r#"
 use std::archive
 fn main() {
-    let files = [("hello.txt", [104, 101, 108, 108, 111])]
+    let files = Vec::from([("hello.txt", Vec::from([104, 101, 108, 108, 111]))])
     match archive::tar::write(files) {
         Ok(tar_bytes) => {
             match archive::tar::read(tar_bytes) {
@@ -836,10 +840,10 @@ fn main() {
         Ok(key) => {
             match crypto::rand::bytes(12) {
                 Ok(nonce) => {
-                    let pt: Vec<u8> = [104, 101, 108, 108, 111, 32, 97, 101, 115]
-                    match crypto::aead::aes_256_gcm_seal(key, nonce, pt, []) {
+                    let pt: Vec<u8> = Vec::from([104, 101, 108, 108, 111, 32, 97, 101, 115])
+                    match crypto::aead::aes_256_gcm_seal(key, nonce, pt, Vec::from([])) {
                         Ok(ct) => {
-                            match crypto::aead::aes_256_gcm_open(key, nonce, ct, []) {
+                            match crypto::aead::aes_256_gcm_open(key, nonce, ct, Vec::from([])) {
                                 Ok(dec) => println!("{}", dec.len()),
                                 Err(e) => println!("open err: {}", e)
                             }
@@ -869,7 +873,7 @@ fn main() {
         Ok(pair) => {
             let secret = pair.0
             let public = pair.1
-            let msg: Vec<u8> = [116, 101, 115, 116, 32, 109, 101, 115, 115, 97, 103, 101]
+            let msg: Vec<u8> = Vec::from([116, 101, 115, 116, 32, 109, 101, 115, 115, 97, 103, 101])
             match crypto::ed25519::sign(secret, msg) {
                 Ok(sig) => {
                     match crypto::ed25519::verify(public, msg, sig) {
@@ -895,7 +899,12 @@ fn crypto_kdf_pbkdf2() {
         r#"
 use std::crypto
 fn main() {
-    let key = crypto::kdf::pbkdf2_sha256([112, 97, 115, 115, 119, 111, 114, 100], [115, 97, 108, 116], 1, 32)
+    let key = crypto::kdf::pbkdf2_sha256(
+        Vec::from([112, 97, 115, 115, 119, 111, 114, 100]),
+        Vec::from([115, 97, 108, 116]),
+        1,
+        32,
+    )
     println!("{}", key.len())
 }
 "#,
@@ -1302,7 +1311,7 @@ fn encoding_ascii85_roundtrip() {
         r#"
 use std::encoding
 fn main() {
-    let enc = encoding::ascii85::encode([104, 101, 108, 108, 111])
+    let enc = encoding::ascii85::encode(Vec::from([104, 101, 108, 108, 111]))
     let dec = encoding::ascii85::decode(enc)
     match dec {
         Ok(bytes) => println!("{}", bytes.len()),
@@ -1399,7 +1408,7 @@ fn compress_bzip2_roundtrip() {
         r#"
 use std::compress
 fn main() {
-    let data: Vec<u8> = [104, 101, 108, 108, 111, 44, 32, 103, 111, 115, 115, 97, 109, 101, 114, 32, 108, 97, 110, 103, 33]
+    let data: Vec<u8> = Vec::from([104, 101, 108, 108, 111, 44, 32, 103, 111, 115, 115, 97, 109, 101, 114, 32, 108, 97, 110, 103, 33])
     let enc = compress::bzip2::compress(data, 6)
     match enc {
         Ok(compressed) => {

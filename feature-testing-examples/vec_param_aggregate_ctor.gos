@@ -6,20 +6,20 @@
 // out into a call argument - every share released exactly once on
 // every tier.
 struct Cfg {
-    key: [u8],
-    trusted: [String],
+    key: Vec<u8>,
+    trusted: Vec<String>,
 }
 
 struct Resp {
     body: String,
-    headers: [(String, String)],
+    headers: Vec<(String, String)>,
 }
 
-fn config(key: [u8]) -> Cfg {
-    Cfg { key: key, trusted: [] }
+fn config(key: Vec<u8>) -> Cfg {
+    Cfg { key: key, trusted: Vec::from([]) }
 }
 
-fn key_len(key: [u8]) -> i64 {
+fn key_len(key: Vec<u8>) -> i64 {
     key.len()
 }
 
@@ -38,11 +38,11 @@ fn header_of(headers: &[(String, String)], want: String) -> String {
 }
 
 fn main() {
-    let key: [u8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    let key: Vec<u8> = Vec::from([1, 2, 3, 4, 5, 6, 7, 8])
     let mut cfg = config(key)
-    cfg.trusted = ["https://app.example.com"]
+    cfg.trusted = Vec::from(["https://app.example.com"])
     let n = key_len(cfg.key)
-    let resp = Resp { body: "ok", headers: [] }
+    let resp = Resp { body: "ok", headers: Vec::from([]) }
     let resp = attach(resp, &"tok")
     let sc = header_of(&resp.headers, "set-cookie")
     println!("key_len={n}")

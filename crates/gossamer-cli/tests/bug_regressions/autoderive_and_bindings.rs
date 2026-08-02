@@ -63,7 +63,7 @@ use std::errors
 use std::fs
 
 fn main() -> Result<(), errors::Error> {{
-    let payload: [u8] = [72, 105, 0, 65, 66, 67, 10]
+    let payload: Vec<u8> = [72, 105, 0, 65, 66, 67, 10].to_vec()
     fs::write(&"{tmp}", &payload)?
     let back = fs::read(&"{tmp}")?
     println!("len={{}}", back.len())
@@ -252,7 +252,7 @@ fn change(v: &mut Vec<i64>) -> &mut Vec<i64> {
 }
 
 fn main() {
-    let mut a: Vec<i64> = [1, 2]
+    let mut a: Vec<i64> = Vec::from([1, 2])
     let b = change(&mut a)
     println!("a: {:?}", a)
     println!("b: {:?}", b)
@@ -382,7 +382,7 @@ fn vec_pop_on_typed_storage_shrinks_by_one() {
     // element instead of removing only the last one.
     let src = r#"
 fn main() {
-    let mut xs: [i64] = [10, 20, 30, 40]
+    let mut xs: Vec<i64> = Vec::from([10, 20, 30, 40])
     let _ = xs.pop()
     println!("len={}", xs.len())
     println!("xs[0]={}", xs[0])
@@ -431,8 +431,8 @@ fn main() {
 }
 
 #[test]
-fn return_array_literal_coerces_to_slice() {
-    // Bug fixed in 0.10.0: `fn f() -> [String] { return ["a", "b"] }`
+fn explicit_vec_return_uses_vec_storage() {
+    // A Vec return must be constructed explicitly from an array.
     // lowered the array literal as a flat `Array<String; 2>` and
     // returned the stack-aggregate bytes through the slot that the
     // caller dereferenced as a `*mut GosVec` - len read as garbage
@@ -441,12 +441,12 @@ fn return_array_literal_coerces_to_slice() {
     // `gos_rt_vec_from_arr` whenever the declared return type is
     // `Vec(elem)` or `Slice(elem)` with matching `elem`.
     let src = r#"
-fn cols() -> [String] {
-    return ["id", "name", "value"]
+fn cols() -> Vec<String> {
+    return Vec::from(["id", "name", "value"])
 }
 fn modes() -> Vec<i64> {
     let values = [7, 8, 9]
-    values
+    values.to_vec()
 }
 fn main() {
     let xs = cols()
@@ -563,7 +563,7 @@ fn vec_of_struct_index_field_reads_and_writes_through_data_buffer() {
     let src = r#"
 struct Body { x: f64, vx: f64, mass: f64 }
 fn main() {
-    let mut bs: [Body] = []
+    let mut bs: Vec<Body> = Vec::from([])
     bs.push(Body { x: 1.0, vx: 2.0, mass: 10.0 })
     bs.push(Body { x: 4.0, vx: 5.0, mass: 20.0 })
     bs[1].x = 9.0
@@ -669,7 +669,7 @@ fn sort_by_on_tuple_vec_orders_by_comparator() {
     // receivers - those are aggregates passed by pointer.
     let src = r#"
 fn main() {
-    let mut xs: [(String, i64)] = []
+    let mut xs: Vec<(String, i64)> = Vec::from([])
     xs.push(("c".to_string(), 3))
     xs.push(("a".to_string(), 1))
     xs.push(("b".to_string(), 2))
@@ -732,7 +732,7 @@ fn show(e: &Expr) {
     }
 }
 fn main() {
-    let mut xs: [Expr] = []
+    let mut xs: Vec<Expr> = Vec::from([])
     xs.push(Expr::EColumn("t".to_string(), "id".to_string()))
     xs.push(Expr::ELit(Sv::SvInt(42)))
     xs.push(Expr::ELit(Sv::SvText("hello".to_string())))
@@ -760,7 +760,7 @@ fn main() {
 fn vec_of_multi_slot_struct_round_trips_all_fields() {
     // Bug fixed in 0.10.0: `type_slot_bytes` in MIR returned a flat
     // 8 bytes for every user-defined `Adt`, including multi-field
-    // structs. `let xs: [Projection] = []` then created a Vec with
+    // structs. `let xs: Vec<Projection> = []` then created a Vec with
     // `elem_bytes = 8`, so a `push(Projection { a, b })` writing 16
     // bytes of inline storage truncated to the first field. The
     // first iteration of `for p in &xs` re-read garbage for `p.b`
@@ -772,7 +772,7 @@ struct Projection {
     b: i64,
 }
 fn main() {
-    let mut xs: [Projection] = []
+    let mut xs: Vec<Projection> = Vec::from([])
     xs.push(Projection { a: 1, b: 2 })
     xs.push(Projection { a: 3, b: 4 })
     for p in &xs {
@@ -801,7 +801,7 @@ fn regex_captures_all_option_string_match_reads_real_discriminant() {
     // pushed a bare c-string pointer (or 0) per capture group, but the
     // source type of each group is `Option<String>`. When the element
     // typed as a concrete `Option<String>` (e.g. through a function
-    // whose declared return is `[[Option<String>]]`), the compiled-tier
+    // whose declared return is `Vec<Vec<Option<String>>>`), the compiled-tier
     // `match group { Some(k) => ..., None => ... }` reads the tagged-
     // union discriminant via `gos_rt_result_disc` off the pointer - a
     // raw c-string's first bytes are not a valid discriminant, so the
@@ -810,8 +810,8 @@ fn regex_captures_all_option_string_match_reads_real_discriminant() {
     // the MIR pins the result element to `Option<String>`.
     let src = r#"
 use std::regex
-fn parse_pairs(line: String) -> [[Option<String>]] {
-    let re = match regex::compile("(\\w+)=(\\w+)") { Ok(r) => r, Err(_) => { return [] } }
+fn parse_pairs(line: String) -> Vec<Vec<Option<String>>> {
+    let re = match regex::compile("(\\w+)=(\\w+)") { Ok(r) => r, Err(_) => { return Vec::from([]) } }
     regex::captures_all(&re, &line)
 }
 fn main() {
@@ -972,7 +972,7 @@ fn process_spawn_piped_round_trips_across_tiers() {
 fn vec_insert_result_and_receiver_match_across_tiers() {
     let src = r#"
 fn main() {
-    let mut values: Vec<i64> = [1, 2, 3]
+    let mut values: Vec<i64> = Vec::from([1, 2, 3])
     println!("{}", values.insert(1, 9).is_ok())
     println!("{} {} {} {}", values[0], values[1], values[2], values[3])
     println!("{}", values.insert(99, 8).is_err())

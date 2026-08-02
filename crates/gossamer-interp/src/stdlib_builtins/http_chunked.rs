@@ -121,13 +121,18 @@ pub(crate) fn install_http_chunked(globals: &mut Vec<(&'static str, Value)>) {
 pub(crate) fn builtin_chunked_encode(args: &[Value]) -> RuntimeResult<Value> {
     let input = bytes_from_value(args.first().unwrap_or(&Value::Unit));
     let out = gossamer_std::http_chunked::encode_one(&input);
-    Ok(bytes_to_array(out))
+    Ok(Value::String(
+        String::from_utf8(out)
+            .expect("chunk framing around UTF-8 input remains UTF-8")
+            .into(),
+    ))
 }
 
 pub(crate) fn builtin_chunked_decode(args: &[Value]) -> RuntimeResult<Value> {
     let input = bytes_from_value(args.first().unwrap_or(&Value::Unit));
-    match gossamer_std::http_chunked::decode_all(&input) {
-        Ok(bytes) => Ok(ok_variant(bytes_to_array(bytes))),
-        Err(e) => Ok(err_variant(format!("{e}"))),
-    }
+    let decoded = gossamer_std::http_chunked::decode_all(&input)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_default();
+    Ok(Value::String(decoded.into()))
 }

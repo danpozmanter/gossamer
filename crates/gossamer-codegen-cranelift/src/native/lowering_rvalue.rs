@@ -145,7 +145,7 @@ pub(super) fn lower_rvalue(
     intrinsics: &mut IntrinsicContext,
 ) -> Result<ir::Value> {
     lower_rvalue_into(
-        module, builder, locals, body, tcx, rvalue, dst_hint, None, intrinsics,
+        module, builder, locals, body, tcx, rvalue, dst_hint, None, None, intrinsics,
     )
 }
 
@@ -188,6 +188,7 @@ pub(super) fn lower_rvalue_into(
     tcx: &TyCtxt,
     rvalue: &Rvalue,
     dst_hint: Option<ir::Type>,
+    dest_ty: Option<Ty>,
     dest_base: Option<ir::Value>,
     intrinsics: &mut IntrinsicContext,
 ) -> Result<ir::Value> {
@@ -273,7 +274,22 @@ pub(super) fn lower_rvalue_into(
                 builder.inst_results(call)[0]
             } else {
                 let unsigned = cmp_shift_is_unsigned(tcx, body, lhs, rhs);
-                lower_binop(builder, *op, a, b, unsigned)?
+                let arithmetic_ty = arithmetic_int_ty(tcx, body, lhs, rhs).or_else(|| {
+                    dest_ty.and_then(|ty| match tcx.kind_of(ty) {
+                        TyKind::Int(int_ty) => Some(*int_ty),
+                        _ => None,
+                    })
+                });
+                lower_binop(
+                    module,
+                    builder,
+                    intrinsics,
+                    *op,
+                    a,
+                    b,
+                    unsigned,
+                    arithmetic_ty,
+                )?
             }
         }
         Rvalue::UnaryOp { op, operand } => {
@@ -848,7 +864,7 @@ pub(super) fn lower_rvalue_into(
         // already a pointer when the local holds an aggregate);
         // for a projected place, it's the computed projection
         // address.
-        Rvalue::Ref { place, .. } => {
+        Rvalue::Ref { place, mutable } => {
             if place.projection.is_empty() {
                 let var = ensure_var(
                     builder,
@@ -886,8 +902,8 @@ pub(super) fn lower_rvalue_into(
                         | gossamer_types::TyKind::Float(_)
                         | gossamer_types::TyKind::Bool
                         | gossamer_types::TyKind::Char
-                        | gossamer_types::TyKind::String
-                );
+                ) || (*mutable
+                    && matches!(tcx.kind_of(ty), gossamer_types::TyKind::String));
                 if is_addressable_value {
                     let ptr_ty = module.target_config().pointer_type();
                     let slot =
@@ -902,7 +918,25 @@ pub(super) fn lower_rvalue_into(
                     val
                 }
             } else {
-                lower_place_address(module, builder, locals, body, tcx, place, intrinsics)?
+                let leaf_ty = resolve_place_ty(tcx, body, place);
+                let addr =
+                    lower_place_address(module, builder, locals, body, tcx, place, intrinsics)?;
+                if matches!(
+                    tcx.kind_of(leaf_ty),
+                    gossamer_types::TyKind::String
+                        | gossamer_types::TyKind::Slice(_)
+                        | gossamer_types::TyKind::Vec(_)
+                        | gossamer_types::TyKind::HashMap { .. }
+                ) {
+                    builder.ins().load(
+                        module.target_config().pointer_type(),
+                        MemFlagsData::new(),
+                        addr,
+                        0,
+                    )
+                } else {
+                    addr
+                }
             }
         }
         // `CallIntrinsic` as an Rvalue is dispatched at the
@@ -1048,12 +1082,32 @@ fn cmp_shift_is_unsigned(tcx: &TyCtxt, body: &Body, lhs: &Operand, rhs: &Operand
     )
 }
 
+fn arithmetic_int_ty(tcx: &TyCtxt, body: &Body, lhs: &Operand, rhs: &Operand) -> Option<IntTy> {
+    let pick = |op: &Operand| -> Option<IntTy> {
+        let Operand::Copy(place) = op else {
+            return None;
+        };
+        let mut ty = resolve_place_ty(tcx, body, place);
+        while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+            ty = *inner;
+        }
+        match tcx.kind_of(ty) {
+            TyKind::Int(int_ty) => Some(*int_ty),
+            _ => None,
+        }
+    };
+    pick(lhs).or_else(|| pick(rhs))
+}
+
 pub(super) fn lower_binop(
+    module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
+    intrinsics: &mut IntrinsicContext,
     op: BinOp,
     a: ir::Value,
     b: ir::Value,
     unsigned: bool,
+    arithmetic_ty: Option<IntTy>,
 ) -> Result<ir::Value> {
     let mut a_ty = value_type(a, builder);
     let mut b_ty = value_type(b, builder);
@@ -1119,10 +1173,56 @@ pub(super) fn lower_binop(
             }
         });
     }
+    if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) {
+        let arithmetic_ty = arithmetic_ty.unwrap_or(IntTy::I64);
+        let overflow_unsigned = matches!(
+            arithmetic_ty,
+            IntTy::U8 | IntTy::U16 | IntTy::U32 | IntTy::U64 | IntTy::U128 | IntTy::Usize
+        );
+        let checked_ty = match arithmetic_ty {
+            IntTy::I8 | IntTy::U8 => types::I8,
+            IntTy::I16 | IntTy::U16 => types::I16,
+            IntTy::I32 | IntTy::U32 => types::I32,
+            IntTy::I64 | IntTy::U64 | IntTy::I128 | IntTy::U128 | IntTy::Isize | IntTy::Usize => {
+                types::I64
+            }
+        };
+        let checked_a = if a_ty == checked_ty {
+            a
+        } else {
+            builder.ins().ireduce(checked_ty, a)
+        };
+        let checked_b = if b_ty == checked_ty {
+            b
+        } else {
+            builder.ins().ireduce(checked_ty, b)
+        };
+        let (value, overflow) = match (op, overflow_unsigned) {
+            (BinOp::Add, true) => builder.ins().uadd_overflow(checked_a, checked_b),
+            (BinOp::Add, false) => builder.ins().sadd_overflow(checked_a, checked_b),
+            (BinOp::Sub, true) => builder.ins().usub_overflow(checked_a, checked_b),
+            (BinOp::Sub, false) => builder.ins().ssub_overflow(checked_a, checked_b),
+            (BinOp::Mul, true) => builder.ins().umul_overflow(checked_a, checked_b),
+            (BinOp::Mul, false) => builder.ins().smul_overflow(checked_a, checked_b),
+            _ => unreachable!(),
+        };
+        let pass = builder.create_block();
+        let fail = builder.create_block();
+        builder.ins().brif(overflow, fail, &[], pass, &[]);
+        builder.switch_to_block(fail);
+        emit_runtime_panic(module, builder, intrinsics, "arithmetic overflow\n")?;
+        builder.switch_to_block(pass);
+        let value = if checked_ty == a_ty {
+            value
+        } else if overflow_unsigned {
+            builder.ins().uextend(a_ty, value)
+        } else {
+            builder.ins().sextend(a_ty, value)
+        };
+        return Ok(value);
+    }
     Ok(match op {
-        BinOp::Add => builder.ins().iadd(a, b),
-        BinOp::Sub => builder.ins().isub(a, b),
-        BinOp::Mul => builder.ins().imul(a, b),
+        BinOp::Add | BinOp::Sub | BinOp::Mul => unreachable!(),
         BinOp::Div => {
             if unsigned {
                 builder.ins().udiv(a, b)

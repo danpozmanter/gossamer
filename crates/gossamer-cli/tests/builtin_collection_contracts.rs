@@ -29,7 +29,7 @@ fn run(source: &str) -> std::process::Output {
 #[test]
 fn vec_insert_returns_result_without_replacing_the_receiver() {
     let output = run(
-        "fn main() {\n    let mut values: Vec<i64> = [1, 2, 3]\n    println(values.insert(1, 9))\n    println(values)\n    println(values.insert(99, 8).is_err())\n    println(values)\n    println(values.swap(0, 3))\n    println(values)\n    println(values.swap(0, 99).is_err())\n    println(values)\n}\n",
+        "fn main() {\n    let mut values: Vec<i64> = Vec::from([1, 2, 3])\n    println(values.insert(1, 9))\n    println(values)\n    println(values.insert(99, 8).is_err())\n    println(values)\n    println(values.swap(0, 3))\n    println(values)\n    println(values.swap(0, 99).is_err())\n    println(values)\n}\n",
     );
     assert!(
         output.status.success(),
@@ -45,7 +45,7 @@ fn vec_insert_returns_result_without_replacing_the_receiver() {
 #[test]
 fn map_insert_and_collection_from_follow_rust_shaped_contracts() {
     let output = run(
-        "use std::collections::{HashMap, HashSet}\n\nfn main() {\n    let mut map: HashMap<String, i64> = HashMap::from({})\n    println(map.len())\n    println(map.insert(\"a\", 1))\n    println(map.insert(\"a\", 2))\n    println(map.get(\"a\"))\n    println(map.remove(\"a\"))\n    println(map.remove(\"a\"))\n    let made: HashMap<String, i64> = HashMap::from([(\"x\", 3), (\"y\", 4)])\n    println(made.len())\n    let set: HashSet<i64> = HashSet::from([1, 2, 2, 3])\n    println(set.len())\n}\n",
+        "use std::collections::{HashMap, HashSet}\n\nfn main() {\n    let mut map: HashMap<String, i64> = HashMap::from({})\n    println(map.len())\n    println(map.insert(\"a\", 1))\n    println(map.insert(\"a\", 2))\n    println(map.get(\"a\"))\n    println(map.remove(\"a\"))\n    println(map.remove(\"a\"))\n    let made: HashMap<String, i64> = HashMap::from({\"x\": 3, \"y\": 4})\n    println(made.len())\n    let set: HashSet<i64> = HashSet::from([1, 2, 2, 3])\n    println(set.len())\n}\n",
     );
     assert!(
         output.status.success(),

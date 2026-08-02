@@ -14,8 +14,8 @@
 //!
 //! Two opt levels are exposed:
 //!
-//! - `gos build` (no `--release`): the lightweight correctness MIR
-//!   pipeline followed by minimal `opt` and `llc -O0` codegen.
+//! - `gos build` (no `--release`): the checked debug MIR pipeline followed by
+//!   LLVM's `O1` optimization pipeline and `llc -O0` codegen.
 //! - `gos build --release`: the release MIR pipeline followed by
 //!   integrated Clang `-O3` codegen with the audited target flags.
 //!   PGO and `GOS_LLVM_SPLIT_TOOLS=1` retain the explicit `opt` plus
@@ -311,7 +311,7 @@ fn print_profile_plan(target: &LinkTarget, opts: LinkOptions, static_musl: bool)
     let (mir, llvm) = if opts.release {
         ("release-inline+optimise", "O3")
     } else {
-        ("debug-canonicalise", "O0")
+        ("debug-checked", "O1")
     };
     let linker = match target.os {
         TargetOs::MacOs => {

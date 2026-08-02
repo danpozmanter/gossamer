@@ -212,19 +212,19 @@ fn main() {
 fn impl_method_self_field_iteration_binds_element_type() {
     // Bug fixed in 0.10.0: inside an `impl` method the `self` receiver
     // was bound to a fresh inference var instead of the impl's `Self`
-    // type, so `for x in self.items` over a `[String]` field bound `x`
+    // type, so `for x in self.items` over a `Vec<String>` field bound `x`
     // at the i64 default - printing element pointers as integers (the
-    // auto-derived `to_json` serialised a `[String]` field as numbers).
+    // auto-derived `to_json` serialised a `Vec<String>` field as numbers).
     // `self` now binds to the concrete `Self` type.
     let src = r#"
-struct U { tags: [String] }
+struct U { tags: Vec<String> }
 impl U {
     fn dump(self) {
         for item in self.tags { println!("item={}", item) }
     }
 }
 fn main() {
-    let mut t: [String] = []
+    let mut t: Vec<String> = Vec::from([])
     t.push("a")
     t.push("b")
     let u = U { tags: t }
@@ -415,7 +415,7 @@ fn usize_index_works_for_string_arrays() {
     // with "index must be integer".
     let src = r#"
 fn try_it() {
-    let mut args: [String] = [].to_vec()
+    let mut args: Vec<String> = [].to_vec()
     args.push("zero".to_string())
     args.push("one".to_string())
     let mut i: usize = 0
@@ -501,7 +501,7 @@ fn main() {
         Some(s) => println!("first={}", s),
         None => println!("none"),
     }
-    let empty: [i64] = [].to_vec()
+    let empty: Vec<i64> = [].to_vec()
     let mut it2 = empty.iter()
     match it2.next() {
         Some(_) => println!("unexpected some"),
@@ -551,12 +551,12 @@ struct User {
     name: String,
     age: i64,
     active: bool,
-    tags: [String],
+    tags: Vec<String>,
     address: Address,
 }
 
 fn main() -> Result<(), errors::Error> {
-    let mut tags: [String] = []
+    let mut tags: Vec<String> = Vec::from([])
     tags.push("admin")
     let original = User { name: "alice", age: 30, active: true, tags: tags, address: Address { city: "denver", zip: "80205" } }
     let text = to_json::<User>(&original)?
@@ -906,7 +906,7 @@ fn main() {
 fn iterator_sum_preserves_usize_result_type() {
     let src = r#"
 fn main() {
-    let values: Vec<i64> = [9, 18, 27]
+    let values: Vec<i64> = Vec::from([9, 18, 27])
     let total: usize = values.map(|value| value as usize).sum()
     println!("total={}", total)
 }

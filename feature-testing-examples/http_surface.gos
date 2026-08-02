@@ -28,7 +28,7 @@ fn main() {
         .with_header("x-tag", "v2")
         .with_header("x-extra", "e")
     println!("r_status={} r_body={} r_ct={}", r.status, r.body, r.content_type)
-    let headers = r.headers
+    let headers: Vec<(String, String)> = r.headers
     println!(
         "x-tag={} x-extra={}",
         header_of(&headers, "x-tag"),
@@ -42,7 +42,7 @@ fn main() {
     let _ = strict
     println!("client=built")
 
-    match http::request("BOGUS", "http://127.0.0.1:23905/never", "", []) {
+    match http::request("BOGUS", "http://127.0.0.1:23905/never", "", Vec::from([])) {
         Ok(resp) => println!("unexpected status={}", resp.status),
         Err(e) => println!("err={}", e),
     }

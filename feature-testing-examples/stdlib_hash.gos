@@ -3,12 +3,12 @@ use std::hash
 
 fn main() {
     println!("{}", hash::crc32::checksum_string("hello world"))
-    println!("{}", hash::crc32::checksum([104, 105]))
-    println!("{}", hash::crc32::update(0, [104, 105]))
+    println!("{}", hash::crc32::checksum(Vec::from([104, 105])))
+    println!("{}", hash::crc32::update(0, Vec::from([104, 105])))
     println!("{}", hash::adler32::checksum_string("hello world"))
-    println!("{}", hash::adler32::checksum([104, 105]))
-    println!("{}", hash::adler32::update(1, [104, 105]))
+    println!("{}", hash::adler32::checksum(Vec::from([104, 105])))
+    println!("{}", hash::adler32::update(1, Vec::from([104, 105])))
     println!("{}", hash::fnv::hash_string("hello"))
-    println!("{}", hash::fnv::hash32([104, 105]))
-    println!("{}", hash::fnv::hash64([104, 105]))
+    println!("{}", hash::fnv::hash32(Vec::from([104, 105])))
+    println!("{}", hash::fnv::hash64(Vec::from([104, 105])))
 }

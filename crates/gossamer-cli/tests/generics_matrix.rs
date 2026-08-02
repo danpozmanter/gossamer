@@ -170,24 +170,24 @@ fn higher_order_map_runs_over_i64_and_f64_in_one_program() {
     // turned up exactly here: same-shape mangled symbols
     // overwrite each other and the wrong body runs.
     let src = r#"
-fn map_i64(xs: [i64], f: Fn(i64) -> i64) -> [i64] {
-    let mut out: [i64] = []
+fn map_i64(xs: Vec<i64>, f: Fn(i64) -> i64) -> Vec<i64> {
+    let mut out: Vec<i64> = Vec::from([])
     for x in xs { out.push(f(x)) }
     out
 }
 
-fn map_f64(xs: [f64], f: Fn(f64) -> f64) -> [f64] {
-    let mut out: [f64] = []
+fn map_f64(xs: Vec<f64>, f: Fn(f64) -> f64) -> Vec<f64> {
+    let mut out: Vec<f64> = Vec::from([])
     for x in xs { out.push(f(x)) }
     out
 }
 
 fn main() {
-    let ints: [i64] = [1, 2, 3, 4]
+    let ints: Vec<i64> = [1, 2, 3, 4].to_vec()
     let doubled = map_i64(ints, |x| x * 2)
     println!("ints[3]={}", doubled[3])
 
-    let floats: [f64] = [1.0, 2.0, 3.0, 4.0]
+    let floats: Vec<f64> = [1.0, 2.0, 3.0, 4.0].to_vec()
     let halved = map_f64(floats, |x| x * 0.5)
     println!("floats[3]={:.1}", halved[3])
 }
@@ -248,7 +248,7 @@ fn main() {
 
 #[test]
 fn hashmap_and_vec_of_same_value_type_dont_collide() {
-    // `HashMap<String, i64>` and `Vec<i64>` (i.e. `[i64]`)
+    // `HashMap<String, i64>` and `Vec<i64>` (i.e. `Vec<i64>`)
     // both carry an `i64` payload through the runtime. A
     // collision in the value-type mangling shows up as one
     // collection's getter dispatching the other's storage -
@@ -261,7 +261,7 @@ fn main() {
     counts.insert("a", 100)
     counts.insert("b", 200)
 
-    let mut nums: [i64] = [1, 2, 3]
+    let mut nums: Vec<i64> = [1, 2, 3].to_vec()
     nums.push(4)
 
     if let Some(c) = counts.get(&"b") {
@@ -286,7 +286,7 @@ fn closure_with_capture_inside_higher_order_filter() {
     // closure-in-generic-position (HOF takes `Fn(...)`) as a
     // hot regression spot.
     let src = r#"
-fn count_over(xs: [i64], pred: Fn(i64) -> bool) -> i64 {
+fn count_over(xs: Vec<i64>, pred: Fn(i64) -> bool) -> i64 {
     let mut n = 0
     for x in xs {
         if pred(x) { n = n + 1 }
@@ -295,7 +295,7 @@ fn count_over(xs: [i64], pred: Fn(i64) -> bool) -> i64 {
 }
 
 fn main() {
-    let xs: [i64] = [1, 5, 2, 7, 3, 8]
+    let xs: Vec<i64> = [1, 5, 2, 7, 3, 8].to_vec()
     let threshold = 4
     let n = count_over(xs, |x| x > threshold)
     println!("over_{}={}", threshold, n)

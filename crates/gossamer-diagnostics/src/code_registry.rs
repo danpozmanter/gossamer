@@ -694,6 +694,18 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      `&mut value`. An existing `&mut T` value can be forwarded directly.",
     ),
     (
+        "GT0049",
+        "A bare `[T]` names an unsized slice and cannot be stored as an owned local, field, parameter, or return value. Use `[T; N]` for an owned fixed-size array, `Vec<T>` for an owned growable sequence, or borrow a sequence as `&[T]` or `&mut [T]`.",
+    ),
+    (
+        "GT0050",
+        "A method that changes sequence length or capacity was called on a fixed array or slice. Those operations require `Vec<T>`. Arrays and mutable slices can still mutate existing elements and use non-resizing methods.",
+    ),
+    (
+        "GT0051",
+        "A fixed array length was not known at compile time. Array lengths are part of `[T; N]`, so `[value; N]` requires a constant `N`. Use an explicit `Vec<T>` construction when the length is only known at runtime.",
+    ),
+    (
         "GX0001",
         "An operation received a value of an incompatible type. The\n\
                      diagnostic names the type that was required and the type\n\

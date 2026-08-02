@@ -324,26 +324,25 @@ declared narrow or unsigned width is observable only at an explicit
 the target's signedness (`300 as u8 == 44`, `200 as i8 == -56`).
 Consequences of the model:
 
-- Arithmetic between narrow values does not wrap at the declared
-  width: `200u8 + 200u8 == 400`. Wrap-at-width is opt-in via a cast
-  (`(200u8 + 200u8) as u8 == 144`).
+- `+`, `-`, and `*` follow Rust's profile-sensitive integer overflow
+  behavior at the declared type width. Debug execution, including `gos`
+  and `gos build`, panics on overflow. `gos build --release` wraps at the
+  declared width, so a release `200u8 + 200u8` evaluates to `144`.
 - `u64`/`usize` values use the same 64-bit payload as signed integers,
   but arithmetic, comparison, shifts, division/remainder, and display are
   type-aware on every tier. Casts reinterpret or truncate to the target
   width (`(0 - 1) as u64` prints `18446744073709551615`); an explicit
   cast back to a signed type reinterprets the same bits.
-- `+`, `-`, `*` wrap two's-complement at 64-bit width.
 - `<<` and `>>` mask the shift amount to the low 6 bits
   (`1 << 70 == 1 << 6`); `>>` is the arithmetic (sign-propagating)
   shift.
 - Float → int casts saturate at i64 width with no narrow mask
   (`300.7 as u8 == 300`, `1e20 as i64 == i64::MAX`, NaN → 0).
 
-No tier emits overflow traps: integer arithmetic wraps at 64-bit width
-in every build mode, and there is no debug-mode overflow panic. The
-method forms `checked_add`, `wrapping_add`, `saturating_add`,
-`overflowing_add` and friends are the portable way to request explicit
-overflow behaviour.
+The VM, Cranelift JIT, and LLVM debug backend all enforce the same checked
+behavior. Explicit `wrapping_add` and `wrapping_mul` retain wrapping behavior
+at the declared integer width in every profile. Other Rust integer arithmetic
+method families are not yet part of Gossamer's public method surface.
 
 `i128` and `u128` are not supported on any tier. The checker rejects
 every spelling of these types at the declaration site with a
@@ -377,51 +376,51 @@ parameter. String literals have type `String`.
 `char` is a 32-bit Unicode scalar value. A `String` is not indexable by
 `char`; iteration is via `.chars()` (an iterator of `char`) or
 `.bytes()` (an iterator of `u8`). Byte-level substring operations go
-through `.as_bytes()` which returns `&Vec<u8>` sharing the underlying
-bytes.
+through `.as_bytes()` which returns an owned `Vec<u8>`.
 
 ### 3.3 Collections (built-in generic types)
 
 | Type | Semantics |
 |---|---|
-| `Vec<T>` | Growable slice. Analogue of Go's `[]T`. |
-| `[T; N]` | Fixed-size array. Analogue of Go's `[N]T`. (There is no `Array<T, N>` spelling.) |
+| `Vec<T>` | Owned growable sequence. |
+| `[T; N]` | Owned fixed-size array. The length is part of its type. |
+| `[T]` | Unsized slice. Ordinarily used as `&[T]` or `&mut [T]`. |
 | `HashMap<K, V>` | Hash map. Analogue of Go's `map[K]V`. |
 | `BTreeMap<K, V>` | Ordered map. |
 | `HashSet<T>` | Sets. |
 | `Sender<T>`, `Receiver<T>` | Channel endpoints. Always come as a pair from `channel<T>()`. |
 
-All collections are managed reference types. Assigning
-`let b = a;` where `a: Vec<T>` creates a second reference to the same
-underlying slice (same as Go's behavior). For a deep copy, use
-`.clone()`.
+Runtime-managed collections retain Gossamer's shared-storage assignment
+semantics. Arrays are fixed-size values, slices are borrowed views, and Vec is
+the only sequence type that owns growable storage.
 
 #### Collection literals
 
-`[a, b, c]` (list) and `[value; count]` (repeat) are the literal forms
-for sequences. With no contextual type they infer a fixed `[T; N]`
-array; where the expected type is a growable `Vec<T>` or `[T]` slice,
-the literal **coerces** to that growable form. Coercion fires at every
-expected-type site:
+`[a, b, c]` and `[value; N]` always produce fixed `[T; N]` arrays. `N`
+must be a compile-time constant. An expected Vec or slice type never changes
+an array literal's identity. Construct a growable sequence explicitly:
 
 ```gossamer
-let words: Vec<String> = ["yes", "wow"]      // let annotation
-let zeros: Vec<i64> = [0; 4]                  // repeat form
-fn names() -> Vec<String> { ["ada", "grace"] }   // return position
-struct Basket { fruits: Vec<String> }
-let b = Basket(["apple", "pear"])  // struct field
-fn total(xs: Vec<i64>) -> i64 { /* … */ }
-total([1, 2, 3])                              // by-value argument
+let words: Vec<String> = Vec::from(["yes", "wow"])
+let zeros: Vec<i64> = Vec::from([0; 4])
 fn count(xs: &[String]) -> i64 { xs.len() }
-count(["m", "n"])                             // slice argument
+let names = ["m", "n"]
+count(&names)
 ```
 
-An `if` or `match` whose branches are array literals of differing
-length joins to `Vec<T>` - the only type that holds both - for every
-element type (`if c { ["a", "b"] } else { ["c"] }` is a
-`Vec<String>`). Equal-length branches stay a fixed `[T; N]` unless the
-surrounding context asks for a Vec. Nested literals follow the element
-type: `let g: Vec<Vec<i64>> = [[1, 2], [3]]` builds a Vec of Vecs.
+Different array lengths are different types and do not silently join to Vec.
+There is no implicit conversion between an owned array and Vec.
+
+Shared and mutable references unsize in the same four places as Rust:
+`&[T; N]` and `&Vec<T>` coerce to `&[T]`; `&mut [T; N]` and
+`&mut Vec<T>` coerce to `&mut [T]`. Arrays, slices, and Vec share the
+implemented slice surface, including queries, checked indexing helpers,
+conversion with `to_vec`, and in-place ordering methods. Eager collection
+combinators such as `map`, `filter`, `fold`, `sum`, and `take` are Vec methods;
+arrays and slices use `iter()` before applying iterator combinators. Only Vec
+exposes length- or capacity-changing methods. A mutable slice can modify
+existing elements and use non-resizing mutable methods such as `swap`, `sort`,
+`sort_by`, `sort_by_key`, `reverse`, and `fill`.
 
 ### 3.4 Pointers and references
 
@@ -441,10 +440,11 @@ type: `let g: Vec<Vec<i64>> = [[1, 2], [3]]` builds a Vec of Vecs.
 - `&mut T` - a **mutable managed reference**, used to signal write
   intent through a reference. Created by taking `&mut` of a writable
   place rooted at a `mut` binding or reached through another `&mut`.
-  Writes through it update that source place. Complete exclusivity is
-  *not* enforced: the checker rejects a second simple named `&mut` to the
-  same root, but simultaneous call arguments and more complex alias shapes
-  are not tracked, and a `&mut T` struct field is accepted. Does not carry
+  Writes through it update that source place. A lightweight lexical
+  exclusivity check rejects a second named `&mut` to the same root, a
+  temporary borrow overlapping an active named borrow, and repeated `&mut`
+  roots in one call. More complex alias shapes are not tracked, and a
+  `&mut T` struct field is accepted. Does not carry
   write-through across a `go` or channel boundary (see the
   parameter-semantics paragraph below).
 
@@ -457,9 +457,9 @@ unsafe to do.)
 
 `&T` and `&mut T` in Gossamer are not borrows in the Rust sense:
 automatic memory management already guarantees liveness. They are
-statically checked read/write-intent markers, but there is no lifetime or
-exclusivity analysis (§7.5). No lifetime parameters exist at any level of
-the language.
+statically checked read/write-intent markers with scope-local exclusivity,
+but there is no lifetime or non-lexical borrow analysis (§7.5). No lifetime
+parameters exist at any level of the language.
 
 **`&mut` parameter semantics.** A `&mut T` parameter writes through to
 the caller's storage on every tier, including scalar values, strings,
@@ -1634,8 +1634,8 @@ they are not diagnosed.
   value; let r = &mut x` would provide a write path to the value that `let
   x` declares immutable.
 - `&mut Vec<T>` / `&mut [T]` parameters do carry write-through to the
-  caller (§3.4), so the marker is load-bearing for that data flow even
-  though exclusivity is unchecked.
+  caller (§3.4), so the marker is load-bearing for that data flow. The
+  scope-local exclusivity rules apply to these references too.
 - Returning a reference from a function is permitted (the runtime keeps
   the pointee alive); the caller receives an unconstrained `&T` /
   `&mut T`.
@@ -1658,8 +1658,9 @@ This design deliberately does *not* include:
   state are the programmer's responsibility, not blocked at compile
   time.
 
-A complete exclusivity check (many `&T`, or one `&mut T`, never both) remains
-a candidate for a future release. It is not part of the language today.
+The scope-local check is intentionally not a complete Rust borrow checker. In
+particular, it does not enforce the full "many shared references or one mutable
+reference" rule, infer lifetimes, or track arbitrary aliases and projections.
 
 ---
 
@@ -2036,8 +2037,8 @@ create a compatibility promise without improving fidelity.
   - `to_json::<Type>(value: Type) -> Result<String, errors::Error>`.
   `from_json` is the canonical one-line, serde-style deserializer:
   it validates each field against the declared field type
-  recursively (nested structs by source name, `[T]` / `Vec<T>` /
-  `[T; N]` / tuples / `Option<T>` / `HashMap<String, V>` walk
+  recursively (nested structs by source name, `Vec<T>` / `[T; N]` /
+  tuples / `Option<T>` / `HashMap<String, V>` walk
   through, `json::Value` fields pass through). Missing required
   fields and type mismatches surface as
   `Result::Err(errors::Error)` with a path-qualified message.
@@ -2109,7 +2110,7 @@ must be installed to compile natively on the Pi.
 | Mode | Command | Backend | Pipeline | Speed | Output quality |
 |---|---|---|---|---|---|
 | Interpret | `gos file.gos` | Bytecode VM | Direct dispatch; in-process Cranelift JIT tiers up hot bodies | Fastest cold start | No native codegen |
-| Debug build | `gos build` | LLVM | minimal `opt` (`mem2reg`, `instcombine`, `simplifycfg`) then `llc -O0` | Sub-second for small programs | ~2x slower than release |
+| Debug build | `gos build` | LLVM | checked arithmetic, `opt -O1`, then `llc -O0` | Sub-second for small programs | Optimized enough for development while preserving debug overflow traps |
 | Release build | `gos build --release` | LLVM | `opt -O3 \| llc -O3 -mcpu=native -mattr=+prefer-256-bit` | Seconds for thousands of LoC | Vectorised, inlined |
 
 LLVM is the canonical native backend; the Cranelift code path is
@@ -2263,8 +2264,8 @@ includes the Rust macros a newcomer reaches for: there is no `vec!`,
 `map!`, `set!`, `write!`, `writeln!`, `assert!`, `assert_eq!`,
 `debug_assert!`, `include_str!`, `include_bytes!`, or `env!`.
 
-- Collection literals use the array form `[...]` / `[v; n]`, which
-  coerces to `Vec<T>` (§3.3) - there is no `vec!`.
+- Collection literals use the fixed-array form `[...]` / `[v; N]`. Use
+  `Vec::from([...])` for an owned growable sequence; there is no `vec!`.
 - `assert(cond[, msg])` and `assert_eq(a, b[, msg])` are prelude
   *functions* called without a `!`; `std::testing` provides the
   non-panicking `check*` variants.

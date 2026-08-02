@@ -242,7 +242,7 @@ cargo build --workspace
 ./target/debug/gos new example.com/hello --path hello
 cd hello
 
-# Type-check, run, build.
+# Type-check, execute, build.
 gos check src/main.gos
 gos src/main.gos
 gos build src/main.gos
@@ -255,6 +255,17 @@ gos test src/main.gos
 # Drop into the REPL.
 gos
 ```
+
+Sequence types follow Rust's model. `[T; N]` is an owned fixed-size array,
+`[T]` is an unsized slice used behind `&` or `&mut`, and `Vec<T>` is the only
+owned growable sequence. Array literals never silently become Vec values, so
+write `Vec::from([1, 2, 3])` when growable storage is required. References to
+arrays and Vec values coerce to slice references in the same four shared and
+mutable forms as Rust. Arrays and slices expose the implemented slice-method
+surface, while Vec additionally owns eager collection combinators, resizing,
+and capacity operations. Mutable arrays and slices support non-resizing
+mutation such as `sort`, `reverse`, `swap`, and `fill`. `%i` shows these distinct type surfaces and `%e`
+filters them further by the binding's writable capability.
 
 ## Foreign Function Interface (FFI)
 

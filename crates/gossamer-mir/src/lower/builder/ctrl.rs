@@ -2472,6 +2472,24 @@ impl<'a> Builder<'a> {
             if let Some(result) = self.try_lower_for_loop(&for_loop, span) {
                 return Some(result);
             }
+            // A user-defined iterator is executed correctly by the register
+            // VM's generic `next()` protocol, but the MIR generic-loop path
+            // cannot yet represent that protocol. Leave an explicit marker
+            // in the body so Cranelift admission keeps the caller on
+            // bytecode instead of promoting the empty MIR back-edge into an
+            // infinite native loop.
+            if self.for_loop_uses_user_adt(&for_loop) {
+                let unit_ty = self.tcx.unit();
+                let marker = self.fresh(unit_ty);
+                self.emit_assign(
+                    Place::local(marker),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_jit_unsupported_user_iterator",
+                        args: Vec::new(),
+                    },
+                    span,
+                );
+            }
             self.pending_loop_label = None;
         }
         let header = self.new_block(span);
@@ -2506,6 +2524,39 @@ impl<'a> Builder<'a> {
         } else {
             None
         }
+    }
+
+    fn for_loop_uses_user_adt(&mut self, for_loop: &ForLoopShape<'_>) -> bool {
+        use gossamer_types::TyKind;
+
+        let probe_expr = match &for_loop.iter_expr.kind {
+            HirExprKind::Unary {
+                op: gossamer_hir::HirUnaryOp::RefShared | gossamer_hir::HirUnaryOp::RefMut,
+                operand,
+                ..
+            } => operand.as_ref(),
+            _ => for_loop.iter_expr,
+        };
+        let is_user_adt = |mut ty| {
+            for _ in 0..8 {
+                match self.tcx.kind_of(ty) {
+                    TyKind::Ref { inner, .. } => ty = *inner,
+                    TyKind::Adt { def, .. } => return def.local < u32::MAX - 64,
+                    _ => return false,
+                }
+            }
+            false
+        };
+        if is_user_adt(for_loop.iter_expr.ty) {
+            return true;
+        }
+        if let HirExprKind::Path { segments, .. } = &probe_expr.kind
+            && let Some(first) = segments.first()
+            && let Some(local) = self.lookup_local(&first.name)
+        {
+            return is_user_adt(self.locals[local.0 as usize].ty);
+        }
+        false
     }
 
     /// Best-effort element type for a `for x in <iter>` iterable whose HIR

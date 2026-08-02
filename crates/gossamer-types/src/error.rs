@@ -109,6 +109,25 @@ pub enum TypeError {
         /// Source spelling of the reference pattern.
         pattern: &'static str,
     },
+    /// A bare `[T]` slice was used where a sized owned value is required.
+    #[error("slice type `[{element}]` is unsized and cannot be stored by value")]
+    UnsizedSliceValue {
+        /// Rendered element type.
+        element: String,
+    },
+    /// A length- or capacity-changing `Vec` method was called on an array or slice.
+    #[error(
+        "method `{method}` changes sequence length or capacity and requires `Vec<T>`, but the receiver has type `{ty}`"
+    )]
+    SequenceResizeRequiresVec {
+        /// Receiver type.
+        ty: String,
+        /// Attempted method.
+        method: String,
+    },
+    /// A fixed array length could not be evaluated at compile time.
+    #[error("array length must be a compile-time constant")]
+    ArrayLengthNotConstant,
     /// A nominal struct or enum was destructured with an anonymous tuple
     /// pattern, which would bypass its declared name and field labels.
     #[error("destructuring `{ty}` requires its struct or variant name")]
@@ -516,6 +535,9 @@ impl TypeError {
             Self::ReferencePatternRequiresReference { .. } => {
                 "reference-pattern-requires-reference"
             }
+            Self::UnsizedSliceValue { .. } => "unsized-slice-value",
+            Self::SequenceResizeRequiresVec { .. } => "sequence-resize-requires-vec",
+            Self::ArrayLengthNotConstant => "array-length-not-constant",
             Self::StructPatternNameRequired { .. } => "struct-pattern-name-required",
             Self::StructConstructorBracesRequired { .. } => "struct-constructor-braces-required",
             Self::TupleStructConstructorParenthesesRequired { .. } => {
@@ -572,6 +594,9 @@ impl TypeError {
             Self::NonExhaustiveMatch { .. } => "GT0004",
             Self::CannotAssignToLiteral | Self::LetPatternMayNotMatch => "GT0047",
             Self::ReferencePatternRequiresReference { .. } => "GT0048",
+            Self::UnsizedSliceValue { .. } => "GT0049",
+            Self::SequenceResizeRequiresVec { .. } => "GT0050",
+            Self::ArrayLengthNotConstant => "GT0051",
             Self::StructPatternNameRequired { .. } => "GT0033",
             Self::StructConstructorBracesRequired { .. }
             | Self::TupleStructConstructorParenthesesRequired { .. }
@@ -799,6 +824,29 @@ impl TypeDiagnostic {
                     .with_note(format!(
                         "`let {pattern} name = value` can only destructure an existing {pattern} reference"
                     ));
+            }
+            TypeError::UnsizedSliceValue { .. } => {
+                out = out
+                    .with_help(
+                        "borrow a sequence as `&[T]` or `&mut [T]`, or use `Vec<T>` for an owned growable sequence",
+                    )
+                    .with_note(
+                        "`[T]` is an unsized view; `[T; N]` is an owned fixed-size array and `Vec<T>` is an owned growable collection",
+                    );
+            }
+            TypeError::SequenceResizeRequiresVec { ty, method } => {
+                out = out
+                    .with_help(format!(
+                        "use `Vec<T>` when `{method}` must change the sequence length or capacity"
+                    ))
+                    .with_note(format!(
+                        "`{ty}` has fixed storage; arrays and slices only expose non-resizing sequence methods"
+                    ));
+            }
+            TypeError::ArrayLengthNotConstant => {
+                out = out
+                    .with_help("use a constant length for `[value; N]`, or build a `Vec<T>` explicitly")
+                    .with_note("array lengths are part of the fixed array's type and must be known during compilation");
             }
             TypeError::StructPatternNameRequired { ty } => {
                 out = out

@@ -22,7 +22,7 @@ use crate::{doc, repl};
     version,
     about = "The Gossamer toolchain",
     override_usage = "gos [OPTIONS] [FILE] [ARGS]...\n    gos [OPTIONS] <COMMAND>",
-    after_help = "Default behavior:\n  gos FILE [ARGS]... runs FILE and forwards ARGS to the program.\n  gos with no FILE or COMMAND starts the REPL.\n\nUse -e/--eval STRING to execute inline source instead of running a file."
+    after_help = "Default behavior:\n  gos FILE [ARGS]... runs FILE and forwards ARGS to the program.\n  gos with no FILE or COMMAND starts the REPL.\n\nUse -e or --eval STRING to evaluate inline source instead of running a file."
 )]
 pub(crate) struct Cli {
     /// Print additional progress information for the command being run.
@@ -30,7 +30,7 @@ pub(crate) struct Cli {
     verbose: bool,
     /// Execute inline Gossamer source instead of running a file.
     #[arg(short = 'e', long = "eval", value_name = "STRING")]
-    eval: Option<String>,
+    execute: Option<String>,
     /// Subcommand to dispatch; omit to start the REPL.
     #[command(subcommand)]
     command: Option<Command>,
@@ -607,7 +607,7 @@ enum Command {
 /// `Err` into a non-zero exit code with a styled `error:` prefix.
 pub(crate) fn run() -> ExitCode {
     let cli = parse_cli();
-    match dispatch(cli.command, cli.verbose, cli.eval) {
+    match dispatch(cli.command, cli.verbose, cli.execute) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("{}: {err:#}", style::error("error"));
@@ -763,8 +763,12 @@ fn cli_help_width() -> usize {
     clippy::too_many_lines,
     reason = "intentional flat dispatch - one arm per subcommand keeps grep-ability"
 )]
-fn dispatch(command: Option<Command>, verbose: bool, eval: Option<String>) -> anyhow::Result<()> {
-    if let Some(source) = eval {
+fn dispatch(
+    command: Option<Command>,
+    verbose: bool,
+    execute: Option<String>,
+) -> anyhow::Result<()> {
+    if let Some(source) = execute {
         return cmd::run::command(source);
     }
     match command {

@@ -317,8 +317,8 @@ fn compiled_container_and_accumulator_loops_stay_under_rss_cap() {
     std::fs::write(
         &source,
         "
-fn make_vec(n: i64) -> [i64] {
-    let mut v: [i64] = []
+fn make_vec(n: i64) -> Vec<i64> {
+    let mut v: Vec<i64> = Vec::from([])
     let mut i = 0
     while i < n {
         v.push(i * 2)
@@ -328,7 +328,7 @@ fn make_vec(n: i64) -> [i64] {
 }
 
 fn repeat_sum(n: i64) -> i64 {
-    let d = [7; n]
+    let d: Vec<i64> = Vec::from([7; 64])
     d[0] + d[n - 1]
 }
 
@@ -343,7 +343,7 @@ fn make_str(n: i64) -> String {
 }
 
 fn main() {
-    let mut v: [i64] = []
+    let mut v: Vec<i64> = Vec::from([])
     let mut total = 0
     let mut r = 0
     while r < 200000 {
@@ -404,7 +404,7 @@ fn main() {
 
 /// Correctness and leak gate for a by-value struct with a `Vec`/`[T]` field that
 /// is moved into the struct in a returning function and back out across the call
-/// boundary (`struct { data: [i64], name: String }`). The struct and its indexed
+/// boundary (`struct { data: Vec<i64>, name: String }`). The struct and its indexed
 /// field must read correctly on the bytecode VM, the Cranelift JIT, and both LLVM
 /// AOT modes, and each iteration's field buffer must be released when the struct
 /// drops, so peak RSS stays bounded across 300k iterations.
@@ -428,10 +428,10 @@ fn compiled_struct_vec_field_loop_runs_correctly_on_all_tiers() {
     std::fs::write(
         &source,
         "
-struct Rec { data: [i64], name: String }
+struct Rec { data: Vec<i64>, name: String }
 
 fn make(n: i64) -> Rec {
-    let mut v: [i64] = []
+    let mut v: Vec<i64> = Vec::from([])
     let mut i = 0
     while i < n {
         v.push(i * 2)

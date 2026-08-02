@@ -12,7 +12,7 @@ the implementation by a rev.
 | `gos check [--timings] FILE` | Parse + resolve + typecheck + exhaustiveness. With `--timings`, prints per-stage wall-clock times. Parse output is cached by source hash - re-invocations on an unchanged file reuse the parsed AST. Set `GOSSAMER_CACHE_TRACE=1` to log cache hits. |
 | `gos FILE` | Execute via the register-based bytecode VM. Recursive helper workloads may promote through the in-process Cranelift JIT. |
 | `gos watch [PATH] [--] [ARGS...]` | Validate and restart a development service when project inputs change. This is process replacement, not in-process code patching. |
-| `gos build [--release] [--target TRIPLE] FILE` | Produce a native binary (ELF/Mach-O/PE) by lowering through MIR + LLVM (`llc -O0`; `--release` runs the full `opt -O3 | llc -O3` pipeline) and linking the user's `.o` against `libgossamer_runtime.a`. Release builds may use `--pgo-collect PATH.profraw` to emit an instrumented binary or `--pgo-profile PATH.profdata` to apply merged LLVM profile data; the modes conflict, profile input must exist, and an input older than the source produces a warning. The Cranelift code path is reserved for the in-process JIT (`gos`), not this command. Tier 2 cross deployment is `{x86_64,aarch64}-unknown-linux-musl`, QEMU-differential-tested in CI. Other registered triples are not supported merely because a local link succeeds; macOS/Windows as cross targets are out of scope. |
+| `gos build [--release] [--target TRIPLE] FILE` | Produce a native binary (ELF/Mach-O/PE) by lowering through MIR + LLVM (checked debug arithmetic with `opt -O1 | llc -O0`; `--release` runs `opt -O3 | llc -O3`) and linking the user's `.o` against `libgossamer_runtime.a`. Release builds may use `--pgo-collect PATH.profraw` to emit an instrumented binary or `--pgo-profile PATH.profdata` to apply merged LLVM profile data; the modes conflict, profile input must exist, and an input older than the source produces a warning. The Cranelift code path is reserved for the in-process JIT (`gos`), not this command. Tier 2 cross deployment is `{x86_64,aarch64}-unknown-linux-musl`, QEMU-differential-tested in CI. Other registered triples are not supported merely because a local link succeeds; macOS/Windows as cross targets are out of scope. |
 
 ## Formatting + linting + docs
 
@@ -80,8 +80,10 @@ It starts with `gos <version> REPL [<architecture>-<os>]`. The REPL supports:
   expression sees previously-bound locals in scope. `%bindings`
   lists the active set.
 - `%help` lists REPL commands.
-- `%info [anything]` (`%i`) shows item help and the relevant module or type
-  listing. `%find <regex>` (`%f`) searches public symbol names.
+- `%info [pattern]` (`%i`) searches the public language and standard-library
+  catalog. `%explain NAME` (`%e`) inspects a persistent binding and filters
+  methods by its type and mutability. Add `--details` for descriptions and
+  examples.
 - `%bindings [regex]` (`%b`), `%declarations [regex]` (`%d`), and
   `%history [regex]` (`%h`) show persistent bindings, declarations, and input
   history. `%reset` (`%r`) clears bindings and declarations.
@@ -89,7 +91,7 @@ It starts with `gos <version> REPL [<architecture>-<os>]`. The REPL supports:
   `%quit` (`%q`) exits.
 
 Meta-command output adapts to the current terminal width and is capped at 80
-columns, so `%help`, `%info`, `%find`, `%bindings`, and `%declarations` remain
+columns, so `%help`, `%info`, `%explain`, `%bindings`, and `%declarations` remain
 readable in narrow terminals.
 
 ## Editor integration
@@ -147,7 +149,7 @@ directly:
 - `check` - parse + resolve + typecheck; one JSON object per
   diagnostic (the `--message-format json` schema).
 - `explain` - long-form rationale for a diagnostic code.
-- `run` / `build` / `test` - execute programs and test suites;
+- `execute` / `build` / `test` - execute programs and test suites;
   exit code, stdout, and stderr come back, bounded by a
   per-call `timeout_ms`.
 - `fmt` / `doc` - formatting and item listings.

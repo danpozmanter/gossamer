@@ -19,7 +19,7 @@ fn main() {
     g.dec()
     println!("gauge_ok={}", g.value() == 7.0)
 
-    let buckets: [f64] = [1.0, 4.0, 8.0]
+    let buckets: Vec<f64> = Vec::from([1.0, 4.0, 8.0])
     let h = metrics::Histogram::new("latency_seconds", "request latency", buckets)
     h.observe(2.0)
     h.observe(5.0)

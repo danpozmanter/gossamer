@@ -1,0 +1,37 @@
+use std::env
+
+enum ListNode {
+    Link(ListNode, i64),
+    End,
+}
+
+fn linked_list(n: i64) -> i64 {
+    let mut head = ListNode::End
+    for i in 0..n {
+        head = ListNode::Link(head, i)
+    }
+
+    let mut checksum: i64 = 0
+    let mut count: i64 = 0
+    let mut cursor = &head
+    while count <= n {
+        match cursor {
+            ListNode::Link(next, value) => {
+                checksum = (checksum + (value & 65535)) % 1000000007
+                count += 1
+                cursor = next
+            },
+            ListNode::End => break,
+        }
+    }
+
+    if count > n {
+        println!("cycle {}", count)
+        return -1
+    }
+    println!("{} {}", count, checksum + n)
+    checksum + n
+}
+
+let n: i64 = env::args()[0].parse().unwrap_or(1000)
+let _ = linked_list(n)

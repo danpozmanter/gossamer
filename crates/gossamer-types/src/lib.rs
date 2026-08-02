@@ -32,8 +32,9 @@ pub use arena_escape::{
     ArenaEscapeDiagnostic, ArenaEscapeError, ArenaEscapeKind, check_arena_escapes,
 };
 pub use checker::{
-    is_fixed_array_incompatible_vec_method, typecheck_source_file,
-    typecheck_source_file_with_edition, typecheck_source_file_with_lazy_iterators,
+    is_array_sequence_method, is_slice_sequence_method, is_vec_only_sequence_method,
+    typecheck_source_file, typecheck_source_file_with_edition,
+    typecheck_source_file_with_lazy_iterators,
 };
 pub use context::TyCtxt;
 pub use error::{TypeDiagnostic, TypeError};
@@ -80,10 +81,20 @@ pub fn is_mutating_method_name(name: &str) -> bool {
             | "extend"
             | "extend_from_slice"
             | "truncate"
+            | "reserve"
+            | "reserve_exact"
             | "sort"
             | "sort_by"
             | "sort_by_key"
             | "reverse"
             | "swap"
+            | "fill"
+            | "append"
+            | "resize"
+            | "resize_with"
+            | "split_off"
+            | "drain"
+            | "retain"
+            | "shrink_to_fit"
     )
 }

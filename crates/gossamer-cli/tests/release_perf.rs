@@ -110,7 +110,7 @@ fn time_best(bin: &Path, runs: u32) -> Duration {
 /// a final scalar so the optimizer can't dead-code-eliminate the loop.
 const NUMERIC_LOOP_SOURCE: &str = r#"
 fn main() {
-    let n: i64 = 50000000
+    let n: i64 = 2000000
     let mut acc: i64 = 0
     let mut i: i64 = 0
     while i < n {

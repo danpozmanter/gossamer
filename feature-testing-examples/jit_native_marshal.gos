@@ -37,10 +37,10 @@ fn fill_letters(buf: U8Vec, n: i64) {
 }
 
 fn main() {
-    let xs: Vec<f64> = [1.0, 2.0, 3.0, 4.0]
+    let xs: Vec<f64> = Vec::from([1.0, 2.0, 3.0, 4.0])
     println!("scale={}", scale_sum(&xs, 2.5))
 
-    let ps: Vec<(i64, f64)> = [(1, 0.5), (2, 0.25), (4, 0.125)]
+    let ps: Vec<(i64, f64)> = Vec::from([(1, 0.5), (2, 0.25), (4, 0.125)])
     println!("weight={}", weight_pairs(&ps))
 
     let buf = U8Vec::new(32)

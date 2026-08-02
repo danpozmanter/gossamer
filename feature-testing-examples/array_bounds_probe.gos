@@ -4,7 +4,7 @@
 // backends.
 
 fn main() {
-    let arr: [i64] = [10, 20, 30, 40, 50]
+    let arr: Vec<i64> = Vec::from([10, 20, 30, 40, 50])
 
     // Valid accesses with bare i64 indices
     println!("arr[0] = {}", arr[0])
@@ -37,7 +37,7 @@ mod tests {
 
     #[test]
     fn sum_via_loop() {
-        let arr: [i64] = [10, 20, 30, 40, 50]
+        let arr: Vec<i64> = Vec::from([10, 20, 30, 40, 50])
         let mut s = 0
         for i in 0..arr.len() {
             s += arr[i]
@@ -54,14 +54,14 @@ mod tests {
 
     #[test]
     fn mid_element() {
-        let arr: [i64] = [10, 20, 30, 40, 50]
+        let arr: Vec<i64> = Vec::from([10, 20, 30, 40, 50])
         let idx: i64 = (arr.len() / 2)
         let _ = testing::check_eq(&arr[idx], &30, "mid=30")
     }
 
     #[test]
     fn last_element() {
-        let arr: [i64] = [10, 20, 30, 40, 50]
+        let arr: Vec<i64> = Vec::from([10, 20, 30, 40, 50])
         let last = arr.len() - 1
         let _ = testing::check_eq(&arr[last], &50, "last=50")
     }

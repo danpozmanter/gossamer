@@ -116,7 +116,7 @@ fn explicit_and_forwarded_mutable_references_remain_usable() {
         ),
         (
             "explicit field and index references",
-            "struct S { values: Vec<i64> }\nfn change(v: &mut i64) { *v = 0 }\nfn main() { let mut s = S { values: [1, 2] }\n change(&mut s.values[0]) }",
+            "struct S { values: Vec<i64> }\nfn change(v: &mut i64) { *v = 0 }\nfn main() { let mut s = S { values: Vec::from([1, 2]) }\n change(&mut s.values[0]) }",
         ),
         (
             "forward existing mutable reference",
@@ -638,7 +638,7 @@ fn mutable_places_and_reference_capabilities_remain_usable() {
         ),
         (
             "mutable builtin method on mutable value",
-            "fn main() { let mut values: Vec<i64> = [1, 2]\n values.push(3)\n let mut text = \"a\".to_string()\n text.push_str(\"b\") }",
+            "fn main() { let mut values: Vec<i64> = Vec::from([1, 2])\n values.push(3)\n let mut text = \"a\".to_string()\n text.push_str(\"b\") }",
         ),
         (
             "qualified map and set mutations on mutable values",

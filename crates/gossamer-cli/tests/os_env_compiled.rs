@@ -191,7 +191,7 @@ use std::env
 use std::env::exec
 fn main() {
     env::set_var(&"GOS_PROBE_CHILD_2026".to_string(), &"propagated".to_string())
-    let args: [String] = [].to_vec()
+    let args: Vec<String> = Vec::from([]).to_vec()
     match exec::run(&"/usr/bin/env".to_string(), &args) {
         Ok(o) => {
             for line in o.stdout.lines() {
@@ -221,7 +221,7 @@ use std::env
 use std::env::exec
 fn main() {
     env::set_var(&"GOS_PROBE_CHILD_2026".to_string(), &"propagated".to_string())
-    let args: [String] = ["/c", "set", "GOS_PROBE_CHILD_2026"].to_vec()
+    let args: Vec<String> = ["/c", "set", "GOS_PROBE_CHILD_2026"].to_vec()
     match exec::run(&"cmd".to_string(), &args) {
         Ok(o) => {
             for line in o.stdout.lines() {

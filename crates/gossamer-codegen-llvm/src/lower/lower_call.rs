@@ -602,6 +602,15 @@ impl<'a> Lowerer<'a> {
             self.lower_vec_set_i64_unchecked_inline(args, destination, target)?;
             return Ok(());
         }
+        if name == "gos_rt_vec_swap_safe"
+            && args.len() == 3
+            && !crate::emit::target_is_windows()
+            && (self.vec_operand_has_word_elem(&args[0])
+                || self.vec_operand_has_byte_elem(&args[0]))
+        {
+            self.lower_vec_swap_safe_inline(args, destination, target)?;
+            return Ok(());
+        }
         if name == "gos_rt_vec_swap_i64"
             && args.len() == 3
             && (self.vec_operand_has_word_elem(&args[0])

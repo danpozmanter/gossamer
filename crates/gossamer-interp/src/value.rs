@@ -292,7 +292,9 @@ pub enum Value {
     Json(Arc<JsonInner>),
     /// Tuple aggregate.
     Tuple(Arc<Vec<Value>>),
-    /// Array / Vec aggregate (interpreter treats both as `Vec`).
+    /// Boxed aggregate storage shared by fixed arrays and non-packed Vec
+    /// values. Static type checking keeps their identities and method
+    /// capabilities distinct even when this internal representation matches.
     Array(Arc<Vec<Value>>),
     /// Flat f64 storage for an array of a struct whose fields
     /// are all `f64`.

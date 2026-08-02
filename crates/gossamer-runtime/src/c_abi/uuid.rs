@@ -514,6 +514,22 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_take_i64(
     })
 }
 
+/// Lazy `step_by(step)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_step_by_i64(
+    step: i64,
+    iter: *mut GosLazyIterI64,
+) -> *mut GosLazyIterI64 {
+    ffi_entry!(std::ptr::null_mut(), {
+        if step <= 0 {
+            unsafe { gos_rt_panic(c"iter::step_by: step must be positive".as_ptr()) };
+        }
+        let step = usize::try_from(step).unwrap_or(1);
+        let upstream = unsafe { take_lazy_i64(iter) };
+        lazy_i64(upstream.step_by(step))
+    })
+}
+
 /// Lazy `skip(n)`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_lazy_iter_skip_i64(

@@ -66,6 +66,7 @@ impl<'tcx> FnBuilder<'tcx> {
             next_arith_cache_idx: 0,
             next_field_cache_idx: 0,
             mut_ref_params: Vec::new(),
+            i64_params: Vec::new(),
             consumable: std::collections::HashSet::new(),
         }
     }
@@ -82,10 +83,17 @@ impl<'tcx> FnBuilder<'tcx> {
         }
     }
 
+    pub(crate) fn bind_typed_param(&mut self, pattern: &HirPat, reg: Reg, kind: RegKind) {
+        if let HirPatKind::Binding { name, .. } = &pattern.kind {
+            self.bind_local(&name.name, TypedReg { reg, kind });
+        }
+    }
+
     pub(crate) fn finish(mut self, arity: u16) -> FnChunk {
         debug_assert_eq!(self.instrs.len(), self.instruction_locations.len());
         optimize_float_accumulator_moves(&mut self.instrs, &mut self.instruction_locations);
         optimize_i64_to_f64_divs(&mut self.instrs, &mut self.instruction_locations);
+        optimize_tail_call_argument_moves(&mut self.instrs);
         let instruction_locations = encode_instruction_locations(&self.instruction_locations);
         let mut chunk = FnChunk {
             name: self.name,
@@ -110,6 +118,7 @@ impl<'tcx> FnBuilder<'tcx> {
             arith_cache_count: self.next_arith_cache_idx,
             field_cache_count: self.next_field_cache_idx,
             mut_ref_params: self.mut_ref_params,
+            i64_params: self.i64_params,
         };
         // Release growth-by-doubling slack on every Vec field
         // unconditionally - any code path that produces a chunk
@@ -117,6 +126,55 @@ impl<'tcx> FnBuilder<'tcx> {
         // forgetting an explicit compact() call.
         chunk.compact();
         chunk
+    }
+}
+
+/// A caller has no live locals after `Call; Return dst`. Transfer its argument
+/// handles into the child frame instead of cloning them. The second rewrite
+/// follows the common shared-borrow materialization chain
+/// `Move local -> borrow_temp; Move borrow_temp -> arg_slot` so borrowed
+/// aggregate tail calls also avoid an otherwise redundant retain/release pair.
+fn optimize_tail_call_argument_moves(instrs: &mut [Op]) {
+    for call_idx in 0..instrs.len().saturating_sub(1) {
+        let (dst, args, argc) = match instrs[call_idx] {
+            Op::Call {
+                dst, args, argc, ..
+            }
+            | Op::CallGlobal {
+                dst, args, argc, ..
+            } => (dst, args, argc),
+            _ => continue,
+        };
+        if !matches!(instrs[call_idx + 1], Op::Return { value } if value == dst) {
+            continue;
+        }
+        let Some(first_move_idx) = call_idx.checked_sub(usize::from(argc)) else {
+            continue;
+        };
+        for offset in 0..argc {
+            let arg_slot = args + offset;
+            let move_idx = first_move_idx + usize::from(offset);
+            let Op::Move { dst: move_dst, src } = instrs[move_idx] else {
+                continue;
+            };
+            if move_dst != arg_slot {
+                continue;
+            }
+            instrs[move_idx] = Op::MoveConsume { dst: arg_slot, src };
+
+            if move_idx > 0
+                && let Op::Move {
+                    dst: producer_dst,
+                    src: original,
+                } = instrs[move_idx - 1]
+                && producer_dst == src
+            {
+                instrs[move_idx - 1] = Op::MoveConsume {
+                    dst: src,
+                    src: original,
+                };
+            }
+        }
     }
 }
 

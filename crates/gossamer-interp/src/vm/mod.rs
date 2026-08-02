@@ -1452,15 +1452,18 @@ fn fill_cache_slot(
 /// IC slot stays cold and the slow path is taken every time -
 /// those receivers don't have a stable identity worth caching.
 pub(crate) fn call_token(v: &Value) -> u64 {
-    const TAG_NAMED: u64 = 1 << 56;
     match v {
         // Cache slots retain and compare the exact `SmolStr` spelling, so all
         // named calls can share this class token without collisions or a
         // process-global `&'static str` interner.
-        Value::String(_) => TAG_NAMED,
+        Value::String(_) => NAMED_CALL_TOKEN,
         _ => 0,
     }
 }
+
+/// Cache identity shared by all named calls. Exact spelling remains part of
+/// the cache key, so unrelated globals cannot collide.
+pub(crate) const NAMED_CALL_TOKEN: u64 = 1 << 56;
 
 /// Binary arithmetic that dispatches on operand kind. Ints use
 /// `int_fn`; floats use `float_fn`; mixed kinds promote to
@@ -2354,6 +2357,7 @@ mod tests {
             arith_cache_count: 0,
             field_cache_count: 0,
             mut_ref_params: Vec::new(),
+            i64_params: Vec::new(),
             closure_protos: Vec::new(),
             select_arms: Vec::new(),
         }
@@ -2472,7 +2476,7 @@ mod tests {
         )));
         assert!(
             !has_jit_eligible_fn(&hir_for_jit_admission(
-                "fn main() -> i64 { let mut n = 0i64\nwhile n < 2i64 { n += 1i64 }\nlet xs: Vec<i64> = [1i64]\nmatch xs { [x, ..] => x, _ => 0i64 } }"
+                "fn main() -> i64 { let mut n = 0i64\nwhile n < 2i64 { n += 1i64 }\nlet xs: Vec<i64> = Vec::from([1i64])\nmatch xs { [x, ..] => x, _ => 0i64 } }"
             )),
             "slice-pattern programs must stay on bytecode until native lowering preserves failed-arm control flow"
         );

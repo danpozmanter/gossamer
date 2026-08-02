@@ -11,10 +11,10 @@
 use std::archive
 
 fn main() {
-    let files = [
+    let files = Vec::from([
         ("hello.txt", "hello, world\n".as_bytes()),
         ("readme.md", "# demo\n\nA tiny archive.\n".as_bytes()),
-    ]
+    ])
     let bytes = archive::zip::write(&files).unwrap()
     println!("zip size: {} bytes", bytes.len())
 

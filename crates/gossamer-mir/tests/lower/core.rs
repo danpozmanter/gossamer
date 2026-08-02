@@ -109,16 +109,16 @@ fn identity_function_produces_return_only_body() {
 }
 
 #[test]
-fn array_to_vec_return_coercion_covers_explicit_and_tail_returns() {
+fn explicit_vec_construction_covers_explicit_and_tail_returns() {
     let (bodies, _) = build(
         r"
 fn explicit() -> Vec<i64> {
-    let values = [1, 2, 3]
+    let values = Vec::from([1, 2, 3])
     return values
 }
 
 fn tail() -> Vec<i64> {
-    let values = [4, 5, 6]
+    let values = Vec::from([4, 5, 6])
     values
 }
 ",
@@ -128,8 +128,8 @@ fn tail() -> Vec<i64> {
         assert!(
             call_symbol_names(body)
                 .iter()
-                .any(|symbol| symbol == "gos_rt_vec_from_arr"),
-            "{name} must coerce its fixed array to the declared Vec ABI"
+                .any(|symbol| symbol == "gos_rt_vec_push"),
+            "{name} must lower explicit Vec construction to the Vec ABI"
         );
     }
 }
@@ -487,9 +487,9 @@ use std::collections::HashMap
 
 fn replace() -> i64 {
     let mut m: HashMap<i64, Vec<i64>> = HashMap::new()
-    let value: Vec<i64> = [1i64, 2i64]
+    let value: Vec<i64> = Vec::from([1i64, 2i64])
     m.insert(1, value)
-    m.insert(1, [3i64, 4i64])
+    m.insert(1, Vec::from([3i64, 4i64]))
     m.remove(1)
     0i64
 }
@@ -569,7 +569,7 @@ use std::collections::HashMap
 
 fn insert_default() -> i64 {
     let mut m: HashMap<String, Vec<i64>> = HashMap::new()
-    let stored = m.or_insert("key", [1i64, 2i64])
+    let stored = m.or_insert("key", Vec::from([1i64, 2i64]))
     stored.len()
 }
 "#;
@@ -620,8 +620,8 @@ fn nested_vec_push_retains_inner_vec_once_for_container_share() {
     // both frees, leaking nested Vec<String> stress cases.
     let source = r#"
 fn main() {
-    let mut outer: [[String]] = []
-    let mut inner: [String] = []
+    let mut outer: Vec<Vec<String>> = Vec::new()
+    let mut inner: Vec<String> = Vec::new()
     inner.push("value".to_string())
     outer.push(inner)
     println(outer[0][0])
@@ -683,11 +683,11 @@ fn map_insert_registers_structural_children_for_aggregate_values() {
     let source = r#"
 use std::collections::HashMap
 
-struct Item { name: String, tags: [String], n: i64 }
+struct Item { name: String, tags: Vec<String>, n: i64 }
 
 fn insert_item() {
     let mut m: HashMap<i64, Item> = HashMap::new()
-    m.insert(1i64, Item { name: "item", tags: [], n: 1i64 })
+    m.insert(1i64, Item { name: "item", tags: Vec::new(), n: 1i64 })
 }
 "#;
     let (bodies, tcx) = build(source);
@@ -1065,9 +1065,10 @@ fn array_repeat_lowers_to_rvalue_repeat() {
 }
 
 #[test]
-fn runtime_array_repeat_builds_directly_in_let_binding() {
+fn runtime_vec_capacity_builds_directly_in_let_binding() {
     let source = r"fn make(n: i64) -> i64 {
-    let mut xs = [0i64; n]
+    let mut xs: Vec<i64> = Vec::with_capacity(n)
+    for _ in 0..n { xs.push(0i64) }
     xs[0] = 7
     xs.len()
 }
@@ -1078,16 +1079,12 @@ fn runtime_array_repeat_builds_directly_in_let_binding() {
     assert!(
         names
             .iter()
-            .any(|name| name == "gos_rt_vec_repeat_primitive"),
-        "primitive runtime-sized repeat must construct initialized storage directly"
+            .any(|name| name == "gos_rt_vec_with_capacity"),
+        "dynamic Vec storage must reserve its requested capacity directly"
     );
     assert!(
-        !names.iter().any(|name| name == "gos_rt_vec_push"),
-        "primitive runtime-sized repeat must not execute a checked push loop"
-    );
-    assert!(
-        !names.iter().any(|name| name == "gos_rt_vec_clone"),
-        "fresh repeat storage must move directly into the binding"
+        names.iter().any(|name| name == "gos_rt_vec_push"),
+        "Vec initialization must use the explicit source push loop"
     );
 }
 

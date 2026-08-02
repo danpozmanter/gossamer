@@ -388,6 +388,63 @@ impl<'tcx> FnBuilder<'tcx> {
                     kind: RegKind::Value,
                 })
             }
+            HirExprKind::MethodCall {
+                receiver,
+                name,
+                args,
+                ..
+            } => {
+                if let Some(result) = self.try_compile_i64_wrapping_method(receiver, name, args)? {
+                    return Ok(result);
+                }
+                // Keep conversion methods on their typed direct path too.
+                // `compile_expr_ex` handles typed call operands and must not
+                // fall through to a runtime method named only `into` or
+                // `try_into`, which has no standalone global binding.
+                if name.name == "into"
+                    && args.is_empty()
+                    && let Some(bname) = self.adt_type_name(expr.ty)
+                {
+                    return self.compile_struct_unary(&bname, "from", receiver);
+                }
+                if name.name == "try_into"
+                    && args.is_empty()
+                    && let Some(bname) = self.result_ok_adt_name(expr.ty)
+                {
+                    return self.compile_struct_unary(&bname, "try_from", receiver);
+                }
+                if matches!(name.name.as_str(), "byte_at" | "len") {
+                    let mut kind = self.tcx.kind(receiver.ty).cloned();
+                    while let Some(TyKind::Ref { inner, .. }) = kind {
+                        kind = self.tcx.kind(inner).cloned();
+                    }
+                    if matches!(kind, Some(TyKind::String)) {
+                        let recv = self.compile_expr(receiver)?;
+                        let dst_i = self.alloc_int();
+                        if name.name == "len" && args.is_empty() {
+                            self.emit(Op::StrLenI64 { dst_i, recv });
+                            return Ok(TypedReg {
+                                reg: dst_i,
+                                kind: RegKind::I64,
+                            });
+                        }
+                        if name.name == "byte_at" && args.len() == 1 {
+                            let index = self.compile_expr_ex(&args[0])?;
+                            let idx_i = self.as_i64(index);
+                            self.emit(Op::StrByteAtI64 { dst_i, recv, idx_i });
+                            return Ok(TypedReg {
+                                reg: dst_i,
+                                kind: RegKind::I64,
+                            });
+                        }
+                    }
+                }
+                let reg = self.compile_method_call(receiver, name, args)?;
+                Ok(TypedReg {
+                    reg,
+                    kind: RegKind::Value,
+                })
+            }
             HirExprKind::Array(gossamer_hir::HirArrayExpr::List(elems)) => {
                 if let Some(tr) = self.try_build_float_array(expr.ty, elems.as_slice())? {
                     return Ok(tr);
@@ -1533,9 +1590,6 @@ impl<'tcx> FnBuilder<'tcx> {
         rhs: &HirExpr,
     ) -> RuntimeResult<Option<TypedReg>> {
         let kind = match op {
-            HirBinaryOp::Add => ImmArithKind::Add,
-            HirBinaryOp::Sub => ImmArithKind::Sub,
-            HirBinaryOp::Mul => ImmArithKind::Mul,
             HirBinaryOp::Div => ImmArithKind::Div,
             HirBinaryOp::Rem => ImmArithKind::Rem,
             _ => return Ok(None),
@@ -1652,7 +1706,13 @@ impl<'tcx> FnBuilder<'tcx> {
             let rhs_peer = (lhs_tr.kind != RegKind::I64).then(|| self.as_value(rhs_tr));
             let lhs_i = self.as_i64_with_peer(lhs_tr, rhs_peer);
             let rhs_i = self.as_i64_with_peer(rhs_tr, lhs_peer);
-            return self.emit_binary_i64(op, lhs_i, rhs_i, lhs_unsigned, rhs_unsigned);
+            let overflow_ty = [lhs.ty, rhs.ty].into_iter().find_map(|ty| {
+                match self.tcx.kind(self.unwrap_ref(ty)) {
+                    Some(TyKind::Int(int_ty)) => Some(*int_ty),
+                    _ => None,
+                }
+            });
+            return self.emit_binary_i64(op, lhs_i, rhs_i, lhs_unsigned, rhs_unsigned, overflow_ty);
         }
         // Struct `==` / `!=` routes to the derived `<Type>::eq` method,
         // which the bytecode `Op::Eq` (scalar / structural) can't express
@@ -2227,10 +2287,7 @@ impl<'tcx> FnBuilder<'tcx> {
         if matches!(self.tcx.kind(receiver.ty), Some(TyKind::Array { .. })) {
             return Ok(false);
         }
-        let is_concrete_vec = matches!(
-            self.tcx.kind(receiver.ty),
-            Some(TyKind::Vec(_) | TyKind::Slice(_))
-        );
+        let is_concrete_vec = matches!(self.tcx.kind(receiver.ty), Some(TyKind::Vec(_)));
         if matches!(self.tcx.kind(receiver.ty), Some(TyKind::HashMap { .. })) {
             return Ok(false);
         }
@@ -2281,12 +2338,123 @@ impl<'tcx> FnBuilder<'tcx> {
         }
     }
 
+    fn try_compile_i64_wrapping_method(
+        &mut self,
+        receiver: &HirExpr,
+        name: &Ident,
+        args: &[HirExpr],
+    ) -> RuntimeResult<Option<TypedReg>> {
+        if !matches!(name.name.as_str(), "wrapping_add" | "wrapping_mul") || args.len() != 1 {
+            return Ok(None);
+        }
+        let mut kind = self.tcx.kind(receiver.ty).cloned();
+        while let Some(TyKind::Ref { inner, .. }) = kind {
+            kind = self.tcx.kind(inner).cloned();
+        }
+        if !matches!(
+            kind,
+            Some(TyKind::Int(
+                gossamer_types::IntTy::I64 | gossamer_types::IntTy::Isize
+            ))
+        ) {
+            return Ok(None);
+        }
+
+        let lhs_tr = self.compile_expr_ex(receiver)?;
+        let lhs_i = self.as_i64(lhs_tr);
+        let dst_i = self.alloc_int();
+        if name.name == "wrapping_add"
+            && let HirExprKind::MethodCall {
+                receiver: byte_receiver,
+                name: byte_name,
+                args: byte_args,
+                ..
+            } = &args[0].kind
+            && byte_name.name == "byte_at"
+            && byte_args.len() == 1
+        {
+            let mut byte_receiver_kind = self.tcx.kind(byte_receiver.ty).cloned();
+            while let Some(TyKind::Ref { inner, .. }) = byte_receiver_kind {
+                byte_receiver_kind = self.tcx.kind(inner).cloned();
+            }
+            if matches!(byte_receiver_kind, Some(TyKind::String)) {
+                let recv = self.compile_expr(byte_receiver)?;
+                let index = self.compile_expr_ex(&byte_args[0])?;
+                let idx_i = self.as_i64(index);
+                self.emit(Op::StrByteAtAddI64 {
+                    dst_i,
+                    lhs_i,
+                    recv,
+                    idx_i,
+                });
+                return Ok(Some(TypedReg {
+                    reg: dst_i,
+                    kind: RegKind::I64,
+                }));
+            }
+        }
+        let immediate = match &args[0].kind {
+            HirExprKind::Literal(HirLiteral::Int(text)) => parse_int(text),
+            HirExprKind::Unary {
+                op: HirUnaryOp::Neg,
+                operand,
+            } => match &operand.kind {
+                HirExprKind::Literal(HirLiteral::Int(text)) => {
+                    parse_int(text).and_then(i64::checked_neg)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(value) = immediate
+            && let Ok(imm) = i32::try_from(value)
+        {
+            self.emit(Op::ArithImmI64 {
+                kind: if name.name == "wrapping_add" {
+                    ImmArithKind::Add
+                } else {
+                    ImmArithKind::Mul
+                },
+                dst_i,
+                lhs_i,
+                imm,
+            });
+        } else {
+            let rhs_tr = self.compile_expr_ex(&args[0])?;
+            let rhs_i = self.as_i64(rhs_tr);
+            if name.name == "wrapping_add" {
+                self.emit(Op::AddI64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                });
+            } else {
+                self.emit(Op::MulI64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                });
+            }
+        }
+        Ok(Some(TypedReg {
+            reg: dst_i,
+            kind: RegKind::I64,
+        }))
+    }
+
     pub(crate) fn compile_method_call(
         &mut self,
         receiver: &HirExpr,
         name: &Ident,
         args: &[HirExpr],
     ) -> RuntimeResult<Reg> {
+        // Keep explicit wrapping arithmetic on the unboxed integer register
+        // path. Routing these methods through generic dynamic dispatch makes
+        // an intentional opt-out from debug overflow checks substantially
+        // slower than the original arithmetic operation.
+        if let Some(result) = self.try_compile_i64_wrapping_method(receiver, name, args)? {
+            return Ok(self.as_value(result));
+        }
         // A `&mut self` user method on a writeback place rides the cell
         // protocol so its mutation of `self` reaches the caller's
         // binding - the mechanism `for x in <custom iterator>` and every
@@ -2304,7 +2472,7 @@ impl<'tcx> FnBuilder<'tcx> {
             while let Some(TyKind::Ref { inner, .. }) = kind {
                 kind = self.tcx.kind(inner).cloned();
             }
-            if matches!(kind, Some(TyKind::Vec(_) | TyKind::Slice(_))) {
+            if matches!(kind, Some(TyKind::Vec(_))) {
                 let receiver_reg = self.compile_expr(receiver)?;
                 let index = self.compile_expr(&args[0])?;
                 let value = self.compile_expr(&args[1])?;
@@ -2326,7 +2494,7 @@ impl<'tcx> FnBuilder<'tcx> {
             while let Some(TyKind::Ref { inner, .. }) = kind {
                 kind = self.tcx.kind(inner).cloned();
             }
-            if matches!(kind, Some(TyKind::Vec(_) | TyKind::Slice(_))) {
+            if matches!(kind, Some(TyKind::Vec(_))) {
                 let receiver_reg = self.compile_expr(receiver)?;
                 let index = self.compile_expr(&args[0])?;
                 let dst = self.alloc_reg();
@@ -2860,6 +3028,83 @@ impl<'tcx> FnBuilder<'tcx> {
         };
         let dispatch_name = if is_map_pop {
             "HashMap::pop"
+        } else if matches!(name.name.as_str(), "wrapping_add" | "wrapping_mul") {
+            match self.tcx.kind(resolved_receiver_ty) {
+                Some(TyKind::Int(int_ty)) => match int_ty {
+                    gossamer_types::IntTy::I8 => {
+                        if name.name == "wrapping_add" {
+                            "i8::wrapping_add"
+                        } else {
+                            "i8::wrapping_mul"
+                        }
+                    }
+                    gossamer_types::IntTy::I16 => {
+                        if name.name == "wrapping_add" {
+                            "i16::wrapping_add"
+                        } else {
+                            "i16::wrapping_mul"
+                        }
+                    }
+                    gossamer_types::IntTy::I32 => {
+                        if name.name == "wrapping_add" {
+                            "i32::wrapping_add"
+                        } else {
+                            "i32::wrapping_mul"
+                        }
+                    }
+                    gossamer_types::IntTy::I64 => {
+                        if name.name == "wrapping_add" {
+                            "i64::wrapping_add"
+                        } else {
+                            "i64::wrapping_mul"
+                        }
+                    }
+                    gossamer_types::IntTy::Isize => {
+                        if name.name == "wrapping_add" {
+                            "isize::wrapping_add"
+                        } else {
+                            "isize::wrapping_mul"
+                        }
+                    }
+                    gossamer_types::IntTy::U8 => {
+                        if name.name == "wrapping_add" {
+                            "u8::wrapping_add"
+                        } else {
+                            "u8::wrapping_mul"
+                        }
+                    }
+                    gossamer_types::IntTy::U16 => {
+                        if name.name == "wrapping_add" {
+                            "u16::wrapping_add"
+                        } else {
+                            "u16::wrapping_mul"
+                        }
+                    }
+                    gossamer_types::IntTy::U32 => {
+                        if name.name == "wrapping_add" {
+                            "u32::wrapping_add"
+                        } else {
+                            "u32::wrapping_mul"
+                        }
+                    }
+                    gossamer_types::IntTy::U64 => {
+                        if name.name == "wrapping_add" {
+                            "u64::wrapping_add"
+                        } else {
+                            "u64::wrapping_mul"
+                        }
+                    }
+                    gossamer_types::IntTy::Usize => {
+                        if name.name == "wrapping_add" {
+                            "usize::wrapping_add"
+                        } else {
+                            "usize::wrapping_mul"
+                        }
+                    }
+                    gossamer_types::IntTy::I128 | gossamer_types::IntTy::U128 => &name.name,
+                },
+                _ => &name.name,
+            }
         } else {
             qualified_collection_method.as_deref().unwrap_or(&name.name)
         };
@@ -2895,7 +3140,7 @@ impl<'tcx> FnBuilder<'tcx> {
             Some(TyKind::String | TyKind::Vec(_) | TyKind::Slice(_)) => true,
             Some(TyKind::Array { .. }) => matches!(
                 name.name.as_str(),
-                "sort" | "sort_by" | "sort_by_key" | "reverse" | "swap"
+                "sort" | "sort_by" | "sort_by_key" | "reverse" | "swap" | "fill"
             ),
             _ => false,
         };
@@ -2940,10 +3185,11 @@ impl<'tcx> FnBuilder<'tcx> {
                     | "retain"
                     | "drain"
                     | "swap"
+                    | "fill"
             ),
             Some(TyKind::Array { .. }) => matches!(
                 name.name.as_str(),
-                "sort" | "sort_by" | "sort_by_key" | "reverse" | "swap"
+                "sort" | "sort_by" | "sort_by_key" | "reverse" | "swap" | "fill"
             ),
             Some(TyKind::HashMap { .. }) => name.name == "clear",
             Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 9 => {
@@ -2976,20 +3222,9 @@ impl<'tcx> FnBuilder<'tcx> {
         args: &[HirExpr],
     ) -> RuntimeResult<Option<Reg>> {
         let place = peel_ref_wrappers_expr(receiver);
-        // Match the compiled tiers: only a direct local receiver's
-        // `&mut self` mutation persists. A field / index / temporary
-        // receiver (`w.c.bump()`, `arr[i].bump()`, `make().bump()`)
-        // operates on a value copy whose mutation `gos build` discards,
-        // so writing it back here would diverge from the AOT oracle. A
-        // local Path is also the shape the `for x in <custom iterator>`
-        // desugar produces (`(&mut __for_iter).next()`).
-        let HirExprKind::Path { segments, .. } = &place.kind else {
-            return Ok(None);
-        };
-        let [seg] = segments.as_slice() else {
-            return Ok(None);
-        };
-        if self.lookup_local(&seg.name).is_none() {
+        // Direct locals, fields, and indexed elements rooted at locals are
+        // writable places. Temporaries remain values and receive no writeback.
+        if !self.place_root_is_local(place) {
             return Ok(None);
         }
         let qual = self
@@ -3153,6 +3388,7 @@ impl<'tcx> FnBuilder<'tcx> {
                     | "sort_by_key"
                     | "reverse"
                     | "swap"
+                    | "fill"
                     | "insert"
                     | "remove"
             )
@@ -3175,6 +3411,9 @@ impl<'tcx> FnBuilder<'tcx> {
                 .is_some_and(|variants| variants.iter().any(|name| name == &variant_name.name))
         {
             return self.compile_expr(callee);
+        }
+        if let Some(reg) = self.try_compile_variant_constructor(callee, args)? {
+            return Ok(reg);
         }
         if let Some(reg) = self.try_compile_struct2_i64(callee, args, result_ty)? {
             return Ok(reg);
@@ -3277,7 +3516,28 @@ impl<'tcx> FnBuilder<'tcx> {
             });
             return Ok(dst);
         }
-        let callee_reg = self.compile_expr(callee)?;
+        let direct_global_idx = if let HirExprKind::Path { segments, def } = &callee.kind {
+            let local = segments.len() == 1 && self.lookup_local(&segments[0].name).is_some();
+            let module_const = def.is_some_and(|def| self.module_consts.contains_key(&def));
+            if local || module_const {
+                None
+            } else {
+                let stripped = strip_module_relative(segments);
+                let name = stripped
+                    .iter()
+                    .map(|segment| segment.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join("::");
+                Some(self.global_idx(&name))
+            }
+        } else {
+            None
+        };
+        let callee_reg = if direct_global_idx.is_none() {
+            Some(self.compile_expr(callee)?)
+        } else {
+            None
+        };
         let argc = u16::try_from(args.len()).map_err(|_| RuntimeError::Arity {
             expected: u16::MAX as usize,
             found: args.len(),
@@ -3422,14 +3682,25 @@ impl<'tcx> FnBuilder<'tcx> {
                 Some(TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char)
             )
         });
-        self.emit(Op::Call {
-            dst,
-            callee: callee_reg,
-            args: args_start,
-            argc,
-            cache_idx,
-            may_have_cells,
-        });
+        if let Some(global_idx) = direct_global_idx {
+            self.emit(Op::CallGlobal {
+                dst,
+                global_idx,
+                args: args_start,
+                argc,
+                cache_idx,
+                may_have_cells,
+            });
+        } else {
+            self.emit(Op::Call {
+                dst,
+                callee: callee_reg.expect("dynamic call has a callee register"),
+                args: args_start,
+                argc,
+                cache_idx,
+                may_have_cells,
+            });
+        }
         for (home, cell) in cell_takes {
             self.emit(Op::CellTake { dst: home, cell });
         }
@@ -3439,6 +3710,66 @@ impl<'tcx> FnBuilder<'tcx> {
             self.compile_place_store(place, tmp)?;
         }
         Ok(dst)
+    }
+
+    /// Lowers common payload enum constructors directly. The generic call
+    /// path has to load a constructor sentinel, materialize an argument span,
+    /// and rediscover that sentinel at runtime. The variant identity is
+    /// already known from HIR, so one typed construction opcode is enough.
+    fn try_compile_variant_constructor(
+        &mut self,
+        callee: &HirExpr,
+        args: &[HirExpr],
+    ) -> RuntimeResult<Option<Reg>> {
+        if !matches!(args.len(), 1 | 2) {
+            return Ok(None);
+        }
+        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(callee.ty) else {
+            return Ok(None);
+        };
+        let HirExprKind::Path { segments, .. } = &callee.kind else {
+            return Ok(None);
+        };
+        let Some(variant) = segments.last() else {
+            return Ok(None);
+        };
+        if !self
+            .tcx
+            .enum_variant_names(*def)
+            .is_some_and(|names| names.iter().any(|name| name == &variant.name))
+        {
+            return Ok(None);
+        }
+
+        let name_idx = self.const_idx(
+            ConstKey::Variant(variant.name.clone()),
+            Value::variant(variant.name.as_str(), Vec::new()),
+        );
+        let first = self.compile_expr(&args[0])?;
+        let take_first = matches!(args[0].kind, HirExprKind::Call { .. })
+            || self.consumable_path(&args[0]).is_some();
+        let dst = self.alloc_reg();
+        if args.len() == 1 {
+            self.emit(Op::BuildVariant1 {
+                dst,
+                name_idx,
+                field: first,
+                take_field: take_first,
+            });
+        } else {
+            let second = self.compile_expr(&args[1])?;
+            let take_second = matches!(args[1].kind, HirExprKind::Call { .. })
+                || self.consumable_path(&args[1]).is_some();
+            self.emit(Op::BuildVariant2 {
+                dst,
+                name_idx,
+                first,
+                second,
+                take_first,
+                take_second,
+            });
+        }
+        Ok(Some(dst))
     }
 
     /// Recognises the HIR lowering of `Pair(a, b)` / a two-field positional

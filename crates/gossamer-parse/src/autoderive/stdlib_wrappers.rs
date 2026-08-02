@@ -66,14 +66,14 @@ const HTTP_SECURITY_MARKERS: &[&str] = &[
 ];
 
 const PEM_WRAPPERS: &str = r"
-struct __gos_pem_Block { block_type: String, bytes: [u8] }
+struct __gos_pem_Block { block_type: String, bytes: Vec<u8> }
 fn __gos_pem_decode(s: &String) -> Result<__gos_pem_Block, errors::Error> {
     let (t, b) = __gos_pem_decode_raw(s)?
     Ok(__gos_pem_Block { block_type: t, bytes: b })
 }
-fn __gos_pem_decode_all(s: &String) -> Result<[__gos_pem_Block], errors::Error> {
+fn __gos_pem_decode_all(s: &String) -> Result<Vec<__gos_pem_Block>, errors::Error> {
     let raws = __gos_pem_decode_all_raw(s)?
-    let mut out: [__gos_pem_Block] = []
+    let mut out: Vec<__gos_pem_Block> = Vec::from([])
     for r in raws {
         out.push(__gos_pem_Block { block_type: r.0, bytes: r.1 })
     }
@@ -134,7 +134,7 @@ fn __gos_time_add_date(unix_ms: i64, location: __gos_time_Location, years: i64, 
 
 /// Real-struct + wrapper source for `std::crypto::x509`.
 const X509_WRAPPERS: &str = r"
-struct __gos_x509_CertInfo { subject: String, issuer: String, serial: [u8], not_before_unix: i64, not_after_unix: i64, san_dns: [String], sha256: [u8] }
+struct __gos_x509_CertInfo { subject: String, issuer: String, serial: Vec<u8>, not_before_unix: i64, not_after_unix: i64, san_dns: Vec<String>, sha256: Vec<u8> }
 fn __gos_x509_parse_pem(s: &String) -> Result<__gos_x509_CertInfo, errors::Error> {
     let (subject, issuer, serial, nb, na, san, sha) = __gos_x509_parse_pem_raw(s)?
     Ok(__gos_x509_CertInfo { subject: subject, issuer: issuer, serial: serial, not_before_unix: nb, not_after_unix: na, san_dns: san, sha256: sha })
@@ -177,10 +177,10 @@ impl __gos_path_Path {
 /// Real-struct + wrapper source for `std::archive::tar` (read).
 /// `write` lowers directly (no struct).
 const TAR_WRAPPERS: &str = r"
-struct __gos_tar_TarEntry { name: String, data: [u8], is_dir: bool }
-fn __gos_tar_read(data: &[u8]) -> Result<[__gos_tar_TarEntry], errors::Error> {
+struct __gos_tar_TarEntry { name: String, data: Vec<u8>, is_dir: bool }
+fn __gos_tar_read(data: Vec<u8>) -> Result<Vec<__gos_tar_TarEntry>, errors::Error> {
     let raws = __gos_tar_read_raw(data)?
-    let mut out: [__gos_tar_TarEntry] = []
+    let mut out: Vec<__gos_tar_TarEntry> = Vec::from([])
     for r in raws {
         out.push(__gos_tar_TarEntry { name: r.0, data: r.1, is_dir: r.2 })
     }
@@ -190,10 +190,10 @@ fn __gos_tar_read(data: &[u8]) -> Result<[__gos_tar_TarEntry], errors::Error> {
 
 /// Real-struct + wrapper source for `std::archive::zip` (read).
 const ZIP_WRAPPERS: &str = r"
-struct __gos_zip_ZipEntry { name: String, data: [u8], is_dir: bool }
-fn __gos_zip_read(data: &[u8]) -> Result<[__gos_zip_ZipEntry], errors::Error> {
+struct __gos_zip_ZipEntry { name: String, data: Vec<u8>, is_dir: bool }
+fn __gos_zip_read(data: Vec<u8>) -> Result<Vec<__gos_zip_ZipEntry>, errors::Error> {
     let raws = __gos_zip_read_raw(data)?
-    let mut out: [__gos_zip_ZipEntry] = []
+    let mut out: Vec<__gos_zip_ZipEntry> = Vec::from([])
     for r in raws {
         out.push(__gos_zip_ZipEntry { name: r.0, data: r.1, is_dir: r.2 })
     }
@@ -207,7 +207,7 @@ fn __gos_zip_read(data: &[u8]) -> Result<[__gos_zip_ZipEntry], errors::Error> {
 /// intrinsics (sentinel error convention, message via
 /// `__gos_sql_last_error_raw`), so the same code runs on every tier.
 const SQL_WRAPPERS: &str = r#"
-enum __gos_sql_Value { Null, Bool(bool), Int(i64), Float(f64), Text(String), Blob([u8]) }
+enum __gos_sql_Value { Null, Bool(bool), Int(i64), Float(f64), Text(String), Blob(Vec<u8>) }
 enum __gos_sql_IsolationLevel { Default, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable }
 struct __gos_sql_Conn { __handle: i64 }
 struct __gos_sql_Rows { __handle: i64 }
@@ -216,7 +216,7 @@ struct __gos_sql_Tx { __handle: i64 }
 struct __gos_sql_Stmt { __handle: i64 }
 struct __gos_sql_Pool { __handle: i64 }
 struct __gos_sql_Notification { channel: String, payload: String, process_id: i64 }
-struct __gos_sql_Select { table: String, cols: [String], wheres: [String], binds: [__gos_sql_Value], order: String, lim: i64, off: i64 }
+struct __gos_sql_Select { table: String, cols: Vec<String>, wheres: Vec<String>, binds: Vec<__gos_sql_Value>, order: String, lim: i64, off: i64 }
 fn __gos_sql_err() -> errors::Error {
     errors::new(__gos_sql_last_error_raw())
 }
@@ -229,9 +229,9 @@ fn __gos_sql_open(name: &String, url: &String) -> Result<__gos_sql_Conn, errors:
     if h < 0 { return Err(__gos_sql_err()) }
     Ok(__gos_sql_Conn { __handle: h })
 }
-fn __gos_sql_drivers() -> [String] {
+fn __gos_sql_drivers() -> Vec<String> {
     let joined = __gos_sql_drivers_raw()
-    if joined == "" { return [] }
+    if joined == "" { return Vec::from([]) }
     joined.split(",")
 }
 fn __gos_sql_bind(params: &[__gos_sql_Value]) -> i64 {
@@ -309,7 +309,7 @@ impl __gos_sql_Conn {
         if n < 0 { return Err(__gos_sql_err()) }
         Ok(n)
     }
-    fn copy_out(&mut self, sql: &String) -> Result<[u8], errors::Error> {
+    fn copy_out(&mut self, sql: &String) -> Result<Vec<u8>, errors::Error> {
         if __gos_sql_conn_copy_out_run_raw(self.__handle, sql) < 0 { return Err(__gos_sql_err()) }
         Ok(__gos_sql_conn_copy_out_take_raw(self.__handle))
     }
@@ -394,15 +394,15 @@ fn __gos_sql_join(parts: &[String], sep: String) -> String {
     out
 }
 fn __gos_sql_select_new(table: &String) -> __gos_sql_Select {
-    __gos_sql_Select { table: table.clone(), cols: [], wheres: [], binds: [], order: "", lim: -1, off: -1 }
+    __gos_sql_Select { table: table.clone(), cols: Vec::from([]), wheres: Vec::from([]), binds: Vec::from([]), order: "", lim: -1, off: -1 }
 }
-fn __gos_sql_copy_strs(xs: &[String]) -> [String] {
-    let mut out: [String] = []
+fn __gos_sql_copy_strs(xs: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::from([])
     for x in xs { out.push(x) }
     out
 }
-fn __gos_sql_copy_vals(xs: &[__gos_sql_Value]) -> [__gos_sql_Value] {
-    let mut out: [__gos_sql_Value] = []
+fn __gos_sql_copy_vals(xs: &[__gos_sql_Value]) -> Vec<__gos_sql_Value> {
+    let mut out: Vec<__gos_sql_Value> = Vec::from([])
     for x in xs { out.push(x) }
     out
 }
@@ -440,8 +440,8 @@ fn __gos_sql_quote_ident(ident: &String) -> String {
     }
     format!("\"{}\"", ident.replace("\"", "\"\""))
 }
-fn __gos_sql_quote_idents(xs: &[String]) -> [String] {
-    let mut out: [String] = []
+fn __gos_sql_quote_idents(xs: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::from([])
     for x in xs { out.push(__gos_sql_quote_ident(x)) }
     out
 }
@@ -468,7 +468,7 @@ impl __gos_sql_Select {
     fn offset(&self, n: i64) -> __gos_sql_Select {
         __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(&self.cols), wheres: __gos_sql_copy_strs(&self.wheres), binds: __gos_sql_copy_vals(&self.binds), order: self.order, lim: self.lim, off: n }
     }
-    fn params(&self) -> [__gos_sql_Value] {
+    fn params(&self) -> Vec<__gos_sql_Value> {
         __gos_sql_copy_vals(&self.binds)
     }
     fn render(&self) -> String {
@@ -500,9 +500,9 @@ impl __gos_sql_Rows {
         if __gos_sql_rows_close_raw(self.__handle) < 0 { return Err(__gos_sql_err()) }
         Ok(())
     }
-    fn columns(&self) -> [String] {
+    fn columns(&self) -> Vec<String> {
         let joined = __gos_sql_rows_columns_raw(self.__handle)
-        if joined == "" { return [] }
+        if joined == "" { return Vec::from([]) }
         joined.split(",")
     }
 }
@@ -539,7 +539,7 @@ impl __gos_sql_Row {
         }
         Ok(__gos_sql_row_get_text_raw(self.__handle, column))
     }
-    fn get_blob(&self, column: &String) -> Result<[u8], errors::Error> {
+    fn get_blob(&self, column: &String) -> Result<Vec<u8>, errors::Error> {
         let k = __gos_sql_row_kind_raw(self.__handle, column)
         __gos_sql_row_guard(k)?
         if k != 5 {
@@ -640,8 +640,8 @@ fn __gos_http_bytes_to_str(b: &[u8]) -> String {
     for x in b { buf.push(x) }
     buf.to_string()
 }
-fn __gos_http_first12(b: &[u8]) -> [u8] {
-    let mut out: [u8] = []
+fn __gos_http_first12(b: &[u8]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::from([])
     let mut i = 0
     while i < 12 {
         out.push(b[i])
@@ -678,27 +678,27 @@ struct __gos_http_csrf_Config {
     cookie_name: String,
     header_name: String,
     form_field: String,
-    key: [u8],
-    trusted_origins: [String],
+    key: Vec<u8>,
+    trusted_origins: Vec<String>,
     secure: bool,
     same_site: String,
     max_age_secs: i64,
-    safe_methods: [String],
-    exempt_prefixes: [String],
+    safe_methods: Vec<String>,
+    exempt_prefixes: Vec<String>,
 }
 enum __gos_http_csrf_RouteAuth { BearerOnly, CookieSession, None }
-fn __gos_http_csrf_config(key: [u8]) -> __gos_http_csrf_Config {
+fn __gos_http_csrf_config(key: Vec<u8>) -> __gos_http_csrf_Config {
     __gos_http_csrf_Config {
         cookie_name: "gos_csrf",
         header_name: "X-CSRF-Token",
         form_field: "_csrf",
         key: key,
-        trusted_origins: [],
+        trusted_origins: Vec::from([]),
         secure: true,
         same_site: "Lax",
         max_age_secs: 86400,
-        safe_methods: ["GET", "HEAD", "OPTIONS", "TRACE"],
-        exempt_prefixes: [],
+        safe_methods: Vec::from(["GET", "HEAD", "OPTIONS", "TRACE"]),
+        exempt_prefixes: Vec::from([]),
     }
 }
 fn __gos_http_csrf_is_safe(config: &__gos_http_csrf_Config, method: &String) -> bool {
@@ -798,24 +798,24 @@ fn __gos_http_csrf_attach_cookie(resp: http::Response, token: &String, config: &
 
 // ---- session (signed + AES-256-GCM encrypted store) ----
 struct __gos_http_session_Store {
-    key: [u8],
+    key: Vec<u8>,
     cookie_name: String,
     encrypted: bool,
     secure: bool,
     max_age_secs: i64,
 }
-fn __gos_http_session_signed(key: [u8]) -> __gos_http_session_Store {
+fn __gos_http_session_signed(key: Vec<u8>) -> __gos_http_session_Store {
     __gos_http_session_Store { key: key, cookie_name: "gos_session", encrypted: false, secure: true, max_age_secs: 86400 }
 }
-fn __gos_http_session_encrypted(key: [u8]) -> __gos_http_session_Store {
+fn __gos_http_session_encrypted(key: Vec<u8>) -> __gos_http_session_Store {
     __gos_http_session_Store { key: key, cookie_name: "gos_session", encrypted: true, secure: true, max_age_secs: 86400 }
 }
 fn __gos_http_session_seal(key: &[u8], data: &String) -> Result<String, errors::Error> {
     let pt = data.as_bytes()
-    let mac = crypto::hmac::sha256_mac(key, &pt)
+    let mac = crypto::hmac::sha256_mac(key.to_vec(), pt.to_vec())
     let nonce = __gos_http_first12(&mac)
-    let empty: [u8] = []
-    let ct = crypto::aead::aes_256_gcm_seal(key, &nonce, &pt, &empty)?
+    let empty: Vec<u8> = Vec::from([])
+    let ct = crypto::aead::aes_256_gcm_seal(key.to_vec(), nonce.to_vec(), pt.to_vec(), empty)?
     Ok(encoding::hex::encode(&nonce) + "." + &encoding::hex::encode(&ct))
 }
 fn __gos_http_session_open(key: &[u8], cookie: &String) -> Result<String, errors::Error> {
@@ -825,8 +825,8 @@ fn __gos_http_session_open(key: &[u8], cookie: &String) -> Result<String, errors
     }
     let nonce = encoding::hex::decode(&n)?
     let ct = encoding::hex::decode(&c)?
-    let empty: [u8] = []
-    let pt = crypto::aead::aes_256_gcm_open(key, &nonce, &ct, &empty)?
+    let empty: Vec<u8> = Vec::from([])
+    let pt = crypto::aead::aes_256_gcm_open(key.to_vec(), nonce, ct, empty)?
     Ok(__gos_http_bytes_to_str(&pt))
 }
 fn __gos_http_session_encode(store: &__gos_http_session_Store, data: &String) -> String {
@@ -885,10 +885,10 @@ fn __gos_http_session_with_session(store: &__gos_http_session_Store, r: http::Re
 }
 
 // ---- form (application/x-www-form-urlencoded) ----
-struct __gos_http_form_Form { pairs: [(String, String)] }
+struct __gos_http_form_Form { pairs: Vec<(String, String)> }
 fn __gos_http_form_parse(body: &String) -> __gos_http_form_Form {
-    let mut pairs: [(String, String)] = []
-    let raw_pairs: [String] = strings::split(body, "&")
+    let mut pairs: Vec<(String, String)> = Vec::from([])
+    let raw_pairs: Vec<String> = strings::split(body, "&")
     for pair in raw_pairs {
         let p: String = pair
         if p == "" { continue }
@@ -905,8 +905,8 @@ fn __gos_http_form_get(form: &__gos_http_form_Form, name: &String) -> String {
     }
     ""
 }
-fn __gos_http_form_get_all(form: &__gos_http_form_Form, name: &String) -> [String] {
-    let mut out: [String] = []
+fn __gos_http_form_get_all(form: &__gos_http_form_Form, name: &String) -> Vec<String> {
+    let mut out: Vec<String> = Vec::from([])
     for (k, v) in form.pairs {
         if k == *name { out.push(v) }
     }
@@ -927,7 +927,7 @@ struct __gos_http_multipart_Part {
     name: String,
     filename: String,
     content_type: String,
-    content: [u8],
+    content: Vec<u8>,
 }
 fn __gos_http_multipart_boundary(content_type: &String) -> String {
     match content_type.split_once("boundary=") {
@@ -943,7 +943,7 @@ fn __gos_http_multipart_boundary(content_type: &String) -> String {
 }
 fn __gos_http_multipart_header_value(head: &String, key: &String) -> String {
     let target = key.to_lowercase()
-    let lines: [String] = strings::lines(head)
+    let lines: Vec<String> = strings::lines(head)
     for line in lines {
         let l: String = line
         match l.split_once(":") {
@@ -967,11 +967,11 @@ fn __gos_http_multipart_disp_param(disp: &String, key: &String) -> String {
         None => "",
     }
 }
-fn __gos_http_multipart_parse(body: &[u8], boundary: &String) -> [__gos_http_multipart_Part] {
+fn __gos_http_multipart_parse(body: &[u8], boundary: &String) -> Vec<__gos_http_multipart_Part> {
     let text = __gos_http_bytes_to_str(body)
     let delim = "--" + boundary
-    let segments: [String] = strings::split(&text, &delim)
-    let mut parts: [__gos_http_multipart_Part] = []
+    let segments: Vec<String> = strings::split(&text, &delim)
+    let mut parts: Vec<__gos_http_multipart_Part> = Vec::from([])
     for seg in segments {
         let s: String = seg
         let trimmed = s.trim()

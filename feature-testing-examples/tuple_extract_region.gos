@@ -18,7 +18,7 @@ enum Tree {
 
 fn build(depth: i64, seed: i64) -> (Tree, i64) {
     if depth == 0 {
-        (Tree::Leaf(seed % 100), seed * 6364136223846793005 + 1)
+        (Tree::Leaf(seed % 100), (seed * 48271 + 1) % 2147483647)
     } else {
         let (l, s1) = build(depth - 1, seed)
         let (r, s2) = build(depth - 1, s1)

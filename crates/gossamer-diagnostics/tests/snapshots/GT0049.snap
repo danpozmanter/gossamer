@@ -1,0 +1,13 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+assertion_line: 86
+expression: rendered
+---
+--- plain ---
+error[GT0049]: A bare `[T]` names an unsized slice and cannot be stored as an owned local, field, parameter, or return value. Use `[T; N]` for an owned fixed-size array, `Vec<T>` for an owned growable sequence, or borrow a sequence as `&[T]` or `&mut [T]`. - here
+--- framed ---
+error[GT0049]: A bare `[T]` names an unsized slice and cannot be stored as an owned local, field, parameter, or return value. Use `[T; N]` for an owned fixed-size array, `Vec<T>` for an owned growable sequence, or borrow a sequence as `&[T]` or `&mut [T]`.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

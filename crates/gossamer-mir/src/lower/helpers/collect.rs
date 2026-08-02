@@ -349,6 +349,42 @@ pub(crate) fn collect_impl_methods(program: &HirProgram) -> HashMap<String, Opti
     out
 }
 
+pub(crate) fn collect_impl_method_receivers(program: &HirProgram) -> HashMap<String, Ty> {
+    let mut out = HashMap::new();
+    for item in &program.items {
+        if let HirItemKind::Impl(decl) = &item.kind
+            && let Some(prefix) = decl.self_name.as_ref()
+        {
+            for method in &decl.methods {
+                if let Some(receiver) = method.params.first() {
+                    out.insert(
+                        format!("{}::{}", prefix.name, method.name.name),
+                        receiver.ty,
+                    );
+                }
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn collect_impl_method_inputs(program: &HirProgram) -> HashMap<String, Vec<Ty>> {
+    let mut out = HashMap::new();
+    for item in &program.items {
+        if let HirItemKind::Impl(decl) = &item.kind
+            && let Some(prefix) = decl.self_name.as_ref()
+        {
+            for method in &decl.methods {
+                out.insert(
+                    format!("{}::{}", prefix.name, method.name.name),
+                    method.params.iter().map(|param| param.ty).collect(),
+                );
+            }
+        }
+    }
+    out
+}
+
 pub(crate) fn collect_fn_inputs(program: &HirProgram) -> HashMap<gossamer_resolve::DefId, Vec<Ty>> {
     let mut out = HashMap::new();
     for item in &program.items {
@@ -882,6 +918,8 @@ pub(crate) fn collect_item(
     struct_defs: &HashMap<gossamer_resolve::DefId, String>,
     enums: &EnumIndex,
     impl_methods: &HashMap<String, Option<Ty>>,
+    impl_method_receivers: &HashMap<String, Ty>,
+    impl_method_inputs: &HashMap<String, Vec<Ty>>,
     fn_ret_names: &HashMap<String, Ty>,
     fn_returns: &HashMap<gossamer_resolve::DefId, Ty>,
     fn_inputs: &HashMap<gossamer_resolve::DefId, Vec<Ty>>,
@@ -919,6 +957,8 @@ pub(crate) fn collect_item(
                 struct_defs,
                 enums,
                 impl_methods,
+                impl_method_receivers,
+                impl_method_inputs,
                 fn_ret_names,
                 fn_returns,
                 fn_inputs,
@@ -953,6 +993,8 @@ pub(crate) fn collect_item(
                     struct_defs,
                     enums,
                     impl_methods,
+                    impl_method_receivers,
+                    impl_method_inputs,
                     fn_ret_names,
                     fn_returns,
                     fn_inputs,
@@ -979,6 +1021,8 @@ pub(crate) fn collect_item(
                         struct_defs,
                         enums,
                         impl_methods,
+                        impl_method_receivers,
+                        impl_method_inputs,
                         fn_ret_names,
                         fn_returns,
                         fn_inputs,
@@ -999,136 +1043,6 @@ pub(crate) fn collect_item(
 /// place. A binding that receives any of these somewhere in the
 /// function body genuinely wants a heap `Vec`; one that doesn't can
 /// stay a fixed inline `[T; N]` array.
-const GROWTH_METHODS: &[&str] = &[
-    "push",
-    "pop",
-    "insert",
-    "remove",
-    "extend",
-    "truncate",
-    "clear",
-    "retain",
-    "append",
-    "resize",
-    "drain",
-    "split_off",
-    // `sort` / `sort_by` dispatch to the `gos_rt_vec_sort_*` helpers
-    // which require the heap-`Vec` representation; keep promoting
-    // their receivers so `let mut xs = [3, 1, 2]; xs.sort()` works.
-    "sort",
-    "sort_by",
-];
-
-/// Walks `block` and records the receiver name of every growth /
-/// destructive-reshape method call (`xs.push(...)`, `xs.remove(i)`,
-/// …). Drives the `let mut [literal]` → `Vec` promotion decision so
-/// explicitly-sized arrays that are only indexed / passed to
-/// `[T; N]` parameters keep their inline layout.
-pub(crate) fn collect_growth_receivers(
-    block: &HirBlock,
-    out: &mut std::collections::HashSet<String>,
-    elem_out: &mut HashMap<String, Ty>,
-) {
-    for stmt in &block.stmts {
-        match &stmt.kind {
-            HirStmtKind::Let { init: Some(e), .. }
-            | HirStmtKind::Expr { expr: e, .. }
-            | HirStmtKind::Defer(e)
-            | HirStmtKind::Go(e) => growth_in_expr(e, out, elem_out),
-            HirStmtKind::Let { init: None, .. } | HirStmtKind::Item(_) => {}
-        }
-    }
-    if let Some(tail) = &block.tail {
-        growth_in_expr(tail, out, elem_out);
-    }
-}
-
-fn growth_in_expr(
-    expr: &HirExpr,
-    out: &mut std::collections::HashSet<String>,
-    elem_out: &mut HashMap<String, Ty>,
-) {
-    match &expr.kind {
-        HirExprKind::MethodCall {
-            receiver,
-            name,
-            args,
-        } => {
-            if GROWTH_METHODS.contains(&name.name.as_str()) {
-                if let HirExprKind::Path { segments, .. } = &receiver.kind {
-                    if segments.len() == 1 {
-                        out.insert(segments[0].name.clone());
-                        // Recover the element type from the single-element
-                        // mutators so an unannotated `let mut xs = []`
-                        // gets the right element stride: `push(x)` →
-                        // `x` is arg 0, `insert(i, x)` → `x` is arg 1.
-                        let elem_arg = match name.name.as_str() {
-                            "push" => args.first(),
-                            "insert" => args.get(1),
-                            _ => None,
-                        };
-                        if let Some(arg) = elem_arg {
-                            elem_out.entry(segments[0].name.clone()).or_insert(arg.ty);
-                        }
-                    }
-                }
-            }
-            growth_in_expr(receiver, out, elem_out);
-            for a in args {
-                growth_in_expr(a, out, elem_out);
-            }
-        }
-        HirExprKind::Call { callee, args } => {
-            growth_in_expr(callee, out, elem_out);
-            for a in args {
-                growth_in_expr(a, out, elem_out);
-            }
-        }
-        HirExprKind::Field { receiver, .. } | HirExprKind::TupleIndex { receiver, .. } => {
-            growth_in_expr(receiver, out, elem_out);
-        }
-        HirExprKind::Index { base, index } => {
-            growth_in_expr(base, out, elem_out);
-            growth_in_expr(index, out, elem_out);
-        }
-        HirExprKind::Unary { operand, .. } => growth_in_expr(operand, out, elem_out),
-        HirExprKind::Binary { lhs, rhs, .. } => {
-            growth_in_expr(lhs, out, elem_out);
-            growth_in_expr(rhs, out, elem_out);
-        }
-        HirExprKind::Assign { place, value } => {
-            growth_in_expr(place, out, elem_out);
-            growth_in_expr(value, out, elem_out);
-        }
-        HirExprKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            growth_in_expr(condition, out, elem_out);
-            growth_in_expr(then_branch, out, elem_out);
-            if let Some(e) = else_branch {
-                growth_in_expr(e, out, elem_out);
-            }
-        }
-        HirExprKind::Match { scrutinee, arms } => {
-            growth_in_expr(scrutinee, out, elem_out);
-            for arm in arms {
-                growth_in_expr(&arm.body, out, elem_out);
-            }
-        }
-        HirExprKind::Block(b) => collect_growth_receivers(b, out, elem_out),
-        HirExprKind::Loop { body, .. } => growth_in_expr(body, out, elem_out),
-        HirExprKind::While {
-            condition, body, ..
-        } => {
-            growth_in_expr(condition, out, elem_out);
-            growth_in_expr(body, out, elem_out);
-        }
-        _ => {}
-    }
-}
-
 pub(crate) fn lower_fn(
     decl: &HirFn,
     def: Option<gossamer_resolve::DefId>,
@@ -1138,6 +1052,8 @@ pub(crate) fn lower_fn(
     struct_defs: &HashMap<gossamer_resolve::DefId, String>,
     enums: &EnumIndex,
     impl_methods: &HashMap<String, Option<Ty>>,
+    impl_method_receivers: &HashMap<String, Ty>,
+    impl_method_inputs: &HashMap<String, Vec<Ty>>,
     fn_ret_names: &HashMap<String, Ty>,
     fn_returns: &HashMap<gossamer_resolve::DefId, Ty>,
     fn_inputs: &HashMap<gossamer_resolve::DefId, Vec<Ty>>,
@@ -1154,17 +1070,14 @@ pub(crate) fn lower_fn(
         struct_defs,
         enums,
         impl_methods,
+        impl_method_receivers,
+        impl_method_inputs,
         fn_ret_names,
         fn_returns,
         fn_inputs,
         consts,
         mut_statics,
         region_unsafe,
-    );
-    collect_growth_receivers(
-        &body.block,
-        &mut builder.grows_bindings,
-        &mut builder.grows_elem_ty,
     );
     // A const generic array return (`-> [T; N]`) is carried as a runtime
     // GosVec exactly like the `[T; N]` parameter it is derived from, so the

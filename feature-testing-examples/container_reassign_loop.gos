@@ -4,8 +4,8 @@
 // previous value before the overwrite. Output is a scalar so it is
 // bit-identical across tiers while the RSS stays bounded.
 
-fn make(n: i64) -> [i64] {
-    let mut v: [i64] = []
+fn make(n: i64) -> Vec<i64> {
+    let mut v: Vec<i64> = Vec::from([])
     let mut i = 0
     while i < n {
         v.push(i * 2)
@@ -15,7 +15,7 @@ fn make(n: i64) -> [i64] {
 }
 
 fn main() {
-    let mut v: [i64] = []
+    let mut v: Vec<i64> = Vec::from([])
     let mut r = 0
     while r < 2000 {
         v = make(64)

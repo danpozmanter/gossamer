@@ -41,33 +41,33 @@ struct Holder {
 }
 
 fn main() {
-    let mut a: Vec<i64> = [1, 2, 3]
+    let mut a: Vec<i64> = Vec::from([1, 2, 3])
     set_first(&mut a)
     println!("direct: {} {} {}", a[0], a[1], a[2])
 
-    let mut b: Vec<i64> = [0, 0, 0]
+    let mut b: Vec<i64> = Vec::from([0, 0, 0])
     nested(&mut b)
     println!("nested: {} {} {}", b[0], b[1], b[2])
 
-    let mut c: Vec<i64> = [0, 0, 0]
+    let mut c: Vec<i64> = Vec::from([0, 0, 0])
     early(&mut c, true)
     println!("early_stop: {}", c[2])
     early(&mut c, false)
     println!("early_through: {}", c[2])
 
-    let mut d: Vec<i64> = [1]
+    let mut d: Vec<i64> = Vec::from([1])
     push_one(&mut d)
     println!("push: len={} last={}", d.len(), d[1])
 
-    let mut e: Vec<i64> = [10, 20, 30]
+    let mut e: Vec<i64> = Vec::from([10, 20, 30])
     swap_ends(&mut e)
     println!("swap: {} {} {}", e[0], e[1], e[2])
 
-    let mut h = Holder { data: [0, 0] }
+    let mut h = Holder { data: Vec::from([0, 0]) }
     set_first(&mut h.data)
     println!("field: {}", h.data[0])
 
-    let mut f: Vec<i64> = [1, 2, 3]
+    let mut f: Vec<i64> = Vec::from([1, 2, 3])
     let bump = |v: &mut Vec<i64>| { v[0] = 77 }
     bump(&mut f)
     println!("closure: {}", f[0])

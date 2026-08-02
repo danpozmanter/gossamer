@@ -323,10 +323,15 @@ impl DigestWriter {
 /// representation, target triple, profile, and compiler fingerprint. The
 /// result is computed once per body per build and reused for cache lookup and
 /// publication.
-fn body_cache_key(body: &Body, triple: &str, profile: OptProfile) -> String {
+fn body_cache_key(
+    body: &Body,
+    triple: &str,
+    profile: OptProfile,
+    cabi_handler_arity: Option<usize>,
+) -> String {
     use std::fmt::Write as _;
 
-    let mut digest = DigestWriter::new(b"gossamer-llvm-body-cache-v2\0");
+    let mut digest = DigestWriter::new(b"gossamer-llvm-body-cache-v3\0");
     digest.update(body.name.as_bytes());
     digest.update(b"\0");
     digest.update(triple.as_bytes());
@@ -340,6 +345,14 @@ fn body_cache_key(body: &Body, triple: &str, profile: OptProfile) -> String {
     digest.update(&compiler_fingerprint().to_le_bytes());
     digest.update(b"\0");
     digest.update(codegen_configuration_fingerprint(triple, profile).as_bytes());
+    digest.update(b"\0");
+    match cabi_handler_arity {
+        Some(arity) => {
+            digest.update(b"runtime-handler:");
+            digest.update(arity.to_string().as_bytes());
+        }
+        None => digest.update(b"gossamer-call-abi"),
+    }
     digest.update(b"\0");
     write!(&mut digest, "{body:?}").expect("hashing MIR through fmt cannot fail");
     digest.finish()
@@ -914,9 +927,17 @@ fn compile_bodies_parallel_incremental(
     let llvm_triple = llvm_target_triple_for(&triple);
     let profile = opt_profile();
     let dump = std::env::var("GOS_LLVM_DUMP").is_ok();
+    let cabi_handlers = collect_cabi_handlers(bodies);
     let body_cache_keys: Vec<String> = bodies
         .iter()
-        .map(|body| body_cache_key(body, &llvm_triple, profile))
+        .map(|body| {
+            body_cache_key(
+                body,
+                &llvm_triple,
+                profile,
+                cabi_handlers.get(&body.name).copied(),
+            )
+        })
         .collect();
 
     // Precompute program-wide lookup tables shared across all lowerers.
@@ -1594,9 +1615,9 @@ fn want_strict_lowering() -> bool {
 pub enum OptProfile {
     /// Release: full `opt -O3 | llc -O3` pipeline. Default.
     Release,
-    /// Debug: skip the `opt` pre-pass, run `llc -O0`. Faster
-    /// compile, no mid-level optimisation, debug-friendly IR
-    /// shapes preserved.
+    /// Debug: use LLVM's `O1` scalar and loop pipeline without discretionary
+    /// inlining, followed by the `O0` instruction selector. Checked arithmetic
+    /// remains enabled.
     Debug,
 }
 
@@ -2178,12 +2199,10 @@ fn invoke_llc_pipeline(
     // entirely sends those shapes straight to `llc`, which
     // rejects them.
     //
-    // Debug profile runs only the three passes the lowerer
-    // requires - `mem2reg` (alloca → SSA), `instcombine`
-    // (canonicalise integer casts), `simplifycfg` (dead-branch
-    // elimination) - saving ~50-80 ms vs the full `default<O1>`
-    // pipeline that also runs the loop unroller, SLP vectoriser,
-    // and ~40 other passes unused by our IR shapes.
+    // Debug uses `default<O1>` with discretionary inlining disabled, then
+    // `llc -O0`. Profile-sensitive arithmetic checks remain observable. The
+    // zero inlining threshold prevents a large mutation-heavy body from being
+    // folded into its caller, a shape that LLVM handles poorly at `O1`.
     //
     // Release profile uses `default<O3>` for full optimisation.
     //
@@ -2192,10 +2211,7 @@ fn invoke_llc_pipeline(
     // source-level context before any optimisation rewrites
     // obscure the offending value.
     let (opt_passes, llc_level) = match profile {
-        OptProfile::Debug => (
-            "verify,function(mem2reg,instcombine<max-iterations=4>,simplifycfg)",
-            "-O0",
-        ),
+        OptProfile::Debug => ("verify,default<O1>", "-O0"),
         OptProfile::Release => ("verify,default<O3>", "-O3"),
     };
     let opt_tool = find_opt()?;
@@ -2233,6 +2249,9 @@ fn invoke_llc_pipeline(
         // benchmarks. The narrower `disable-memcpy-idiom` flag
         // no longer takes effect under LLVM 18's new pass manager.
         ;
+    if matches!(profile, OptProfile::Debug) {
+        opt_cmd.arg("-inline-threshold=0");
+    }
     if matches!(profile, OptProfile::Release) && disable_loop_idiom_for_target(triple) {
         opt_cmd.arg("--disable-loop-idiom-all");
     }
@@ -3109,7 +3128,7 @@ mod cabi_thunk_tests {
 
 #[cfg(test)]
 mod codegen_partition_tests {
-    use super::{codegen_chunks, codegen_job_limit};
+    use super::{OptProfile, body_cache_key, codegen_chunks, codegen_job_limit};
     use gossamer_lex::{SourceMap, Span};
     use gossamer_mir::{BasicBlock, BlockId, Body, ConstValue, Local, Operand, Place, Terminator};
 
@@ -3167,6 +3186,24 @@ mod codegen_partition_tests {
             codegen_chunks(&bodies, 3),
             "partition must be stable"
         );
+    }
+
+    #[test]
+    fn object_cache_separates_runtime_handler_abi_from_gossamer_call_abi() {
+        let handler = body("App::serve", None);
+        let ordinary = body_cache_key(
+            &handler,
+            "x86_64-unknown-linux-gnu",
+            OptProfile::Debug,
+            None,
+        );
+        let runtime = body_cache_key(
+            &handler,
+            "x86_64-unknown-linux-gnu",
+            OptProfile::Debug,
+            Some(2),
+        );
+        assert_ne!(ordinary, runtime);
     }
 
     #[test]

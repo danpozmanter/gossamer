@@ -30,10 +30,10 @@ fn main() -> Result<(), errors::Error> {
     println!("read {} bytes: {}", contents.len(), contents.trim())
 
     // --- JSON ---
-    let features: [json::Value] = [
+    let features: Vec<json::Value> = Vec::from([
         json::Value::String("http"),
         json::Value::String("tls"),
-    ]
+    ])
     let payload = json::Value::object([
         ("port", json::Value::Int(8080)),
         ("addr", json::Value::String("0.0.0.0")),

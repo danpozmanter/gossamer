@@ -898,6 +898,7 @@ pub(super) fn lower_statement(
                 tcx,
                 rvalue,
                 Some(dst_hint),
+                Some(resolve_place_ty(tcx, body, place)),
                 agg_into_slot,
                 intrinsics,
             )?;
@@ -2184,7 +2185,7 @@ pub(super) const STATIC_PANIC_MESSAGES: &[&str] = &[
 /// Mirrors the LLVM backend's `gos_rt_panic` lowering so the
 /// in-process JIT tier produces the same clean diagnostic the VM and
 /// AOT tiers do instead of a raw machine trap.
-fn emit_runtime_panic(
+pub(super) fn emit_runtime_panic(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
     intrinsics: &mut IntrinsicContext,

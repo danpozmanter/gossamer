@@ -42,12 +42,12 @@ struct Note { id: i64, body: String }
 // Seed dataset standing in for a persistent store. Returned by value
 // on each read so handlers never share mutable state across the
 // request goroutines the server fans out to.
-fn seed_notes() -> [Note] {
-    [
+fn seed_notes() -> Vec<Note> {
+    Vec::from([
         Note { id: 1, body: "first note" },
         Note { id: 2, body: "second note" },
         Note { id: 3, body: "third note" },
-    ]
+    ])
 }
 
 fn render_note_json(note: &Note) -> String {

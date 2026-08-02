@@ -1061,11 +1061,16 @@ impl<'a> Builder<'a> {
                     local: array_local,
                     projection: vec![crate::ir::Projection::Index(counter)],
                 };
-                self.emit_assign(
-                    Place::local(bind_local),
-                    Rvalue::Use(Operand::Copy(indexed_place)),
-                    span,
-                );
+                let binding_value =
+                    if let TyKind::Ref { mutability, .. } = self.tcx.kind_of(elem_ty) {
+                        Rvalue::Ref {
+                            place: indexed_place,
+                            mutable: matches!(mutability, gossamer_types::Mutbl::Mut),
+                        }
+                    } else {
+                        Rvalue::Use(Operand::Copy(indexed_place))
+                    };
+                self.emit_assign(Place::local(bind_local), binding_value, span);
             }
             HirPatKind::Tuple(sub_pats) => {
                 // Bind each tuple sub-pattern to its own local that

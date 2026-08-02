@@ -61,8 +61,10 @@ automatic cycle reclamation that ARC leaves to the programmer.
   `isize`/`usize`, `f32`/`f64`.
 - **Reference-semantic types** share their backing storage when
   copied; the runtime reclaims the backing when the last reference
-  dies. This includes `String`, `Vec<T>`, `[T]`, `struct`, `enum`,
-  closures.
+  dies. This includes `String`, `Vec<T>`, structs, enums, and closures.
+  `[T; N]` is an owned fixed array. `[T]` is unsized and appears through a
+  borrowed `&[T]` or `&mut [T]` view, so a bare slice is not an owned heap
+  collection.
 
 ## `&` and `&mut`
 

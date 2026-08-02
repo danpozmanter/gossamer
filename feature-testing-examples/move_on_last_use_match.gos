@@ -39,7 +39,7 @@ fn bump(t: Tree) -> Tree {
     match t {
         Tree::Leaf(n) => Tree::Leaf(n + 1),
         Tree::Node(kids) => {
-            let mut out: Vec<Tree> = []
+            let mut out: Vec<Tree> = Vec::from([])
             for k in kids {
                 out.push(bump(k))
             }
@@ -69,11 +69,11 @@ fn main() {
     let e = two(E::Pair(1, 42))
     let f = two(E::Wrap(11))
 
-    let tree = Tree::Node([
+    let tree = Tree::Node(Vec::from([
         Tree::Leaf(1),
-        Tree::Node([Tree::Leaf(2), Tree::Leaf(3)]),
+        Tree::Node(Vec::from([Tree::Leaf(2), Tree::Leaf(3)])),
         Tree::Leaf(4),
-    ])
+    ]))
     let bumped = bump(tree)
     let s = total(&bumped)
 

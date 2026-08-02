@@ -47,7 +47,7 @@ fn main() {
     show_opt_i64("empty last", none_vec.last())
 
     // rev (non-mutating) then original unchanged.
-    let r = [1, 2, 3, 4]
+    let r: Vec<i64> = Vec::from([1, 2, 3, 4])
     let rr = r.rev()
     print!("rev ")
     for v in rr { print!("{} ", v) }

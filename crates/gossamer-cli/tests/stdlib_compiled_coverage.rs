@@ -151,12 +151,17 @@ fn dispatch_paths(src: &str) -> BTreeSet<String> {
 }
 
 /// A `STDLIB_QUALIFIED` entry is a free function when none of its
-/// segments names a type (no segment starts uppercase) - the
-/// `module::Type::method` forms are dispatched separately.
+/// segments names a type. Nominal standard-library types start uppercase;
+/// primitive integer types use Rust's lowercase names and must be recognised
+/// explicitly. Methods are dispatched separately.
 fn is_free_function(path: &str) -> bool {
-    !path
-        .split("::")
-        .any(|seg| seg.chars().next().is_some_and(char::is_uppercase))
+    const PRIMITIVE_TYPES: &[&str] = &[
+        "i8", "i16", "i32", "i64", "isize", "u8", "u16", "u32", "u64", "usize",
+    ];
+
+    !path.split("::").any(|seg| {
+        seg.chars().next().is_some_and(char::is_uppercase) || PRIMITIVE_TYPES.contains(&seg)
+    })
 }
 
 /// Edition-2027 migration aliases are deliberately dispatched through the

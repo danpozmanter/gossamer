@@ -17,7 +17,7 @@ fn main() {
     let seq = "ACGTACGTACGTAACCGGTT"
     for k in 1..4 {
         let m = count_kmers(&seq, k)
-        let mut keys: [String] = m.keys()
+        let mut keys: Vec<String> = m.keys()
         keys.sort()
         let mut line = format!("k={}", k)
         for key in keys {

@@ -5,7 +5,7 @@
 
 use std::regex
 
-fn cap_line(caps: [Option<String>]) -> String {
+fn cap_line(caps: Vec<Option<String>>) -> String {
     let mut out = format!("n={}", caps.len())
     for c in caps {
         match c {

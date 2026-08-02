@@ -52,7 +52,7 @@ fn serve_app() {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, []) {
+        if let Ok(_) = http::get(url, Vec::from([])) {
             return
         }
         time::sleep(25)
@@ -65,11 +65,11 @@ fn main() {
     let base = "http://127.0.0.1:23910/x"
     await_ready(&base)
 
-    match http::get(&base, []) {
+    match http::get(&base, Vec::from([])) {
         Ok(r) => println!("get status={} body={}", r.status, r.body),
         Err(e) => println!("get error: {}", e),
     }
-    match http::options(&base, []) {
+    match http::options(&base, Vec::from([])) {
         Ok(r) => println!("options status={} body={}", r.status, r.body),
         Err(e) => println!("options error: {}", e),
     }
@@ -81,11 +81,11 @@ fn main() {
         Ok(r) => println!("put status={} body={}", r.status, r.body),
         Err(e) => println!("put error: {}", e),
     }
-    match http::delete(&base, "hello-delete", []) {
+    match http::delete(&base, "hello-delete", Vec::from([])) {
         Ok(r) => println!("delete status={} body={}", r.status, r.body),
         Err(e) => println!("delete error: {}", e),
     }
-    match http::head(&base, []) {
+    match http::head(&base, Vec::from([])) {
         Ok(r) => println!("head status={}", r.status),
         Err(e) => println!("head error: {}", e),
     }

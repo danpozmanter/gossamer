@@ -161,14 +161,14 @@ fn fn_i64_to_i64_indirect_through_vec_read() {
     // matrix needs to pin the baseline to catch any future drift that
     // would erase it back to a generic shape.
     let src = r#"
-fn map_i64(xs: [i64], f: Fn(i64) -> i64) -> [i64] {
-    let mut out: [i64] = []
+fn map_i64(xs: Vec<i64>, f: Fn(i64) -> i64) -> Vec<i64> {
+    let mut out: Vec<i64> = Vec::from([])
     for x in xs { out.push(f(x)) }
     out
 }
 
 fn main() {
-    let xs = [1, 2, 3, 4]
+    let xs = Vec::from([1, 2, 3, 4])
     let mapped = map_i64(xs, |x| x * 10)
     println!("mapped[0]={}", mapped[0])
     println!("mapped[3]={}", mapped[3])
@@ -186,14 +186,14 @@ fn fn_f64_to_f64_indirect_through_vec_read() {
     // caller reads `rax` (the actual return register) instead of
     // `xmm0` (stale).
     let src = r#"
-fn map_f64(xs: [f64], f: Fn(f64) -> f64) -> [f64] {
-    let mut out: [f64] = []
+fn map_f64(xs: Vec<f64>, f: Fn(f64) -> f64) -> Vec<f64> {
+    let mut out: Vec<f64> = Vec::from([])
     for x in xs { out.push(f(x)) }
     out
 }
 
 fn main() {
-    let xs: [f64] = [1.0, 2.0, 3.0, 4.0]
+    let xs: Vec<f64> = [1.0, 2.0, 3.0, 4.0].to_vec()
     let halved = map_f64(xs, |x| x * 0.5)
     println!("halved[0]={}", halved[0])
     println!("halved[3]={}", halved[3])
@@ -211,14 +211,14 @@ fn fn_f64_to_i64_indirect_through_vec_read() {
     // i64` so the closure-return bitcast - not scalar-cast lowering
     // - is the path under test.
     let src = r#"
-fn map_f64_to_i64(xs: [f64], f: Fn(f64) -> i64) -> [i64] {
-    let mut out: [i64] = []
+fn map_f64_to_i64(xs: Vec<f64>, f: Fn(f64) -> i64) -> Vec<i64> {
+    let mut out: Vec<i64> = Vec::from([])
     for x in xs { out.push(f(x)) }
     out
 }
 
 fn main() {
-    let xs: [f64] = [1.5, 2.5, 3.5, 4.5]
+    let xs: Vec<f64> = [1.5, 2.5, 3.5, 4.5].to_vec()
     let buckets = map_f64_to_i64(xs, |x| if x > 3.0 { 100 } else { 7 })
     println!("buckets[0]={}", buckets[0])
     println!("buckets[3]={}", buckets[3])
@@ -234,14 +234,14 @@ fn fn_i64_to_f64_indirect_through_vec_read() {
     // a Vec<f64> slot. Avoid `as f64` so the closure-result bitcast
     // - not scalar-cast lowering - is the path under test.
     let src = r#"
-fn map_i64_to_f64(xs: [i64], f: Fn(i64) -> f64) -> [f64] {
-    let mut out: [f64] = []
+fn map_i64_to_f64(xs: Vec<i64>, f: Fn(i64) -> f64) -> Vec<f64> {
+    let mut out: Vec<f64> = Vec::from([])
     for x in xs { out.push(f(x)) }
     out
 }
 
 fn main() {
-    let xs = [2, 4, 6, 8]
+    let xs = Vec::from([2, 4, 6, 8])
     let weights = map_i64_to_f64(xs, |x| if x > 5 { 1.5 } else { 0.25 })
     println!("weights[0]={}", weights[0])
     println!("weights[3]={}", weights[3])
@@ -258,14 +258,14 @@ fn fn_two_f64_to_f64_indirect_through_vec_read() {
     // multi-arg float case would show up here distinct from the
     // single-arg case above.
     let src = r#"
-fn reduce_f64(xs: [f64], init: f64, f: Fn(f64, f64) -> f64) -> f64 {
+fn reduce_f64(xs: Vec<f64>, init: f64, f: Fn(f64, f64) -> f64) -> f64 {
     let mut acc = init
     for x in xs { acc = f(acc, x) }
     acc
 }
 
 fn main() {
-    let xs: [f64] = [1.5, 2.5, 3.5, 4.5]
+    let xs: Vec<f64> = [1.5, 2.5, 3.5, 4.5].to_vec()
     let total = reduce_f64(xs, 0.0, |acc, x| acc + x)
     println!("total={}", total)
     let scaled = reduce_f64(xs, 1.0, |acc, x| acc * x)
@@ -287,14 +287,14 @@ fn bare_fn_item_f64_through_vec_read() {
     let src = r#"
 fn double(x: f64) -> f64 { x * 2.0 }
 
-fn map_f64(xs: [f64], f: Fn(f64) -> f64) -> [f64] {
-    let mut out: [f64] = []
+fn map_f64(xs: Vec<f64>, f: Fn(f64) -> f64) -> Vec<f64> {
+    let mut out: Vec<f64> = Vec::from([])
     for x in xs { out.push(f(x)) }
     out
 }
 
 fn main() {
-    let xs: [f64] = [0.25, 0.5, 1.0, 2.0]
+    let xs: Vec<f64> = [0.25, 0.5, 1.0, 2.0].to_vec()
     let doubled = map_f64(xs, double)
     println!("doubled[0]={}", doubled[0])
     println!("doubled[3]={}", doubled[3])
@@ -312,14 +312,14 @@ fn capturing_closure_f64_through_vec_read() {
     // body from env[8] and tail-jumps with `(env, x)`. f64 args
     // travel in xmm1 across both ABIs because env occupies slot 0.
     let src = r#"
-fn map_f64(xs: [f64], f: Fn(f64) -> f64) -> [f64] {
-    let mut out: [f64] = []
+fn map_f64(xs: Vec<f64>, f: Fn(f64) -> f64) -> Vec<f64> {
+    let mut out: Vec<f64> = Vec::from([])
     for x in xs { out.push(f(x)) }
     out
 }
 
 fn main() {
-    let xs: [f64] = [1.0, 2.0, 3.0, 4.0]
+    let xs: Vec<f64> = [1.0, 2.0, 3.0, 4.0].to_vec()
     let bias = 100.0
     let shifted = map_f64(xs, |x| x + bias)
     println!("shifted[0]={}", shifted[0])

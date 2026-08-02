@@ -8,12 +8,12 @@ fn apply(f: Fn(i64) -> bool, x: i64) -> bool { f(x) }
 
 fn main() {
     let n = 10
-    let sieve = [true; n]
+    let sieve: Vec<bool> = Vec::from([true; 10])
     let f = |k: i64| sieve[k]
     println!("{} {} {} {}", f(0), f(3), f(7), f(9))
     println!("{} {}", apply(f, 2), apply(f, 8))
 
-    let marks = [65; n]
+    let marks: Vec<i64> = Vec::from([65; 10])
     let g = |k: i64| marks[k]
     println!("{} {}", g(3), g(9))
 

@@ -23,7 +23,7 @@ fn main() {
     // close+drain requires a single owner of the close step.
     time::sleep(50)
 
-    let mut received: [i64] = []
+    let mut received: Vec<i64> = Vec::from([])
     while let Some(v) = rx.try_recv() {
         received.push(v)
     }

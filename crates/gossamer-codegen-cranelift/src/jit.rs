@@ -253,6 +253,18 @@ fn body_user_calls<'a>(
             Operand::Const(ConstValue::Str(name)) if all_names.contains(name.as_str()) => {
                 calls.push(name.as_str());
             }
+            Operand::Const(ConstValue::Str(name)) => {
+                let suffix = format!("::{name}");
+                let mut matching_methods = all_names
+                    .iter()
+                    .copied()
+                    .filter(|candidate| candidate.ends_with(&suffix));
+                match (matching_methods.next(), matching_methods.next()) {
+                    (Some(method), None) => calls.push(method),
+                    (Some(_), Some(_)) => unresolved = true,
+                    _ => {}
+                }
+            }
             Operand::FnRef { def, .. } => match def_to_name.get(&def.local) {
                 Some(name) => calls.push(name),
                 None => unresolved = true,
@@ -433,12 +445,14 @@ fn jit_compile_set<'a>(
         let (calls, _) = body_user_calls(body, &all_names, &def_to_name);
         for callee in calls {
             let ok = body_map.get(callee).is_some_and(|b| {
-                // A native-only link dependency never crosses the VM
-                // trampoline, so its parameter and return types do not need a
-                // JitKind marshalling shape. This admits helpers such as
-                // `energy(&[Body; 5])` while `jit_entry_body_names` still keeps
-                // them out of the VM entry table.
-                !body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes)
+                // Native-only dependencies do not cross the VM trampoline,
+                // but the same unsupported aggregate boundary shapes also
+                // lack a proven native call ABI. Compiling a caller while
+                // admitting such a callee produced malformed calls for
+                // generic structs and aggregate sret helpers. Keep the whole
+                // dependent closure on bytecode until that ABI is lowerable.
+                body_kinds(b, tcx, enum_shapes, struct_shapes).is_some()
+                    && !body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes)
                     && !body_has_cross_goroutine_ops(b)
                     && !body_jit_unsupported(b, tcx)
             });
@@ -1254,6 +1268,10 @@ fn body_calls_jit_unsafe(
 ///   registries; a native body would mint and wait on the *runtime*
 ///   registries instead, so the two sides never observe each other
 ///   (a `wg.wait()` deadlock). Such bodies stay on bytecode.
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeping every native-admission safety check in one audit point is deliberate"
+)]
 fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
     use gossamer_mir::{ConstValue, Operand, Rvalue, StatementKind, Terminator};
     use gossamer_types::Mutbl;
@@ -1347,12 +1365,13 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
     for block in &body.blocks {
         for stmt in &block.stmts {
             if let StatementKind::Assign {
-                rvalue: Rvalue::CallIntrinsic { args, .. },
+                rvalue: Rvalue::CallIntrinsic { name, args },
                 ..
             } = &stmt.kind
-                && has_fn_arg(args)
             {
-                return true;
+                if *name == "gos_jit_unsupported_user_iterator" || has_fn_arg(args) {
+                    return true;
+                }
             }
         }
         if let Terminator::Call { callee, args, .. } = &block.terminator {
@@ -1957,6 +1976,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_vec_last"            => rt::gos_rt_vec_last,
         "gos_rt_vec_get_opt"         => rt::gos_rt_vec_get_opt,
         "gos_rt_vec_reversed"        => rt::gos_rt_vec_reversed,
+        "gos_rt_vec_reverse"         => rt::gos_rt_vec_reverse,
         "gos_rt_vec_index_of_i64"    => rt::gos_rt_vec_index_of_i64,
         "gos_rt_vec_index_of_str"    => rt::gos_rt_vec_index_of_str,
         "gos_rt_vec_count_of_i64"    => rt::gos_rt_vec_count_of_i64,
@@ -2399,6 +2419,9 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         // Adds these to the JIT dispatch table so user bodies that
         // call them stop falling through to the bytecode VM.
         "gos_rt_arr_sort_by_i64"     => rt::gos_rt_arr_sort_by_i64,
+        "gos_rt_arr_reverse"         => rt::gos_rt_arr_reverse,
+        "gos_rt_arr_sort_i64"        => rt::gos_rt_arr_sort_i64,
+        "gos_rt_arr_sort_str"        => rt::gos_rt_arr_sort_str,
         "gos_rt_vec_sort_by_i64"     => rt::gos_rt_vec_sort_by_i64,
         "gos_rt_vec_sort_i64"        => rt::gos_rt_vec_sort_i64,
         "gos_rt_vec_sort_str"        => rt::gos_rt_vec_sort_str,
@@ -3002,6 +3025,36 @@ mod promotion_report_tests {
         assert!(
             entries.is_empty(),
             "caller with unsupported dependency must not become a VM entry: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn unsupported_method_dependency_rejects_dynamic_leaf_name_caller() {
+        let mut tcx = TyCtxt::new();
+        let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+        let map_ty = tcx.intern(TyKind::HashMap {
+            key: i64_ty,
+            value: i64_ty,
+        });
+        let mut caller = body("main", i64_ty, true);
+        let span = caller.span;
+        caller.blocks[0].terminator = Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("next".to_string())),
+            args: Vec::new(),
+            destination: Place::local(Local(0)),
+            target: Some(BlockId(1)),
+        };
+        caller.blocks.push(BasicBlock {
+            id: BlockId(1),
+            stmts: Vec::new(),
+            terminator: Terminator::Goto { target: BlockId(1) },
+            span,
+        });
+        let bodies = vec![caller, body("Counter::next", map_ty, false)];
+        let admitted = jit_compile_body_names(&bodies, &tcx, &HashMap::new(), &HashMap::new());
+        assert!(
+            admitted.is_empty(),
+            "dynamic method dispatch must retain its unsupported dependency: {admitted:?}"
         );
     }
 

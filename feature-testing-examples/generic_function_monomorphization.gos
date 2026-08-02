@@ -4,15 +4,15 @@
 // demonstrating that higher-order functions substitute for
 // monomorphized generics in Gossamer today.
 
-fn map_i64(xs: [i64], f: Fn(i64) -> i64) -> [i64] {
-    let mut out: [i64] = []
+fn map_i64(xs: Vec<i64>, f: Fn(i64) -> i64) -> Vec<i64> {
+    let mut out: Vec<i64> = Vec::from([])
     for x in xs {
         out.push(f(x))
     }
     out
 }
 
-fn reduce_i64(xs: [i64], init: i64, f: Fn(i64, i64) -> i64) -> i64 {
+fn reduce_i64(xs: Vec<i64>, init: i64, f: Fn(i64, i64) -> i64) -> i64 {
     let mut acc = init
     for x in xs {
         acc = f(acc, x)
@@ -20,15 +20,15 @@ fn reduce_i64(xs: [i64], init: i64, f: Fn(i64, i64) -> i64) -> i64 {
     acc
 }
 
-fn map_f64(xs: [f64], f: Fn(f64) -> f64) -> [f64] {
-    let mut out: [f64] = []
+fn map_f64(xs: Vec<f64>, f: Fn(f64) -> f64) -> Vec<f64> {
+    let mut out: Vec<f64> = Vec::from([])
     for x in xs {
         out.push(f(x))
     }
     out
 }
 
-fn reduce_f64(xs: [f64], init: f64, f: Fn(f64, f64) -> f64) -> f64 {
+fn reduce_f64(xs: Vec<f64>, init: f64, f: Fn(f64, f64) -> f64) -> f64 {
     let mut acc = init
     for x in xs {
         acc = f(acc, x)
@@ -42,7 +42,7 @@ fn clamp_i64(lo: i64, hi: i64, x: i64) -> i64 {
 
 fn main() {
     // Integer domain
-    let nums = [1, 2, 3, 4, 5]
+    let nums = Vec::from([1, 2, 3, 4, 5])
     let doubled = map_i64(nums, |x| x * 2)
     println!("doubled[4] = {}", doubled[4])
 
@@ -53,7 +53,7 @@ fn main() {
     println!("product = {}", product)
 
     // Float domain - same algorithm, different type
-    let fs: [f64] = [1.0, 2.0, 3.0, 4.0]
+    let fs: Vec<f64> = Vec::from([1.0, 2.0, 3.0, 4.0])
     let halved = map_f64(fs, |x| x * 0.5)
     println!("halved[0] = {}", halved[0])
 
@@ -67,7 +67,7 @@ fn main() {
 
     // clamp via partial application
     let clamp5 = |x| clamp_i64(1, 5, x)
-    let raw = [0, 3, 7, -1, 5]
+    let raw = Vec::from([0, 3, 7, -1, 5])
     let clamped = map_i64(raw, clamp5)
     println!("clamped[0] = {}", clamped[0])
     println!("clamped[2] = {}", clamped[2])

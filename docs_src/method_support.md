@@ -32,19 +32,19 @@ dispatch-table additions.
 | `s.push(ch)` / `s.push_char(ch)` | `()` | Appends a Unicode scalar through mutating-method writeback. |
 | `s.push_byte(b)` | `()` | Appends the byte as the matching Unicode scalar. |
 | `s.push_str(t)` | `()` | Appends string contents through mutating-method writeback. |
-| `s.chars()` | `[char]` | Unicode scalar values. |
+| `s.chars()` | `Vec<char>` | Unicode scalar values. |
 | `s.trim()` | `String` | ASCII whitespace strip. |
 | `s.contains(needle)` | `bool` | Substring search. |
 | `s.starts_with(prefix)` | `bool` | |
 | `s.ends_with(suffix)` | `bool` | |
 | `s.find(needle)` | `Option<i64>` | Byte position of first match. |
 | `s.replace(from, to)` | `String` | Replaces every occurrence. |
-| `s.split(delim)` | `[String]` | Splits on every delimiter occurrence. |
+| `s.split(delim)` | `Vec<String>` | Splits on every delimiter occurrence. |
 | `s.to_lowercase()` | `String` | Lowercase; Unicode-aware. (`to_lowercase` is not a method.) |
 | `s.to_uppercase()` | `String` | Uppercase; Unicode-aware. |
 | `s.to_string()` | `String` | No-op clone for `&str`/`String`. |
 | `s.clone()` | `String` | |
-| `s.as_bytes()` | `&[u8]` | Zero-copy borrow. |
+| `s.as_bytes()` | `Vec<u8>` | Materializes the UTF-8 bytes. This is an intentional divergence from Rust's borrowed `&[u8]` result because the current cross-tier string ABI does not expose a stable borrowed byte view. |
 | `s.parse<T>()` / `s.parse::<T>()` | `Result<T, errors::Error>` | Parses into the expected result type, such as `let n: i64 = s.parse()?`. |
 | `s.to_i64()` | `Option<i64>` | Parses the string; `None` on malformed input. |
 | `s.to_f64()` | `Option<f64>` | |
@@ -54,24 +54,35 @@ dispatch-table additions.
 
 ## Vec
 
-Ranges are plain `Vec<i64>` values - `(2..n)` and `(1..=n)` build the
-sequence directly, so every method below chains off a range too:
-`(1..=5).filter(|n| n % 2 == 1).sum()`.
+`Vec<T>` is the only owned growable sequence. A bracket literal is a fixed
+array, so use `Vec::from([a, b, c])` when growth or capacity is required.
+`[T; N]`, `&[T]`, and `&mut [T]` share only the non-resizing methods listed
+below. Mutable arrays and slices may reorder or replace existing elements, but
+cannot change their length or capacity. Iterator combinators are used through
+`.iter()` on arrays and slices.
+
+| Receiver | Available surface |
+|---|---|
+| `[T; N]`, `&[T; N]`, `&[T]` | `len`, `is_empty`, `slice`, `first`, `last`, `get`, `contains`, `index_of`, `count_of`, `windows`, `chunks`, `join`, `to_vec`, `iter`; fixed arrays also have value-preserving `clone` |
+| `&mut [T; N]`, `&mut [T]` | Shared methods plus in-place `sort`, `sort_by`, `sort_by_key`, `reverse`, `swap`, and `fill` |
+| `Vec<T>`, `&Vec<T>`, `&mut Vec<T>` | Shared methods plus eager combinators, resizing, and capacity operations |
 
 | Method | Returns | Notes |
 |---|---|---|
-| `Vec::new()` | `[T]` | Associated function; empty vector. |
-| `Vec::with_capacity(n)` | `[T]` | Associated function; preallocates in compiled tiers, accepted as an advisory hint in the VM. |
+| `Vec::new()` | `Vec<T>` | Associated function; empty vector. |
+| `Vec::with_capacity(n)` | `Vec<T>` | Associated function; preallocates in compiled tiers, accepted as an advisory hint in the VM. |
 | `v.push(item)` | `()` | Amortised O(1). |
 | `v.pop()` | `Option<T>` | |
 | `v.clear()` | `()` | Removes all elements. |
 | `v.truncate(n)` | `()` | Keeps the first `n` elements, clamping negative lengths to `0`. |
 | `v.extend(xs)` / `v.extend_from_slice(xs)` | `()` | Appends elements from another vector or inline array with matching element layout. |
+| `v.reserve(n)` / `v.reserve_exact(n)` | `()` | Ensures room for at least `n` total elements. |
+| `v.capacity()` | `i64` | Returns allocated element capacity. |
 | `v.len()` | `i64` | |
 | `v.is_empty()` | `bool` | |
 | `v.iter()` | `Iter<T>` | Lazy iterator. |
-| `v.filter(pred)` | `[T]` | Elements where `pred` holds. |
-| `v.map(f)` | `[U]` | Transform every element. |
+| `v.filter(pred)` | `Vec<T>` | Elements where `pred` holds. |
+| `v.map(f)` | `Vec<U>` | Transform every element. |
 | `v.sum()` | `T` | Numeric sum; `0` for empty. |
 | `v.min()` / `v.max()` | `Option<T>` | `None` for empty. |
 | `v.count(pred)` | `i64` | Elements where `pred` holds. |
@@ -79,29 +90,30 @@ sequence directly, so every method below chains off a range too:
 | `v.find(pred)` | `Option<T>` | First match; `v.position(pred)` returns its index. |
 | `v.fold(init, f)` | `U` | Left fold: `f(acc, x)` per element. |
 | `v.max_by_key(f)` / `v.min_by_key(f)` | `Option<T>` | Extremum by derived key. |
-| `v.take(n)` | `[T]` | First `n` elements (fewer if short). |
-| `v.step_by(n)` | `[T]` | Every `n`-th element, starting at index 0. |
+| `v.take(n)` | `Vec<T>` | First `n` elements (fewer if short). |
+| `v.step_by(n)` | `Vec<T>` | Every `n`-th element, starting at index 0. |
 | `v.join(sep)` | `String` | Scalar / `String` elements joined with `sep`. |
 | `v.first()` / `v.last()` | `Option<T>` | |
 | `v.insert(i, item)` / `v.remove(i)` | `Result<_, errors::Error>` | Bounds-checked mutation helpers. |
-| `v.rev()` | `[T]` | Non-mutating; `v.reverse()` is in-place. |
+| `v.rev()` | `Vec<T>` | Non-mutating; `v.reverse()` is in-place. |
 | `v.contains(&x)` | `bool` | `v.index_of(&x)` returns `Option<i64>`, `v.count_of(&x)` the tally. |
 | `v.sort()` / `v.sort_by(cmp)` / `v.sort_by_key(f)` | `()` | In-place; `Reverse(k)` keys give descending order. |
-| `v.swap(i, j)` | `()` | |
+| `v.swap(i, j)` | `Result<(), errors::Error>` | Exchanges two existing elements or returns a bounds error. |
+| `v.fill(value)` | `()` | Clones `value` into every existing element without changing length or capacity; also available on mutable arrays and slices. |
 
 ## HashMap
 
 | Method | Returns | Notes |
 |---|---|---|
-| `m.insert(k, v)` | `()` | Inserts or overwrites in place; does not return the previous value. |
+| `m.insert(k, v)` | `Option<V>` | Inserts or overwrites in place and returns the previous value when present. |
 | `m.get(k)` | `Option<V>` | `None` when the key is absent. |
 | `m.get_or(k, default)` | `V` | Value for `k`, or `default` when absent. |
 | `m.contains_key(k)` | `bool` | Key-membership test (`m.contains(k)` is an alias). |
-| `m.remove(k)` | `()` | Deletes the key in place. Use `HashMap::pop(m, k) -> Option<V>` to recover the removed value. |
+| `m.remove(k)` / `m.pop(k)` | `Option<V>` | Deletes the key and returns its previous value when present. |
 | `m.inc(k)` / `m.inc(k, by)` | `()` | Increment an `i64` counter, inserting `0` first if absent. |
 | `m.or_insert(k, default)` | `V` | Value for `k`, inserting `default` first when absent; works for aggregate values (structs, tuples) too. |
 | `m.len()` | `i64` | |
-| `m.iter()` | `[(K, V)]` | `keys()` / `values()` return the halves. |
+| `m.iter()` | `Vec<(K, V)>` | `keys()` / `values()` return `Vec<K>` / `Vec<V>`. |
 
 ## BTreeMap
 
@@ -111,23 +123,23 @@ yields pairs in ascending key order.
 
 | Method | Returns | Notes |
 |---|---|---|
-| `m.insert(k, v)` | `()` | Inserts or overwrites in place. |
+| `m.insert(k, v)` | `Option<V>` | Inserts or overwrites and returns the previous value when present. |
 | `m.get(k)` | `Option<V>` | `None` when the key is absent. |
 | `m.get_or(k, default)` | `V` | Value for `k`, or `default` when absent. |
 | `m.contains(k)` / `m.contains_key(k)` | `bool` | Key-membership test. |
 | `m.len()` | `i64` | |
-| `m.iter()` | `[(K, V)]` | Yields pairs in ascending key order. |
+| `m.iter()` | `Vec<(K, V)>` | Yields pairs in ascending key order. |
 
 ## HashSet
 
 | Method | Returns | Notes |
 |---|---|---|
-| `s.insert(v)` | `()` | Inserts the value in place. |
+| `s.insert(v)` | `bool` | Inserts the value and reports whether it was newly added. |
 | `s.contains(v)` | `bool` | Membership test. |
-| `s.remove(v)` | `()` | Deletes the value in place. |
+| `s.remove(v)` | `bool` | Deletes the value and reports whether it was present. |
 | `s.len()` | `i64` | |
 | `s.clear()` | `()` | Removes all values. |
-| `s.to_vec()` | `[T]` | Materialises the set values. |
+| `s.to_vec()` | `Vec<T>` | Materialises the set values. |
 | `s.union(other)` | `HashSet<T>` | Set union. |
 | `s.intersection(other)` | `HashSet<T>` | Shared values. |
 | `s.difference(other)` | `HashSet<T>` | Values present only in `s`. |

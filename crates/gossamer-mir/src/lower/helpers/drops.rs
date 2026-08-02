@@ -693,6 +693,10 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     if let Some(l) = rc_operand(op)
                         && !copyback_sites.contains(&(block_idx, stmt_idx))
                         && !skip_extraction_move
+                        && !matches!(
+                            tcx.kind_of(body.locals[place.local.0 as usize].ty),
+                            gossamer_types::TyKind::Ref { .. }
+                        )
                     {
                         retain_sites.push((block_idx, stmt_idx, l, 1));
                     }
@@ -1756,10 +1760,33 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             }
         }
     }
-    // Retain after each acquisition statement (gap = stmt_idx + 1).
+    // Retain each acquisition. For whole-local reassignment of an owner, mint
+    // the replacement share before releasing the previous value. The source
+    // can be a child borrowed from that previous value, as in
+    // `cursor = next` while walking a recursive list. Releasing `cursor`
+    // first recursively reclaims `next`, so a retain after the copy reads a
+    // dangling pointer. Other acquisition forms retain after the statement as
+    // before.
     for (bi, si, local, count) in &retain_sites {
+        let retain_gap = if matches!(
+            body.blocks[*bi].stmts.get(*si),
+            Some(Statement {
+                kind:
+                    StatementKind::Assign {
+                        place,
+                        rvalue: Rvalue::Use(Operand::Copy(src)),
+                    },
+                ..
+            }) if place.projection.is_empty()
+                && src.projection.is_empty()
+                && releasable_set.contains(&place.local.0)
+        ) {
+            *si
+        } else {
+            *si + 1
+        };
         for _ in 0..*count {
-            gaps[*bi][*si + 1].push((true, *local));
+            gaps[*bi][retain_gap].push((true, *local));
         }
     }
     // Retain consuming-call arguments just before the terminator.

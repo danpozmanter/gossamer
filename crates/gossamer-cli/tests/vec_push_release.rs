@@ -161,7 +161,7 @@ fn assert_three_tier_stdout(tag: &str, source: &str, expected: &str) {
 
 #[test]
 fn empty_vec_push_then_index_works_in_all_tiers() {
-    // The smallest repro - `let mut v: [i64] = [].to_vec();
+    // The smallest repro - `let mut v: Vec<i64> = Vec::from([]).to_vec();
     // v.push(42); v[0]`. The empty-vec path used to allocate a
     // zero-cap `GosVec` whose backing buffer was null; the
     // first push grew it but the LLVM tier passed the i64
@@ -169,7 +169,7 @@ fn empty_vec_push_then_index_works_in_all_tiers() {
     // memcpy crashed at `si_addr=42`.
     let src = r#"
 fn main() {
-    let mut v: [i64] = [].to_vec()
+    let mut v: Vec<i64> = Vec::from([]).to_vec()
     v.push(42)
     println!("v[0]={}", v[0])
 }
@@ -181,7 +181,7 @@ fn main() {
 fn core_method_contract_mutators_work_in_all_tiers() {
     let src = r#"
 fn main() {
-    let mut xs: [i64] = [1, 2]
+    let mut xs: Vec<i64> = [1, 2].to_vec()
     xs.extend([3, 4])
     println!("len1={}", xs.len())
     xs.truncate(3)
@@ -189,12 +189,12 @@ fn main() {
     xs.clear()
     println!("len3={}", xs.len())
 
-    let mut ys: [i64] = [5]
+    let mut ys: Vec<i64> = [5].to_vec()
     ys.extend_from_slice([6, 7])
     println!("y2={}", ys[2])
 
-    let mut words: [String] = ["a"].to_vec()
-    let more: [String] = ["b"].to_vec()
+    let mut words: Vec<String> = ["a"].to_vec()
+    let more: Vec<String> = ["b"].to_vec()
     words.extend(more)
     println!("word={}", words[1])
 
@@ -246,7 +246,7 @@ fn vec_push_string_then_index_works_in_all_tiers() {
     // i64 cast loses the pointer's bytes.
     let src = r#"
 fn main() {
-    let mut v: [String] = [].to_vec()
+    let mut v: Vec<String> = Vec::from([]).to_vec()
     v.push("hello".to_string())
     v.push("world".to_string())
     println!("{},{}", v[0], v[1])
@@ -273,7 +273,7 @@ fn render(ids: &[String]) -> String {
 }
 
 fn main() {
-    let mut v: [String] = [].to_vec()
+    let mut v: Vec<String> = Vec::from([]).to_vec()
     let mut i: i64 = 0
     while i < 5 {
         v.push(format!("item_{}", i))

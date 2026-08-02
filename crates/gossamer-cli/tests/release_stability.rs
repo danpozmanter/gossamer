@@ -156,7 +156,7 @@ fn run_server() {
 }
 
 fn await_ready() {
-    let none: [(String, String)] = []
+    let none: Vec<(String, String)> = Vec::from([])
     let mut tries = 0
     while tries < 400 {
         if let Ok(_) = http::get("http://127.0.0.1:23924/probe", none) {
@@ -170,7 +170,7 @@ fn await_ready() {
 fn main() {
     go run_server()
     await_ready()
-    let none: [(String, String)] = []
+    let none: Vec<(String, String)> = Vec::from([])
     match http::get("http://127.0.0.1:23924/echo?k=1&n=2", none) {
         Ok(r) => println!("status={} body={}", r.status, r.body),
         Err(e) => println!("error: {}", e),
@@ -216,7 +216,7 @@ fn run_server() {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, []) {
+        if let Ok(_) = http::get(url, Vec::from([])) {
             return
         }
         time::sleep(25)
@@ -227,7 +227,7 @@ fn await_ready(url: &String) {
 fn main() {
     go run_server()
     await_ready(&"http://127.0.0.1:23921/x")
-    match http::get("http://127.0.0.1:23921/x", []) {
+    match http::get("http://127.0.0.1:23921/x", Vec::from([])) {
         Ok(r) => println!("status={} body={}", r.status, r.body),
         Err(e) => println!("error: {}", e),
     }
@@ -265,7 +265,7 @@ struct Proxy { }
 
 impl http::Handler for Proxy {
     fn serve(&self, r: http::Request) -> Result<http::Response, http::Error> {
-        match http::stream(&r.method, "http://127.0.0.1:23922/data", &r.body, []) {
+        match http::stream(&r.method, "http://127.0.0.1:23922/data", &r.body, Vec::from([])) {
             Ok(up) => Ok(http::Response::stream(up.status, up.content_type, up)),
             Err(_) => Ok(http::Response::text(502, "bad upstream")),
         }
@@ -291,7 +291,7 @@ fn run_proxy() {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, []) {
+        if let Ok(_) = http::get(url, Vec::from([])) {
             return
         }
         time::sleep(25)
@@ -304,7 +304,7 @@ fn main() {
     go run_proxy()
     await_ready(&"http://127.0.0.1:23922/data")
     await_ready(&"http://127.0.0.1:23923/x")
-    match http::get("http://127.0.0.1:23923/x", []) {
+    match http::get("http://127.0.0.1:23923/x", Vec::from([])) {
         Ok(r) => println!("status={} ct={} body={}", r.status, r.content_type, r.body),
         Err(e) => println!("error: {}", e),
     }
@@ -614,7 +614,7 @@ fn release_vec_push_iter_sums_correctly() {
         "vec_iter",
         r#"
 fn main() {
-    let mut v: [i64] = []
+    let mut v: Vec<i64> = Vec::from([])
     let mut k: i64 = 0
     while k < 1000 {
         v.push(k)
@@ -972,7 +972,7 @@ fn release_byte_vec_literal_sums_at_i64_width() {
         "byte_vec_sum",
         r#"
 fn main() {
-    let body: [u8] = [200, 200, 60, 4]
+    let body: Vec<u8> = [200, 200, 60, 4].to_vec()
     let mut sum = 0
     for b in body {
         sum += b as i64
@@ -1001,7 +1001,7 @@ use std::fs
 use std::path
 
 fn main() -> Result<(), errors::Error> {
-    let payload: [u8] = [0, 255, 1, 254]
+    let payload: Vec<u8> = [0, 255, 1, 254].to_vec()
     let tmp = path::join(&env::temp_dir(), &"gos_rel_byte_sum_probe.bin")
     fs::write(&tmp, &payload)?
     let mut bytes = fs::read(&tmp)?
@@ -1028,8 +1028,8 @@ fn main() -> Result<(), errors::Error> {
 #[test]
 fn release_narrow_casts_mask_and_float_casts_saturate() {
     // `as` is the single masking point for narrow int types
-    // (`300 as u8` == 44, `200 as i8` == -56); arithmetic between
-    // narrow values runs at i64 width (200u8 + 200u8 == 400); and
+    // (`300 as u8` == 44, `200 as i8` == -56); release arithmetic
+    // wraps at the declared width (`200u8 + 200u8` == 144); and
     // float -> int saturates at i64 width with no narrow mask
     // (`300.7 as u8` == 300, `1e20 as i64` == i64::MAX). All match
     // the bytecode VM.
@@ -1051,7 +1051,7 @@ fn main() {
     println!("{}", h as i64)
 }
 "#,
-        "44\n-56\n400\n300\n-1\n9223372036854775807\n",
+        "44\n-56\n144\n300\n-1\n9223372036854775807\n",
     );
 }
 
@@ -1072,7 +1072,7 @@ use std::fs
 use std::path
 
 fn main() -> Result<(), errors::Error> {
-    let payload: [u8] = [9, 3, 7, 3, 1]
+    let payload: Vec<u8> = [9, 3, 7, 3, 1].to_vec()
     let tmp = path::join(&env::temp_dir(), &"gos_rel_packed_helpers.bin")
     fs::write(&tmp, &payload)?
     let mut bytes = fs::read(&tmp)?

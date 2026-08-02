@@ -13,8 +13,8 @@
 //     pre-call value (the move optimization falls back to a clone).
 
 fn classify(xs: &[i64]) -> Vec<i64> {
-    let mut evens: Vec<i64> = []
-    let mut odds: Vec<i64> = []
+    let mut evens: Vec<i64> = Vec::from([])
+    let mut odds: Vec<i64> = Vec::from([])
     for x in xs {
         // Tail-position push inside an `if` block.
         if *x % 2 == 0 {
@@ -26,7 +26,7 @@ fn classify(xs: &[i64]) -> Vec<i64> {
             _ => odds.push(*x),
         }
     }
-    let mut out: Vec<i64> = []
+    let mut out: Vec<i64> = Vec::from([])
     for e in evens {
         out.push(e)
     }
@@ -83,13 +83,13 @@ fn main() {
     println!("{} {}", b, b.len())
 
     // &mut Vec local with a sibling read of the same local.
-    let mut v: Vec<i64> = [10, 20]
+    let mut v: Vec<i64> = Vec::from([10, 20])
     push_first(&mut v)
     println!("{:?}", v)
 }
 
 // Reads `v[0]` while `v` is borrowed `&mut`.
-fn push_first(v: &mut [i64]) {
+fn push_first(v: &mut Vec<i64>) {
     let head = v[0]
     v.push(head)
 }

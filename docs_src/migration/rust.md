@@ -132,7 +132,7 @@ impl Area for Circle {
     fn area(&self) -> f64 { 3.14159 * self.r * self.r }
 }
 
-fn total<T: Area>(xs: [T]) -> f64 {
+fn total<T: Area>(xs: &[T]) -> f64 {
     let mut out = 0.0
     for x in xs {
         out += x.area()

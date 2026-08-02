@@ -1,7 +1,7 @@
 # Running Gossamer
 
 Once `gos` is on your `PATH`, run a program with `gos FILE [ARGS...]`.
-`FILE` may be a `.gos` source file or a project directory containing
+`FILE` may be a source file with any filename extension or a project directory containing
 `project.toml`; `gos` with no arguments drops into the REPL.
 
 ## Cheat-sheet
@@ -13,7 +13,7 @@ Once `gos` is on your `PATH`, run a program with `gos FILE [ARGS...]`.
 | `gos src/main.gos` | Register-based bytecode VM with in-process Cranelift JIT |
 | `gos --no-jit src/main.gos` | Same VM, pure bytecode dispatch (JIT off) |
 | `gos check src/main.gos` | Type-check + exhaustiveness |
-| `gos build src/main.gos` | Native build via LLVM AOT - lowers through MIR + LLVM (`llc -O0`), then links the user's object against the `gossamer-runtime` staticlib into an ELF/Mach-O/PE. |
+| `gos build src/main.gos` | Native build via LLVM AOT with checked arithmetic (`opt -O1 | llc -O0`), then links the user's object against the `gossamer-runtime` staticlib into an ELF/Mach-O/PE. |
 | `gos build --release src/main.gos` | Optimised native build - full LLVM `opt -O3 | llc -O3` pipeline, static musl on Linux. |
 | `gos build --target aarch64-unknown-linux-musl src/main.gos` | Cross-compile to a Tier 2 Linux-musl target. CI executes the resulting AOT output under QEMU and compares it with the pure bytecode VM. Other registered triples are not necessarily supported deployment targets. |
 | `gos fmt src/main.gos` | Rewrite canonically; `--check` refuses to edit |
@@ -33,7 +33,8 @@ Once `gos` is on your `PATH`, run a program with `gos FILE [ARGS...]`.
 | `gos` (no args) / `gos repl` | Start the interactive REPL |
 | `gos repl` then `%help` | List REPL commands |
 | `gos repl` then `%info strings::trim` | Show help and the relevant module or type listing |
-| `gos repl` then `%find trim` | Search public symbol names with a regex |
+| `gos repl` then `%info trim` | Search public catalog entries |
+| `gos repl` then `%explain value --details` | Inspect a binding's available methods with descriptions and examples |
 
 ## Entry file
 

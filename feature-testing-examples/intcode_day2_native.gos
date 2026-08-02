@@ -1,4 +1,4 @@
-fn program_step(mut program: [i64], offset: i64) -> [i64] {
+fn program_step(mut program: Vec<i64>, offset: i64) -> Vec<i64> {
     let opcode = program[offset]
     if opcode == 99 {
         return program
@@ -16,7 +16,7 @@ fn program_step(mut program: [i64], offset: i64) -> [i64] {
     program
 }
 
-fn run_program(mut program: [i64]) -> [i64] {
+fn run_program(mut program: Vec<i64>) -> Vec<i64> {
     let mut offset = 0
     while program[offset] != 99 {
         program = program_step(program, offset)
@@ -25,7 +25,7 @@ fn run_program(mut program: [i64]) -> [i64] {
     program
 }
 
-fn with_inputs(program: &[i64], noun: i64, verb: i64) -> [i64] {
+fn with_inputs(program: &[i64], noun: i64, verb: i64) -> Vec<i64> {
     let mut copy = program.to_vec()
     copy[1] = noun
     copy[2] = verb
@@ -33,11 +33,11 @@ fn with_inputs(program: &[i64], noun: i64, verb: i64) -> [i64] {
 }
 
 fn main() {
-    let input: [i64] = [1, 9, 10, 3, 2, 3, 11, 0, 99, 30, 40, 50]
+    let input = [1, 9, 10, 3, 2, 3, 11, 0, 99, 30, 40, 50]
     let part1 = run_program(with_inputs(&input, 9, 10))
     println!("pos0={}", part1[0])
 
-    let sample: [i64] = [1, 1, 1, 4, 99, 5, 6, 0, 99]
+    let sample = Vec::from([1, 1, 1, 4, 99, 5, 6, 0, 99])
     let out = run_program(sample)
     println!("sample={} {}", out[0], out[4])
 }

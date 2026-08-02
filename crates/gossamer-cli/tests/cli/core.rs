@@ -119,7 +119,7 @@ fn direct_script_infers_a_gos_extension_when_omitted() {
 }
 
 #[test]
-fn eval_flag_executes_inline_source() {
+fn execute_flag_executes_inline_source() {
     for flag in ["-e", "--eval"] {
         let out = Command::new(gos_bin())
             .args([flag, "println(\"inline works\")"])
@@ -425,7 +425,7 @@ fn main() {
         |> iter::sum
     println!("{borrowed_total}")
 
-    let mut replaced: Vec<i64> = [1, 2, 3]
+    let mut replaced: Vec<i64> = Vec::from([1, 2, 3])
     let pending_replacement = replaced |> iter::map(|x| x)
     replaced[1] = 9
     println!("{}", pending_replacement |> iter::sum)
@@ -496,7 +496,7 @@ fn main() {
 const LAZY_ITERATOR_INVALIDATION_SOURCE: &str = r#"use std::iter
 
 fn main() {
-    let mut xs: Vec<i64> = [1, 2, 3]
+    let mut xs: Vec<i64> = Vec::from([1, 2, 3])
     let pending = xs |> iter::map(|x| x)
     xs.push(4)
     println!("{}", pending |> iter::sum)

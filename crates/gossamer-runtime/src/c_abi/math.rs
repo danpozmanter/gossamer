@@ -161,6 +161,32 @@ pub extern "C" fn gos_rt_math_abs_i64(x: i64) -> i64 {
     x.saturating_abs()
 }
 
+fn normalize_wrapping_int(value: u64, bits: i64, signed: i64) -> i64 {
+    let bits = bits.clamp(1, 64) as u32;
+    let masked = if bits == 64 {
+        value
+    } else {
+        value & ((1_u64 << bits) - 1)
+    };
+    if signed != 0 && bits < 64 && masked & (1_u64 << (bits - 1)) != 0 {
+        (masked | (!0_u64 << bits)) as i64
+    } else {
+        masked as i64
+    }
+}
+
+/// Profile-independent, Rust-compatible wrapping integer addition.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_int_wrapping_add(x: i64, y: i64, bits: i64, signed: i64) -> i64 {
+    normalize_wrapping_int((x as u64).wrapping_add(y as u64), bits, signed)
+}
+
+/// Profile-independent, Rust-compatible wrapping integer multiplication.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_int_wrapping_mul(x: i64, y: i64, bits: i64, signed: i64) -> i64 {
+    normalize_wrapping_int((x as u64).wrapping_mul(y as u64), bits, signed)
+}
+
 /// `math::is_nan(x)` - 1 when `x` is NaN, else 0.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_math_is_nan(x: f64) -> i32 {

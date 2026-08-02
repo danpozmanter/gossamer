@@ -129,9 +129,12 @@ fn radix_sort_like_release_work_stays_linear_and_fast() {
 use std::env
 
 let n: i64 = env::args()[0].parse().unwrap_or(500000)
-let mut src = [0; n]
-let mut dst = [0; n]
-for i in 0..n { src[i] = i * 6364136223846793005 + 1442695040888963407 }
+let mut src: Vec<i64> = Vec::with_capacity(n)
+let mut dst: Vec<i64> = Vec::with_capacity(n)
+for i in 0..n {
+    src.push(i * 6364136223846793005 + 1442695040888963407)
+    dst.push(0)
+}
 let mut pass = 0
 while pass < 8 {
     let shift = pass * 8

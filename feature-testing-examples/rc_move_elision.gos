@@ -27,11 +27,11 @@ fn sum(t: &Tree) -> i64 {
 
 struct Named {
     label: String,
-    tags: [String],
+    tags: Vec<String>,
 }
 
 fn make_named(k: i64) -> Named {
-    let mut tags: [String] = []
+    let mut tags: Vec<String> = Vec::from([])
     tags.push(format!("t{}", k))
     tags.push(format!("u{}", k))
     Named { label: format!("name-{}", k), tags: tags }

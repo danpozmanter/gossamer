@@ -7,7 +7,7 @@
 
 enum Doc {
     Leaf(i64),
-    Obj([(String, Doc)]),
+    Obj(Vec<(String, Doc)>),
 }
 
 fn total(d: Doc) -> i64 {
@@ -43,11 +43,11 @@ fn render(d: &Doc, out: &mut String) {
 }
 
 fn main() {
-    let inner = [(String::from("x"), Doc::Leaf(10)), (String::from("y"), Doc::Leaf(20))]
-    let doc = Doc::Obj([
+    let inner = Vec::from([(String::from("x"), Doc::Leaf(10)), (String::from("y"), Doc::Leaf(20))])
+    let doc = Doc::Obj(Vec::from([
         (String::from("id"), Doc::Leaf(7)),
         (String::from("body"), Doc::Obj(inner)),
-    ])
+    ]))
     let mut out = String::new()
     render(&doc, &mut out)
     println!("{}", out)

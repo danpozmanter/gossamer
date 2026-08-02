@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use crate::value::Value;
+use gossamer_types::IntTy;
 
 /// Virtual register index within a frame's register file.
 pub type Reg = u16;
@@ -134,6 +135,23 @@ pub enum Op {
         /// at the call boundary. `false` when every argument is a
         /// primitive scalar (which can never be a `__Cell`), letting
         /// the dispatch skip the per-argument cell check.
+        may_have_cells: bool,
+    },
+    /// Calls the named global at `global_idx` without first materializing its
+    /// name in a value register. Statically resolved path calls use this form;
+    /// dynamic callable values continue to use [`Op::Call`].
+    CallGlobal {
+        /// Destination register for the returned value.
+        dst: Reg,
+        /// Index into [`FnChunk::globals`].
+        global_idx: GlobalIdx,
+        /// First argument register.
+        args: Reg,
+        /// Number of arguments.
+        argc: u16,
+        /// Per-VM call-cache slot.
+        cache_idx: u16,
+        /// Whether arguments may contain auto-dereferenced cells.
         may_have_cells: bool,
     },
     /// `ret value`.
@@ -443,6 +461,22 @@ pub enum Op {
         /// Whether the source omitted the upper bound.
         end_open: bool,
     },
+    /// Constructs a one-field enum variant without generic call dispatch.
+    BuildVariant1 {
+        dst: Reg,
+        name_idx: ConstIdx,
+        field: Reg,
+        take_field: bool,
+    },
+    /// Constructs a two-field enum variant without generic call dispatch.
+    BuildVariant2 {
+        dst: Reg,
+        name_idx: ConstIdx,
+        first: Reg,
+        second: Reg,
+        take_first: bool,
+        take_second: bool,
+    },
     /// Typed numeric cast: `i64 as f64`. Reads from the `i64`
     /// register file and writes to the `f64` register file with
     /// no boxing.
@@ -601,7 +635,7 @@ pub enum Op {
         default_i: Reg,
     },
     /// `map.insert(key, value)` for `Value::IntMap`. The map handle
-    /// stays in `map_reg`; `dst_v` receives the previous value as Option<i64>.
+    /// stays in `map_reg`; `dst_v` receives the previous value as `Option<i64>`.
     IntMapInsert {
         /// Destination `Value` register receiving `Option<i64>`.
         dst_v: Reg,
@@ -686,6 +720,37 @@ pub enum Op {
         recv: Reg,
         /// Register holding the index value.
         idx: Reg,
+    },
+    /// Typed form of [`Op::StrByteAt`] for integer-producing expressions.
+    /// Keeping both the index and result in the `i64` register file avoids a
+    /// `Value::Int` box/unbox pair for every byte in string-scanning loops.
+    StrByteAtI64 {
+        /// Destination `i64` register.
+        dst_i: Reg,
+        /// Value register holding the string receiver.
+        recv: Reg,
+        /// `i64` register holding the index.
+        idx_i: Reg,
+    },
+    /// Fused wrapping addition of a string byte to an integer accumulator.
+    /// This is the typed lowering of `sum.wrapping_add(s.byte_at(i))`.
+    StrByteAtAddI64 {
+        /// Destination `i64` register.
+        dst_i: Reg,
+        /// `i64` register holding the accumulator.
+        lhs_i: Reg,
+        /// Value register holding the string receiver.
+        recv: Reg,
+        /// `i64` register holding the byte index.
+        idx_i: Reg,
+    },
+    /// Byte length of a statically typed string into the integer register
+    /// file, avoiding generic method dispatch and result boxing in loops.
+    StrLenI64 {
+        /// Destination `i64` register.
+        dst_i: Reg,
+        /// Value register holding the string receiver.
+        recv: Reg,
     },
     /// `base[index]` where the element is an aggregate (struct / tuple /
     /// array). An out-of-range index panics with `index out of bounds`
@@ -976,10 +1041,31 @@ pub enum Op {
     LoadConstI64 { dst_i: Reg, idx: ConstIdx },
     /// Wrapping `ints[dst_i] = ints[lhs_i] + ints[rhs_i]`.
     AddI64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
+    /// Debug-checked integer addition for the declared integer type.
+    CheckedAddI64 {
+        dst_i: Reg,
+        lhs_i: Reg,
+        rhs_i: Reg,
+        overflow_ty: IntTy,
+    },
     /// Wrapping `ints[dst_i] = ints[lhs_i] - ints[rhs_i]`.
     SubI64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
+    /// Debug-checked integer subtraction for the declared integer type.
+    CheckedSubI64 {
+        dst_i: Reg,
+        lhs_i: Reg,
+        rhs_i: Reg,
+        overflow_ty: IntTy,
+    },
     /// Wrapping `ints[dst_i] = ints[lhs_i] * ints[rhs_i]`.
     MulI64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
+    /// Debug-checked integer multiplication for the declared integer type.
+    CheckedMulI64 {
+        dst_i: Reg,
+        lhs_i: Reg,
+        rhs_i: Reg,
+        overflow_ty: IntTy,
+    },
     /// Checked `ints[dst_i] = ints[lhs_i] / ints[rhs_i]`.
     DivI64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
     /// Checked `ints[dst_i] = ints[lhs_i] % ints[rhs_i]`.
@@ -1759,6 +1845,10 @@ pub struct FnChunk {
     /// the vast majority of chunks, so the entry probe is one
     /// `is_empty` test.
     pub mut_ref_params: Vec<Reg>,
+    /// Plain integer parameters copied from their ABI `Value` slot into the
+    /// typed integer register file when a frame starts. Each pair is
+    /// `(value_parameter_index, integer_register)`.
+    pub i64_params: Vec<(Reg, Reg)>,
     /// Closure templates referenced by [`Op::MakeClosure`]. Empty for
     /// chunks that build no closures.
     pub closure_protos: Vec<ClosureProto>,

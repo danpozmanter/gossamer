@@ -1180,6 +1180,39 @@ impl<'a> TypeChecker<'a> {
         let lhs_kind = self.tcx.kind(lhs_resolved).cloned();
         let rhs_kind = self.tcx.kind(rhs_resolved).cloned();
 
+        // Directional slice-reference unsizing. Keep the expression's concrete
+        // array or Vec type in the type table while accepting it where a slice
+        // reference is expected. A mutable reference may also reborrow as a
+        // shared slice, but a shared reference cannot become mutable.
+        if let (
+            Some(TyKind::Ref {
+                mutability: expected_mut,
+                inner: expected_inner,
+            }),
+            Some(TyKind::Ref {
+                mutability: found_mut,
+                inner: found_inner,
+            }),
+        ) = (&lhs_kind, &rhs_kind)
+            && (*expected_mut == Mutbl::Not || *found_mut == Mutbl::Mut)
+            && let expected_inner = self.infer.resolve(self.tcx, *expected_inner)
+            && let found_inner = self.infer.resolve(self.tcx, *found_inner)
+            && let Some(TyKind::Slice(expected_elem)) = self.tcx.kind(expected_inner).cloned()
+            && let Some(
+                TyKind::Slice(found_elem)
+                | TyKind::Vec(found_elem)
+                | TyKind::Array {
+                    elem: found_elem, ..
+                },
+            ) = self.tcx.kind(found_inner).cloned()
+        {
+            let result = self.infer.unify(self.tcx, expected_elem, found_elem);
+            if let Err(err) = result {
+                self.report_unify(err, expected_elem, found_elem, span);
+            }
+            return;
+        }
+
         // Function items carry only a DefId in their TyKind; their signature
         // lives in `fn_sigs`. Materialize that signature before unification so
         // a named function can coerce to a compatible `fn`/`Fn` parameter but
@@ -3494,7 +3527,7 @@ impl<'a> TypeChecker<'a> {
             .map(|ty| self.infer.resolve(self.tcx, ty))
             .map(|ty| self.peel_refs(ty))
             .and_then(|ty| match self.tcx.kind(ty) {
-                Some(TyKind::Vec(elem) | TyKind::Slice(elem)) => Some(*elem),
+                Some(TyKind::Vec(elem)) => Some(*elem),
                 _ => None,
             })
             .unwrap_or_else(|| self.fresh());
@@ -3519,6 +3552,7 @@ impl<'a> TypeChecker<'a> {
             ),
             "remove" => (vec![mutable, i64_ty], self.result_adt_ty(elem, error_ty)),
             "sort" | "reverse" => (vec![mutable], self.tcx.unit()),
+            "fill" => (vec![mutable, elem], self.tcx.unit()),
             "swap" => (
                 vec![mutable, i64_ty, i64_ty],
                 self.result_adt_ty(unit_ty, error_ty),
@@ -3861,7 +3895,7 @@ impl<'a> TypeChecker<'a> {
             _ => None,
         };
         let (lhs, rhs) = match (param_ref, arg_ref) {
-            (Some((p, Mutbl::Mut)), Some((a, Mutbl::Mut))) => (p, a),
+            (Some((_p, Mutbl::Mut)), Some((_a, Mutbl::Mut))) => (param, arg_ty),
             (Some((_p, Mutbl::Mut)), Some((a, Mutbl::Not))) => (
                 param,
                 self.tcx.intern(TyKind::Ref {
@@ -4994,18 +5028,10 @@ impl<'a> TypeChecker<'a> {
                 operand,
             } => self.adjust_literal_to_join(operand, expected),
             ExprKind::Array(ArrayExpr::List(elems)) => {
-                if let Some(TyKind::Vec(e) | TyKind::Slice(e)) = self.tcx.kind(expected).cloned() {
-                    self.record(expr.id, expected);
-                    for el in elems {
-                        self.adjust_literal_to_join(el, e);
-                    }
-                }
+                let _ = elems;
             }
             ExprKind::Array(ArrayExpr::Repeat { value, .. }) => {
-                if let Some(TyKind::Vec(e) | TyKind::Slice(e)) = self.tcx.kind(expected).cloned() {
-                    self.record(expr.id, expected);
-                    self.adjust_literal_to_join(value, e);
-                }
+                let _ = value;
             }
             ExprKind::Tuple(elems) => {
                 if let Some(TyKind::Tuple(tys)) = self.tcx.kind(expected).cloned() {
@@ -5258,7 +5284,7 @@ impl<'a> TypeChecker<'a> {
         self.check_overlapping_mutable_call_args(args);
         let receiver_expected = self.method_receiver_expectation(method, receiver, expected);
         let receiver_ty = self.check_expr_expecting(receiver, receiver_expected);
-        if self.reject_fixed_array_vec_only_method(receiver_ty, method, args, receiver.span) {
+        if self.reject_invalid_non_vec_sequence_method(receiver_ty, method, args, receiver.span) {
             return self.tcx.error_ty();
         }
         self.check_mutating_method_receiver(receiver, receiver_ty, method);
@@ -5308,6 +5334,25 @@ impl<'a> TypeChecker<'a> {
             resolved = self.infer.resolve(self.tcx, *inner);
         }
         if method == "clone" && args.is_empty() {
+            return resolved;
+        }
+        if matches!(self.tcx.kind(resolved), Some(TyKind::Int(_)))
+            && matches!(method, "wrapping_add" | "wrapping_mul")
+        {
+            if args.len() != 1 {
+                let owner = self.render_public_ty(resolved);
+                self.emit(
+                    TypeError::CallArityMismatch {
+                        callee: format!("{owner}::{method}"),
+                        expected: 1,
+                        found: args.len(),
+                    },
+                    receiver.span,
+                );
+                return self.tcx.error_ty();
+            }
+            let arg_ty = self.peel_refs(arg_tys[0]);
+            self.unify(resolved, arg_ty, args[0].span);
             return resolved;
         }
         if self.reject_collection_method_arity(resolved, method, args.len(), receiver.span) {
@@ -5381,39 +5426,17 @@ impl<'a> TypeChecker<'a> {
         {
             return self.tcx.error_ty();
         }
-        if matches!(self.tcx.kind(resolved), Some(TyKind::String)) {
-            let expected_arity = match method {
-                "clear" => Some(0),
-                "truncate" | "push" | "push_str" | "push_char" | "push_byte" => Some(1),
-                _ => None,
-            };
-            if let Some(expected) = expected_arity
-                && args.len() != expected
-            {
-                self.emit(
-                    TypeError::CallArityMismatch {
-                        callee: format!("String::{method}"),
-                        expected,
-                        found: args.len(),
-                    },
-                    receiver.span,
-                );
-                return self.tcx.error_ty();
-            }
-            if let Some(arg_ty) = arg_tys.first().copied() {
-                let want = match method {
-                    "push" | "push_char" => Some(self.tcx.intern(TyKind::Char)),
-                    "push_str" => Some(self.tcx.string_ty()),
-                    "push_byte" | "truncate" => Some(self.tcx.int_ty(IntTy::I64)),
-                    _ => None,
-                };
-                if let Some(want) = want {
-                    let found = self.peel_refs(arg_ty);
-                    self.unify(want, found, args[0].span);
-                }
-            }
-            self.check_string_method_args_if_needed(call_id, method, receiver.span, args, &arg_tys);
-            return self.string_method_ret(method, generics, expected, receiver.span);
+        if let Some(ty) = self.check_string_receiver_method(
+            call_id,
+            method,
+            generics,
+            expected,
+            resolved,
+            receiver.span,
+            args,
+            &arg_tys,
+        ) {
+            return ty;
         }
         if let Some(name) = self.payload_adt_method_owner(resolved)
             && !matches!(method, "clone")
@@ -5430,6 +5453,58 @@ impl<'a> TypeChecker<'a> {
         self.check_method_arity(call_id, resolved, method, args, receiver.span);
         self.maybe_reject_unknown_adt_method(resolved, method, receiver.span);
         self.fresh()
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the helper preserves the method-call checking context"
+    )]
+    fn check_string_receiver_method(
+        &mut self,
+        call_id: NodeId,
+        method: &str,
+        generics: &[AstGenericArg],
+        expected: Expectation,
+        resolved: Ty,
+        span: Span,
+        args: &[Expr],
+        arg_tys: &[Ty],
+    ) -> Option<Ty> {
+        if !matches!(self.tcx.kind(resolved), Some(TyKind::String)) {
+            return None;
+        }
+        let expected_arity = match method {
+            "clear" => Some(0),
+            "truncate" | "push" | "push_str" | "push_char" | "push_byte" => Some(1),
+            _ => None,
+        };
+        if let Some(expected_arity) = expected_arity
+            && args.len() != expected_arity
+        {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: format!("String::{method}"),
+                    expected: expected_arity,
+                    found: args.len(),
+                },
+                span,
+            );
+            return Some(self.tcx.error_ty());
+        }
+        if let Some(arg_ty) = arg_tys.first().copied() {
+            let want = match method {
+                "push" | "push_char" => Some(self.tcx.intern(TyKind::Char)),
+                "push_str" => Some(self.tcx.string_ty()),
+                "push_byte" | "truncate" => Some(self.tcx.int_ty(IntTy::I64)),
+                _ => None,
+            };
+            if let Some(want) = want {
+                let found = self.peel_refs(arg_ty);
+                self.unify(want, found, args[0].span);
+            }
+        }
+        self.check_string_method_args_if_needed(call_id, method, span, args, arg_tys);
+        Some(self.string_method_ret(method, generics, expected, span))
     }
 
     fn reject_unknown_sequence_method(&mut self, resolved: Ty, method: &str, span: Span) -> bool {
@@ -5638,7 +5713,7 @@ impl<'a> TypeChecker<'a> {
         self.check_mutating_receiver_place(receiver);
     }
 
-    fn reject_fixed_array_vec_only_method(
+    fn reject_non_vec_resizing_method(
         &mut self,
         receiver_ty: Ty,
         method: &str,
@@ -5649,9 +5724,55 @@ impl<'a> TypeChecker<'a> {
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = self.infer.resolve(self.tcx, *inner);
         }
-        if !matches!(self.tcx.kind(resolved), Some(TyKind::Array { .. }))
-            || !is_fixed_array_incompatible_vec_method(method)
+        if !matches!(
+            self.tcx.kind(resolved),
+            Some(TyKind::Array { .. } | TyKind::Slice(_))
+        ) || !is_vec_only_sequence_method(method)
         {
+            return false;
+        }
+        for arg in args {
+            self.check_expr(arg);
+        }
+        let ty = self.render_public_ty(resolved);
+        self.emit(
+            TypeError::SequenceResizeRequiresVec {
+                ty,
+                method: method.to_string(),
+            },
+            span,
+        );
+        true
+    }
+
+    fn reject_invalid_non_vec_sequence_method(
+        &mut self,
+        receiver_ty: Ty,
+        method: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> bool {
+        self.reject_non_vec_resizing_method(receiver_ty, method, args, span)
+            || self.reject_unavailable_non_vec_sequence_method(receiver_ty, method, args, span)
+    }
+
+    fn reject_unavailable_non_vec_sequence_method(
+        &mut self,
+        receiver_ty: Ty,
+        method: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> bool {
+        let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
+            resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        let available = match self.tcx.kind(resolved) {
+            Some(TyKind::Array { .. }) => is_array_sequence_method(method),
+            Some(TyKind::Slice(_)) => is_slice_sequence_method(method),
+            _ => return false,
+        };
+        if available || is_vec_only_sequence_method(method) {
             return false;
         }
         for arg in args {
@@ -6265,7 +6386,7 @@ impl<'a> TypeChecker<'a> {
         };
         let expected_arity = match method {
             "push" | "remove" | "truncate" | "extend" | "extend_from_slice" | "reserve"
-            | "reserve_exact" | "get" => Some(1),
+            | "reserve_exact" | "get" | "fill" => Some(1),
             "insert" | "swap" => Some(2),
             "pop" | "clear" | "sort" | "reverse" | "capacity" | "iter" => Some(0),
             "sort_by" | "sort_by_key" => Some(1),
@@ -6287,7 +6408,7 @@ impl<'a> TypeChecker<'a> {
         // References are layout-transparent (the runtime owns memory), so
         // peel them before comparing the pushed element to the slot type.
         let push_arg = match (method, args.len()) {
-            ("push", 1) => arg_tys.first().copied(),
+            ("push" | "fill", 1) => arg_tys.first().copied(),
             ("insert", 2) => arg_tys.get(1).copied(),
             _ => None,
         };
@@ -6299,7 +6420,7 @@ impl<'a> TypeChecker<'a> {
         match (method, args.len()) {
             (
                 "push" | "clear" | "truncate" | "extend" | "extend_from_slice" | "reserve"
-                | "reserve_exact" | "sort" | "sort_by" | "sort_by_key" | "reverse",
+                | "reserve_exact" | "sort" | "sort_by" | "sort_by_key" | "reverse" | "fill",
                 _,
             ) => Some(self.tcx.unit()),
             ("insert", 2) => {
@@ -7324,6 +7445,7 @@ impl<'a> TypeChecker<'a> {
                         | "repeat"
                         | "take"
                         | "skip"
+                        | "step_by"
                         | "enumerate"
                         | "chain"
                         | "zip"
@@ -7350,6 +7472,7 @@ impl<'a> TypeChecker<'a> {
                     name,
                     "take"
                         | "skip"
+                        | "step_by"
                         | "enumerate"
                         | "chain"
                         | "zip"
@@ -7698,17 +7821,12 @@ impl<'a> TypeChecker<'a> {
         op: UnaryOp,
         operand: &Expr,
         span: Span,
-        expected: Expectation,
+        _expected: Expectation,
     ) -> Ty {
-        // A borrow is layout-transparent: `&[..]` against an expected
-        // `&[T]` (or bare `[T]`) shapes the borrowed literal itself.
-        // `expectation_target` already peels one `Ref`, so the operand
-        // inherits the peeled target at the same strength.
+        // A borrow preserves the operand's concrete owned type. The resulting
+        // reference may then unsize from an array or Vec reference to a slice.
         let operand_expected = match op {
-            UnaryOp::RefShared | UnaryOp::RefMut => match self.expectation_target(expected) {
-                Some(target) => expected.rewrap(target),
-                None => Expectation::None,
-            },
+            UnaryOp::RefShared | UnaryOp::RefMut => Expectation::None,
             _ => Expectation::None,
         };
         let operand_ty = self.check_expr_expecting(operand, operand_expected);
@@ -8511,31 +8629,9 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    /// Joins two branch result types (if/else, match arms). Two array
-    /// literals of differing length - or an array and a Vec/slice - join
-    /// to a growable `Vec<T>`, the only type that holds both, so
-    /// `if c { ["a", "b"] } else { ["c"] }` is a `Vec<String>` rather than
-    /// a length mismatch. Equal-length arrays and every other type unify
-    /// normally (a same-length pair stays a fixed `[T; N]`, coercible to a
-    /// Vec later if the surrounding context wants one).
+    /// Joins branch types without silently converting arrays or slices to Vec.
+    /// As in Rust, both value-producing branches must have one compatible type.
     fn join_branch_tys(&mut self, a: Ty, b: Ty, span: Span) -> Ty {
-        let ra = self.infer.resolve(self.tcx, a);
-        let rb = self.infer.resolve(self.tcx, b);
-        let elem_of = |k: &TyKind| match k {
-            TyKind::Array { elem, len } => Some((*elem, Some(*len))),
-            TyKind::Vec(elem) | TyKind::Slice(elem) => Some((*elem, None)),
-            _ => None,
-        };
-        if let (Some(ka), Some(kb)) = (self.tcx.kind(ra).cloned(), self.tcx.kind(rb).cloned()) {
-            if let (Some((ea, la)), Some((eb, lb))) = (elem_of(&ka), elem_of(&kb)) {
-                self.unify(ea, eb, span);
-                if la.is_none() || lb.is_none() || la != lb {
-                    return self.tcx.intern(TyKind::Vec(ea));
-                }
-                self.unify(a, b, span);
-                return a;
-            }
-        }
         self.unify(a, b, span);
         a
     }
@@ -9040,53 +9136,41 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_array(&mut self, arr: &ArrayExpr, expected: Expectation) -> Ty {
-        // An expected growable `[T]` / `Vec<T>` (possibly behind one
-        // `&`) shapes the literal: it adopts the expected container
-        // type directly - fixed `[T; N]` versus heap Vec is a layout
-        // decision unification cannot rewrite later - and its
-        // elements are checked against `T` at the same strength.
-        let growable: Option<(Ty, Ty)> = match self.expectation_target(expected) {
-            Some(target) => match self.tcx.kind(target) {
-                Some(TyKind::Vec(elem) | TyKind::Slice(elem)) => Some((target, *elem)),
-                _ => None,
-            },
-            None => None,
-        };
+        // Array literals always produce fixed-size arrays. A fixed-array
+        // expectation may shape their element type, but Vec and slice
+        // expectations never change the literal's container identity.
         match arr {
             ArrayExpr::List(elems) => {
-                if let Some((container, want_elem)) = growable {
+                let expected_elem = self
+                    .expectation_target(expected)
+                    .and_then(|target| match self.tcx.kind(target) {
+                        Some(TyKind::Array { elem, len })
+                            if *len == crate::ArrayLen::Concrete(elems.len()) =>
+                        {
+                            Some(*elem)
+                        }
+                        _ => None,
+                    });
+                if let Some(want_elem) = expected_elem {
                     for elem in elems {
                         let got = self.check_expr_expecting(elem, expected.rewrap(want_elem));
                         if expected.unifies() {
                             self.unify(want_elem, got, elem.span);
                         }
                     }
-                    return container;
+                    return self.tcx.intern(TyKind::Array {
+                        elem: want_elem,
+                        len: crate::ArrayLen::Concrete(elems.len()),
+                    });
                 }
                 let mut elem_ty = if let Some(first) = elems.first() {
                     self.check_expr(first)
                 } else {
                     self.fresh()
                 };
-                // Join element types rather than a plain unify so a nested
-                // literal whose inner arrays differ in length -
-                // `[["a", "b"], ["c"]]` - settles on `Vec<String>` instead
-                // of failing `[String; 2]` vs `[String; 1]`.
                 for elem in elems.iter().skip(1) {
                     let ty = self.check_expr(elem);
                     elem_ty = self.join_branch_tys(elem_ty, ty, elem.span);
-                }
-                // If the elements joined to a growable Vec/slice, re-record
-                // each one to that shape so every inner array literal lowers
-                // as a heap Vec, matching the outer element slot.
-                let resolved_elem = self.infer.resolve(self.tcx, elem_ty);
-                if matches!(
-                    self.tcx.kind(resolved_elem),
-                    Some(TyKind::Vec(_) | TyKind::Slice(_))
-                ) {
-                    for elem in elems {
-                        self.adjust_literal_to_join(elem, elem_ty);
-                    }
                 }
                 self.tcx.intern(TyKind::Array {
                     elem: elem_ty,
@@ -9094,14 +9178,6 @@ impl<'a> TypeChecker<'a> {
                 })
             }
             ArrayExpr::Repeat { value, count } => {
-                if let Some((container, want_elem)) = growable {
-                    let got = self.check_expr_expecting(value, expected.rewrap(want_elem));
-                    if expected.unifies() {
-                        self.unify(want_elem, got, value.span);
-                    }
-                    self.check_expr(count);
-                    return container;
-                }
                 let elem_ty = self.check_expr(value);
                 self.check_expr(count);
                 if let Some(len) = self.evaluate_array_len(count) {
@@ -9117,8 +9193,11 @@ impl<'a> TypeChecker<'a> {
                         len: crate::ArrayLen::Concrete(len),
                     })
                 } else {
-                    // Non-constant count: the result is a heap-allocated Vec.
-                    self.tcx.intern(TyKind::Vec(elem_ty))
+                    self.emit(TypeError::ArrayLengthNotConstant, count.span);
+                    self.tcx.intern(TyKind::Array {
+                        elem: elem_ty,
+                        len: crate::ArrayLen::Concrete(0),
+                    })
                 }
             }
         }
@@ -9413,10 +9492,18 @@ impl<'a> TypeChecker<'a> {
             }
             AstTypeKind::Slice(inner) => {
                 let inner_ty = self.type_from_ast(inner);
-                self.tcx.intern(TyKind::Slice(inner_ty))
+                let element = self.render_public_ty(inner_ty);
+                self.emit(TypeError::UnsizedSliceValue { element }, ast_ty.span);
+                self.tcx.error_ty()
             }
             AstTypeKind::Ref { mutability, inner } => {
-                let inner_ty = self.type_from_ast(inner);
+                let inner_ty = match &inner.kind {
+                    AstTypeKind::Slice(element) => {
+                        let element = self.type_from_ast(element);
+                        self.tcx.intern(TyKind::Slice(element))
+                    }
+                    _ => self.type_from_ast(inner),
+                };
                 let mutability = match mutability {
                     gossamer_ast::Mutability::Immutable => Mutbl::Not,
                     gossamer_ast::Mutability::Mutable => Mutbl::Mut,
@@ -9871,7 +9958,8 @@ impl<'a> TypeChecker<'a> {
     /// Types an array-length expression. A literal yields a concrete
     /// count; a bare path naming a const generic parameter in scope
     /// yields a symbolic `Param` length linked to that parameter's
-    /// position; anything else falls back to a concrete `0`.
+    /// position; anything else is rejected and uses `0` only as an error
+    /// recovery placeholder.
     fn array_len_from_ast(&mut self, expr: &Expr) -> crate::ArrayLen {
         if let Some(len) = self.evaluate_array_len(expr) {
             return crate::ArrayLen::Concrete(len);
@@ -9886,13 +9974,13 @@ impl<'a> TypeChecker<'a> {
         {
             return crate::ArrayLen::Param(idx);
         }
+        self.emit(TypeError::ArrayLengthNotConstant, expr.span);
         crate::ArrayLen::Concrete(0)
     }
 
     /// Evaluates an array-length expression to a `usize`, emitting a
     /// diagnostic when the literal magnitude exceeds `usize::MAX`.
-    /// Returns `None` for non-literal forms (the caller falls back to
-    /// `0`, matching the historical lenient behaviour).
+    /// Returns `None` for non-literal forms.
     fn evaluate_array_len(&mut self, expr: &Expr) -> Option<usize> {
         let raw = evaluate_const_int_from_expr(expr)?;
         if raw > usize::MAX as u128 {
@@ -11282,7 +11370,7 @@ fn is_string_method(name: &str) -> bool {
 /// Returns whether a `Vec` method changes capacity or length and therefore
 /// cannot be called on a fixed-size array receiver.
 #[must_use]
-pub fn is_fixed_array_incompatible_vec_method(name: &str) -> bool {
+pub fn is_vec_only_sequence_method(name: &str) -> bool {
     matches!(
         name,
         "push"
@@ -11300,7 +11388,50 @@ pub fn is_fixed_array_incompatible_vec_method(name: &str) -> bool {
             | "resize"
             | "resize_with"
             | "split_off"
+            | "drain"
+            | "retain"
+            | "shrink_to_fit"
+            | "dedup"
     )
+}
+
+/// Returns whether a method belongs to Gossamer's slice surface. This is the
+/// canonical list used by method checking and REPL documentation. Eager
+/// iterator combinators remain Vec operations; arrays and slices use `iter()`
+/// before applying iterator methods, matching Rust's separation of collection
+/// and iterator APIs.
+#[must_use]
+pub fn is_slice_sequence_method(name: &str) -> bool {
+    matches!(
+        name,
+        "len"
+            | "is_empty"
+            | "slice"
+            | "first"
+            | "last"
+            | "get"
+            | "contains"
+            | "index_of"
+            | "count_of"
+            | "sort"
+            | "sort_by"
+            | "sort_by_key"
+            | "reverse"
+            | "swap"
+            | "fill"
+            | "windows"
+            | "chunks"
+            | "join"
+            | "to_vec"
+            | "iter"
+    )
+}
+
+/// Fixed arrays expose value-preserving `clone` in addition to methods made
+/// available through Rust-like array-to-slice receiver coercion.
+#[must_use]
+pub fn is_array_sequence_method(name: &str) -> bool {
+    name == "clone" || is_slice_sequence_method(name)
 }
 
 /// Best-effort human-readable name for a call's callee expression,

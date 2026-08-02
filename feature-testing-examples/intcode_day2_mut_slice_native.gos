@@ -9,8 +9,8 @@ fn program_step(program: &mut [i64], pos: i64, op: i64) {
     }
 }
 
-fn run_intcode(program: [i64], v1: i64, v2: i64) -> i64 {
-    let mut prog = program
+fn run_intcode(program: &[i64], v1: i64, v2: i64) -> i64 {
+    let mut prog = program.to_vec()
     prog[1] = v1
     prog[2] = v2
 
@@ -26,13 +26,13 @@ fn run_intcode(program: [i64], v1: i64, v2: i64) -> i64 {
     prog[0]
 }
 
-fn mutate_copy(program: [i64]) -> i64 {
-    let mut copy = program
+fn mutate_copy(program: &[i64]) -> i64 {
+    let mut copy = program.to_vec()
     copy[0] = 99
     copy[0]
 }
 
-fn solve_part2(program: [i64], target: i64) -> Option<i64> {
+fn solve_part2(program: &[i64], target: i64) -> Option<i64> {
     for noun in 0..=2 {
         for verb in 0..=2 {
             let code = run_intcode(program, noun, verb)
@@ -46,17 +46,17 @@ fn solve_part2(program: [i64], target: i64) -> Option<i64> {
 }
 
 fn main() {
-    let sample: [i64] = [1, 1, 1, 4, 99, 5, 6, 0, 99]
-    println!("sample={}", run_intcode(sample, 1, 1))
+    let sample = [1, 1, 1, 4, 99, 5, 6, 0, 99]
+    println!("sample={}", run_intcode(&sample, 1, 1))
 
-    let input: [i64] = [1, 9, 10, 3, 2, 3, 11, 0, 99, 30, 40, 50]
-    println!("pos0={}", run_intcode(input, 9, 10))
+    let input = [1, 9, 10, 3, 2, 3, 11, 0, 99, 30, 40, 50]
+    println!("pos0={}", run_intcode(&input, 9, 10))
 
-    let value_copy: [i64] = [1, 2, 3]
-    println!("copy={}, base={}", mutate_copy(value_copy), value_copy[0])
+    let value_copy = [1, 2, 3]
+    println!("copy={}, base={}", mutate_copy(&value_copy), value_copy[0])
 
-    let part2: [i64] = [1, 0, 0, 0, 99]
-    match solve_part2(part2, 4) {
+    let part2 = [1, 0, 0, 0, 99]
+    match solve_part2(&part2, 4) {
         Some(answer) => println!("part2={}", answer),
         None => println!("part2=none")
     }

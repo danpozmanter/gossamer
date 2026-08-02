@@ -80,13 +80,7 @@ impl<'a> Lowerer<'a> {
     /// private rodata global; `gos_rt_panic` is `noreturn`.
     pub(crate) fn lower_panic(&mut self, message: &str) {
         declare_rt(&mut self.runtime_refs, "gos_rt_panic");
-        let msg_global = self.runtime_refs.len();
-        let msg_name = format!("@.panic_msg_{msg_global}");
-        let escaped = escape_c_string(message);
-        let size = message.len() + 1;
-        self.runtime_refs.insert(format!(
-            "{msg_name} = private unnamed_addr constant [{size} x i8] c\"{escaped}\\00\""
-        ));
+        let (msg_name, _) = self.strings.borrow_mut().intern(message);
         writeln!(self.out, "  call void @gos_rt_panic(ptr {msg_name})").unwrap();
         writeln!(self.out, "  unreachable").unwrap();
     }

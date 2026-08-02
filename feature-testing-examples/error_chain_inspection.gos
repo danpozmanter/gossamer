@@ -46,7 +46,7 @@ fn main() {
     // Joined errors
     let e1 = errors::new("first failure")
     let e2 = errors::new("second failure")
-    let combined = errors::join([e1, e2])
+    let combined = errors::join(Vec::from([e1, e2]))
     match combined {
         Some(e) => println!("combined message: {}", e.message()),
         None => println!("no errors to join"),

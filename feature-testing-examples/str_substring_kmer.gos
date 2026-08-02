@@ -22,7 +22,7 @@ fn count_kmers(s: &String, k: i64) -> HashMap<String, i64> {
 
 fn freq_line(s: &String, k: i64) {
     let m = count_kmers(s, k)
-    let mut e: [(String, i64)] = m.iter()
+    let mut e: Vec<(String, i64)> = m.iter()
     e.sort_by(|a, b| if a.0 < b.0 { -1 } else if a.0 > b.0 { 1 } else { 0 })
     print!("k{}:", k)
     for (kk, v) in e { print!(" {}={}", kk, v) }

@@ -7,7 +7,7 @@ struct User { id: i64, name: String, active: bool }
 struct Point { x: f64, y: f64 }
 
 // P2: generate a SQL DDL string from the reflected fields.
-comptime fn create_table(table: String, fields: [(String, String)]) -> String {
+comptime fn create_table(table: String, fields: Vec<(String, String)>) -> String {
     let mut cols = ""
     let mut first = true
     for (name, ty) in fields {
@@ -28,7 +28,7 @@ comptime fn create_table(table: String, fields: [(String, String)]) -> String {
 }
 
 // Comptime: build a comma-separated field-name list from reflection.
-comptime fn field_list(fields: [(String, String)]) -> String {
+comptime fn field_list(fields: Vec<(String, String)>) -> String {
     let mut out = ""
     let mut first = true
     for (name, _) in fields {

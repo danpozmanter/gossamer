@@ -7,7 +7,7 @@ fn main() {
     let _ = xs.remove(4)
     println!("{:?}", xs)
 
-    let mut ys: Vec<String> = ["a", "b", "c"]
+    let mut ys: Vec<String> = Vec::from(["a", "b", "c"])
     let _ = ys.insert(1, "X")
     println!("{:?}", ys)
     let _ = ys.remove(2)

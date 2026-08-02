@@ -218,6 +218,127 @@ pub fn const_fold(body: &mut Body) {
     }
 }
 
+/// Type-aware constant folding for integer arithmetic. Debug profiles leave
+/// an overflowing operation in MIR so code generation can emit the runtime
+/// overflow panic. Release profiles fold with the declared integer width's
+/// wrapping semantics.
+fn const_fold_typed(body: &mut Body, tcx: &TyCtxt, checked_overflow: bool) {
+    let local_tys: Vec<_> = body.locals.iter().map(|local| local.ty).collect();
+    for block in &mut body.blocks {
+        for stmt in &mut block.stmts {
+            if let StatementKind::Assign {
+                place,
+                rvalue: rv,
+            } = &mut stmt.kind
+            {
+                let folded = match tcx.kind_of(local_tys[place.local.0 as usize]) {
+                    TyKind::Int(int_ty) => try_fold_typed_int(rv, *int_ty, checked_overflow),
+                    _ => try_fold(rv),
+                };
+                if let Some(folded) = folded {
+                    *rv = Rvalue::Use(Operand::Const(folded));
+                } else if let Some(simplified) = try_identity_fold(rv) {
+                    *rv = simplified;
+                }
+            }
+        }
+    }
+}
+
+fn try_fold_typed_int(
+    rvalue: &Rvalue,
+    int_ty: gossamer_types::IntTy,
+    checked_overflow: bool,
+) -> Option<ConstValue> {
+    let Rvalue::BinaryOp {
+        op,
+        lhs: Operand::Const(ConstValue::Int(lhs)),
+        rhs: Operand::Const(ConstValue::Int(rhs)),
+    } = rvalue
+    else {
+        return try_fold(rvalue);
+    };
+    if !matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) {
+        return fold_binary(*op, &ConstValue::Int(*lhs), &ConstValue::Int(*rhs));
+    }
+    fold_typed_integer_arithmetic(*op, *lhs, *rhs, int_ty, checked_overflow)
+        .map(ConstValue::Int)
+}
+
+fn fold_typed_integer_arithmetic(
+    op: BinOp,
+    lhs: i128,
+    rhs: i128,
+    int_ty: gossamer_types::IntTy,
+    checked_overflow: bool,
+) -> Option<i128> {
+    use gossamer_types::IntTy;
+
+    let unsigned_bits = match int_ty {
+        IntTy::U8 => Some(8),
+        IntTy::U16 => Some(16),
+        IntTy::U32 => Some(32),
+        IntTy::U64 | IntTy::U128 | IntTy::Usize => Some(64),
+        _ => None,
+    };
+    if let Some(bits) = unsigned_bits {
+        let lhs = u128::from(lhs as u64);
+        let rhs = u128::from(rhs as u64);
+        let value = match op {
+            BinOp::Add => lhs.checked_add(rhs),
+            BinOp::Sub => lhs.checked_sub(rhs),
+            BinOp::Mul => lhs.checked_mul(rhs),
+            _ => unreachable!(),
+        };
+        let max = if bits == 64 {
+            u128::from(u64::MAX)
+        } else {
+            (1u128 << bits) - 1
+        };
+        if checked_overflow {
+            return value
+                .filter(|value| *value <= max)
+                .map(|value| i128::from(value as u64 as i64));
+        }
+        let mask = max;
+        let wrapped = value.unwrap_or_else(|| match op {
+            BinOp::Add => lhs.wrapping_add(rhs),
+            BinOp::Sub => lhs.wrapping_sub(rhs),
+            BinOp::Mul => lhs.wrapping_mul(rhs),
+            _ => unreachable!(),
+        }) as u64
+            & mask as u64;
+        return Some(i128::from(wrapped as i64));
+    }
+
+    let bits = match int_ty {
+        IntTy::I8 => 8,
+        IntTy::I16 => 16,
+        IntTy::I32 => 32,
+        IntTy::I64 | IntTy::I128 | IntTy::Isize => 64,
+        _ => unreachable!(),
+    };
+    let value = match op {
+        BinOp::Add => lhs + rhs,
+        BinOp::Sub => lhs - rhs,
+        BinOp::Mul => lhs * rhs,
+        _ => unreachable!(),
+    };
+    let min = -(1i128 << (bits - 1));
+    let max = (1i128 << (bits - 1)) - 1;
+    if checked_overflow {
+        return (min..=max).contains(&value).then_some(value);
+    }
+    let modulus = 1i128 << bits;
+    let wrapped = value.rem_euclid(modulus);
+    let signed = if wrapped > max {
+        wrapped - modulus
+    } else {
+        wrapped
+    };
+    Some(signed)
+}
+
 fn try_fold(rvalue: &Rvalue) -> Option<ConstValue> {
     match rvalue {
         Rvalue::BinaryOp {
@@ -623,4 +744,3 @@ pub fn const_value_of(body: &Body, local: Local) -> Option<ConstValue> {
     }
     found
 }
-

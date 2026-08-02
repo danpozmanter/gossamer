@@ -121,7 +121,7 @@ fn sz(j: &J) -> i64 {
  for x in xs { t += sz(x) }
  t } }
 }
-fn mkarr() -> J { let mut v: Vec<J> = []
+fn mkarr() -> J { let mut v: Vec<J> = Vec::from([])
  v.push(J::Int(1))
  v.push(J::Int(2))
  v.push(J::Int(3))
@@ -158,7 +158,7 @@ fn sumj(j: &J) -> i64 {
     }
 }
 fn mkobj(i: i64) -> J {
-    let mut v: Vec<(String, J)> = []
+    let mut v: Vec<(String, J)> = Vec::from([])
     v.push((format!("k{}", i), J::Int(10)))
     J::Obj(v)
 }
@@ -189,9 +189,9 @@ fn cnt(j: &J) -> i64 {
  t } }
 }
 fn build() -> J {
-    let mut inner: Vec<J> = []
+    let mut inner: Vec<J> = Vec::from([])
     inner.push(J::Int(1))
-    let mut outer: Vec<J> = []
+    let mut outer: Vec<J> = Vec::from([])
     outer.push(J::Arr(inner))
     J::Arr(outer)
 }
@@ -224,9 +224,9 @@ fn main() {
     let mut round = 0i64
     while round < 100i64 {
         let mut m: HashMap<i64, Vec<i64>> = HashMap::new()
-        let first: Vec<i64> = [round, round + 1i64]
+        let first: Vec<i64> = Vec::from([round, round + 1i64])
         m.insert(1i64, first)
-        m.insert(1i64, [round + 2i64, round + 3i64])
+        m.insert(1i64, Vec::from([round + 2i64, round + 3i64]))
         if let Some(v) = m.get(1i64) { total += v[0] }
         m.remove(1i64)
         round += 1i64
@@ -250,16 +250,16 @@ fn container_pop_and_error_exit_release_every_owner_once() {
 use std::{collections::{HashMap, HashSet}, errors}
 
 fn one_round(round: i64) -> Result<i64, errors::Error> {
-    let mut rows: Vec<Vec<i64>> = []
-    let first: Vec<i64> = [round, round + 1i64]
+    let mut rows: Vec<Vec<i64>> = Vec::from([])
+    let first: Vec<i64> = Vec::from([round, round + 1i64])
     rows.push(first)
-    let tail: Vec<i64> = [round + 2i64, round + 3i64]
+    let tail: Vec<i64> = Vec::from([round + 2i64, round + 3i64])
     rows.push(tail)
     let popped_row = rows.pop().unwrap()
 
     let mut m: HashMap<i64, Vec<i64>> = HashMap::new()
     m.insert(1i64, popped_row)
-    let retained: Vec<i64> = [round + 4i64]
+    let retained: Vec<i64> = Vec::from([round + 4i64])
     m.insert(2i64, retained)
     let popped_map = HashMap::pop(m, 1i64).unwrap()
     let mut tags: HashSet<String> = HashSet::new()
@@ -307,19 +307,19 @@ impl P {
         if s == 2 { self.parr() } else if s == 3 { self.pobj() } else { Ok(J::Int(1)) }
     }
     fn parr(&mut self) -> Result<J, errors::Error> {
-        let mut xs: Vec<J> = []
+        let mut xs: Vec<J> = Vec::from([])
         xs.push(J::Int(1))
  xs.push(J::Int(1))
  xs.push(J::Int(1))
         Ok(J::Arr(xs))
     }
     fn pobj(&mut self) -> Result<J, errors::Error> {
-        let mut ps: Vec<(String, J)> = []
+        let mut ps: Vec<(String, J)> = Vec::from([])
         ps.push((format!("d"), J::Int(1)))
         Ok(J::Obj(ps))
     }
     fn top(&mut self) -> Result<J, errors::Error> {
-        let mut ps: Vec<(String, J)> = []
+        let mut ps: Vec<(String, J)> = Vec::from([])
         let mut i = 0
         loop { let k = format!("k{}", i)
  let v = self.pval()?
@@ -365,7 +365,7 @@ enum J { Int(i64), Arr(Vec<J>) }
 fn transform(v: J) -> J {
     match v {
         J::Int(n) => J::Int(n + 1),
-        J::Arr(xs) => { let mut out: Vec<J> = []
+        J::Arr(xs) => { let mut out: Vec<J> = Vec::from([])
  for x in xs { out.push(transform(x)) }
  J::Arr(out) }
     }
@@ -375,7 +375,7 @@ fn cnt(j: &J) -> i64 {
  for x in xs { t += cnt(x) }
  t } }
 }
-fn build() -> J { let mut a: Vec<J> = []
+fn build() -> J { let mut a: Vec<J> = Vec::from([])
  a.push(J::Int(1))
  a.push(J::Int(2))
  J::Arr(a) }

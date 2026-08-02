@@ -8,9 +8,21 @@
 
 // Matmul-shape: `c[irow + j]` read+write and `b[krow + j]` read, every index
 // in range, so the unchecked clone runs.
+fn zeros(n: i64) -> Vec<i64> {
+    let mut values: Vec<i64> = Vec::with_capacity(n)
+    for _ in 0..n { values.push(0) }
+    values
+}
+
+fn float_zeros(n: i64) -> Vec<f64> {
+    let mut values: Vec<f64> = Vec::with_capacity(n)
+    for _ in 0..n { values.push(0.0) }
+    values
+}
+
 fn matmul_trace(a: &[i64], b: &[i64], n: i64) -> i64 {
     let sz = n * n
-    let mut c = [0; sz]
+    let mut c = zeros(sz)
     for i in 0..n {
         let irow = i * n
         for k in 0..n {
@@ -43,7 +55,7 @@ fn shifted_sum(xs: &[i64], shift: i64) -> i64 {
 // edit-distance-shape: `dp[j]` (base 0) and `dp[j - 1]` (base -1) with a
 // loop-carried dependency, both proven in range.
 fn prefix_pass(seed: i64, n: i64) -> i64 {
-    let mut dp = [0; n]
+    let mut dp = zeros(n)
     for j in 0..n {
         dp[j] = (j + seed) % 7
     }
@@ -55,7 +67,7 @@ fn prefix_pass(seed: i64, n: i64) -> i64 {
 
 // f64 affine access (8-byte word element) through the same unchecked path.
 fn scale_sum(xs: &[f64], n: i64) -> f64 {
-    let mut ys = [0.0; n]
+    let mut ys = float_zeros(n)
     for i in 0..n {
         ys[i] = xs[i] * 2.0 + 1.0
     }

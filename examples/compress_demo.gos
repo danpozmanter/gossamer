@@ -13,7 +13,7 @@
 
 use std::compress
 
-fn show_roundtrip(name: &str, compressed: Result<[u8], compress::Error>, original_len: i64) {
+fn show_roundtrip(name: &str, compressed: Result<Vec<u8>, compress::Error>, original_len: i64) {
     match compressed {
         Ok(bytes) => {
             let ratio = bytes.len() * 100 / original_len

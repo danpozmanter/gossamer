@@ -178,7 +178,7 @@ fn exec_spawn_returns_positive_pid_for_long_running_sleep() {
     let src = r#"
 use std::os::exec
 fn main() {
-    let args: [String] = ["30"].to_vec()
+    let args: Vec<String> = ["30"].to_vec()
     match exec::spawn(&"/bin/sleep".to_string(), &args) {
         Ok(pid) => {
             if pid > 0 { println!("spawned") } else { println!("zero pid") }
@@ -201,7 +201,7 @@ fn exec_spawn_returns_error_for_nonexistent_program() {
     let src = r#"
 use std::os::exec
 fn main() {
-    let args: [String] = [].to_vec()
+    let args: Vec<String> = Vec::from([]).to_vec()
     match exec::spawn(&"/this/does/not/exist/please".to_string(), &args) {
         Ok(_) => println!("unexpected ok"),
         Err(_) => println!("err"),
@@ -220,7 +220,7 @@ fn exec_spawn_then_kill_round_trips_through_a_named_var() {
     let src = r#"
 use std::os::exec
 fn main() {
-    let args: [String] = ["10"].to_vec()
+    let args: Vec<String> = ["10"].to_vec()
     let r = exec::spawn(&"/bin/sleep".to_string(), &args)
     match r {
         Ok(pid) => {
@@ -244,7 +244,7 @@ fn exec_spawn_returns_positive_pid_for_long_running_ping() {
     let src = r#"
 use std::os::exec
 fn main() {
-    let args: [String] = ["127.0.0.1", "-n", "31"].to_vec()
+    let args: Vec<String> = ["127.0.0.1", "-n", "31"].to_vec()
     match exec::spawn(&"ping".to_string(), &args) {
         Ok(pid) => {
             if pid > 0 { println!("spawned") } else { println!("zero pid") }
@@ -264,7 +264,7 @@ fn exec_spawn_returns_error_for_nonexistent_program() {
     let src = r#"
 use std::os::exec
 fn main() {
-    let args: [String] = [].to_vec()
+    let args: Vec<String> = Vec::from([]).to_vec()
     match exec::spawn(&"C:\\this\\does\\not\\exist\\please.exe".to_string(), &args) {
         Ok(_) => println!("unexpected ok"),
         Err(_) => println!("err"),
@@ -280,7 +280,7 @@ fn exec_spawn_then_kill_round_trips_through_a_named_var() {
     let src = r#"
 use std::os::exec
 fn main() {
-    let args: [String] = ["127.0.0.1", "-n", "11"].to_vec()
+    let args: Vec<String> = ["127.0.0.1", "-n", "11"].to_vec()
     let r = exec::spawn(&"ping".to_string(), &args)
     match r {
         Ok(pid) => {

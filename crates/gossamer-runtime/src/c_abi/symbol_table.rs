@@ -72,12 +72,24 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         ),
         ("gos_rt_arr_len", crate::c_abi::gos_rt_arr_len as *const u8),
         (
+            "gos_rt_arr_reverse",
+            crate::c_abi::gos_rt_arr_reverse as *const u8,
+        ),
+        (
             "gos_rt_arr_sort_by_aggr",
             crate::c_abi::gos_rt_arr_sort_by_aggr as *const u8,
         ),
         (
             "gos_rt_arr_sort_by_i64",
             crate::c_abi::gos_rt_arr_sort_by_i64 as *const u8,
+        ),
+        (
+            "gos_rt_arr_sort_i64",
+            crate::c_abi::gos_rt_arr_sort_i64 as *const u8,
+        ),
+        (
+            "gos_rt_arr_sort_str",
+            crate::c_abi::gos_rt_arr_sort_str as *const u8,
         ),
         (
             "gos_rt_atomic_bool_load",
@@ -1682,6 +1694,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_i64_to_str as *const u8,
         ),
         (
+            "gos_rt_int_wrapping_add",
+            crate::c_abi::gos_rt_int_wrapping_add as *const u8,
+        ),
+        (
+            "gos_rt_int_wrapping_mul",
+            crate::c_abi::gos_rt_int_wrapping_mul as *const u8,
+        ),
+        (
             "gos_rt_intarr_slice_result",
             crate::c_abi::gos_rt_intarr_slice_result as *const u8,
         ),
@@ -1829,6 +1849,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_lazy_iter_take_i64",
             crate::c_abi::gos_rt_lazy_iter_take_i64 as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_step_by_i64",
+            crate::c_abi::gos_rt_lazy_iter_step_by_i64 as *const u8,
         ),
         (
             "gos_rt_lazy_iter_skip_i64",
@@ -5445,6 +5469,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_vec_truncate",
             crate::c_abi::gos_rt_vec_truncate as *const u8,
+        ),
+        (
+            "gos_rt_vec_reverse",
+            crate::c_abi::gos_rt_vec_reverse as *const u8,
         ),
         (
             "gos_rt_vec_reversed",

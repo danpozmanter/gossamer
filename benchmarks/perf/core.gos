@@ -12,7 +12,7 @@ fn arithmetic_work(n: i64) -> i64 {
 }
 
 fn vec_work(n: i64) -> i64 {
-    let mut xs: [i64] = []
+    let mut xs: Vec<i64> = Vec::from([])
     for i in 0..n {
         xs.push((i * 13 + 5) % 97)
     }

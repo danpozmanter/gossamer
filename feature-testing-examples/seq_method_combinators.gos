@@ -5,7 +5,7 @@
 use std::iter
 
 fn main() {
-    let xs = [3, 1, 4, 1, 5, 9, 2, 6]
+    let xs: Vec<i64> = Vec::from([3, 1, 4, 1, 5, 9, 2, 6])
     println!("{:?}", xs.map(|x| x * 2))
     println!("{:?}", xs.filter(|x| x > 3))
     println!("{}", xs.sum())
@@ -15,7 +15,7 @@ fn main() {
     println!("{}", xs.fold(100, |acc, x| acc + x))
     println!("{} {}", xs.any(|x| x == 9), xs.all(|x| x > 0))
     println!("{:?} {:?}", xs.find(|x| x > 4), xs.position(|x| x == 9))
-    let fs = [1.5, 2.5, 3.0]
+    let fs: Vec<f64> = Vec::from([1.5, 2.5, 3.0])
     println!("{} {:?}", fs.sum(), fs.map(|f| f * 2.0))
     println!("{:?}", (2..10).filter(|k| k % 3 == 0) |> iter::collect)
     println!("{}", (1..5).map(|i| i * i).sum())

@@ -38,6 +38,87 @@ fn incompatible_type_error(value: &Value, peer: Option<&Value>, expected: &str) 
     RuntimeError::Type(message)
 }
 
+#[inline(always)]
+fn checked_integer_arithmetic(
+    lhs: i64,
+    rhs: i64,
+    ty: gossamer_types::IntTy,
+    op: ImmArithKind,
+) -> RuntimeResult<i64> {
+    use gossamer_types::IntTy;
+
+    let label = match op {
+        ImmArithKind::Add => "add",
+        ImmArithKind::Sub => "subtract",
+        ImmArithKind::Mul => "multiply",
+        ImmArithKind::Div | ImmArithKind::Rem => unreachable!("only additive ops are checked here"),
+    };
+    let overflow = || RuntimeError::Panic(format!("attempt to {label} with overflow"));
+    match ty {
+        IntTy::U64 | IntTy::U128 | IntTy::Usize => {
+            let lhs = lhs as u64;
+            let rhs = rhs as u64;
+            let value = match op {
+                ImmArithKind::Add => lhs.checked_add(rhs),
+                ImmArithKind::Sub => lhs.checked_sub(rhs),
+                ImmArithKind::Mul => lhs.checked_mul(rhs),
+                ImmArithKind::Div | ImmArithKind::Rem => unreachable!(),
+            }
+            .ok_or_else(overflow)?;
+            Ok(value as i64)
+        }
+        IntTy::U8 | IntTy::U16 | IntTy::U32 => {
+            let max = match ty {
+                IntTy::U8 => u8::MAX as u128,
+                IntTy::U16 => u16::MAX as u128,
+                IntTy::U32 => u32::MAX as u128,
+                _ => unreachable!(),
+            };
+            let lhs = lhs as u64 as u128;
+            let rhs = rhs as u64 as u128;
+            let value = match op {
+                ImmArithKind::Add => lhs.checked_add(rhs),
+                ImmArithKind::Sub => lhs.checked_sub(rhs),
+                ImmArithKind::Mul => lhs.checked_mul(rhs),
+                ImmArithKind::Div | ImmArithKind::Rem => unreachable!(),
+            }
+            .filter(|value| *value <= max)
+            .ok_or_else(overflow)?;
+            Ok(value as u64 as i64)
+        }
+        IntTy::I64 | IntTy::I128 | IntTy::Isize => {
+            let value = match op {
+                ImmArithKind::Add => lhs.checked_add(rhs),
+                ImmArithKind::Sub => lhs.checked_sub(rhs),
+                ImmArithKind::Mul => lhs.checked_mul(rhs),
+                ImmArithKind::Div | ImmArithKind::Rem => unreachable!(),
+            }
+            .ok_or_else(overflow)?;
+            Ok(value)
+        }
+        IntTy::I8 | IntTy::I16 | IntTy::I32 => {
+            let (min, max) = match ty {
+                IntTy::I8 => (i8::MIN as i128, i8::MAX as i128),
+                IntTy::I16 => (i16::MIN as i128, i16::MAX as i128),
+                IntTy::I32 => (i32::MIN as i128, i32::MAX as i128),
+                _ => unreachable!(),
+            };
+            let lhs = i128::from(lhs);
+            let rhs = i128::from(rhs);
+            let value = match op {
+                ImmArithKind::Add => lhs + rhs,
+                ImmArithKind::Sub => lhs - rhs,
+                ImmArithKind::Mul => lhs * rhs,
+                ImmArithKind::Div | ImmArithKind::Rem => unreachable!(),
+            };
+            if !(min..=max).contains(&value) {
+                return Err(overflow());
+            }
+            Ok(value as i64)
+        }
+    }
+}
+
 /// How a bytecode frame completed.
 ///
 /// A tail call is deliberately returned to [`Vm::apply`] rather than invoked
@@ -186,6 +267,18 @@ impl Vm {
                 registers[i] = arg;
             }
             self.pool.borrow_mut().give_args(args);
+            for &(param, dst_i) in &chunk.i64_params {
+                let value = match &registers[param as usize] {
+                    Value::Int(value) => *value,
+                    Value::Uint(value) => *value as i64,
+                    other => {
+                        return Err(RuntimeError::Type(format!(
+                            "integer parameter received `{other}`"
+                        )));
+                    }
+                };
+                ints[dst_i as usize] = value;
+            }
         }
         // Write-back cell protocol for `&mut Vec<T>` / `&mut [T]`
         // parameters: unwrap each incoming `MutCell` into its param
@@ -515,14 +608,43 @@ impl Vm {
                         pc = target;
                     }
                 }
-                Op::Call {
-                    dst,
-                    callee,
-                    args,
-                    argc,
-                    cache_idx,
-                    may_have_cells,
-                } => {
+                op @ (Op::Call { .. } | Op::CallGlobal { .. }) => {
+                    let (dst, callee, direct_global, args, argc, cache_idx, may_have_cells) =
+                        match op {
+                            Op::Call {
+                                dst,
+                                callee,
+                                args,
+                                argc,
+                                cache_idx,
+                                may_have_cells,
+                            } => (
+                                dst,
+                                Some(callee),
+                                None,
+                                args,
+                                argc,
+                                cache_idx,
+                                may_have_cells,
+                            ),
+                            Op::CallGlobal {
+                                dst,
+                                global_idx,
+                                args,
+                                argc,
+                                cache_idx,
+                                may_have_cells,
+                            } => (
+                                dst,
+                                None,
+                                Some(global_idx),
+                                args,
+                                argc,
+                                cache_idx,
+                                may_have_cells,
+                            ),
+                            _ => unreachable!(),
+                        };
                     // `Call; Return <same destination>` is a tail position.
                     // Do not re-enter `apply` from this already-large Rust
                     // dispatch frame. The outer trampoline resolves the
@@ -535,7 +657,8 @@ impl Vm {
                         && ref_cells.is_empty()
                         && matches!(instrs.get(pc as usize), Some(Op::Return { value }) if *value == dst);
                     let argc_usz = argc as usize;
-                    if let Value::Variant(inner) = &registers[callee as usize]
+                    if let Some(callee) = callee
+                        && let Value::Variant(inner) = &registers[callee as usize]
                         && inner.fields.is_empty()
                     {
                         let take_arg = |registers: &mut [Value], offset: usize| {
@@ -603,21 +726,54 @@ impl Vm {
                         };
                         arg_values.push(v);
                     }
-                    let callee_val = &registers[callee as usize];
+                    let callee_val = callee.map(|callee| &registers[callee as usize]);
+                    let direct_name = direct_global.map(|idx| &*chunk.globals[idx as usize]);
+                    let token = if direct_name.is_some() {
+                        NAMED_CALL_TOKEN
+                    } else {
+                        callee_val.map_or(0, call_token)
+                    };
+                    let callee_name = direct_name.or_else(|| match callee_val {
+                        Some(Value::String(name)) => Some(name.as_str()),
+                        _ => None,
+                    });
+                    let live_generation = self.globals_generation();
                     // Resolve every bytecode callable before falling through
                     // to the synchronous dispatcher. In particular, closure
                     // bodies are bytecode chunks too: calling one from a VM
                     // frame must suspend that frame rather than grow the Rust
                     // stack through `invoke_closure -> apply`.
-                    let bytecode_target = match callee_val {
-                        Value::String(name) => match self.lookup_global(name.as_str()) {
-                            Some(Global::Fn(chunk)) => Some((chunk, None)),
-                            _ => None,
-                        },
-                        Value::Closure(closure) => {
-                            Some((Arc::clone(&closure.chunk), Some(closure)))
-                        }
-                        _ => None,
+                    let bytecode_target = if let Some(name) = callee_name {
+                        let cached = {
+                            let cache = state.call_caches.borrow();
+                            let slot = &cache[cache_idx as usize];
+                            (slot.type_token == token
+                                && slot.callee_name.as_deref() == Some(name)
+                                && slot.generation == live_generation)
+                                .then(|| slot.fn_chunk.as_ref().map(Arc::clone))
+                                .flatten()
+                        };
+                        let resolved = cached.or_else(|| {
+                            let global = self.lookup_global(name);
+                            if let Some(ref global) = global {
+                                let mut cache = state.call_caches.borrow_mut();
+                                cache[cache_idx as usize] = fill_cache_slot(
+                                    token,
+                                    live_generation,
+                                    Some(SmolStr::from(name)),
+                                    global,
+                                );
+                            }
+                            match global {
+                                Some(Global::Fn(chunk)) => Some(chunk),
+                                _ => None,
+                            }
+                        });
+                        resolved.map(|chunk| (chunk, None))
+                    } else if let Some(Value::Closure(closure)) = callee_val {
+                        Some((Arc::clone(&closure.chunk), Some(closure)))
+                    } else {
+                        None
                     };
                     if let Some((next_chunk, closure)) = bytecode_target {
                         let closure_call = closure.is_some();
@@ -689,12 +845,6 @@ impl Vm {
                     // skips the `self.globals.get(name)` HashMap
                     // probe - typically the dominant cost in tight
                     // loops calling small helper functions.
-                    let token = call_token(callee_val);
-                    let callee_name = match callee_val {
-                        Value::String(name) => Some(name),
-                        _ => None,
-                    };
-                    let live_generation = self.globals_generation();
                     // Two-tier IC probe (same shape as MethodCall): a
                     // resolved builtin is returned as a raw `fn` pointer so
                     // the hit path calls it directly - no per-call
@@ -711,7 +861,7 @@ impl Vm {
                             let cache = state.call_caches.borrow();
                             let slot = &cache[cache_idx as usize];
                             if slot.type_token == token
-                                && slot.callee_name.as_ref() == callee_name
+                                && slot.callee_name.as_deref() == callee_name
                                 && slot.generation == live_generation
                             {
                                 if let Some(call_fn) = slot.builtin_fn {
@@ -741,24 +891,36 @@ impl Vm {
                         self.apply(g, arg_values)?
                     } else if token != 0 {
                         // Miss: do the full dispatch and write back.
-                        let resolved_global = match callee_val {
-                            Value::String(name) => self.lookup_global(name.as_str()),
-                            _ => None,
-                        };
+                        let resolved_global = callee_name.and_then(|name| self.lookup_global(name));
                         if let Some(ref g) = resolved_global {
                             let mut cache = state.call_caches.borrow_mut();
-                            cache[cache_idx as usize] =
-                                fill_cache_slot(token, live_generation, callee_name.cloned(), g);
+                            cache[cache_idx as usize] = fill_cache_slot(
+                                token,
+                                live_generation,
+                                callee_name.map(SmolStr::from),
+                                g,
+                            );
                         }
                         match resolved_global {
                             Some(g) => self.apply(g, arg_values)?,
-                            None => self.dispatch_call(callee_val, arg_values)?,
+                            None => {
+                                if let Some(name) = direct_name {
+                                    return Err(RuntimeError::UnresolvedName(name.to_string()));
+                                }
+                                self.dispatch_call(
+                                    callee_val.expect("dynamic unresolved call has a callee"),
+                                    arg_values,
+                                )?
+                            }
                         }
                     } else {
                         // Non-cacheable callee shape (Builtin,
                         // Closure, Native, …): straight to the
                         // existing slow-path dispatcher.
-                        self.dispatch_call(callee_val, arg_values)?
+                        self.dispatch_call(
+                            callee_val.expect("non-cacheable call has a callee"),
+                            arg_values,
+                        )?
                     };
                     registers[dst as usize] = result;
                 }
@@ -1607,6 +1769,52 @@ impl Vm {
                     };
                     registers[dst as usize] = Value::Int(byte);
                 }
+                Op::StrByteAtI64 { dst_i, recv, idx_i } => unsafe {
+                    // Static typing and bytecode validation guarantee the
+                    // register files. Keep the hot path free of bounds checks
+                    // and `Value::Int` allocation.
+                    let i = *ints.get_unchecked(idx_i as usize);
+                    let byte = match registers.get_unchecked(recv as usize) {
+                        Value::String(s) => {
+                            let bytes = s.as_str().as_bytes();
+                            if i < 0 || (i as usize) >= bytes.len() {
+                                0
+                            } else {
+                                i64::from(*bytes.get_unchecked(i as usize))
+                            }
+                        }
+                        _ => 0,
+                    };
+                    *ints.get_unchecked_mut(dst_i as usize) = byte;
+                },
+                Op::StrByteAtAddI64 {
+                    dst_i,
+                    lhs_i,
+                    recv,
+                    idx_i,
+                } => unsafe {
+                    let i = *ints.get_unchecked(idx_i as usize);
+                    let byte = match registers.get_unchecked(recv as usize) {
+                        Value::String(s) => {
+                            let bytes = s.as_str().as_bytes();
+                            if i < 0 || (i as usize) >= bytes.len() {
+                                0
+                            } else {
+                                i64::from(*bytes.get_unchecked(i as usize))
+                            }
+                        }
+                        _ => 0,
+                    };
+                    *ints.get_unchecked_mut(dst_i as usize) =
+                        ints.get_unchecked(lhs_i as usize).wrapping_add(byte);
+                },
+                Op::StrLenI64 { dst_i, recv } => unsafe {
+                    let len = match registers.get_unchecked(recv as usize) {
+                        Value::String(value) => value.len() as i64,
+                        _ => 0,
+                    };
+                    *ints.get_unchecked_mut(dst_i as usize) = len;
+                },
                 Op::IndexGetChecked { dst, base, index } => {
                     let b = &registers[base as usize];
                     let i = &registers[index as usize];
@@ -2502,6 +2710,19 @@ impl Vm {
                         .get_unchecked(lhs_i as usize)
                         .wrapping_add(*ints.get_unchecked(rhs_i as usize));
                 },
+                Op::CheckedAddI64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                    overflow_ty,
+                } => unsafe {
+                    *ints.get_unchecked_mut(dst_i as usize) = checked_integer_arithmetic(
+                        *ints.get_unchecked(lhs_i as usize),
+                        *ints.get_unchecked(rhs_i as usize),
+                        overflow_ty,
+                        ImmArithKind::Add,
+                    )?;
+                },
                 Op::SubI64 {
                     dst_i,
                     lhs_i,
@@ -2511,6 +2732,19 @@ impl Vm {
                         .get_unchecked(lhs_i as usize)
                         .wrapping_sub(*ints.get_unchecked(rhs_i as usize));
                 },
+                Op::CheckedSubI64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                    overflow_ty,
+                } => unsafe {
+                    *ints.get_unchecked_mut(dst_i as usize) = checked_integer_arithmetic(
+                        *ints.get_unchecked(lhs_i as usize),
+                        *ints.get_unchecked(rhs_i as usize),
+                        overflow_ty,
+                        ImmArithKind::Sub,
+                    )?;
+                },
                 Op::MulI64 {
                     dst_i,
                     lhs_i,
@@ -2519,6 +2753,19 @@ impl Vm {
                     *ints.get_unchecked_mut(dst_i as usize) = ints
                         .get_unchecked(lhs_i as usize)
                         .wrapping_mul(*ints.get_unchecked(rhs_i as usize));
+                },
+                Op::CheckedMulI64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                    overflow_ty,
+                } => unsafe {
+                    *ints.get_unchecked_mut(dst_i as usize) = checked_integer_arithmetic(
+                        *ints.get_unchecked(lhs_i as usize),
+                        *ints.get_unchecked(rhs_i as usize),
+                        overflow_ty,
+                        ImmArithKind::Mul,
+                    )?;
                 },
                 Op::DivI64 {
                     dst_i,
@@ -3380,10 +3627,14 @@ impl Vm {
                         ])));
                 }
                 Op::CheckNonNegativeCapacity { capacity_i } => unsafe {
-                    if *ints.get_unchecked(capacity_i as usize) < 0 {
+                    let capacity = *ints.get_unchecked(capacity_i as usize);
+                    if capacity < 0 {
                         return Err(RuntimeError::Type(
                             "Vec::with_capacity: capacity must be non-negative".to_string(),
                         ));
+                    }
+                    if capacity as u64 > (isize::MAX as u64) / (std::mem::size_of::<i64>() as u64) {
+                        return Err(RuntimeError::Panic("capacity overflow".to_string()));
                     }
                 },
                 Op::IntToFloatF64 { dst_f, src_i } => unsafe {
@@ -3517,6 +3768,51 @@ impl Vm {
                     registers[dst as usize] = crate::stdlib_builtins::iter::new_range_iter(
                         start_val, end_val, inclusive, start_open, end_open,
                     );
+                }
+                Op::BuildVariant1 {
+                    dst,
+                    name_idx,
+                    field,
+                    take_field,
+                } => {
+                    let Value::Variant(sentinel) = &chunk.consts[name_idx as usize] else {
+                        return Err(RuntimeError::Type(
+                            "variant constructor constant must be a variant".to_string(),
+                        ));
+                    };
+                    let field = if take_field {
+                        std::mem::replace(&mut registers[field as usize], Value::Void)
+                    } else {
+                        registers[field as usize].clone()
+                    };
+                    registers[dst as usize] =
+                        Value::variant_with_tag_1(sentinel.name.clone(), field);
+                }
+                Op::BuildVariant2 {
+                    dst,
+                    name_idx,
+                    first,
+                    second,
+                    take_first,
+                    take_second,
+                } => {
+                    let Value::Variant(sentinel) = &chunk.consts[name_idx as usize] else {
+                        return Err(RuntimeError::Type(
+                            "variant constructor constant must be a variant".to_string(),
+                        ));
+                    };
+                    let first = if take_first {
+                        std::mem::replace(&mut registers[first as usize], Value::Void)
+                    } else {
+                        registers[first as usize].clone()
+                    };
+                    let second = if take_second {
+                        std::mem::replace(&mut registers[second as usize], Value::Void)
+                    } else {
+                        registers[second as usize].clone()
+                    };
+                    registers[dst as usize] =
+                        Value::variant_with_tag_2(sentinel.name.clone(), first, second);
                 }
                 Op::VariantIs {
                     dst,

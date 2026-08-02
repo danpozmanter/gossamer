@@ -778,7 +778,10 @@ fn builtin_vec_from(args: &[Value]) -> RuntimeResult<Value> {
 /// same empty value as `Vec::new()` (len 0), leaving the compiled tiers to
 /// honour the reservation via `gos_rt_vec_with_capacity`.
 fn builtin_vec_with_capacity(args: &[Value]) -> RuntimeResult<Value> {
-    let _ = non_negative_arg(args, 0, 0, "Vec::with_capacity: capacity")?;
+    let capacity = non_negative_arg(args, 0, 0, "Vec::with_capacity: capacity")?;
+    if capacity > (isize::MAX as usize) / std::mem::size_of::<Value>() {
+        return Err(RuntimeError::Panic("capacity overflow".to_string()));
+    }
     Ok(Value::empty_array())
 }
 

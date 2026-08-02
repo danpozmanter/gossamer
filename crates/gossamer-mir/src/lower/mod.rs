@@ -163,6 +163,8 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
     let enums = collect_enum_variants(program);
     register_inline_enums(program, tcx);
     let impl_methods = collect_impl_methods(program);
+    let impl_method_receivers = collect_impl_method_receivers(program);
+    let impl_method_inputs = collect_impl_method_inputs(program);
     let fn_ret_names = collect_fn_ret_names(program);
     let fn_returns = collect_fn_returns(program, tcx);
     let fn_inputs = collect_fn_inputs(program);
@@ -185,6 +187,8 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
             &struct_defs,
             &enums,
             &impl_methods,
+            &impl_method_receivers,
+            &impl_method_inputs,
             &fn_ret_names,
             &fn_returns,
             &fn_inputs,

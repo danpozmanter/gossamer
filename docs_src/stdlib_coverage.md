@@ -16,24 +16,24 @@ evidence visible.
 | `std::fmt` | experimental | 9 | module-only | module-only | module-only | println / print / eprintln / eprint / format / write / writeln. |
 | `std::io` | experimental | 10 | module-only | module-only | module-only | stdout, stderr, stdin, write, write_byte, write_byte_array, flush, read_line, read_to_string. |
 | `std::os` | experimental | 2 | module-only | module-only | module-only | args, env, exit, read_file, write_file, mkdir, mkdir_all, read_dir. |
-| `std::os::exec` | shipped | 11 | module-only | module-only | module-only | Command builder + output / status / spawn / kill / wait. Wired through interp builtins, MIR lower, and C ABI. |
+| `std::os::exec` | shipped | 12 | module-only | module-only | module-only | Command builder + output / status / spawn / kill / wait. Wired through interp builtins, MIR lower, and C ABI. |
 | `std::os::signal` | experimental | 5 | module-only | module-only | module-only | on(signum) + Notifier::wait/try_wait. Wired through interp builtins, MIR lower, and C ABI. |
 | `std::env` | experimental | 9 | none | none | none | No module-level evidence record. |
 | `std::process` | shipped | 12 | none | none | none | No module-level evidence record. |
 | `std::thread` | shipped | 2 | none | none | none | No module-level evidence record. |
-| `std::strings` | experimental | 40 | module-only | module-only | module-only | split, trim, contains, find, replace, to_lower, to_upper, starts_with, ends_with. |
+| `std::strings` | experimental | 41 | module-only | module-only | module-only | split, trim, contains, find, replace, to_lower, to_upper, starts_with, ends_with. |
 | `std::strconv` | experimental | 10 | module-only | module-only | module-only | parse_i64, parse_u64, parse_f64, parse_bool, format_i64, format_f64. |
 | `std::collections` | experimental | 5 | module-only | module-only | module-only | Vec, HashMap, HashSet, VecDeque (both ends), BTreeMap (String/i64 keys). |
 | `std::net` | experimental | 6 | module-only | module-only | module-only | TcpListener, TcpStream. UdpSocket partial. |
 | `std::http` | experimental | 29 | module-only | module-only | module-only | HTTP/1.1 + HTTP/2 server + client (push + trailers); HTTP/3 via std::http_h3. |
 | `std::encoding::json` | experimental | 21 | module-only | module-only | module-only | encode + decode + Value. |
 | `std::sync` | experimental | 13 | module-only | module-only | module-only | Mutex, WaitGroup, AtomicI64. RwLock, Once partial. |
-| `std::time` | experimental | 13 | module-only | module-only | module-only | now, sleep, format_rfc3339, parse_rfc3339. |
+| `std::time` | experimental | 18 | module-only | module-only | module-only | now, sleep, format_rfc3339, parse_rfc3339. |
 | `std::panic` | experimental | 1 | module-only | module-only | module-only | panic + catch_unwind. |
 | `std::errors` | experimental | 6 | module-only | module-only | module-only | new, newf, wrap, is, join. |
 | `std::flag` | experimental | 8 | module-only | module-only | module-only | Set with string/int/uint/float/bool/duration/string_list, --help, equals form. Subcommands deferred to v1.x. |
 | `std::path` | shipped | 9 | module-only | module-only | module-only | join, split, base, dir, ext, clean. |
-| `std::fs` | experimental | 23 | module-only | module-only | module-only | read_dir, walk_dir, mkdir_all, remove_all, copy, rename. |
+| `std::fs` | experimental | 25 | module-only | module-only | module-only | read_dir, walk_dir, mkdir_all, remove_all, copy, rename. |
 | `std::bytes` | experimental | 5 | module-only | module-only | module-only | Buffer, Builder, index_of, split, replace. |
 | `std::bufio` | experimental | 7 | module-only | module-only | module-only | Reader, Writer, Scanner with split_lines / split_words. |
 | `std::net::url` | shipped | 5 | module-only | module-only | module-only | Url, query_escape, query_unescape. |
@@ -49,6 +49,8 @@ evidence visible.
 | `std::utf8` | experimental | 14 | module-only | module-only | module-only | is_valid, rune_count. |
 | `std::math::rand` | experimental | 1 | module-only | module-only | module-only | Rng (SplitMix64). |
 | `std::testing` | experimental | 5 | module-only | module-only | module-only | Runner, check, check_eq, check_ok. |
+| `std::httptest` | experimental | 1 | none | none | none | No module-level evidence record. |
+| `std::image` | experimental | 9 | none | none | none | No module-level evidence record. |
 | `std::runtime` | experimental | 6 | module-only | module-only | module-only | max_procs, set_max_procs, num_cpus, caller, stack, set_finalizer. |
 | `std::tls` | shipped | 0 | module-only | module-only | module-only | rustls-backed; ServerConfig, ClientConfig. |
 | `std::regex` | experimental | 10 | module-only | module-only | module-only | compile, is_match, find, find_all, captures, replace, split. |
@@ -58,7 +60,7 @@ evidence visible.
 | `std::crypto::aead` | experimental | 4 | none | none | none | No module-level evidence record. |
 | `std::crypto::ed25519` | experimental | 3 | none | none | none | No module-level evidence record. |
 | `std::crypto::ecdsa` | experimental | 3 | none | none | none | No module-level evidence record. |
-| `std::crypto::x509` | experimental | 2 | none | none | none | No module-level evidence record. |
+| `std::crypto::x509` | shipped | 3 | none | none | none | No module-level evidence record. |
 | `std::crypto::kdf` | experimental | 4 | none | none | none | No module-level evidence record. |
 | `std::encoding::yaml` | experimental | 7 | none | none | none | No module-level evidence record. |
 | `std::html::template` | shipped | 1 | none | none | none | No module-level evidence record. |
@@ -236,6 +238,7 @@ the canonical item path.
 | `std::crypto::subtle::constant_time_eq` | Function | experimental | not item-audited |
 | `std::crypto::x509::CertInfo` | Type | experimental | not item-audited |
 | `std::crypto::x509::parse_pem` | Function | experimental | not item-audited |
+| `std::crypto::x509::verify_server_certificate_with_crls` | Function | experimental | not item-audited |
 | `std::database::sql::Conn` | Type | experimental | not item-audited |
 | `std::database::sql::Driver` | Trait | experimental | not item-audited |
 | `std::database::sql::Error` | Type | experimental | not item-audited |
@@ -381,6 +384,8 @@ the canonical item path.
 | `std::fs::remove_dir_all` | Function | experimental | not item-audited |
 | `std::fs::remove_file` | Function | experimental | not item-audited |
 | `std::fs::rename` | Function | experimental | not item-audited |
+| `std::fs::temp_dir` | Function | experimental | not item-audited |
+| `std::fs::temp_file` | Function | experimental | not item-audited |
 | `std::fs::walk_dir` | Function | experimental | not item-audited |
 | `std::fs::write` | Function | experimental | not item-audited |
 | `std::hash::adler32::checksum` | Function | experimental | not item-audited |
@@ -507,6 +512,16 @@ the canonical item path.
 | `std::http_h3::H3Error` | Type | experimental | not item-audited |
 | `std::http_h3::Handler` | Trait | experimental | not item-audited |
 | `std::http_h3::serve` | Function | experimental | not item-audited |
+| `std::httptest::server` | Function | experimental | not item-audited |
+| `std::image::decode_base64` | Function | experimental | not item-audited |
+| `std::image::encode_jpeg_base64` | Function | experimental | not item-audited |
+| `std::image::encode_png_base64` | Function | experimental | not item-audited |
+| `std::image::filled` | Function | experimental | not item-audited |
+| `std::image::height` | Function | experimental | not item-audited |
+| `std::image::new` | Function | experimental | not item-audited |
+| `std::image::pixel` | Function | experimental | not item-audited |
+| `std::image::set_pixel` | Function | experimental | not item-audited |
+| `std::image::width` | Function | experimental | not item-audited |
 | `std::io::BufReader` | Type | experimental | not item-audited |
 | `std::io::BufWriter` | Type | experimental | not item-audited |
 | `std::io::Copy` | Function | experimental | not item-audited |
@@ -732,6 +747,7 @@ the canonical item path.
 | `std::option::zip` | Function | experimental | not item-audited |
 | `std::os::arch` | Function | experimental | not item-audited |
 | `std::os::exec::Child` | Type | experimental | not item-audited |
+| `std::os::exec::Path` | Type | experimental | not item-audited |
 | `std::os::exec::Pipeline` | Type | experimental | not item-audited |
 | `std::os::exec::Signal` | Type | experimental | not item-audited |
 | `std::os::exec::kill` | Function | experimental | not item-audited |
@@ -834,6 +850,7 @@ the canonical item path.
 | `std::strings::lines` | Function | experimental | not item-audited |
 | `std::strings::pad_left` | Function | experimental | not item-audited |
 | `std::strings::pad_right` | Function | experimental | not item-audited |
+| `std::strings::parse` | Function | experimental | not item-audited |
 | `std::strings::repeat` | Function | experimental | not item-audited |
 | `std::strings::replace` | Function | experimental | not item-audited |
 | `std::strings::replacen` | Function | experimental | not item-audited |
@@ -880,9 +897,14 @@ the canonical item path.
 | `std::testing::wait_for_scheduler_idle` | Function | experimental | not item-audited |
 | `std::thread::num_cpus` | Function | experimental | not item-audited |
 | `std::thread::yield_now` | Function | experimental | not item-audited |
+| `std::time::CivilResolution` | Type | experimental | not item-audited |
+| `std::time::CivilTime` | Type | experimental | not item-audited |
 | `std::time::Duration` | Type | experimental | not item-audited |
 | `std::time::Instant` | Type | experimental | not item-audited |
+| `std::time::Location` | Type | experimental | not item-audited |
 | `std::time::SystemTime` | Type | experimental | not item-audited |
+| `std::time::add_date` | Function | experimental | not item-audited |
+| `std::time::format_in` | Function | experimental | not item-audited |
 | `std::time::format_rfc3339` | Function | experimental | not item-audited |
 | `std::time::monotonic_ms` | Function | experimental | not item-audited |
 | `std::time::monotonic_nanos` | Function | experimental | not item-audited |

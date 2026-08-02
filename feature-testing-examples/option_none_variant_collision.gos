@@ -37,11 +37,11 @@ fn main() {
     let form = http::form::parse(&"a=1&b=2")
     println!("form_count={}", http::form::count(&form))
 
-    let dispositions: [String] = [
+    let dispositions: Vec<String> = Vec::from([
         "form-data; name=\"alpha\"",
         "form-data; name=\"file\"; filename=\"data.bin\"",
-    ]
-    let mut fields: [Field] = []
+    ])
+    let mut fields: Vec<Field> = Vec::from([])
     for disp in dispositions {
         let d: String = disp
         let name = attr(&d, &"name")

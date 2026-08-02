@@ -6,8 +6,8 @@
  * `let`. Bubble sort is O(n²) but a clear teaching example.
  */
 
-fn sorted_ascending(xs: &[i64]) -> [i64] {
-    let mut out: [i64] = xs.to_vec()
+fn sorted_ascending(xs: &[i64]) -> Vec<i64> {
+    let mut out: Vec<i64> = xs.to_vec()
     let n = out.len()
     for i in 0..n {
         for j in 0..n - i - 1 {
@@ -22,7 +22,7 @@ fn print_array(xs: &[i64]) {
 }
 
 fn main() {
-    let inputs: [i64] = [7, 2, 9, 1, 5, 3, 8, 4, 6]
+    let inputs: [i64; 9] = [7, 2, 9, 1, 5, 3, 8, 4, 6]
     let sorted = sorted_ascending(&inputs)
     print!("input:  ")
     print_array(&inputs)

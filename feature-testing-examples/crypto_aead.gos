@@ -17,13 +17,13 @@ use std::encoding
 
 fn main() {
     // 32-byte key, 12-byte nonce - fixed for a deterministic seal.
-    let key: Vec<u8> = [
+    let key: Vec<u8> = Vec::from([
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
         17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-    ]
-    let nonce: Vec<u8> = [9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9]
-    let pt: Vec<u8> = [104, 101, 108, 108, 111]   // "hello"
-    let aad: Vec<u8> = [109, 101, 116, 97]        // "meta"
+    ])
+    let nonce: Vec<u8> = Vec::from([9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9])
+    let pt: Vec<u8> = Vec::from([104, 101, 108, 108, 111])   // "hello"
+    let aad: Vec<u8> = Vec::from([109, 101, 116, 97])        // "meta"
 
     // --- AES-256-GCM ---
     match crypto::aead::aes_256_gcm_seal(key, nonce, pt, aad) {
@@ -33,10 +33,10 @@ fn main() {
                 Ok(back) => println!("aes open = {}", encoding::hex::encode(back)),
                 Err(e) => println!("aes open err {}", e),
             }
-            let badkey: Vec<u8> = [
+            let badkey: Vec<u8> = Vec::from([
                 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
                 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-            ]
+            ])
             let opened = match crypto::aead::aes_256_gcm_open(badkey, nonce, ct, aad) {
                 Ok(_) => true,
                 Err(_) => false,
@@ -59,8 +59,8 @@ fn main() {
     }
 
     // --- Ed25519 (random keypair -> assert round-trip booleans) ---
-    let msg: Vec<u8> = [118, 111, 116, 101]        // "vote"
-    let tampered: Vec<u8> = [119, 111, 116, 101]   // "wote"
+    let msg: Vec<u8> = Vec::from([118, 111, 116, 101])        // "vote"
+    let tampered: Vec<u8> = Vec::from([119, 111, 116, 101])   // "wote"
     match crypto::ed25519::keypair() {
         Ok((secret, public)) => {
             match crypto::ed25519::sign(secret, msg) {

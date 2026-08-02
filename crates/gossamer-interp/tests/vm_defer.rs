@@ -215,7 +215,7 @@ fn defer_lifo_through_mutated_state() {
     // a deferred expression is visible after the block.
     let src = r#"
 fn main() {
-    let mut order: [i64] = []
+    let mut order: Vec<i64> = Vec::new()
     order.push(0)
     {
         defer order.push(1)

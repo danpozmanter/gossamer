@@ -221,6 +221,7 @@ fn count(n: i64) -> i64 {
                 op,
                 Op::AddInt { .. }
                     | Op::AddI64 { .. }
+                    | Op::CheckedAddI64 { .. }
                     | Op::ArithImmI64 {
                         kind: crate::bytecode::ImmArithKind::Add,
                         ..
@@ -426,6 +427,28 @@ fn make_leaf() -> Tree { Tree::Leaf }
     }
 
     #[test]
+    fn payload_enum_constructor_skips_generic_call() {
+        let source = r"
+enum Tree { Leaf, Node(Tree, Tree) }
+fn node(left: Tree, right: Tree) -> Tree { Tree::Node(left, right) }
+";
+        let (chunk, _) = compile_named(source, "node");
+        assert!(
+            chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::BuildVariant2 { .. })),
+            "payload constructor should use BuildVariant2: {:?}",
+            chunk.instrs
+        );
+        assert!(
+            !chunk.instrs.iter().any(|op| matches!(op, Op::Call { .. })),
+            "payload constructor must not retain generic dispatch: {:?}",
+            chunk.instrs
+        );
+    }
+
+    #[test]
     fn i64_to_f64_divisor_uses_fused_typed_opcode() {
         let source = r"
 fn recip(i: i64) -> f64 {
@@ -502,6 +525,131 @@ fn build() -> String {
                 .count(),
             3,
             "all local character pushes should mutate the receiver directly: {:?}",
+            chunk.instrs
+        );
+    }
+
+    #[test]
+    fn string_byte_checksum_uses_fused_typed_opcode() {
+        let source = r"
+fn checksum(s: &String) -> i64 {
+    let mut sum: i64 = 0
+    let mut i: i64 = 0
+    while i < s.len() {
+        sum = sum.wrapping_add(s.byte_at(i))
+        i = i.wrapping_add(1)
+    }
+    sum
+}
+";
+        let (chunk, _) = compile_named(source, "checksum");
+        assert!(
+            chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::StrByteAtAddI64 { .. })),
+            "expected fused StrByteAtAddI64: {:?}",
+            chunk.instrs
+        );
+        assert!(
+            chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::StrLenI64 { .. })),
+            "expected typed StrLenI64: {:?}",
+            chunk.instrs
+        );
+        assert!(
+            !chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::MethodCall { .. })),
+            "string checksum loop should not retain generic method dispatch: {:?}",
+            chunk.instrs
+        );
+    }
+
+    #[test]
+    fn negative_wrapping_immediate_is_one_typed_opcode() {
+        let (chunk, _) = compile_named(
+            "fn dec(value: i64) -> i64 { value.wrapping_add(-1) }\n",
+            "dec",
+        );
+        assert!(
+            chunk.instrs.iter().any(|op| matches!(
+                op,
+                Op::ArithImmI64 {
+                    kind: crate::bytecode::ImmArithKind::Add,
+                    imm: -1,
+                    ..
+                }
+            )),
+            "expected one immediate wrapping add: {:?}",
+            chunk.instrs
+        );
+        assert!(
+            !chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::NegI64 { .. })),
+            "negative immediate should not materialize a negation: {:?}",
+            chunk.instrs
+        );
+    }
+
+    #[test]
+    fn integer_parameters_stay_in_the_typed_register_file() {
+        let (chunk, _) = compile_named("fn twice(value: i64) -> i64 { value + value }\n", "twice");
+        assert_eq!(chunk.i64_params.len(), 1);
+        assert!(
+            !chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::UnboxI64 { .. })),
+            "typed integer parameter should not be repeatedly unboxed: {:?}",
+            chunk.instrs
+        );
+    }
+
+    #[test]
+    fn last_use_shared_borrow_transfers_aggregate_handle() {
+        let source = r"
+struct Item { value: i64 }
+fn read(item: &Item) -> i64 { item.value }
+fn consume(item: Item) -> i64 { read(&item) }
+";
+        let (chunk, _) = compile_named(source, "consume");
+        assert!(
+            chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::MoveConsume { .. })),
+            "last-use shared borrow should transfer its aggregate handle: {:?}",
+            chunk.instrs
+        );
+    }
+
+    #[test]
+    fn statically_named_function_call_skips_global_load() {
+        let source = r"
+fn add_one(value: i64) -> i64 { value + 1 }
+fn caller(value: i64) -> i64 { add_one(value) }
+";
+        let (chunk, _) = compile_named(source, "caller");
+        assert!(
+            chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::CallGlobal { .. })),
+            "static function path should use CallGlobal: {:?}",
+            chunk.instrs
+        );
+        assert!(
+            !chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::LoadGlobal { .. } | Op::Call { .. })),
+            "static call must not materialize a callable name: {:?}",
             chunk.instrs
         );
     }

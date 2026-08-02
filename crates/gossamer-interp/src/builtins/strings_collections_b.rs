@@ -346,6 +346,77 @@ fn builtin_swap(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
+fn builtin_fill(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(value) = args.get(1) else {
+        return Ok(args.first().cloned().unwrap_or(Value::Unit));
+    };
+    match args.first() {
+        Some(Value::Array(parts)) => {
+            let mut owned = parts.as_ref().clone();
+            owned.fill(value.clone());
+            Ok(Value::Array(Arc::new(owned)))
+        }
+        Some(Value::IntArray(parts)) => {
+            let Value::Int(value) = value else {
+                return Err(RuntimeError::Type(
+                    "fill expects an integer element".to_string(),
+                ));
+            };
+            let mut owned = parts.as_ref().clone();
+            owned.fill(*value);
+            Ok(Value::IntArray(Arc::new(owned)))
+        }
+        Some(Value::FloatVec(parts)) => {
+            let Value::Float(value) = value else {
+                return Err(RuntimeError::Type(
+                    "fill expects a float element".to_string(),
+                ));
+            };
+            let mut owned = parts.as_ref().clone();
+            owned.fill(*value);
+            Ok(Value::FloatVec(Arc::new(owned)))
+        }
+        Some(Value::ByteArray(parts)) => {
+            let Value::Int(value) = value else {
+                return Err(RuntimeError::Type("fill expects a byte element".to_string()));
+            };
+            let byte = u8::try_from(*value)
+                .map_err(|_| {
+                    RuntimeError::Type("fill byte must be in the range 0..=255".to_string())
+                })?;
+            let mut owned = parts.as_ref().clone();
+            owned.fill(byte);
+            Ok(Value::ByteArray(Arc::new(owned)))
+        }
+        Some(Value::InlineByteArray(parts)) => {
+            let Value::Int(value) = value else {
+                return Err(RuntimeError::Type("fill expects a byte element".to_string()));
+            };
+            let byte = u8::try_from(*value)
+                .map_err(|_| {
+                    RuntimeError::Type("fill byte must be in the range 0..=255".to_string())
+                })?;
+            let mut owned = parts.as_ref().clone();
+            owned.fill(byte);
+            Ok(Value::InlineByteArray(Arc::new(owned)))
+        }
+        Some(Value::ByteVec(parts)) => {
+            let Value::Int(value) = value else {
+                return Err(RuntimeError::Type("fill expects a byte element".to_string()));
+            };
+            let byte = u8::try_from(*value)
+                .map_err(|_| {
+                    RuntimeError::Type("fill byte must be in the range 0..=255".to_string())
+                })?;
+            let mut owned = parts.as_ref().clone();
+            owned.fill(byte);
+            Ok(Value::ByteVec(Arc::new(owned)))
+        }
+        Some(other) => Ok(other.clone()),
+        None => Ok(Value::Unit),
+    }
+}
+
 fn builtin_clone(args: &[Value]) -> RuntimeResult<Value> {
     Ok(args.first().cloned().unwrap_or(Value::Unit))
 }

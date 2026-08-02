@@ -113,6 +113,55 @@ impl<'a> Builder<'a> {
             return Some(dest);
         }
 
+        if matches!(method.name.as_str(), "wrapping_add" | "wrapping_mul") && args.len() == 1 {
+            let mut receiver_ty = receiver.ty;
+            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(receiver_ty) {
+                receiver_ty = *inner;
+            }
+            if matches!(
+                self.tcx.kind_of(receiver_ty),
+                TyKind::Int(_) | TyKind::Var(_)
+            ) {
+                let (bits, signed) = match self.tcx.kind_of(receiver_ty) {
+                    TyKind::Var(_) => (64, 1),
+                    TyKind::Int(int_ty) => match int_ty {
+                        gossamer_types::IntTy::I8 => (8, 1),
+                        gossamer_types::IntTy::I16 => (16, 1),
+                        gossamer_types::IntTy::I32 => (32, 1),
+                        gossamer_types::IntTy::I64 | gossamer_types::IntTy::Isize => (64, 1),
+                        gossamer_types::IntTy::U8 => (8, 0),
+                        gossamer_types::IntTy::U16 => (16, 0),
+                        gossamer_types::IntTy::U32 => (32, 0),
+                        gossamer_types::IntTy::U64 | gossamer_types::IntTy::Usize => (64, 0),
+                        gossamer_types::IntTy::I128 | gossamer_types::IntTy::U128 => return None,
+                    },
+                    _ => unreachable!(),
+                };
+                let lhs = self.lower_expr(receiver)?;
+                let rhs = self.lower_expr(&args[0])?;
+                let dest = self.fresh(ty);
+                let next = self.new_block(span);
+                let symbol = if method.name == "wrapping_add" {
+                    "gos_rt_int_wrapping_add"
+                } else {
+                    "gos_rt_int_wrapping_mul"
+                };
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(symbol.to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(lhs)),
+                        Operand::Copy(Place::local(rhs)),
+                        Operand::Const(ConstValue::Int(bits)),
+                        Operand::Const(ConstValue::Int(signed)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                return Some(dest);
+            }
+        }
+
         // `HashSet::intersection` is eager in Gossamer so its ordinary
         // `.iter()` path used to allocate a whole temporary set and clone
         // every matching aggregate. Recognise the immediate snapshot and
@@ -339,8 +388,80 @@ impl<'a> Builder<'a> {
             return r;
         }
 
-        // Stage 6 - dispatch on the lowered receiver's runtime kind.
-        let receiver_local = self.lower_expr(receiver)?;
+        // Stage 6 - dispatch on the lowered receiver's runtime kind. User
+        // methods declared with `&self` or `&mut self` must receive the
+        // address of the actual place. Lowering `items[index]` as an ordinary
+        // expression creates a value copy, so mutations would disappear and
+        // native calls could use the wrong ABI.
+        let user_receiver_ref_ty = self
+            .struct_name_of(receiver_ty)
+            .or_else(|| self.struct_name_from_expr(receiver))
+            .and_then(|name| {
+                self.impl_method_receivers
+                    .get(&format!("{name}::{}", method.name))
+                    .copied()
+            })
+            .filter(|declared| matches!(self.tcx.kind_of(*declared), TyKind::Ref { .. }));
+        let receiver_local = if let Some(declared_ref_ty) = user_receiver_ref_ty {
+            // A chained by-value method result is not a source-level place,
+            // but it is materialised in a MIR local and can be borrowed for
+            // the next `&self` / `&mut self` call. Requiring
+            // `lower_place_expr` to succeed silently discarded fluent chains
+            // such as `Select::new(...).columns(...).order_by(...)`, leaving
+            // the destination aggregate zero-initialised on compiled tiers.
+            let receiver_place = if let Some(place) = self.lower_place_expr(receiver) {
+                place
+            } else {
+                Place::local(self.lower_expr(receiver)?)
+            };
+            if receiver_place.projection.is_empty()
+                && matches!(
+                    self.tcx
+                        .kind_of(self.locals[receiver_place.local.0 as usize].ty),
+                    TyKind::Ref { .. }
+                )
+            {
+                receiver_place.local
+            } else {
+                let mutable = matches!(
+                    self.tcx.kind_of(declared_ref_ty),
+                    TyKind::Ref {
+                        mutability: gossamer_types::Mutbl::Mut,
+                        ..
+                    }
+                );
+                // The impl declaration contains its template receiver
+                // (`&Wrapper<T>`). Borrow the call site's concrete receiver
+                // instead. Reusing the declared type collapsed every generic
+                // method call onto one arbitrary instantiation, so
+                // `Wrapper<Point>::get` called the scalar `Wrapper<i64>` ABI
+                // and dereferenced `Point.x` as a pointer in native builds.
+                let mut receiver_inner = receiver_ty;
+                while let TyKind::Ref { inner, .. } = self.tcx.kind_of(receiver_inner) {
+                    receiver_inner = *inner;
+                }
+                let receiver_ref_ty = self.tcx.intern(TyKind::Ref {
+                    mutability: if mutable {
+                        gossamer_types::Mutbl::Mut
+                    } else {
+                        gossamer_types::Mutbl::Not
+                    },
+                    inner: receiver_inner,
+                });
+                let receiver_ref = self.fresh(receiver_ref_ty);
+                self.emit_assign(
+                    Place::local(receiver_ref),
+                    Rvalue::Ref {
+                        place: receiver_place,
+                        mutable,
+                    },
+                    span,
+                );
+                receiver_ref
+            }
+        } else {
+            self.lower_expr(receiver)?
+        };
         let lowered_runtime_kind = self.local_runtime_kind.get(&receiver_local).copied();
         if let Some(rt) = self.lowered_kind_dispatch_symbol(lowered_runtime_kind, method, args) {
             return self.lower_lowered_kind_dispatch_call(
@@ -759,44 +880,12 @@ impl<'a> Builder<'a> {
             && let HirExprKind::Array(gossamer_hir::HirArrayExpr::List(elems)) = &receiver.kind
             && !elems.is_empty()
         {
-            let Some(raw) = self.lower_expr(receiver) else {
-                return MethodLowering::Handled(None);
+            let dest = self.fresh(ty);
+            return if self.lower_let_array_as_vec(dest, elems, span) {
+                MethodLowering::Handled(Some(dest))
+            } else {
+                MethodLowering::Handled(None)
             };
-            let raw_ty = self.locals[raw.0 as usize].ty;
-            let TyKind::Array { elem: elem_ty, len } = self.tcx.kind_of(raw_ty) else {
-                return MethodLowering::Handled(None);
-            };
-            let elem_bytes = self.elem_bytes_of(*elem_ty);
-            let len_val = len.to_usize();
-            let elem_ty = *elem_ty;
-            let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-            let elem_bytes_local = self.fresh(i64_ty);
-            self.emit_assign(
-                Place::local(elem_bytes_local),
-                Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(elem_bytes)))),
-                span,
-            );
-            let len_local = self.fresh(i64_ty);
-            self.emit_assign(
-                Place::local(len_local),
-                Rvalue::Use(Operand::Const(ConstValue::Int(len_val as i128))),
-                span,
-            );
-            let vec_ty = self.tcx.intern(TyKind::Vec(elem_ty));
-            let dest = self.fresh(vec_ty);
-            let next = self.new_block(span);
-            self.terminate(Terminator::Call {
-                callee: Operand::Const(ConstValue::Str("gos_rt_vec_from_arr".to_string())),
-                args: vec![
-                    Operand::Copy(Place::local(elem_bytes_local)),
-                    Operand::Copy(Place::local(raw)),
-                    Operand::Copy(Place::local(len_local)),
-                ],
-                destination: Place::local(dest),
-                target: Some(next),
-            });
-            self.set_current(next);
-            return MethodLowering::Handled(Some(dest));
         }
         MethodLowering::Pass
     }
@@ -824,6 +913,19 @@ impl<'a> Builder<'a> {
             {
                 return MethodLowering::Handled(Some(swap_local));
             }
+        }
+        if matches!(method.name.as_str(), "sort" | "reverse")
+            && args.is_empty()
+            && let Some(local) =
+                self.try_lower_fixed_array_ordering(receiver, method.name.as_str(), span)
+        {
+            return MethodLowering::Handled(Some(local));
+        }
+        if method.name.as_str() == "fill"
+            && let [value] = args
+            && let Some(local) = self.try_lower_sequence_fill(receiver, value, span)
+        {
+            return MethodLowering::Handled(Some(local));
         }
         // `xs.sort_by(closure)` for `[i64; N]` / `[i64]` / `Vec<i64>`.
         // Routes through one of two runtime helpers depending on
@@ -1471,23 +1573,23 @@ impl<'a> Builder<'a> {
                 _ => Some(""),
             },
             "extend" | "extend_from_slice" if args.len() == 1 => match &receiver_kind_flat {
-                TyKind::Vec(_) | TyKind::Slice(_) => Some("gos_rt_vec_extend"),
+                TyKind::Vec(_) => Some("gos_rt_vec_extend"),
                 _ => None,
             },
             "truncate" if args.len() == 1 => match &receiver_kind_flat {
-                TyKind::Vec(_) | TyKind::Slice(_) => Some("gos_rt_vec_truncate"),
+                TyKind::Vec(_) => Some("gos_rt_vec_truncate"),
                 _ => None,
             },
             "reserve" if args.len() == 1 => match &receiver_kind_flat {
-                TyKind::Vec(_) | TyKind::Slice(_) => Some("gos_rt_vec_reserve_at_least"),
+                TyKind::Vec(_) => Some("gos_rt_vec_reserve_at_least"),
                 _ => None,
             },
             "reserve_exact" if args.len() == 1 => match &receiver_kind_flat {
-                TyKind::Vec(_) | TyKind::Slice(_) => Some("gos_rt_vec_reserve_exact"),
+                TyKind::Vec(_) => Some("gos_rt_vec_reserve_exact"),
                 _ => None,
             },
             "capacity" if args.is_empty() => match &receiver_kind_flat {
-                TyKind::Vec(_) | TyKind::Slice(_) => Some("gos_rt_vec_capacity"),
+                TyKind::Vec(_) => Some("gos_rt_vec_capacity"),
                 _ => None,
             },
             // Option / Result methods. Result/Option now live as
@@ -1903,11 +2005,11 @@ impl<'a> Builder<'a> {
             "to_lowercase" => Some("gos_rt_str_to_lower"),
             "to_uppercase" => Some("gos_rt_str_to_upper"),
             "push" => match &receiver_kind_flat {
-                TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Var(_) => Some("gos_rt_vec_push"),
+                TyKind::Vec(_) | TyKind::Var(_) => Some("gos_rt_vec_push"),
                 _ => None,
             },
             "pop" => match &receiver_kind_flat {
-                TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Var(_) => Some("gos_rt_vec_pop_opt"),
+                TyKind::Vec(_) | TyKind::Var(_) => Some("gos_rt_vec_pop_opt"),
                 _ => None,
             },
             "sort" => Some(
@@ -1917,6 +2019,10 @@ impl<'a> Builder<'a> {
                     "gos_rt_vec_sort_i64"
                 },
             ),
+            "reverse" => match &receiver_kind_flat {
+                TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Var(_) => Some("gos_rt_vec_reverse"),
+                _ => None,
+            },
             "iter" => match &receiver_kind_flat {
                 // HashMap `.iter()` is handled before the helper-name
                 // dispatch: the `for (k, v) in m.iter()` shape by
@@ -3410,8 +3516,22 @@ impl<'a> Builder<'a> {
         runtime_symbol: Option<&'static str>,
         receiver_ty: Ty,
     ) -> Option<Local> {
-        let (receiver_local, mut arg_operands) =
-            self.build_fallback_arg_operands(runtime_symbol, receiver_local, receiver, args, span)?;
+        let method_inputs = self
+            .struct_name_of(receiver_ty)
+            .or_else(|| self.struct_name_from_expr(receiver))
+            .and_then(|name| {
+                self.impl_method_inputs
+                    .get(&format!("{name}::{}", method.name))
+            })
+            .map(|inputs| inputs.get(1..).unwrap_or_default());
+        let (receiver_local, mut arg_operands) = self.build_fallback_arg_operands(
+            runtime_symbol,
+            receiver_local,
+            receiver,
+            args,
+            method_inputs,
+            span,
+        )?;
         let runtime_symbol =
             self.rewrite_result_map_closure_arg(runtime_symbol, &mut arg_operands, span);
         // Re-check the dispatch for Result/Option methods now that
@@ -3581,6 +3701,7 @@ impl<'a> Builder<'a> {
         receiver_local: Local,
         receiver: &HirExpr,
         args: &[HirExpr],
+        expected_args: Option<&[Ty]>,
         span: Span,
     ) -> Option<(Local, Vec<Operand>)> {
         let receiver_local = match runtime_symbol {
@@ -3670,7 +3791,7 @@ impl<'a> Builder<'a> {
                     | "gos_rt_str_split"
             )
         );
-        for arg in args {
+        for (index, arg) in args.iter().enumerate() {
             let a = self.lower_expr(arg)?;
             // 0.7.0 flag::Cell auto-deref at the call boundary -
             // mirrors the bytecode VM's auto-unwrap shape so
@@ -3688,6 +3809,38 @@ impl<'a> Builder<'a> {
             };
             let a = if coerce_char_needle {
                 self.coerce_char_arg_to_str(a, span)
+            } else {
+                a
+            };
+            // User impl arguments obey the same array-to-slice coercions as
+            // free-function calls. In particular, `method(&[a, b])` passes a
+            // real GosVec-backed borrowed slice when the declared parameter is
+            // `&[T]`; forwarding the inline `[T; N]` address makes the callee
+            // interpret element zero as a Vec length/header and dereference a
+            // wild data pointer.
+            let a = if let Some(expected) = expected_args.and_then(|tys| tys.get(index)).copied() {
+                let source_ty = self.locals[a.0 as usize].ty;
+                let source_inner = match self.tcx.kind_of(source_ty) {
+                    TyKind::Ref { inner, .. } => *inner,
+                    _ => source_ty,
+                };
+                let expected_inner = match self.tcx.kind_of(expected) {
+                    TyKind::Ref { inner, .. } => *inner,
+                    _ => expected,
+                };
+                if let TyKind::Array { elem, len } = self.tcx.kind_of(source_inner).clone() {
+                    if matches!(self.tcx.kind_of(expected_inner), TyKind::Slice(_)) {
+                        if matches!(self.tcx.kind_of(expected), TyKind::Ref { .. }) {
+                            self.coerce_borrow_array_to_vec(a, elem, len, span)
+                        } else {
+                            self.coerce_array_to_vec(a, elem, len, span)
+                        }
+                    } else {
+                        a
+                    }
+                } else {
+                    a
+                }
             } else {
                 a
             };
@@ -3932,6 +4085,7 @@ impl<'a> Builder<'a> {
             ("filter", 1) => Some("iter::filter"),
             ("take", 1) => Some("iter::take"),
             ("skip", 1) => Some("iter::skip"),
+            ("step_by", 1) => Some("iter::step_by"),
             ("for_each", 1) => Some("iter::for_each"),
             ("any", 1) => Some("iter::any"),
             ("all", 1) => Some("iter::all"),
@@ -3970,7 +4124,7 @@ impl<'a> Builder<'a> {
         }
         if matches!(
             method.name.as_str(),
-            "take" | "skip" | "collect" | "product"
+            "take" | "skip" | "step_by" | "collect" | "product"
         ) && !matches!(recv_kind, TyKind::Iterator(_))
         {
             return MethodLowering::Pass;

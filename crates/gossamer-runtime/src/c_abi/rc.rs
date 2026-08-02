@@ -638,7 +638,7 @@ thread_local! {
     /// non-zero value. Deduplicated by the `BUFFERED_BIT`. Thread-local so
     /// buffering needs no lock on the release hot path; the collector runs
     /// on the same thread over its own candidates.
-    static ROOTS: std::cell::RefCell<Vec<*mut u8>> = const { std::cell::RefCell::new(Vec::new()) };
+    static ROOTS: std::cell::RefCell<RootBuffer> = std::cell::RefCell::new(RootBuffer::default());
     /// Adaptive arming threshold for automatic collection on this thread.
     /// Doubles (capped at `COLLECT_THRESHOLD_MAX`) after a slice that
     /// reclaimed little, and snaps back to `COLLECT_THRESHOLD_BASE` after a
@@ -646,6 +646,70 @@ thread_local! {
     /// scan every `COLLECT_THRESHOLD_BASE` surviving decrements.
     static COLLECT_THRESHOLD: std::cell::Cell<usize> =
         const { std::cell::Cell::new(COLLECT_THRESHOLD_BASE) };
+}
+
+#[derive(Default)]
+struct RootBuffer {
+    items: Vec<*mut u8>,
+    positions: std::collections::HashMap<usize, usize>,
+}
+
+impl RootBuffer {
+    fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    fn push(&mut self, payload: *mut u8) {
+        let key = payload as usize;
+        if self.positions.contains_key(&key) {
+            return;
+        }
+        self.positions.insert(key, self.items.len());
+        self.items.push(payload);
+    }
+
+    fn remove(&mut self, payload: *mut u8) -> bool {
+        let key = payload as usize;
+        let Some(index) = self.positions.remove(&key) else {
+            return false;
+        };
+        self.items.swap_remove(index);
+        if let Some(moved) = self.items.get(index) {
+            self.positions.insert(*moved as usize, index);
+        }
+        true
+    }
+
+    fn take_tail(&mut self, count: usize) -> Vec<*mut u8> {
+        let start = self.items.len().saturating_sub(count);
+        let tail = self.items.split_off(start);
+        for payload in &tail {
+            self.positions.remove(&(*payload as usize));
+        }
+        tail
+    }
+
+    fn take_all(&mut self) -> Vec<*mut u8> {
+        self.positions.clear();
+        std::mem::take(&mut self.items)
+    }
+
+    fn remove_all(&mut self, removed: &std::collections::HashSet<usize>) {
+        self.items
+            .retain(|payload| !removed.contains(&(*payload as usize)));
+        self.positions.clear();
+        self.positions.extend(
+            self.items
+                .iter()
+                .enumerate()
+                .map(|(index, payload)| (*payload as usize, index)),
+        );
+    }
 }
 
 /// Total cyclic objects reclaimed by the collector. Diagnostic / test hook.
@@ -693,6 +757,22 @@ unsafe fn possible_root(payload: *mut u8) {
         // threshold; it never drains the whole buffer in one inline pass.
         unsafe { collect_cycles_budgeted(Some(COLLECT_SLICE_ROOTS)) };
     }
+}
+
+/// Reclaim a zero-count object immediately when its buffered candidate still
+/// lives in the thread-local queue. Indexed removal makes this O(1), which is
+/// essential for long acyclic lists whose nodes briefly survive alias
+/// releases. A candidate already extracted into an active collector slice is
+/// not in the queue, so its pin remains intact until that slice finishes.
+unsafe fn try_reclaim_zero(payload: *mut u8) {
+    let h = unsafe { header_ptr(payload) };
+    if unsafe { is_buffered(h) } {
+        let removed = ROOTS.with(|roots| roots.borrow_mut().remove(payload));
+        if removed {
+            unsafe { set_buffered(h, false) };
+        }
+    }
+    unsafe { try_reclaim(payload) };
 }
 
 // ---------------------------------------------------------------
@@ -1931,7 +2011,9 @@ pub unsafe extern "C" fn gos_rt_rc_release_no_buffer(payload: *mut u8) {
     // and the candidate-buffer entry are dropped together: a freed block
     // must never linger in `ROOTS`, or a later collection dereferences it.
     if unsafe { is_buffered(h) } {
-        ROOTS.with(|r| r.borrow_mut().retain(|p| *p != payload));
+        ROOTS.with(|r| {
+            r.borrow_mut().remove(payload);
+        });
         unsafe { set_buffered(h, false) };
     }
     // Child slots are already cleared by the caller, so there are no
@@ -2349,7 +2431,7 @@ unsafe fn rc_release_impl(root: *mut u8) {
     // leaf node) is reclaimed directly. This avoids touching the worklist
     // at all, so the dominant release shape never allocates or recurses.
     if meta.is_null() {
-        unsafe { try_reclaim(root) };
+        unsafe { try_reclaim_zero(root) };
         return;
     }
     // Internal node: walk children iteratively (bounds stack depth on deep
@@ -2380,7 +2462,7 @@ unsafe fn rc_release_impl(root: *mut u8) {
             visit_vec_children(root, queue_vec_child);
         }
         let _ = meta;
-        unsafe { try_reclaim(root) };
+        unsafe { try_reclaim_zero(root) };
         while let Some(payload) = worklist.pop() {
             if payload.is_null() {
                 continue;
@@ -2404,7 +2486,7 @@ unsafe fn rc_release_impl(root: *mut u8) {
             unsafe {
                 visit_children_raw_buffered(payload, &mut worklist);
             }
-            unsafe { try_reclaim(payload) };
+            unsafe { try_reclaim_zero(payload) };
         }
     });
     unsafe { teardown_exit() };
@@ -3147,8 +3229,8 @@ unsafe fn collect_cycles_budgeted(budget: Option<usize>) {
             // front is exactly the state the buffer would hold had those
             // releases not yet crossed the threshold, so slicing is
             // equivalent to a not-yet-fired smaller buffer - sound.
-            Some(n) if n < len => buf.split_off(len - n),
-            _ => std::mem::take(&mut *buf),
+            Some(n) if n < len => buf.take_tail(n),
+            _ => buf.take_all(),
         }
     });
     if roots.is_empty() {
@@ -3223,9 +3305,7 @@ unsafe fn collect_cycles_slice(budget: Option<usize>, roots: Vec<*mut u8>) {
     if !freed_nodes.is_empty() {
         let dropped: std::collections::HashSet<usize> =
             freed_nodes.iter().map(|p| *p as usize).collect();
-        ROOTS.with(|r| {
-            r.borrow_mut().retain(|p| !dropped.contains(&(*p as usize)));
-        });
+        ROOTS.with(|r| r.borrow_mut().remove_all(&dropped));
     }
     // Adapt the automatic arming threshold by this slice's yield. An explicit
     // full drain (budget None) does not perturb it.
@@ -4290,7 +4370,7 @@ mod tests {
     }
 
     #[test]
-    fn buffered_then_shared_candidate_is_unpinned_and_reclaimed() {
+    fn buffered_then_shared_zero_count_candidate_is_reclaimed_immediately() {
         let _g = count_guard();
         fresh_cycle_state();
         let base = rc_live_count();
@@ -4306,11 +4386,12 @@ mod tests {
             assert!(is_buffered(header_ptr(x)), "surviving decrement buffers X");
 
             // X escapes to another goroutine, then its last owner drops it.
-            // The release tears down C, but the buffered pin defers X's own
-            // block to the owning thread's next collection slice.
+            // The release tears down C and indexed candidate removal clears
+            // X's stale thread-local pin immediately. No collection slice is
+            // needed once the strong count is known to be zero.
             gos_rt_rc_mark_shared(x);
             gos_rt_rc_release(x);
-            assert_eq!(rc_live_count(), base + 1, "C freed, X pinned");
+            assert_eq!(rc_live_count(), base, "C and X reclaimed immediately");
             gos_rt_collect_cycles();
         }
         assert_eq!(

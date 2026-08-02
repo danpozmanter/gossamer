@@ -30,7 +30,7 @@ fn main() {
     // Filter using captured threshold
     let xs = [1, 2, 3, 4, 5]
     let threshold = 3
-    let mut filtered: [i64] = []
+    let mut filtered: Vec<i64> = Vec::from([])
     for n in xs {
         if n > threshold {
             filtered.push(n)
@@ -40,7 +40,7 @@ fn main() {
 
     // Map using captured factor
     let factor = 2
-    let mut mapped: [i64] = []
+    let mut mapped: Vec<i64> = Vec::from([])
     for n in xs {
         mapped.push(n * factor)
     }

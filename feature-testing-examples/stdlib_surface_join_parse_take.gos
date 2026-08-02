@@ -20,14 +20,15 @@ fn main() {
     println!("{:?} {:?}", "true".to_bool(), "yes".to_bool())
     println!("{}", "8".to_i64().unwrap_or(3))
 
-    let xs = [10, 20, 30, 40, 50]
-    println!("{:?}", xs.take(3))
-    println!("{:?}", xs.take(0))
-    println!("{:?}", xs.take(99))
-    println!("{:?}", xs.step_by(2))
-    println!("{:?}", xs.step_by(1))
-    let names = ["ada", "grace", "edsger", "barbara"]
-    println!("{:?}", names.take(2))
-    println!("{}", names.step_by(2).join(" & "))
+    let take3: Vec<i64> = (0..5).take(3) |> iter::collect
+    let take0: Vec<i64> = (0..5).take(0) |> iter::collect
+    let take99: Vec<i64> = (0..5).take(99) |> iter::collect
+    let step2: Vec<i64> = (0..5).step_by(2) |> iter::collect
+    let step1: Vec<i64> = (0..5).step_by(1) |> iter::collect
+    println!("{}", take3.join(","))
+    println!("{}", take0.join(","))
+    println!("{}", take99.join(","))
+    println!("{}", step2.join(","))
+    println!("{}", step1.join(","))
     println!("{:?}", (0..10 |> iter::filter(|k| k > 2)).take(4) |> iter::collect)
 }

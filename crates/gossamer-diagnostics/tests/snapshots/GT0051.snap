@@ -1,0 +1,13 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+assertion_line: 86
+expression: rendered
+---
+--- plain ---
+error[GT0051]: A fixed array length was not known at compile time. Array lengths are part of `[T; N]`, so `[value; N]` requires a constant `N`. Use an explicit `Vec<T>` construction when the length is only known at runtime. - here
+--- framed ---
+error[GT0051]: A fixed array length was not known at compile time. Array lengths are part of `[T; N]`, so `[value; N]` requires a constant `N`. Use an explicit `Vec<T>` construction when the length is only known at runtime.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

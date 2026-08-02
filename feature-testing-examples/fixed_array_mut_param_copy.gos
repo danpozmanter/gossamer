@@ -25,7 +25,7 @@ fn main() {
     println!("fixed_exact_source: {}", fixed_exact[0])
     println!("fixed_exact_result: {}", exact_result[0])
 
-    let mut grow: Vec<i64> = [1, 2, 3]
+    let mut grow: Vec<i64> = Vec::from([1, 2, 3])
     set_first(&mut grow)
     push_one(&mut grow)
     println!("vec_after: len={} first={} last={}", grow.len(), grow[0], grow[3])

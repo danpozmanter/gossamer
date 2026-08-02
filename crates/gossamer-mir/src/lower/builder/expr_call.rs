@@ -313,6 +313,12 @@ impl<'a> Builder<'a> {
                 "Vec::from" | "collections::Vec::from" | "std::collections::Vec::from"
             ) && args.len() == 1
             {
+                if let HirExprKind::Array(gossamer_hir::HirArrayExpr::List(elems)) = &args[0].kind {
+                    let dest = self.fresh(ty);
+                    if self.lower_let_array_as_vec(dest, elems, span) {
+                        return Some(dest);
+                    }
+                }
                 let source = self.lower_expr(&args[0])?;
                 if let TyKind::Array { elem, len } =
                     self.tcx.kind_of(self.locals[source.0 as usize].ty).clone()

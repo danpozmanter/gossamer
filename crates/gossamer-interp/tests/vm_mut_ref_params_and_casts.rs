@@ -51,7 +51,7 @@ fn set_first(v: &mut Vec<i64>) {
 }
 
 fn main() {
-    let mut a: Vec<i64> = [1, 2, 3]
+    let mut a: Vec<i64> = Vec::from([1, 2, 3])
     set_first(&mut a)
     println!("{} {} {}", a[0], a[1], a[2])
 }
@@ -73,7 +73,7 @@ fn inc(x: &mut i64) {
 }
 
 fn main() {
-    let mut v: Vec<i64> = [1, 2]
+    let mut v: Vec<i64> = Vec::from([1, 2])
     set_first(&mut v)
     let mut n = 1
     inc(&mut n)
@@ -129,7 +129,7 @@ fn early(v: &mut Vec<i64>, stop: bool) {
 }
 
 fn main() {
-    let mut c: Vec<i64> = [0, 0, 0]
+    let mut c: Vec<i64> = Vec::from([0, 0, 0])
     nested(&mut c)
     println!("{} {} {}", c[0], c[1], c[2])
     early(&mut c, true)
@@ -151,7 +151,7 @@ fn push_one(v: &mut Vec<i64>) {
 }
 
 fn main() {
-    let mut e: Vec<i64> = [1]
+    let mut e: Vec<i64> = Vec::from([1])
     push_one(&mut e)
     println!("{} {}", e.len(), e[1])
 }
@@ -170,7 +170,7 @@ fn swap_ends(v: &mut [i64]) {
 }
 
 fn main() {
-    let mut f: Vec<i64> = [10, 20, 30]
+    let mut f: Vec<i64> = Vec::from([10, 20, 30])
     swap_ends(&mut f)
     println!("{} {} {}", f[0], f[1], f[2])
 }
@@ -190,7 +190,7 @@ fn set_first(v: &mut Vec<i64>) {
 }
 
 fn main() {
-    let mut h = Holder { data: [0, 0] }
+    let mut h = Holder { data: Vec::from([0, 0]) }
     set_first(&mut h.data)
     println!("{}", h.data[0])
 }
@@ -209,10 +209,10 @@ fn apply_mut(f: Fn(&mut Vec<i64>) -> (), v: &mut Vec<i64>) {
 
 fn main() {
     let setter = |v: &mut Vec<i64>| { v[0] = 9 }
-    let mut a: Vec<i64> = [1, 2]
+    let mut a: Vec<i64> = Vec::from([1, 2])
     setter(&mut a)
     println!("{}", a[0])
-    let mut b: Vec<i64> = [1, 2]
+    let mut b: Vec<i64> = Vec::from([1, 2])
     apply_mut(setter, &mut b)
     println!("{}", b[0])
 }

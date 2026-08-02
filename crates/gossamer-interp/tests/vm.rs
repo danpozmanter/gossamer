@@ -63,6 +63,25 @@ fn vm_evaluates_arithmetic_expression() {
 }
 
 #[test]
+fn vm_string_byte_at_loop_preserves_typed_integer_semantics() {
+    let output = run_vm_main(
+        r#"
+fn main() {
+    let text = "Gossamer"
+    let mut i: i64 = 0
+    let mut checksum: i64 = 0
+    while i < text.len() {
+        checksum = checksum.wrapping_add(text.byte_at(i))
+        i += 1
+    }
+    println!("{} {} {}", text.byte_at(-1), checksum, text.byte_at(text.len()))
+}
+"#,
+    );
+    assert_eq!(output, "0 833 0\n");
+}
+
+#[test]
 fn vm_packs_float_struct_arrays_built_by_constructor_helpers() {
     let vm = build_vm(
         r"

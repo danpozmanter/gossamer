@@ -6,11 +6,13 @@
 // the compiled cell and the VM cell must agree bit-for-bit across VM /
 // Cranelift / LLVM.
 
-static mut SEED: i64 = 88172645463325252
+static mut SEED: i64 = 123456789
 
 fn next() -> i64 {
-    SEED = SEED * 6364136223846793005 + 1442695040888963407
-    (SEED >> 33) & 0x7fffffff
+    // Keep the arithmetic in range so this JIT fixture is independent of the
+    // debug-checked versus release-wrapping profile contract.
+    SEED = (SEED * 48271 + 1) % 2147483647
+    SEED
 }
 
 fn main() {

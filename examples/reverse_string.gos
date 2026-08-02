@@ -12,7 +12,7 @@ use std::iter
 
 // Returns the rev sequence of byte codes. Treats input
 // as bytes - multi-byte UTF-8 would be split mid-codepoint.
-fn reverse_bytes(text: &String) -> [i64] {
+fn reverse_bytes(text: &String) -> Vec<i64> {
     text.as_bytes().rev().map(|b| b as i64)
 }
 

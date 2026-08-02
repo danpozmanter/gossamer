@@ -663,6 +663,7 @@ impl<'tcx> FnBuilder<'tcx> {
         rhs_i: Reg,
         lhs_unsigned: bool,
         rhs_unsigned: bool,
+        overflow_ty: Option<gossamer_types::IntTy>,
     ) -> RuntimeResult<TypedReg> {
         // Relational comparisons treat the pair as unsigned when either
         // operand's declared type is unsigned 64-bit; a right-shift keys
@@ -671,10 +672,18 @@ impl<'tcx> FnBuilder<'tcx> {
         match op {
             HirBinaryOp::Add => {
                 let dst = self.alloc_int();
-                self.emit(Op::AddI64 {
-                    dst_i: dst,
-                    lhs_i,
-                    rhs_i,
+                self.emit(match overflow_ty {
+                    Some(overflow_ty) => Op::CheckedAddI64 {
+                        dst_i: dst,
+                        lhs_i,
+                        rhs_i,
+                        overflow_ty,
+                    },
+                    None => Op::AddI64 {
+                        dst_i: dst,
+                        lhs_i,
+                        rhs_i,
+                    },
                 });
                 Ok(TypedReg {
                     reg: dst,
@@ -683,10 +692,18 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             HirBinaryOp::Sub => {
                 let dst = self.alloc_int();
-                self.emit(Op::SubI64 {
-                    dst_i: dst,
-                    lhs_i,
-                    rhs_i,
+                self.emit(match overflow_ty {
+                    Some(overflow_ty) => Op::CheckedSubI64 {
+                        dst_i: dst,
+                        lhs_i,
+                        rhs_i,
+                        overflow_ty,
+                    },
+                    None => Op::SubI64 {
+                        dst_i: dst,
+                        lhs_i,
+                        rhs_i,
+                    },
                 });
                 Ok(TypedReg {
                     reg: dst,
@@ -695,10 +712,18 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             HirBinaryOp::Mul => {
                 let dst = self.alloc_int();
-                self.emit(Op::MulI64 {
-                    dst_i: dst,
-                    lhs_i,
-                    rhs_i,
+                self.emit(match overflow_ty {
+                    Some(overflow_ty) => Op::CheckedMulI64 {
+                        dst_i: dst,
+                        lhs_i,
+                        rhs_i,
+                        overflow_ty,
+                    },
+                    None => Op::MulI64 {
+                        dst_i: dst,
+                        lhs_i,
+                        rhs_i,
+                    },
                 });
                 Ok(TypedReg {
                     reg: dst,

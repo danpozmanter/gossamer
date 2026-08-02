@@ -1066,6 +1066,119 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
+    /// Inline the successful path of `gos_rt_vec_swap_safe(vec, i, j)` while
+    /// retaining the runtime helper as the uncommon error path. The helper's
+    /// `i128` return uses the native SysV ABI, so Windows continues through
+    /// the generic call lowering that handles its indirect aggregate return.
+    pub(crate) fn lower_vec_swap_safe_inline(
+        &mut self,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let word_elem = self.vec_operand_has_word_elem(&args[0]);
+        let byte_elem = !word_elem && self.vec_operand_has_byte_elem(&args[0]);
+        if !word_elem && !byte_elem {
+            return Err(BuildError::Unsupported(
+                "inline Vec::swap requires statically word- or byte-sized elements",
+            ));
+        }
+
+        let vec_ptr = self.vec_operand_ptr(&args[0])?;
+        let i_raw = self.lower_operand(&args[1])?;
+        let i = self.widen_to_i64(&args[1], &i_raw);
+        let j_raw = self.lower_operand(&args[2])?;
+        let j = self.widen_to_i64(&args[2], &j_raw);
+        let s = self.next_ssa;
+        self.next_ssa += 1;
+        let (check, check_j, invalid, swap, join) = (
+            format!("vss_check_{s}"),
+            format!("vss_check_j_{s}"),
+            format!("vss_invalid_{s}"),
+            format!("vss_swap_{s}"),
+            format!("vss_join_{s}"),
+        );
+
+        let isnull = self.fresh();
+        writeln!(self.out, "  {isnull} = icmp eq ptr {vec_ptr}, null").unwrap();
+        writeln!(
+            self.out,
+            "  br i1 {isnull}, label %{invalid}, label %{check}"
+        )
+        .unwrap();
+
+        writeln!(self.out, "{check}:").unwrap();
+        let len = self.fresh();
+        writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}{TBAA_HEADER}").unwrap();
+        let i_bad = self.fresh();
+        writeln!(self.out, "  {i_bad} = icmp uge i64 {i}, {len}").unwrap();
+        writeln!(
+            self.out,
+            "  br i1 {i_bad}, label %{invalid}, label %{check_j}"
+        )
+        .unwrap();
+
+        writeln!(self.out, "{check_j}:").unwrap();
+        let j_bad = self.fresh();
+        writeln!(self.out, "  {j_bad} = icmp uge i64 {j}, {len}").unwrap();
+        writeln!(self.out, "  br i1 {j_bad}, label %{invalid}, label %{swap}").unwrap();
+
+        writeln!(self.out, "{invalid}:").unwrap();
+        declare_rt(&mut self.runtime_refs, "gos_rt_vec_swap_safe");
+        let error_result = self.fresh();
+        writeln!(
+            self.out,
+            "  {error_result} = call i128 @gos_rt_vec_swap_safe(ptr {vec_ptr}, i64 {i}, i64 {j})"
+        )
+        .unwrap();
+        writeln!(self.out, "  br label %{join}").unwrap();
+
+        writeln!(self.out, "{swap}:").unwrap();
+        if word_elem {
+            let i_off = self.fresh();
+            writeln!(self.out, "  {i_off} = mul i64 {i}, 8").unwrap();
+            let j_off = self.fresh();
+            writeln!(self.out, "  {j_off} = mul i64 {j}, 8").unwrap();
+            let i_addr = self.vec_elem_addr(&vec_ptr, &i_off);
+            let j_addr = self.vec_elem_addr(&vec_ptr, &j_off);
+            let a = self.fresh();
+            writeln!(self.out, "  {a} = load i64, ptr {i_addr}{TBAA_DATA}").unwrap();
+            let b = self.fresh();
+            writeln!(self.out, "  {b} = load i64, ptr {j_addr}{TBAA_DATA}").unwrap();
+            writeln!(self.out, "  store i64 {b}, ptr {i_addr}{TBAA_DATA}").unwrap();
+            writeln!(self.out, "  store i64 {a}, ptr {j_addr}{TBAA_DATA}").unwrap();
+        } else {
+            let i_addr = self.vec_elem_addr(&vec_ptr, &i);
+            let j_addr = self.vec_elem_addr(&vec_ptr, &j);
+            let a = self.fresh();
+            writeln!(self.out, "  {a} = load i8, ptr {i_addr}{TBAA_DATA}").unwrap();
+            let b = self.fresh();
+            writeln!(self.out, "  {b} = load i8, ptr {j_addr}{TBAA_DATA}").unwrap();
+            writeln!(self.out, "  store i8 {b}, ptr {i_addr}{TBAA_DATA}").unwrap();
+            writeln!(self.out, "  store i8 {a}, ptr {j_addr}{TBAA_DATA}").unwrap();
+        }
+        writeln!(self.out, "  br label %{join}").unwrap();
+
+        writeln!(self.out, "{join}:").unwrap();
+        let result = self.fresh();
+        writeln!(
+            self.out,
+            "  {result} = phi i128 [ 0, %{swap} ], [ {error_result}, %{invalid} ]"
+        )
+        .unwrap();
+        let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
+        if dest_ty != "void" {
+            writeln!(
+                self.out,
+                "  store i128 {result}, ptr {}",
+                local_slot(destination.local)
+            )
+            .unwrap();
+        }
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
     /// Emits the branchless inline body of `gos_rt_heap_u8_set(v, idx, val)`.
     /// `GosU8Vec` is `{ i64 len, ptr data }`; a null vec or out-of-range index
     /// redirects the store to a scratch byte, reproducing the runtime shim's

@@ -11,7 +11,7 @@
 use std::os::exec
 
 fn main() {
-    let empty: [String] = [].to_vec()
+    let empty: Vec<String> = [].to_vec()
     match exec::spawn(&"/usr/bin/true", &empty) {
         Ok(pid) => {
             let code = exec::wait_timeout(pid, 5000)
@@ -24,7 +24,7 @@ fn main() {
         Err(e) => println!("quick spawn err: {}", e.message()),
     }
 
-    let sleep_args: [String] = ["30"].to_vec()
+    let sleep_args: Vec<String> = ["30"].to_vec()
     match exec::spawn(&"/bin/sleep", &sleep_args) {
         Ok(pid) => {
             let r = exec::wait_timeout(pid, 200)

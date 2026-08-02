@@ -58,7 +58,7 @@ fn main() {
     let mut sizes: HashMap<String, i64> = HashMap::new()
     sizes.insert(format!("x"), 2)
     sizes.insert(format!("y"), 3)
-    let mut kept: Vec<Tree> = []
+    let mut kept: Vec<Tree> = Vec::from([])
     for (_, d) in sizes.iter() {
         kept.push(make(d))
     }

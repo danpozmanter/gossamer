@@ -22,7 +22,7 @@ more explicit types and errors.
 | `defer cleanup()` | `defer cleanup()` | Same idea. |
 | `ch <- v` | `tx.send(v)` | Channels use sender and receiver handles. |
 | `v, ok := <-ch` | `while let Some(v) = rx.recv() { ... }` | `None` means the channel is closed. |
-| `make([]int, 0, 16)` | `Vec::<i64>::with_capacity(16)` | `[T]` is the slice/vector type spelling in Gossamer source. |
+| `make([]int, 0, 16)` | `Vec::<i64>::with_capacity(16)` | `Vec<T>` owns growable storage; `&[T]` is a borrowed slice view. |
 | `make(map[string]int)` | `HashMap::<String, i64>::new()` | Import from `std::collections`. |
 
 Entry files may use top-level statements. Items are hoisted, and bare

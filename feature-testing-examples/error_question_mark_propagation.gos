@@ -16,7 +16,7 @@ fn double_positive(s: String) -> Result<i64, String> {
     Ok(n * 2)
 }
 
-fn sum_positives(inputs: [String]) -> Result<i64, String> {
+fn sum_positives(inputs: Vec<String>) -> Result<i64, String> {
     let mut total = 0
     for s in inputs {
         let n = parse_positive(s)?
@@ -51,14 +51,14 @@ fn main() {
     }
 
     // Sum success
-    let words: [String] = ["1", "2", "3"]
+    let words: Vec<String> = Vec::from(["1", "2", "3"])
     match sum_positives(words) {
         Ok(s) => println!("sum = {}", s),
         Err(e) => println!("sum error: {}", e),
     }
 
     // Sum with bad element
-    let bad: [String] = ["1", "bad", "3"]
+    let bad: Vec<String> = Vec::from(["1", "bad", "3"])
     match sum_positives(bad) {
         Ok(s) => println!("unexpected sum {}", s),
         Err(e) => println!("sum stopped at: {}", e),

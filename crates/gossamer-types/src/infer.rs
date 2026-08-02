@@ -459,28 +459,32 @@ impl InferCtxt {
             {
                 self.unify(tcx, *ae, *be)
             }
-            // `[T]` and `Vec<T>` are the same growable heap container
-            // at runtime; the surface spellings are interchangeable
-            // (`fn f() -> [i64]` returning an `iter::map` Vec), so
-            // the two kinds cross-unify.
-            (TyKind::Slice(a) | TyKind::Vec(a), TyKind::Slice(b) | TyKind::Vec(b))
+            (TyKind::Slice(a), TyKind::Slice(b))
+            | (TyKind::Vec(a), TyKind::Vec(b))
             | (TyKind::Sender(a), TyKind::Sender(b))
             | (TyKind::Receiver(a), TyKind::Receiver(b))
             | (TyKind::JoinHandle(a), TyKind::JoinHandle(b)) => self.unify(tcx, *a, *b),
-            // A `[a, b, c]` literal is typed bottom-up as a fixed
-            // `[T; N]`; it coerces into a growable `Vec<T>` / `[T]`
-            // (slice) when the expected type wants one - `let x:
-            // Vec<String> = ["a", "b"]`, a `-> Vec<T>` return, a
-            // Vec-typed struct field, or a Vec/slice parameter.
-            // Directional: the expected type is the unifier's left
-            // operand at every such site, so the reverse (`[T; N]`
-            // expected, Vec/slice found) stays a mismatch.
-            (TyKind::Vec(elem) | TyKind::Slice(elem), TyKind::Array { elem: lit, .. }) => {
-                self.unify(tcx, *elem, *lit)
-            }
             (TyKind::HashMap { key: ak, value: av }, TyKind::HashMap { key: bk, value: bv }) => {
                 self.unify(tcx, *ak, *bk)?;
                 self.unify(tcx, *av, *bv)
+            }
+            // Rust-like unsizing coercions are directional: an expected
+            // slice reference accepts an array or Vec reference with the
+            // same mutability and element type. Owned arrays, slices, and
+            // Vecs remain distinct.
+            (
+                TyKind::Ref {
+                    mutability: am,
+                    inner: ai,
+                },
+                TyKind::Ref {
+                    mutability: bm,
+                    inner: bi,
+                },
+            ) if (*am == Mutbl::Not || *bm == Mutbl::Mut)
+                && matches!(tcx.kind(self.resolve(tcx, *ai)), Some(TyKind::Slice(_))) =>
+            {
+                self.unify_ref_to_slice(tcx, *ai, *bi)
             }
             (
                 TyKind::Ref {
@@ -561,6 +565,29 @@ impl InferCtxt {
                 },
             ) if ad == bd => self.unify_substs(tcx, asu, bsu),
             (TyKind::Dyn(a), TyKind::Dyn(b)) => self.unify_trait_ref(tcx, a, b),
+            _ => Err(UnifyError::Mismatch),
+        }
+    }
+
+    fn unify_ref_to_slice(
+        &mut self,
+        tcx: &mut TyCtxt,
+        expected: Ty,
+        found: Ty,
+    ) -> Result<(), UnifyError> {
+        let expected = self.resolve(tcx, expected);
+        let found = self.resolve(tcx, found);
+        let Some(TyKind::Slice(expected_elem)) = tcx.kind(expected).cloned() else {
+            unreachable!();
+        };
+        match tcx.kind(found).cloned() {
+            Some(
+                TyKind::Slice(found_elem)
+                | TyKind::Vec(found_elem)
+                | TyKind::Array {
+                    elem: found_elem, ..
+                },
+            ) => self.unify(tcx, expected_elem, found_elem),
             _ => Err(UnifyError::Mismatch),
         }
     }

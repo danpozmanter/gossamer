@@ -57,7 +57,7 @@ fn main() {
         Err(e) => println!("error: {}", e),
     }
     let vals = [sql::Value::Int(7), sql::Value::Text("abc"), sql::Value::Null,
-        sql::Value::Bool(true), sql::Value::Float(1.5), sql::Value::Blob([1, 2, 3])]
+        sql::Value::Bool(true), sql::Value::Float(1.5), sql::Value::Blob(Vec::from([1, 2, 3]))]
     println!("vals: {}", vals.len())
     for v in &vals {
         println!("{}", describe(v))

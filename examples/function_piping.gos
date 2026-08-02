@@ -29,7 +29,7 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
     if x < lo { lo } else if x > hi { hi } else { x }
 }
 
-fn split_words(s: String) -> [String] {
+fn split_words(s: String) -> Vec<String> {
     s.trim().to_lowercase().split(" ")
 }
 

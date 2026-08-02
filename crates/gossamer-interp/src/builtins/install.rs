@@ -1,30 +1,7 @@
 fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("println", builtin("println", builtin_println)));
     globals.push(("print", builtin("print", builtin_print)));
-    // Math library - mirrors the native runtime's
-    // `gos_rt_math_*` surface. Registered under both the bare
-    // name and the qualified `math::*` key the VM's
-    // `compile_path` joins.
-    globals.push(("sqrt", builtin("sqrt", builtin_math_sqrt)));
-    globals.push(("math::sqrt", builtin("math::sqrt", builtin_math_sqrt)));
-    globals.push(("sin", builtin("sin", builtin_math_sin)));
-    globals.push(("math::sin", builtin("math::sin", builtin_math_sin)));
-    globals.push(("cos", builtin("cos", builtin_math_cos)));
-    globals.push(("math::cos", builtin("math::cos", builtin_math_cos)));
-    globals.push(("exp", builtin("exp", builtin_math_exp)));
-    globals.push(("math::exp", builtin("math::exp", builtin_math_exp)));
-    globals.push(("ln", builtin("ln", builtin_math_ln)));
-    globals.push(("log", builtin("log", builtin_math_ln)));
-    globals.push(("math::ln", builtin("math::ln", builtin_math_ln)));
-    globals.push(("math::log", builtin("math::log", builtin_math_ln)));
-    globals.push(("abs", builtin("abs", builtin_math_abs)));
-    globals.push(("math::abs", builtin("math::abs", builtin_math_abs)));
-    globals.push(("floor", builtin("floor", builtin_math_floor)));
-    globals.push(("math::floor", builtin("math::floor", builtin_math_floor)));
-    globals.push(("ceil", builtin("ceil", builtin_math_ceil)));
-    globals.push(("math::ceil", builtin("math::ceil", builtin_math_ceil)));
-    globals.push(("pow", builtin("pow", builtin_math_pow)));
-    globals.push(("math::pow", builtin("math::pow", builtin_math_pow)));
+    install_math_builtins(globals);
     // Stream constructors - each returns an `io::Stream` value
     // the program's subsequent method calls dispatch against.
     globals.push(("io::stdout", builtin("io::stdout", builtin_io_stdout)));
@@ -91,6 +68,59 @@ fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("__fmt_upper", builtin("__fmt_upper", builtin_fmt_upper)));
     globals.push(("__fmt_pad", builtin("__fmt_pad", builtin_fmt_pad)));
     globals.push(("__struct", builtin("__struct", builtin_struct_new)));
+}
+
+fn install_math_builtins(globals: &mut Vec<(&'static str, Value)>) {
+    // Math library - mirrors the native runtime's
+    // `gos_rt_math_*` surface. Registered under both the bare
+    // name and the qualified `math::*` key the VM's
+    // `compile_path` joins.
+    globals.push(("sqrt", builtin("sqrt", builtin_math_sqrt)));
+    globals.push(("math::sqrt", builtin("math::sqrt", builtin_math_sqrt)));
+    globals.push(("sin", builtin("sin", builtin_math_sin)));
+    globals.push(("math::sin", builtin("math::sin", builtin_math_sin)));
+    globals.push(("cos", builtin("cos", builtin_math_cos)));
+    globals.push(("math::cos", builtin("math::cos", builtin_math_cos)));
+    globals.push(("exp", builtin("exp", builtin_math_exp)));
+    globals.push(("math::exp", builtin("math::exp", builtin_math_exp)));
+    globals.push(("ln", builtin("ln", builtin_math_ln)));
+    globals.push(("log", builtin("log", builtin_math_ln)));
+    globals.push(("math::ln", builtin("math::ln", builtin_math_ln)));
+    globals.push(("math::log", builtin("math::log", builtin_math_ln)));
+    globals.push(("abs", builtin("abs", builtin_math_abs)));
+    globals.push(("math::abs", builtin("math::abs", builtin_math_abs)));
+    globals.push(("floor", builtin("floor", builtin_math_floor)));
+    globals.push(("math::floor", builtin("math::floor", builtin_math_floor)));
+    globals.push(("ceil", builtin("ceil", builtin_math_ceil)));
+    globals.push(("math::ceil", builtin("math::ceil", builtin_math_ceil)));
+    globals.push(("pow", builtin("pow", builtin_math_pow)));
+    globals.push(("math::pow", builtin("math::pow", builtin_math_pow)));
+    for (name, function) in [
+        ("wrapping_add", builtin_i64_wrapping_add as BuiltinFn),
+        ("wrapping_mul", builtin_i64_wrapping_mul as BuiltinFn),
+        ("i8::wrapping_add", builtin_i8_wrapping_add as BuiltinFn),
+        ("i8::wrapping_mul", builtin_i8_wrapping_mul as BuiltinFn),
+        ("i16::wrapping_add", builtin_i16_wrapping_add as BuiltinFn),
+        ("i16::wrapping_mul", builtin_i16_wrapping_mul as BuiltinFn),
+        ("i32::wrapping_add", builtin_i32_wrapping_add as BuiltinFn),
+        ("i32::wrapping_mul", builtin_i32_wrapping_mul as BuiltinFn),
+        ("i64::wrapping_add", builtin_i64_wrapping_add as BuiltinFn),
+        ("i64::wrapping_mul", builtin_i64_wrapping_mul as BuiltinFn),
+        ("isize::wrapping_add", builtin_i64_wrapping_add as BuiltinFn),
+        ("isize::wrapping_mul", builtin_i64_wrapping_mul as BuiltinFn),
+        ("u8::wrapping_add", builtin_u8_wrapping_add as BuiltinFn),
+        ("u8::wrapping_mul", builtin_u8_wrapping_mul as BuiltinFn),
+        ("u16::wrapping_add", builtin_u16_wrapping_add as BuiltinFn),
+        ("u16::wrapping_mul", builtin_u16_wrapping_mul as BuiltinFn),
+        ("u32::wrapping_add", builtin_u32_wrapping_add as BuiltinFn),
+        ("u32::wrapping_mul", builtin_u32_wrapping_mul as BuiltinFn),
+        ("u64::wrapping_add", builtin_u64_wrapping_add as BuiltinFn),
+        ("u64::wrapping_mul", builtin_u64_wrapping_mul as BuiltinFn),
+        ("usize::wrapping_add", builtin_u64_wrapping_add as BuiltinFn),
+        ("usize::wrapping_mul", builtin_u64_wrapping_mul as BuiltinFn),
+    ] {
+        globals.push((name, builtin(name, function)));
+    }
 }
 
 #[allow(
@@ -1113,6 +1143,7 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("sort_by", native("sort_by", native_sort_by)));
     globals.push(("reverse", builtin("reverse", builtin_reverse)));
     globals.push(("swap", builtin("swap", builtin_swap)));
+    globals.push(("fill", builtin("fill", builtin_fill)));
     globals.push(("clone", builtin("clone", builtin_clone)));
     // `iter().next()` outside a for-loop. Returns `Some(first)`
     // for non-empty collections, `None` otherwise. The for-loop

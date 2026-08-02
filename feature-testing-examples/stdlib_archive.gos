@@ -6,7 +6,7 @@
 use std::archive
 
 fn main() {
-    let files = [("hello.txt", [104, 105]), ("dir/x.txt", [120])]
+    let files = Vec::from([("hello.txt", Vec::from([104, 105])), ("dir/x.txt", Vec::from([120]))])
     match archive::tar::write(files) {
         Ok(bytes) => match archive::tar::read(bytes) {
             Ok(es) => println!("tar n={} e0={} d0={} e1={}", es.len(), es[0].name, es[0].data.len(), es[1].name),
@@ -14,7 +14,7 @@ fn main() {
         },
         Err(_e) => println!("tar write err"),
     }
-    match archive::zip::write([("hello.txt", [104, 105, 106])]) {
+    match archive::zip::write(Vec::from([("hello.txt", Vec::from([104, 105, 106]))])) {
         Ok(bytes) => match archive::zip::read(bytes) {
             Ok(es) => println!("zip n={} e0={} d0={}", es.len(), es[0].name, es[0].data.len()),
             Err(_e) => println!("zip read err"),

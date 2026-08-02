@@ -815,19 +815,19 @@ fn builtin_map_from(args: &[Value]) -> RuntimeResult<Value> {
     {
         let Some(entries) = array_as_values(source) else {
             return Err(RuntimeError::Type(
-                "HashMap::from expects {} or a collection of (key, value) pairs".to_string(),
+                "HashMap::from expects a map literal such as {\"key\": value}".to_string(),
             ));
         };
         let mut output = map.lock();
         for entry in entries {
             let Some(parts) = array_as_values(&entry) else {
                 return Err(RuntimeError::Type(
-                    "HashMap::from expects (key, value) pairs".to_string(),
+                    "HashMap::from expects key-value entries from a map literal".to_string(),
                 ));
             };
             let [key, value] = parts.as_slice() else {
                 return Err(RuntimeError::Type(
-                    "HashMap::from expects (key, value) pairs".to_string(),
+                    "HashMap::from expects key-value entries from a map literal".to_string(),
                 ));
             };
             output.insert(MapKey::from_value(key), value.clone());

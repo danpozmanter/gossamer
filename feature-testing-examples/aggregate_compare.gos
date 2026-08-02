@@ -10,12 +10,12 @@ fn main() {
     println!("{} {}", ("a", 2) < ("a", 5), ("b", 1) < ("a", 9))
     println!("{}", (1, 2.5) == (1, 2.5))
     println!("{} {}", (3, 4) >= (3, 4), (1, 2) != (1, 2))
-    let mut v: Vec<i64> = []
+    let mut v: Vec<i64> = Vec::from([])
     v.push(10)
     v.push(20)
-    let mut w: Vec<i64> = []
+    let mut w: Vec<i64> = Vec::from([])
     w.push(10)
     w.push(20)
-    println!("{} {}", v == w, v == [10, 99])
+    println!("{} {}", v == w, v == Vec::from([10, 99]))
     println!("{}", ["x", "y"] == ["x", "y"])
 }

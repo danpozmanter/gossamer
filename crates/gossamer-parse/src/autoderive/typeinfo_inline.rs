@@ -1,4 +1,4 @@
-/// Synthesizes a `fn __gos_typeinfo_<Name>() -> [(String, String)]`
+/// Synthesizes a `fn __gos_typeinfo_<Name>() -> Vec<(String, String)>`
 /// returning each field's `(name, type)` for every named-field struct,
 /// so `typeInfo::<Name>()` reflects the type's fields at compile time
 /// (the comptime reflection surface). Only emitted when the source
@@ -21,7 +21,7 @@ pub fn synthesize_type_info(parsed: &SourceFile) -> String {
             .map(|f| format!("(\"{}\", \"{}\")", f.name.name, ty_to_string(&f.ty)))
             .collect();
         out.push_str(&format!(
-            "fn {}() -> [(String, String)] {{ [{}] }}\n",
+            "fn {}() -> Vec<(String, String)> {{ Vec::from([{}]) }}\n",
             type_info_fn(&decl.name.name),
             entries.join(", "),
         ));
@@ -677,4 +677,3 @@ impl gossamer_ast::VisitorMut for TurbofishRewriter<'_> {
         seg.generics.clear();
     }
 }
-

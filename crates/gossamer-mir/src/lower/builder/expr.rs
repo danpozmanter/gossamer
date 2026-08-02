@@ -59,7 +59,6 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Local {
         use gossamer_types::TyKind;
-
         let value_ty = self.locals[local.0 as usize].ty;
         let dest_callable = matches!(
             self.tcx.kind_of(ret_ty),
@@ -790,6 +789,53 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
+        let runtime_projected_field = match &operand.kind {
+            HirExprKind::Field { receiver, .. } => {
+                let runtime_kind = self
+                    .lower_place_expr(receiver)
+                    .and_then(|place| self.local_runtime_kind.get(&place.local).copied());
+                let receiver_ty = match self.tcx.kind_of(receiver.ty) {
+                    TyKind::Ref { inner, .. } => *inner,
+                    _ => receiver.ty,
+                };
+                matches!(runtime_kind, Some("http::Response" | "http::Request"))
+                    || matches!(
+                        self.struct_name_of(receiver_ty).as_deref(),
+                        Some("Response" | "Request")
+                    )
+                    || matches!(
+                        self.tcx.kind_of(receiver_ty),
+                        TyKind::Adt { def, .. } if def.local >= u32::MAX - 64
+                    )
+            }
+            _ => false,
+        };
+        // Heap-backed sequence and string values already are the pointer a
+        // shared reference must carry. Read a place directly into the
+        // reference-typed destination so borrowing a projected field does not
+        // first create an owned temporary that drop insertion later releases.
+        // That extra owner was especially harmful for `&record.vec_field`:
+        // the temporary was never retained, so native cleanup over-released
+        // the Vec header after repeated struct construction.
+        if matches!(op, HirUnaryOp::RefShared)
+            && matches!(
+                self.tcx.kind_of(operand.ty),
+                TyKind::Slice(_) | TyKind::Vec(_) | TyKind::HashMap { .. }
+            )
+            && !runtime_projected_field
+            && let Some(place) = self.lower_place_expr(operand)
+        {
+            let dest = self.fresh(ty);
+            self.emit_assign(
+                Place::local(dest),
+                Rvalue::Ref {
+                    mutable: false,
+                    place,
+                },
+                span,
+            );
+            return Some(dest);
+        }
         let inner = self.lower_expr(operand)?;
         // `-x` on a user struct / enum routes to its `neg` impl method.
         if matches!(op, HirUnaryOp::Neg) {

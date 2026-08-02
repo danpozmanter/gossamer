@@ -30,7 +30,7 @@ fn serve() {
 fn await_ready() {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(&URL, []) {
+        if let Ok(_) = http::get(&URL, Vec::from([])) {
             return
         }
         time::sleep(25)
@@ -41,7 +41,7 @@ fn await_ready() {
 fn main() {
     go serve()
     await_ready()
-    match http::get(&URL, []) {
+    match http::get(&URL, Vec::from([])) {
         Ok(r) => {
             let mut has_server = false
             let mut has_date = false

@@ -7,20 +7,20 @@
 
 pub enum Node {
     Leaf(i64),
-    Call([i64]),
+    Call(Vec<i64>),
 }
 
 pub fn ident(n: Node) -> Node { n }
 
 fn make() -> Node {
-    let mut args: [i64] = []
+    let mut args: Vec<i64> = Vec::from([])
     args.push(40)
     args.push(2)
     ident(Node::Call(args))
 }
 
 fn direct() -> Node {
-    let mut xs: [i64] = []
+    let mut xs: Vec<i64> = Vec::from([])
     xs.push(7)
     Node::Call(xs)
 }

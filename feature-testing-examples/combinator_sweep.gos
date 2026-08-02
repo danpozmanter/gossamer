@@ -140,7 +140,7 @@ fn iter_groupings() {
     let mut odd_sum = 0
     for x in odds { odd_sum += x }
     let groups = [1, 2, 3, 4] |> iter::chunk_by(|x: i64| x % 2)
-    let zero_bucket = groups.get_or(0, [])
+    let zero_bucket = groups.get_or(0, Vec::from([]))
     let mut bucket_sum = 0
     for x in zero_bucket { bucket_sum += x }
     println!("iter partition {even_sum}/{odd_sum} group_by {bucket_sum} groups {}", groups.len())

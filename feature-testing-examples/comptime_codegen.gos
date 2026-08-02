@@ -11,7 +11,7 @@ struct User { id: i64, name: String, active: bool }
 // One generic generator serializes any struct, branching on each field's
 // reflected type (type-directed codegen). `v` is the runtime binding name
 // the emitted code reads.
-comptime fn gen_record(fields: [(String, String)], v: String) -> String {
+comptime fn gen_record(fields: Vec<(String, String)>, v: String) -> String {
     let mut out = "\"\""
     for (name, ty) in fields {
         let label = match ty {

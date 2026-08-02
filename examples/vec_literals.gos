@@ -1,18 +1,16 @@
-// Collection literals: `[a, b, c]` and `[value; count]` build a growable
-// `Vec<T>` / `[T]` wherever the expected type calls for one. The same literal
-// syntax serves a `let` annotation, a function return, a struct field, and a
-// Vec or slice argument - no separate constructor needed.
+// Array literals always build fixed arrays. Use `Vec::from` when owned,
+// growable storage is required. Arrays can still be borrowed as slices.
 
 struct Basket { fruits: Vec<String> }
 
 // A literal in return position becomes the declared `Vec<T>`.
 fn greetings() -> Vec<String> {
-    ["hello", "hi", "hey"]
+    Vec::from(["hello", "hi", "hey"])
 }
 
 // Branches of differing length join to a `Vec<T>`.
 fn scores(high: bool) -> Vec<i64> {
-    if high { [90, 95, 100] } else { [60] }
+    if high { Vec::from([90, 95, 100]) } else { Vec::from([60]) }
 }
 
 // A `Vec<T>` parameter accepts a bare literal at the call site.
@@ -27,8 +25,8 @@ fn count(items: &[String]) -> i64 {
 
 fn main() {
     // List form and the `[value; count]` repeat form.
-    let names: Vec<String> = ["ada", "grace", "edsger"]
-    let zeros: Vec<i64> = [0; 5]
+    let names: Vec<String> = Vec::from(["ada", "grace", "edsger"])
+    let zeros: Vec<i64> = Vec::from([0; 5])
 
     println!("first name: {}", names[0])
     println!("zeros: {} entries, last = {}", zeros.len(), zeros[4])
@@ -39,14 +37,18 @@ fn main() {
     println!("scores(true) has {} entries", scores(true).len())
 
     // Struct field.
-    let basket = Basket { fruits: ["apple", "pear"] }
+    let basket = Basket { fruits: Vec::from(["apple", "pear"]) }
     println!("basket holds {} and {}", basket.fruits[0], basket.fruits[1])
 
     // Arguments.
-    println!("total = {}", total([3, 4, 5]))
-    println!("count = {}", count(["x", "y", "z"]))
+    println!("total = {}", total(Vec::from([3, 4, 5])))
+    println!("count = {}", count(&["x", "y", "z"]))
 
     // Nested literals build a Vec of Vecs.
-    let grid: Vec<Vec<i64>> = [[1, 2, 3], [4, 5], [6]]
+    let grid: Vec<Vec<i64>> = Vec::from([
+        Vec::from([1, 2, 3]),
+        Vec::from([4, 5]),
+        Vec::from([6])
+    ])
     println!("grid rows = {}, grid[0][2] = {}", grid.len(), grid[0][2])
 }

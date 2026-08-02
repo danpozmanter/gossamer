@@ -117,12 +117,12 @@ Write clear, low-complexity, concise code.
 - **`s.to_i64()` / `to_f64()` / `to_bool()`** - strict full-string
   parses returning `Option<T>`:
   `env::args().first().unwrap_or("8").to_i64().unwrap_or(8)`.
-- **`[v; n]` with runtime `n` builds a Vec** - never write a push loop
-  for a constant fill.
+- **`[v; N]` is a fixed array and `N` is compile-time constant**. Use
+  `Vec::from([v; N])` for growable storage.
 - **Collection constructors infer**: `let mut m = HashMap::new()`,
   `let empty: HashMap<String, i64> = HashMap::from({})`, and
-  `let mut xs = []` ground from first use. `HashMap::from` also accepts
-  a collection of `(key, value)` pairs; `HashSet::from` accepts values.
+  `let map: HashMap<String, i64> = HashMap::from({"one": 1})`.
+  `HashSet::from` accepts a fixed array of values.
 - **Byte reads**: `s[i]` is the byte as `i64`; compare with byte
   literals (`s[i] >= b'0'`), render with `s[i] as char`. Prefer this
   over per-byte `substring`.
@@ -218,7 +218,9 @@ let n = 3 |> double |> add(10) |> clamp(0, 100)
   from the argument (not usable as a bare value or repeat count).
 - **References**: `&x` is shared and `&mut x` writes through to the same
   source place; both are aliases, never copies. There are no lifetimes or
-  borrow checker, so `&mut` is writable rather than fully exclusive.
+  non-lexical borrow analysis. A lightweight lexical check rejects a second
+  named `&mut` to the same root, overlap with an active named mutable alias,
+  and repeated mutable roots in one call.
   Calls never create `&mut` implicitly: pass a writable place as
   `change(&mut value)`. Forward an existing `&mut T` as `change(value)`.
 - **Types**: `bool char i8..i64 u8..u64 isize usize f32 f64 String
@@ -322,9 +324,15 @@ are callable as methods/free functions and materialize results.
 
 ## 10. Data structures
 
-- `[T]` growable (push/pop/swap/sort/sort_by, `contains`, `index_of`,
-  `first`/`last`, `rev`, `slice(a, b) -> Result`); `[T; N]`
-  fixed; tuples `.0`/`.1`; tuple structs fully usable. Method-call
+- `[T; N]` is an owned fixed array, `[T]` is an unsized borrowed slice,
+  and `Vec<T>` is the only owned growable sequence. Arrays, slices, and Vec
+  share the implemented slice method surface. Eager collection combinators
+  are Vec methods; arrays and slices use `iter()` first. Only Vec has
+  push/pop/insert/remove/clear, truncation, extension, reservation, and
+  capacity methods. Mutable arrays and slices support `sort`, `reverse`,
+  `swap`, and `fill` without resizing. `%i` reports each type's real surface, while `%e` also removes
+  methods that the binding's mutability cannot call. Tuples use `.0`/`.1`;
+  tuple structs are fully usable. Method-call
   `xs.insert/remove/swap` mutate in place and return `Result`, with an
   `Err` for an out-of-bounds index. Qualified calls use the same contract:
   `Vec::insert(&mut xs, i, v)` / `Vec::remove(&mut xs, i)`.
@@ -336,8 +344,8 @@ are callable as methods/free functions and materialize results.
   keys), `VecDeque`. A separate i64-only `queue`/`stack`/`deque`/
   `heap`/`ordered_*` family is functional re-bind style
   (`let q = queue::push(q, v)`), not mutating.
-- Collection literals coerce to `Vec<T>`/`[T]` wherever the expected
-  type calls for one.
+- Array literals never silently become Vec or an owned slice. Use
+  `Vec::from([...])`; borrow arrays or Vecs as `&[T]` / `&mut [T]`.
 - **Weak references**: RC means a genuine cycle leaks unless one edge
   is non-owning: `strong.downgrade() -> Weak<T>`,
   `w.upgrade() -> Option<T>`; `runtime::collect_cycles()` runs the

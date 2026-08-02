@@ -30,8 +30,8 @@ fn fibonacci(n: u64) -> u64 {
 }
 
 // A fallible helper used below to show `check_ok` integration.
-fn parse_sequence(text: &String) -> Result<[u64], errors::Error> {
-    let mut out: [u64] = []
+fn parse_sequence(text: &String) -> Result<Vec<u64>, errors::Error> {
+    let mut out: Vec<u64> = Vec::from([])
     for piece in text.split(',') {
         let trimmed = piece.trim()
         let n: u64 = trimmed.parse()

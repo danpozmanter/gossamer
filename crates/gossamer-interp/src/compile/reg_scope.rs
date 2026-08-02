@@ -320,8 +320,11 @@ impl<'tcx> FnBuilder<'tcx> {
         match self.instrs.last_mut() {
             Some(
                 Op::AddI64 { dst_i, .. }
+                | Op::CheckedAddI64 { dst_i, .. }
                 | Op::SubI64 { dst_i, .. }
+                | Op::CheckedSubI64 { dst_i, .. }
                 | Op::MulI64 { dst_i, .. }
+                | Op::CheckedMulI64 { dst_i, .. }
                 | Op::DivI64 { dst_i, .. }
                 | Op::RemI64 { dst_i, .. }
                 | Op::DivU64 { dst_i, .. }

@@ -8,12 +8,12 @@
  *     compile(pattern) -> Result<Pattern, String>
  *     is_match(&re, text) -> bool
  *     find(&re, text) -> Option<(i64, i64, String)>
- *     find_all(&re, text) -> [(i64, i64, String)]
+ *     find_all(&re, text) -> Vec<(i64, i64, String)>
  *     captures(&re, text) -> Option<[Option<String>]>
  *     captures_all(&re, text) -> [[Option<String>]]
  *     replace(&re, text, replacement) -> String
  *     replace_all(&re, text, replacement) -> String
- *     split(&re, text) -> [String]
+ *     split(&re, text) -> Vec<String>
  *
  * Compile once, use many times: the compiled `Pattern` is cheap to
  * pass around and carries its source string for diagnostics.
@@ -22,11 +22,11 @@
 use std::regex
 
 // Pulls every `key=value` pair out of a config line.
-fn parse_pairs(line: String) -> [[Option<String>]] {
+fn parse_pairs(line: String) -> Vec<Vec<Option<String>>> {
     let re = match regex::compile("(\\w+)=(\\w+)") {
         Ok(r) => r
         Err(e) => { eprintln!("bad pattern: {}", e)
-            return [] }
+            return Vec::from([]) }
     }
     regex::captures_all(&re, &line)
 }

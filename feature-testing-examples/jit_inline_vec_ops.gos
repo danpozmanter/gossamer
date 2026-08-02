@@ -23,7 +23,7 @@ fn sum_for(xs: &[i64]) -> i64 {
 // Adjacency walk over `[[i64]]`: the inner `for nb in graph[node]`
 // iterates a Vec<i64> element with the same counted-loop reader. Mirrors
 // the BFS neighbor scan that the unchecked read targets.
-fn walk_neighbors(graph: &[[i64]]) -> i64 {
+fn walk_neighbors(graph: &[Vec<i64>]) -> i64 {
     let mut total = 0
     let n = graph.len()
     let mut node = 0
@@ -36,11 +36,11 @@ fn walk_neighbors(graph: &[[i64]]) -> i64 {
     total
 }
 
-fn build_graph(n: i64) -> [[i64]] {
-    let mut graph: [[i64]] = []
+fn build_graph(n: i64) -> Vec<Vec<i64>> {
+    let mut graph: Vec<Vec<i64>> = Vec::from([])
     let mut node = 0
     while node < n {
-        let mut neighbors: [i64] = []
+        let mut neighbors: Vec<i64> = Vec::from([])
         let mut e = 0
         while e < 4 {
             neighbors.push((node * 7 + e) % n)

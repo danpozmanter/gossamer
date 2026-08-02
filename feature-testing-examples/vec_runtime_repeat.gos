@@ -1,7 +1,11 @@
 fn main() {
     let n = 5
-    let zeros = [0; n]
-    let flags = [false; n]
+    let mut zeros: Vec<i64> = Vec::with_capacity(n)
+    let mut flags: Vec<bool> = Vec::with_capacity(n)
+    for _ in 0..n {
+        zeros.push(0)
+        flags.push(false)
+    }
     println!("{}", zeros.len())
     println!("{}", flags.len())
     println!("{}", zeros[2])

@@ -36,7 +36,7 @@ fn serve_router() {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, []) {
+        if let Ok(_) = http::get(url, Vec::from([])) {
             return
         }
         time::sleep(25)
@@ -47,11 +47,11 @@ fn await_ready(url: &String) {
 fn main() {
     go serve_router()
     await_ready(&"http://127.0.0.1:23884/p/1/1.0")
-    match http::get("http://127.0.0.1:23884/p/42/3.5", []) {
+    match http::get("http://127.0.0.1:23884/p/42/3.5", Vec::from([])) {
         Ok(r) => println!("A {}", r.body),
         Err(e) => println!("A error: {}", e),
     }
-    match http::get("http://127.0.0.1:23884/p/notnum/x", []) {
+    match http::get("http://127.0.0.1:23884/p/notnum/x", Vec::from([])) {
         Ok(r) => println!("B {}", r.body),
         Err(e) => println!("B error: {}", e),
     }

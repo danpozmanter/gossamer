@@ -7,7 +7,7 @@
 // inline and split free paths without leaking or double-freeing.
 
 fn fill_i64(cap: i64, count: i64) -> i64 {
-    let mut v: [i64] = Vec::with_capacity(cap)
+    let mut v: Vec<i64> = Vec::with_capacity(cap)
     for i in 0..count {
         v.push(i * i)
     }
@@ -19,7 +19,7 @@ fn fill_i64(cap: i64, count: i64) -> i64 {
 }
 
 fn build_strings(cap: i64, count: i64) -> i64 {
-    let mut parts: [String] = Vec::with_capacity(cap)
+    let mut parts: Vec<String> = Vec::with_capacity(cap)
     for i in 0..count {
         parts.push(format!("item-{}", i))
     }
@@ -38,7 +38,7 @@ fn main() {
     // Reserved larger than the inline buffer (split from birth).
     println!("large: {}", fill_i64(64, 40))
     // Turbofish spelling.
-    let mut w: [i64] = Vec::<i64>::with_capacity(8)
+    let mut w: Vec<i64> = Vec::<i64>::with_capacity(8)
     w.push(7)
     w.push(11)
     println!("turbofish: {} {}", w[0], w[1])

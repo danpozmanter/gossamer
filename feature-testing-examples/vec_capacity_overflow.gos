@@ -1,4 +1,4 @@
-// Regression [P0]: a `[value; n]` / `Vec::with_capacity(n)` whose
+// Regression [P0]: a `Vec::with_capacity(n)` whose
 // `capacity * elem_bytes` product overflows the address space must abort
 // with a clean `capacity overflow` panic on every tier, not wrap to a
 // short allocation whose oversized `cap` header then drives out-of-bounds
@@ -10,6 +10,6 @@ fn main() {
     println!("before")
     // 2^61 elements of 8 bytes each = 2^64 bytes, which overflows usize.
     let n: i64 = 2305843009213693952
-    let v: [i64] = [7; n]
+    let v: Vec<i64> = Vec::with_capacity(n)
     println!("unreachable {}", v.len())
 }

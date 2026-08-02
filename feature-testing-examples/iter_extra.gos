@@ -29,7 +29,7 @@ fn main() {
     println!("zip {}", zsum)
 
     // -- flatten: Vec<Vec<i64>> -> Vec<i64>.
-    let nested = [[1, 2], [3], [4, 5, 6]]
+    let nested = Vec::from([Vec::from([1, 2]), Vec::from([3]), Vec::from([4, 5, 6])])
     let mut fsum = 0
     for v in iter::flatten(nested) {
         fsum += v
@@ -90,7 +90,7 @@ fn main() {
 
     // -- collect / once / empty as public free functions, plus method collect.
     let c = iter::collect(xs)
-    let mc = xs.collect()
+    let mc = xs.to_vec()
     let one = iter::once(99)
     let empty: Vec<i64> = iter::empty()
     println!("collect {} {} once {} empty {}", c[3], mc[0], one[0], empty.len())

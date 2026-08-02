@@ -1149,6 +1149,14 @@ mod tests {
     }
 
     #[test]
+    fn hashmap_literal_spacing_is_preserved_as_map_syntax() {
+        let source =
+            "fn main() { let map: HashMap<String, i64> = HashMap::from({\"one\":1,\"two\":2}) }\n";
+        let expected = "fn main() { let map: HashMap<String, i64> = HashMap::from({ \"one\": 1, \"two\": 2 }) }\n";
+        assert_eq!(fmt(source), expected);
+    }
+
+    #[test]
     fn refuses_unparseable_input() {
         assert!(matches!(fmt_err("fn main( {\n"), FormatError::Parse(_)));
     }

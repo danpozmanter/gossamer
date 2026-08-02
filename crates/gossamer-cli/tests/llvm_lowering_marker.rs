@@ -259,13 +259,13 @@ fn main() { println!("{}", name(1)) }
     Shape {
         tag: "vec_iter",
         source: r#"
-fn total(xs: [i64]) -> i64 {
+fn total(xs: Vec<i64>) -> i64 {
     let mut t = 0
     for x in xs { t = t + x }
     t
 }
 fn main() {
-    let xs: [i64] = [1, 2, 3, 4, 5]
+    let xs: Vec<i64> = [1, 2, 3, 4, 5].to_vec()
     println!("{}", total(xs))
 }
 "#,

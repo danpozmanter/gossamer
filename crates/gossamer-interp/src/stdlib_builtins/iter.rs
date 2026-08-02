@@ -162,6 +162,11 @@ enum LazyIterState {
         upstream: Value,
         remaining: usize,
     },
+    StepBy {
+        upstream: Value,
+        step: usize,
+        skip_before: usize,
+    },
     Enumerate {
         upstream: Value,
         index: i64,
@@ -332,6 +337,7 @@ fn discard_lazy_state(state: LazyIterState) {
     match state {
         LazyIterState::Take { upstream, .. }
         | LazyIterState::Skip { upstream, .. }
+        | LazyIterState::StepBy { upstream, .. }
         | LazyIterState::Enumerate { upstream, .. }
         | LazyIterState::Map { upstream, .. }
         | LazyIterState::Filter { upstream, .. }
@@ -663,6 +669,24 @@ fn lazy_next(
             } else {
                 lazy_next(upstream, dispatch)
             }
+        }
+        LazyIterState::StepBy {
+            upstream,
+            step,
+            skip_before,
+        } => {
+            while *skip_before > 0 {
+                if lazy_next(upstream, dispatch)?.is_none() {
+                    *skip_before = 0;
+                    return Ok(None);
+                }
+                *skip_before -= 1;
+            }
+            let out = lazy_next(upstream, dispatch)?;
+            if out.is_some() {
+                *skip_before = step.saturating_sub(1);
+            }
+            Ok(out)
         }
         LazyIterState::Enumerate { upstream, index } => {
             if let Some(value) = lazy_next(upstream, dispatch)? {
@@ -1023,6 +1047,7 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
     for (short, call) in [
         ("take", builtin_iterator_take_method as BuiltinFnPub),
         ("skip", builtin_iterator_skip_method as BuiltinFnPub),
+        ("step_by", builtin_iterator_step_by_method as BuiltinFnPub),
         (
             "enumerate",
             builtin_iterator_enumerate_method as BuiltinFnPub,
@@ -1194,6 +1219,11 @@ pub(crate) fn builtin_iterator_skip_method(args: &[Value]) -> RuntimeResult<Valu
     builtin_iter_skip(&rotate_receiver_last(args))
 }
 
+/// `iter.step_by(n)` with the receiver rotated into the data-last free form.
+pub(crate) fn builtin_iterator_step_by_method(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_iter_step_by(&rotate_receiver_last(args))
+}
+
 /// `iter.enumerate()` with the receiver in the data-first free form.
 pub(crate) fn builtin_iterator_enumerate_method(args: &[Value]) -> RuntimeResult<Value> {
     builtin_iter_enumerate(args)
@@ -1283,6 +1313,13 @@ pub(crate) fn builtin_iter_empty(_args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_iter_step_by(args: &[Value]) -> RuntimeResult<Value> {
     let step = positive_count(args, 0, "iter::step_by")?;
+    if lazy_iterators_enabled() || matches!(args.get(1), Some(Value::LazyIter(_))) {
+        return Ok(new_lazy_iter(LazyIterState::StepBy {
+            upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
+            step,
+            skip_before: 0,
+        }));
+    }
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     let out: Vec<Value> = xs.iter().step_by(step).cloned().collect();
     Ok(Value::Array(Arc::new(out)))

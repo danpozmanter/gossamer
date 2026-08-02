@@ -88,16 +88,30 @@ impl<'a> Lowerer<'a> {
             Rvalue::CallIntrinsic { name, args } => {
                 self.lower_call_intrinsic(name, args, dest_local)
             }
-            Rvalue::Ref { place, .. } => {
+            Rvalue::Ref { place, mutable } => {
                 // `&place` returns the address of the projection walk.
                 // A bare reference local already stores the referent pointer,
                 // so forward that value instead of taking the address of the
                 // stack slot that happens to hold the reference.
-                if place.projection.is_empty()
+                let leaf_is_heap_value = matches!(
+                    self.tcx.kind(self.place_leaf_ty(place)),
+                    Some(
+                        TyKind::String | TyKind::Slice(_) | TyKind::Vec(_) | TyKind::HashMap { .. }
+                    )
+                );
+                let bare_mut_string = *mutable
+                    && place.projection.is_empty()
                     && matches!(
                         self.tcx.kind(self.body.local_ty(place.local)),
-                        Some(TyKind::Ref { .. })
-                    )
+                        Some(TyKind::String)
+                    );
+                if !bare_mut_string
+                    && (leaf_is_heap_value
+                        || place.projection.is_empty()
+                            && (matches!(
+                                self.tcx.kind(self.body.local_ty(place.local)),
+                                Some(TyKind::Ref { .. })
+                            ) || self.tcx.is_payload_enum(self.body.local_ty(place.local))))
                 {
                     Ok(self.lower_place_read(place))
                 } else if place.projection.is_empty() {

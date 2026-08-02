@@ -94,6 +94,8 @@ struct ReceiverDescriptor {
     /// User-facing type name extracted from `let r: Foo = …` or
     /// `struct Foo { … }`. Used to match `impl Foo` blocks.
     type_name: Option<String>,
+    /// Whether method completion may offer an `&mut self` operation.
+    writable: bool,
 }
 
 impl ReceiverDescriptor {
@@ -104,7 +106,10 @@ impl ReceiverDescriptor {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BuiltinReceiver {
+    Integer,
     Vec,
+    Array,
+    Slice,
     String,
     HashMap,
     HashSet,
@@ -127,6 +132,7 @@ fn receiver_descriptor(doc: &DocumentAnalysis, offset: u32) -> ReceiverDescripto
         return ReceiverDescriptor {
             builtin: BuiltinReceiver::Unknown,
             type_name: None,
+            writable: false,
         };
     }
     // Walk left across the receiver expression (very conservative: stop
@@ -162,24 +168,51 @@ fn classify_receiver(doc: &DocumentAnalysis, expr: &str) -> ReceiverDescriptor {
         return ReceiverDescriptor {
             builtin: BuiltinReceiver::String,
             type_name: Some("String".to_string()),
+            writable: false,
         };
     }
-    // Vec literal `vec![...]` / `[...]`.
-    if head.starts_with("vec![") || head.starts_with('[') {
+    if head.starts_with("vec![") {
         return ReceiverDescriptor {
             builtin: BuiltinReceiver::Vec,
             type_name: None,
+            writable: false,
+        };
+    }
+    // A bracket literal is always a fixed array, never a Vec or slice.
+    if head.starts_with('[') {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::Array,
+            type_name: None,
+            writable: false,
+        };
+    }
+    if head.parse::<i64>().is_ok()
+        || ["i8", "i16", "i32", "i64", "isize", "u8", "u16", "u32", "u64", "usize"]
+            .iter()
+            .any(|suffix| {
+                head.strip_suffix(suffix)
+                    .is_some_and(|number| number.parse::<i64>().is_ok())
+            })
+    {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::Integer,
+            type_name: Some("i64".to_string()),
+            writable: false,
         };
     }
     // Identifier - try resolving via let-binding type annotation.
     if let Some(name) = identifier_token(head) {
         if let Some(ty) = lookup_let_annotation(doc.source(), name) {
-            return classify_type_string(&ty);
+            let mut descriptor = classify_type_string(&ty);
+            descriptor.writable = ty.trim_start().starts_with("&mut ")
+                || lookup_let_binding_is_mutable(doc.source(), name);
+            return descriptor;
         }
     }
     ReceiverDescriptor {
         builtin: BuiltinReceiver::Unknown,
         type_name: None,
+        writable: false,
     }
 }
 
@@ -188,46 +221,75 @@ fn classify_type_string(ty: &str) -> ReceiverDescriptor {
     let head = ty
         .trim_start_matches(['&', '*', ' '])
         .trim_end_matches([',', ';', ' ']);
-    if head.starts_with("Vec<") || head.starts_with("&[") || head.starts_with('[') {
+    let head = head.strip_prefix("mut ").unwrap_or(head);
+    if head.starts_with("Vec<") {
         return ReceiverDescriptor {
             builtin: BuiltinReceiver::Vec,
             type_name: None,
+            writable: false,
+        };
+    }
+    if head.starts_with('[') {
+        return ReceiverDescriptor {
+            builtin: if head.contains(';') {
+                BuiltinReceiver::Array
+            } else {
+                BuiltinReceiver::Slice
+            },
+            type_name: None,
+            writable: false,
         };
     }
     if head.starts_with("HashMap<") {
         return ReceiverDescriptor {
             builtin: BuiltinReceiver::HashMap,
             type_name: None,
+            writable: false,
         };
     }
     if head.starts_with("HashSet<") {
         return ReceiverDescriptor {
             builtin: BuiltinReceiver::HashSet,
             type_name: None,
+            writable: false,
         };
     }
     if head == "String" || head == "&str" || head == "str" {
         return ReceiverDescriptor {
             builtin: BuiltinReceiver::String,
             type_name: Some("String".to_string()),
+            writable: false,
+        };
+    }
+    if matches!(
+        head,
+        "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
+    ) {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::Integer,
+            type_name: Some(head.to_string()),
+            writable: false,
         };
     }
     if head.starts_with("Option<") || head == "Option" {
         return ReceiverDescriptor {
             builtin: BuiltinReceiver::Option,
             type_name: Some("Option".to_string()),
+            writable: false,
         };
     }
     if head.starts_with("Iterator<") || head == "Iterator" {
         return ReceiverDescriptor {
             builtin: BuiltinReceiver::Iterator,
             type_name: Some("Iterator".to_string()),
+            writable: false,
         };
     }
     if head.starts_with("Result<") || head == "Result" {
         return ReceiverDescriptor {
             builtin: BuiltinReceiver::Result,
             type_name: Some("Result".to_string()),
+            writable: false,
         };
     }
     let bare = head.split(['<', '[', '(', ' ']).next().unwrap_or(head);
@@ -235,11 +297,13 @@ fn classify_type_string(ty: &str) -> ReceiverDescriptor {
         ReceiverDescriptor {
             builtin: BuiltinReceiver::Unknown,
             type_name: None,
+            writable: false,
         }
     } else {
         ReceiverDescriptor {
             builtin: BuiltinReceiver::Unknown,
             type_name: Some(bare.to_string()),
+            writable: false,
         }
     }
 }
@@ -268,7 +332,12 @@ fn lookup_let_annotation(source: &str, name: &str) -> Option<String> {
     let needle_mut = format!("let mut {name}");
     let mut start = 0usize;
     while start < source.len() {
-        let position = source[start..].find(&needle)?;
+        let remaining = &source[start..];
+        let position = match (remaining.find(&needle), remaining.find(&needle_mut)) {
+            (Some(a), Some(b)) => a.min(b),
+            (Some(position), None) | (None, Some(position)) => position,
+            (None, None) => return None,
+        };
         let absolute = start + position;
         let head_ok = absolute == 0
             || !matches!(
@@ -327,6 +396,31 @@ fn lookup_let_annotation(source: &str, name: &str) -> Option<String> {
     None
 }
 
+fn lookup_let_binding_is_mutable(source: &str, name: &str) -> bool {
+    let mutable = format!("let mut {name}");
+    let immutable = format!("let {name}");
+    source.lines().rev().find_map(|line| {
+        let line = line.trim_start();
+        if line.starts_with(&mutable)
+            && line[mutable.len()..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_')
+        {
+            Some(true)
+        } else if line.starts_with(&immutable)
+            && line[immutable.len()..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_')
+        {
+            Some(false)
+        } else {
+            None
+        }
+    }) == Some(true)
+}
+
 #[derive(Debug, Clone, Copy)]
 struct BuiltinMethod {
     name: &'static str,
@@ -349,28 +443,10 @@ const VEC_METHODS: &[BuiltinMethod] = &[
         snippet: "pop()$0",
     },
     BuiltinMethod {
-        name: "len",
-        signature: "fn len(&self) -> usize",
-        doc: "Number of elements currently in the vec.",
-        snippet: "len()$0",
-    },
-    BuiltinMethod {
-        name: "is_empty",
-        signature: "fn is_empty(&self) -> bool",
-        doc: "Returns `true` when the vec has no elements.",
-        snippet: "is_empty()$0",
-    },
-    BuiltinMethod {
         name: "clear",
         signature: "fn clear(&mut self)",
         doc: "Removes every element, leaving the vec at length 0.",
         snippet: "clear()$0",
-    },
-    BuiltinMethod {
-        name: "iter",
-        signature: "fn iter(&self) -> Iter<T>",
-        doc: "Returns an iterator over the vec's elements.",
-        snippet: "iter()$0",
     },
     BuiltinMethod {
         name: "clone",
@@ -379,16 +455,175 @@ const VEC_METHODS: &[BuiltinMethod] = &[
         snippet: "clone()$0",
     },
     BuiltinMethod {
+        name: "insert",
+        signature: "fn insert(&mut self, index: i64, value: T) -> Result<(), errors::Error>",
+        doc: "Inserts a value at a checked index.",
+        snippet: "insert($1, $2)$0",
+    },
+    BuiltinMethod {
+        name: "remove",
+        signature: "fn remove(&mut self, index: i64) -> Result<T, errors::Error>",
+        doc: "Removes and returns the value at a checked index.",
+        snippet: "remove($0)",
+    },
+    BuiltinMethod {
+        name: "extend",
+        signature: "fn extend(&mut self, values: Vec<T>)",
+        doc: "Appends every value from another vector.",
+        snippet: "extend($0)",
+    },
+    BuiltinMethod {
+        name: "extend_from_slice",
+        signature: "fn extend_from_slice(&mut self, values: &[T])",
+        doc: "Appends cloned values from a slice.",
+        snippet: "extend_from_slice($0)",
+    },
+    BuiltinMethod {
+        name: "truncate",
+        signature: "fn truncate(&mut self, len: i64)",
+        doc: "Shortens the vector to at most `len` elements.",
+        snippet: "truncate($0)",
+    },
+    BuiltinMethod {
+        name: "reserve",
+        signature: "fn reserve(&mut self, capacity: i64)",
+        doc: "Ensures at least the requested total capacity.",
+        snippet: "reserve($0)",
+    },
+    BuiltinMethod {
+        name: "reserve_exact",
+        signature: "fn reserve_exact(&mut self, capacity: i64)",
+        doc: "Reserves the requested total capacity without extra growth.",
+        snippet: "reserve_exact($0)",
+    },
+    BuiltinMethod {
+        name: "capacity",
+        signature: "fn capacity(&self) -> i64",
+        doc: "Returns the vector's allocated element capacity.",
+        snippet: "capacity()$0",
+    },
+];
+
+const ARRAY_SLICE_METHODS: &[BuiltinMethod] = &[
+    BuiltinMethod {
+        name: "len",
+        signature: "fn len(&self) -> usize",
+        doc: "Returns the fixed number of elements in the sequence view.",
+        snippet: "len()$0",
+    },
+    BuiltinMethod {
+        name: "is_empty",
+        signature: "fn is_empty(&self) -> bool",
+        doc: "Returns true when the slice has no elements.",
+        snippet: "is_empty()$0",
+    },
+    BuiltinMethod {
+        name: "slice",
+        signature: "fn slice(&self, start: i64, end: i64) -> Result<Vec<T>, errors::Error>",
+        doc: "Returns a checked copy of the selected range.",
+        snippet: "slice($1, $2)$0",
+    },
+    BuiltinMethod {
+        name: "first",
+        signature: "fn first(&self) -> Option<T>",
+        doc: "Returns the first element, or `None` when empty.",
+        snippet: "first()$0",
+    },
+    BuiltinMethod {
+        name: "last",
+        signature: "fn last(&self) -> Option<T>",
+        doc: "Returns the last element, or `None` when empty.",
+        snippet: "last()$0",
+    },
+    BuiltinMethod {
+        name: "get",
+        signature: "fn get(&self, index: i64) -> Option<T>",
+        doc: "Returns the element at `index`, or `None` when out of bounds.",
+        snippet: "get($0)",
+    },
+    BuiltinMethod {
+        name: "iter",
+        signature: "fn iter(&self) -> Iter<T>",
+        doc: "Returns an iterator over borrowed elements.",
+        snippet: "iter()$0",
+    },
+    BuiltinMethod {
         name: "contains",
         signature: "fn contains(&self, value: &T) -> bool",
-        doc: "Returns `true` when the vec contains an element equal to `value`.",
+        doc: "Returns true when the sequence contains an equal element.",
         snippet: "contains(&$0)",
+    },
+    BuiltinMethod {
+        name: "index_of",
+        signature: "fn index_of(&self, value: T) -> Option<i64>",
+        doc: "Returns the first matching index when present.",
+        snippet: "index_of($0)",
+    },
+    BuiltinMethod {
+        name: "count_of",
+        signature: "fn count_of(&self, value: T) -> i64",
+        doc: "Counts elements equal to `value`.",
+        snippet: "count_of($0)",
     },
     BuiltinMethod {
         name: "sort",
         signature: "fn sort(&mut self)",
-        doc: "Sorts the vec in place.",
+        doc: "Sorts existing elements in place without resizing.",
         snippet: "sort()$0",
+    },
+    BuiltinMethod {
+        name: "sort_by",
+        signature: "fn sort_by(&mut self, cmp: fn(T, T) -> i64)",
+        doc: "Sorts existing elements in place with a comparator.",
+        snippet: "sort_by($0)",
+    },
+    BuiltinMethod {
+        name: "sort_by_key",
+        signature: "fn sort_by_key<K>(&mut self, key: fn(T) -> K)",
+        doc: "Sorts existing elements in place by a derived key.",
+        snippet: "sort_by_key($0)",
+    },
+    BuiltinMethod {
+        name: "reverse",
+        signature: "fn reverse(&mut self)",
+        doc: "Reverses existing elements in place without resizing.",
+        snippet: "reverse()$0",
+    },
+    BuiltinMethod {
+        name: "swap",
+        signature: "fn swap(&mut self, a: i64, b: i64) -> Result<(), errors::Error>",
+        doc: "Swaps two existing elements after checking both indices.",
+        snippet: "swap($1, $2)$0",
+    },
+    BuiltinMethod {
+        name: "fill",
+        signature: "fn fill(&mut self, value: T)",
+        doc: "Clones a value into every existing element without resizing.",
+        snippet: "fill($0)",
+    },
+    BuiltinMethod {
+        name: "windows",
+        signature: "fn windows(&self, size: i64) -> Vec<Vec<T>>",
+        doc: "Returns overlapping windows of `size` elements.",
+        snippet: "windows($0)",
+    },
+    BuiltinMethod {
+        name: "chunks",
+        signature: "fn chunks(&self, size: i64) -> Vec<Vec<T>>",
+        doc: "Returns consecutive chunks of at most `size` elements.",
+        snippet: "chunks($0)",
+    },
+    BuiltinMethod {
+        name: "join",
+        signature: "fn join(&self, separator: String) -> String",
+        doc: "Joins displayable elements with a separator.",
+        snippet: "join($0)",
+    },
+    BuiltinMethod {
+        name: "to_vec",
+        signature: "fn to_vec(&self) -> Vec<T>",
+        doc: "Copies the elements into a new vector.",
+        snippet: "to_vec()$0",
     },
 ];
 
@@ -464,6 +699,12 @@ const STRING_METHODS: &[BuiltinMethod] = &[
         signature: "fn to_string(&self) -> String",
         doc: "Returns a fresh owned copy.",
         snippet: "to_string()$0",
+    },
+    BuiltinMethod {
+        name: "as_bytes",
+        signature: "fn as_bytes(&self) -> Vec<u8>",
+        doc: "Materializes the UTF-8 bytes in a vector.",
+        snippet: "as_bytes()$0",
     },
 ];
 
@@ -677,16 +918,37 @@ const ALL_BUILTIN_METHODS: &[BuiltinMethod] = &[
     },
 ];
 
-fn builtin_methods_for(receiver: &ReceiverDescriptor) -> &'static [BuiltinMethod] {
-    match receiver.builtin {
-        BuiltinReceiver::Vec => VEC_METHODS,
-        BuiltinReceiver::String => STRING_METHODS,
-        BuiltinReceiver::HashMap | BuiltinReceiver::HashSet => HASHMAP_METHODS,
-        BuiltinReceiver::Iterator => ITERATOR_METHODS,
-        BuiltinReceiver::Option => OPTION_METHODS,
-        BuiltinReceiver::Result => RESULT_METHODS,
-        BuiltinReceiver::Unknown => &[],
-    }
+const INTEGER_METHODS: &[BuiltinMethod] = &[
+    BuiltinMethod {
+        name: "wrapping_add",
+        signature: "fn wrapping_add(self, rhs: Self) -> Self",
+        doc: "Adds with two's-complement wrapping at the declared integer width.",
+        snippet: "wrapping_add($0)",
+    },
+    BuiltinMethod {
+        name: "wrapping_mul",
+        signature: "fn wrapping_mul(self, rhs: Self) -> Self",
+        doc: "Multiplies with two's-complement wrapping at the declared integer width.",
+        snippet: "wrapping_mul($0)",
+    },
+];
+
+fn builtin_methods_for(receiver: &ReceiverDescriptor) -> Vec<&'static BuiltinMethod> {
+    let methods: Vec<_> = match receiver.builtin {
+        BuiltinReceiver::Integer => INTEGER_METHODS.iter().collect(),
+        BuiltinReceiver::Vec => VEC_METHODS.iter().chain(ARRAY_SLICE_METHODS).collect(),
+        BuiltinReceiver::Array | BuiltinReceiver::Slice => ARRAY_SLICE_METHODS.iter().collect(),
+        BuiltinReceiver::String => STRING_METHODS.iter().collect(),
+        BuiltinReceiver::HashMap | BuiltinReceiver::HashSet => HASHMAP_METHODS.iter().collect(),
+        BuiltinReceiver::Iterator => ITERATOR_METHODS.iter().collect(),
+        BuiltinReceiver::Option => OPTION_METHODS.iter().collect(),
+        BuiltinReceiver::Result => RESULT_METHODS.iter().collect(),
+        BuiltinReceiver::Unknown => Vec::new(),
+    };
+    methods
+        .into_iter()
+        .filter(|method| receiver.writable || !method.signature.contains("&mut self"))
+        .collect()
 }
 
 fn method_completion_item(method: &BuiltinMethod) -> Value {

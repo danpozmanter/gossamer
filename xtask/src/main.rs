@@ -320,7 +320,7 @@ fn render_empty_cookbook_catalog() -> String {
 /// Generates the small root LLM discovery index rather than a second primer.
 fn render_llms_index(catalogue: &PublicApiCatalog) -> String {
     format!(
-        "# Gossamer\n\nGossamer is a Rust-flavoured language with goroutines and deterministic memory management; use `gos` to check, run, build, test, format, and query programs. This generated index points models and agents at the reviewed primer and canonical API data.\n\n- [Compact LLM reference](llms-full.txt)\n- [Reviewed skill card](SKILL.md)\n- [Machine-readable stdlib API catalog](docs/api/stdlib.json) ({entries} entries)\n- [Cookbook registry](docs/api/cookbook.json) (recipes appear only after fixture verification)\n- [Language specification](SPEC.md)\n- [Examples](examples/)\n- [Examples guide](docs_src/examples.md)\n\n## Tooling\n\nUse `gos check FILE` before `gos FILE`; validate compiled behavior with `gos build FILE`. For agent integration, run `gos mcp` over stdio, then use its `check`, `run`, `build`, `doc`, `explain`, and semantic-navigation tools.\n",
+        "# Gossamer\n\nGossamer is a Rust-flavoured language with goroutines and deterministic memory management; use `gos` to check, execute, build, test, format, and query programs. This generated index points models and agents at the reviewed primer and canonical API data.\n\n- [Compact LLM reference](llms-full.txt)\n- [Reviewed skill card](SKILL.md)\n- [Machine-readable stdlib API catalog](docs/api/stdlib.json) ({entries} entries)\n- [Cookbook registry](docs/api/cookbook.json) (recipes appear only after fixture verification)\n- [Language specification](SPEC.md)\n- [Examples](examples/)\n- [Examples guide](docs_src/examples.md)\n\n## Tooling\n\nUse `gos check FILE` before `gos FILE`; validate compiled behavior with `gos build FILE`. For agent integration, run `gos mcp` over stdio, then use its `check`, `execute`, `build`, `doc`, `explain`, and semantic-navigation tools.\n",
         entries = catalogue.entries.len()
     )
 }
@@ -617,6 +617,9 @@ fn render_stdlib_page(modules: &[StdModule]) -> String {
     writeln!(out).unwrap();
     for module in &sorted {
         write_module_section(&mut out, module);
+    }
+    while out.ends_with("\n\n") {
+        out.pop();
     }
     out
 }

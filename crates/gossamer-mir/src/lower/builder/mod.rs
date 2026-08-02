@@ -61,6 +61,10 @@ pub(crate) struct Builder<'a> {
     pub(crate) struct_defs: &'a HashMap<gossamer_resolve::DefId, String>,
     pub(crate) enums: &'a EnumIndex,
     pub(crate) impl_methods: &'a HashMap<String, Option<Ty>>,
+    /// Declared receiver type for each mangled user impl method.
+    pub(crate) impl_method_receivers: &'a HashMap<String, Ty>,
+    /// Declared receiver and argument types for each mangled impl method.
+    pub(crate) impl_method_inputs: &'a HashMap<String, Vec<Ty>>,
     /// Declared return types by callable name (free fns bare,
     /// impl methods mangled). See `collect_fn_ret_names`.
     pub(crate) fn_ret_names: &'a HashMap<String, Ty>,
@@ -122,24 +126,6 @@ pub(crate) struct Builder<'a> {
     /// of the pre-branch header. Prevents unconditional null-deref when
     /// the scrutinee is None/Err on a subsequent loop iteration.
     pub(crate) payload_defer_block: Option<BlockId>,
-    /// Binding names that are the receiver of a growth / in-place
-    /// mutation method (`push`, `pop`, `insert`, `remove`, `sort`,
-    /// `sort_by`, `extend`, `truncate`, `clear`, `retain`, `swap`)
-    /// somewhere in the function body. A `let mut xs = [literal]`
-    /// is only promoted to a heap `Vec` when its name is in this set -
-    /// an explicitly-sized `let mut bodies: [Body; 5]` that is only
-    /// indexed / field-mutated / passed to a `[T; N]`-typed parameter
-    /// must stay a fixed inline array so the layout matches at every
-    /// use site.
-    pub(crate) grows_bindings: std::collections::HashSet<String>,
-    /// Element type pushed into each growing binding, keyed by binding
-    /// name, recovered from the first argument of `push` / `insert` /
-    /// `append` call sites. An unannotated `let mut xs = []` carries no
-    /// element type on its literal, so the promotion to a heap `Vec`
-    /// would otherwise size elements at 8 bytes (i64) and silently
-    /// truncate every multi-slot element (`[i64; 2]`, tuple, struct) on
-    /// push. This map supplies the real element stride for that case.
-    pub(crate) grows_elem_ty: std::collections::HashMap<String, Ty>,
     /// Nesting depth of `runtime::arena_push` .. `arena_pop` while
     /// lowering. Locals created at depth > 0 are arena-region-owned: the
     /// drop pass must not release them (the region frees them wholesale at

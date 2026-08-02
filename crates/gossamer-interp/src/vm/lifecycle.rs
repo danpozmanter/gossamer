@@ -669,6 +669,12 @@ impl Vm {
             // shape so programs that cannot promote a useful body do not
             // prepare the native compiler.
             if jit_backend::has_worthy_jit_body(&bodies, &jit_tcx, &shapes, &struct_shapes) {
+                // Preserve the pre-inline safety decision. Inlining an
+                // unsupported aggregate-boundary callee can erase the call
+                // edge that rejected its caller without making the resulting
+                // aggregate ABI safe to compile.
+                let pre_inline_names =
+                    jit_backend::jit_compile_body_names(&bodies, &jit_tcx, &shapes, &struct_shapes);
                 // Keep static-mut accessors as distinct bodies. Inlining one
                 // into a hot caller duplicates the accessor in MIR, after
                 // which the static-consistency gate correctly rejects the
@@ -686,8 +692,9 @@ impl Vm {
                 for body in &mut bodies {
                     gossamer_mir::optimise_for_jit(body, &jit_tcx);
                 }
-                let compile_names =
+                let mut compile_names =
                     jit_backend::jit_compile_body_names(&bodies, &jit_tcx, &shapes, &struct_shapes);
+                compile_names.retain(|name| pre_inline_names.contains(name));
                 if jit_call::jit_trace() {
                     for decision in jit_backend::jit_promotion_report(
                         &bodies,

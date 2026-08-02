@@ -321,6 +321,7 @@ pub fn compile_fn(
             arith_cache_count: 0,
             field_cache_count: 0,
             mut_ref_params: Vec::new(),
+            i64_params: Vec::new(),
             closure_protos: Vec::new(),
             select_arms: Vec::new(),
         });
@@ -341,7 +342,13 @@ pub fn compile_fn(
     builder.consumable = consume::consumable_locals(decl);
     for (idx, param) in decl.params.iter().enumerate() {
         let reg = builder.alloc_reg();
-        builder.bind_param(&param.pattern, reg);
+        if matches!(tcx.kind(param.ty), Some(TyKind::Int(_))) {
+            let int_reg = builder.alloc_int();
+            builder.bind_typed_param(&param.pattern, int_reg, RegKind::I64);
+            builder.i64_params.push((reg, int_reg));
+        } else {
+            builder.bind_param(&param.pattern, reg);
+        }
         // `&mut Vec<T>` / `&mut [T]` / `&mut <scalar>` parameters
         // participate in the write-back cell protocol - the callee
         // unwraps an incoming `MutCell` into the param register and
@@ -561,6 +568,7 @@ pub(crate) struct FnBuilder<'tcx> {
     /// Parameter registers declared `&mut Vec<T>` / `&mut [T]`;
     /// copied into [`FnChunk::mut_ref_params`] at `finish` time.
     pub(crate) mut_ref_params: Vec<Reg>,
+    pub(crate) i64_params: Vec<(Reg, Reg)>,
     /// Qualified names (`Type::method`) of user `&mut self` methods, used
     /// by `compile_method_call` to route a place-receiver call through
     /// the write-back cell protocol so the receiver's mutation persists.
@@ -630,6 +638,7 @@ pub(crate) enum ConstKey {
     Float(u64),
     Char(char),
     String(String),
+    Variant(String),
 }
 
 mod block;

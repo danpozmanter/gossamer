@@ -125,7 +125,7 @@ fn main() {
     names.sort_by(|a, b| if a < b { -1 } else if a > b { 1 } else { 0 })
     println!("ascending={:?}", names)
 
-    let mut nums: [i64] = [7, 2, 9, 1, 5]
+    let mut nums: [i64; 5] = [7, 2, 9, 1, 5]
     nums.sort_by(|a, b| if a > b { -1 } else if a < b { 1 } else { 0 })
     println!("descending={:?}", nums)
 }

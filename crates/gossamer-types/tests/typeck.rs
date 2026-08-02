@@ -757,7 +757,7 @@ fn contextual_integer_literals_must_fit_their_declared_width() {
          fn byte() -> i8 { 567 }\n\
          fn main() {\n\
              let scalar: i8 = 567\n\
-             let values: Vec<i8> = [1, 567]\n\
+             let values: [i8; 2] = [1, 567]\n\
              let holder = ByteHolder { value: 567 }\n\
              takes_byte(567)\n\
              let negative: i8 = -129\n\
@@ -1019,26 +1019,36 @@ fn unsuffixed_integer_literal_rejected_in_string_position() {
 }
 
 #[test]
-fn array_literal_coerces_to_vec_annotation() {
+fn array_literal_does_not_coerce_to_vec_annotation() {
     let checked = run("fn main() { let xs: Vec<String> = [\"a\", \"b\"] }\n");
-    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+    assert!(checked.diagnostics.iter().any(|diagnostic| matches!(
+        &diagnostic.error,
+        TypeError::TypeMismatch { expected, found }
+            if expected == "Vec<String>" && found == "[String; 2]"
+    )));
 }
 
 #[test]
-fn array_literal_coerces_to_slice_annotation() {
+fn owned_slice_annotation_is_rejected_as_unsized() {
     let checked = run("fn main() { let xs: [String] = [\"a\", \"b\"] }\n");
+    assert!(
+        checked
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { matches!(diagnostic.error, TypeError::UnsizedSliceValue { .. }) })
+    );
+}
+
+#[test]
+fn vec_from_repeat_array_is_explicit_and_accepted() {
+    let checked = run("fn main() { let xs: Vec<i64> = Vec::from([0; 4]) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
 #[test]
-fn repeat_literal_coerces_to_vec_annotation() {
-    let checked = run("fn main() { let xs: Vec<i64> = [0; 4] }\n");
-    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
-}
-
-#[test]
-fn array_literal_return_coerces_to_vec() {
-    let checked = run("fn make() -> Vec<String> { [\"x\", \"y\"] }\nfn main() { make()\n }\n");
+fn vec_return_requires_explicit_construction() {
+    let checked =
+        run("fn make() -> Vec<String> { Vec::from([\"x\", \"y\"]) }\nfn main() { make()\n }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
@@ -1052,26 +1062,29 @@ fn vec_literal_rejects_wrong_element_type() {
 }
 
 #[test]
-fn if_branches_of_differing_array_length_join_to_vec() {
+fn if_branches_of_differing_array_length_are_rejected() {
     // Differing lengths can only co-type as a Vec; this must check for any
     // element type, not only integer literals.
     let checked =
         run("fn main() { let v: Vec<String> = if true { [\"a\", \"b\"] } else { [\"c\"] } }\n");
+    assert!(!checked.diagnostics.is_empty());
+}
+
+#[test]
+fn nested_vec_construction_with_differing_inner_lengths_checks() {
+    let checked = run(
+        "fn main() { let g: Vec<Vec<i64>> = Vec::from([Vec::from([1, 2]), Vec::from([3])]) }\n",
+    );
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
 #[test]
-fn nested_vec_literal_with_differing_inner_lengths_checks() {
-    let checked = run("fn main() { let g: Vec<Vec<i64>> = [[1, 2], [3]] }\n");
-    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
-}
-
-#[test]
-fn assignment_value_array_literal_adopts_vec_shape() {
+fn assignment_value_uses_explicit_vec_construction() {
     // `v = [2, 3]` where `v: Vec<i64>` must record the literal as a
     // heap Vec - a fixed `[i64; 2]` record desyncs the value layout
     // from the Vec-typed slot on the compiled tiers.
-    let checked = run("fn main() { let mut v: Vec<i64> = [1]\n v = [2, 3] }\n");
+    let checked =
+        run("fn main() { let mut v: Vec<i64> = Vec::from([1])\n v = Vec::from([2, 3]) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
     let ItemKind::Fn(decl) = &checked.source.items[0].kind else {
         panic!("expected fn");
@@ -1097,7 +1110,7 @@ fn later_narrow_assignments_do_not_retype_an_inferred_source_binding() {
     let checked = run("fn main() {
             let a = 256
             let mut b: i8 = 1
-            let mut v: Vec<i8> = [1, 2]
+            let mut v: Vec<i8> = Vec::from([1, 2])
             b = a
             v[0] = a
         }\n");
@@ -1139,7 +1152,7 @@ fn later_use_sites_cannot_narrow_established_numeric_bindings() {
             let value = 256
             let values = [256, 257]
             let optional = Some(256)
-            let mut bytes: Vec<i8> = []
+            let mut bytes: Vec<i8> = Vec::from([])
             let mut map: HashMap<String, i8> = HashMap::new()
             takes_i8(value)
             bytes.push(value)
@@ -1172,10 +1185,10 @@ fn later_use_sites_cannot_narrow_established_numeric_bindings() {
 }
 
 #[test]
-fn some_payload_array_literal_adopts_vec_shape() {
+fn some_payload_explicit_vec_construction_has_vec_shape() {
     // `Some([1, 2])` bound to `Option<Vec<i64>>` must record the
     // payload literal as a Vec, not a fixed `[i64; 2]`.
-    let checked = run("fn main() { let x: Option<Vec<i64>> = Some([1, 2]) }\n");
+    let checked = run("fn main() { let x: Option<Vec<i64>> = Some(Vec::from([1, 2])) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
     let ItemKind::Fn(decl) = &checked.source.items[0].kind else {
         panic!("expected fn");
@@ -1319,7 +1332,7 @@ fn vec_rejects_methods_without_lowering() {
 #[test]
 fn iter_map_free_fn_closure_param_pins_to_elem_type() {
     let checked = run("use std::iter\n\
-         fn main() { let xs: Vec<String> = [\"a\"]\n\
+         fn main() { let xs: Vec<String> = Vec::from([\"a\"])\n\
          let ys = iter::map(|s| format!(\"[{s}]\"), xs) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
     let init = let_init(&checked, "main", 1);
@@ -1337,7 +1350,7 @@ fn iter_map_free_fn_closure_param_pins_to_elem_type() {
 #[test]
 fn piped_iter_map_closure_param_pins_to_elem_type() {
     let checked = run("use std::iter\n\
-         fn main() { let xs: Vec<String> = [\"a\"]\n\
+         fn main() { let xs: Vec<String> = Vec::from([\"a\"])\n\
          let ys = xs |> iter::map(|s| format!(\"({s})\")) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
     let init = let_init(&checked, "main", 1);
@@ -1356,7 +1369,7 @@ fn piped_iter_map_closure_param_pins_to_elem_type() {
 fn lazy_iter_map_types_as_iterator_when_enabled() {
     let checked = run_with_lazy_iterators(
         "use std::iter\n\
-         fn main() { let xs: Vec<String> = [\"a\"]\n\
+         fn main() { let xs: Vec<String> = Vec::from([\"a\"])\n\
          let ys = xs |> iter::map(|s| format!(\"({s})\")) }\n",
         true,
     );
@@ -1376,7 +1389,7 @@ fn lazy_iter_map_types_as_iterator_when_enabled() {
 #[test]
 fn eager_iter_migration_aliases_preserve_combinator_types() {
     let checked = run("use std::iter\n\
-         fn main() { let xs: Vec<String> = [\"a\", \"bb\"]\n\
+         fn main() { let xs: Vec<String> = Vec::from([\"a\", \"bb\"])\n\
          let ys = xs |> iter::eager_map(|s| format!(\"[{s}]\"))\n\
          let kept = ys |> iter::eager_filter(|s| s.len() > 2)\n\
          let found = kept |> iter::eager_find(|s| s.len() > 3)\n\
@@ -1398,7 +1411,7 @@ fn eager_iter_migration_aliases_preserve_combinator_types() {
 fn lazy_mode_keeps_eager_iter_aliases_as_vec() {
     let checked = run_with_lazy_iterators(
         "use std::iter\n\
-         fn main() { let xs: Vec<String> = [\"a\", \"bb\"]\n\
+         fn main() { let xs: Vec<String> = Vec::from([\"a\", \"bb\"])\n\
          let ys = xs |> iter::eager_map(|s| format!(\"[{s}]\"))\n\
          let _ = ys }\n",
         true,
@@ -1513,7 +1526,7 @@ fn unknown_std_combinator_with_closure_errors_loudly() {
     // (The resolver flags the unknown name separately; this test
     // bypasses the resolve assertion on purpose.)
     let source = "use std::iter\n\
-                  fn main() { let xs: Vec<String> = [\"a\"]\n\
+                  fn main() { let xs: Vec<String> = Vec::from([\"a\"])\n\
                   let ys = iter::mystery(|x| x, xs) }\n";
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
@@ -1751,12 +1764,12 @@ fn formatting_lazy_iterator_is_rejected() {
 }
 
 #[test]
-fn unsupported_lazy_iterator_input_adapter_is_rejected() {
+fn lazy_iterator_step_by_is_accepted() {
     let d = diagnostics_for_with_lazy_iterators(
         "use std::iter\nfn main() { let xs = iter::range(0, 9) |> iter::step_by(2)\n let _ = xs }\n",
         true,
     );
-    assert!(has_code(&d, "GT0001"), "{d:?}");
+    assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]
@@ -1815,9 +1828,13 @@ fn very_large_fixed_array_is_accepted() {
 }
 
 #[test]
-fn oversized_repeat_into_vec_is_accepted() {
+fn owned_slice_repeat_is_rejected_as_unsized() {
     let d = diagnostics_for("fn main() { let v: [i64] = [0; 100000000]\n let _ = v.len() }\n");
-    assert!(d.is_empty(), "{d:?}");
+    assert!(
+        d.iter()
+            .any(|diagnostic| { matches!(diagnostic.error, TypeError::UnsizedSliceValue { .. }) }),
+        "{d:?}"
+    );
 }
 
 #[test]
@@ -2351,7 +2368,7 @@ fn fixed_array_rejects_vec_only_methods() {
         assert!(
             d.iter().any(|diagnostic| matches!(
                 &diagnostic.error,
-                TypeError::UnresolvedMethod { ty, name: method }
+                TypeError::SequenceResizeRequiresVec { ty, method }
                     if ty == "[i64; 3]" && method == name
             )),
             "expected fixed-array `{name}` rejection, got {d:?}"

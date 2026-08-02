@@ -32,7 +32,7 @@ fn main() {
     println!("renamed = {} ({})", b.name, b.count)
 
     // Owned Vec<String> built, indexed, and dropped.
-    let mut names: [String] = []
+    let mut names: Vec<String> = Vec::from([])
     names.push(make_tag(&"x", 7).name)
     names.push(make_tag(&"y", 8).name)
     println!("names = {}, {}", names[0], names[1])

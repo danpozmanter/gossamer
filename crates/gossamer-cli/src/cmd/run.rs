@@ -44,7 +44,7 @@ fn run_on_vm(file: &PathBuf, forwarded: &[String]) -> Result<()> {
     run_source_on_vm(&user_source, &file_label, forwarded, edition)
 }
 
-/// Executes inline source passed through `gos -e` / `gos --eval`.
+/// Executes inline source passed through `gos -e` or `gos --eval`.
 pub(crate) fn command(source: String) -> Result<()> {
     let edition = crate::paths::project_edition();
     crate::cmd::with_vm_stack(move || run_source_on_vm(&source, "<command>", &[], edition))

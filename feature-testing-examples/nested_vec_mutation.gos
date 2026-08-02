@@ -6,25 +6,25 @@
 // agree. This is the shape SQL-style group-by aggregation relies on.
 // Bit-identical across VM / Cranelift / LLVM (incl. `--release`).
 
-struct Bag { items: [i64] }
+struct Bag { items: Vec<i64> }
 
 fn main() {
-    let mut groups: [[i64]] = []
-    let g0: [i64] = []
+    let mut groups: Vec<Vec<i64>> = Vec::from([])
+    let g0: Vec<i64> = Vec::from([])
     groups.push(g0)
     groups[0].push(1)
     groups[0].push(2)
     groups[0].push(3)
     println!("nested: {}", groups[0].len())
 
-    let mut b = Bag { items: [] }
+    let mut b = Bag { items: Vec::from([]) }
     b.items.push(10)
     b.items.push(20)
     println!("field: {} {}", b.items.len(), b.items[1])
 
-    let mut buckets: [[i64]] = []
-    let b0: [i64] = []
-    let b1: [i64] = []
+    let mut buckets: Vec<Vec<i64>> = Vec::from([])
+    let b0: Vec<i64> = Vec::from([])
+    let b1: Vec<i64> = Vec::from([])
     buckets.push(b0)
     buckets.push(b1)
     let mut i: i64 = 0

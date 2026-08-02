@@ -227,7 +227,22 @@ for item in iter { ... }
 `break value` returns a value from `loop`. `continue` jumps to
 the top.
 
-## Ranges and sequence methods
+## Arrays, slices, Vec, and ranges
+
+Gossamer follows Rust's sequence model:
+
+- `[T; N]` is an owned fixed-size array, and `[a, b]` always creates one.
+- `[T]` is unsized and is ordinarily used as `&[T]` or `&mut [T]`.
+- `Vec<T>` is the only owned growable sequence. Construct one explicitly with
+  `Vec::from([a, b])`, `Vec::new()`, or `Vec::with_capacity(n)`.
+
+`&[T; N]` and `&Vec<T>` coerce to `&[T]`; their mutable forms coerce to
+`&mut [T]`. Arrays and slices support queries and non-resizing operations.
+Mutable arrays and slices can reorder or replace existing elements with
+`sort`, `reverse`, `swap`, and `fill`.
+Only Vec supports `push`, `pop`, insertion, removal, truncation, extension,
+reservation, and capacity queries. See [method support](method_support.md#vec)
+for the exact surfaces.
 
 A range is a lazy `Iterator<i64>` value: `(2..n)` is exclusive and `(1..=n)`
 is inclusive. It can be iterated directly or stored and consumed later:

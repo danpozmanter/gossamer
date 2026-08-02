@@ -760,6 +760,10 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_flag_cell_load_f64" => Some("gos_rt_flag_cell_load_f64"),
         "gos_rt_flag_cell_load_vec" => Some("gos_rt_flag_cell_load_vec"),
         // Plain ascending sort for Vec<i64>.
+        "gos_rt_arr_reverse" => Some("gos_rt_arr_reverse"),
+        "gos_rt_arr_sort_i64" => Some("gos_rt_arr_sort_i64"),
+        "gos_rt_arr_sort_str" => Some("gos_rt_arr_sort_str"),
+        "gos_rt_vec_reverse" => Some("gos_rt_vec_reverse"),
         "gos_rt_vec_sort_i64" => Some("gos_rt_vec_sort_i64"),
         "gos_rt_vec_sort_str" => Some("gos_rt_vec_sort_str"),
         // Sort-by callbacks for fixed-array / Vec receivers.

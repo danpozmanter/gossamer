@@ -5,11 +5,11 @@
 // double-frees at scope teardown.
 
 struct User { name: String, role: String }
-struct Team { lead: User, members: [String], size: i64 }
+struct Team { lead: User, members: Vec<String>, size: i64 }
 
 fn main() {
     let lead = User { name: format!("lin"), role: format!("eng") }
-    let mut roster: [String] = []
+    let mut roster: Vec<String> = Vec::from([])
     roster.push(format!("ben"))
     roster.push(format!("cleo"))
     let team = Team { lead: lead, members: roster, size: 3 }
