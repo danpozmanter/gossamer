@@ -4,17 +4,21 @@
 
 - Run existing source files through `gos TARGET` regardless of filename
   extension, infer a neighboring `.gos` source when the extension is omitted,
-  and complete every current-directory filename alongside subcommands.
+  complete every current-directory filename alongside subcommands, and make
+  `gos -h` distinguish default file execution from `-e/--eval` inline source.
 - Make `%info` and `%explain` expose the complete Option and Iterator method
-  surfaces from one signature catalog, and cover every standard-library type
-  with discovery tests. Keep LSP completion aligned with these methods.
+  surfaces from one signature catalog, render their default listings with the
+  same compact newline spacing, include an example after every detailed
+  description, and cover every standard-library type with discovery tests.
+  Keep LSP completion aligned with these methods.
 - Match Rust reference-pattern mutability, preserve aggregate values and types
   through reference bindings, and add a comprehensive assignment matrix.
 - Format multiline match arms correctly when optional commas precede line or
   block comments, and keep multiline parameters aligned after generic types.
 - Return bounds failures from Vec insertion, removal, and swapping as `Result`
-  without replacing the receiver, return the previous value from
-  `HashMap::insert`, and add
+  without replacing the receiver, preserve direct mutating `Result` calls
+  across later REPL inputs without poisoning session replay, return the
+  previous value from `HashMap::insert`, and add
   `HashMap::from({})`, pair collection, and `HashSet::from` constructors.
 - Refresh the skill card, README, MCP execution tool, and command descriptions
   for the direct-execution CLI and current REPL surface.

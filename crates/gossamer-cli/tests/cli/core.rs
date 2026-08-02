@@ -119,17 +119,31 @@ fn direct_script_infers_a_gos_extension_when_omitted() {
 }
 
 #[test]
-fn command_flag_executes_inline_source() {
-    let out = Command::new(gos_bin())
-        .args(["-c", "println(\"inline works\")"])
-        .output()
-        .expect("spawn inline command");
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(String::from_utf8_lossy(&out.stdout).contains("inline works"));
+fn eval_flag_executes_inline_source() {
+    for flag in ["-e", "--eval"] {
+        let out = Command::new(gos_bin())
+            .args([flag, "println(\"inline works\")"])
+            .output()
+            .expect("spawn inline eval");
+        assert!(
+            out.status.success(),
+            "{flag} stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("inline works"),
+            "{flag} stdout: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+
+    for removed in ["-c", "--command"] {
+        let out = Command::new(gos_bin())
+            .args([removed, "println(\"old flag\")"])
+            .output()
+            .expect("spawn removed inline flag");
+        assert!(!out.status.success(), "removed flag {removed} still worked");
+    }
 }
 
 #[test]
@@ -149,6 +163,29 @@ fn help_wraps_to_narrow_terminal_width() {
     );
     assert!(stdout.contains("The Gossamer toolchain"), "{stdout}");
     assert!(stdout.contains("Commands:"), "{stdout}");
+}
+
+#[test]
+fn help_distinguishes_default_file_execution_from_inline_source() {
+    let out = Command::new(gos_bin())
+        .arg("-h")
+        .output()
+        .expect("spawn -h");
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).expect("utf8");
+    assert!(
+        stdout.contains("gos [OPTIONS] [FILE] [ARGS]..."),
+        "{stdout}"
+    );
+    assert!(stdout.contains("    gos [OPTIONS] <COMMAND>"), "{stdout}");
+    assert!(
+        stdout.contains("gos FILE [ARGS]... runs FILE"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("--eval <STRING>"), "{stdout}");
+    assert!(!stdout.contains("--command"), "{stdout}");
+    assert!(!stdout.contains("<SUBCOMMAND>"), "{stdout}");
+    assert!(!stdout.contains("Usage: gos [OPTIONS] [COMMAND]"), "{stdout}");
 }
 
 #[test]

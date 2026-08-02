@@ -17,16 +17,21 @@ use crate::{doc, repl};
 
 /// Top-level parsed command line for the `gos` binary.
 #[derive(Debug, Parser)]
-#[command(name = "gos", version, about = "The Gossamer toolchain")]
+#[command(
+    name = "gos",
+    version,
+    about = "The Gossamer toolchain",
+    override_usage = "gos [OPTIONS] [FILE] [ARGS]...\n    gos [OPTIONS] <COMMAND>",
+    after_help = "Default behavior:\n  gos FILE [ARGS]... runs FILE and forwards ARGS to the program.\n  gos with no FILE or COMMAND starts the REPL.\n\nUse -e/--eval STRING to execute inline source instead of running a file."
+)]
 pub(crate) struct Cli {
     /// Print additional progress information for the command being run.
     #[arg(short, long, global = true)]
     verbose: bool,
-    /// Execute inline Gossamer source.
-    #[arg(short = 'c', long = "command")]
+    /// Execute inline Gossamer source instead of running a file.
+    #[arg(short = 'e', long = "eval", value_name = "STRING")]
     eval: Option<String>,
-    /// Subcommand to dispatch; omit for a bare no-op that still
-    /// prints `--version`.
+    /// Subcommand to dispatch; omit to start the REPL.
     #[command(subcommand)]
     command: Option<Command>,
 }

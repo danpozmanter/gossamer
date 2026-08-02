@@ -793,6 +793,13 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
     },
     CoreMethodHelp {
         owner: "HashMap",
+        name: "from",
+        kind: "assoc",
+        signature: "fn from<K, V>(entries: {} | [(K, V)]) -> HashMap<K, V>",
+        doc: "Creates a hash map from `{}` or key-value pairs.",
+    },
+    CoreMethodHelp {
+        owner: "HashMap",
         name: "insert",
         kind: "method",
         signature: "fn insert<K, V>(self: &mut HashMap<K, V>, key: K, value: V) -> Option<V>",
@@ -944,6 +951,13 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         kind: "assoc",
         signature: "fn new<T>() -> HashSet<T>",
         doc: "Creates an empty hash set.",
+    },
+    CoreMethodHelp {
+        owner: "HashSet",
+        name: "from",
+        kind: "assoc",
+        signature: "fn from<T>(values: [T]) -> HashSet<T>",
+        doc: "Creates a hash set from a collection, removing duplicate values.",
     },
     CoreMethodHelp {
         owner: "HashSet",
@@ -1490,8 +1504,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
         // Assignments and collection mutation calls must be replayed with the
         // preceding bindings so their effects survive into later inputs.
         if input_mutates_binding(trimmed) {
-            lets.push(trimmed.to_string());
-            let prefix = lets[..lets.len() - 1].join("\n    ");
+            let prefix = lets.join("\n    ");
             let probe_body = if prefix.is_empty() {
                 trimmed.to_string()
             } else {
@@ -1505,14 +1518,20 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
             );
             match build_and_call(&probe, &format!("__irepl_{input_no}")) {
                 Ok(value) => {
-                    if !matches!(value, gossamer_interp::Value::Unit) {
+                    if matches!(value, gossamer_interp::Value::Unit) {
+                        lets.push(trimmed.to_string());
+                    } else {
                         print_repl_result(&value);
+                        // The call is a tail expression in the probe so its
+                        // Result can be displayed. On later inputs it becomes
+                        // a statement, where an unused Result is rightly a
+                        // type error. Replay it with an explicit discard so
+                        // its receiver mutation persists without poisoning
+                        // every subsequent binding and `%b` inspection.
+                        lets.push(format!("let _ = {trimmed}"));
                     }
                 }
-                Err(msg) => {
-                    lets.pop();
-                    print_repl_error(&format!("error: {msg}"));
-                }
+                Err(msg) => print_repl_error(&format!("error: {msg}")),
             }
             input_no += 1;
             continue;
@@ -1696,13 +1715,17 @@ fn repl_binding_info(
         };
         let mut out = format!("{} [binding]\n  type: {}\n  capability: {capability}\n", var.name, ty.rendered);
         let Some(ref owner) = ty.method_owner else {
-            out.push_str("\nNo cataloged methods for this binding's type.");
+            out.push_str(&format!(
+                "\nNo cataloged methods for this binding's type.\nExample: let copy = {}",
+                var.name
+            ));
             return out;
         };
         if ty.fixed_array {
-            out.push_str(
-                "  method surface: fixed array (non-resizing Vec methods; mutable methods require writable access)\n",
-            );
+            out.push_str(&format!(
+                "  method surface: fixed array (non-resizing Vec methods; mutable methods require writable access)\n  Example: let first = {}[0]\n",
+                var.name
+            ));
         }
         let methods = available_repl_binding_methods(&ty, owner, can_mutate);
         let mut found = false;
@@ -1711,12 +1734,20 @@ fn repl_binding_info(
             let signature = signature_suffix(&method.signature, &method.name);
             out.push('\n');
             out.push_str(&format!(
-                "{}.{}{signature} [method]\n    {}\n",
-                var.name, method.name, method.doc
+                "{}.{}{signature} [method]\n    {}\n    Example: {}.{}({})\n",
+                var.name,
+                method.name,
+                method.doc,
+                var.name,
+                method.name,
+                signature_argument_names(signature).join(", ")
             ));
         }
         if !found {
-            out.push_str("\nNo methods are available with this binding's capability.");
+            out.push_str(&format!(
+                "\nNo methods are available with this binding's capability.\nExample: let copy = {}",
+                var.name
+            ));
         }
         out.trim_end().to_string()
     }))
@@ -2165,7 +2196,8 @@ fn paginate_info(text: &str, options: &ListingOptions) -> String {
         .split("\n\n")
         .filter(|entry| !entry.is_empty())
         .collect();
-    paginate_listing(entries, options, "%i").join("\n\n")
+    let separator = if options.details { "\n\n" } else { "\n" };
+    paginate_listing(entries, options, "%i").join(separator)
 }
 
 fn regex_argument(arg: &str) -> std::result::Result<Option<Regex>, String> {
@@ -2356,7 +2388,106 @@ fn push_catalog_match(
     out.push_str(&format!(" [{kind}]\n"));
     if details {
         out.push_str(&format!("    {description}\n"));
+        out.push_str(&format!(
+            "    Example: {}\n",
+            catalog_example(path, kind, signature)
+        ));
     }
+}
+
+fn catalog_example(path: &str, kind: &str, signature: &str) -> String {
+    match path {
+        "HashMap::from" => {
+            return "let empty: HashMap<String, i64> = HashMap::from({}); let map: HashMap<String, i64> = HashMap::from([(\"one\", 1), (\"two\", 2)])".to_string();
+        }
+        "HashSet::from" => {
+            return "let set: HashSet<i64> = HashSet::from([1, 2, 2, 3])".to_string();
+        }
+        _ => {}
+    }
+
+    match kind {
+        "module" => return format!("use {path}"),
+        "type" => return format!("fn use_value(value: {path}) {{ }}"),
+        "trait" => return format!("fn use_value<T: {path}>(value: T) {{ }}"),
+        "const" => return format!("let value = {path}"),
+        _ => {}
+    }
+
+    let args = signature_argument_names(signature).join(", ");
+    if kind == "method" {
+        let (owner, name) = path.rsplit_once("::").unwrap_or(("", path));
+        return format!("{}.{}({args})", example_receiver(owner), name);
+    }
+    format!("{path}({args})")
+}
+
+fn example_receiver(owner: &str) -> &'static str {
+    match owner.rsplit("::").next().unwrap_or(owner) {
+        "String" | "str" => "\"text\"",
+        "Vec" | "Slice" | "Array" => "values",
+        "HashMap" | "BTreeMap" => "map",
+        "HashSet" => "set",
+        "VecDeque" => "queue",
+        "Option" => "option",
+        "Result" => "result",
+        "Iterator" | "Range" => "iter",
+        _ => "value",
+    }
+}
+
+fn signature_argument_names(signature: &str) -> Vec<&str> {
+    let Some(open) = signature.find('(') else {
+        return Vec::new();
+    };
+    let mut depth = 0usize;
+    let mut close = None;
+    for (offset, ch) in signature[open + 1..].char_indices() {
+        match ch {
+            '(' | '[' | '{' | '<' => depth += 1,
+            ')' if depth == 0 => {
+                close = Some(open + 1 + offset);
+                break;
+            }
+            ')' | ']' | '}' | '>' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
+        return Vec::new();
+    };
+    split_top_level_parameters(&signature[open + 1..close])
+        .into_iter()
+        .filter_map(|parameter| {
+            let parameter = parameter.trim();
+            let name = parameter
+                .split_once(':')
+                .map_or(parameter, |(name, _)| name);
+            let name = name.trim().trim_end_matches('?');
+            (!matches!(name, "self" | "&self" | "&mut self") && !name.is_empty()).then_some(name)
+        })
+        .collect()
+}
+
+fn split_top_level_parameters(parameters: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (offset, ch) in parameters.char_indices() {
+        match ch {
+            '(' | '[' | '{' | '<' => depth += 1,
+            ')' | ']' | '}' | '>' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&parameters[start..offset]);
+                start = offset + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    if start < parameters.len() {
+        parts.push(&parameters[start..]);
+    }
+    parts
 }
 
 fn signature_suffix<'a>(signature: &'a str, name: &str) -> &'a str {
@@ -2461,7 +2592,10 @@ fn render_stdlib_namespace_dir(namespace: &str, modules: &[StdModule]) -> String
 }
 
 fn push_catalog_entry(out: &mut String, path: &str, kind: &str, description: &str) {
-    out.push_str(&format!("{path} [{kind}]\n  {description}\n\n"));
+    out.push_str(&format!(
+        "{path} [{kind}]\n  {description}\n  Example: {}\n\n",
+        catalog_example(path, kind, "")
+    ));
 }
 
 fn core_method_entries() -> Vec<CoreMethodEntry> {
@@ -3572,6 +3706,80 @@ mod tests {
         assert!(
             missing.is_empty(),
             "std types missing from %info: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn every_detailed_catalog_description_is_followed_by_an_example() {
+        for method in core_method_entries() {
+            let mut rendered = String::new();
+            push_core_method_match(&mut rendered, &method, true);
+            assert!(
+                rendered.contains(&format!("    {}\n    Example: ", method.doc)),
+                "missing example for {}::{}:\n{rendered}",
+                method.owner,
+                method.name
+            );
+        }
+
+        for module in gossamer_std::registry::modules() {
+            let mut rendered = String::new();
+            push_module_match(&mut rendered, module, true);
+            assert!(
+                rendered.contains(&format!("    {}\n    Example: ", module.summary)),
+                "missing module example for {}:\n{rendered}",
+                module.path
+            );
+            for item in module.items {
+                let mut rendered = String::new();
+                push_item_match(&mut rendered, module, item, true);
+                assert!(
+                    rendered.contains(&format!("    {}\n    Example: ", item.doc)),
+                    "missing item example for {}::{}:\n{rendered}",
+                    module.path,
+                    item.name
+                );
+            }
+        }
+
+        for builtin in PRELUDE_BUILTINS {
+            let mut rendered = String::new();
+            push_catalog_match(
+                &mut rendered,
+                builtin.name,
+                "builtin",
+                builtin.signature,
+                builtin.doc,
+                true,
+            );
+            assert!(
+                rendered.contains(&format!("    {}\n    Example: ", builtin.doc)),
+                "missing builtin example for {}:\n{rendered}",
+                builtin.name
+            );
+        }
+        for builtin in BUILTIN_MACROS {
+            let mut rendered = String::new();
+            push_catalog_match(
+                &mut rendered,
+                builtin.name,
+                "macro",
+                builtin.signature,
+                builtin.doc,
+                true,
+            );
+            assert!(
+                rendered.contains(&format!("    {}\n    Example: ", builtin.doc)),
+                "missing macro example for {}:\n{rendered}",
+                builtin.name
+            );
+        }
+
+        let directory = render_stdlib_dir();
+        assert_eq!(
+            directory.matches("\n  Example: ").count(),
+            directory.matches(" [module]\n").count(),
+            "every directory description must have an example:\n{directory}"
         );
     }
 

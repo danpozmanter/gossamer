@@ -146,6 +146,47 @@ fn vec_insert_results_do_not_corrupt_persistent_repl_bindings() {
 }
 
 #[test]
+fn direct_vec_insert_results_replay_without_poisoning_the_repl() {
+    let out = run_repl(
+        "let mut first = Vec::new()\n\
+         first.push(0)\n\
+         let bound = first.insert(0, 0)\n\
+         let mut valid = Vec::new()\n\
+         valid.insert(0, 0)\n\
+         valid.insert(0, 1)\n\
+         let mut invalid = Vec::new()\n\
+         invalid.insert(10, 10)\n\
+         let after = 42\n\
+         %b\n",
+    );
+    assert!(out.success, "stderr: {}", out.stderr);
+    assert!(out.stderr.is_empty(), "stderr: {}", out.stderr);
+    for expected in [
+        "mut first: Vec<i64> = [0, 0]",
+        "bound: Result<(), errors::Error> = Ok(())",
+        "mut valid: Vec<i64> = [1, 0]",
+        "mut invalid: Vec<i64> = []",
+        "after: i64 = 42",
+    ] {
+        assert!(
+            out.stdout.contains(expected),
+            "missing `{expected}`: {}",
+            out.stdout
+        );
+    }
+    assert!(out.stdout.contains("Ok(())"), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains(
+            "Err(errors::Error { message: \"insert: index 10 out of bounds for length 0\""
+        ),
+        "stdout: {}",
+        out.stdout
+    );
+    assert!(!out.stdout.contains("<unknown>"), "stdout: {}", out.stdout);
+    assert!(!out.stdout.contains("<error:"), "stdout: {}", out.stdout);
+}
+
+#[test]
 fn repl_reports_the_computed_operand_in_chained_numeric_mismatches() {
     let out = run_repl("0.38 * 40.0 * 50\n0.48 * 40.0 * 40\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -486,6 +527,50 @@ fn repl_info_lists_matches_unless_details_are_requested() {
                 .stdout
                 .contains("Removes leading and trailing whitespace."),
         "%i should show signatures by default and documentation with -d: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_info_and_explain_details_always_follow_descriptions_with_examples() {
+    let info = run_repl("%i HashMap::from -d\n");
+    assert!(info.success, "stderr: {}", info.stderr);
+    assert!(
+        info.stdout.contains(
+            "HashMap::from<K, V>(entries: {} | [(K, V)]) -> HashMap<K, V> [assoc]\n    Creates a hash map from `{}` or key-value pairs.\n    Example: let empty: HashMap<String, i64> = HashMap::from({});"
+        ) && info.stdout.contains("let map:")
+            && info.stdout.contains("HashMap<String, i64> = HashMap::from([")
+            && info.stdout.contains("(\"one\", 1), (\"two\",")
+            && info.stdout.contains("2)])"),
+        "HashMap::from help is incomplete: {}",
+        info.stdout
+    );
+
+    let explained = run_repl("let text = \"hello\"\n%e text -d\n");
+    assert!(explained.success, "stderr: {}", explained.stderr);
+    assert!(
+        explained.stdout.contains(
+            "Returns whether the string starts with a prefix.\n    Example: text.starts_with(needle)"
+        ),
+        "binding method example did not use the binding: {}",
+        explained.stdout
+    );
+}
+
+#[test]
+fn repl_info_default_listing_has_no_blank_lines_between_entries() {
+    let out = run_repl("%i starts_with\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains(
+            "String::starts_with(self: String, needle: String | char) -> bool [method]\nstd::path::starts_with"
+        ),
+        "%i should render default entries on consecutive lines: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("[method]\n\nstd::path::starts_with"),
+        "%i inserted a blank line between default entries: {}",
         out.stdout
     );
 }
