@@ -638,7 +638,7 @@ fn repl_info_and_explain_details_always_follow_descriptions_with_examples() {
     assert!(info.success, "stderr: {}", info.stderr);
     assert!(
         info.stdout.contains(
-            "HashMap::from<K, V>(entries: {K: V}) -> HashMap<K, V> [associated function]\n    Creates a hash map from a map literal.\n    Example: let empty: HashMap<String, i64> = HashMap::from({});"
+            "HashMap::from<K, V>(entries: {K: V}) -> HashMap<K, V> [associated function]\n    Creates a hash map from a map literal.\n    Defined in: \n    Example: let empty: HashMap<String, i64> = HashMap::from({});"
         ) && info.stdout.contains("let map:")
             && info.stdout.contains("HashMap<String, i64> = HashMap::from({")
             && info.stdout.contains("\"one\": 1, \"two\":")
@@ -651,10 +651,27 @@ fn repl_info_and_explain_details_always_follow_descriptions_with_examples() {
     assert!(explained.success, "stderr: {}", explained.stderr);
     assert!(
         explained.stdout.contains(
-            "Returns whether the string starts with a prefix.\n    Example: text.starts_with(needle)"
+            "Returns whether the string starts with a prefix.\n    Defined in: \n    Example: text.starts_with(needle)"
         ),
         "binding method example did not use the binding: {}",
         explained.stdout
+    );
+}
+
+#[test]
+fn repl_explain_details_do_not_insert_blank_line_buffers() {
+    let out = run_repl("let text = \"hello\"\n%e text -d\n");
+    assert!(out.success, "stderr: {}", out.stderr);
+    assert!(
+        out.stdout
+            .contains("capability: immutable binding\ntext.as_bytes"),
+        "%e -d should start methods on the next line: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("\n\ntext."),
+        "%e -d inserted a blank line before a method entry: {}",
+        out.stdout
     );
 }
 
@@ -671,7 +688,7 @@ fn repl_info_vec_from_has_the_array_conversion_contract() {
     );
     assert!(
         out.stdout.contains(
-            "Creates a growable vector by moving values from a fixed-size array.\n    Example: let values: Vec<i64> = Vec::from([1, 2, 3])"
+            "Creates a growable vector by moving values from a fixed-size array.\n    Defined in: \n    Example: let values: Vec<i64> = Vec::from([1, 2, 3])"
         ),
         "Vec::from details are incomplete: {}",
         out.stdout
@@ -683,6 +700,18 @@ fn repl_info_vec_from_has_the_array_conversion_contract() {
         3,
         "%i and %e must resolve Vec::from through the same catalog entry: {}",
         out.stdout
+    );
+}
+
+#[test]
+fn repl_resolution_errors_suggest_prelude_type_case() {
+    let out = run_repl("let map = Hashmap::from({\"example\": 1})\n");
+    assert!(out.success, "stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("cannot find `Hashmap` in this scope")
+            && out.stderr.contains("did you mean `HashMap`?"),
+        "missing HashMap suggestion: {}",
+        out.stderr
     );
 }
 
@@ -701,6 +730,42 @@ fn iterator_parameter_for_loop_preserves_single_pass_state() {
         values,
         ["1", "2"],
         "a fresh Iterator parameter must be driven through its single-pass state"
+    );
+}
+
+#[test]
+fn repl_range_binding_inspection_does_not_poison_iterator_reuse() {
+    let out = run_repl(
+        "use Iterator\n\
+         fn list_range(v: Vec<i64>, r: Iterator<i64>) { for i in r { println(v[i]) } }\n\
+         let v = Vec::from([1, 2, 3])\n\
+         let r = 0..2\n\
+         %b\n\
+         for i in r { println(v[i]) }\n\
+         list_range(v, r)\n",
+    );
+    assert!(out.success, "stderr: {}", out.stderr);
+    assert!(
+        out.stdout
+            .lines()
+            .any(|line| line == "r: Iterator<i64> = 0..2"),
+        "%b must render the range binding without an inspection error: {}",
+        out.stdout
+    );
+    let values: Vec<&str> = out
+        .stdout
+        .lines()
+        .filter(|line| line.parse::<i64>().is_ok())
+        .collect();
+    assert_eq!(
+        values,
+        ["1", "2", "1", "2"],
+        "range binding should be usable after %b and as an Iterator parameter"
+    );
+    assert!(
+        !out.stderr.contains("already consumed"),
+        "iterator consumption leaked across scopes: {}",
+        out.stderr
     );
 }
 

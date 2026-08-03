@@ -1,13 +1,13 @@
 //! `gos parse FILE` - pretty-prints the AST for the supplied source.
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use anyhow::{Result, anyhow};
 
 use crate::paths::read_source;
 
 /// Entry point for `gos parse FILE`.
-pub(crate) fn run(file: &PathBuf) -> Result<()> {
+pub(crate) fn run(file: &Path) -> Result<()> {
     let source = read_source(file)?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());

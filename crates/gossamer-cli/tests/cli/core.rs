@@ -98,6 +98,54 @@ fn gos_run_executes_existing_files_with_any_extension() {
 }
 
 #[test]
+fn gos_run_does_not_rewrite_an_existing_non_gos_path() {
+    let dir = env::temp_dir().join(format!(
+        "gossamer-cli-extension-conflict-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create fixture dir");
+    let explicit = dir.join("testy.py");
+    let inferred = dir.join("testy.gos");
+    std::fs::write(&explicit, "fn main() { println(\"explicit py\") }\n")
+        .expect("write explicit fixture");
+    std::fs::write(&inferred, "fn main() { println(\"inferred gos\") }\n")
+        .expect("write inferred fixture");
+
+    let explicit_out = Command::new(gos_bin())
+        .arg("run")
+        .arg(&explicit)
+        .output()
+        .expect("spawn gos run explicit");
+    assert!(
+        explicit_out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&explicit_out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&explicit_out.stdout),
+        "explicit py\n"
+    );
+
+    let extensionless = dir.join("testy");
+    let inferred_out = Command::new(gos_bin())
+        .arg("run")
+        .arg(&extensionless)
+        .output()
+        .expect("spawn gos run extensionless");
+    assert!(
+        inferred_out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&inferred_out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&inferred_out.stdout),
+        "inferred gos\n"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn gos_run_infers_a_gos_extension_when_omitted() {
     let fixture = env::temp_dir().join(format!(
         "gossamer-cli-inferred-extension-{}.gos",

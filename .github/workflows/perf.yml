@@ -181,13 +181,13 @@ jobs:
           PY
 
           # Arithmetic-heavy: factorial via recursion
-          [[ -f examples/factorial.gos ]] && measure_process factorial "$GOS" examples/factorial.gos
+          [[ -f examples/factorial.gos ]] && measure_process factorial "$GOS" run examples/factorial.gos
 
           # String + I/O: hello world (baseline for interpreter startup)
-          [[ -f examples/hello_world.gos ]] && measure_process hello_world "$GOS" examples/hello_world.gos
+          [[ -f examples/hello_world.gos ]] && measure_process hello_world "$GOS" run examples/hello_world.gos
 
           # Struct + field arithmetic: generic struct instantiation
-          [[ -f examples/generic_struct.gos ]] && measure_process generic_struct "$GOS" examples/generic_struct.gos
+          [[ -f examples/generic_struct.gos ]] && measure_process generic_struct "$GOS" run examples/generic_struct.gos
 
       - name: Compare against baseline
         shell: bash
@@ -291,7 +291,7 @@ jobs:
           path: .perf/
 
   # Cross-platform native-binary perf gate. The `perf` job above only times
-  # direct `gos FILE` execution on Linux; this one builds a `gos build --release` native binary
+  # `gos run FILE` execution on Linux; this one builds a `gos build --release` native binary
   # on all three Tier-1 platforms and times it, so an allocator/codegen
   # regression (or a tier silently degrading to the interpreter) is visible on
   # macOS and Windows too - not just Linux.

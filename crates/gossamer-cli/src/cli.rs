@@ -74,7 +74,7 @@ enum Command {
     #[command(trailing_var_arg = true)]
     Run {
         /// Source-file path. Optional in a project. Shell completion offers
-        /// every filename rather than filtering by extension.
+        /// `.gos` files, but any existing file path is accepted.
         #[arg(value_hint = ValueHint::FilePath)]
         file: Option<PathBuf>,
         /// Disable the Cranelift JIT and use pure bytecode dispatch.
@@ -120,8 +120,9 @@ enum Command {
     /// else the source stem beside the input file. With no path,
     /// builds `<project-root>/src/main.gos`.
     Build {
-        /// Path to a `.gos` source file. Optional: defaults to the
-        /// project's `src/main.gos`.
+        /// Source-file path. Optional: defaults to the project's
+        /// `src/main.gos`.
+        #[arg(value_hint = ValueHint::FilePath)]
         file: Option<PathBuf>,
         /// Cross-compilation target triple (e.g. `aarch64-apple-darwin`).
         #[arg(long)]
@@ -706,21 +707,160 @@ fn completion_script(shell: clap_complete::Shell) -> Vec<u8> {
     let mut output = Vec::new();
     clap_complete::generate(shell, &mut Cli::command(), "gos", &mut output);
     if shell == clap_complete::Shell::Bash {
-        let mut script = String::from_utf8(output).expect("clap emits UTF-8 completions");
-        let run_start = script
-            .find("        gos__subcmd__run)\n")
-            .expect("generated Bash completion contains the run command");
-        let run_end = script[run_start + 1..]
-            .find("\n        gos__subcmd__")
-            .map_or(script.len(), |offset| run_start + 1 + offset);
-        let run = script[run_start..run_end].replace(
-            "COMPREPLY=( $(compgen -W \"${opts}\" -- \"${cur}\") )",
-            "COMPREPLY=( $(compgen -W \"${opts}\" -- \"${cur}\") $(compgen -f -- \"${cur}\") )",
-        );
-        script.replace_range(run_start..run_end, &run);
-        return script.into_bytes();
+        return bash_completion_script(output).into_bytes();
+    }
+    if shell == clap_complete::Shell::Zsh {
+        return zsh_completion_script(output).into_bytes();
+    }
+    if shell == clap_complete::Shell::Fish {
+        return fish_completion_script(output).into_bytes();
     }
     output
+}
+
+fn bash_completion_script(output: Vec<u8>) -> String {
+    let mut script = String::from_utf8(output).expect("clap emits UTF-8 completions");
+    let helper = r#"
+    _gos_gos_file_completions() {
+        local matches=()
+        local match
+        while IFS= read -r match; do
+            matches+=("${match}")
+        done < <(compgen -G "${cur}*.gos")
+        while IFS= read -r match; do
+            matches+=("${match}")
+        done < <(compgen -d -- "${cur}")
+        COMPREPLY=("${matches[@]}")
+        compopt -o filenames 2>/dev/null || true
+    }
+"#;
+    let insert_at = script
+        .find("    for i in \"${COMP_WORDS[@]:0:COMP_CWORD}\"")
+        .expect("generated Bash completion contains the main word loop");
+    script.insert_str(insert_at, helper);
+    replace_bash_subcmd_block(
+        &mut script,
+        "build",
+        r#"        gos__subcmd__build)
+            opts="-g -v -h --target --release --pgo-collect --pgo-profile --debug-info --dynamic --timings --explain-profile --reproducible --out-dir --allow-llvm-fallback --locked --verbose --help"
+            if [[ ${cur} == -* ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --target)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --pgo-collect)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --pgo-profile)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --out-dir)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    _gos_gos_file_completions
+                    return 0
+                    ;;
+            esac
+            ;;
+"#,
+    );
+    replace_bash_subcmd_block(
+        &mut script,
+        "run",
+        r#"        gos__subcmd__run)
+            opts="-v -h --no-jit --main-thread --locked --verbose --help"
+            if [[ ${cur} == -* ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            _gos_gos_file_completions
+            return 0
+            ;;
+"#,
+    );
+    script
+}
+
+fn zsh_completion_script(output: Vec<u8>) -> String {
+    let mut script = String::from_utf8(output).expect("clap emits UTF-8 completions");
+    let helper = r#"
+_gos_gos_file_completions() {
+    _alternative \
+        'gos-files:Gossamer source files:_files -g "*.gos(-.)"' \
+        'directories:directories:_files -/'
+}
+"#;
+    let insert_at = script
+        .find("_gos() {")
+        .expect("generated Zsh completion has _gos");
+    script.insert_str(insert_at, helper);
+    replace_zsh_source_file_completion(&mut script, "run");
+    replace_zsh_source_file_completion(&mut script, "build");
+    script
+}
+
+fn fish_completion_script(output: Vec<u8>) -> String {
+    let mut script = String::from_utf8(output).expect("clap emits UTF-8 completions");
+    script.push_str(
+        r#"
+function __fish_gos_gos_file_completions
+    set -l token (commandline -ct)
+    set -l dir "."
+    set -l prefix "$token"
+    if string match -q -- "*/*" "$token"
+        set dir (dirname -- "$token")
+        set prefix (basename -- "$token")
+    end
+    for path in "$dir"/"$prefix"*.gos "$dir"/"$prefix"*/
+        if test -e "$path"
+            string replace -r '^\./' '' -- "$path"
+        end
+    end
+end
+
+complete -c gos -n "__fish_gos_using_subcommand run; and not string match -q -- '-*' (commandline -ct)" -f -a "(__fish_gos_gos_file_completions)"
+complete -c gos -n "__fish_gos_using_subcommand build; and not string match -q -- '-*' (commandline -ct)" -f -a "(__fish_gos_gos_file_completions)"
+"#,
+    );
+    script
+}
+
+fn replace_bash_subcmd_block(script: &mut String, name: &str, replacement: &str) {
+    let marker = format!("        gos__subcmd__{name})\n");
+    let start = script
+        .find(&marker)
+        .unwrap_or_else(|| panic!("generated Bash completion contains the {name} command"));
+    let end = script[start + 1..]
+        .find("\n        gos__subcmd__")
+        .map_or(script.len(), |offset| start + 1 + offset);
+    script.replace_range(start..end, replacement);
+}
+
+fn replace_zsh_source_file_completion(script: &mut String, name: &str) {
+    let start = script
+        .find(&format!("({name})\n_arguments"))
+        .unwrap_or_else(|| panic!("generated Zsh completion contains the {name} command"));
+    let end = script[start + 1..]
+        .find("\n;;")
+        .map_or(script.len(), |offset| start + 1 + offset);
+    let mut block = script[start..end].to_string();
+    let file_arg = block
+        .find("'::file --")
+        .unwrap_or_else(|| panic!("generated Zsh completion has a {name} file argument"));
+    let files = block[file_arg..].find(":_files").map_or_else(
+        || panic!("generated Zsh completion has a {name} file completer"),
+        |offset| file_arg + offset,
+    );
+    block.replace_range(files..files + ":_files".len(), ":_gos_gos_file_completions");
+    script.replace_range(start..end, &block);
 }
 
 fn parse_cli() -> Cli {
@@ -1218,15 +1358,58 @@ mod tests {
     }
 
     #[test]
-    fn generated_completion_offers_current_directory_filenames() {
+    fn generated_completion_offers_top_level_commands_and_gos_files_for_run_build() {
         let output = completion_script(clap_complete::Shell::Bash);
         let output = String::from_utf8(output).expect("completion is utf8");
+        let top_start = output.find("gos)").expect("top-level completion");
+        let top_end = output[top_start + 1..]
+            .find("gos__subcmd__")
+            .map_or(output.len(), |offset| top_start + 1 + offset);
+        let top = &output[top_start..top_end];
+        assert!(top.contains("run"), "{top}");
+        assert!(top.contains("build"), "{top}");
+        assert!(top.contains("help"), "{top}");
+
         let run_start = output.find("gos__subcmd__run)").expect("run completion");
         let run_end = output[run_start + 1..]
             .find("gos__subcmd__")
             .map_or(output.len(), |offset| run_start + 1 + offset);
         let run = &output[run_start..run_end];
-        assert!(run.contains("compgen -f -- \"${cur}\""), "{run}");
+        assert!(run.contains("_gos_gos_file_completions"), "{run}");
+        assert!(!run.contains("compgen -f -- \"${cur}\""), "{run}");
+
+        let build_start = output
+            .find("gos__subcmd__build)")
+            .expect("build completion");
+        let build_end = output[build_start + 1..]
+            .find("gos__subcmd__")
+            .map_or(output.len(), |offset| build_start + 1 + offset);
+        let build = &output[build_start..build_end];
+        assert!(build.contains("_gos_gos_file_completions"), "{build}");
+        assert!(output.contains(r#"compgen -G "${cur}*.gos""#), "{output}");
+
+        let zsh = completion_script(clap_complete::Shell::Zsh);
+        let zsh = String::from_utf8(zsh).expect("completion is utf8");
+        assert!(zsh.contains("_gos_gos_file_completions()"), "{zsh}");
+        assert!(zsh.contains("run)\n_arguments"), "{zsh}");
+        assert!(
+            zsh.contains("Shell completion offers `.gos` files, but any existing file path is accepted:_gos_gos_file_completions"),
+            "{zsh}"
+        );
+        assert!(
+            zsh.contains("src/main.gos`:_gos_gos_file_completions"),
+            "{zsh}"
+        );
+
+        let fish = completion_script(clap_complete::Shell::Fish);
+        let fish = String::from_utf8(fish).expect("completion is utf8");
+        assert!(
+            fish.contains("function __fish_gos_gos_file_completions"),
+            "{fish}"
+        );
+        assert!(fish.contains("__fish_gos_using_subcommand run"), "{fish}");
+        assert!(fish.contains("__fish_gos_using_subcommand build"), "{fish}");
+        assert!(fish.contains("\"$dir\"/\"$prefix\"*.gos"), "{fish}");
     }
 
     #[test]

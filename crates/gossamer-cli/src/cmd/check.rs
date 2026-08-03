@@ -6,7 +6,7 @@
 //! when any stage produces error-severity output.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 
@@ -82,7 +82,7 @@ pub(crate) fn dispatch(
 /// Single-file `gos check`. Public to the crate so the dispatcher
 /// above and the `cmd::watch` re-runner can share it.
 pub(crate) fn run(
-    file: &PathBuf,
+    file: &Path,
     timings: bool,
     message_format: crate::cli::MessageFormat,
 ) -> Result<()> {

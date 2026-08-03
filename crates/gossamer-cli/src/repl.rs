@@ -1752,9 +1752,8 @@ fn repl_binding_info(
         for method in methods {
             found = true;
             let signature = signature_suffix(&method.signature, &method.name);
-            out.push('\n');
             out.push_str(&format!(
-                "{}.{}{signature} [method]\n    {}\n    Example: {}.{}({})\n",
+                "{}.{}{signature} [method]\n    {}\n    Defined in: \n    Example: {}.{}({})\n",
                 var.name,
                 method.name,
                 method.doc,
@@ -2242,6 +2241,7 @@ fn render_catalog_matches(pattern: &Regex, details: bool) -> String {
                 "macro",
                 builtin.signature,
                 builtin.doc,
+                None,
                 details,
             );
             entries.push(entry);
@@ -2259,6 +2259,7 @@ fn render_catalog_matches(pattern: &Regex, details: bool) -> String {
                 "builtin",
                 builtin.signature,
                 builtin.doc,
+                None,
                 details,
             );
             entries.push(entry);
@@ -2273,6 +2274,7 @@ fn render_catalog_matches(pattern: &Regex, details: bool) -> String {
                 "type",
                 "",
                 "Built-in receiver and associated methods.",
+                Some(""),
                 details,
             );
             entries.push(entry);
@@ -2316,6 +2318,7 @@ fn render_catalog_query_matches(query: &str, details: bool) -> String {
             "macro",
             builtin.signature,
             builtin.doc,
+            None,
             details,
         );
         entries.push(entry);
@@ -2328,6 +2331,7 @@ fn render_catalog_query_matches(query: &str, details: bool) -> String {
             "builtin",
             builtin.signature,
             builtin.doc,
+            None,
             details,
         );
         entries.push(entry);
@@ -2340,6 +2344,7 @@ fn render_catalog_query_matches(query: &str, details: bool) -> String {
             "type",
             "",
             "Built-in receiver and associated methods.",
+            Some(""),
             details,
         );
         entries.push(entry);
@@ -2394,6 +2399,7 @@ fn push_catalog_match(
     kind: &str,
     signature: &str,
     description: &str,
+    defined_in: Option<&str>,
     details: bool,
 ) {
     out.push_str(path);
@@ -2407,6 +2413,9 @@ fn push_catalog_match(
     out.push_str(&format!(" [{}]\n", catalog_kind_label(kind)));
     if details {
         out.push_str(&format!("    {description}\n"));
+        if let Some(defined_in) = defined_in {
+            out.push_str(&format!("    Defined in: {defined_in}\n"));
+        }
         out.push_str(&format!(
             "    Example: {}\n",
             catalog_example(path, kind, signature)
@@ -2529,7 +2538,15 @@ fn signature_suffix<'a>(signature: &'a str, name: &str) -> &'a str {
 }
 
 fn push_module_match(out: &mut String, module: &StdModule, details: bool) {
-    push_catalog_match(out, module.path, "module", "", module.summary, details);
+    push_catalog_match(
+        out,
+        module.path,
+        "module",
+        "",
+        module.summary,
+        Some(""),
+        details,
+    );
 }
 
 fn push_item_match(out: &mut String, module: &StdModule, item: &StdItem, details: bool) {
@@ -2542,6 +2559,7 @@ fn push_item_match(out: &mut String, module: &StdModule, item: &StdItem, details
         item_kind_label(item.kind),
         &signature,
         item.doc,
+        Some(""),
         details,
     );
 }
@@ -2554,6 +2572,7 @@ fn push_core_method_match(out: &mut String, method: &CoreMethodEntry, details: b
         method.kind,
         signature,
         &method.doc,
+        Some(""),
         details,
     );
 }
@@ -3716,7 +3735,7 @@ fn rebuild_session(declarations: &[String]) -> std::result::Result<(), String> {
     }
     let (res, resolve_diags) = gossamer_resolve::resolve_source_file(&sf);
     if !resolve_diags.is_empty() {
-        return Err(format_semantic_diags("resolution", &resolve_diags));
+        return Err(format_resolve_diags(&sf, &resolve_diags));
     }
     let mut tcx = gossamer_types::TyCtxt::new();
     let (tbl, type_diags) = gossamer_types::typecheck_source_file(&sf, &res, &mut tcx);
@@ -3764,7 +3783,7 @@ fn build_and_call_with_type_inner(
     }
     let (res, resolve_diags) = gossamer_resolve::resolve_source_file(&sf);
     if !resolve_diags.is_empty() {
-        return Err(format_semantic_diags("resolution", &resolve_diags));
+        return Err(format_resolve_diags(&sf, &resolve_diags));
     }
     let mut tcx = gossamer_types::TyCtxt::new();
     let (tbl, type_diags) = if inspection {
@@ -3879,6 +3898,59 @@ fn format_semantic_diags<T: std::fmt::Display>(phase: &str, diags: &[T]) -> Stri
         out.push_str("  ");
         out.push_str(&diag.to_string());
         out.push('\n');
+    }
+    out.pop();
+    out
+}
+
+fn format_resolve_diags(
+    sf: &gossamer_ast::SourceFile,
+    diags: &[gossamer_resolve::ResolveDiagnostic],
+) -> String {
+    let in_scope = collect_source_file_names(sf);
+    let structured = diags
+        .iter()
+        .map(|diag| diag.to_diagnostic(&in_scope))
+        .collect::<Vec<_>>();
+    format_structured_semantic_diags("resolution", &structured)
+}
+
+fn collect_source_file_names(sf: &gossamer_ast::SourceFile) -> Vec<&str> {
+    use gossamer_ast::ItemKind;
+
+    let mut out = Vec::new();
+    for item in &sf.items {
+        let name = match &item.kind {
+            ItemKind::Fn(decl) => decl.name.name.as_str(),
+            ItemKind::Struct(decl) => decl.name.name.as_str(),
+            ItemKind::Enum(decl) => decl.name.name.as_str(),
+            ItemKind::Trait(decl) => decl.name.name.as_str(),
+            ItemKind::TypeAlias(decl) => decl.name.name.as_str(),
+            ItemKind::Const(decl) => decl.name.name.as_str(),
+            ItemKind::Static(decl) => decl.name.name.as_str(),
+            ItemKind::Mod(decl) => decl.name.name.as_str(),
+            ItemKind::Impl(_) | ItemKind::AttrItem(_) => continue,
+        };
+        out.push(name);
+    }
+    out
+}
+
+fn format_structured_semantic_diags(
+    phase: &str,
+    diags: &[gossamer_diagnostics::Diagnostic],
+) -> String {
+    let noun = if diags.len() == 1 { "error" } else { "errors" };
+    let mut out = format!("{} {phase} {noun}:\n", diags.len());
+    for diag in diags {
+        out.push_str("  ");
+        out.push_str(&diag.title);
+        out.push('\n');
+        for help in &diag.helps {
+            out.push_str("  help: ");
+            out.push_str(help);
+            out.push('\n');
+        }
     }
     out.pop();
     out
@@ -4083,7 +4155,10 @@ mod tests {
             let mut rendered = String::new();
             push_core_method_match(&mut rendered, &method, true);
             assert!(
-                rendered.contains(&format!("    {}\n    Example: ", method.doc)),
+                rendered.contains(&format!(
+                    "    {}\n    Defined in: \n    Example: ",
+                    method.doc
+                )),
                 "missing example for {}::{}:\n{rendered}",
                 method.owner,
                 method.name
@@ -4094,7 +4169,10 @@ mod tests {
             let mut rendered = String::new();
             push_module_match(&mut rendered, module, true);
             assert!(
-                rendered.contains(&format!("    {}\n    Example: ", module.summary)),
+                rendered.contains(&format!(
+                    "    {}\n    Defined in: \n    Example: ",
+                    module.summary
+                )),
                 "missing module example for {}:\n{rendered}",
                 module.path
             );
@@ -4102,7 +4180,10 @@ mod tests {
                 let mut rendered = String::new();
                 push_item_match(&mut rendered, module, item, true);
                 assert!(
-                    rendered.contains(&format!("    {}\n    Example: ", item.doc)),
+                    rendered.contains(&format!(
+                        "    {}\n    Defined in: \n    Example: ",
+                        item.doc
+                    )),
                     "missing item example for {}::{}:\n{rendered}",
                     module.path,
                     item.name
@@ -4118,6 +4199,7 @@ mod tests {
                 "builtin",
                 builtin.signature,
                 builtin.doc,
+                None,
                 true,
             );
             assert!(
@@ -4134,6 +4216,7 @@ mod tests {
                 "macro",
                 builtin.signature,
                 builtin.doc,
+                None,
                 true,
             );
             assert!(

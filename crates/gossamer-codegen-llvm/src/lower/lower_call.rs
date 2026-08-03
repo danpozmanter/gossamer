@@ -66,6 +66,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use crate::BuildError;
+use crate::ty::packed_byte_array_len;
 use anyhow::Result;
 use gossamer_abi as abi;
 use gossamer_mir::{
@@ -958,6 +959,60 @@ impl<'a> Lowerer<'a> {
             if let Some(tgt) = target {
                 writeln!(self.out, "  br label %bb{}", tgt.as_u32()).unwrap();
             }
+            return Ok(());
+        }
+        if matches!(
+            name.as_str(),
+            "gos_rt_vec_from_arr" | "gos_rt_vec_borrow_arr"
+        ) && args.get(1).is_some_and(|arg| {
+            matches!(
+                arg,
+                Operand::Copy(place)
+                    if place.projection.is_empty()
+                        && packed_byte_array_len(self.tcx, self.body.local_ty(place.local))
+                            .is_some()
+            )
+        }) {
+            let symbol = if name == "gos_rt_vec_borrow_arr" {
+                "gos_rt_vec_borrow_packed_arr"
+            } else {
+                "gos_rt_vec_from_packed_arr"
+            };
+            declare_rt(&mut self.runtime_refs, symbol);
+            let dst = local_slot(destination.local);
+            let elem_bytes = if let Some(arg) = args.first() {
+                self.lower_operand(arg)?
+            } else {
+                "1".to_string()
+            };
+            let elem_bytes_i32 = self.fresh();
+            writeln!(
+                self.out,
+                "  {elem_bytes_i32} = trunc i64 {elem_bytes} to i32"
+            )
+            .unwrap();
+            let data = self.lower_operand(&args[1])?;
+            let data_ptr = self.coerce_llvm_value(&data, &self.operand_llvm_ty(&args[1]), "ptr");
+            let len = if let Some(arg) = args.get(2) {
+                self.lower_operand(arg)?
+            } else {
+                "0".to_string()
+            };
+            let len_i64 = self.coerce_llvm_value(
+                &len,
+                &args
+                    .get(2)
+                    .map_or("i64".to_string(), |arg| self.operand_llvm_ty(arg)),
+                "i64",
+            );
+            let tmp = self.fresh();
+            writeln!(
+                self.out,
+                "  {tmp} = call ptr @\"{symbol}\"(i32 {elem_bytes_i32}, ptr {data_ptr}, i64 {len_i64})"
+            )
+            .unwrap();
+            writeln!(self.out, "  store ptr {tmp}, ptr {dst}").unwrap();
+            emit_terminator_branch(&mut self.out, target);
             return Ok(());
         }
         let mapped = map_prelude_symbol(&name);

@@ -204,11 +204,18 @@ pub(super) fn collect_body_static_refs(body: &Body) -> Vec<&gossamer_mir::Static
     out
 }
 
-/// Upper bound (in 8-byte slots) on an aggregate that may be constructed or
-/// copied into a frame stack slot rather than a heap block. Structs and tuples
-/// stay well under it; a large `[v; N]` array exceeds it and keeps its heap
-/// allocation so a deep call chain cannot overflow the machine stack.
-const MAX_STACK_AGGR_SLOTS: u32 = 256;
+/// Upper bound on an aggregate that may be constructed or copied into a frame
+/// stack slot rather than a heap block. This is deliberately byte-based rather
+/// than slot-count based: Cranelift currently lays aggregate leaves out as
+/// 8-byte words, so common scratch buffers like `[u8; 1024]` need an 8 KiB slot
+/// and must not fall back to unreclaimed heap blocks inside hot loops.
+const MAX_STACK_AGGR_BYTES: u32 = 64 * 1024;
+
+fn stack_aggregate_slots(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
+    let slots = type_slot_count(tcx, ty).max(1);
+    let bytes = slots.saturating_mul(8);
+    (bytes <= MAX_STACK_AGGR_BYTES).then_some(slots)
+}
 
 pub(super) fn lower_body(
     module: &mut dyn Module,
@@ -326,8 +333,7 @@ pub(super) fn lower_body(
                         Rvalue::Use(Operand::Copy(_))
                             | Rvalue::Aggregate { .. }
                             | Rvalue::Repeat { .. }
-                    ) && type_slot_count(tcx, body.local_ty(place.local))
-                        <= MAX_STACK_AGGR_SLOTS
+                    ) && stack_aggregate_slots(tcx, body.local_ty(place.local)).is_some()
                     {
                         // A whole-aggregate copy destination (`let q = p`) or
                         // an aggregate constructor (`let p = Foo { .. }`,
@@ -338,9 +344,8 @@ pub(super) fn lower_body(
                         // write through to the source and unbalance the drop
                         // pass's per-field retain/release pairs; a per-iteration
                         // heap block is never reclaimed on the non-region path.
-                        // Bound the slot size so a large `[v; N]` array keeps
-                        // its heap allocation rather than risking a stack
-                        // overflow from an oversized frame slot.
+                        // Bound the slot size so an oversized `[v; N]` array
+                        // still avoids blowing the machine stack.
                         field_store_targets.insert(place.local.0);
                     }
                 }
@@ -381,7 +386,10 @@ pub(super) fn lower_body(
             if slots <= 1 && !single_slot_addr_aggregate(tcx, ty) {
                 continue;
             }
-            let bytes = slots * 8;
+            let Some(stack_slots) = stack_aggregate_slots(tcx, ty) else {
+                continue;
+            };
+            let bytes = stack_slots * 8;
             let slot = builder.create_sized_stack_slot(StackSlotData::new(
                 StackSlotKind::ExplicitSlot,
                 bytes,

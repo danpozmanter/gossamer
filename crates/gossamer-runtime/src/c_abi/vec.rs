@@ -838,6 +838,29 @@ pub unsafe extern "C" fn gos_rt_vec_borrow_arr(
     })
 }
 
+/// Builds a borrowing `*mut GosVec` view over a packed array. This is the
+/// LLVM counterpart of [`gos_rt_vec_borrow_arr`] for fixed `[u8; N]` arrays,
+/// whose native storage is `[N x i8]` rather than one 8-byte slot per element.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_borrow_packed_arr(
+    elem_bytes: u32,
+    data: *const u8,
+    len: i64,
+) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        if len < 0 {
+            unsafe { gos_rt_panic(c"Vec length must be non-negative".as_ptr()) };
+        }
+        let v = unsafe { alloc_box_vec(elem_bytes.max(1), vec_elem_kind::PRIMITIVE, 0, 0) };
+        unsafe {
+            (*v).len = len;
+            (*v).cap = len;
+            (*v).ptr = SyncRawPtr::new(data.cast_mut());
+        }
+        v
+    })
+}
+
 /// Release the owned children of every element of an `AGGR_OWNED`
 /// vec. Called by `gos_rt_vec_free` before the buffer is reclaimed,
 /// closing the early-`break` leak: slots the consumer never walked
@@ -1472,6 +1495,29 @@ pub unsafe extern "C" fn gos_rt_vec_from_arr(
             } else {
                 unsafe { std::ptr::copy_nonoverlapping(data, (*v).ptr.as_ptr(), n) };
             }
+        }
+        v
+    })
+}
+
+/// Builds a fresh `*mut GosVec` from a packed native array. LLVM stores direct
+/// fixed `[u8; N]` arrays as `[N x i8]`, so this helper copies `len *
+/// elem_bytes` contiguous bytes instead of applying the legacy word-slot
+/// repack used by [`gos_rt_vec_from_arr`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_from_packed_arr(
+    elem_bytes: u32,
+    data: *const u8,
+    len: i64,
+) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        if len < 0 {
+            unsafe { gos_rt_panic(c"Vec length must be non-negative".as_ptr()) };
+        }
+        let n = checked_buffer_bytes(len as usize, elem_bytes as usize);
+        let v = unsafe { alloc_box_vec(elem_bytes.max(1), vec_elem_kind::PRIMITIVE, len, len) };
+        if n > 0 && !data.is_null() {
+            unsafe { std::ptr::copy_nonoverlapping(data, (*v).ptr.as_ptr(), n) };
         }
         v
     })

@@ -3,7 +3,7 @@
 //! 2000-line hard limit defined in `GUIDELINES.md`.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
 
@@ -102,7 +102,7 @@ pub(crate) fn cmd_emit_stdlib(out_dir: &Path, check: bool) -> Result<()> {
     }
 }
 
-pub(crate) fn cmd_doc(file: &PathBuf, html_out: Option<&std::path::Path>) -> Result<()> {
+pub(crate) fn cmd_doc(file: &Path, html_out: Option<&std::path::Path>) -> Result<()> {
     let source = read_source(file)?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());

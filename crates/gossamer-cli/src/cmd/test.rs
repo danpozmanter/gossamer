@@ -622,7 +622,7 @@ fn render_lcov(records: &[TestRecord], files: &[PathBuf]) -> String {
 }
 
 fn discover_tests(file: &Path) -> Result<Vec<TestSpec>> {
-    let source = read_source(&file.to_path_buf())?;
+    let source = read_source(file)?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
     let (sf, _diags) = gossamer_parse::parse_source_file(&source, file_id);
@@ -786,7 +786,7 @@ fn validate_test_file(file: &Path) -> Result<()> {
     // augment + comptime-fold + check the execution path uses - so cross-file
     // references stay valid and a real static error is surfaced with its
     // "refusing to execute" trailer rather than swallowed.
-    let entry = read_entry_source(&file.to_path_buf())?;
+    let entry = read_entry_source(file)?;
     let augmented = gossamer_parse::autoderive::augment_source(&entry);
     let augmented = if augmented.contains("comptime") {
         match crate::comptime_fold::fold_comptime(augmented.clone(), &file.to_string_lossy()) {
@@ -845,7 +845,7 @@ fn run_tests_filtered_inner(
     // module (`super::helper::triple` where `src/helper.gos` is declared
     // `mod helper;`). Test-name collection stays unbundled so sibling
     // tests are not double-counted against this file.
-    let Ok(source) = read_entry_source(&file.to_path_buf()) else {
+    let Ok(source) = read_entry_source(file) else {
         return Vec::new();
     };
     let augmented = gossamer_parse::autoderive::augment_source(&source);

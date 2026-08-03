@@ -120,7 +120,9 @@ impl ResolveDiagnostic {
                     "standard library module `{name}` is not in scope; add `use std::{path}`"
                 ));
             }
-            if let Some(suggestion) = suggest(name, in_scope.iter().copied(), 2) {
+            if let Some(suggestion) = suggest(name, in_scope.iter().copied(), 2)
+                .or_else(|| suggest(name, crate::scope::prelude_suggestion_names(), 2))
+            {
                 let msg = format!("did you mean `{suggestion}`?");
                 out = out.with_suggestion(Suggestion::replacement(
                     location,

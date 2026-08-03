@@ -372,6 +372,14 @@ const PRELUDE_VALUES: &[&str] = &[
     "__gos_sql_native_value_blob_of",
 ];
 
+pub(crate) fn prelude_suggestion_names() -> impl Iterator<Item = &'static str> {
+    PRIMITIVE_TYPES
+        .iter()
+        .map(|(name, _)| *name)
+        .chain(PRELUDE_TYPES.iter().copied())
+        .chain(PRELUDE_VALUES.iter().copied())
+}
+
 const PRIMITIVE_TYPES: &[(&str, PrimitiveTy)] = &[
     ("bool", PrimitiveTy::Bool),
     ("char", PrimitiveTy::Char),

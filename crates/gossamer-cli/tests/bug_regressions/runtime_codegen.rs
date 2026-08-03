@@ -158,6 +158,51 @@ fn main() {
 }
 
 #[test]
+fn fixed_u8_array_to_vec_preserves_packed_positions_across_tiers() {
+    let src = r"
+fn main() {
+    let mut bytes = [0u8; 10]
+    bytes[1] = 11u8
+    bytes[7] = 77u8
+    let values: Vec<u8> = bytes.to_vec()
+    println(values[1])
+    println(values[7])
+    println(values.len())
+}
+";
+    let expected = "11\n77\n10\n";
+    let dir = fresh_dir("fixed_u8_array_to_vec");
+    let path = write_source(&dir, "fixed_u8_array_to_vec", src);
+
+    let vm = run_vm(&path);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, expected);
+
+    let jit = Command::new(gos_bin())
+        .arg("run")
+        .env("GOS_JIT_ONLY", "main")
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn forced JIT");
+    let jit = run_with_timeout(jit);
+    assert_eq!(jit.2, Some(0), "jit stderr: {}", jit.1);
+    assert_eq!(jit.0, expected);
+
+    for release in [false, true] {
+        let scratch = dir.join(if release { "release" } else { "debug" });
+        fs::create_dir_all(&scratch).unwrap();
+        let bin = build_native_with_flag(&path, &scratch, release).expect("native build");
+        let native = run_native(&bin);
+        assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+        assert_eq!(native.0, expected);
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn shared_borrow_of_indexed_string_passes_the_string_value() {
     let src = r"
 use std::env

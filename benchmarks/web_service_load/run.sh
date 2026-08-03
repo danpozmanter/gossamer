@@ -72,7 +72,7 @@ GET https://127.0.0.1:$PORT/notes
 TARGETS
 else
     echo "[bench] running bundled harness"
-    "$REPO_ROOT/target/release/gos" "$ROOT/harness.gos" \
+    "$REPO_ROOT/target/release/gos" run "$ROOT/harness.gos" \
         --port "$PORT" --connections "$CONNECTIONS" --duration "$DURATION_SEC"
 fi
 

@@ -237,6 +237,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
         // Copy/type and ownership lowering can expose the canonical
         // three-way swap only after their temporary assignments settle.
         crate::opt::elide_vec_clone_in_three_way_swaps(body);
+        crate::opt::elide_vec_clone_of_fresh_temporary(body, tcx);
         if std::env::var("GOS_DUMP_MIR_RC").is_ok() {
             eprintln!("=== MIR(post-rc) {} ===", body.name);
             for block in &body.blocks {

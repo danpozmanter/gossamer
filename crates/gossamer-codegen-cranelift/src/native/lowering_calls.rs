@@ -206,6 +206,159 @@ pub(super) fn emit_win64_rt_call(
     })
 }
 
+fn pack_i64_carrier(
+    builder: &mut FunctionBuilder<'_>,
+    disc: ir::Value,
+    payload: ir::Value,
+) -> ir::Value {
+    let disc = coerce_arg_to(builder, disc, types::I64).unwrap_or(disc);
+    let payload = coerce_arg_to(builder, payload, types::I64).unwrap_or(payload);
+    let disc128 = builder.ins().uextend(types::I128, disc);
+    let payload128 = builder.ins().uextend(types::I128, payload);
+    let shifted = builder.ins().ishl_imm_s(payload128, 64);
+    builder.ins().bor(disc128, shifted)
+}
+
+fn lower_inline_result_carrier_call(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    locals: &mut HashMap<Local, Variable>,
+    body: &Body,
+    tcx: &TyCtxt,
+    args: &[Operand],
+    intrinsics: &mut IntrinsicContext,
+    destination: &gossamer_mir::Place,
+    name: &str,
+) -> Result<bool> {
+    let value = match name {
+        "gos_rt_result_new" => {
+            let disc = match args.first() {
+                Some(arg) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    arg,
+                    Some(types::I64),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let payload = match args.get(1) {
+                Some(arg) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    arg,
+                    Some(types::I64),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            pack_i64_carrier(builder, disc, payload)
+        }
+        "gos_rt_result_new_f64" => {
+            let disc = match args.first() {
+                Some(arg) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    arg,
+                    Some(types::I64),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let payload = match args.get(1) {
+                Some(arg) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    arg,
+                    Some(types::F64),
+                    intrinsics,
+                )?,
+                None => builder.ins().f64const(0.0),
+            };
+            let payload_bits = builder
+                .ins()
+                .bitcast(types::I64, MemFlagsData::new(), payload);
+            pack_i64_carrier(builder, disc, payload_bits)
+        }
+        "gos_rt_result_disc" => {
+            let carrier = match args.first() {
+                Some(arg) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    arg,
+                    Some(types::I128),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I128, 0),
+            };
+            let carrier = coerce_arg_to(builder, carrier, types::I128)?;
+            builder.ins().ireduce(types::I64, carrier)
+        }
+        "gos_rt_result_payload" | "gos_rt_weak_opt_payload" => {
+            let carrier = match args.first() {
+                Some(arg) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    arg,
+                    Some(types::I128),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I128, 0),
+            };
+            let carrier = coerce_arg_to(builder, carrier, types::I128)?;
+            let (_disc, payload) = builder.ins().isplit(carrier);
+            payload
+        }
+        "gos_rt_result_payload_f64" => {
+            let carrier = match args.first() {
+                Some(arg) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    arg,
+                    Some(types::I128),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I128, 0),
+            };
+            let carrier = coerce_arg_to(builder, carrier, types::I128)?;
+            let (_disc, payload) = builder.ins().isplit(carrier);
+            builder
+                .ins()
+                .bitcast(types::F64, MemFlagsData::new(), payload)
+        }
+        _ => return Ok(false),
+    };
+    define_var_to(
+        builder,
+        locals,
+        &intrinsics.body_cl_types,
+        destination.local,
+        value,
+    );
+    Ok(true)
+}
+
 pub(super) fn lower_generic_rt_call(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -217,6 +370,19 @@ pub(super) fn lower_generic_rt_call(
     destination: &gossamer_mir::Place,
     name: &'static str,
 ) -> Result<()> {
+    if lower_inline_result_carrier_call(
+        module,
+        builder,
+        locals,
+        body,
+        tcx,
+        args,
+        intrinsics,
+        destination,
+        name,
+    )? {
+        return Ok(());
+    }
     let ptr_ty = module.target_config().pointer_type();
     // Signature table: arg cl-types + return cl-type. `None`
     // return means void.

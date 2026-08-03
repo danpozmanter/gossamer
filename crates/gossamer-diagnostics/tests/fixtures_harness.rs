@@ -171,6 +171,28 @@ fn did_you_mean_suggests_a_close_match() {
 }
 
 #[test]
+fn did_you_mean_suggests_prelude_type_case_match() {
+    let source = "fn main() { let map = Hashmap::from({\"example\": 1}) }\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("prelude-typo.gos", source.to_string());
+    let (sf, _) = parse_source_file(source, file);
+    let (_res, diags) = resolve_source_file(&sf);
+    let in_scope = collect_names(&sf);
+    let rendered: Vec<Diagnostic> = diags
+        .iter()
+        .filter(|d| matches!(d.error, ResolveError::UnresolvedName { .. }))
+        .map(|d| d.to_diagnostic(&in_scope))
+        .collect();
+    assert!(
+        rendered
+            .iter()
+            .any(|d| d.helps.iter().any(|h| h.contains("HashMap"))),
+        "did-you-mean should suggest `HashMap`; got {:?}",
+        rendered.iter().map(|d| d.helps.clone()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn parser_recovers_and_reports_multiple_errors_in_one_file() {
     let source = "fn main() { let x = ; let y = ; }\n";
     let mut map = SourceMap::new();

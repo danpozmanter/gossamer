@@ -37,7 +37,7 @@ fn run(file: &Path, main_thread: bool, forwarded: &[String]) -> Result<()> {
     }
 }
 
-fn run_on_vm(file: &PathBuf, forwarded: &[String]) -> Result<()> {
+fn run_on_vm(file: &Path, forwarded: &[String]) -> Result<()> {
     let edition = crate::paths::project_edition_for_entry(file);
     let file_label = file.to_string_lossy();
     let user_source = read_entry_source(file)?;

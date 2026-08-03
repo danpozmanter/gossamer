@@ -11,11 +11,16 @@
   form.
 - Preserve multiline shell-completion help for bash, fish, and zsh, and fix
   deterministic native test output names on Windows.
+- Filter `gos run` and `gos build` source-file completion to `.gos` files plus
+  directories across bash, fish, and zsh.
 - Require a semicolon or newline between adjacent non-block statements.
   `println` remains an ordinary first-class function.
 - Complete `%info`, `%explain`, LSP completion, and `gos explain` coverage for
   the current standard-library and diagnostic surfaces. Associated functions now
   render as `[associated function]`, and detailed entries include examples.
+- Add a `Defined in:` field to detailed REPL discovery, leaving standard
+  namespace entries blank, and suggest prelude type casing fixes such as
+  `HashMap` for `Hashmap`.
 - Restore useful `Vec::from` discovery, add `HashMap::from({})` and map-literal
   syntax such as `HashMap::from({"one": 1})`, and document collection
   constructors with clear signatures and examples.
@@ -52,6 +57,8 @@
 - Fix native and VM sequence lowering for fixed-array and mutable-slice
   mutation, iteration, sorting, reversing, swapping, filling, and packed `u8`
   Vec construction.
+- Fix packed `[u8; N].to_vec()` in LLVM release output and keep Cranelift
+  scratch aggregates in frame slots.
 - Add lazy `Iterator::step_by`, preserve iterator type provenance, enforce
   single-pass iterator consumption, and align Iterator discovery with the
   methods implemented across tiers.
@@ -80,6 +87,9 @@
 - Fix Cranelift inline Option and Result field assignment, owned constructor
   binding, shallow managed-field copies from fresh function results, and the
   struct/Vec stress RSS regression.
+- Lower simple Option/Result carrier construction and payload/discriminant
+  reads inline in Cranelift, avoiding the Win64 `i128` runtime-call boundary
+  that made the Windows `vm_jit` promotion test fail.
 - Improve bytecode performance with direct payload enum constructors, unboxed
   integer parameters, direct global calls, typed String byte paths, and typed
   wrapping checksum accumulation.

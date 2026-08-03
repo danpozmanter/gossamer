@@ -3211,6 +3211,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::vec::gos_rt_vec_borrow_arr as *const u8,
         ),
         (
+            "gos_rt_vec_borrow_packed_arr",
+            crate::c_abi::vec::gos_rt_vec_borrow_packed_arr as *const u8,
+        ),
+        (
             "gos_rt_map_set_blob_values",
             crate::c_abi::map::gos_rt_map_set_blob_values as *const u8,
         ),
@@ -5338,6 +5342,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_vec_from_arr",
             crate::c_abi::gos_rt_vec_from_arr as *const u8,
+        ),
+        (
+            "gos_rt_vec_from_packed_arr",
+            crate::c_abi::gos_rt_vec_from_packed_arr as *const u8,
         ),
         (
             "gos_rt_vec_get_i128",

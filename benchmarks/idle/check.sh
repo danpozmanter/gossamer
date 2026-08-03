@@ -21,19 +21,26 @@ if [ ! -x "$gos" ]; then
     exit 2
 fi
 
-TIMEFORMAT='%U %S'
-# Run inside `bash -c` so we can use the POSIX `time` builtin's
+# Run inside `bash -c` so we can use bash's `time` builtin
 # user/system breakdown; route to a tmp file so the program's stdout
 # does not collide with the timing output on stderr.
 out="$(mktemp)"
 trap 'rm -f "$out"' EXIT
 
-# `bash -c 'time ...'` writes user/sys/real to stderr in a portable
+# `bash -c 'time ...'` writes user/sys to stderr in a portable
 # format. Capture stderr only and ignore the program's stdout.
-time_output="$(bash -c "
-TIMEFORMAT='%U %S'
-{ time '$gos' '$here/empty.gos' >'$out'; } 2>&1
-" 2>&1)"
+set +e
+time_output="$(bash -c '
+TIMEFORMAT="%U %S"
+{ time "$1" run "$2" >"$3"; } 2>&1
+' sh "$gos" "$here/empty.gos" "$out" 2>&1)"
+status=$?
+set -e
+
+if [ "$status" -ne 0 ]; then
+    printf 'error: idle benchmark command failed with status %s:\n%s\n' "$status" "$time_output" >&2
+    exit "$status"
+fi
 
 # Parse the trailing "<user> <sys>" line emitted by bash time.
 last_line="$(printf '%s\n' "$time_output" | tail -n 1)"

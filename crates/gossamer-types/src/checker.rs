@@ -241,7 +241,7 @@ struct TypeChecker<'a> {
     recursion_limit_reported: bool,
     /// Iterator locals consumed by a lazy adapter or terminal. This is a
     /// conservative source-level linearity check for simple named locals.
-    consumed_iterators: HashMap<String, String>,
+    consumed_iterators: Vec<HashMap<String, String>>,
     /// Lexically active named mutable borrows, keyed by referent root. This
     /// is deliberately conservative: it prevents a second named `&mut`
     /// binding while the first remains in scope.
@@ -500,7 +500,7 @@ impl<'a> TypeChecker<'a> {
             current_impl_generics: None,
             recursion_depth: 0,
             recursion_limit_reported: false,
-            consumed_iterators: HashMap::new(),
+            consumed_iterators: vec![HashMap::new()],
             mutable_borrows: vec![HashMap::new()],
             shared_borrows: vec![HashMap::new()],
             reference_origins: vec![HashMap::new()],
@@ -1107,6 +1107,7 @@ impl<'a> TypeChecker<'a> {
     fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
         self.mut_scopes.push(HashMap::new());
+        self.consumed_iterators.push(HashMap::new());
         self.mutable_borrows.push(HashMap::new());
         self.shared_borrows.push(HashMap::new());
         self.reference_origins.push(HashMap::new());
@@ -1115,6 +1116,7 @@ impl<'a> TypeChecker<'a> {
     fn pop_scope(&mut self) {
         self.scopes.pop();
         self.mut_scopes.pop();
+        self.consumed_iterators.pop();
         self.mutable_borrows.pop();
         self.shared_borrows.pop();
         self.reference_origins.pop();
@@ -8139,8 +8141,9 @@ impl<'a> TypeChecker<'a> {
             return;
         }
         let binding = path.segments[0].name.name.clone();
-        self.consumed_iterators
-            .insert(binding, format!("iter::{name}"));
+        if let Some(scope) = self.consumed_iterators.last_mut() {
+            scope.insert(binding, format!("iter::{name}"));
+        }
     }
 
     /// Types Result/Option combinator *method* calls
@@ -9778,7 +9781,11 @@ impl<'a> TypeChecker<'a> {
             Resolution::Local(binding_id) => {
                 if path.segments.len() == 1
                     && let Some(name) = path.segments.first().map(|seg| seg.name.name.as_str())
-                    && let Some(operation) = self.consumed_iterators.get(name).cloned()
+                    && let Some(operation) = self
+                        .consumed_iterators
+                        .iter()
+                        .rev()
+                        .find_map(|scope| scope.get(name).cloned())
                 {
                     self.emit(
                         TypeError::IteratorStateConsumed {

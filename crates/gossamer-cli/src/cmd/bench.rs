@@ -305,7 +305,7 @@ fn digits(n: u128) -> usize {
 /// annotated fn name in source order. Mirrors `gos test`'s
 /// `collect_test_names`.
 fn collect_bench_names(file: &Path) -> Result<Vec<String>> {
-    let source = read_source(&file.to_path_buf())?;
+    let source = read_source(file)?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
     let (_program, sf, _tcx) = load_and_check_with_sf(&source, file_id, &map)?;
