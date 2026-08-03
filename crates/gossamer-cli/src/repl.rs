@@ -286,8 +286,8 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "String",
         name: "from",
         kind: "assoc",
-        signature: "fn from(value) -> String",
-        doc: "Converts a displayable value into a string.",
+        signature: "fn from<T: Display>(value: T) -> String",
+        doc: "Converts a Display value into a string.",
     },
     CoreMethodHelp {
         owner: "String",
@@ -811,8 +811,8 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "HashMap",
         name: "from",
         kind: "assoc",
-        signature: "fn from<K, V>(entries: {K: V}) -> HashMap<K, V>",
-        doc: "Creates a hash map from a map literal.",
+        signature: "fn from<K, V, const N: usize>(entries: {K: V} | [(K, V); N]) -> HashMap<K, V>",
+        doc: "Creates a hash map from a map literal or key-value tuple array.",
     },
     CoreMethodHelp {
         owner: "HashMap",
@@ -2558,7 +2558,7 @@ fn catalog_kind_label(kind: &str) -> &str {
 fn catalog_example(path: &str, kind: &str, signature: &str) -> String {
     match path {
         "HashMap::from" => {
-            return "let empty: HashMap<String, i64> = HashMap::from({}); let map: HashMap<String, i64> = HashMap::from({\"one\": 1, \"two\": 2})".to_string();
+            return "let empty: HashMap<String, i64> = HashMap::from({}); let map: HashMap<String, i64> = HashMap::from({\"one\": 1, \"two\": 2}); let also = HashMap::from([(\"one\", 1), (\"two\", 2)])".to_string();
         }
         "HashSet::from" => {
             return "let set: HashSet<i64> = HashSet::from([1, 2, 2, 3])".to_string();

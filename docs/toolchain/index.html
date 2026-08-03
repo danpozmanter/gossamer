@@ -2326,7 +2326,9 @@ It starts with <code>gos &lt;version&gt; REPL [&lt;architecture&gt;-&lt;os&gt;]<
   examples.</li>
 <li><code>%bindings [regex]</code> (<code>%b</code>), <code>%declarations [regex]</code> (<code>%d</code>), and
   <code>%history [regex]</code> (<code>%h</code>) show persistent bindings, declarations, and input
-  history. <code>%reset</code> (<code>%r</code>) clears bindings and declarations.</li>
+  history. <code>%drop NAME</code> ends one persistent binding's lexical lifetime and
+  removes it, which releases any source protected by a reference binding.
+  <code>%reset</code> (<code>%r</code>) clears bindings and declarations.</li>
 <li>Up/down cycles history. Enter continues until braces close. Ctrl-D or
   <code>%quit</code> (<code>%q</code>) exits.</li>
 </ul>

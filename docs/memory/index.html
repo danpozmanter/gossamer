@@ -2054,10 +2054,10 @@
 
 
 <h1 id="memory-model">Memory model<a class="headerlink" href="#memory-model" title="Permanent link">&para;</a></h1>
-<p>Gossamer manages memory for you automatically: there is no borrow
-checker, no lifetime annotations, and no manual ownership transfer.
-<code>&amp;</code> and <code>&amp;mut</code> exist - but they express <em>aliasing intent</em>, not
-ownership.</p>
+<p>Gossamer manages memory automatically and has no manual ownership transfer or
+explicit lifetime annotations. It does have a conservative lexical borrow
+checker. Every named <code>&amp;</code> or <code>&amp;mut</code> reference has an implicit lifetime from its
+declaration through the closing brace of that scope.</p>
 <p>Under the hood the compiled tiers use <strong>deterministic reference
 counting</strong> with a cycle collector, not a tracing collector: most
 values are reclaimed at the moment their last reference dies, RAM
@@ -2116,9 +2116,11 @@ automatic cycle reclamation that ARC leaves to the programmer.</p>
   collection.</li>
 </ul>
 <h2 id="and-mut"><code>&amp;</code> and <code>&amp;mut</code><a class="headerlink" href="#and-mut" title="Permanent link">&para;</a></h2>
-<p><code>&amp;x</code> means "read <code>x</code> without taking ownership". <code>&amp;mut x</code> means
-"write <code>x</code> without taking ownership". Both are aliases of the source
-place, never copies. In particular:</p>
+<p><code>&amp;x</code> creates a shared lexical view. <code>&amp;mut x</code> creates an exclusive lexical
+view. Both alias the source place rather than copying it. Any active reference
+prevents mutation of its source through another path, and an active <code>&amp;mut</code>
+also prevents reads through the source. Access remains available through the
+reference itself. In particular:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">xs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">]</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">r</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="n">xs</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">r</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span>
@@ -2136,29 +2138,24 @@ rebindable. The type checker rejects:</p>
 <li>A mutating method call on an immutable place.</li>
 <li>A projection that crosses any shared layer inside a nested reference chain.</li>
 </ul>
-<p>These are <em>correctness</em> rules, not lifetime proofs. You never write <code>'a</code>, and
-<code>&amp;mut</code> does not mean "the only reference" as it does in Rust. It grants write
-access through an alias. The original mutable binding and every permitted
-mutable-reference chain can therefore observe and update the same value.</p>
-<p>Gossamer rejects a second simple named <code>&amp;mut</code> taken directly from the same root
-while the first remains in lexical scope. This catches the common accidental
-sibling-alias case. It also rejects a temporary <code>&amp;mut</code> overlapping an active
-named reference and duplicate <code>&amp;mut</code> roots in one call. These checks are not a
-general uniqueness proof. Taking a mutable reference to an existing
-mutable-reference binding creates a chain:</p>
+<p>These are lexical borrowing rules. You never write <code>'a</code>, and Gossamer does not
+infer an earlier endpoint from a reference's last use. Use a smaller block
+when source access must resume. Gossamer rejects a second named <code>&amp;mut</code> to the
+same root, a temporary <code>&amp;mut</code> overlapping an active reference, and duplicate
+<code>&amp;mut</code> roots in one call.</p>
+<p>Taking a mutable reference to an existing mutable-reference binding creates a
+nested exclusive view of that reference slot:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">]</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="n">a</span><span class="w">       </span><span class="c1">// b: &amp;mut [i64; 2]</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="n">b</span><span class="w">           </span><span class="c1">// c: &amp;mut &amp;mut [i64; 2]</span>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">c</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="w">                 </span><span class="c1">// auto-dereferences both layers</span>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="c1">// a, b, and c all observe [0, 2]</span>
 </code></pre></div>
-<p><code>c</code> does not create independent storage or a second direct borrow of <code>a</code>; it
-aliases the reference slot <code>b</code>, which already points at <code>a</code>. This is allowed
-because references express access intent rather than ownership. Within one
-goroutine, coordinating such aliases is the programmer's responsibility.
-Across goroutines, shared mutation must be synchronized with channels,
-<code>std::sync</code> primitives, or atomics as described in the
-<a href="../design/memory_model/">concurrency memory model</a>.</p>
+<p><code>c</code> does not create independent storage or a sibling borrow of <code>a</code>; it
+exclusively borrows the reference slot <code>b</code>, which already points at <code>a</code>.
+While <code>c</code> is active, <code>b</code> must be accessed through <code>c</code>. References cannot cross
+goroutine boundaries. Share owned values using channels or synchronization as
+described in the <a href="../design/memory_model/">concurrency memory model</a>.</p>
 <h2 id="how-reclamation-works">How reclamation works<a class="headerlink" href="#how-reclamation-works" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Reference counting, compiler-inserted.</strong> The MIR lowering inserts

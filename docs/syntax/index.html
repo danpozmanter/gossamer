@@ -2264,8 +2264,8 @@
 <h1 id="syntax-tour">Syntax tour<a class="headerlink" href="#syntax-tour" title="Permanent link">&para;</a></h1>
 <p>Gossamer's surface is Rust with two simplifications:</p>
 <ul>
-<li>No lifetime annotations. References express aliasing intent;
-  the runtime owns the memory.</li>
+<li>No explicit lifetime annotations. References have implicit lexical
+  lifetimes ending at the closing brace.</li>
 <li>Semicolons may replace newlines only between statements on the same line.
   They are separators, not trailing terminators.</li>
 </ul>
@@ -2410,6 +2410,7 @@ more than once in one pipe step.</p>
 <li><code>Some(inner)</code> / <code>None</code> - variant destructure.</li>
 <li><code>Point { x, y }</code> / <code>Point { x: a, y: b }</code> - struct destructure (and renamed).</li>
 <li><code>(a, b)</code> - tuple destructure.</li>
+<li><code>&amp;value</code> / <code>&amp;mut value</code> - shared or mutable reference destructure.</li>
 <li><code>1..=5</code> / <code>1..5</code> - closed and exclusive range.</li>
 <li><code>..=hi</code> / <code>..hi</code> / <code>lo..</code> - open-ended range (an open end covers up to
   the type maximum). <code>lo..=</code> is a parse error because <code>..=</code> requires an
@@ -2424,6 +2425,16 @@ required. The struct, variant, tuple, and or-pattern forms also work in
 irrefutable <code>let</code> bindings: <code>let Point { x, y } = p</code>, <code>let Shape::Pair(m,
 n) = s</code>, <code>let (A(g, _) | B(g)) = v</code> (or-pattern alternatives must bind the
 same names).</p>
+<p>The left side of <code>=</code> is a pattern and the right side is an expression.
+Consequently, <code>&amp;mut place</code> on the right creates a mutable reference, while
+<code>&amp;mut pattern</code> on the left matches and removes a mutable-reference layer.
+Reference mutability must match exactly. The inner binding receives an
+independent value copy, including when the referent is an aggregate.</p>
+<p><code>mut name</code> is separate: it makes <code>name</code> reassignable. <code>let &amp;mut value =
+reference</code> does not make <code>value</code> reassignable, while <code>let &amp;mut mut value =
+reference</code> does. For a simple top-level copy, <code>let value = *reference</code> is often
+clearer. Reference patterns are especially useful when nested, as in <code>let
+(name, &amp;mut count) = entry</code>.</p>
 <h2 id="conditions-and-let-chains">Conditions and let-chains<a class="headerlink" href="#conditions-and-let-chains" title="Permanent link">&para;</a></h2>
 <p>An <code>if</code> or <code>while</code> condition may chain clauses with <code>&amp;&amp;</code>, where each
 clause is either <code>let PAT = expr</code> or a boolean. Earlier <code>let</code> bindings

@@ -1829,6 +1829,8 @@ Same-line expression arms use a comma. Block-bodied arms need no comma.</p>
 <li>Struct patterns <code>Point { x, y }</code>, renamed <code>Point { x: a, y: b }</code>.</li>
 <li>Tuples <code>(a, b)</code>; rest <code>..</code> for the unmatched fields (<code>Shape::Box(..)</code>,
   <code>Point { x, .. }</code>).</li>
+<li>Reference patterns <code>&amp;value</code> and <code>&amp;mut value</code>. They require the matching
+  shared or mutable reference and bind an independent copy of its referent.</li>
 <li>Ranges: closed <code>1..=5</code>, exclusive <code>1..5</code>, open-ended (<code>..=hi</code>, <code>lo..</code>);
   a range pattern is opaque to exhaustiveness, so a <code>_</code> arm is still
   required.</li>
@@ -1847,6 +1849,10 @@ Same-line expression arms use a comma. Block-bodied arms need no comma.</p>
 <p>Patterns also drive <code>let</code>, <code>if let</code> / <code>while let</code>, <code>for</code>, and function
 parameters - see <a href="../fn/">fn</a> for parameter destructuring. The
 <code>matches!(expr, pat)</code> macro is a boolean one-arm match.</p>
+<p>Reference patterns remove one reference layer before matching their inner
+pattern. They work both at the top level and when nested. <code>&amp;mut pattern</code> is
+independent of <code>mut name</code>: the former matches a mutable reference, while the
+latter makes a binding reassignable.</p>
 
 
 

@@ -2210,9 +2210,9 @@ dispatch-table additions.</p>
 <td>Associated function; reserves mutable builder storage in the VM and native runtime.</td>
 </tr>
 <tr>
-<td><code>String::from(value)</code></td>
+<td><code>String::from&lt;T: Display&gt;(value)</code></td>
 <td><code>String</code></td>
-<td>Associated function; identity for strings, display conversion for scalars.</td>
+<td>Associated function; identity for strings, display conversion for values that implement <code>Display</code>.</td>
 </tr>
 <tr>
 <td><code>String::from_utf8(bytes)</code></td>
@@ -2556,6 +2556,11 @@ cannot change their length or capacity. Iterator combinators are used through
 </tr>
 </thead>
 <tbody>
+<tr>
+<td><code>HashMap::from&lt;K, V, const N: usize&gt;({K: V} \| [(K, V); N])</code></td>
+<td><code>HashMap&lt;K, V&gt;</code></td>
+<td>Associated function; accepts map literals and key-value tuple arrays.</td>
+</tr>
 <tr>
 <td><code>m.insert(k, v)</code></td>
 <td><code>Option&lt;V&gt;</code></td>

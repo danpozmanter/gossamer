@@ -23,7 +23,7 @@ dispatch-table additions.
 |---|---|---|
 | `String::new()` | `String` | Associated function; empty owned string. |
 | `String::with_capacity(n)` | `String` | Associated function; reserves mutable builder storage in the VM and native runtime. |
-| `String::from(value)` | `String` | Associated function; identity for strings, display conversion for scalars. |
+| `String::from<T: Display>(value)` | `String` | Associated function; identity for strings, display conversion for values that implement `Display`. |
 | `String::from_utf8(bytes)` | `Result<String, errors::Error>` | Associated function; decodes a byte vector, returning `Err` for invalid UTF-8. |
 | `s.len()` | `i64` | Byte length, not codepoint count. Use `utf8::rune_count` for code points. |
 | `s.is_empty()` | `bool` | |
@@ -105,6 +105,7 @@ cannot change their length or capacity. Iterator combinators are used through
 
 | Method | Returns | Notes |
 |---|---|---|
+| `HashMap::from<K, V, const N: usize>({K: V} \| [(K, V); N])` | `HashMap<K, V>` | Associated function; accepts map literals and key-value tuple arrays. |
 | `m.insert(k, v)` | `Option<V>` | Inserts or overwrites in place and returns the previous value when present. |
 | `m.get(k)` | `Option<V>` | `None` when the key is absent. |
 | `m.get_or(k, default)` | `V` | Value for `k`, or `default` when absent. |

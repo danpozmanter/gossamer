@@ -1934,7 +1934,9 @@
 <h1 id="running-gossamer">Running Gossamer<a class="headerlink" href="#running-gossamer" title="Permanent link">&para;</a></h1>
 <p>Once <code>gos</code> is on your <code>PATH</code>, run a program with <code>gos run FILE [ARGS...]</code>.
 <code>FILE</code> may be a source file with any filename extension or a project directory containing
-<code>project.toml</code>; <code>gos</code> with no arguments drops into the REPL.</p>
+<code>project.toml</code>; <code>gos</code> with no arguments drops into the REPL. Every token after
+<code>FILE</code> is passed to the program verbatim, including option-shaped values and a
+literal <code>--</code>. Put <code>gos run</code> options before <code>FILE</code>.</p>
 <h2 id="cheat-sheet">Cheat-sheet<a class="headerlink" href="#cheat-sheet" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

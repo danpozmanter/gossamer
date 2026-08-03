@@ -666,13 +666,17 @@ fn repl_info_lists_matches_unless_details_are_requested() {
 fn repl_info_and_explain_details_always_follow_descriptions_with_examples() {
     let info = run_repl("%i HashMap::from -d\n");
     assert!(info.success, "stderr: {}", info.stderr);
+    let compact_info = info.stdout.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        info.stdout.contains(
-            "HashMap::from<K, V>(entries: {K: V}) -> HashMap<K, V> [associated function]\n    Creates a hash map from a map literal.\n    Builtin\n    Example: let empty: HashMap<String, i64> = HashMap::from({});"
-        ) && info.stdout.contains("let map:")
-            && info.stdout.contains("HashMap<String, i64> = HashMap::from({")
-            && info.stdout.contains("\"one\": 1, \"two\":")
-            && info.stdout.contains("2})"),
+        compact_info.contains(
+            "HashMap::from<K, V, const N: usize>(entries: {K: V} | [(K, V); N]) -> HashMap<K, V> [associated function]"
+        ) && info.stdout.contains("Creates a hash map from a map literal or key-value tuple array.")
+            && info.stdout.contains("    Builtin")
+            && compact_info.contains("Example: let empty: HashMap<String, i64> = HashMap::from({});")
+            && compact_info.contains("let map: HashMap<String, i64> = HashMap::from({")
+            && compact_info.contains("\"one\": 1, \"two\":")
+            && compact_info.contains("2})")
+            && compact_info.contains("let also = HashMap::from([(\"one\", 1), (\"two\", 2)])"),
         "HashMap::from help is incomplete: {}",
         info.stdout
     );
@@ -685,6 +689,50 @@ fn repl_info_and_explain_details_always_follow_descriptions_with_examples() {
         ),
         "binding method example did not use the binding: {}",
         explained.stdout
+    );
+}
+
+#[test]
+fn repl_hashmap_from_accepts_map_literals_and_tuple_arrays() {
+    let out = run_repl(
+        "let m = HashMap::from({\"a\": 1, \"b\": 2})\n\
+         let n = HashMap::from([(\"a\", 1), (\"b\", 2)])\n\
+         m.len()\n\
+         n.len()\n\
+         m.get(\"a\")\n\
+         n.get(\"a\")\n",
+    );
+    assert!(out.success, "stderr: {}", out.stderr);
+    let lines = out.stdout.lines().map(str::trim).collect::<Vec<_>>();
+    assert!(
+        lines.iter().filter(|line| **line == "2").count() >= 2
+            && lines.iter().filter(|line| **line == "Some(1)").count() >= 2,
+        "HashMap::from forms did not expose matching entries: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_info_string_from_has_display_bound_contract() {
+    let out = run_repl("%i String::from\n%i String::from -d\n");
+    assert!(out.success, "stderr: {}", out.stderr);
+    assert!(
+        out.stdout
+            .contains("String::from<T: Display>(value: T) -> String [associated function]"),
+        "String::from signature fell back to an untyped value parameter: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains(
+            "Converts a Display value into a string.\n    Builtin\n    Example: String::from(value)"
+        ),
+        "String::from details are incomplete: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("String::from(value) -> String"),
+        "String::from should not expose an untyped value parameter: {}",
+        out.stdout
     );
 }
 
