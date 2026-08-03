@@ -28,9 +28,10 @@ reference counting rather than a tracing collector. Unlike Swift ARC,
 compiled Gossamer also collects strong cycles, and it can keep
 goroutine-local reference counts non-atomic until an object is shared.
 
-This is not Rust's model. `&` and `&mut` express access intent in the
-type system, not a lifetime proof, and there is no borrow checker
-surface or lifetime annotation language.
+This is not Rust's ownership model. `&` and `&mut` are shared and exclusive
+lexical views enforced by a conservative borrow checker. Their implicit
+lifetimes end at the closing brace. There is no explicit lifetime annotation
+language or non-lexical last-use inference.
 
 This is not C or C++ either. A data race is not documented as permission
 for the compiler to assume arbitrary facts about the whole program. It

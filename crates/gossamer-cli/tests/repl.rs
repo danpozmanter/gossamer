@@ -2030,6 +2030,70 @@ fn repl_meta_quit_terminates_with_exit_zero() {
 }
 
 #[test]
+fn repl_drop_ends_reference_lifetime_and_preserves_mutation() {
+    let out = run_repl(
+        "let mut v = Vec::from([1, 2])\n\
+         let a = &mut v\n\
+         a[0] = 9\n\
+         let answer = 42\n\
+         v[0]\n\
+         %drop a\n\
+         v[0]\n\
+         answer\n\
+         %bindings\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("cannot read `v` while reference `a` is active"),
+        "the reference should remain exclusive before `%drop`: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("dropped `a`"),
+        "`%drop` should confirm the ended binding: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.lines().any(|line| line == "9"),
+        "mutation through the dropped reference should remain visible: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.lines().any(|line| line == "42") && out.stdout.contains("answer: i64 = 42"),
+        "bindings created after the reference should survive `%drop`: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("mut v: Vec<i64> = [9, 2]"),
+        "the source should remain available with its final value: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.lines().any(|line| line.starts_with("a:")),
+        "the dropped binding should not remain in `%bindings`: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_drop_validates_its_binding_name() {
+    let out = run_repl("%drop\n%drop missing\n%drop one two\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert_eq!(
+        out.stderr.matches("usage: %drop NAME").count(),
+        2,
+        "empty and extra arguments should show usage: {}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("no persistent binding named `missing`"),
+        "an unknown binding should be diagnosed: {}",
+        out.stderr
+    );
+}
+
+#[test]
 fn repl_only_accepts_documented_quit_commands() {
     let out = run_repl("%exit\n1 + 2\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);

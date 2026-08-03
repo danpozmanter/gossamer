@@ -52,6 +52,11 @@ impl GosReplHelper {
         }
     }
 
+    /// Removes completion metadata for a binding ended by `%drop`.
+    pub(crate) fn forget_binding(&mut self, name: &str) {
+        self.hash_set_bindings.remove(name);
+    }
+
     /// Clears all completion metadata with the rest of the REPL session.
     pub(crate) fn reset_session(&mut self) {
         self.hash_set_bindings.clear();

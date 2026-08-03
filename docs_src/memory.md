@@ -1,9 +1,9 @@
 # Memory model
 
-Gossamer manages memory for you automatically: there is no borrow
-checker, no lifetime annotations, and no manual ownership transfer.
-`&` and `&mut` exist - but they express *aliasing intent*, not
-ownership.
+Gossamer manages memory automatically and has no manual ownership transfer or
+explicit lifetime annotations. It does have a conservative lexical borrow
+checker. Every named `&` or `&mut` reference has an implicit lifetime from its
+declaration through the closing brace of that scope.
 
 Under the hood the compiled tiers use **deterministic reference
 counting** with a cycle collector, not a tracing collector: most
@@ -68,9 +68,11 @@ automatic cycle reclamation that ARC leaves to the programmer.
 
 ## `&` and `&mut`
 
-`&x` means "read `x` without taking ownership". `&mut x` means
-"write `x` without taking ownership". Both are aliases of the source
-place, never copies. In particular:
+`&x` creates a shared lexical view. `&mut x` creates an exclusive lexical
+view. Both alias the source place rather than copying it. Any active reference
+prevents mutation of its source through another path, and an active `&mut`
+also prevents reads through the source. Access remains available through the
+reference itself. In particular:
 
 ```gossamer
 let mut xs = [1, 2]
@@ -91,17 +93,14 @@ rebindable. The type checker rejects:
 - A mutating method call on an immutable place.
 - A projection that crosses any shared layer inside a nested reference chain.
 
-These are *correctness* rules, not lifetime proofs. You never write `'a`, and
-`&mut` does not mean "the only reference" as it does in Rust. It grants write
-access through an alias. The original mutable binding and every permitted
-mutable-reference chain can therefore observe and update the same value.
+These are lexical borrowing rules. You never write `'a`, and Gossamer does not
+infer an earlier endpoint from a reference's last use. Use a smaller block
+when source access must resume. Gossamer rejects a second named `&mut` to the
+same root, a temporary `&mut` overlapping an active reference, and duplicate
+`&mut` roots in one call.
 
-Gossamer rejects a second simple named `&mut` taken directly from the same root
-while the first remains in lexical scope. This catches the common accidental
-sibling-alias case. It also rejects a temporary `&mut` overlapping an active
-named reference and duplicate `&mut` roots in one call. These checks are not a
-general uniqueness proof. Taking a mutable reference to an existing
-mutable-reference binding creates a chain:
+Taking a mutable reference to an existing mutable-reference binding creates a
+nested exclusive view of that reference slot:
 
 ```gossamer
 let mut a = [1, 2]
@@ -111,13 +110,11 @@ c[0] = 0                 // auto-dereferences both layers
 // a, b, and c all observe [0, 2]
 ```
 
-`c` does not create independent storage or a second direct borrow of `a`; it
-aliases the reference slot `b`, which already points at `a`. This is allowed
-because references express access intent rather than ownership. Within one
-goroutine, coordinating such aliases is the programmer's responsibility.
-Across goroutines, shared mutation must be synchronized with channels,
-`std::sync` primitives, or atomics as described in the
-[concurrency memory model](design/memory_model.md).
+`c` does not create independent storage or a sibling borrow of `a`; it
+exclusively borrows the reference slot `b`, which already points at `a`.
+While `c` is active, `b` must be accessed through `c`. References cannot cross
+goroutine boundaries. Share owned values using channels or synchronization as
+described in the [concurrency memory model](design/memory_model.md).
 
 ## How reclamation works
 

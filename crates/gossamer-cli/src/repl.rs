@@ -24,6 +24,8 @@ REPL commands
     Inspect a persistent `let` binding; use -d for methods and capability.
   %bindings (%b) [regex] [-a|--all] [-p N|--page N]
     Show persistent `let` bindings.
+  %drop NAME
+    End a persistent binding's lexical lifetime and remove it.
   %declarations (%d) [regex] [-a|--all] [-p N|--page N]
     Show persistent declarations.
   %history (%h) [regex]
@@ -1337,6 +1339,46 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     }
                     continue;
                 }
+                "drop" => {
+                    let mut words = arg.split_whitespace();
+                    let Some(name) = words.next() else {
+                        print_repl_error("usage: %drop NAME");
+                        continue;
+                    };
+                    if words.next().is_some() {
+                        print_repl_error("usage: %drop NAME");
+                        continue;
+                    }
+                    let Some((candidate_lets, candidate_bindings)) =
+                        prepare_repl_drop(&lets, &bindings, name)
+                    else {
+                        print_repl_error(&format!("no persistent binding named `{name}`"));
+                        continue;
+                    };
+                    let probe_body = format!("{}()\n", render_repl_setup(&candidate_lets));
+                    let entry = format!("__irepl_drop_{input_no}");
+                    let probe = format!(
+                        "{}\nfn {entry}() {{\n    {probe_body}}}\n",
+                        declarations.join("\n"),
+                    );
+                    match build_and_call(&probe, &entry) {
+                        Ok(_) => {
+                            lets = candidate_lets;
+                            bindings = candidate_bindings;
+                            if let Some(helper) = editor.helper_mut() {
+                                helper.forget_binding(name);
+                            }
+                            println!(
+                                "{}",
+                                crate::style::repl_meta_accent(&format!("dropped `{name}`"))
+                            );
+                        }
+                        Err(message) => print_repl_error(&format!(
+                            "cannot drop `{name}` while later bindings depend on it:\n{message}"
+                        )),
+                    }
+                    continue;
+                }
                 "declarations" | "decls" | "d" => {
                     let options = match parse_listing_options("declarations", arg) {
                         Ok(options) => options,
@@ -1481,7 +1523,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
 
         if trimmed.starts_with("let ") {
             let candidate = trimmed.to_string();
-            let new_binding = match repl_binding_from_let_source(&candidate) {
+            let mut new_binding = match repl_binding_from_let_source(&candidate) {
                 Ok(binding) => binding,
                 Err(msg) => {
                     print_repl_error(&format!("    {msg}"));
@@ -1498,6 +1540,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
             );
             match build_and_call(&probe, &format!("__irepl_{input_no}")) {
                 Ok(_) => {
+                    new_binding.source_index = lets.len();
                     if let Some(helper) = editor.helper_mut() {
                         let names: Vec<&str> = new_binding
                             .vars
@@ -1672,10 +1715,13 @@ fn suppress_replayed_prints(input: &str) -> String {
         .replace("eprint(", "__repl_discard(")
 }
 
+#[derive(Clone)]
 struct ReplBinding {
     vars: Vec<ReplBindingVar>,
+    source_index: usize,
 }
 
+#[derive(Clone)]
 struct ReplBindingVar {
     name: String,
     mutable: bool,
@@ -1694,6 +1740,65 @@ fn update_repl_bindings(bindings: &mut Vec<ReplBinding>, new_binding: ReplBindin
         bindings.retain(|binding| !binding.vars.is_empty());
     }
     bindings.push(new_binding);
+}
+
+fn prepare_repl_drop(
+    lets: &[String],
+    bindings: &[ReplBinding],
+    name: &str,
+) -> Option<(Vec<String>, Vec<ReplBinding>)> {
+    let target_index = bindings
+        .iter()
+        .find(|binding| binding.vars.iter().any(|var| var.name == name))?
+        .source_index;
+
+    let surviving_vars = bindings
+        .iter()
+        .filter(|binding| binding.source_index >= target_index)
+        .flat_map(|binding| binding.vars.iter())
+        .filter(|var| var.name != name)
+        .cloned()
+        .collect::<Vec<_>>();
+    let scoped_source = lets[target_index..].join("\n    ");
+    let replacement = match surviving_vars.as_slice() {
+        [] => format!("{{\n    {scoped_source}\n}}"),
+        [var] => format!(
+            "let {mutability}{name} = {{\n    {scoped_source}\n    {name}\n}}",
+            mutability = if var.mutable { "mut " } else { "" },
+            name = var.name,
+        ),
+        vars => {
+            let pattern = vars
+                .iter()
+                .map(|var| {
+                    if var.mutable {
+                        format!("mut {}", var.name)
+                    } else {
+                        var.name.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let values = vars
+                .iter()
+                .map(|var| var.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("let ({pattern}) = {{\n    {scoped_source}\n    ({values})\n}}")
+        }
+    };
+
+    let mut new_lets = lets[..target_index].to_vec();
+    new_lets.push(replacement);
+    let mut new_bindings = bindings.to_vec();
+    for binding in &mut new_bindings {
+        binding.vars.retain(|var| var.name != name);
+        if binding.source_index >= target_index {
+            binding.source_index = target_index;
+        }
+    }
+    new_bindings.retain(|binding| !binding.vars.is_empty());
+    Some((new_lets, new_bindings))
 }
 
 fn render_repl_bindings(
@@ -1893,7 +1998,10 @@ fn repl_binding_from_let_source(input: &str) -> std::result::Result<ReplBinding,
     if !saw_let {
         return Err(repl_let_shape_error());
     }
-    Ok(ReplBinding { vars })
+    Ok(ReplBinding {
+        vars,
+        source_index: 0,
+    })
 }
 
 fn repl_let_shape_error() -> String {

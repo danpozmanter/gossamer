@@ -123,11 +123,21 @@ to Stable, treat them as may-change-with-notice.
 ### On Mutability and Ownership
 
 The broad goal is be inspired by Rust, but not as strict.
-There is no powerful borrow checker. That said, there is some local borrow checking.
-Additionally:
-    
-* Immutable by default.
-* A function can only mutate data it receives through a mutable reference.
+Gossamer uses a conservative lexical borrow checker rather than Rust's
+ownership and lifetime system. References have implicit lifetimes ending at
+the closing brace, and safe Gossamer has no explicit lifetime annotations.
+Bindings are immutable by default, and a function can mutate caller-owned data
+only through a mutable reference.
+
+## Parity and the REPL
+
+Tier parity between interpreted Gossamer and compiled Gossamer is a primary
+language goal.
+
+This extends to the REPL as much as practical. Because top-level REPL bindings
+share one persistent scope, a reference would otherwise protect its source for
+the rest of the session. `%drop NAME` ends and removes that binding's lexical
+lifetime while preserving completed mutations and later independent bindings.
 
 ## Gossamer's Syntax
 

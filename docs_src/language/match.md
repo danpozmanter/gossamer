@@ -29,6 +29,8 @@ Same-line expression arms use a comma. Block-bodied arms need no comma.
 - Struct patterns `Point { x, y }`, renamed `Point { x: a, y: b }`.
 - Tuples `(a, b)`; rest `..` for the unmatched fields (`Shape::Box(..)`,
   `Point { x, .. }`).
+- Reference patterns `&value` and `&mut value`. They require the matching
+  shared or mutable reference and bind an independent copy of its referent.
 - Ranges: closed `1..=5`, exclusive `1..5`, open-ended (`..=hi`, `lo..`);
   a range pattern is opaque to exhaustiveness, so a `_` arm is still
   required.
@@ -47,3 +49,8 @@ let kind = match s {
 Patterns also drive `let`, `if let` / `while let`, `for`, and function
 parameters - see [fn](fn.md) for parameter destructuring. The
 `matches!(expr, pat)` macro is a boolean one-arm match.
+
+Reference patterns remove one reference layer before matching their inner
+pattern. They work both at the top level and when nested. `&mut pattern` is
+independent of `mut name`: the former matches a mutable reference, while the
+latter makes a binding reassignable.

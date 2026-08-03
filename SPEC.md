@@ -457,8 +457,15 @@ non-lexical: put a view in a smaller block when source access must resume.
 
 A mutable reference binding may be rebound directly to another stable named
 place; the lexical record moves to the new root. Rebinding through another
-reference or from a temporary is rejected. Reference patterns are limited to
-scalar referents. They cannot copy an aggregate out of a view (GT0054).
+reference or from a temporary is rejected.
+
+Reference patterns are available wherever patterns are accepted. `&p` matches
+a shared reference, `&mut p` matches a mutable reference, and each form removes
+one reference layer before matching `p`. The reference mutability must match
+exactly: `&p` does not match `&mut T`, and `&mut p` does not match `&T`.
+Extracting through a reference pattern follows Gossamer's normal value-copy
+semantics. Scalars and aggregates are copied into independent values; the
+pattern does not create another alias to the referent.
 
 Raw pointers (`*const T`, `*mut T`) are **not** part of the language
 today: the type spellings do not parse (`GP0001`), and there is no safe
@@ -467,10 +474,13 @@ or unsafe way to construct one in Gossamer source. FFI goes through the
 parses - see §8.6 - but grants no extra powers, because there is nothing
 unsafe to do.)
 
-`&T` and `&mut T` do not have Rust lifetime parameters or non-lexical lifetime
-inference. Their safety comes from the restrictions above, not from automatic
-reference counting. Reference counting a container is insufficient when a
-view points into storage that the container can replace.
+`&T` and `&mut T` have implicit lexical lifetimes. A named reference remains
+active from its declaration through the closing brace of that scope. Gossamer
+does not shorten this interval at the reference's last use, and safe code has
+no explicit lifetime annotations. Their safety comes from the restrictions
+above, not from automatic reference counting. Reference counting a container
+is insufficient when a view points into storage that the container can
+replace.
 
 **`&mut` parameter semantics.** A `&mut T` parameter writes through to
 the caller's storage on every tier, including scalar values, strings,
@@ -497,11 +507,11 @@ FnType = "fn" "(" [ TypeList ] ")" [ "->" Type ]
 Plain `fn(...) -> ...` is a raw function-pointer shape. A bare named function
 coerces to a compatible `Fn(...) -> ...` callback when passed to a higher-order
 function or sequence combinator. `Fn`, `FnMut`, `FnOnce` are closure traits (as
-in Rust). Closures that capture
-the environment satisfy the appropriate closure trait and are
-heap-allocated. Because there is no borrow checker, `Fn` and `FnMut`
-collapse into essentially the same constraint; the distinction is
-retained for readability and forward compatibility.
+in Rust). Closures that capture the environment satisfy the appropriate
+closure trait and are heap-allocated. Closure capture does not currently
+distinguish shared from exclusive environment access, so `Fn` and `FnMut`
+collapse into essentially the same constraint; the distinction is retained
+for readability and forward compatibility.
 
 ### 3.6 Structs
 
@@ -783,6 +793,8 @@ LetStmt = "let" [ "mut" ] Pattern [ ":" Type ] [ "=" Expr ]
 - `let Point { x: a, y: b } = p` - renamed struct destructuring.
 - `let Nested { p: Point { x, y }, label } = n` - nested struct.
 - `let Shape::Pair(m, n) = s` - enum / tuple-struct variant.
+- `let &value = shared` - copy the value behind a shared reference.
+- `let &mut value = writable` - copy the value behind a mutable reference.
 - `let (A(g, _) | B(g)) = v` - or-pattern (alternatives must bind the
   same names).
 - `let x: i64 = 1` - annotated.
@@ -794,6 +806,17 @@ bind correct values on the bytecode VM, the Cranelift JIT, and the LLVM
 AOT tiers.
 
 Shadowing is permitted.
+
+The left side of `=` is a pattern and the right side is an expression. This
+makes the two uses of reference syntax complementary: `&mut place` in an
+expression creates a mutable reference, while `&mut pattern` in a pattern
+matches and removes a mutable-reference layer. Only `mut name` makes a binding
+reassignable. For example, `let &mut value = reference` does not make `value`
+reassignable; `let &mut mut value = reference` does.
+
+For a simple top-level copy, `let value = *reference` is usually the clearest
+spelling. Reference patterns remain useful and uniform when nested, such as
+`let (name, &mut count) = entry`.
 
 ### 4.2 Expressions
 
@@ -1188,7 +1211,7 @@ Pattern = LiteralPattern
         | ".." Literal                       // open-start, exclusive
         | "..=" Literal                      // open-start, inclusive
         | Literal ".."                       // open-end, exclusive
-        | "&" Pattern                        // ref pattern
+        | "&" [ "mut" ] Pattern              // reference pattern
         | "mut" IdentPattern                 // mutable binding
         | ".." Pattern?                      // rest pattern
 ```
@@ -1202,6 +1225,12 @@ A `let` binding (§4.1) and a `let` clause in an `if` / `while` condition
 (§4.4) require an irrefutable pattern (or an `else` branch that diverges,
 for `let ... else`). Struct, nested-struct, variant, and or-pattern
 destructuring in irrefutable position bind identically across all tiers.
+
+`&p` and `&mut p` are reference patterns. They require a shared or mutable
+reference respectively, remove that reference layer, and then match `p`
+against a value copy of the referent. This rule applies at the top level and
+inside tuples, structs, variants, slices, or other patterns. `mut name` is a
+binding modifier and is independent of `&mut p`.
 
 Exhaustiveness is checked via matrix decomposition (the Maranget
 algorithm, same as Rust).
@@ -1592,10 +1621,10 @@ codegen instruments.
 
 ### 7.5 References and aliasing (write-through references, lexical checks)
 
-Gossamer has no ownership transfer, `move` keyword, lifetime annotations, or
-non-lexical lifetime inference. References therefore use a smaller,
-enforceable model: they are non-owning lexical views and cannot escape the
-call or block that proves their source remains live.
+Gossamer has no ownership transfer, `move` keyword, explicit lifetime
+annotations, or non-lexical lifetime inference. It uses implicit lexical
+lifetimes instead: references are non-owning views and cannot escape the call
+or block that proves their source remains live.
 
 The checker enforces the full named-root rule for its supported reference
 shape. Any number of shared views may coexist. A mutable view is exclusive.
@@ -1652,9 +1681,9 @@ This design deliberately does *not* include:
 - `Send`/`Sync` marker traits. References never cross concurrency boundaries;
   runtime synchronization handles have their own explicit contracts.
 
-The scope-local check is not a Rust borrow checker. It enforces a smaller
-lexical language shape and rejects escape forms that would require lifetime or
-arbitrary alias reasoning.
+This is a conservative lexical borrow checker, not Rust's lifetime system. It
+enforces a smaller lexical language shape and rejects escape forms that would
+require non-lexical lifetime inference or arbitrary alias reasoning.
 
 ---
 

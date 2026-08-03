@@ -2,8 +2,8 @@
 
 Gossamer's surface is Rust with two simplifications:
 
-- No lifetime annotations. References express aliasing intent;
-  the runtime owns the memory.
+- No explicit lifetime annotations. References have implicit lexical
+  lifetimes ending at the closing brace.
 - Semicolons may replace newlines only between statements on the same line.
   They are separators, not trailing terminators.
 
@@ -181,6 +181,7 @@ more than once in one pipe step.
 - `Some(inner)` / `None` - variant destructure.
 - `Point { x, y }` / `Point { x: a, y: b }` - struct destructure (and renamed).
 - `(a, b)` - tuple destructure.
+- `&value` / `&mut value` - shared or mutable reference destructure.
 - `1..=5` / `1..5` - closed and exclusive range.
 - `..=hi` / `..hi` / `lo..` - open-ended range (an open end covers up to
   the type maximum). `lo..=` is a parse error because `..=` requires an
@@ -196,6 +197,18 @@ required. The struct, variant, tuple, and or-pattern forms also work in
 irrefutable `let` bindings: `let Point { x, y } = p`, `let Shape::Pair(m,
 n) = s`, `let (A(g, _) | B(g)) = v` (or-pattern alternatives must bind the
 same names).
+
+The left side of `=` is a pattern and the right side is an expression.
+Consequently, `&mut place` on the right creates a mutable reference, while
+`&mut pattern` on the left matches and removes a mutable-reference layer.
+Reference mutability must match exactly. The inner binding receives an
+independent value copy, including when the referent is an aggregate.
+
+`mut name` is separate: it makes `name` reassignable. `let &mut value =
+reference` does not make `value` reassignable, while `let &mut mut value =
+reference` does. For a simple top-level copy, `let value = *reference` is often
+clearer. Reference patterns are especially useful when nested, as in `let
+(name, &mut count) = entry`.
 
 ## Conditions and let-chains
 

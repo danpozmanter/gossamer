@@ -14,6 +14,22 @@ let mut shared = &value
 shared = &[3, 4]       // rebinds shared; it remains read-only
 ```
 
+The left side of `=` is a pattern and the right side is an expression.
+`&mut value` on the right creates a mutable reference. `&mut pattern` on the
+left matches a mutable reference, removes that reference layer, and copies the
+referent into the inner pattern:
+
+```gossamer
+let mut source = [1, 2, 3]
+let reference = &mut source
+let &mut copy = reference
+```
+
+`copy` is an independent `[i64; 3]` value and is not reassignable. Only
+`mut name` makes a binding reassignable. Reference patterns also compose with
+other patterns, for example `let (name, &mut count) = entry`. For a simple
+top-level copy, `let copy = *reference` is usually clearer.
+
 An immutable binding cannot be used as the source of `&mut`, because that
 would create a write path around its immutability.
 
@@ -25,3 +41,9 @@ directly.
 Implicit dereferencing does not weaken this rule. If an access path contains
 any shared `&T` layer, indexing, field assignment, and mutating method calls
 through that path are rejected even when every outer reference is `&mut`.
+
+A named reference has an implicit lexical lifetime ending at the closing
+brace. While `let reference = &mut value` remains active, `value` cannot be
+read or mutated through another path. Use a smaller block when source access
+must resume. In the persistent REPL scope, `%drop reference` ends and removes
+the reference binding explicitly.
