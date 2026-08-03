@@ -519,10 +519,14 @@ pub enum AggregateKind {
 pub enum BinOp {
     /// `+`.
     Add,
+    /// Explicit `wrapping_add`.
+    WrappingAdd,
     /// `-`.
     Sub,
     /// `*`.
     Mul,
+    /// Explicit `wrapping_mul`.
+    WrappingMul,
     /// `/`.
     Div,
     /// `%`.

@@ -185,15 +185,16 @@ fn invalid_mut_before_reference_pattern_spelling_is_rejected() {
 }
 
 #[test]
-fn aggregate_reference_pattern_preserves_the_aggregate_type() {
-    assert_accepted(
-        "mutable reference pattern over fixed array",
+fn aggregate_reference_pattern_is_rejected() {
+    assert_rejected(
+        "mutable reference pattern cannot copy a fixed array referent",
         "    let mut values = [1, 2, 3]\n    let &mut copy = &mut values\n    let first = copy[0]",
+        "GT0054",
     );
 }
 
 #[test]
-fn repl_reference_pattern_preserves_aggregate_binding_value_and_type() {
+fn repl_rejects_aggregate_reference_pattern() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_gos"))
         .arg("repl")
         .env(
@@ -222,7 +223,12 @@ fn repl_reference_pattern_preserves_aggregate_binding_value_and_type() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("mut m: [i64; 3] = [1, 2, 3]"), "{stdout}");
-    assert!(stdout.contains("d: [i64; 3] = [1, 2, 3]"), "{stdout}");
-    assert!(stdout.contains("b: [i64; 3] = [1, 2, 3]"), "{stdout}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let transcript = format!("{stdout}{stderr}");
+    assert!(
+        transcript.contains("reference pattern cannot bind aggregate value `[i64; 3]` by value"),
+        "{transcript}"
+    );
+    assert!(!stdout.contains("d: [i64; 3]"), "{stdout}");
+    assert!(!stdout.contains("b: [i64; 3]"), "{stdout}");
 }

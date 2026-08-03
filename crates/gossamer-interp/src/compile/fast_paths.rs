@@ -2124,11 +2124,7 @@ impl<'tcx> FnBuilder<'tcx> {
             HirExprKind::MethodCall { name, args, .. }
                 if name.name == "iter" && args.is_empty()
         );
-        if matches!(
-            self.tcx.kind(next_recv.ty),
-            Some(gossamer_types::TyKind::Iterator(_))
-        ) && !collection_iter_method
-        {
+        if self.receiver_is_lazy_iterator(next_recv) && !collection_iter_method {
             return Ok(None);
         }
         // Walk the iterator chain. Recognise:

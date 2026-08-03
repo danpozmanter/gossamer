@@ -2,7 +2,7 @@
  * Basic interactive input.
  *
  * Run:
- *     gos examples/input.gos
+ *     gos run examples/input.gos
  */
 
 use std::io

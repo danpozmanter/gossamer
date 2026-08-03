@@ -31,9 +31,9 @@ fn read_name(o: &Option<String>) -> String {
     }
 }
 
-// Returns a borrowed field; the caller matches through the borrow.
-fn first_field(h: &Holder) -> &Option<i64> {
-    &h.o
+// Returns the field value. References remain call-scoped in Gossamer 0.40.
+fn first_field(h: &Holder) -> Option<i64> {
+    h.o
 }
 
 // Recursion blocks inlining, forcing a real call across the ABI.
@@ -63,7 +63,7 @@ fn main() {
     // fn taking &Option / &Result.
     println!("call opt={} res={} err={}", read_opt(&opt), read_res(&res), read_res(&err))
 
-    // struct field of Option matched + returned by reference.
+    // Struct field of Option matched by reference and returned by value.
     let h = Holder { o: Some(99), label: Some("ada") }
     let field_inline = match &h.o {
         Some(x) => *x,

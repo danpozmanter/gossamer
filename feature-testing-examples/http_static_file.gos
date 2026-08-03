@@ -32,8 +32,8 @@ fn doc_root() -> String {
     path::join(&env::temp_dir(), &"gossamer_static_fixture")
 }
 
-fn serve_files(root: &String) {
-    let server = static_files::FileServer::new(root, "")
+fn serve_files(root: String) {
+    let server = static_files::FileServer::new(&root, "")
     if let Err(e) = http::serve("127.0.0.1:23890", server) {
         eprintln!("serve failed: {e}")
     }
@@ -57,7 +57,7 @@ fn main() {
     let _ = fs::create_dir_all(root)
     let _ = fs::write(path::join(&root, &"hello.txt"), "static file ok".to_string().as_bytes())
 
-    go serve_files(&root)
+    go serve_files(root)
     await_ready(&"http://127.0.0.1:23890/hello.txt")
 
     match http::get("http://127.0.0.1:23890/hello.txt", Vec::from([])) {

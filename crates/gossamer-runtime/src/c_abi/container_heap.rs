@@ -108,16 +108,16 @@ pub unsafe extern "C" fn gos_rt_bheap_pop_i64(v: *mut GosVec) -> *mut GosVec {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_bheap_peek_i64(v: *const GosVec) -> i64 {
-    ffi_entry!(0, {
+pub unsafe extern "C" fn gos_rt_bheap_peek_i64(v: *const GosVec) -> i128 {
+    ffi_entry!(super::vec::pack_result(1, 0), {
         if v.is_null() {
-            return 0;
+            return super::vec::pack_result(1, 0);
         }
         let vec = unsafe { &*v };
         if vec.len <= 0 {
-            return 0;
+            return super::vec::pack_result(1, 0);
         }
-        unsafe { *vec.ptr.cast::<i64>() }
+        super::vec::pack_result(0, unsafe { *vec.ptr.cast::<i64>() })
     })
 }
 

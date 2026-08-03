@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0033]: A nominal struct or enum value was destructured without naming its - here
+--- framed ---
+error[GT0033]: A nominal struct or enum value was destructured without naming its
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

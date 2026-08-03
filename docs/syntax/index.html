@@ -558,10 +558,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#ranges-and-sequence-methods" class="md-nav__link">
+  <a href="#arrays-slices-vec-and-ranges" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Ranges and sequence methods
+        Arrays, slices, Vec, and ranges
 
     </span>
   </a>
@@ -1687,6 +1687,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1722,6 +1724,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/sequence_reference_safety/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Sequence and reference safety
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
 
 
 
@@ -2105,10 +2135,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#ranges-and-sequence-methods" class="md-nav__link">
+  <a href="#arrays-slices-vec-and-ranges" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Ranges and sequence methods
+        Arrays, slices, Vec, and ranges
 
     </span>
   </a>
@@ -2415,7 +2445,21 @@ without parentheses.</p>
 </code></pre></div>
 <p><code>break value</code> returns a value from <code>loop</code>. <code>continue</code> jumps to
 the top.</p>
-<h2 id="ranges-and-sequence-methods">Ranges and sequence methods<a class="headerlink" href="#ranges-and-sequence-methods" title="Permanent link">&para;</a></h2>
+<h2 id="arrays-slices-vec-and-ranges">Arrays, slices, Vec, and ranges<a class="headerlink" href="#arrays-slices-vec-and-ranges" title="Permanent link">&para;</a></h2>
+<p>Gossamer follows Rust's sequence model:</p>
+<ul>
+<li><code>[T; N]</code> is an owned fixed-size array, and <code>[a, b]</code> always creates one.</li>
+<li><code>[T]</code> is unsized and is ordinarily used as <code>&amp;[T]</code> or <code>&amp;mut [T]</code>.</li>
+<li><code>Vec&lt;T&gt;</code> is the only owned growable sequence. Construct one explicitly with
+  <code>Vec::from([a, b])</code>, <code>Vec::new()</code>, or <code>Vec::with_capacity(n)</code>.</li>
+</ul>
+<p><code>&amp;[T; N]</code> and <code>&amp;Vec&lt;T&gt;</code> coerce to <code>&amp;[T]</code>; their mutable forms coerce to
+<code>&amp;mut [T]</code>. Arrays and slices support queries and non-resizing operations.
+Mutable arrays and slices can reorder or replace existing elements with
+<code>sort</code>, <code>reverse</code>, <code>swap</code>, and <code>fill</code>.
+Only Vec supports <code>push</code>, <code>pop</code>, insertion, removal, truncation, extension,
+reservation, and capacity queries. See <a href="../method_support/#vec">method support</a>
+for the exact surfaces.</p>
 <p>A range is a lazy <code>Iterator&lt;i64&gt;</code> value: <code>(2..n)</code> is exclusive and <code>(1..=n)</code>
 is inclusive. It can be iterated directly or stored and consumed later:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">first_three</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="o">..</span><span class="mi">3</span>

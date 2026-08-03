@@ -252,6 +252,7 @@ impl<'a> Lowerer<'a> {
                         Some(TyKind::Tuple(elems)) => {
                             elems.get(*idx as usize).copied().unwrap_or(current_ty)
                         }
+                        Some(TyKind::Array { elem, .. }) => *elem,
                         _ => current_ty,
                     };
                     stride_slots = elem_slots(self.tcx, current_ty);

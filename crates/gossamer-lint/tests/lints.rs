@@ -38,7 +38,7 @@ fn unused_variable_silenced_by_underscore_prefix() {
 
 #[test]
 fn unused_variable_silenced_when_read_later() {
-    let diags = lint("fn main() { let x = 1i64 let _y: i64 = x }\n");
+    let diags = lint("fn main() {\n let x = 1i64\n let _y: i64 = x\n}\n");
     assert!(!has_code(&diags, "GL0001"), "{:?}", diags_codes(&diags));
 }
 
@@ -67,26 +67,27 @@ fn grouped_stdlib_imports_used_by_top_level_statements_are_not_unused() {
 
 #[test]
 fn unused_mut_variable_fires_when_never_reassigned() {
-    let diags = lint("fn main() { let mut x = 1i64 let _y: i64 = x }\n");
+    let diags = lint("fn main() {\n let mut x = 1i64\n let _y: i64 = x\n}\n");
     assert!(has_code(&diags, "GL0003"), "{:?}", diags_codes(&diags));
 }
 
 #[test]
 fn unused_mut_variable_silent_when_reassigned() {
-    let diags = lint("fn main() { let mut x = 1i64 x = 2i64 let _y: i64 = x }\n");
+    let diags = lint("fn main() {\n let mut x = 1i64\n x = 2i64\n let _y: i64 = x\n}\n");
     assert!(!has_code(&diags, "GL0003"));
 }
 
 #[test]
 fn unused_mut_variable_silent_when_indexed_place_is_written() {
-    let diags = lint("fn main() { let mut c = [1, 2] c[0] = 3 }\n");
+    let diags = lint("fn main() {\n let mut c = [1, 2]\n c[0] = 3\n}\n");
     assert!(!has_code(&diags, "GL0003"), "{:?}", diags_codes(&diags));
 }
 
 #[test]
 fn unused_mut_variable_silent_when_field_place_is_written() {
-    let diags =
-        lint("struct Box { value: i64 }\nfn main() { let mut b = Box { value: 1 } b.value = 2 }\n");
+    let diags = lint(
+        "struct Box { value: i64 }\nfn main() {\n let mut b = Box { value: 1 }\n b.value = 2\n}\n",
+    );
     assert!(!has_code(&diags, "GL0003"), "{:?}", diags_codes(&diags));
 }
 
@@ -125,7 +126,7 @@ fn single_match_fires_with_one_arm() {
 
 #[test]
 fn shadowed_binding_fires_on_redeclared_let() {
-    let diags = lint("fn main() { let x = 1i64 let x = 2i64 let _y: i64 = x }\n");
+    let diags = lint("fn main() {\n let x = 1i64\n let x = 2i64\n let _y: i64 = x\n}\n");
     assert!(has_code(&diags, "GL0008"), "{:?}", diags_codes(&diags));
 }
 
@@ -145,14 +146,16 @@ fn empty_block_fires_on_bare_brace_pair() {
 fn empty_block_silent_on_else_less_if_let() {
     // The implicit else arm of an else-less `if let` is a
     // parser-synthesized empty block, not a user mistake.
-    let diags = lint("fn main() { let m = Some(1i64) if let Some(n) = m { let _y: i64 = n } }\n");
+    let diags =
+        lint("fn main() {\n let m = Some(1i64)\n if let Some(n) = m { let _y: i64 = n }\n}\n");
     assert!(!has_code(&diags, "GL0010"), "{:?}", diags_codes(&diags));
 }
 
 #[test]
 fn empty_block_still_fires_on_user_written_empty_else() {
-    let diags =
-        lint("fn main() { let m = Some(1i64) if let Some(n) = m { let _y: i64 = n } else { } }\n");
+    let diags = lint(
+        "fn main() {\n let m = Some(1i64)\n if let Some(n) = m { let _y: i64 = n } else { }\n}\n",
+    );
     assert!(has_code(&diags, "GL0010"), "{:?}", diags_codes(&diags));
 }
 

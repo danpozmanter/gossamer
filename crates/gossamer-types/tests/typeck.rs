@@ -383,16 +383,25 @@ fn function_boundaries_preserve_nominal_struct_identity() {
 }
 
 #[test]
-fn string_values_coerce_to_borrowed_str_at_typed_boundaries() {
+fn string_values_coerce_to_borrowed_str_only_at_non_escaping_boundaries() {
     let checked = run("static GREETING: &str = \"hello\"\n\
-         fn classify(value: bool) -> &str { if value { \"yes\" } else { \"no\" } }\n\
          fn take(value: &str) {}\n\
-         fn main() { take(\"text\")\n let _ = classify(true) }\n");
+         fn main() { take(\"text\") }\n");
     assert!(
         checked.diagnostics.is_empty(),
         "String to &str coercions must remain valid: {:?}",
         checked.diagnostics
     );
+
+    let static_return =
+        run("fn classify(value: bool) -> &str { if value { \"yes\" } else { \"no\" } }\n");
+    assert!(static_return.diagnostics.is_empty());
+
+    let escaped = run("fn bad() -> &str { let local = \"temporary\"\n &local }\n");
+    assert!(escaped.diagnostics.iter().any(|diagnostic| matches!(
+        diagnostic.error,
+        TypeError::ReferenceEscapeUnsupported { .. }
+    )));
 }
 
 #[test]
@@ -793,9 +802,12 @@ fn contextual_integer_literals_must_fit_their_declared_width() {
 }
 
 #[test]
-fn mutable_reference_binding_can_be_rebound_with_a_reference() {
+fn mutable_reference_binding_cannot_borrow_temporary_arrays() {
     let checked = run("fn main() { let mut x = &[1, 2]\n x = &[2, 3] }\n");
-    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+    assert!(checked.diagnostics.iter().any(|diagnostic| matches!(
+        diagnostic.error,
+        TypeError::ReferenceEscapeUnsupported { .. }
+    )));
 }
 
 #[test]
@@ -1029,6 +1041,16 @@ fn array_literal_does_not_coerce_to_vec_annotation() {
 }
 
 #[test]
+fn named_array_does_not_coerce_to_vec_annotation() {
+    let checked = run("fn main() { let a = [1, 2, 3]\n let mut v: Vec<i64> = a\n v.push(4) }\n");
+    assert!(checked.diagnostics.iter().any(|diagnostic| matches!(
+        &diagnostic.error,
+        TypeError::TypeMismatch { expected, found }
+            if expected == "Vec<i64>" && found == "[i64; 3]"
+    )));
+}
+
+#[test]
 fn owned_slice_annotation_is_rejected_as_unsized() {
     let checked = run("fn main() { let xs: [String] = [\"a\", \"b\"] }\n");
     assert!(
@@ -1080,9 +1102,8 @@ fn nested_vec_construction_with_differing_inner_lengths_checks() {
 
 #[test]
 fn assignment_value_uses_explicit_vec_construction() {
-    // `v = [2, 3]` where `v: Vec<i64>` must record the literal as a
-    // heap Vec - a fixed `[i64; 2]` record desyncs the value layout
-    // from the Vec-typed slot on the compiled tiers.
+    // Explicit construction must record the expression as a heap Vec. A fixed
+    // array in the Vec-typed slot would desynchronize compiled-tier layouts.
     let checked =
         run("fn main() { let mut v: Vec<i64> = Vec::from([1])\n v = Vec::from([2, 3]) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
@@ -1788,6 +1809,17 @@ fn reusing_consumed_lazy_iterator_is_rejected() {
         true,
     );
     assert!(has_code(&d, "GT0042"), "{d:?}");
+}
+
+#[test]
+fn iterator_parameters_cannot_be_reused_after_consuming_methods_or_for_loops() {
+    for source in [
+        "use Iterator\nfn consume(r: Iterator<i64>) { let n = r.count()\n let _ = r\n let _ = n }\n",
+        "use Iterator\nfn consume(r: Iterator<i64>) { for i in r { let _ = i }\n let _ = r }\n",
+    ] {
+        let d = diagnostics_for_with_lazy_iterators(source, true);
+        assert!(has_code(&d, "GT0042"), "{source}: {d:?}");
+    }
 }
 
 #[test]

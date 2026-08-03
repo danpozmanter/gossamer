@@ -9,9 +9,8 @@ fn push_one(v: &mut Vec<i64>) {
     v.push(4)
 }
 
-fn mutate_exact_copy(v: &mut [i64; 3]) -> &mut [i64; 3] {
+fn mutate_exact_copy(v: &mut [i64; 3]) {
     v[0] = 77
-    v
 }
 
 fn main() {
@@ -20,10 +19,12 @@ fn main() {
     println!("fixed_after_set: {} {} {}", fixed[0], fixed[1], fixed[2])
 
     let mut fixed_exact = [1, 2, 3]
-    let fixed_alias = &mut fixed_exact
-    let exact_result = mutate_exact_copy(fixed_alias)
+    {
+        let fixed_alias = &mut fixed_exact
+        mutate_exact_copy(fixed_alias)
+        println!("fixed_exact_result: {}", fixed_alias[0])
+    }
     println!("fixed_exact_source: {}", fixed_exact[0])
-    println!("fixed_exact_result: {}", exact_result[0])
 
     let mut grow: Vec<i64> = Vec::from([1, 2, 3])
     set_first(&mut grow)

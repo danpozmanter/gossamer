@@ -804,7 +804,7 @@ fn loop_with_body_as_function_tail_does_not_emit_return_assign() {
 
 #[test]
 fn go_stmt_does_not_confuse_following_statements() {
-    let source = "fn main() { go fn() { let x = 1i64 } let y = 2i64 }\n";
+    let source = "fn main() {\n go fn() { let x = 1i64 }\n let y = 2i64\n}\n";
     let (bodies, _) = build(source);
     let body = &bodies[0];
     assert_eq!(body.name, "main");
@@ -1086,6 +1086,50 @@ fn runtime_vec_capacity_builds_directly_in_let_binding() {
         names.iter().any(|name| name == "gos_rt_vec_push"),
         "Vec initialization must use the explicit source push loop"
     );
+}
+
+#[test]
+fn fresh_struct_return_with_vec_field_uses_managed_shallow_copy() {
+    let source = r#"
+struct Rec { data: Vec<i64>, name: String }
+
+fn make() -> Rec {
+    Rec { data: Vec::from([1, 2, 3]), name: "row" }
+}
+
+fn main() {
+    let rec = make()
+    println!("{}", rec.data.len())
+}
+"#;
+    let (bodies, _) = build(source);
+    let main = bodies.iter().find(|body| body.name == "main").expect("main");
+    assert!(
+        !call_symbol_names(main)
+            .iter()
+            .any(|name| name == "gos_rt_vec_clone"),
+        "a fresh function result must not deep-clone its Vec field"
+    );
+    let rec = main
+        .locals
+        .iter()
+        .position(|decl| decl.debug_name.as_ref().is_some_and(|name| name.name == "rec"))
+        .map(|index| Local(index as u32))
+        .expect("rec binding");
+    assert!(main.blocks.iter().any(|block| {
+        block.stmts.iter().any(|stmt| {
+            matches!(
+                &stmt.kind,
+                StatementKind::Assign {
+                    place,
+                    rvalue: Rvalue::Use(Operand::Copy(source)),
+                } if place.local == rec
+                    && place.projection.is_empty()
+                    && source.local != rec
+                    && source.projection.is_empty()
+            )
+        })
+    }), "the owned binding must shallow-copy the fresh result temporary so RC insertion can balance its managed fields");
 }
 
 #[test]

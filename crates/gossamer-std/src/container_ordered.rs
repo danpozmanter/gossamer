@@ -37,17 +37,17 @@ pub mod ordered_vec {
     }
 
     #[must_use]
-    pub fn index_of(xs: &[i64], value: i64) -> i64 {
-        xs.binary_search(&value).map_or(-1, |i| i as i64)
+    pub fn index_of(xs: &[i64], value: i64) -> Option<i64> {
+        xs.binary_search(&value).ok().map(|i| i as i64)
     }
 
     #[must_use]
-    pub fn peek_min(xs: &[i64]) -> i64 {
-        xs.first().copied().unwrap_or(0)
+    pub fn peek_min(xs: &[i64]) -> Option<i64> {
+        xs.first().copied()
     }
     #[must_use]
-    pub fn peek_max(xs: &[i64]) -> i64 {
-        xs.last().copied().unwrap_or(0)
+    pub fn peek_max(xs: &[i64]) -> Option<i64> {
+        xs.last().copied()
     }
     #[must_use]
     pub fn len(xs: &[i64]) -> i64 {
@@ -70,7 +70,7 @@ mod tests {
         assert_eq!(v, vec![1, 1, 3, 4, 5]);
         assert!(ordered_vec::contains(&v, 4));
         assert!(!ordered_vec::contains(&v, 99));
-        assert_eq!(ordered_vec::peek_min(&v), 1);
-        assert_eq!(ordered_vec::peek_max(&v), 5);
+        assert_eq!(ordered_vec::peek_min(&v), Some(1));
+        assert_eq!(ordered_vec::peek_max(&v), Some(5));
     }
 }

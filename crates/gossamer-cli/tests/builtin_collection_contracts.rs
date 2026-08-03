@@ -19,6 +19,7 @@ fn run(source: &str) -> std::process::Output {
     ));
     std::fs::write(&fixture, source).expect("write fixture");
     let output = Command::new(gos_bin())
+        .arg("run")
         .arg(&fixture)
         .output()
         .expect("run fixture");

@@ -32,9 +32,9 @@ pub use arena_escape::{
     ArenaEscapeDiagnostic, ArenaEscapeError, ArenaEscapeKind, check_arena_escapes,
 };
 pub use checker::{
-    is_array_sequence_method, is_slice_sequence_method, is_vec_only_sequence_method,
-    typecheck_source_file, typecheck_source_file_with_edition,
-    typecheck_source_file_with_lazy_iterators,
+    is_array_sequence_method, is_iterator_method, is_slice_sequence_method,
+    is_vec_only_sequence_method, typecheck_source_file, typecheck_source_file_for_repl_inspection,
+    typecheck_source_file_with_edition, typecheck_source_file_with_lazy_iterators,
 };
 pub use context::TyCtxt;
 pub use error::{TypeDiagnostic, TypeError};

@@ -162,7 +162,7 @@ pub struct Vm {
     /// Lowered MIR for the program, shared across goroutines via
     /// `Arc` so a child `Vm` can drive its own deferred JIT
     /// compile without reflowing HIR → MIR. `None` when the JIT
-    /// is disabled (`gos --no-jit` / `GOS_JIT=0`).
+    /// is disabled (`gos run --no-jit` / `GOS_JIT=0`).
     /// `RefCell` so the deferred JIT can release the bodies the
     /// instant `compile_to_jit` finishes (see [`Self::jit_droppable`])
     /// rather than holding them through the whole run.

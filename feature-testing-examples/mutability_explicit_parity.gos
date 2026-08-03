@@ -10,12 +10,11 @@ impl Counter {
     }
 }
 
-fn add(value: &mut i64, amount: i64) -> &mut i64 {
+fn add(value: &mut i64, amount: i64) {
     *value += amount
-    value
 }
 
-fn forward(value: &mut i64) -> &mut i64 {
+fn forward(value: &mut i64) {
     add(value, 2)
 }
 
@@ -25,8 +24,8 @@ fn append_value(values: &mut Vec<i64>, value: i64) {
 
 fn main() {
     let mut scalar = 1
-    let alias = forward(&mut scalar)
-    *alias += 4
+    forward(&mut scalar)
+    add(&mut scalar, 4)
 
     let mut counter = Counter { value: 10 }
     Counter::add(&mut counter, 3)

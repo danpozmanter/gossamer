@@ -458,6 +458,7 @@ fn main() {
     // the interpreter baseline, but a per-iteration leak would still crash /
     // OOM, and this exercises the JIT single-slot / field-free paths.
     let run = Command::new(gos_bin())
+        .arg("run")
         .arg(&source)
         .output()
         .expect("spawn gos");

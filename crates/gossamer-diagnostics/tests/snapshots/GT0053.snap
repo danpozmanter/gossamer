@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0053]: An access conflicts with an active lexical reference to the same root - here
+--- framed ---
+error[GT0053]: An access conflicts with an active lexical reference to the same root
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

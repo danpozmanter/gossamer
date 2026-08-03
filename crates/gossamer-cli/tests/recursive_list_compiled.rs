@@ -1,5 +1,7 @@
 #![allow(missing_docs)]
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -55,6 +57,7 @@ fn assert_success(output: &std::process::Output, label: &str) {
 fn assert_run(source: &Path, function: &str, n: i64, expected: &str, jit: bool) {
     let mut command = Command::new(gos_bin());
     command
+        .arg("run")
         .arg(source)
         .arg(n.to_string())
         .env("GOS_RC_DEBUG", "1");
@@ -121,12 +124,16 @@ fn recursive_enum_release_binary_has_exact_bounded_traversal_and_teardown() {
         let output = run_with_timeout(build, Duration::from_mins(1));
         assert_success(&output, "release build");
 
-        let binary = std::fs::read_dir(&out_dir)
-            .expect("read native output dir")
-            .flatten()
-            .map(|entry| entry.path())
-            .find(|path| path.is_file() && path.extension().is_none())
-            .expect("find native executable");
+        let stem = source
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .expect("fixture has a UTF-8 file stem");
+        let binary = common::native_executable(&out_dir, stem);
+        assert!(
+            binary.is_file(),
+            "release build did not produce {}",
+            binary.display()
+        );
         let mut run = Command::new(binary);
         run.arg("8000").env("GOS_RC_DEBUG", "1");
         let output = run_with_timeout(run, Duration::from_secs(20));

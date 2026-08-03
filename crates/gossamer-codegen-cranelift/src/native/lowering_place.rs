@@ -329,6 +329,18 @@ pub(super) fn lower_place_store(
     intrinsics: &mut IntrinsicContext,
 ) -> Result<()> {
     let addr = lower_place_address(module, builder, locals, body, tcx, place, intrinsics)?;
+    // Option/Result carriers occupy two inline words. Projection assignment
+    // must replace both the discriminant and payload. Narrowing an i128
+    // carrier to the pointer-sized leaf type stores only the low word, leaving
+    // the old payload behind. That made `node.next = Some(new_node)` observe
+    // the previous child and could turn cyclic aggregates into malformed
+    // graphs in JIT code.
+    if value_type(value, builder) == types::I128
+        && type_slot_count(tcx, resolve_place_ty(tcx, body, place)) > 1
+    {
+        store_i128_words(builder, value, addr, 0);
+        return Ok(());
+    }
     // Coerce the value to the leaf's cranelift type where possible;
     // bail loudly when that would be lossy.
     let coerced = coerce_store_value(builder, value, leaf_ty)?;

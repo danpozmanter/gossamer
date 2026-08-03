@@ -32,10 +32,10 @@ pub mod queue {
         xs
     }
 
-    /// Front element, or 0 if empty.
+    /// Front element, if present.
     #[must_use]
-    pub fn peek(xs: &[i64]) -> i64 {
-        xs.first().copied().unwrap_or(0)
+    pub fn peek(xs: &[i64]) -> Option<i64> {
+        xs.first().copied()
     }
 
     /// Element count.
@@ -61,10 +61,10 @@ pub mod stack {
         xs
     }
 
-    /// Top of the stack, or 0 if empty.
+    /// Top of the stack, if present.
     #[must_use]
-    pub fn peek(xs: &[i64]) -> i64 {
-        xs.last().copied().unwrap_or(0)
+    pub fn peek(xs: &[i64]) -> Option<i64> {
+        xs.last().copied()
     }
 
     /// Element count.
@@ -106,16 +106,16 @@ pub mod deque {
         xs
     }
 
-    /// Front element, or 0 if empty.
+    /// Front element, if present.
     #[must_use]
-    pub fn peek_front(xs: &[i64]) -> i64 {
-        xs.first().copied().unwrap_or(0)
+    pub fn peek_front(xs: &[i64]) -> Option<i64> {
+        xs.first().copied()
     }
 
-    /// Back element, or 0 if empty.
+    /// Back element, if present.
     #[must_use]
-    pub fn peek_back(xs: &[i64]) -> i64 {
-        xs.last().copied().unwrap_or(0)
+    pub fn peek_back(xs: &[i64]) -> Option<i64> {
+        xs.last().copied()
     }
 
     /// Element count.
@@ -135,9 +135,9 @@ mod tests {
         let q = queue::push(q, 1);
         let q = queue::push(q, 2);
         let q = queue::push(q, 3);
-        assert_eq!(queue::peek(&q), 1);
+        assert_eq!(queue::peek(&q), Some(1));
         let q = queue::pop(q);
-        assert_eq!(queue::peek(&q), 2);
+        assert_eq!(queue::peek(&q), Some(2));
         assert_eq!(queue::len(&q), 2);
     }
 
@@ -147,9 +147,9 @@ mod tests {
         let s = stack::push(s, 1);
         let s = stack::push(s, 2);
         let s = stack::push(s, 3);
-        assert_eq!(stack::peek(&s), 3);
+        assert_eq!(stack::peek(&s), Some(3));
         let s = stack::pop(s);
-        assert_eq!(stack::peek(&s), 2);
+        assert_eq!(stack::peek(&s), Some(2));
     }
 
     #[test]
@@ -158,9 +158,9 @@ mod tests {
         let d = deque::push_back(d, 2);
         let d = deque::push_back(d, 3);
         let d = deque::push_front(d, 1);
-        assert_eq!(deque::peek_front(&d), 1);
-        assert_eq!(deque::peek_back(&d), 3);
+        assert_eq!(deque::peek_front(&d), Some(1));
+        assert_eq!(deque::peek_back(&d), Some(3));
         let d = deque::pop_front(d);
-        assert_eq!(deque::peek_front(&d), 2);
+        assert_eq!(deque::peek_front(&d), Some(2));
     }
 }

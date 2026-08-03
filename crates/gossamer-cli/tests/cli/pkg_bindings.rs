@@ -153,6 +153,7 @@ fn run_refuses_type_invalid_program_with_diagnostic() {
         "fn main() -> i64 {\n    let x: i64 = \"not an int\"\n    x\n}\n",
     );
     let out = Command::new(gos_bin())
+        .arg("run")
         .arg(&fixture)
         .output()
         .expect("spawn gos");
@@ -235,6 +236,7 @@ fn runtime_panic_stderr_carries_gx_code_prefix() {
     // exercises the `GX0005` branch end-to-end.
     let fixture = write_fixture("runtime-panic", "fn main() {\n    panic(\"boom\")\n}\n");
     let out = Command::new(gos_bin())
+        .arg("run")
         .arg(&fixture)
         .output()
         .expect("spawn gos");
@@ -441,6 +443,7 @@ fn jit_compiled_binding_call_resolves_predeclared_symbol() {
     .expect("write main.gos");
 
     let out = Command::new(gos_bin())
+        .arg("run")
         .arg("src/main.gos")
         .current_dir(&tmp)
         .env("GOSSAMER_ROOT", &workspace_root)
@@ -464,11 +467,12 @@ fn jit_compiled_binding_call_resolves_predeclared_symbol() {
 
 #[test]
 fn run_main_thread_flag_executes_program() {
-    // `gos --main-thread` runs the VM on the process main thread
+    // `gos run --main-thread` runs the VM on the process main thread
     // (for native libraries that require it) instead of the spawned
     // `gos-vm` thread. The program must still execute correctly.
     let fixture = write_fixture("main-thread", "fn main() { println!(\"mt {}\", 40 + 2) }\n");
     let out = Command::new(gos_bin())
+        .arg("run")
         .arg("--main-thread")
         .arg(&fixture)
         .output()
@@ -525,6 +529,7 @@ fn main() {
 "#;
     let fixture = write_fixture("n6-discard-result", src);
     let out = std::process::Command::new(gos_bin())
+        .arg("run")
         .arg(&fixture)
         .output()
         .expect("spawn gos");
@@ -561,6 +566,7 @@ fn main() {
 "#;
     let fixture = write_fixture("n6-let-underscore-ok", src);
     let out = std::process::Command::new(gos_bin())
+        .arg("run")
         .arg(&fixture)
         .output()
         .expect("spawn gos");

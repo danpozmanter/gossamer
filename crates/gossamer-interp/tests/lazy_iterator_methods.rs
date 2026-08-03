@@ -63,3 +63,21 @@ fn main() {
 "#;
     assert_eq!(run_lazy_program(source), "30 24 Some(1) Some(4)\n");
 }
+
+#[test]
+fn lazy_range_for_loop_survives_an_iterator_typed_parameter() {
+    let source = r"
+use Iterator
+
+fn list_range(values: Vec<i64>, range: Iterator<i64>) {
+    for i in range {
+        println(values[i])
+    }
+}
+
+fn main() {
+    list_range(Vec::from([1, 2, 3]), 0..2)
+}
+";
+    assert_eq!(run_lazy_program(source), "1\n2\n");
+}

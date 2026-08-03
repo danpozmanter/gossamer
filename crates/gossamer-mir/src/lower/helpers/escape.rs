@@ -639,16 +639,27 @@ impl<'a> LoopEligibility<'a> {
                     self.expr(a, false);
                 }
             }
-            // A method call could mutate an outer container. The one audited
-            // exception is zero-argument `len()`: it reads only its receiver,
-            // cannot retain a region pointer, and is needed by the common
-            // build-a-value/consume-its-size loop shape. Keep every other
-            // method (including `get`, callbacks, and all mutators) rejected.
+            // A method call could mutate an outer container. The audited
+            // exceptions below read only Copy-typed data and cannot retain a
+            // region pointer.
             HirExprKind::MethodCall {
                 receiver,
                 name,
                 args,
             } if name.name == "len" && args.is_empty() => self.expr(receiver, false),
+            HirExprKind::MethodCall {
+                receiver,
+                name,
+                args,
+            } if matches!(name.name.as_str(), "wrapping_add" | "wrapping_mul")
+                && is_copy_ty(self.tcx, receiver.ty)
+                && args.iter().all(|arg| is_copy_ty(self.tcx, arg.ty)) =>
+            {
+                self.expr(receiver, false);
+                for arg in args {
+                    self.expr(arg, false);
+                }
+            }
             HirExprKind::MethodCall { .. } => self.reject(RegionReject::MethodCall),
             HirExprKind::Assign { place, value } => {
                 // Only Copy-typed places (i64 accumulators, loop counters)

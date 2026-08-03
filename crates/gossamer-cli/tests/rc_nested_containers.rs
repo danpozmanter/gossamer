@@ -49,6 +49,7 @@ fn assert_vm_matches_native(tag: &str, src: &str) {
     std::fs::write(&source, src).unwrap();
 
     let vm = Command::new(gos_bin())
+        .arg("run")
         .arg(&source)
         .output()
         .expect("spawn gos");

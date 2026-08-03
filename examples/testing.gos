@@ -94,6 +94,6 @@ fn main() {
     // When run directly (not via `gos test`), demonstrate the
     // function so the example is still useful.
     for i in 0..8 {
-        println!("fib({i}) = {}", fibonacci(i))
+        println!("fib({i}) = {}", fibonacci(i as u64))
     }
 }

@@ -1618,6 +1618,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1653,6 +1655,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/sequence_reference_safety/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Sequence and reference safety
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
 
 
 
@@ -2113,7 +2143,7 @@ the implementation by a rev.</p>
 <td>Parse + resolve + typecheck + exhaustiveness. With <code>--timings</code>, prints per-stage wall-clock times. Parse output is cached by source hash - re-invocations on an unchanged file reuse the parsed AST. Set <code>GOSSAMER_CACHE_TRACE=1</code> to log cache hits.</td>
 </tr>
 <tr>
-<td><code>gos FILE</code></td>
+<td><code>gos run FILE</code></td>
 <td>Execute via the register-based bytecode VM. Recursive helper workloads may promote through the in-process Cranelift JIT.</td>
 </tr>
 <tr>
@@ -2122,7 +2152,7 @@ the implementation by a rev.</p>
 </tr>
 <tr>
 <td><code>gos build [--release] [--target TRIPLE] FILE</code></td>
-<td>Produce a native binary (ELF/Mach-O/PE) by lowering through MIR + LLVM (<code>llc -O0</code>; <code>--release</code> runs the full <code>opt -O3 | llc -O3</code> pipeline) and linking the user's <code>.o</code> against <code>libgossamer_runtime.a</code>. Release builds may use <code>--pgo-collect PATH.profraw</code> to emit an instrumented binary or <code>--pgo-profile PATH.profdata</code> to apply merged LLVM profile data; the modes conflict, profile input must exist, and an input older than the source produces a warning. The Cranelift code path is reserved for the in-process JIT (<code>gos</code>), not this command. Tier 2 cross deployment is <code>{x86_64,aarch64}-unknown-linux-musl</code>, QEMU-differential-tested in CI. Other registered triples are not supported merely because a local link succeeds; macOS/Windows as cross targets are out of scope.</td>
+<td>Produce a native binary (ELF/Mach-O/PE) by lowering through MIR + LLVM (checked debug arithmetic with <code>opt -O1 | llc -O0</code>; <code>--release</code> runs <code>opt -O3 | llc -O3</code>) and linking the user's <code>.o</code> against <code>libgossamer_runtime.a</code>. Release builds may use <code>--pgo-collect PATH.profraw</code> to emit an instrumented binary or <code>--pgo-profile PATH.profdata</code> to apply merged LLVM profile data; the modes conflict, profile input must exist, and an input older than the source produces a warning. The Cranelift code path is reserved for the in-process JIT (<code>gos run</code>), not this command. Tier 2 cross deployment is <code>{x86_64,aarch64}-unknown-linux-musl</code>, QEMU-differential-tested in CI. Other registered triples are not supported merely because a local link succeeds; macOS/Windows as cross targets are out of scope.</td>
 </tr>
 </tbody>
 </table>
@@ -2290,8 +2320,10 @@ It starts with <code>gos &lt;version&gt; REPL [&lt;architecture&gt;-&lt;os&gt;]<
   expression sees previously-bound locals in scope. <code>%bindings</code>
   lists the active set.</li>
 <li><code>%help</code> lists REPL commands.</li>
-<li><code>%info [anything]</code> (<code>%i</code>) shows item help and the relevant module or type
-  listing. <code>%find &lt;regex&gt;</code> (<code>%f</code>) searches public symbol names.</li>
+<li><code>%info [pattern]</code> (<code>%i</code>) searches the public language and standard-library
+  catalog. <code>%explain NAME</code> (<code>%e</code>) inspects a persistent binding and filters
+  methods by its type and mutability. Add <code>--details</code> for descriptions and
+  examples.</li>
 <li><code>%bindings [regex]</code> (<code>%b</code>), <code>%declarations [regex]</code> (<code>%d</code>), and
   <code>%history [regex]</code> (<code>%h</code>) show persistent bindings, declarations, and input
   history. <code>%reset</code> (<code>%r</code>) clears bindings and declarations.</li>
@@ -2299,7 +2331,7 @@ It starts with <code>gos &lt;version&gt; REPL [&lt;architecture&gt;-&lt;os&gt;]<
   <code>%quit</code> (<code>%q</code>) exits.</li>
 </ul>
 <p>Meta-command output adapts to the current terminal width and is capped at 80
-columns, so <code>%help</code>, <code>%info</code>, <code>%find</code>, <code>%bindings</code>, and <code>%declarations</code> remain
+columns, so <code>%help</code>, <code>%info</code>, <code>%explain</code>, <code>%bindings</code>, and <code>%declarations</code> remain
 readable in narrow terminals.</p>
 <h2 id="editor-integration">Editor integration<a class="headerlink" href="#editor-integration" title="Permanent link">&para;</a></h2>
 <table>
@@ -2371,7 +2403,7 @@ directly:</p>
 <li><code>check</code> - parse + resolve + typecheck; one JSON object per
   diagnostic (the <code>--message-format json</code> schema).</li>
 <li><code>explain</code> - long-form rationale for a diagnostic code.</li>
-<li><code>run</code> / <code>build</code> / <code>test</code> - execute programs and test suites;
+<li><code>execute</code> / <code>build</code> / <code>test</code> - execute programs and test suites;
   exit code, stdout, and stderr come back, bounded by a
   per-call <code>timeout_ms</code>.</li>
 <li><code>fmt</code> / <code>doc</code> - formatting and item listings.</li>

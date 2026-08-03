@@ -52,8 +52,8 @@ builtins or repository-specific bridge.
 cargo build -p gossamer-cli
 
 # Either run them one at a time…
-( cd 01-gossamer-aware && /path/to/gos src/main.gos )
-( cd 02-plain-rust-wrapped && /path/to/gos src/main.gos )
+( cd 01-gossamer-aware && /path/to/gos run src/main.gos )
+( cd 02-plain-rust-wrapped && /path/to/gos run src/main.gos )
 
 # …or use the helper script which does both.
 bash run_examples.sh

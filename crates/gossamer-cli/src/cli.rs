@@ -9,7 +9,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{Arg, CommandFactory, FromArgMatches, Parser, Subcommand, ValueHint};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, ValueHint};
 
 use crate::cmd::{self, TestOpts};
 use crate::style;
@@ -21,8 +21,8 @@ use crate::{doc, repl};
     name = "gos",
     version,
     about = "The Gossamer toolchain",
-    override_usage = "gos [OPTIONS] [FILE] [ARGS]...\n    gos [OPTIONS] <COMMAND>",
-    after_help = "Default behavior:\n  gos FILE [ARGS]... runs FILE and forwards ARGS to the program.\n  gos with no FILE or COMMAND starts the REPL.\n\nUse -e or --eval STRING to evaluate inline source instead of running a file."
+    override_usage = "gos [OPTIONS] <COMMAND>",
+    after_help = "Bare `gos` starts the REPL. Use `gos run [FILE] [ARGS]...` to run a source file and `gos -e STRING` to evaluate inline source."
 )]
 pub(crate) struct Cli {
     /// Print additional progress information for the command being run.
@@ -66,6 +66,29 @@ enum Command {
         /// `gossamer_diagnostics::render_json`.
         #[arg(long, value_enum, default_value_t = MessageFormat::Plain)]
         message_format: MessageFormat,
+    },
+    /// Execute a program by invoking its `main` function.
+    ///
+    /// With no path, defaults to `<project-root>/src/main.gos` when a
+    /// `project.toml` is reachable. The file may use any extension.
+    #[command(trailing_var_arg = true)]
+    Run {
+        /// Source-file path. Optional in a project. Shell completion offers
+        /// every filename rather than filtering by extension.
+        #[arg(value_hint = ValueHint::FilePath)]
+        file: Option<PathBuf>,
+        /// Disable the Cranelift JIT and use pure bytecode dispatch.
+        #[arg(long)]
+        no_jit: bool,
+        /// Run on the process main thread for native libraries that require it.
+        #[arg(long = "main-thread")]
+        main_thread: bool,
+        /// Require a matching `project.lock`.
+        #[arg(long)]
+        locked: bool,
+        /// Arguments forwarded to the interpreted program.
+        #[arg(allow_hyphen_values = true)]
+        args: Vec<String>,
     },
     /// Restart a development program whenever local project inputs change.
     #[command(alias = "dev")]
@@ -518,9 +541,10 @@ enum Command {
     /// Generate shell completion script for the chosen shell.
     ///
     /// Pipe the output into the shell's completion directory:
-    ///   bash:  `gos completion bash > /etc/bash_completion.d/gos`
-    ///   zsh:   `gos completion zsh > $fpath[1]/_gos`
-    ///   fish:  `gos completion fish > ~/.config/fish/completions/gos.fish`
+    /// bash: `gos completion bash > /etc/bash_completion.d/gos`
+    /// fish: `gos completion fish > ~/.config/fish/completions/gos.fish`
+    /// zsh:  `gos completion zsh > $fpath[1]/_gos`
+    #[command(verbatim_doc_comment)]
     Completion {
         /// Shell to emit completions for.
         shell: clap_complete::Shell,
@@ -616,26 +640,18 @@ pub(crate) fn run() -> ExitCode {
     }
 }
 
-/// Returns whether `args` are a direct program invocation such as
-/// `gos ./tool`, `gos ./tool.gos`, or `gos ./project`. This is the form the
-/// kernel uses for a `#!/usr/bin/env gos` hashbang.
+/// Executes an unambiguous common `gos run` command without constructing
+/// Clap's full command schema. Ambiguous forms fall back to Clap so it remains
+/// the source of diagnostics and help text.
 #[must_use]
-pub fn is_direct_script_invocation(args: &[std::ffi::OsString]) -> bool {
-    parse_direct_script(args).is_some()
-}
-
-/// Executes a program passed directly to `gos`, forwarding every remaining
-/// argument to its `main` function. Execution options must precede the path,
-/// so program arguments beginning with `-` are forwarded unchanged.
-#[must_use]
-pub fn try_script_run(args: &[std::ffi::OsString]) -> Option<ExitCode> {
-    let parsed = parse_direct_script(args)?;
+pub fn try_fast_run(args: &[std::ffi::OsString]) -> Option<ExitCode> {
+    let parsed = parse_fast_run(args)?;
     let result = (|| {
         crate::cmd::pkg::enforce_lockfile_if_requested(parsed.locked)?;
         if parsed.no_jit {
             gossamer_interp::set_jit_disabled();
         }
-        cmd::run::dispatch(Some(parsed.file), parsed.main_thread, &parsed.forwarded)
+        cmd::run::dispatch(parsed.file, parsed.main_thread, &parsed.forwarded)
     })();
     Some(match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -646,89 +662,62 @@ pub fn try_script_run(args: &[std::ffi::OsString]) -> Option<ExitCode> {
     })
 }
 
-struct DirectScript {
-    file: PathBuf,
+struct FastRun {
+    file: Option<PathBuf>,
     no_jit: bool,
     main_thread: bool,
     locked: bool,
     forwarded: Vec<String>,
 }
 
-/// Parses the narrow direct-invocation grammar without taking ownership of
-/// ordinary subcommands. The path may name a source file or a project
-/// directory; the latter resolves through `project.toml` in `cmd::run`.
-fn parse_direct_script(args: &[std::ffi::OsString]) -> Option<DirectScript> {
-    let mut no_jit = false;
-    let mut main_thread = false;
-    let mut locked = false;
-    let mut index = 1;
-
-    while let Some(arg) = args.get(index) {
-        let text = arg.to_str()?;
-        match text {
-            "--no-jit" if !no_jit => no_jit = true,
-            "--main-thread" if !main_thread => main_thread = true,
-            "--locked" if !locked => locked = true,
-            _ if text.starts_with('-') => return None,
-            _ => {
-                let file = PathBuf::from(arg);
-                let path = Path::new(&file);
-                if !path.is_file()
-                    && !path.is_dir()
-                    && !crate::paths::resolve_gos_source(&file).is_file()
-                    && path.extension().is_none_or(|extension| extension != "gos")
-                {
-                    return None;
-                }
-                let forwarded = args[index + 1..]
-                    .iter()
-                    .map(|arg| arg.to_str().map(str::to_owned))
-                    .collect::<Option<Vec<_>>>()?;
-                return Some(DirectScript {
-                    file,
-                    no_jit,
-                    main_thread,
-                    locked,
-                    forwarded,
-                });
-            }
-        }
-        index += 1;
+fn parse_fast_run(args: &[std::ffi::OsString]) -> Option<FastRun> {
+    if args.get(1)?.to_str()? != "run" {
+        return None;
     }
-    None
+    let mut parsed = FastRun {
+        file: None,
+        no_jit: false,
+        main_thread: false,
+        locked: false,
+        forwarded: Vec::new(),
+    };
+    let mut forwarding = false;
+    for arg in &args[2..] {
+        if forwarding || parsed.file.is_some() {
+            parsed.forwarded.push(arg.to_str()?.to_owned());
+            continue;
+        }
+        match arg.to_str() {
+            Some("--") => forwarding = true,
+            Some("--no-jit") if !parsed.no_jit => parsed.no_jit = true,
+            Some("--main-thread") if !parsed.main_thread => parsed.main_thread = true,
+            Some("--locked") if !parsed.locked => parsed.locked = true,
+            Some(text) if text.starts_with('-') => return None,
+            _ if parsed.file.is_none() => parsed.file = Some(PathBuf::from(arg)),
+            _ => parsed.forwarded.push(arg.to_str()?.to_owned()),
+        }
+    }
+    Some(parsed)
 }
 
 /// Builds the command tree used for generated shell completions.
 ///
-/// Direct script execution is recognized before Clap parses the command line,
-/// so it does not otherwise appear in Clap's schema. Adding a file-path
-/// positional here teaches shells that `gos <TAB>` accepts any path while
-/// retaining completion for the ordinary subcommands.
-fn completion_command() -> clap::Command {
-    Cli::command().arg(
-        Arg::new("script")
-            .help("Path to a Gossamer script or project directory")
-            .value_name("TARGET")
-            .value_hint(ValueHint::FilePath)
-            .index(1),
-    )
-}
-
 fn completion_script(shell: clap_complete::Shell) -> Vec<u8> {
     let mut output = Vec::new();
-    clap_complete::generate(shell, &mut completion_command(), "gos", &mut output);
+    clap_complete::generate(shell, &mut Cli::command(), "gos", &mut output);
     if shell == clap_complete::Shell::Bash {
-        let script = String::from_utf8(output).expect("Clap emits UTF-8 completion text");
-        let script = script.replacen(
-            "if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then",
-            "if [[ ${cur} == -* ]] ; then",
-            1,
+        let mut script = String::from_utf8(output).expect("clap emits UTF-8 completions");
+        let run_start = script
+            .find("        gos__subcmd__run)\n")
+            .expect("generated Bash completion contains the run command");
+        let run_end = script[run_start + 1..]
+            .find("\n        gos__subcmd__")
+            .map_or(script.len(), |offset| run_start + 1 + offset);
+        let run = script[run_start..run_end].replace(
+            "COMPREPLY=( $(compgen -W \"${opts}\" -- \"${cur}\") )",
+            "COMPREPLY=( $(compgen -W \"${opts}\" -- \"${cur}\") $(compgen -f -- \"${cur}\") )",
         );
-        let script = script.replacen(
-            "COMPREPLY=( $(compgen -W \"${opts}\" -- \"${cur}\") )\n            return 0",
-            "COMPREPLY=( $(compgen -W \"${opts}\" -- \"${cur}\") $(compgen -f -- \"${cur}\") )\n            return 0",
-            2,
-        );
+        script.replace_range(run_start..run_end, &run);
         return script.into_bytes();
     }
     output
@@ -779,6 +768,19 @@ fn dispatch(
             timings,
             message_format,
         }) => cmd::check::dispatch(file, timings, message_format),
+        Some(Command::Run {
+            file,
+            no_jit,
+            main_thread,
+            locked,
+            args,
+        }) => {
+            crate::cmd::pkg::enforce_lockfile_if_requested(locked)?;
+            if no_jit {
+                gossamer_interp::set_jit_disabled();
+            }
+            cmd::run::dispatch(file, main_thread, &args)
+        }
         Some(Command::Watch {
             file,
             debounce,
@@ -1170,21 +1172,33 @@ fn dispatch_build(
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, completion_script, configure_pgo, is_direct_script_invocation};
-    use clap::Parser;
+    use super::{Cli, completion_script, configure_pgo, parse_fast_run};
+    use clap::{CommandFactory, Parser};
 
     fn os_args(args: &[&str]) -> Vec<std::ffi::OsString> {
         args.iter().map(std::ffi::OsString::from).collect()
     }
 
     #[test]
-    fn direct_gos_file_is_reserved_for_script_execution() {
-        assert!(is_direct_script_invocation(&os_args(&["gos", "tool.gos"])));
-        assert!(!is_direct_script_invocation(&os_args(&["gos", "repl"])));
+    fn direct_gos_file_is_rejected_and_run_is_recognized() {
+        assert!(Cli::try_parse_from(["gos", "tool.gos"]).is_err());
+        assert!(parse_fast_run(&os_args(&["gos", "run", "tool.gos"])).is_some());
     }
 
     #[test]
-    fn direct_script_accepts_existing_files_with_any_extension() {
+    fn run_forwards_every_token_after_the_filename() {
+        let direct = parse_fast_run(&os_args(&["gos", "run", "tool.gos", "--name", "x"]))
+            .expect("direct args");
+        assert_eq!(direct.forwarded, ["--name", "x"]);
+
+        let literal_dash_dash =
+            parse_fast_run(&os_args(&["gos", "run", "tool.gos", "--", "--name", "x"]))
+                .expect("literal dash-dash arg");
+        assert_eq!(literal_dash_dash.forwarded, ["--", "--name", "x"]);
+    }
+
+    #[test]
+    fn run_accepts_existing_files_with_any_extension() {
         let root =
             std::env::temp_dir().join(format!("gossamer-direct-script-{}", std::process::id()));
         std::fs::create_dir_all(&root).expect("create fixture directory");
@@ -1196,10 +1210,10 @@ mod tests {
         }
 
         for path in [&extensionless, &arbitrary, &root.join("inferred")] {
-            assert!(is_direct_script_invocation(&[
-                "gos".into(),
-                path.as_os_str().to_owned(),
-            ]));
+            assert!(
+                parse_fast_run(&["gos".into(), "run".into(), path.as_os_str().to_owned(),])
+                    .is_some()
+            );
         }
     }
 
@@ -1207,8 +1221,27 @@ mod tests {
     fn generated_completion_offers_current_directory_filenames() {
         let output = completion_script(clap_complete::Shell::Bash);
         let output = String::from_utf8(output).expect("completion is utf8");
-        assert!(output.contains("compgen -f -- \"${cur}\""), "{output}");
-        assert!(!output.contains("gos__run"), "{output}");
+        let run_start = output.find("gos__subcmd__run)").expect("run completion");
+        let run_end = output[run_start + 1..]
+            .find("gos__subcmd__")
+            .map_or(output.len(), |offset| run_start + 1 + offset);
+        let run = &output[run_start..run_end];
+        assert!(run.contains("compgen -f -- \"${cur}\""), "{run}");
+    }
+
+    #[test]
+    fn completion_help_lists_shell_install_commands_on_separate_lines() {
+        let mut command = Cli::command();
+        let help = command
+            .find_subcommand_mut("completion")
+            .expect("completion subcommand")
+            .render_long_help()
+            .to_string();
+        let expected = "Pipe the output into the shell's completion directory:\n\
+                        bash: `gos completion bash > /etc/bash_completion.d/gos`\n\
+                        fish: `gos completion fish > ~/.config/fish/completions/gos.fish`\n\
+                        zsh:  `gos completion zsh > $fpath[1]/_gos`";
+        assert!(help.contains(expected), "{help}");
     }
 
     #[test]

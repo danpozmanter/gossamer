@@ -309,6 +309,9 @@ pub(super) fn field_byte_offset(tcx: &TyCtxt, ty: Ty, idx: u32) -> u32 {
                     .saturating_mul(8)
             })
         }
+        TyKind::Array { elem, .. } => idx
+            .saturating_mul(type_slot_count(tcx, elem))
+            .saturating_mul(8),
         TyKind::Ref { inner, .. } => field_byte_offset(tcx, inner, idx),
         _ => idx * 8,
     }
@@ -325,6 +328,7 @@ pub(super) fn field_ty_at(tcx: &TyCtxt, ty: Ty, idx: u32) -> Option<Ty> {
             tcx.adt_field_tys(def, &substs)
                 .and_then(|tys| tys.get(target).copied())
         }
+        TyKind::Array { elem, .. } => Some(elem),
         TyKind::Ref { inner, .. } => field_ty_at(tcx, inner, idx),
         _ => None,
     }

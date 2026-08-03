@@ -10,7 +10,7 @@
 // arithmetic across those fields typechecks without any annotation.
 //
 // Run with:
-//   gos examples/generic_struct.gos
+//   gos run examples/generic_struct.gos
 //   gos build examples/generic_struct.gos
 
 // Two independent type parameters.

@@ -920,6 +920,88 @@ fn main() {
 }
 
 #[test]
+fn wrapping_integer_methods_lower_without_runtime_calls_and_do_not_block_auto_region() {
+    let source = r"
+enum Node {
+    Leaf(i64),
+    Pair(Node, Node),
+}
+
+static mut SEED: i64 = 1
+
+fn rand() -> i64 {
+    SEED = SEED.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
+    SEED
+}
+
+fn build(depth: i64) -> Node {
+    let v = rand()
+    if depth == 0 {
+        return Node::Leaf(v)
+    }
+    Node::Pair(build(depth - 1), build(depth - 1))
+}
+
+fn count(n: &Node) -> i64 {
+    match n {
+        Node::Leaf(_) => 1,
+        Node::Pair(l, r) => 1 + count(l) + count(r),
+    }
+}
+
+fn main() {
+    let mut total = 0
+    for _ in 0..3 {
+        let tree = build(4)
+        total += count(&tree)
+    }
+}
+";
+    let (bodies, _) = build(source);
+    let rand = bodies.iter().find(|b| b.name == "rand").expect("rand");
+    let mut saw_wrapping_add = false;
+    let mut saw_wrapping_mul = false;
+    for block in &rand.blocks {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign {
+                rvalue: Rvalue::BinaryOp { op, .. },
+                ..
+            } = &stmt.kind
+            {
+                saw_wrapping_add |= matches!(op, BinOp::WrappingAdd);
+                saw_wrapping_mul |= matches!(op, BinOp::WrappingMul);
+            }
+        }
+        if let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            ..
+        } = &block.terminator
+        {
+            assert!(
+                !matches!(
+                    name.as_str(),
+                    "gos_rt_int_wrapping_add" | "gos_rt_int_wrapping_mul"
+                ),
+                "wrapping integer methods must not lower to runtime calls: {name}"
+            );
+        }
+    }
+    assert!(saw_wrapping_add, "rand must contain a WrappingAdd MIR op");
+    assert!(saw_wrapping_mul, "rand must contain a WrappingMul MIR op");
+
+    let main = bodies.iter().find(|b| b.name == "main").expect("main");
+    let names = call_names(main);
+    assert!(
+        names.iter().any(|n| n == "gos_rt_arena_push"),
+        "scalar wrapping methods in callees must not block auto-regioning: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n == "gos_rt_arena_pop"),
+        "auto-regioned loop must close its arena: {names:?}"
+    );
+}
+
+#[test]
 fn cycle_collection_inside_auto_region_runs_after_arena_pop() {
     let source = r"
 use std::runtime

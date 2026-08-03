@@ -1,8 +1,10 @@
 # Running Gossamer
 
-Once `gos` is on your `PATH`, run a program with `gos FILE [ARGS...]`.
+Once `gos` is on your `PATH`, run a program with `gos run FILE [ARGS...]`.
 `FILE` may be a source file with any filename extension or a project directory containing
-`project.toml`; `gos` with no arguments drops into the REPL.
+`project.toml`; `gos` with no arguments drops into the REPL. Every token after
+`FILE` is passed to the program verbatim, including option-shaped values and a
+literal `--`. Put `gos run` options before `FILE`.
 
 ## Cheat-sheet
 
@@ -10,8 +12,8 @@ Once `gos` is on your `PATH`, run a program with `gos FILE [ARGS...]`.
 |---------|--------------|
 | `gos new example.com/app --path ./app` | Scaffold a project |
 | `gos init example.com/app` | Scaffold just `project.toml` in the CWD |
-| `gos src/main.gos` | Register-based bytecode VM with in-process Cranelift JIT |
-| `gos --no-jit src/main.gos` | Same VM, pure bytecode dispatch (JIT off) |
+| `gos run src/main.gos` | Register-based bytecode VM with in-process Cranelift JIT |
+| `gos run --no-jit src/main.gos` | Same VM, pure bytecode dispatch (JIT off) |
 | `gos check src/main.gos` | Type-check + exhaustiveness |
 | `gos build src/main.gos` | Native build via LLVM AOT with checked arithmetic (`opt -O1 | llc -O0`), then links the user's object against the `gossamer-runtime` staticlib into an ELF/Mach-O/PE. |
 | `gos build --release src/main.gos` | Optimised native build - full LLVM `opt -O3 | llc -O3` pipeline, static musl on Linux. |
@@ -38,7 +40,7 @@ Once `gos` is on your `PATH`, run a program with `gos FILE [ARGS...]`.
 
 ## Entry file
 
-`gos file.gos [ARGS...]` and `gos build file.gos` accept a file with no
+`gos run file.gos [ARGS...]` and `gos build file.gos` accept a file with no
 `fn main`: bare statements at the top of the entry file become the
 body of an implicit `fn main()`. So a one-line `println!("Hello
 World")` file runs as-is. See

@@ -22,7 +22,7 @@ web_service/
 
 ```sh
 cd examples/projects/web_service
-gos src/main.gos
+gos run src/main.gos
 curl http://localhost:8080/health
 curl http://localhost:8080/users
 curl 'http://localhost:8080/echo?msg=hi'

@@ -142,21 +142,20 @@ pub(crate) fn builtin_ov_contains(args: &[Value]) -> RuntimeResult<Value> {
 }
 pub(crate) fn builtin_ov_index_of(args: &[Value]) -> RuntimeResult<Value> {
     let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
-    Ok(Value::Int(
-        gossamer_std::container_ordered::ordered_vec::index_of(&xs, seq_arg_i64(args, 1)),
-    ))
+    Ok(
+        gossamer_std::container_ordered::ordered_vec::index_of(&xs, seq_arg_i64(args, 1))
+            .map_or_else(none_variant, |value| some_variant(Value::Int(value))),
+    )
 }
 pub(crate) fn builtin_ov_peek_min(args: &[Value]) -> RuntimeResult<Value> {
     let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
-    Ok(Value::Int(
-        gossamer_std::container_ordered::ordered_vec::peek_min(&xs),
-    ))
+    Ok(gossamer_std::container_ordered::ordered_vec::peek_min(&xs)
+        .map_or_else(none_variant, |value| some_variant(Value::Int(value))))
 }
 pub(crate) fn builtin_ov_peek_max(args: &[Value]) -> RuntimeResult<Value> {
     let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
-    Ok(Value::Int(
-        gossamer_std::container_ordered::ordered_vec::peek_max(&xs),
-    ))
+    Ok(gossamer_std::container_ordered::ordered_vec::peek_max(&xs)
+        .map_or_else(none_variant, |value| some_variant(Value::Int(value))))
 }
 pub(crate) fn builtin_ov_len(args: &[Value]) -> RuntimeResult<Value> {
     let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));

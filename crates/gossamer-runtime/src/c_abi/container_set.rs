@@ -171,20 +171,20 @@ pub unsafe extern "C" fn gos_rt_omap_remove_i64(v: *mut GosVec, key: i64) -> *mu
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_omap_get_i64(v: *const GosVec, key: i64) -> i64 {
-    ffi_entry!(0, {
+pub unsafe extern "C" fn gos_rt_omap_get_i64(v: *const GosVec, key: i64) -> i128 {
+    ffi_entry!(super::vec::pack_result(1, 0), {
         if v.is_null() {
-            return 0;
+            return super::vec::pack_result(1, 0);
         }
         let vec = unsafe { &*v };
         let pairs = (vec.len as usize) / 2;
         let buf = vec.ptr.cast::<i64>();
         for i in 0..pairs {
             if unsafe { *buf.add(i * 2) } == key {
-                return unsafe { *buf.add(i * 2 + 1) };
+                return super::vec::pack_result(0, unsafe { *buf.add(i * 2 + 1) });
             }
         }
-        0
+        super::vec::pack_result(1, 0)
     })
 }
 

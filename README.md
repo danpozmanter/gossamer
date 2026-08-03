@@ -244,7 +244,7 @@ cd hello
 
 # Type-check, execute, build.
 gos check src/main.gos
-gos src/main.gos
+gos run src/main.gos
 gos build src/main.gos
 
 # Lint, format, test.

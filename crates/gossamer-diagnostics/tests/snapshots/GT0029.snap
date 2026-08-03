@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0029]: An `option::*` or `result::*` combinator received its data argument - here
+--- framed ---
+error[GT0029]: An `option::*` or `result::*` combinator received its data argument
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

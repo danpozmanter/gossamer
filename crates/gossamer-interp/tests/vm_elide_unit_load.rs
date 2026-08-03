@@ -159,7 +159,7 @@ fn main() {
 fn loop_body_with_vec_push_tail_still_mutates() {
     let src = r#"
 fn main() {
-    let mut xs: [i64] = []
+    let mut xs: Vec<i64> = Vec::from([])
     let mut i = 0
     while i < 4 {
         i = i + 1

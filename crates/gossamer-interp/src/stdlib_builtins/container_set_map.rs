@@ -166,9 +166,10 @@ pub(crate) fn builtin_omap_remove(args: &[Value]) -> RuntimeResult<Value> {
 }
 pub(crate) fn builtin_omap_get(args: &[Value]) -> RuntimeResult<Value> {
     let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
-    Ok(Value::Int(
-        gossamer_std::container_set_map::ordered_map::get(&xs, seq_arg_i64(args, 1)),
-    ))
+    Ok(
+        gossamer_std::container_set_map::ordered_map::get(&xs, seq_arg_i64(args, 1))
+            .map_or_else(none_variant, |value| some_variant(Value::Int(value))),
+    )
 }
 pub(crate) fn builtin_omap_contains_key(args: &[Value]) -> RuntimeResult<Value> {
     let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));

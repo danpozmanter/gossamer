@@ -968,6 +968,11 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, a)?;
                 check_v(op_idx, b)?;
             }
+            Op::VecSwapDiscard { receiver, a, b } => {
+                check_v(op_idx, receiver)?;
+                check_v(op_idx, a)?;
+                check_v(op_idx, b)?;
+            }
             Op::VecRemove { receiver, index } => {
                 check_v(op_idx, receiver)?;
                 check_v(op_idx, index)?;
@@ -2093,6 +2098,9 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
         } => {
             effect.v_reads.extend([receiver, a, b]);
             effect.v_writes.push(dst);
+        }
+        Op::VecSwapDiscard { receiver, a, b } => {
+            effect.v_reads.extend([receiver, a, b]);
         }
         Op::VecRemove { receiver, index }
         | Op::VecRemoveAt {

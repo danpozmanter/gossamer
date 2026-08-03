@@ -275,7 +275,7 @@ fn main() -> i64 { hot_loop(10i64) }
 }
 
 #[test]
-fn option_local_loop_falls_back_without_losing_result() {
+fn option_local_loop_promotes_without_losing_result() {
     let _g = GosJitGuard::new();
     let source = r"
 fn option_sum(n: i64) -> i64 {
@@ -292,16 +292,16 @@ fn main() -> i64 { option_sum(10i64) }
 ";
     let (vm, _) = build_vm(source);
     // Use the real admission policy here too. Option locals carry enum state,
-    // so the current in-process JIT leaves the body on bytecode.
+    // which the current in-process JIT lowers directly.
     warm_up_n(&vm, "option_sum", &[Value::Int(100)], 1_000);
     let result = vm
         .call("option_sum", vec![Value::Int(10)])
         .expect("option_sum");
     assert!(matches!(result, Value::Int(45)), "result: {result:?}");
     let metrics = vm.jit_metrics();
-    assert_eq!(
-        metrics.successful_compiles, 0,
-        "Option locals should stay on bytecode: {metrics:?}"
+    assert!(
+        metrics.successful_compiles >= 1,
+        "Option locals should promote successfully: {metrics:?}"
     );
 }
 

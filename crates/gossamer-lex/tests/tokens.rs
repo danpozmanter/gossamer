@@ -176,7 +176,7 @@ fn line_comment_stops_at_newline() {
 /// A leading hashbang is a source-file comment without swallowing attributes.
 #[test]
 fn leading_hashbang_is_a_line_comment() {
-    let kinds = kinds_of("#!/usr/bin/env gos\nfn main() {}");
+    let kinds = kinds_of("#!/bin/env -S gos run\nfn main() {}");
     assert_eq!(
         kinds,
         vec![

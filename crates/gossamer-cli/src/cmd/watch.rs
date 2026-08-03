@@ -186,11 +186,7 @@ fn start_child(entry: &Path, options: &Options, generation: u64, status: &Status
     if let Some(root) = crate::paths::project_root_for_entry(entry) {
         command.current_dir(root);
     }
-    command.arg(entry);
-    if options.locked {
-        command.arg("--locked");
-    }
-    command.arg("--").args(&options.args);
+    command.args(child_arguments(entry, options));
     configure_child_group(&mut command);
     let child = command
         .spawn()
@@ -200,6 +196,16 @@ fn start_child(entry: &Path, options: &Options, generation: u64, status: &Status
         child.id()
     ));
     Ok(child)
+}
+
+fn child_arguments(entry: &Path, options: &Options) -> Vec<std::ffi::OsString> {
+    let mut args = vec![std::ffi::OsString::from("run")];
+    if options.locked {
+        args.push(std::ffi::OsString::from("--locked"));
+    }
+    args.push(entry.as_os_str().to_owned());
+    args.extend(options.args.iter().map(std::ffi::OsString::from));
+    args
 }
 
 struct CurrentDirGuard {
@@ -363,7 +369,9 @@ fn is_relevant(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{SupervisorSignals, WatchDecision, is_relevant, wait_for_batch};
+    use super::{
+        Options, SupervisorSignals, WatchDecision, child_arguments, is_relevant, wait_for_batch,
+    };
     use gossamer_std::signal;
     use std::path::Path;
     use std::sync::mpsc;
@@ -387,5 +395,22 @@ mod tests {
         let decision = wait_for_batch(&rx, std::time::Duration::from_millis(150), &signals)
             .expect("shutdown decision");
         assert_eq!(decision, WatchDecision::Shutdown);
+    }
+
+    #[test]
+    fn child_command_uses_run_and_preserves_every_program_argument() {
+        let options = Options {
+            file: None,
+            debounce: std::time::Duration::ZERO,
+            grace: std::time::Duration::ZERO,
+            check: false,
+            clear: false,
+            locked: true,
+            args: vec!["--".to_string(), "--name".to_string(), "x".to_string()],
+        };
+        assert_eq!(
+            child_arguments(Path::new("app.gos"), &options),
+            ["run", "--locked", "app.gos", "--", "--name", "x"]
+        );
     }
 }

@@ -88,7 +88,7 @@ fn run_check(stem: &str, source: &str) -> (bool, String, String) {
 fn run_program(stem: &str, source: &str, args: &[&str]) -> (bool, String, String) {
     let path = write_temp_file(stem, source);
     let mut cmd = Command::new(gos_binary());
-    cmd.arg(&path);
+    cmd.arg("run").arg(&path);
     for arg in args {
         cmd.arg(arg);
     }
@@ -432,8 +432,10 @@ fn spec_7_5_mut_reference_aliases_fixed_array_source() {
     let src = r#"
 fn main() {
     let mut xs = [1, 2]
-    let r = &mut xs
-    r[0] = 0
+    {
+        let r = &mut xs
+        r[0] = 0
+    }
     if xs[0] != 0 { panic!("mutable reference did not write through") }
 }
 "#;
@@ -446,8 +448,10 @@ fn spec_7_5_mut_reference_aliases_scalar_source() {
     let src = r#"
 fn main() {
     let mut value = 1i64
-    let r = &mut value
-    *r = 42i64
+    {
+        let r = &mut value
+        *r = 42i64
+    }
     if value != 42i64 { panic!("mutable reference did not write through") }
 }
 "#;
@@ -461,9 +465,11 @@ fn spec_7_5_mut_reference_binding_rebinds_its_target() {
 fn main() {
     let mut first = 1i64
     let mut second = 2i64
-    let mut r = &mut first
-    r = &mut second
-    *r = 42i64
+    {
+        let mut r = &mut first
+        r = &mut second
+        *r = 42i64
+    }
     if first != 1i64 { panic!("rebind changed the old target") }
     if second != 42i64 { panic!("rebind did not change the new target") }
 }

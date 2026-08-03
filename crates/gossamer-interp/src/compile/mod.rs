@@ -349,6 +349,12 @@ pub fn compile_fn(
         } else {
             builder.bind_param(&param.pattern, reg);
         }
+        if matches!(
+            tcx.kind(builder.unwrap_ref(param.ty)),
+            Some(TyKind::Iterator(_))
+        ) {
+            builder.lazy_iterator_locals.insert(reg);
+        }
         // `&mut Vec<T>` / `&mut [T]` / `&mut <scalar>` parameters
         // participate in the write-back cell protocol - the callee
         // unwraps an incoming `MutCell` into the param register and
@@ -504,6 +510,11 @@ pub(crate) struct FnBuilder<'tcx> {
     /// lets `try_compile_for_loop_vec_iter` drive it by index instead of
     /// deferring. Populated from the pattern's resolved type at bind time.
     pub(crate) collection_locals: std::collections::HashSet<Reg>,
+    /// Registers proven to hold a stateful, single-pass `Iterator<T>`.
+    /// Parameter and inferred-local paths can retain an unresolved HIR type,
+    /// so for-loop lowering consults this provenance before considering the
+    /// indexable collection fast path.
+    pub(crate) lazy_iterator_locals: std::collections::HashSet<Reg>,
     /// Registers bound to a `flag::Set` handle (`flag::Set::new(...)`),
     /// so a chained `set.duration(...)` is recognised as constructing a
     /// duration-flag cell rather than calling a same-named user method.

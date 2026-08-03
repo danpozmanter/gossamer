@@ -302,6 +302,24 @@ impl<'tcx> FnBuilder<'tcx> {
         false
     }
 
+    /// Returns whether `expr` is a stateful, single-pass `Iterator<T>`, using
+    /// binding provenance when the expression's HIR type remained unresolved.
+    pub(crate) fn receiver_is_lazy_iterator(&self, expr: &HirExpr) -> bool {
+        if matches!(
+            self.tcx.kind(self.unwrap_ref(expr.ty)),
+            Some(TyKind::Iterator(_))
+        ) {
+            return true;
+        }
+        if let HirExprKind::Path { segments, .. } = &expr.kind
+            && let [segment] = segments.as_slice()
+            && let Some(tr) = self.lookup_local(&segment.name)
+        {
+            return self.lazy_iterator_locals.contains(&tr.reg);
+        }
+        false
+    }
+
     /// Returns the element type of an array / vec / slice / tuple,
     /// peeling reference layers first.
     pub(crate) fn array_elem_ty(&self, ty: gossamer_types::Ty) -> Option<gossamer_types::Ty> {

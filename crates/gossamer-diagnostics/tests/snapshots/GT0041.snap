@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0041]: A lazy iterator was formatted or printed directly. Consume it with a - here
+--- framed ---
+error[GT0041]: A lazy iterator was formatted or printed directly. Consume it with a
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

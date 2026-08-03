@@ -240,6 +240,30 @@ fn main() {
 }
 
 #[test]
+fn fallible_collection_helpers_return_options() {
+    assert_lowers(
+        "fallible_collection_helpers",
+        r#"
+use std::collections::{deque, heap, ordered_map, ordered_vec, queue, stack}
+fn main() {
+    let empty: Vec<i64> = Vec::new()
+    println!("{} {} {} {} {} {} {} {} {}",
+        queue::peek(empty.clone()).is_none(),
+        stack::peek(empty.clone()).is_none(),
+        deque::peek_front(empty.clone()).is_none(),
+        deque::peek_back(empty.clone()).is_none(),
+        heap::peek(empty.clone()).is_none(),
+        ordered_vec::index_of(empty.clone(), 4).is_none(),
+        ordered_vec::peek_min(empty.clone()).is_none(),
+        ordered_vec::peek_max(empty.clone()).is_none(),
+        ordered_map::get(empty, 4).is_none())
+}
+"#,
+        "true true true true true true true true true",
+    );
+}
+
+#[test]
 fn encoding_hex_encode_lowers() {
     assert_lowers(
         "encoding_hex_encode",

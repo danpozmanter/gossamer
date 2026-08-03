@@ -46,7 +46,7 @@ applies only to a `cargo build` binary you relocate yourself.
 gos --version
 gos new example.com/hello --path /tmp/hello
 cd /tmp/hello
-gos src/main.gos
+gos run src/main.gos
 ```
 
 You should see `hello from hello`.

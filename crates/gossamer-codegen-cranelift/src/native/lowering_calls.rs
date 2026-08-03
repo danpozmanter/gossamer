@@ -250,6 +250,7 @@ pub(super) fn lower_generic_rt_call(
             (&[ptr_ty], Some(types::I128))
         }
         "gos_rt_vec_first" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_vec_mark_shared" => (&[ptr_ty], None),
         "gos_rt_vec_pop_opt" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_vec_last" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_vec_get_opt" => (&[ptr_ty, types::I64], Some(types::I128)),
@@ -520,7 +521,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_trace_ended_to_otlp_json" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_bheap_push_i64" => (&[ptr_ty, types::I64], Some(ptr_ty)),
         "gos_rt_bheap_pop_i64" => (&[ptr_ty], Some(ptr_ty)),
-        "gos_rt_bheap_peek_i64" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_bheap_peek_i64" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_bheap_len" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_vec_first_i64" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_vec_last_i64" => (&[ptr_ty], Some(types::I64)),
@@ -537,7 +538,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_oset_contains_i64" => (&[ptr_ty, types::I64], Some(types::I64)),
         "gos_rt_omap_insert_i64" => (&[ptr_ty, types::I64, types::I64], Some(ptr_ty)),
         "gos_rt_omap_remove_i64" => (&[ptr_ty, types::I64], Some(ptr_ty)),
-        "gos_rt_omap_get_i64" => (&[ptr_ty, types::I64], Some(types::I64)),
+        "gos_rt_omap_get_i64" => (&[ptr_ty, types::I64], Some(types::I128)),
         "gos_rt_omap_contains_key_i64" => (&[ptr_ty, types::I64], Some(types::I64)),
         "gos_rt_omap_len" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_set_insert_skey" => (&[ptr_ty, ptr_ty, ptr_ty], Some(types::I64)),

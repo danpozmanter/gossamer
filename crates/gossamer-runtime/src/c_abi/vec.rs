@@ -878,6 +878,60 @@ pub unsafe extern "C" fn gos_rt_vec_retain(v: *mut GosVec) {
     });
 }
 
+/// Marks every reference-counted value reachable from a Vec as shared before
+/// the Vec is published to another goroutine. Vec headers already use an
+/// atomic count, but String and RC-node elements must switch their own headers
+/// to atomic mode as well. Nested Vecs and aggregate-owned element slots are
+/// walked recursively.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_mark_shared(v: *mut GosVec) {
+    ffi_entry!((), {
+        if v.is_null() {
+            return;
+        }
+        let vec = unsafe { &*v };
+        if vec.ptr.is_null() || vec.len <= 0 {
+            return;
+        }
+        let len = vec.len as usize;
+        let stride = vec.elem_bytes as usize;
+        match vec.elem_kind {
+            vec_elem_kind::STRING | vec_elem_kind::RC_ENUM | vec_elem_kind::VEC if stride == 8 => {
+                for index in 0..len {
+                    let raw =
+                        unsafe { vec.ptr.add(index * stride).cast::<usize>().read_unaligned() };
+                    let child = std::ptr::with_exposed_provenance_mut::<u8>(raw);
+                    if child.is_null() {
+                        continue;
+                    }
+                    if vec.elem_kind == vec_elem_kind::VEC {
+                        unsafe { gos_rt_vec_mark_shared(child.cast()) };
+                    } else {
+                        unsafe { crate::c_abi::rc::gos_rt_rc_mark_shared(child) };
+                    }
+                }
+            }
+            vec_elem_kind::AGGR_OWNED => {
+                if let Some(children) = vec_slot_children(vec) {
+                    for index in 0..len {
+                        let slot = unsafe { vec.ptr.add(index * stride) };
+                        unsafe {
+                            visit_slot_children(slot, children, |child, kind| match kind {
+                                vec_elem_kind::VEC => gos_rt_vec_mark_shared(child.cast()),
+                                vec_elem_kind::STRING | vec_elem_kind::RC_NODE => {
+                                    crate::c_abi::rc::gos_rt_rc_mark_shared(child);
+                                }
+                                _ => {}
+                            });
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    });
+}
+
 /// Bump a non-region `GosVec`'s strong count by one (the header-RC
 /// counterpart of `gos_rt_str_retain` for nested-vec children).
 pub(crate) unsafe fn vec_retain_header(v: *mut GosVec) {
@@ -909,9 +963,11 @@ pub(crate) unsafe fn vec_retain_header(v: *mut GosVec) {
 }
 
 /// Propagates ownership-bearing element kinds from `src` to `out`
-/// after `out` received a raw copy of (some of) `src`'s slots:
-/// re-tags `out` and retains each copied slot's heap children so both
-/// vecs own their shares. Covers `STRING`, `VEC`, `RC_ENUM` and
+/// after `out` received a raw copy of (some of) `src`'s slots.
+/// String and RC-node children gain a retained share. Nested Vec children are
+/// cloned and the copied slot is rewritten, preserving Vec value semantics
+/// recursively instead of exposing a shared growable header. Covers `STRING`,
+/// `VEC`, `RC_ENUM` and
 /// `AGGR_OWNED` element kinds; `AGGR_GUARDED` keeps its dedicated
 /// copy-blob path at the existing call sites. No-op for primitive /
 /// region / null vecs.
@@ -924,14 +980,12 @@ pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosV
         vec_elem_kind::STRING | vec_elem_kind::VEC | vec_elem_kind::RC_ENUM
             if s.elem_bytes == 8 =>
         {
-            // This branch mutates the output tag but never calls another
-            // helper that borrows the output header, so one exclusive borrow
-            // may cover the whole operation.
-            let o = unsafe { &mut *out };
-            o.elem_kind = s.elem_kind;
-            for i in 0..o.len.max(0) as usize {
+            unsafe { (*out).elem_kind = s.elem_kind };
+            let len = unsafe { (*out).len.max(0) as usize };
+            for i in 0..len {
                 // Exposed-integer slot (flat-slot ABI); recover provenance.
-                let raw = unsafe { o.ptr.add(i * 8).cast::<usize>().read_unaligned() };
+                let slot = unsafe { (*out).ptr.add(i * 8).cast::<usize>() };
+                let raw = unsafe { slot.read_unaligned() };
                 let child: *mut u8 = std::ptr::with_exposed_provenance_mut(raw);
                 if child.is_null() {
                     continue;
@@ -943,7 +997,10 @@ pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosV
                     vec_elem_kind::RC_ENUM => unsafe {
                         crate::c_abi::rc::gos_rt_rc_retain(child);
                     },
-                    _ => unsafe { vec_retain_header(child.cast()) },
+                    _ => unsafe {
+                        let cloned = crate::c_abi::gos_rt_vec_clone(child.cast());
+                        slot.write_unaligned(cloned.expose_provenance());
+                    },
                 }
             }
         }
@@ -960,7 +1017,36 @@ pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosV
                     return;
                 }
                 for i in 0..o.len.max(0) as usize {
-                    unsafe { vec_retain_slot_children(out, o.ptr.add(i * stride)) };
+                    let slot = unsafe { o.ptr.add(i * stride) };
+                    for child in children {
+                        if child.gate >= 0 {
+                            let disc = unsafe {
+                                slot.add(child.disc_word * 8).cast::<i64>().read_unaligned()
+                            };
+                            if disc != child.gate {
+                                continue;
+                            }
+                        }
+                        let child_slot = unsafe { slot.add(child.word * 8).cast::<usize>() };
+                        let raw = unsafe { child_slot.read_unaligned() };
+                        let ptr: *mut u8 = std::ptr::with_exposed_provenance_mut(raw);
+                        if ptr.is_null() {
+                            continue;
+                        }
+                        match child.kind {
+                            vec_elem_kind::STRING => unsafe {
+                                crate::c_abi::string::gos_rt_str_retain(ptr.cast());
+                            },
+                            vec_elem_kind::VEC => unsafe {
+                                let cloned = crate::c_abi::gos_rt_vec_clone(ptr.cast());
+                                child_slot.write_unaligned(cloned.expose_provenance());
+                            },
+                            vec_elem_kind::RC_NODE => unsafe {
+                                crate::c_abi::rc::gos_rt_rc_retain(ptr);
+                            },
+                            _ => {}
+                        }
+                    }
                 }
             } else {
                 // Layout unknown (cannot happen for live vecs; defensive):

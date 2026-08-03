@@ -6,7 +6,7 @@
  * returns a `Result<T, errors::Error>` and is `?`-propagated.
  *
  * Run:
- *     gos examples/file_io.gos
+ *     gos run examples/file_io.gos
  */
 
 use std::encoding::json

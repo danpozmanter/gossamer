@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0054]: A reference pattern attempted to copy an aggregate referent by value. - here
+--- framed ---
+error[GT0054]: A reference pattern attempted to copy an aggregate referent by value.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

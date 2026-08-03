@@ -103,7 +103,7 @@ fn main() {}
 fn vm_persists_statement_position_byte_vector_pushes() {
     let source = r#"
 fn main() {
-    let mut values: [u8] = []
+    let mut values: Vec<u8> = Vec::from([])
     let mut i = 0
     while i < 6 {
         values.push((i * 40 + 3) as u8)

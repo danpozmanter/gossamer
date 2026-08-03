@@ -72,11 +72,10 @@ pub fn pop(xs: Vec<i64>) -> Vec<i64> {
     xs
 }
 
-/// Root element (smallest) of the heap, or 0 if empty. Caller is
-/// expected to check `len` first.
+/// Root element (smallest) of the heap, if present.
 #[must_use]
-pub fn peek(xs: &[i64]) -> i64 {
-    xs.first().copied().unwrap_or(0)
+pub fn peek(xs: &[i64]) -> Option<i64> {
+    xs.first().copied()
 }
 
 /// Number of elements in the heap.
@@ -96,20 +95,20 @@ mod tests {
         let h = push(h, 1);
         let h = push(h, 3);
         let h = push(h, 2);
-        assert_eq!(peek(&h), 1);
+        assert_eq!(peek(&h), Some(1));
         let h = pop(h);
-        assert_eq!(peek(&h), 2);
+        assert_eq!(peek(&h), Some(2));
         let h = pop(h);
-        assert_eq!(peek(&h), 3);
+        assert_eq!(peek(&h), Some(3));
         let h = pop(h);
-        assert_eq!(peek(&h), 5);
+        assert_eq!(peek(&h), Some(5));
         let h = pop(h);
         assert_eq!(len(&h), 0);
     }
 
     #[test]
-    fn peek_on_empty_returns_zero() {
+    fn peek_on_empty_returns_none() {
         let h: Vec<i64> = vec![];
-        assert_eq!(peek(&h), 0);
+        assert_eq!(peek(&h), None);
     }
 }

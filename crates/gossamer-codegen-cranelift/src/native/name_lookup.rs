@@ -477,6 +477,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_bheap_peek_i64" => Some("gos_rt_bheap_peek_i64"),
         "gos_rt_bheap_len" => Some("gos_rt_bheap_len"),
         "gos_rt_vec_first_i64" => Some("gos_rt_vec_first_i64"),
+        "gos_rt_vec_mark_shared" => Some("gos_rt_vec_mark_shared"),
         "gos_rt_vec_last_i64" => Some("gos_rt_vec_last_i64"),
         "gos_rt_vec_pop_front_i64" => Some("gos_rt_vec_pop_front_i64"),
         "gos_rt_vec_pop_back_i64" => Some("gos_rt_vec_pop_back_i64"),

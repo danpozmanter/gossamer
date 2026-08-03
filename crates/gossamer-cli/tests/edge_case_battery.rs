@@ -53,7 +53,7 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) -> (String, String, Opt
 fn run_example_vm(name: &str) -> (String, String, Option<i32>) {
     let src = workspace_root().join("examples").join(name);
     let mut cmd = Command::new(gos_bin());
-    cmd.arg(&src);
+    cmd.arg("run").arg(&src);
     run_with_timeout(cmd, Duration::from_secs(30))
 }
 
@@ -93,6 +93,7 @@ fn stack_overflow_diagnostic_or_clean_abort() {
         .join("examples")
         .join("edge_stack_overflow.gos");
     let mut child = Command::new(gos_bin())
+        .arg("run")
         .arg(&src)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

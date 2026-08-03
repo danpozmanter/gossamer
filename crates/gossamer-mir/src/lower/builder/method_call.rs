@@ -122,42 +122,23 @@ impl<'a> Builder<'a> {
                 self.tcx.kind_of(receiver_ty),
                 TyKind::Int(_) | TyKind::Var(_)
             ) {
-                let (bits, signed) = match self.tcx.kind_of(receiver_ty) {
-                    TyKind::Var(_) => (64, 1),
-                    TyKind::Int(int_ty) => match int_ty {
-                        gossamer_types::IntTy::I8 => (8, 1),
-                        gossamer_types::IntTy::I16 => (16, 1),
-                        gossamer_types::IntTy::I32 => (32, 1),
-                        gossamer_types::IntTy::I64 | gossamer_types::IntTy::Isize => (64, 1),
-                        gossamer_types::IntTy::U8 => (8, 0),
-                        gossamer_types::IntTy::U16 => (16, 0),
-                        gossamer_types::IntTy::U32 => (32, 0),
-                        gossamer_types::IntTy::U64 | gossamer_types::IntTy::Usize => (64, 0),
-                        gossamer_types::IntTy::I128 | gossamer_types::IntTy::U128 => return None,
-                    },
-                    _ => unreachable!(),
-                };
                 let lhs = self.lower_expr(receiver)?;
                 let rhs = self.lower_expr(&args[0])?;
                 let dest = self.fresh(ty);
-                let next = self.new_block(span);
-                let symbol = if method.name == "wrapping_add" {
-                    "gos_rt_int_wrapping_add"
+                let op = if method.name == "wrapping_add" {
+                    BinOp::WrappingAdd
                 } else {
-                    "gos_rt_int_wrapping_mul"
+                    BinOp::WrappingMul
                 };
-                self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str(symbol.to_string())),
-                    args: vec![
-                        Operand::Copy(Place::local(lhs)),
-                        Operand::Copy(Place::local(rhs)),
-                        Operand::Const(ConstValue::Int(bits)),
-                        Operand::Const(ConstValue::Int(signed)),
-                    ],
-                    destination: Place::local(dest),
-                    target: Some(next),
-                });
-                self.set_current(next);
+                self.emit_assign(
+                    Place::local(dest),
+                    Rvalue::BinaryOp {
+                        op,
+                        lhs: Operand::Copy(Place::local(lhs)),
+                        rhs: Operand::Copy(Place::local(rhs)),
+                    },
+                    span,
+                );
                 return Some(dest);
             }
         }
@@ -215,6 +196,21 @@ impl<'a> Builder<'a> {
         // tiers resolve free functions by mangled name). `x.try_into()` is the
         // same but the result is `Result<B, E>`, so `B` is its first type
         // argument and the method is `B::try_from`.
+        if method.name.as_str() == "into"
+            && args.is_empty()
+            && let gossamer_types::TyKind::Vec(target_elem) = self.tcx.kind_of(ty).clone()
+        {
+            let source = self.lower_expr(receiver)?;
+            if let gossamer_types::TyKind::Array { elem, len } =
+                self.tcx.kind_of(self.locals[source.0 as usize].ty).clone()
+            {
+                // Rust provides `From<[T; N]> for Vec<T>`. Keep that conversion
+                // explicit at the source level while using the same lowering as
+                // `Vec::from(array)` on every execution tier.
+                debug_assert_eq!(elem, target_elem);
+                return Some(self.fixed_array_to_vec(source, elem, len, span));
+            }
+        }
         let conversion = match method.name.as_str() {
             "into" => self.adt_dispatch_name(ty).map(|b| (b, "from")),
             "try_into" => self
@@ -2723,7 +2719,7 @@ impl<'a> Builder<'a> {
                     mut_ref_reloads.push((place_local, a));
                 }
                 let a = self.auto_deref_cell(a, span);
-                let a = if coerce_vec_args {
+                let mut a = if coerce_vec_args {
                     let lt = self.locals[a.0 as usize].ty;
                     if let TyKind::Array { elem, len } = self.tcx.kind_of(lt).clone() {
                         self.coerce_array_to_vec(a, elem, len, span)
@@ -2733,6 +2729,26 @@ impl<'a> Builder<'a> {
                 } else {
                     a
                 };
+                if rt == "gos_rt_chan_send"
+                    && matches!(
+                        self.tcx.kind_of(self.locals[a.0 as usize].ty),
+                        TyKind::Vec(_)
+                            | TyKind::Adt { .. }
+                            | TyKind::Tuple(_)
+                            | TyKind::Array { .. }
+                    )
+                    && matches!(
+                        &arg.kind,
+                        HirExprKind::Path { .. }
+                            | HirExprKind::Field { .. }
+                            | HirExprKind::TupleIndex { .. }
+                            | HirExprKind::Index { .. }
+                    )
+                {
+                    let cloned = self.fresh(self.locals[a.0 as usize].ty);
+                    self.emit_owned_clone_binding(a, cloned, span);
+                    a = cloned;
+                }
                 // A value sent on a channel escapes to the receiving
                 // goroutine: switch any RC-managed value to atomic
                 // reference counting before it is enqueued.
@@ -3482,7 +3498,7 @@ impl<'a> Builder<'a> {
             for arg in args {
                 let a = self.lower_expr(arg)?;
                 let a = self.auto_deref_cell(a, span);
-                let a = if coerce_vec_args {
+                let mut a = if coerce_vec_args {
                     let lt = self.locals[a.0 as usize].ty;
                     if let TyKind::Array { elem, len } = self.tcx.kind_of(lt).clone() {
                         self.coerce_array_to_vec(a, elem, len, span)
@@ -3492,6 +3508,26 @@ impl<'a> Builder<'a> {
                 } else {
                     a
                 };
+                if rt == "gos_rt_chan_send"
+                    && matches!(
+                        self.tcx.kind_of(self.locals[a.0 as usize].ty),
+                        TyKind::Vec(_)
+                            | TyKind::Adt { .. }
+                            | TyKind::Tuple(_)
+                            | TyKind::Array { .. }
+                    )
+                    && matches!(
+                        &arg.kind,
+                        HirExprKind::Path { .. }
+                            | HirExprKind::Field { .. }
+                            | HirExprKind::TupleIndex { .. }
+                            | HirExprKind::Index { .. }
+                    )
+                {
+                    let cloned = self.fresh(self.locals[a.0 as usize].ty);
+                    self.emit_owned_clone_binding(a, cloned, span);
+                    a = cloned;
+                }
                 // A value sent on a channel escapes to the receiving
                 // goroutine: switch any RC-managed value to atomic
                 // reference counting before it is enqueued.

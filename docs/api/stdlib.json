@@ -442,7 +442,7 @@
       "id": "std-collections-deque-len",
       "name": "std::collections::deque::len",
       "kind": "function",
-      "signature": "fn len(xs: Deque<i64>) -> i64",
+      "signature": "fn len(xs: Vec<i64>) -> i64",
       "description": "Element count.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -461,7 +461,7 @@
       "id": "std-collections-deque-peek-back",
       "name": "std::collections::deque::peek_back",
       "kind": "function",
-      "signature": "fn peek_back(xs: Deque<i64>) -> i64",
+      "signature": "fn peek_back(xs: Vec<i64>) -> Option<i64>",
       "description": "Back element, or 0 if empty.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -480,7 +480,7 @@
       "id": "std-collections-deque-peek-front",
       "name": "std::collections::deque::peek_front",
       "kind": "function",
-      "signature": "fn peek_front(xs: Deque<i64>) -> i64",
+      "signature": "fn peek_front(xs: Vec<i64>) -> Option<i64>",
       "description": "Front element, or 0 if empty.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -499,7 +499,7 @@
       "id": "std-collections-deque-pop-back",
       "name": "std::collections::deque::pop_back",
       "kind": "function",
-      "signature": "fn pop_back(xs: Deque<i64>) -> Deque<i64>",
+      "signature": "fn pop_back(xs: Vec<i64>) -> Vec<i64>",
       "description": "Drop the back.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -518,7 +518,7 @@
       "id": "std-collections-deque-pop-front",
       "name": "std::collections::deque::pop_front",
       "kind": "function",
-      "signature": "fn pop_front(xs: Deque<i64>) -> Deque<i64>",
+      "signature": "fn pop_front(xs: Vec<i64>) -> Vec<i64>",
       "description": "Drop the front.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -537,7 +537,7 @@
       "id": "std-collections-deque-push-back",
       "name": "std::collections::deque::push_back",
       "kind": "function",
-      "signature": "fn push_back(xs: Deque<i64>, value: i64) -> Deque<i64>",
+      "signature": "fn push_back(xs: Vec<i64>, value: i64) -> Vec<i64>",
       "description": "Append to the back.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -556,7 +556,7 @@
       "id": "std-collections-deque-push-front",
       "name": "std::collections::deque::push_front",
       "kind": "function",
-      "signature": "fn push_front(xs: Deque<i64>, value: i64) -> Deque<i64>",
+      "signature": "fn push_front(xs: Vec<i64>, value: i64) -> Vec<i64>",
       "description": "Prepend to the front.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -575,7 +575,7 @@
       "id": "std-collections-heap-len",
       "name": "std::collections::heap::len",
       "kind": "function",
-      "signature": "fn len(xs: Heap<i64>) -> i64",
+      "signature": "fn len(xs: Vec<i64>) -> i64",
       "description": "Element count.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -594,7 +594,7 @@
       "id": "std-collections-heap-peek",
       "name": "std::collections::heap::peek",
       "kind": "function",
-      "signature": "fn peek(xs: Heap<i64>) -> i64",
+      "signature": "fn peek(xs: Vec<i64>) -> Option<i64>",
       "description": "Smallest element of the heap, or 0 if empty.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -613,7 +613,7 @@
       "id": "std-collections-heap-pop",
       "name": "std::collections::heap::pop",
       "kind": "function",
-      "signature": "fn pop(xs: Heap<i64>) -> Heap<i64>",
+      "signature": "fn pop(xs: Vec<i64>) -> Vec<i64>",
       "description": "Drop the root from the heap; returns the new heap (use `peek` first to read the value).",
       "lifecycle": "experimental",
       "tier_support": [
@@ -632,7 +632,7 @@
       "id": "std-collections-heap-push",
       "name": "std::collections::heap::push",
       "kind": "function",
-      "signature": "fn push(xs: Heap<i64>, value: i64) -> Heap<i64>",
+      "signature": "fn push(xs: Vec<i64>, value: i64) -> Vec<i64>",
       "description": "Push an i64 onto the min-heap; returns the new heap.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -651,7 +651,7 @@
       "id": "std-collections-ordered-map-contains-key",
       "name": "std::collections::ordered_map::contains_key",
       "kind": "function",
-      "signature": "fn contains_key(map: OrderedMap<String, i64>, key: String) -> bool",
+      "signature": "fn contains_key(map: Vec<i64>, key: i64) -> bool",
       "description": "Key-membership test.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -670,7 +670,7 @@
       "id": "std-collections-ordered-map-get",
       "name": "std::collections::ordered_map::get",
       "kind": "function",
-      "signature": "fn get(map: OrderedMap<String, i64>, key: String) -> Option<i64>",
+      "signature": "fn get(map: Vec<i64>, key: i64) -> Option<i64>",
       "description": "Lookup; returns 0 if absent.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -689,7 +689,7 @@
       "id": "std-collections-ordered-map-insert",
       "name": "std::collections::ordered_map::insert",
       "kind": "function",
-      "signature": "fn insert(map: OrderedMap<String, i64>, key: String, value: i64) -> OrderedMap<String, i64>",
+      "signature": "fn insert(map: Vec<i64>, key: i64, value: i64) -> Vec<i64>",
       "description": "Set key => value.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -708,7 +708,7 @@
       "id": "std-collections-ordered-map-len",
       "name": "std::collections::ordered_map::len",
       "kind": "function",
-      "signature": "fn len(map: OrderedMap<String, i64>) -> i64",
+      "signature": "fn len(map: Vec<i64>) -> i64",
       "description": "Pair count.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -727,7 +727,7 @@
       "id": "std-collections-ordered-map-remove",
       "name": "std::collections::ordered_map::remove",
       "kind": "function",
-      "signature": "fn remove(map: OrderedMap<String, i64>, key: String) -> OrderedMap<String, i64>",
+      "signature": "fn remove(map: Vec<i64>, key: i64) -> Vec<i64>",
       "description": "Remove a key.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -746,7 +746,7 @@
       "id": "std-collections-ordered-set-contains",
       "name": "std::collections::ordered_set::contains",
       "kind": "function",
-      "signature": "fn contains(xs: OrderedSet<i64>, value: i64) -> bool",
+      "signature": "fn contains(xs: Vec<i64>, value: i64) -> bool",
       "description": "Membership test.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -765,7 +765,7 @@
       "id": "std-collections-ordered-set-insert",
       "name": "std::collections::ordered_set::insert",
       "kind": "function",
-      "signature": "fn insert(xs: OrderedSet<i64>, value: i64) -> OrderedSet<i64>",
+      "signature": "fn insert(xs: Vec<i64>, value: i64) -> Vec<i64>",
       "description": "Insert (sorted, no duplicates).",
       "lifecycle": "experimental",
       "tier_support": [
@@ -784,7 +784,7 @@
       "id": "std-collections-ordered-set-len",
       "name": "std::collections::ordered_set::len",
       "kind": "function",
-      "signature": "fn len(xs: OrderedSet<i64>) -> i64",
+      "signature": "fn len(xs: Vec<i64>) -> i64",
       "description": "Element count.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -803,7 +803,7 @@
       "id": "std-collections-ordered-set-remove",
       "name": "std::collections::ordered_set::remove",
       "kind": "function",
-      "signature": "fn remove(xs: OrderedSet<i64>, value: i64) -> OrderedSet<i64>",
+      "signature": "fn remove(xs: Vec<i64>, value: i64) -> Vec<i64>",
       "description": "Remove a value.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -898,7 +898,7 @@
       "id": "std-collections-ordered-vec-peek-max",
       "name": "std::collections::ordered_vec::peek_max",
       "kind": "function",
-      "signature": "fn peek_max(xs: Vec<i64>) -> i64",
+      "signature": "fn peek_max(xs: Vec<i64>) -> Option<i64>",
       "description": "Largest element, or 0.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -917,7 +917,7 @@
       "id": "std-collections-ordered-vec-peek-min",
       "name": "std::collections::ordered_vec::peek_min",
       "kind": "function",
-      "signature": "fn peek_min(xs: Vec<i64>) -> i64",
+      "signature": "fn peek_min(xs: Vec<i64>) -> Option<i64>",
       "description": "Smallest element, or 0.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -955,7 +955,7 @@
       "id": "std-collections-queue-len",
       "name": "std::collections::queue::len",
       "kind": "function",
-      "signature": "fn len(xs: Queue<i64>) -> i64",
+      "signature": "fn len(xs: Vec<i64>) -> i64",
       "description": "Element count.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -974,7 +974,7 @@
       "id": "std-collections-queue-peek",
       "name": "std::collections::queue::peek",
       "kind": "function",
-      "signature": "fn peek(xs: Queue<i64>) -> i64",
+      "signature": "fn peek(xs: Vec<i64>) -> Option<i64>",
       "description": "Front element, or 0 if empty.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -993,7 +993,7 @@
       "id": "std-collections-queue-pop",
       "name": "std::collections::queue::pop",
       "kind": "function",
-      "signature": "fn pop(xs: Queue<i64>) -> Queue<i64>",
+      "signature": "fn pop(xs: Vec<i64>) -> Vec<i64>",
       "description": "Drop the front element; returns the new queue.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -1012,7 +1012,7 @@
       "id": "std-collections-queue-push",
       "name": "std::collections::queue::push",
       "kind": "function",
-      "signature": "fn push(xs: Queue<i64>, value: i64) -> Queue<i64>",
+      "signature": "fn push(xs: Vec<i64>, value: i64) -> Vec<i64>",
       "description": "Append an i64 to the back; returns the new queue.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -1031,7 +1031,7 @@
       "id": "std-collections-stack-len",
       "name": "std::collections::stack::len",
       "kind": "function",
-      "signature": "fn len(xs: Stack<i64>) -> i64",
+      "signature": "fn len(xs: Vec<i64>) -> i64",
       "description": "Element count.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -1050,7 +1050,7 @@
       "id": "std-collections-stack-peek",
       "name": "std::collections::stack::peek",
       "kind": "function",
-      "signature": "fn peek(xs: Stack<i64>) -> i64",
+      "signature": "fn peek(xs: Vec<i64>) -> Option<i64>",
       "description": "Top element, or 0 if empty.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -1069,7 +1069,7 @@
       "id": "std-collections-stack-pop",
       "name": "std::collections::stack::pop",
       "kind": "function",
-      "signature": "fn pop(xs: Stack<i64>) -> Stack<i64>",
+      "signature": "fn pop(xs: Vec<i64>) -> Vec<i64>",
       "description": "Drop the top; returns the new stack.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -1088,7 +1088,7 @@
       "id": "std-collections-stack-push",
       "name": "std::collections::stack::push",
       "kind": "function",
-      "signature": "fn push(xs: Stack<i64>, value: i64) -> Stack<i64>",
+      "signature": "fn push(xs: Vec<i64>, value: i64) -> Vec<i64>",
       "description": "Push an i64 onto the top; returns the new stack.",
       "lifecycle": "experimental",
       "tier_support": [

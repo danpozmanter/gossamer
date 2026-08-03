@@ -65,12 +65,28 @@ fn run_with_timeout(mut child: std::process::Child) -> (String, String, Option<i
 
 fn run_vm(src: &Path) -> (String, String, Option<i32>) {
     let child = Command::new(gos_bin())
+        .arg("run")
         .arg(src)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn gos");
+    run_with_timeout(child)
+}
+
+fn run_forced_jit(src: &Path) -> (String, String, Option<i32>) {
+    let child = Command::new(gos_bin())
+        .arg("run")
+        .arg(src)
+        .env("GOSSAMER_JIT_THRESHOLD", "1")
+        .env("GOS_JIT_ONLY", "main")
+        .env("GOS_JIT_TRACE", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn forced JIT gos");
     run_with_timeout(child)
 }
 
@@ -136,6 +152,7 @@ fn assert_three_tier_stdout(tag: &str, source: &str, expected: &str) {
     drop(f);
 
     let vm = run_vm(&src);
+    let jit = run_forced_jit(&src);
     let cl_dir = dir.join("cl");
     fs::create_dir_all(&cl_dir).unwrap();
     let cl_bin = build_native(&src, false, &cl_dir).expect("cranelift build");
@@ -147,7 +164,12 @@ fn assert_three_tier_stdout(tag: &str, source: &str, expected: &str) {
 
     let _ = fs::remove_dir_all(&dir);
 
-    for (name, run) in [("vm", &vm), ("cranelift", &cl), ("llvm", &ll)] {
+    for (name, run) in [
+        ("vm", &vm),
+        ("jit", &jit),
+        ("native-debug", &cl),
+        ("native-release", &ll),
+    ] {
         assert_eq!(
             run.0.trim_end(),
             expected.trim_end(),
@@ -254,5 +276,41 @@ fn main() {
         "user_methods_on_indexed_vec_elements",
         src,
         "halted=true output=42",
+    );
+}
+
+#[test]
+fn mutable_methods_on_indexed_fixed_array_elements_match_across_tiers() {
+    // Regression for #128. A projected `&mut self` receiver must write the
+    // changed aggregate back through a fixed-array element place, just as it
+    // already does for a Vec element.
+    let src = r"
+struct Mutable {
+    content: Vec<i64>
+}
+
+impl Mutable {
+    fn change(&mut self, index: i64, value: i64) {
+        self.content[index] = value
+    }
+}
+
+fn main() {
+    let m = Mutable { content: Vec::from([1, 2, 3]) }
+    let mut values = [m; 2]
+    values[0].change(1, 7)
+    values[1].change(1, 9)
+    println(values[0].content[0])
+    println(values[0].content[1])
+    println(values[0].content[2])
+    println(values[1].content[0])
+    println(values[1].content[1])
+    println(values[1].content[2])
+}
+";
+    assert_three_tier_stdout(
+        "mutable_methods_on_indexed_fixed_array_elements",
+        src,
+        "1\n7\n3\n1\n9\n3",
     );
 }

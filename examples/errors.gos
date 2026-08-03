@@ -11,7 +11,7 @@ use std::errors
 
 // Parses a positive integer from a string. Returns an `Err` with
 // a contextual message on failure.
-fn parse_positive(text: &String) -> Result<i64, errors::Error> {
+fn parse_positive(text: String) -> Result<i64, errors::Error> {
     let n: i64 = text.parse().map_err(|_|
         errors::new(format!("not a number: {text}"))
     )?
@@ -23,7 +23,7 @@ fn parse_positive(text: &String) -> Result<i64, errors::Error> {
 
 // Demonstrates error wrapping: lower-level error → higher-level
 // context.
-fn load_setting(key: &String, raw: &String) -> Result<i64, errors::Error> {
+fn load_setting(key: String, raw: String) -> Result<i64, errors::Error> {
     parse_positive(raw).map_err(|e|
         errors::wrap(e, format!("loading setting `{key}`"))
     )
@@ -31,11 +31,11 @@ fn load_setting(key: &String, raw: &String) -> Result<i64, errors::Error> {
 
 fn main() -> Result<(), errors::Error> {
     // Happy path.
-    let n = load_setting(&"port", &"8080")?
+    let n = load_setting("port", "8080")?
     println!("port = {n}")
 
     // Failure path - propagate with `?` or inspect directly.
-    let attempt = load_setting(&"port", &"oops")
+    let attempt = load_setting("port", "oops")
     match attempt {
         Ok(v) => println!("parsed {v}")
         Err(e) => {
@@ -52,7 +52,7 @@ fn main() -> Result<(), errors::Error> {
     }
 
     // `errors::is` checks whether any link in the chain matches.
-    let broken = load_setting(&"workers", &"-3")
+    let broken = load_setting("workers", "-3")
     match broken {
         Ok(_) => println!("unexpected success")
         Err(e) => {

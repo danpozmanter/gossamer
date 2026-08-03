@@ -259,6 +259,22 @@ impl<'a> Builder<'a> {
                                 {
                                     a = self.coerce_array_to_vec(a, elem, len, go_span);
                                 }
+                                if matches!(
+                                    self.tcx.kind_of(lt),
+                                    gossamer_types::TyKind::Vec(_)
+                                        | gossamer_types::TyKind::Adt { .. }
+                                        | gossamer_types::TyKind::Tuple(_)
+                                ) && matches!(
+                                    &arg.kind,
+                                    HirExprKind::Path { .. }
+                                        | HirExprKind::Field { .. }
+                                        | HirExprKind::TupleIndex { .. }
+                                        | HirExprKind::Index { .. }
+                                ) {
+                                    let cloned = self.fresh(lt);
+                                    self.emit_owned_clone_binding(a, cloned, go_span);
+                                    a = cloned;
+                                }
                                 // The arg escapes to the spawned goroutine:
                                 // switch any RC-managed value to atomic
                                 // reference counting before the spawn.
@@ -1078,6 +1094,8 @@ impl<'a> Builder<'a> {
         // goroutine / channel peer.
         let callee = if self.ty_is_hashmap(ty) {
             "gos_rt_map_mark_shared"
+        } else if matches!(self.tcx.kind_of(ty), gossamer_types::TyKind::Vec(_)) {
+            "gos_rt_vec_mark_shared"
         } else if self.tcx.is_rc_managed(ty) {
             "gos_rt_rc_mark_shared"
         } else {

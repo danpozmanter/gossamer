@@ -228,6 +228,46 @@ fn statement_semicolons_separate_same_line_statements() {
 }
 
 #[test]
+fn same_line_non_block_statements_require_semicolons() {
+    for source in [
+        "fn main() { for e in Vec::from([1, 2, 3]) { println e } }\n",
+        "fn main() { println 1 }\n",
+        "fn main() { let x = 1 let y = 2 }\n",
+        "fn main() { defer cleanup() println(1) }\n",
+        "fn main() { go work() println(1) }\n",
+        "println 1\n",
+    ] {
+        let mut map = SourceMap::new();
+        let file = map.add_file("missing_statement_separator.gos", source.to_string());
+        let (_, diags) = parse_source_file(source, file);
+        assert!(
+            diags.iter().any(|diag| {
+                diag.error
+                    .to_string()
+                    .contains("`;` or a newline between statements")
+            }),
+            "`{source}` unexpectedly parsed without a statement-separator diagnostic: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn block_statements_and_function_values_keep_rust_like_boundaries() {
+    for source in [
+        "fn main() { for e in Vec::from([1, 2, 3]) { println; e } }\n",
+        "fn main() { let output = println; output(1) }\n",
+        "fn main() { if true {} println(1) }\n",
+        "fn main() { while false {} println(1) }\n",
+        "fn main() { println\n1 }\n",
+    ] {
+        let mut map = SourceMap::new();
+        let file = map.add_file("statement_boundaries.gos", source.to_string());
+        let (_, diags) = parse_source_file(source, file);
+        assert!(diags.is_empty(), "`{source}` produced {diags:?}");
+    }
+}
+
+#[test]
 fn statement_semicolon_terminators_are_optional() {
     for source in [
         "use example;\n",

@@ -314,8 +314,10 @@ fn emit_rvalue(out: &mut String, rvalue: &Rvalue) {
 fn binop_mnemonic(op: BinOp) -> &'static str {
     match op {
         BinOp::Add => "iadd",
+        BinOp::WrappingAdd => "iadd.wrap",
         BinOp::Sub => "isub",
         BinOp::Mul => "imul",
+        BinOp::WrappingMul => "imul.wrap",
         BinOp::Div => "sdiv",
         BinOp::Rem => "srem",
         BinOp::BitAnd => "band",

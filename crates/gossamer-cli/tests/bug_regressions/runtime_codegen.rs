@@ -134,6 +134,7 @@ fn main() {
     assert_eq!(vm.0, expected);
 
     let jit = Command::new(gos_bin())
+        .arg("run")
         .env("GOS_JIT_ONLY", "main")
         .arg(&path)
         .stdin(Stdio::null())
@@ -171,6 +172,7 @@ fn main() {
     let path = write_source(&dir, "indexed_string_shared_borrow", src);
 
     let vm = Command::new(gos_bin())
+        .arg("run")
         .env("GOS_JIT", "0")
         .arg(&path)
         .arg("123")
@@ -324,10 +326,10 @@ fn main() {
     let xs: Vec<i64> = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].to_vec()
     let mut acc: i64 = 0
     for x in xs.iter() {
-        if x % 3 == 0 {
+        if *x % 3 == 0 {
             continue
         }
-        acc = acc + x
+        acc = acc + *x
     }
     println!("acc={}", acc)
 }
@@ -787,6 +789,7 @@ fn aggregate_alloc_loop_reclaims_deterministically() {
     // VM tier
     let run = {
         let child = Command::new(gos_bin())
+            .arg("run")
             .arg(&path)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -920,6 +923,7 @@ fn aggregate_return_chain_outlives_callee_frame() {
 
     let run = {
         let child = Command::new(gos_bin())
+            .arg("run")
             .arg(&path)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

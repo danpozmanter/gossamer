@@ -15,7 +15,7 @@
  * success response and `Err(_)` as a 500.
  *
  * Run:
- *     gos examples/http2_server.gos          # interpreted
+ *     gos run examples/http2_server.gos          # interpreted
  *     gos build examples/http2_server.gos        # compiled binary
  *     curl --http2-prior-knowledge -i http://localhost:8443/
  *     curl --http2-prior-knowledge -i -X POST -d 'hello' http://localhost:8443/echo

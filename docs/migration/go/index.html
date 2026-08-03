@@ -1579,6 +1579,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1614,6 +1616,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../design/sequence_reference_safety/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Sequence and reference safety
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
 
 
 
@@ -2096,7 +2126,7 @@ more explicit types and errors.</p>
 <tr>
 <td><code>make([]int, 0, 16)</code></td>
 <td><code>Vec::&lt;i64&gt;::with_capacity(16)</code></td>
-<td><code>[T]</code> is the slice/vector type spelling in Gossamer source.</td>
+<td><code>Vec&lt;T&gt;</code> owns growable storage; <code>&amp;[T]</code> is a borrowed slice view.</td>
 </tr>
 <tr>
 <td><code>make(map[string]int)</code></td>

@@ -96,8 +96,8 @@ Each one passes `gos check`; see `examples/README.md` for the index.
 ## Try it
 
 ```sh
-gos examples/hello_world.gos
-gos examples/function_piping.gos
-gos examples/web_server.gos &
+gos run examples/hello_world.gos
+gos run examples/function_piping.gos
+gos run examples/web_server.gos &
 curl 'http://localhost:8080/echo?name=jane'
 ```

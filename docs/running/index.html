@@ -1522,6 +1522,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1557,6 +1559,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/sequence_reference_safety/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Sequence and reference safety
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
 
 
 
@@ -1902,8 +1932,8 @@
 
 
 <h1 id="running-gossamer">Running Gossamer<a class="headerlink" href="#running-gossamer" title="Permanent link">&para;</a></h1>
-<p>Once <code>gos</code> is on your <code>PATH</code>, run a program with <code>gos FILE [ARGS...]</code>.
-<code>FILE</code> may be a <code>.gos</code> source file or a project directory containing
+<p>Once <code>gos</code> is on your <code>PATH</code>, run a program with <code>gos run FILE [ARGS...]</code>.
+<code>FILE</code> may be a source file with any filename extension or a project directory containing
 <code>project.toml</code>; <code>gos</code> with no arguments drops into the REPL.</p>
 <h2 id="cheat-sheet">Cheat-sheet<a class="headerlink" href="#cheat-sheet" title="Permanent link">&para;</a></h2>
 <table>
@@ -1923,11 +1953,11 @@
 <td>Scaffold just <code>project.toml</code> in the CWD</td>
 </tr>
 <tr>
-<td><code>gos src/main.gos</code></td>
+<td><code>gos run src/main.gos</code></td>
 <td>Register-based bytecode VM with in-process Cranelift JIT</td>
 </tr>
 <tr>
-<td><code>gos --no-jit src/main.gos</code></td>
+<td><code>gos run --no-jit src/main.gos</code></td>
 <td>Same VM, pure bytecode dispatch (JIT off)</td>
 </tr>
 <tr>
@@ -1936,7 +1966,7 @@
 </tr>
 <tr>
 <td><code>gos build src/main.gos</code></td>
-<td>Native build via LLVM AOT - lowers through MIR + LLVM (<code>llc -O0</code>), then links the user's object against the <code>gossamer-runtime</code> staticlib into an ELF/Mach-O/PE.</td>
+<td>Native build via LLVM AOT with checked arithmetic (<code>opt -O1 | llc -O0</code>), then links the user's object against the <code>gossamer-runtime</code> staticlib into an ELF/Mach-O/PE.</td>
 </tr>
 <tr>
 <td><code>gos build --release src/main.gos</code></td>
@@ -2015,13 +2045,17 @@
 <td>Show help and the relevant module or type listing</td>
 </tr>
 <tr>
-<td><code>gos repl</code> then <code>%find trim</code></td>
-<td>Search public symbol names with a regex</td>
+<td><code>gos repl</code> then <code>%info trim</code></td>
+<td>Search public catalog entries</td>
+</tr>
+<tr>
+<td><code>gos repl</code> then <code>%explain value --details</code></td>
+<td>Inspect a binding's available methods with descriptions and examples</td>
 </tr>
 </tbody>
 </table>
 <h2 id="entry-file">Entry file<a class="headerlink" href="#entry-file" title="Permanent link">&para;</a></h2>
-<p><code>gos file.gos [ARGS...]</code> and <code>gos build file.gos</code> accept a file with no
+<p><code>gos run file.gos [ARGS...]</code> and <code>gos build file.gos</code> accept a file with no
 <code>fn main</code>: bare statements at the top of the entry file become the
 body of an implicit <code>fn main()</code>. So a one-line <code>println!("Hello
 World")</code> file runs as-is. See

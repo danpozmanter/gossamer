@@ -246,9 +246,11 @@ impl<'a> Lowerer<'a> {
         let operand_ty = self.operand_ty(lhs);
         let mut kind = numeric_kind(self.tcx, operand_ty);
         let mut operand_llvm = render_ty(self.tcx, operand_ty);
-        if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul)
-            && let NumericKind::Int(dest_int_ty) =
-                numeric_kind(self.tcx, self.body.local_ty(dest_local))
+        if matches!(
+            op,
+            BinOp::Add | BinOp::WrappingAdd | BinOp::Sub | BinOp::Mul | BinOp::WrappingMul
+        ) && let NumericKind::Int(dest_int_ty) =
+            numeric_kind(self.tcx, self.body.local_ty(dest_local))
         {
             kind = NumericKind::Int(dest_int_ty);
         }
@@ -350,8 +352,10 @@ impl<'a> Lowerer<'a> {
             && matches!(
                 op,
                 BinOp::Add
+                    | BinOp::WrappingAdd
                     | BinOp::Sub
                     | BinOp::Mul
+                    | BinOp::WrappingMul
                     | BinOp::Div
                     | BinOp::Rem
                     | BinOp::BitAnd
@@ -582,9 +586,13 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "{continue_label}:").unwrap();
         }
         let instr = match (op, kind) {
-            (BinOp::Add, NumericKind::Int(_)) => format!("add {operand_llvm}"),
+            (BinOp::Add | BinOp::WrappingAdd, NumericKind::Int(_)) => {
+                format!("add {operand_llvm}")
+            }
             (BinOp::Sub, NumericKind::Int(_)) => format!("sub {operand_llvm}"),
-            (BinOp::Mul, NumericKind::Int(_)) => format!("mul {operand_llvm}"),
+            (BinOp::Mul | BinOp::WrappingMul, NumericKind::Int(_)) => {
+                format!("mul {operand_llvm}")
+            }
             (BinOp::Div, NumericKind::Int(i)) => {
                 if op_signed(i) {
                     format!("sdiv {operand_llvm}")

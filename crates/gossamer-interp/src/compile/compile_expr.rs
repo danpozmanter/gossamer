@@ -403,6 +403,14 @@ impl<'tcx> FnBuilder<'tcx> {
                 // `try_into`, which has no standalone global binding.
                 if name.name == "into"
                     && args.is_empty()
+                    && matches!(self.tcx.kind(expr.ty), Some(TyKind::Vec(_)))
+                    && matches!(self.tcx.kind(receiver.ty), Some(TyKind::Array { .. }))
+                {
+                    let source = self.compile_expr_ex(receiver)?;
+                    return Ok(self.bind_to_fresh(source));
+                }
+                if name.name == "into"
+                    && args.is_empty()
                     && let Some(bname) = self.adt_type_name(expr.ty)
                 {
                     return self.compile_struct_unary(&bname, "from", receiver);
@@ -611,6 +619,19 @@ impl<'tcx> FnBuilder<'tcx> {
             } => {
                 // `x.into()` converts to the inferred target `B` (the call's
                 // result type) via `B::from(x)`.
+                if name.name == "into"
+                    && args.is_empty()
+                    && matches!(self.tcx.kind(expr.ty), Some(TyKind::Vec(_)))
+                    && matches!(self.tcx.kind(receiver.ty), Some(TyKind::Array { .. }))
+                {
+                    let source = self.compile_expr(receiver)?;
+                    let destination = self.alloc_reg();
+                    self.emit(Op::Move {
+                        dst: destination,
+                        src: source,
+                    });
+                    return Ok(destination);
+                }
                 if name.name == "into"
                     && args.is_empty()
                     && let Some(bname) = self.adt_type_name(expr.ty)
@@ -2331,6 +2352,40 @@ impl<'tcx> FnBuilder<'tcx> {
                 self.emit(Op::VecRemove {
                     receiver: target_reg,
                     index,
+                });
+                Ok(true)
+            }
+            ("swap", 2) if self.flat_int_locals.contains(&target_reg) => {
+                let i = self.compile_expr_ex(&args[0])?;
+                let i_i = self.as_i64(i);
+                let j = self.compile_expr_ex(&args[1])?;
+                let j_i = self.as_i64(j);
+                self.emit(Op::IntArraySwap {
+                    base: target_reg,
+                    i_i,
+                    j_i,
+                });
+                Ok(true)
+            }
+            ("swap", 2) if self.flat_float_locals.contains(&target_reg) => {
+                let i = self.compile_expr_ex(&args[0])?;
+                let i_i = self.as_i64(i);
+                let j = self.compile_expr_ex(&args[1])?;
+                let j_i = self.as_i64(j);
+                self.emit(Op::FloatVecSwap {
+                    base: target_reg,
+                    i_i,
+                    j_i,
+                });
+                Ok(true)
+            }
+            ("swap", 2) => {
+                let a = self.compile_expr(&args[0])?;
+                let b = self.compile_expr(&args[1])?;
+                self.emit(Op::VecSwapDiscard {
+                    receiver: target_reg,
+                    a,
+                    b,
                 });
                 Ok(true)
             }

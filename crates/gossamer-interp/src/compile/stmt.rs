@@ -49,27 +49,25 @@ impl<'tcx> FnBuilder<'tcx> {
         }
     }
 
-    /// Tags a freshly-bound register as holding a Vec when its
-    /// initializer is a Vec constructor (`Vec::new` / `Vec::with_capacity`)
-    /// or an array literal whose static type stayed an inference var.
-    /// A statement-position `v.push(x)` on such a local then lowers to the
-    /// in-place `Op::VecPush` even though the receiver's HIR type is
-    /// unresolved. Concrete `Vec` / `Slice` / `Array` types and flat
-    /// typed-storage locals already carry their own signal.
+    /// Tags a freshly-bound register as holding a Vec. Prefer the static
+    /// initializer type so explicit conversions such as `array.into()` and
+    /// `Vec::from(array)` retain Vec mutability. Constructor recognition is a
+    /// fallback for unresolved empty Vecs. Array literals are deliberately not
+    /// treated as Vecs because `[T; N]` and `Vec<T>` have distinct identities.
     fn record_vec_init(&mut self, init: &HirExpr, reg: Reg) {
-        let is_vec_ctor = match &init.kind {
-            HirExprKind::Call { callee, .. } => match &callee.kind {
-                HirExprKind::Path { segments, .. } => {
-                    let n = segments.len();
-                    n >= 2
-                        && segments[n - 2].name.as_str() == "Vec"
-                        && matches!(segments[n - 1].name.as_str(), "new" | "with_capacity")
-                }
+        let is_vec_ctor = matches!(self.tcx.kind(init.ty), Some(TyKind::Vec(_)))
+            || match &init.kind {
+                HirExprKind::Call { callee, .. } => match &callee.kind {
+                    HirExprKind::Path { segments, .. } => {
+                        let n = segments.len();
+                        n >= 2
+                            && segments[n - 2].name.as_str() == "Vec"
+                            && matches!(segments[n - 1].name.as_str(), "new" | "with_capacity")
+                    }
+                    _ => false,
+                },
                 _ => false,
-            },
-            HirExprKind::Array(_) => true,
-            _ => false,
-        };
+            };
         if is_vec_ctor {
             self.collection_locals.insert(reg);
         }
@@ -101,6 +99,12 @@ impl<'tcx> FnBuilder<'tcx> {
         self.emit_coverage_hit(stmt.span);
         match &stmt.kind {
             HirStmtKind::Let { pattern, init, .. } => {
+                if matches!(pattern.kind, HirPatKind::Wildcard)
+                    && let Some(init) = init
+                {
+                    self.compile_expr_discarded(init)?;
+                    return Ok(false);
+                }
                 if let HirPatKind::Binding { name, .. } = &pattern.kind {
                     // A direct local reference shares the source
                     // register. Disable flat-array specialisation for that
@@ -162,6 +166,15 @@ impl<'tcx> FnBuilder<'tcx> {
                         };
                         self.record_flag_init(init, typed.reg);
                         self.record_vec_init(init, typed.reg);
+                        if matches!(
+                            self.tcx.kind(self.unwrap_ref(pattern.ty)),
+                            Some(TyKind::Iterator(_))
+                        ) || matches!(
+                            self.tcx.kind(self.unwrap_ref(init.ty)),
+                            Some(TyKind::Iterator(_))
+                        ) {
+                            self.lazy_iterator_locals.insert(typed.reg);
+                        }
                         self.record_uint_display_init(init, typed.reg);
                         self.bind_local(&name.name, typed);
                     } else {

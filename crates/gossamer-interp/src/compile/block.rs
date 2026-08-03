@@ -163,6 +163,36 @@ mod elide_unit_load_tests {
     }
 
     #[test]
+    fn discarded_flat_vec_swap_uses_allocation_free_opcode() {
+        let source = r"
+fn flip(mut values: Vec<i64>, a: i64, b: i64) -> i64 {
+    values.swap(a, b)
+    let _ = values.swap(b, a)
+    values[0]
+}
+";
+        let (chunk, _) = compile_named(source, "flip");
+        assert_eq!(
+            chunk
+                .instrs
+                .iter()
+                .filter(|op| matches!(op, Op::IntArraySwap { .. }))
+                .count(),
+            2,
+            "discarded scalar Vec swap should not allocate a Result: {:?}",
+            chunk.instrs
+        );
+        assert!(
+            !chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::VecSwap { .. })),
+            "discarded swap used value-producing opcode: {:?}",
+            chunk.instrs
+        );
+    }
+
+    #[test]
     fn assignment_tail_in_loop_body_emits_no_dead_unit() {
         let source = r"
 fn count(n: i64) -> i64 {

@@ -2745,10 +2745,7 @@ impl<'a> Builder<'a> {
                 let vec = self.tcx.intern(gossamer_types::TyKind::Vec(i));
                 ("gos_rt_bheap_pop_i64", vec)
             }
-            "heap::peek" => (
-                "gos_rt_bheap_peek_i64",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
+            "heap::peek" => ("gos_rt_bheap_peek_i64", self.option_i64_adt_ty()),
             "heap::len" => (
                 "gos_rt_bheap_len",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
@@ -2773,14 +2770,10 @@ impl<'a> Builder<'a> {
                 let vec = self.tcx.intern(gossamer_types::TyKind::Vec(i));
                 ("gos_rt_vec_push_front_i64", vec)
             }
-            "queue::peek" | "stack::peek_front" | "deque::peek_front" => (
-                "gos_rt_vec_first_i64",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
-            "stack::peek" | "deque::peek_back" => (
-                "gos_rt_vec_last_i64",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
+            "queue::peek" | "stack::peek_front" | "deque::peek_front" => {
+                ("gos_rt_vec_first", self.option_i64_adt_ty())
+            }
+            "stack::peek" | "deque::peek_back" => ("gos_rt_vec_last", self.option_i64_adt_ty()),
             "queue::len" | "stack::len" | "deque::len" => (
                 "gos_rt_vec_len",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
@@ -2796,18 +2789,9 @@ impl<'a> Builder<'a> {
                 ("gos_rt_ovec_remove_at_i64", vec)
             }
             "ordered_vec::contains" => ("gos_rt_ovec_contains_i64", self.tcx.bool_ty()),
-            "ordered_vec::index_of" => (
-                "gos_rt_ovec_index_of_i64",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
-            "ordered_vec::peek_min" => (
-                "gos_rt_vec_first_i64",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
-            "ordered_vec::peek_max" => (
-                "gos_rt_vec_last_i64",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
+            "ordered_vec::index_of" => ("gos_rt_vec_index_of_i64", self.option_i64_adt_ty()),
+            "ordered_vec::peek_min" => ("gos_rt_vec_first", self.option_i64_adt_ty()),
+            "ordered_vec::peek_max" => ("gos_rt_vec_last", self.option_i64_adt_ty()),
             "ordered_vec::len" => (
                 "gos_rt_vec_len",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
@@ -2847,10 +2831,7 @@ impl<'a> Builder<'a> {
                 let vec = self.tcx.intern(gossamer_types::TyKind::Vec(i));
                 ("gos_rt_omap_remove_i64", vec)
             }
-            "ordered_map::get" => (
-                "gos_rt_omap_get_i64",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
+            "ordered_map::get" => ("gos_rt_omap_get_i64", self.option_i64_adt_ty()),
             "ordered_map::contains_key" => ("gos_rt_omap_contains_key_i64", self.tcx.bool_ty()),
             "ordered_map::len" => (
                 "gos_rt_omap_len",

@@ -80,7 +80,7 @@ pub(crate) fn with_vm_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 's
 /// Runs `f` directly on the calling (process main) thread, installing the
 /// native fault handler and arming the recursion guard for this thread's
 /// actual stack size rather than the large [`VM_STACK_BYTES`] reserve a
-/// spawned thread gets. Used by `gos --main-thread` so native
+/// spawned thread gets. Used by `gos run --main-thread` so native
 /// libraries that mandate the process main thread (GLFW / Cocoa / Metal
 /// on macOS, called through `[rust-bindings]`) can create windows and
 /// pump their event loop. The trade-off is the OS default main-thread

@@ -390,9 +390,9 @@ through `.as_bytes()` which returns an owned `Vec<u8>`.
 | `HashSet<T>` | Sets. |
 | `Sender<T>`, `Receiver<T>` | Channel endpoints. Always come as a pair from `channel<T>()`. |
 
-Runtime-managed collections retain Gossamer's shared-storage assignment
-semantics. Arrays are fixed-size values, slices are borrowed views, and Vec is
-the only sequence type that owns growable storage.
+Arrays and Vec use value semantics. A writable Vec copy has independent
+storage, including nested Vec elements. Slices are non-owning lexical views,
+and Vec is the only sequence type that owns growable storage.
 
 #### Collection literals
 
@@ -422,31 +422,43 @@ exposes length- or capacity-changing methods. A mutable slice can modify
 existing elements and use non-resizing mutable methods such as `swap`, `sort`,
 `sort_by`, `sort_by_key`, `reverse`, and `fill`.
 
+`.slice(start, end)` is a checked copying operation that returns
+`Result<Vec<T>, errors::Error>`. It is not a borrowed sub-slice. Gossamer does
+not currently expose an escaping sub-slice value. Sequence iteration yields
+managed element values rather than element references; the iterator retains
+its source state and detects structural mutation.
+
 ### 3.4 Pointers and references
 
-- `T` - a value. For `Copy` types (primitive numerics, `bool`, `char`,
-  small POD structs) pass/return is a copy. For heap-managed types,
-  `T` still names a managed reference - assignment and parameter
-  passing create a second reference to the same heap cell. There is no
-  ownership transfer and no `move` keyword: the original binding
-  remains accessible.
-- `&T` - a **shared managed reference** to a value of type `T`. Not a
-  raw pointer. Cannot be null. Created by `&expr`. Auto-dereferenced
-  for `.` access. A reference aliases its source place: it does not copy
-  the source, including for `Copy` values and fixed arrays. Liveness is
-  guaranteed by the runtime. A place reached through `&T` cannot be
-  assigned, even when the reference binding itself is declared `mut`
-  (§7.5).
-- `&mut T` - a **mutable managed reference**, used to signal write
-  intent through a reference. Created by taking `&mut` of a writable
-  place rooted at a `mut` binding or reached through another `&mut`.
-  Writes through it update that source place. A lightweight lexical
-  exclusivity check rejects a second named `&mut` to the same root, a
-  temporary borrow overlapping an active named borrow, and repeated `&mut`
-  roots in one call. More complex alias shapes are not tracked, and a
-  `&mut T` struct field is accepted. Does not carry
-  write-through across a `go` or channel boundary (see the
-  parameter-semantics paragraph below).
+- `T` is a value. Primitive values copy directly. Owned arrays and Vec values
+  remain usable after assignment or a by-value call. Each writable Vec copy
+  has independent storage, including recursively nested Vec elements. There
+  is no source-level ownership transfer or `move` keyword.
+- `&T` is a shared, non-owning lexical view. It cannot be null. It permits
+  reads but not writes to the source place.
+- `&mut T` is an exclusive, non-owning lexical view. It requires a writable
+  source place and writes through to that place.
+
+References are deliberately restricted because the runtime does not attach an
+owning backing-allocation handle to every reference representation. A named
+reference may borrow only a stable named place. A direct call may borrow a
+temporary for the duration of that call. A reference cannot be returned,
+nested in an owned local, field, container, channel, or closure, or sent to a
+goroutine. The only reference return exception is a shared `&str` expression
+proved to consist entirely of static string literals. These rules are checked
+with GT0052.
+
+Shared and mutable named references remain active until their lexical scope
+ends. Any active reference prevents mutation through the source binding, and
+an active mutable reference also prevents reads through the source binding.
+Taking another mutable reference conflicts with either kind of active view.
+GT0053 reports these conflicts. This is intentionally lexical rather than
+non-lexical: put a view in a smaller block when source access must resume.
+
+A mutable reference binding may be rebound directly to another stable named
+place; the lexical record moves to the new root. Rebinding through another
+reference or from a temporary is rejected. Reference patterns are limited to
+scalar referents. They cannot copy an aggregate out of a view (GT0054).
 
 Raw pointers (`*const T`, `*mut T`) are **not** part of the language
 today: the type spellings do not parse (`GP0001`), and there is no safe
@@ -455,11 +467,10 @@ or unsafe way to construct one in Gossamer source. FFI goes through the
 parses - see §8.6 - but grants no extra powers, because there is nothing
 unsafe to do.)
 
-`&T` and `&mut T` in Gossamer are not borrows in the Rust sense:
-automatic memory management already guarantees liveness. They are
-statically checked read/write-intent markers with scope-local exclusivity,
-but there is no lifetime or non-lexical borrow analysis (§7.5). No lifetime
-parameters exist at any level of the language.
+`&T` and `&mut T` do not have Rust lifetime parameters or non-lexical lifetime
+inference. Their safety comes from the restrictions above, not from automatic
+reference counting. Reference counting a container is insufficient when a
+view points into storage that the container can replace.
 
 **`&mut` parameter semantics.** A `&mut T` parameter writes through to
 the caller's storage on every tier, including scalar values, strings,
@@ -1581,35 +1592,25 @@ codegen instruments.
 
 ### 7.5 References and aliasing (write-through references, lexical checks)
 
-Gossamer has no ownership transfer, no `move` keyword, and no lifetime
-annotations anywhere. All bindings stay live and accessible for the
-duration of their lexical scope. Assignment, parameter passing, and
-closure capture all behave like Go: a managed reference for
-heap-managed types, a copy for `Copy` types. The cognitive load of "who
-owns this value now" does not exist.
+Gossamer has no ownership transfer, `move` keyword, lifetime annotations, or
+non-lexical lifetime inference. References therefore use a smaller,
+enforceable model: they are non-owning lexical views and cannot escape the
+call or block that proves their source remains live.
 
-**There is no lifetime or non-lexical borrow checker.** The type checker does
-enforce reference capabilities. Taking `&mut` requires a writable place,
-assignment through `&T` is rejected, and assignment through `&mut T` writes
-through to its source place independently of whether the reference binding
-itself is `mut`. Every reference layer crossed by implicit field, index, or
-method auto-dereferencing must permit mutation, so an outer `&mut` cannot make
-an inner `&T` writable.
+The checker enforces the full named-root rule for its supported reference
+shape. Any number of shared views may coexist. A mutable view is exclusive.
+While a shared view is active the source cannot be mutated. While a mutable
+view is active the source cannot be read, mutated, or borrowed again. The
+view itself remains the permitted access path. A reference ends only at its
+lexical scope boundary.
 
-The checker also has conservative exclusivity rules for simple mutable
-references. A second named `&mut` to the same root is rejected while the first
-reference binding remains in scope. So is a temporary `&mut` that overlaps an
-active named reference, or two `&mut` arguments rooted at the same binding in
-one call. These checks do not infer lifetimes, end a borrow at its last use, or
-track every projection, shared reference, closure capture, or cross-function
-alias.
-
-Liveness is enforced by automatic memory
-management, at runtime, not by a static check. No reference dangles
-because the runtime keeps every reachable value alive. Mutating a
-collection while iterating it, self-aliasing, and the other patterns a
-borrow checker would reject are the programmer's responsibility today;
-they are not diagnosed.
+References cannot be stored in aggregates or containers, returned from user
+functions, captured by closures, sent through channels, or passed to `go`.
+Inferred container and channel element types are checked after inference so an
+omitted annotation cannot bypass the rule. A direct call-scoped borrow remains
+valid, including array-to-slice and Vec-to-slice coercion. Static string
+literal returns are the sole exception because their backing bytes have
+process lifetime.
 
 #### 7.5.1 What this means in practice
 
@@ -1620,13 +1621,11 @@ they are not diagnosed.
 - Calls never infer mutable access from a parameter type. Pass a writable
   place as `&mut place`. A value already typed as `&mut T` can be forwarded
   directly to another `&mut T` parameter.
-- `let mut reference = &value` permits rebinding `reference`; it does not
-  make the shared referent writable. Its type remains `&T` after every
-  rebind. Conversely, `let reference = &mut value` permits writing through
-  `reference` without making the reference binding itself mutable.
-- In `let mut shared = &value; let outer = &mut shared`, `outer` may rebind
-  the `shared` slot with `*outer = &other`, but it may not mutate `value` via
-  `outer.field` or `outer[index]`. Those projections cross the inner `&T`.
+- `let mut reference = &value` permits a direct `reference = &other` rebind;
+  it does not make either shared referent writable. Rebinding the reference
+  through an alias is rejected.
+- `let reference = &mut value` permits writing through `reference` without
+  making the reference binding itself mutable.
 - References alias their source place on every tier. For example,
   `let mut xs = [1, 2]; let r = &mut xs; r[0] = 0` leaves both `xs` and
   `r` observing `[0, 2]`; it never creates a copy-on-write side value.
@@ -1636,31 +1635,26 @@ they are not diagnosed.
 - `&mut Vec<T>` / `&mut [T]` parameters do carry write-through to the
   caller (§3.4), so the marker is load-bearing for that data flow. The
   scope-local exclusivity rules apply to these references too.
-- Returning a reference from a function is permitted (the runtime keeps
-  the pointee alive); the caller receives an unconstrained `&T` /
-  `&mut T`.
-- `go` and `Sender::send` pass values the same way ordinary assignment
-  does - managed reference for heap types, copy for `Copy` types - and
-  the caller retains access to its bindings (§8.1, §8.2). Cross-
-  goroutine data races on shared mutable state are possible; prevent
-  them by communicating through channels.
+- Returning or storing a reference is rejected. Use an owned return value or
+  keep the view at a direct call boundary.
+- `go` and `Sender::send` reject reference payloads. Owned Vec values are
+  cloned before publication so sender-side growth cannot invalidate receiver
+  storage.
 
 #### 7.5.2 What this deliberately omits
 
 This design deliberately does *not* include:
 
 - A lifetime borrow checker, region inference, or non-lexical borrows.
-- Complete alias tracking beyond the conservative named-`&mut` lexical check.
+- Non-lexical last-use analysis. Views deliberately last to the closing brace.
 - Explicit lifetime annotations (`'a`, `'static`, `for<'a>`). Lifetime
   syntax in a generic parameter list is parsed and then ignored.
-- `Send`/`Sync` marker traits. The language accepts Go-style sharing
-  discipline instead: communicate via channels; races on raw shared
-  state are the programmer's responsibility, not blocked at compile
-  time.
+- `Send`/`Sync` marker traits. References never cross concurrency boundaries;
+  runtime synchronization handles have their own explicit contracts.
 
-The scope-local check is intentionally not a complete Rust borrow checker. In
-particular, it does not enforce the full "many shared references or one mutable
-reference" rule, infer lifetimes, or track arbitrary aliases and projections.
+The scope-local check is not a Rust borrow checker. It enforces a smaller
+lexical language shape and rejects escape forms that would require lifetime or
+arbitrary alias reasoning.
 
 ---
 
@@ -1675,20 +1669,24 @@ clamped to a 32 KiB minimum). The operating system commits pages on demand.
 A byte-budget guard reports `GX0008` before the hardware guard page; the stack
 does not grow or shrink.
 
-**Argument discipline.** `go` captures values by managed reference the
-same way an ordinary closure does. `Copy` types (primitive numerics,
-`bool`, `char`, small POD structs) are captured by value. After
-`go f(x)` returns, the caller may continue to use `x` - Gossamer has no
-ownership transfer, no `move` keyword, and no "value becomes invalid
-after this point" semantics. This matches Go.
+**Argument discipline.** After `go f(x)` returns, the caller may continue to
+use `x`; Gossamer has no source-level ownership transfer. Primitive values
+copy directly. A named Vec argument is cloned before the goroutine is
+published, including nested Vec storage, so later growth occurs on independent
+buffers. Every managed child reachable from that Vec is marked shared before
+publication. Runtime synchronization handles keep their documented
+shared-handle semantics. GT0055 rejects every inline struct, tuple, or
+fixed-array argument at a direct `go` call because the compiled spawn ABI
+cannot yet copy arbitrary inline layouts. Publish supported fields separately
+and reconstruct the aggregate in the receiving goroutine.
 
 A `go` call may not capture or pass a `&T` or `&mut T`. The tracked
 `&`/`&mut` access markers are lexical write-intent markers (§7.5) and cannot be
 carried across goroutine boundaries. Pass the underlying value (managed
 reference, or `Copy`) instead.
 
-Cross-goroutine data races on shared mutable state are possible - the
-same trade-off Go makes. Detect them at runtime with `gos test --race`
+Cross-goroutine data races on other explicitly shared mutable state are
+possible. Detect them at runtime with `gos test --race`
 (§7.4) and prevent them by communicating through channels rather than
 sharing state.
 
@@ -1728,12 +1726,13 @@ Channel operations (non-`select`):
 
 Channels are many-to-many. Close only once.
 
-`Sender::send` passes a managed reference for heap-managed types and a
-copy for `Copy` types - the same rules as ordinary assignment or
-function call. No ownership transfer is implied; the sender retains
-access to whatever bindings it named. Sending a `&T` or `&mut T` on a
-channel is a compile error, for the same reason `go` cannot capture
-references: lexical write-intent markers cannot cross a goroutine boundary.
+`Sender::send` copies primitive values and clones a named Vec value, including
+nested Vec storage, and marks all managed children shared. Scalar-only inline
+aggregates are copied. GT0055 rejects channel values whose inline aggregate
+contains nested Vec storage until that ABI has a complete child-ownership
+descriptor. No ownership transfer is implied; the sender retains access to its
+binding. Sending a `&T` or `&mut T` on a channel is a compile error because a
+lexical view cannot cross a goroutine boundary.
 
 ### 8.3 Select
 
@@ -2109,7 +2108,7 @@ must be installed to compile natively on the Pi.
 
 | Mode | Command | Backend | Pipeline | Speed | Output quality |
 |---|---|---|---|---|---|
-| Interpret | `gos file.gos` | Bytecode VM | Direct dispatch; in-process Cranelift JIT tiers up hot bodies | Fastest cold start | No native codegen |
+| Interpret | `gos run file.gos` | Bytecode VM | Direct dispatch; in-process Cranelift JIT tiers up hot bodies | Fastest cold start | No native codegen |
 | Debug build | `gos build` | LLVM | checked arithmetic, `opt -O1`, then `llc -O0` | Sub-second for small programs | Optimized enough for development while preserving debug overflow traps |
 | Release build | `gos build --release` | LLVM | `opt -O3 \| llc -O3 -mcpu=native -mattr=+prefer-256-bit` | Seconds for thousands of LoC | Vectorised, inlined |
 

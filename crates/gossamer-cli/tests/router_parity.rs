@@ -149,7 +149,7 @@ fn router_interp_matches_compiled() {
 
     // Interp run.
     let mut interp = Command::new(gos_bin());
-    interp.arg(&src);
+    interp.arg("run").arg(&src);
     run_and_check(&mut interp, port);
 
     // Compiled build + run.
@@ -177,7 +177,7 @@ fn router_bare_fn_interp_matches_compiled() {
 
     // Interp run with bare-function handlers (no struct + impl).
     let mut interp = Command::new(gos_bin());
-    interp.arg(&src);
+    interp.arg("run").arg(&src);
     run_and_check(&mut interp, port);
 
     // Compiled build + run.

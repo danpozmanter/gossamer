@@ -1583,6 +1583,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1618,6 +1620,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/sequence_reference_safety/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Sequence and reference safety
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
 
 
 
@@ -2080,8 +2110,10 @@ automatic cycle reclamation that ARC leaves to the programmer.</p>
   <code>isize</code>/<code>usize</code>, <code>f32</code>/<code>f64</code>.</li>
 <li><strong>Reference-semantic types</strong> share their backing storage when
   copied; the runtime reclaims the backing when the last reference
-  dies. This includes <code>String</code>, <code>Vec&lt;T&gt;</code>, <code>[T]</code>, <code>struct</code>, <code>enum</code>,
-  closures.</li>
+  dies. This includes <code>String</code>, <code>Vec&lt;T&gt;</code>, structs, enums, and closures.
+  <code>[T; N]</code> is an owned fixed array. <code>[T]</code> is unsized and appears through a
+  borrowed <code>&amp;[T]</code> or <code>&amp;mut [T]</code> view, so a bare slice is not an owned heap
+  collection.</li>
 </ul>
 <h2 id="and-mut"><code>&amp;</code> and <code>&amp;mut</code><a class="headerlink" href="#and-mut" title="Permanent link">&para;</a></h2>
 <p><code>&amp;x</code> means "read <code>x</code> without taking ownership". <code>&amp;mut x</code> means

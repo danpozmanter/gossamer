@@ -8,6 +8,16 @@
 
 use std::process::ExitStatus;
 
+/// Returns the deterministic executable path produced by `gos build
+/// --out-dir`, including the host platform's executable suffix.
+pub fn native_executable(out_dir: &std::path::Path, stem: &str) -> std::path::PathBuf {
+    out_dir.join(native_executable_name(stem, std::env::consts::EXE_SUFFIX))
+}
+
+fn native_executable_name(stem: &str, suffix: &str) -> String {
+    format!("{stem}{suffix}")
+}
+
 /// Outcome of running a built native binary, with the exit status
 /// rendered into a human-readable form that names the crash cause.
 pub struct RunExit {
@@ -153,7 +163,13 @@ impl Drop for ServerPortLock {
 
 #[cfg(test)]
 mod tests {
-    use super::{ntstatus_name, signal_name};
+    use super::{native_executable_name, ntstatus_name, signal_name};
+
+    #[test]
+    fn native_executable_name_uses_the_platform_suffix() {
+        assert_eq!(native_executable_name("program", ""), "program");
+        assert_eq!(native_executable_name("program", ".exe"), "program.exe");
+    }
 
     #[test]
     fn ntstatus_names_access_violation() {

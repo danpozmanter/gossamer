@@ -105,6 +105,7 @@ impl<'a> Lowerer<'a> {
                         .and_then(|tys| tys.get(*i as usize).copied())
                         .unwrap_or(ty),
                     Some(TyKind::Tuple(elems)) => elems.get(*i as usize).copied().unwrap_or(ty),
+                    Some(TyKind::Array { elem, .. }) => *elem,
                     _ => ty,
                 },
                 Projection::Index(_) => match self.tcx.kind(ty) {
@@ -183,6 +184,7 @@ impl<'a> Lowerer<'a> {
                         .and_then(|tys| tys.get(*idx as usize).copied())
                         .unwrap_or(ty),
                     Some(TyKind::Tuple(elems)) => elems.get(*idx as usize).copied().unwrap_or(ty),
+                    Some(TyKind::Array { elem, .. }) => *elem,
                     _ => ty,
                 },
                 Projection::Index(_) => match self.tcx.kind(ty) {
@@ -1079,6 +1081,7 @@ impl<'a> Lowerer<'a> {
                         .and_then(|tys| tys.get(*i as usize).copied())
                         .unwrap_or(ty),
                     Some(TyKind::Tuple(elems)) => elems.get(*i as usize).copied().unwrap_or(ty),
+                    Some(TyKind::Array { elem, .. }) => *elem,
                     _ => ty,
                 },
                 Projection::Index(_) => match self.tcx.kind(ty) {

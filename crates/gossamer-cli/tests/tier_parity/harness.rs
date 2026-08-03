@@ -1282,14 +1282,14 @@ fn tier_report_shows_exit_ntstatus_and_streams() {
         exit_text: Some("exit 0".to_string()),
         timed_out: false,
         exe: PathBuf::from("/tmp/gos"),
-        cmdline: "/tmp/gos examples/hello.gos".to_string(),
+        cmdline: "/tmp/gos run examples/hello.gos".to_string(),
         workdir: PathBuf::from("/home/daniel/dev/gossamer"),
     };
     let report = tier_report("vm", &run);
     assert!(report.starts_with("vm:\n  exit=0 (exit 0)"));
     assert!(report.contains("timed_out=no"));
     assert!(report.contains("exe=/tmp/gos"));
-    assert!(report.contains("cmdline=/tmp/gos examples/hello.gos"));
+    assert!(report.contains("cmdline=/tmp/gos run examples/hello.gos"));
     assert!(report.contains("workdir=/home/daniel/dev/gossamer"));
     assert!(report.contains("stdout=\"ok\\n\""));
     assert!(report.contains("stderr=\"\""));
@@ -1322,8 +1322,9 @@ fn tier_report_handles_crash_and_timeout() {
 fn run_vm(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
     let gos = gos_bin();
     let mut cmd = Command::new(&gos);
-    cmd.arg(src);
+    cmd.arg("run").arg(src);
     let mut parts: Vec<String> = vec![gos.display().to_string()];
+    parts.push("run".to_string());
     parts.push(src.display().to_string());
     if !args.is_empty() {
         cmd.args(args);
@@ -1352,13 +1353,15 @@ fn run_vm(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
 fn run_jit(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
     let gos = gos_bin();
     let mut cmd = Command::new(&gos);
-    cmd.arg(src)
+    cmd.arg("run")
+        .arg(src)
         .env("GOSSAMER_JIT_THRESHOLD", "1")
         .env_remove("GOS_JIT");
     let mut parts: Vec<String> = vec![
         "GOSSAMER_JIT_THRESHOLD=1".to_string(),
         gos.display().to_string(),
     ];
+    parts.push("run".to_string());
     parts.push(src.display().to_string());
     if !args.is_empty() {
         cmd.args(args);

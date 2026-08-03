@@ -50,19 +50,44 @@ pub fn typecheck_source_file_with_edition(
     tcx: &mut TyCtxt,
     edition: Edition,
 ) -> (TypeTable, Vec<TypeDiagnostic>) {
-    let mut checker = TypeChecker::new(tcx, resolutions, edition);
-    checker.collect_signatures(&source.items);
-    for item in &source.items {
-        checker.check_item(item);
+    let checker = TypeChecker::new(tcx, resolutions, edition);
+    checker.run(source)
+}
+
+/// Typechecks generated REPL inspection programs.
+///
+/// Normal user code rejects reads through an owner while a named `&mut`
+/// borrower is live. `%bindings` and `%explain` synthesize tiny programs that
+/// read a binding solely to display its current value and type, so this entry
+/// point suppresses that read diagnostic without changing assignment or borrow
+/// creation checks.
+#[must_use]
+pub fn typecheck_source_file_for_repl_inspection(
+    source: &SourceFile,
+    resolutions: &Resolutions,
+    tcx: &mut TyCtxt,
+) -> (TypeTable, Vec<TypeDiagnostic>) {
+    let mut checker = TypeChecker::new(tcx, resolutions, Edition::E2026);
+    checker.suppress_borrow_read_conflict = true;
+    checker.run(source)
+}
+
+impl TypeChecker<'_> {
+    fn run(mut self, source: &SourceFile) -> (TypeTable, Vec<TypeDiagnostic>) {
+        self.collect_signatures(&source.items);
+        for item in &source.items {
+            self.check_item(item);
+        }
+        self.infer.default_unresolved_int_vars(self.tcx);
+        self.infer.default_unresolved_float_vars(self.tcx);
+        self.check_deferred_reference_storage();
+        self.check_deferred_type_mismatches();
+        self.check_deferred_literal_type_mismatches();
+        self.check_deferred_mutating_receivers();
+        self.check_deferred_structural();
+        self.resolve_table();
+        (self.table, self.diagnostics)
     }
-    checker.infer.default_unresolved_int_vars(checker.tcx);
-    checker.infer.default_unresolved_float_vars(checker.tcx);
-    checker.check_deferred_type_mismatches();
-    checker.check_deferred_literal_type_mismatches();
-    checker.check_deferred_mutating_receivers();
-    checker.check_deferred_structural();
-    checker.resolve_table();
-    (checker.table, checker.diagnostics)
 }
 
 /// Runs type inference with the lazy iterator surface enabled when
@@ -221,6 +246,19 @@ struct TypeChecker<'a> {
     /// is deliberately conservative: it prevents a second named `&mut`
     /// binding while the first remains in scope.
     mutable_borrows: Vec<HashMap<Box<str>, Box<str>>>,
+    /// Lexically active named shared borrows, keyed by referent root.
+    shared_borrows: Vec<HashMap<Box<str>, Box<str>>>,
+    /// Provenance root for each local reference binding. This lets a cursor
+    /// advance through a reference yielded by pattern matching while still
+    /// rejecting a rebind to storage declared in a shorter-lived scope.
+    reference_origins: Vec<HashMap<Box<str>, Box<str>>>,
+    /// Suppresses ordinary path-read checks while validating the place of a
+    /// borrow or assignment. Those operations issue their more precise
+    /// conflict diagnostic after the place has been typed.
+    suppress_borrow_read_conflict: bool,
+    /// Owned local types that may only reveal a nested reference after
+    /// inference has unified a channel, closure, tuple, or container generic.
+    deferred_reference_storage: Vec<(Ty, Span, &'static str)>,
     /// Ordered field name + type for every named struct, keyed by
     /// the struct's `DefId`. Built during `collect_signatures` so
     /// field-access and struct-literal expressions can resolve leaf
@@ -464,6 +502,10 @@ impl<'a> TypeChecker<'a> {
             recursion_limit_reported: false,
             consumed_iterators: HashMap::new(),
             mutable_borrows: vec![HashMap::new()],
+            shared_borrows: vec![HashMap::new()],
+            reference_origins: vec![HashMap::new()],
+            suppress_borrow_read_conflict: false,
+            deferred_reference_storage: Vec::new(),
             struct_fields: checker_struct_fields,
             fn_sigs: HashMap::new(),
             method_arg_sigs: HashMap::new(),
@@ -1066,12 +1108,16 @@ impl<'a> TypeChecker<'a> {
         self.scopes.push(HashMap::new());
         self.mut_scopes.push(HashMap::new());
         self.mutable_borrows.push(HashMap::new());
+        self.shared_borrows.push(HashMap::new());
+        self.reference_origins.push(HashMap::new());
     }
 
     fn pop_scope(&mut self) {
         self.scopes.pop();
         self.mut_scopes.pop();
         self.mutable_borrows.pop();
+        self.shared_borrows.pop();
+        self.reference_origins.pop();
     }
 
     fn bind_local(&mut self, name: &str, ty: Ty) {
@@ -1116,62 +1162,216 @@ impl<'a> TypeChecker<'a> {
             .find_map(|scope| scope.get(root).map(Box::as_ref))
     }
 
+    fn active_shared_borrower(&self, root: &str) -> Option<&str> {
+        self.shared_borrows
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(root).map(Box::as_ref))
+    }
+
     fn register_named_mutable_borrow(&mut self, pattern: &Pattern, init: &Expr) {
         let PatternKind::Ident { name, .. } = &pattern.kind else {
             return;
         };
-        let ExprKind::Unary {
-            op: UnaryOp::RefMut,
-            operand,
-        } = &init.kind
-        else {
+        if let ExprKind::Path(path) = &init.kind
+            && let [source] = path.segments.as_slice()
+            && let Some(source_ty) = self.lookup_local(&source.name.name)
+            && matches!(
+                self.tcx.kind(self.infer.resolve(self.tcx, source_ty)),
+                Some(TyKind::Ref {
+                    mutability: Mutbl::Not,
+                    ..
+                })
+            )
+            && let Some(origin) = self.reference_origin(&source.name.name).map(str::to_string)
+        {
+            if let Some(scope) = self.reference_origins.last_mut() {
+                scope.insert(
+                    name.name.clone().into_boxed_str(),
+                    origin.clone().into_boxed_str(),
+                );
+            }
+            if self.active_mutable_borrower(&origin).is_none()
+                && let Some(scope) = self.shared_borrows.last_mut()
+            {
+                scope.insert(origin.into_boxed_str(), name.name.clone().into_boxed_str());
+            }
+            return;
+        }
+        let ExprKind::Unary { op, operand } = &init.kind else {
             return;
         };
+        if !matches!(op, UnaryOp::RefShared | UnaryOp::RefMut) {
+            return;
+        }
         let Some(root) = Self::place_root_name(operand) else {
             return;
         };
-        if self.active_mutable_borrower(&root).is_some() {
-            return;
+        let borrower = name.name.clone().into_boxed_str();
+        if let Some(scope) = self.reference_origins.last_mut() {
+            scope.insert(borrower.clone(), root.clone().into_boxed_str());
         }
-        if let Some(scope) = self.mutable_borrows.last_mut() {
-            scope.insert(Box::from(root), name.name.clone().into_boxed_str());
+        if matches!(op, UnaryOp::RefMut) {
+            if self.active_mutable_borrower(&root).is_none()
+                && self.active_shared_borrower(&root).is_none()
+                && let Some(scope) = self.mutable_borrows.last_mut()
+            {
+                scope.insert(Box::from(root), borrower);
+            }
+        } else if self.active_mutable_borrower(&root).is_none()
+            && let Some(scope) = self.shared_borrows.last_mut()
+        {
+            scope.insert(Box::from(root), borrower);
         }
     }
 
-    fn rebind_named_mutable_borrow(&mut self, place: &Expr, value: &Expr) {
+    fn reference_origin(&self, binding: &str) -> Option<&str> {
+        self.reference_origins
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(binding).map(Box::as_ref))
+    }
+
+    fn binding_scope(&self, binding: &str) -> Option<usize> {
+        self.scopes
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, scope)| scope.contains_key(binding).then_some(index))
+    }
+
+    fn register_pattern_reference_origins(&mut self, pattern: &Pattern, origin: &str) {
+        let mut names = Vec::new();
+        pattern_binding_names(pattern, &mut names);
+        for name in names {
+            let Some(ty) = self.lookup_local(&name) else {
+                continue;
+            };
+            let resolved = self.infer.resolve(self.tcx, ty);
+            if matches!(self.tcx.kind(resolved), Some(TyKind::Ref { .. }))
+                && let Some(scope) = self.reference_origins.last_mut()
+            {
+                scope.insert(name.into_boxed_str(), Box::from(origin));
+            }
+        }
+    }
+
+    fn register_reference_parameter_origins(&mut self, pattern: &Pattern) {
+        let mut names = Vec::new();
+        pattern_binding_names(pattern, &mut names);
+        for name in names {
+            let Some(ty) = self.lookup_local(&name) else {
+                continue;
+            };
+            let resolved = self.infer.resolve(self.tcx, ty);
+            if matches!(self.tcx.kind(resolved), Some(TyKind::Ref { .. }))
+                && let Some(scope) = self.reference_origins.last_mut()
+            {
+                scope.insert(name.clone().into_boxed_str(), name.into_boxed_str());
+            }
+        }
+    }
+
+    fn is_stable_shared_reference_alias(&mut self, expr: &Expr) -> bool {
+        let ExprKind::Path(path) = &expr.kind else {
+            return false;
+        };
+        let [source] = path.segments.as_slice() else {
+            return false;
+        };
+        let Some(source_ty) = self.lookup_local(&source.name.name) else {
+            return false;
+        };
+        let resolved = self.infer.resolve(self.tcx, source_ty);
+        matches!(
+            self.tcx.kind(resolved),
+            Some(TyKind::Ref {
+                mutability: Mutbl::Not,
+                ..
+            })
+        ) && self.reference_origin(&source.name.name).is_some()
+    }
+
+    fn rebind_named_borrow(&mut self, place: &Expr, value: &Expr) -> bool {
         let ExprKind::Path(path) = &place.kind else {
-            return;
+            return false;
         };
         let [binding] = path.segments.as_slice() else {
-            return;
-        };
-        let ExprKind::Unary {
-            op: UnaryOp::RefMut,
-            operand,
-        } = &value.kind
-        else {
-            return;
-        };
-        let Some(root) = Self::place_root_name(operand) else {
-            return;
+            return false;
         };
         let binding = binding.name.name.as_str();
         let owner_scope = self
             .mutable_borrows
             .iter()
-            .rposition(|scope| scope.values().any(|borrower| borrower.as_ref() == binding));
+            .position(|scope| scope.values().any(|borrower| borrower.as_ref() == binding))
+            .or_else(|| {
+                self.shared_borrows
+                    .iter()
+                    .position(|scope| scope.values().any(|borrower| borrower.as_ref() == binding))
+            });
         let Some(owner_scope) = owner_scope else {
-            return;
+            return false;
         };
-        self.mutable_borrows[owner_scope].retain(|_, borrower| borrower.as_ref() != binding);
-        if let Some(borrower) = self.active_mutable_borrower(&root).map(str::to_string) {
+
+        if let ExprKind::Path(path) = &value.kind
+            && let [source] = path.segments.as_slice()
+            && let Some(root) = self.reference_origin(&source.name.name).map(str::to_string)
+            && self
+                .binding_scope(&root)
+                .is_none_or(|scope| scope <= owner_scope)
+        {
+            if let Some(scope) = self.reference_origins.get_mut(owner_scope) {
+                scope.insert(Box::from(binding), root.into_boxed_str());
+            }
+            return true;
+        }
+
+        let ExprKind::Unary { op, operand } = &value.kind else {
+            return false;
+        };
+        if !matches!(op, UnaryOp::RefShared | UnaryOp::RefMut) || !is_stable_borrow_place(operand) {
+            return false;
+        }
+        let Some(root) = Self::place_root_name(operand) else {
+            return false;
+        };
+        if self
+            .binding_scope(&root)
+            .is_some_and(|scope| scope > owner_scope)
+        {
+            return false;
+        }
+        let conflicting = match op {
+            UnaryOp::RefMut => self
+                .active_mutable_borrower(&root)
+                .or_else(|| self.active_shared_borrower(&root)),
+            UnaryOp::RefShared => self.active_mutable_borrower(&root),
+            _ => None,
+        };
+        if let Some(borrower) = conflicting
+            && borrower != binding
+        {
             self.emit(
-                TypeError::MutableReferenceConflict { root, borrower },
+                TypeError::MutableReferenceConflict {
+                    root,
+                    borrower: borrower.to_string(),
+                },
                 operand.span,
             );
-            return;
+            return true;
         }
-        self.mutable_borrows[owner_scope].insert(Box::from(root), Box::from(binding));
+        self.mutable_borrows[owner_scope].retain(|_, borrower| borrower.as_ref() != binding);
+        self.shared_borrows[owner_scope].retain(|_, borrower| borrower.as_ref() != binding);
+        let target = if matches!(op, UnaryOp::RefMut) {
+            &mut self.mutable_borrows[owner_scope]
+        } else {
+            &mut self.shared_borrows[owner_scope]
+        };
+        target.insert(root.clone().into_boxed_str(), Box::from(binding));
+        if let Some(scope) = self.reference_origins.get_mut(owner_scope) {
+            scope.insert(Box::from(binding), root.into_boxed_str());
+        }
+        true
     }
 
     fn unify(&mut self, lhs: Ty, rhs: Ty, span: Span) {
@@ -2044,11 +2244,39 @@ impl<'a> TypeChecker<'a> {
             }
             ItemKind::Const(decl) => {
                 let annotated = self.type_from_ast(&decl.ty);
+                let static_string_reference = matches!(
+                    self.tcx.kind_of(annotated),
+                    TyKind::Ref {
+                        inner,
+                        mutability: Mutbl::Not,
+                    } if matches!(self.tcx.kind_of(*inner), TyKind::String)
+                ) && expr_is_static_string_value(&decl.value);
+                if !static_string_reference {
+                    self.reject_stored_reference_type(
+                        annotated,
+                        decl.ty.span,
+                        "be stored in a constant",
+                    );
+                }
                 let init = self.check_expr_expecting(&decl.value, Expectation::HasType(annotated));
                 self.unify(annotated, init, decl.value.span);
             }
             ItemKind::Static(decl) => {
                 let annotated = self.type_from_ast(&decl.ty);
+                let static_string_reference = matches!(
+                    self.tcx.kind_of(annotated),
+                    TyKind::Ref {
+                        inner,
+                        mutability: Mutbl::Not,
+                    } if matches!(self.tcx.kind_of(*inner), TyKind::String)
+                ) && expr_is_static_string_value(&decl.value);
+                if !static_string_reference {
+                    self.reject_stored_reference_type(
+                        annotated,
+                        decl.ty.span,
+                        "be stored in a static",
+                    );
+                }
                 let init = self.check_expr_expecting(&decl.value, Expectation::HasType(annotated));
                 self.unify(annotated, init, decl.value.span);
             }
@@ -2076,12 +2304,22 @@ impl<'a> TypeChecker<'a> {
         match body {
             StructBody::Named(fields) => {
                 for field in fields {
-                    let _ = self.type_from_ast(&field.ty);
+                    let ty = self.type_from_ast(&field.ty);
+                    self.reject_stored_reference_type(
+                        ty,
+                        field.ty.span,
+                        "be stored in a struct field",
+                    );
                 }
             }
             StructBody::Tuple(fields) => {
                 for field in fields {
-                    let _ = self.type_from_ast(&field.ty);
+                    let ty = self.type_from_ast(&field.ty);
+                    self.reject_stored_reference_type(
+                        ty,
+                        field.ty.span,
+                        "be stored in a tuple-struct field",
+                    );
                 }
             }
             StructBody::Unit => {}
@@ -2106,17 +2344,61 @@ impl<'a> TypeChecker<'a> {
         self.push_scope();
         for param in &decl.params {
             self.bind_fn_param(param);
+            match param {
+                FnParam::Typed { pattern, .. } => {
+                    self.register_reference_parameter_origins(pattern);
+                }
+                FnParam::Receiver(
+                    gossamer_ast::Receiver::RefShared | gossamer_ast::Receiver::RefMut,
+                ) => {
+                    if let Some(scope) = self.reference_origins.last_mut() {
+                        scope.insert(Box::from("self"), Box::from("self"));
+                    }
+                }
+                FnParam::Receiver(gossamer_ast::Receiver::Owned) => {}
+            }
+            if let FnParam::Typed { ty, .. } = param {
+                let param_ty = self.type_from_ast(ty);
+                if !matches!(
+                    self.tcx.kind_of(param_ty),
+                    TyKind::Ref { .. } | TyKind::FnPtr(_) | TyKind::FnTrait(_)
+                ) {
+                    self.reject_stored_reference_type(
+                        param_ty,
+                        ty.span,
+                        "be nested inside an owned function parameter",
+                    );
+                }
+            }
         }
         let declared_ret = decl.ret.as_ref().map(|ty| self.type_from_ast(ty));
+        if let Some(ret) = declared_ret {
+            let static_string_reference = matches!(
+                self.tcx.kind_of(ret),
+                TyKind::Ref {
+                    inner,
+                    mutability: Mutbl::Not,
+                } if matches!(self.tcx.kind_of(*inner), TyKind::String)
+            ) && decl
+                .body
+                .as_ref()
+                .is_some_and(|body| expr_is_static_string_value(body));
+            if !static_string_reference {
+                self.reject_stored_reference_type(
+                    ret,
+                    decl.ret.as_ref().expect("declared return").span,
+                    "escape through a function return",
+                );
+            }
+        }
         let ret = declared_ret.unwrap_or_else(|| self.tcx.unit());
         if let Some(body) = &decl.body {
             self.collect_write_arg_bindings(body);
             let prev_ret = self.current_fn_ret.replace(ret);
-            // The declared return type flows into the body as its
-            // expectation, so a literal in return position (block
-            // tail / branch / arm) adopts the declared shape -
-            // `fn f() -> Vec<T> { [..] }` yields a growable Vec,
-            // not `[T; N]`.
+            // The declared return type flows into the body as its expectation
+            // to constrain literals and conversions. Container identity does
+            // not change: an array literal remains `[T; N]` even when `Vec<T>`
+            // is expected, and unification reports the mismatch.
             let body_ty = if let Some(ret) = declared_ret {
                 self.check_expr_expecting(body, Expectation::HasType(ret))
             } else {
@@ -2137,6 +2419,82 @@ impl<'a> TypeChecker<'a> {
         self.pop_scope();
         self.current_param_bounds = prior_bounds;
         self.leave_generic_scope(prior_scope);
+    }
+
+    fn ty_contains_reference(&self, ty: Ty) -> bool {
+        match self.tcx.kind_of(ty) {
+            TyKind::Ref { .. } => true,
+            TyKind::Array { elem, .. }
+            | TyKind::Slice(elem)
+            | TyKind::Vec(elem)
+            | TyKind::Sender(elem)
+            | TyKind::Receiver(elem)
+            | TyKind::JoinHandle(elem) => self.ty_contains_reference(*elem),
+            TyKind::Tuple(items) => items.iter().any(|item| self.ty_contains_reference(*item)),
+            TyKind::HashMap { key, value } => {
+                self.ty_contains_reference(*key) || self.ty_contains_reference(*value)
+            }
+            TyKind::Adt { substs, .. } | TyKind::FnDef { substs, .. } => substs
+                .types()
+                .iter()
+                .any(|item| self.ty_contains_reference(*item)),
+            TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
+                self.ty_contains_reference(sig.output)
+                    || sig
+                        .inputs
+                        .iter()
+                        .any(|item| self.ty_contains_reference(*item))
+            }
+            _ => false,
+        }
+    }
+
+    fn ty_contains_nested_vec(&self, ty: Ty) -> bool {
+        fn walk(checker: &TypeChecker<'_>, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+            let ty = checker.infer.resolve(checker.tcx, ty);
+            if !seen.insert(ty) {
+                return false;
+            }
+            match checker.tcx.kind_of(ty) {
+                TyKind::Vec(_) => true,
+                TyKind::Array { elem, .. } | TyKind::Slice(elem) => walk(checker, *elem, seen),
+                TyKind::Tuple(items) => items.iter().any(|item| walk(checker, *item, seen)),
+                TyKind::Adt { def, substs } => checker
+                    .tcx
+                    .adt_field_tys(*def, substs)
+                    .is_some_and(|fields| fields.iter().any(|field| walk(checker, *field, seen))),
+                _ => false,
+            }
+        }
+
+        walk(self, ty, &mut HashSet::new())
+    }
+
+    fn reject_stored_reference_type(&mut self, ty: Ty, span: Span, context: &str) {
+        if self.ty_contains_reference(ty) {
+            self.emit(
+                TypeError::ReferenceEscapeUnsupported {
+                    context: context.to_string(),
+                },
+                span,
+            );
+        }
+    }
+
+    fn check_deferred_reference_storage(&mut self) {
+        let pending = std::mem::take(&mut self.deferred_reference_storage);
+        for (ty, span, context) in pending {
+            let ty = self.infer.resolve(self.tcx, ty);
+            if !matches!(self.tcx.kind_of(ty), TyKind::Ref { .. }) && self.ty_contains_reference(ty)
+            {
+                self.emit(
+                    TypeError::ReferenceEscapeUnsupported {
+                        context: context.to_string(),
+                    },
+                    span,
+                );
+            }
+        }
     }
 
     /// Return type of a method called on a bound type-parameter receiver
@@ -2750,6 +3108,7 @@ impl<'a> TypeChecker<'a> {
             }
             ExprKind::Go(inner) => {
                 self.check_expr(inner);
+                self.reject_go_inline_aggregate_args(inner);
                 self.fresh()
             }
             ExprKind::Select(arms) => self.check_select(arms),
@@ -5206,6 +5565,27 @@ impl<'a> TypeChecker<'a> {
                 for arg in args {
                     let v = self.check_expr(arg);
                     self.unify(elem, v, arg.span);
+                    let v = self.infer.resolve(self.tcx, v);
+                    if self.ty_contains_reference(v) {
+                        self.emit(
+                            TypeError::ReferenceEscapeUnsupported {
+                                context: "be stored in a channel".to_string(),
+                            },
+                            arg.span,
+                        );
+                    }
+                    if !matches!(self.tcx.kind_of(v), TyKind::Vec(_))
+                        && self.ty_contains_nested_vec(v)
+                    {
+                        let ty = self.render_public_ty(v);
+                        self.emit(
+                            TypeError::ConcurrentAggregateUnsupported {
+                                ty,
+                                boundary: "be stored in a channel",
+                            },
+                            arg.span,
+                        );
+                    }
                 }
                 Some(self.tcx.unit())
             }
@@ -5336,8 +5716,10 @@ impl<'a> TypeChecker<'a> {
         if method == "clone" && args.is_empty() {
             return resolved;
         }
-        if matches!(self.tcx.kind(resolved), Some(TyKind::Int(_)))
-            && matches!(method, "wrapping_add" | "wrapping_mul")
+        if matches!(
+            self.tcx.kind(resolved),
+            Some(TyKind::Int(_) | TyKind::Var(_))
+        ) && matches!(method, "wrapping_add" | "wrapping_mul")
         {
             if args.len() != 1 {
                 let owner = self.render_public_ty(resolved);
@@ -5390,6 +5772,7 @@ impl<'a> TypeChecker<'a> {
         }
         if let Some(ty) = self.seq_combinator_method_ret(method, &arg_tys, resolved, receiver.span)
         {
+            self.mark_consumed_iterator_expr(method, receiver, resolved);
             return ty;
         }
         if let Some(ty) = self.set_method_ret(method, resolved) {
@@ -6439,11 +6822,11 @@ impl<'a> TypeChecker<'a> {
             }
             ("capacity" | "len", 0) => Some(self.tcx.int_ty(IntTy::I64)),
             ("iter", 0) => {
-                let item = self.tcx.intern(TyKind::Ref {
-                    mutability: Mutbl::Not,
-                    inner: elem,
-                });
-                Some(self.tcx.intern(TyKind::Iterator(item)))
+                // Gossamer iteration yields managed values, not references.
+                // Scalar elements copy and RC-backed elements gain their own
+                // managed share. This keeps an iterator independent of a raw
+                // element address while its runtime state retains the source.
+                Some(self.tcx.intern(TyKind::Iterator(elem)))
             }
             ("is_empty", 0) => Some(self.tcx.bool_ty()),
             ("pop", 0) => Some(self.option_adt_ty(elem)),
@@ -7468,33 +7851,7 @@ impl<'a> TypeChecker<'a> {
                     self.unify(i64_ty, data_ty, span);
                     return Some(self.iter_adapter_result_ty(lead_tys[0], edition_lazy_result));
                 }
-                let all_tier_iterator_input = matches!(
-                    name,
-                    "take"
-                        | "skip"
-                        | "step_by"
-                        | "enumerate"
-                        | "chain"
-                        | "zip"
-                        | "map"
-                        | "filter"
-                        | "rev"
-                        | "dedup"
-                        | "flatten"
-                        | "pairwise"
-                        | "windows"
-                        | "chunks"
-                        | "collect"
-                        | "count"
-                        | "sum"
-                        | "product"
-                        | "min"
-                        | "max"
-                        | "fold"
-                        | "any"
-                        | "all"
-                        | "find"
-                );
+                let all_tier_iterator_input = is_iterator_method(name);
                 let data_is_iterator = matches!(
                     self.tcx.kind_of(self.infer.resolve(self.tcx, data_ty)),
                     TyKind::Iterator(_)
@@ -7829,7 +8186,12 @@ impl<'a> TypeChecker<'a> {
             UnaryOp::RefShared | UnaryOp::RefMut => Expectation::None,
             _ => Expectation::None,
         };
+        let previous_suppression = self.suppress_borrow_read_conflict;
+        if matches!(op, UnaryOp::RefShared | UnaryOp::RefMut) {
+            self.suppress_borrow_read_conflict = true;
+        }
         let operand_ty = self.check_expr_expecting(operand, operand_expected);
+        self.suppress_borrow_read_conflict = previous_suppression;
         let resolved = self.infer.resolve(self.tcx, operand_ty);
         match op {
             UnaryOp::Not => {
@@ -7879,36 +8241,8 @@ impl<'a> TypeChecker<'a> {
                     operand_ty
                 }
             }
-            UnaryOp::RefShared => self.tcx.intern(TyKind::Ref {
-                mutability: Mutbl::Not,
-                inner: operand_ty,
-            }),
-            UnaryOp::RefMut => {
-                let name = Self::place_root_name(operand).unwrap_or_else(|| "value".to_string());
-                if let Some(borrower) = self.active_mutable_borrower(&name).map(str::to_string) {
-                    self.emit(
-                        TypeError::MutableReferenceConflict {
-                            root: name.clone(),
-                            borrower,
-                        },
-                        operand.span,
-                    );
-                }
-                match self.place_mutability(operand) {
-                    PlaceMut::ImmutableBinding => self.emit(
-                        TypeError::MutableReferenceToImmutable { name },
-                        operand.span,
-                    ),
-                    PlaceMut::SharedReference => self.emit(
-                        TypeError::AssignThroughSharedReference { name },
-                        operand.span,
-                    ),
-                    PlaceMut::Writable | PlaceMut::Unknown => {}
-                }
-                self.tcx.intern(TyKind::Ref {
-                    mutability: Mutbl::Mut,
-                    inner: operand_ty,
-                })
+            UnaryOp::RefShared | UnaryOp::RefMut => {
+                self.check_reference_unary(op, operand, operand_ty)
             }
             UnaryOp::Deref => {
                 // `*x` strips a single `&T` / `&mut T` wrapper.
@@ -7926,6 +8260,53 @@ impl<'a> TypeChecker<'a> {
                 }
             }
         }
+    }
+
+    fn check_reference_unary(&mut self, op: UnaryOp, operand: &Expr, operand_ty: Ty) -> Ty {
+        let root = Self::place_root_name(operand).unwrap_or_else(|| "value".to_string());
+        let mutability = if op == UnaryOp::RefMut {
+            let conflict = self
+                .active_mutable_borrower(&root)
+                .or_else(|| self.active_shared_borrower(&root))
+                .map(str::to_string);
+            if let Some(borrower) = conflict {
+                self.emit(
+                    TypeError::MutableReferenceConflict {
+                        root: root.clone(),
+                        borrower,
+                    },
+                    operand.span,
+                );
+            }
+            match self.place_mutability(operand) {
+                PlaceMut::ImmutableBinding => self.emit(
+                    TypeError::MutableReferenceToImmutable { name: root.clone() },
+                    operand.span,
+                ),
+                PlaceMut::SharedReference => self.emit(
+                    TypeError::AssignThroughSharedReference { name: root.clone() },
+                    operand.span,
+                ),
+                PlaceMut::Writable | PlaceMut::Unknown => {}
+            }
+            Mutbl::Mut
+        } else {
+            if let Some(borrower) = self.active_mutable_borrower(&root).map(str::to_string) {
+                self.emit(
+                    TypeError::BorrowedPlaceConflict {
+                        root,
+                        borrower,
+                        action: "read through a new shared reference to",
+                    },
+                    operand.span,
+                );
+            }
+            Mutbl::Not
+        };
+        self.tcx.intern(TyKind::Ref {
+            mutability,
+            inner: operand_ty,
+        })
     }
 
     /// If `expr` is a tuple-variant constructor call (`E::B(1)`), the `Adt`
@@ -8475,8 +8856,25 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_assign(&mut self, place: &Expr, value: &Expr, op: gossamer_ast::AssignOp) -> Ty {
+        let previous_suppression = self.suppress_borrow_read_conflict;
+        self.suppress_borrow_read_conflict = true;
         let place_ty = self.check_expr(place);
+        self.suppress_borrow_read_conflict = previous_suppression;
         let name = Self::place_root_name(place).unwrap_or_else(|| "value".to_string());
+        if let Some(borrower) = self
+            .active_mutable_borrower(&name)
+            .or_else(|| self.active_shared_borrower(&name))
+            .map(str::to_string)
+        {
+            self.emit(
+                TypeError::BorrowedPlaceConflict {
+                    root: name.clone(),
+                    borrower,
+                    action: "mutate",
+                },
+                place.span,
+            );
+        }
         match self.place_mutability(place) {
             PlaceMut::ImmutableBinding => {
                 self.emit(TypeError::AssignToImmutable { name }, place.span);
@@ -8506,7 +8904,14 @@ impl<'a> TypeChecker<'a> {
         // key/default arguments have grounded the map generics.
         value_ty = self.correct_map_lookup_assignment_result(value, value_ty);
         if place_is_reference {
-            self.rebind_named_mutable_borrow(place, value);
+            if !self.rebind_named_borrow(place, value) {
+                self.emit(
+                    TypeError::ReferenceEscapeUnsupported {
+                        context: "be rebound through an alias or from a temporary".to_string(),
+                    },
+                    value.span,
+                );
+            }
         }
         if place_is_reference {
             let value_resolved = self.infer.resolve(self.tcx, value_ty);
@@ -8666,6 +9071,16 @@ impl<'a> TypeChecker<'a> {
             // unresolved vars.
             self.unify(effective_scrut_ty, pat_ty, arm.pattern.span);
             self.bind_pattern(&arm.pattern, pat_ty);
+            let resolved_scrut_ty = self.infer.resolve(self.tcx, scrut_ty);
+            if matches!(self.tcx.kind(resolved_scrut_ty), Some(TyKind::Ref { .. }))
+                && let Some(scrutinee_binding) = Self::place_root_name(scrutinee)
+            {
+                let origin = self
+                    .reference_origin(&scrutinee_binding)
+                    .unwrap_or(&scrutinee_binding)
+                    .to_string();
+                self.register_pattern_reference_origins(&arm.pattern, &origin);
+            }
             if let Some(guard) = &arm.guard {
                 let guard_ty = self.check_expr(guard);
                 let bool_ty = self.tcx.bool_ty();
@@ -8881,6 +9296,7 @@ impl<'a> TypeChecker<'a> {
 
     fn check_for(&mut self, pattern: &Pattern, iter: &Expr, body: &Expr) -> Ty {
         let iter_ty = self.check_expr(iter);
+        self.mark_consumed_iterator_expr("into_iter", iter, iter_ty);
         self.push_scope();
         // Derive the pattern's type from the iterator: arrays/slices
         // yield their element type, ranges over integers yield the
@@ -8930,7 +9346,10 @@ impl<'a> TypeChecker<'a> {
                         }
                         _ => cur = inner,
                     },
-                    TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
+                    TyKind::Array { elem, .. }
+                    | TyKind::Slice(elem)
+                    | TyKind::Vec(elem)
+                    | TyKind::Iterator(elem) => {
                         break Some(elem);
                     }
                     TyKind::String => break Some(self.tcx.char_ty()),
@@ -8993,64 +9412,7 @@ impl<'a> TypeChecker<'a> {
     fn check_stmt(&mut self, stmt: &Stmt) {
         match &stmt.kind {
             StmtKind::Let { pattern, ty, init } => {
-                if let Some(problem) = plain_let_pattern_problem(pattern) {
-                    let error = match problem {
-                        PlainLetPatternProblem::Literal => TypeError::CannotAssignToLiteral,
-                        PlainLetPatternProblem::MayNotMatch => TypeError::LetPatternMayNotMatch,
-                    };
-                    self.emit(error, pattern.span);
-                }
-                let forced = self.write_arg_bindings.get(&pattern.id).copied();
-                let binding_ty = match ty {
-                    Some(ty) => self.type_from_ast(ty),
-                    None => forced.unwrap_or_else(|| self.fresh()),
-                };
-                if let Some(init) = init {
-                    // The annotated (or write-arg-forced) binding type
-                    // flows into the initializer as its expectation:
-                    // `let x: Vec<String> = ["a", "b"]` makes the
-                    // literal a growable Vec rather than a fixed
-                    // `[T; N]` (see `collect_write_arg_bindings` for
-                    // the `forced` source).
-                    let init_expected = if ty.is_some() || forced.is_some() {
-                        Expectation::HasType(binding_ty)
-                    } else {
-                        Expectation::None
-                    };
-                    let init_ty = self.check_expr_expecting(init, init_expected);
-                    self.unify(binding_ty, init_ty, init.span);
-                    if let PatternKind::Ref { mutability, .. } = &pattern.kind {
-                        self.infer.default_numeric_vars_in_ty(self.tcx, init_ty);
-                        let resolved = self.infer.resolve(self.tcx, init_ty);
-                        let expected_mutability = if mutability.is_mutable() {
-                            Mutbl::Mut
-                        } else {
-                            Mutbl::Not
-                        };
-                        let valid = match self.tcx.kind(resolved) {
-                            Some(TyKind::Ref {
-                                mutability: actual, ..
-                            }) => *actual == expected_mutability,
-                            Some(TyKind::Var(_) | TyKind::Error) => true,
-                            _ => false,
-                        };
-                        if !valid {
-                            self.emit(
-                                TypeError::ReferencePatternRequiresReference {
-                                    pattern: if mutability.is_mutable() { "&mut" } else { "&" },
-                                },
-                                pattern.span,
-                            );
-                        }
-                    }
-                }
-                if ty.is_none() && forced.is_none() {
-                    self.infer.default_numeric_vars_in_ty(self.tcx, binding_ty);
-                }
-                self.bind_pattern(pattern, binding_ty);
-                if let Some(init) = init {
-                    self.register_named_mutable_borrow(pattern, init);
-                }
+                self.check_let_stmt(pattern, ty.as_ref(), init.as_deref());
             }
             StmtKind::Expr { expr, .. } => {
                 let expr_ty = self.check_expr(expr);
@@ -9074,8 +9436,170 @@ impl<'a> TypeChecker<'a> {
                 self.collect_signatures(std::slice::from_ref(item));
                 self.check_item(item);
             }
-            StmtKind::Defer(inner) | StmtKind::Go(inner) => {
+            StmtKind::Defer(inner) => {
                 self.check_expr(inner);
+            }
+            StmtKind::Go(inner) => {
+                self.check_expr(inner);
+                if expr_tree_has_reference(inner, &self.table, self.tcx) {
+                    self.emit(
+                        TypeError::ReferenceEscapeUnsupported {
+                            context: "cross a `go` concurrency boundary".to_string(),
+                        },
+                        inner.span,
+                    );
+                }
+                self.reject_go_inline_aggregate_args(inner);
+            }
+        }
+    }
+
+    fn check_let_stmt(&mut self, pattern: &Pattern, ty: Option<&AstType>, init: Option<&Expr>) {
+        if let Some(problem) = plain_let_pattern_problem(pattern) {
+            let error = match problem {
+                PlainLetPatternProblem::Literal => TypeError::CannotAssignToLiteral,
+                PlainLetPatternProblem::MayNotMatch => TypeError::LetPatternMayNotMatch,
+            };
+            self.emit(error, pattern.span);
+        }
+        let forced = self.write_arg_bindings.get(&pattern.id).copied();
+        let binding_ty = if let Some(authored) = ty {
+            self.type_from_ast(authored)
+        } else {
+            forced.unwrap_or_else(|| self.fresh())
+        };
+        if let Some(init) = init {
+            let expected = if ty.is_some() || forced.is_some() {
+                Expectation::HasType(binding_ty)
+            } else {
+                Expectation::None
+            };
+            let init_ty = self.check_expr_expecting(init, expected);
+            self.unify(binding_ty, init_ty, init.span);
+            self.check_local_reference_storage(pattern, binding_ty, init);
+            self.check_reference_pattern(pattern, init_ty);
+        }
+        if ty.is_none() && forced.is_none() {
+            self.infer.default_numeric_vars_in_ty(self.tcx, binding_ty);
+        }
+        self.bind_pattern(pattern, binding_ty);
+        if let Some(init) = init {
+            self.register_named_mutable_borrow(pattern, init);
+        }
+    }
+
+    fn check_local_reference_storage(&mut self, pattern: &Pattern, binding_ty: Ty, init: &Expr) {
+        if matches!(pattern.kind, PatternKind::Ref { .. }) {
+            return;
+        }
+        let resolved = self.infer.resolve(self.tcx, binding_ty);
+        if matches!(self.tcx.kind(resolved), Some(TyKind::Ref { .. })) {
+            let stable = matches!(
+                &init.kind,
+                ExprKind::Unary {
+                    op: UnaryOp::RefShared | UnaryOp::RefMut,
+                    operand,
+                } if is_stable_borrow_place(operand)
+            ) || self.is_stable_shared_reference_alias(init);
+            if !stable {
+                self.emit(
+                    TypeError::ReferenceEscapeUnsupported {
+                        context: "be copied into a local or borrow a temporary".to_string(),
+                    },
+                    init.span,
+                );
+            }
+        } else {
+            // A function value whose signature accepts a reference does not
+            // store a reference. Its reference exists only for the duration
+            // of a future call. Captured references are rejected separately
+            // by `check_closure`.
+            if !matches!(
+                self.tcx.kind(resolved),
+                Some(TyKind::FnPtr(_) | TyKind::FnTrait(_))
+            ) {
+                self.deferred_reference_storage.push((
+                    binding_ty,
+                    pattern.span,
+                    "be nested inside an owned local value",
+                ));
+            }
+        }
+    }
+
+    fn check_reference_pattern(&mut self, pattern: &Pattern, init_ty: Ty) {
+        let PatternKind::Ref { mutability, .. } = &pattern.kind else {
+            return;
+        };
+        self.infer.default_numeric_vars_in_ty(self.tcx, init_ty);
+        let resolved = self.infer.resolve(self.tcx, init_ty);
+        let expected = if mutability.is_mutable() {
+            Mutbl::Mut
+        } else {
+            Mutbl::Not
+        };
+        let valid = match self.tcx.kind(resolved) {
+            Some(TyKind::Ref {
+                mutability: actual, ..
+            }) => *actual == expected,
+            Some(TyKind::Var(_) | TyKind::Error) => true,
+            _ => false,
+        };
+        if !valid {
+            self.emit(
+                TypeError::ReferencePatternRequiresReference {
+                    pattern: if mutability.is_mutable() { "&mut" } else { "&" },
+                },
+                pattern.span,
+            );
+            return;
+        }
+        let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) else {
+            return;
+        };
+        let inner = self.infer.resolve(self.tcx, *inner);
+        if !matches!(
+            self.tcx.kind_of(inner),
+            TyKind::Bool
+                | TyKind::Char
+                | TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Unit
+                | TyKind::Never
+        ) {
+            let ty = self.render_public_ty(inner);
+            self.emit(
+                TypeError::ReferencePatternAggregateUnsupported { ty },
+                pattern.span,
+            );
+        }
+    }
+
+    fn reject_go_inline_aggregate_args(&mut self, expr: &Expr) {
+        let ExprKind::Call { args, .. } = &expr.kind else {
+            return;
+        };
+        for arg in args {
+            let Some(ty) = self.table.get(arg.id) else {
+                continue;
+            };
+            let resolved = self.infer.resolve(self.tcx, ty);
+            let inline = match self.tcx.kind_of(resolved) {
+                TyKind::Tuple(_) | TyKind::Array { .. } => true,
+                TyKind::Adt { def, .. } => {
+                    def.local < u32::MAX - 32 && self.tcx.struct_field_tys(*def).is_some()
+                }
+                _ => false,
+            };
+            if inline {
+                let ty = self.render_public_ty(resolved);
+                self.emit(
+                    TypeError::ConcurrentAggregateUnsupported {
+                        ty,
+                        boundary: "cross a `go` boundary",
+                    },
+                    arg.span,
+                );
             }
         }
     }
@@ -9087,6 +9611,22 @@ impl<'a> TypeChecker<'a> {
         body: &Expr,
         expected: Expectation,
     ) -> Ty {
+        let mut outer_references: HashSet<String> = self
+            .scopes
+            .iter()
+            .flat_map(|scope| scope.iter())
+            .filter_map(|(name, ty)| {
+                let ty = self.infer.resolve(self.tcx, *ty);
+                matches!(self.tcx.kind_of(ty), TyKind::Ref { .. }).then(|| name.to_string())
+            })
+            .collect();
+        for param in params {
+            let mut names = Vec::new();
+            pattern_binding_names(&param.pattern, &mut names);
+            for name in names {
+                outer_references.remove(&name);
+            }
+        }
         self.push_scope();
         // When the call site expects a function of a known shape (e.g. a
         // `Vec<T>` comparator pins `Fn(T, T) -> _`), unify each unannotated
@@ -9117,6 +9657,7 @@ impl<'a> TypeChecker<'a> {
                     self.unify(ty, want, body.span);
                 }
                 self.bind_pattern(&param.pattern, ty);
+                self.register_reference_parameter_origins(&param.pattern);
                 ty
             })
             .collect();
@@ -9131,6 +9672,23 @@ impl<'a> TypeChecker<'a> {
         };
         let body_ty = self.check_expr_expecting(body, body_expected);
         self.unify(output, body_ty, body.span);
+        if expr_mentions_any_name(body, &outer_references) {
+            self.emit(
+                TypeError::ReferenceEscapeUnsupported {
+                    context: "be captured by a closure".to_string(),
+                },
+                body.span,
+            );
+        }
+        let resolved_output = self.infer.resolve(self.tcx, output);
+        if self.ty_contains_reference(resolved_output) {
+            self.emit(
+                TypeError::ReferenceEscapeUnsupported {
+                    context: "escape through a closure return".to_string(),
+                },
+                body.span,
+            );
+        }
         self.pop_scope();
         self.tcx.intern(TyKind::FnPtr(FnSig { inputs, output }))
     }
@@ -9204,31 +9762,14 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_path_expr(&mut self, node: NodeId, path: &gossamer_ast::PathExpr, span: Span) -> Ty {
+        self.check_path_read_conflict(path, span);
         // `Enum::Variant` naming a variant the enum does not declare: the
         // resolver resolves the path to the enum head and leaves the bad
         // tail to fault at runtime (GX0002 `Shape::Triangle`). Reject it
         // where the enum is known and the tail is neither a declared
         // variant nor an associated function on the enum.
-        if path.segments.len() >= 2 {
-            let n = path.segments.len();
-            let enum_name = path.segments[n - 2].name.name.as_str();
-            let variant = path.segments[n - 1].name.name.as_str();
-            if let Some(variants) = self.enum_variants.get(enum_name)
-                && !variants.contains(variant)
-                && !self
-                    .user_method_owners
-                    .get(variant)
-                    .is_some_and(|owners| owners.contains(enum_name))
-            {
-                self.emit(
-                    TypeError::UnknownVariant {
-                        enum_name: enum_name.to_string(),
-                        variant: variant.to_string(),
-                    },
-                    span,
-                );
-                return self.tcx.error_ty();
-            }
+        if self.reject_unknown_variant_path(path, span) {
+            return self.tcx.error_ty();
         }
         let Some(resolution) = self.resolutions.get(node) else {
             return self.check_std_path_value(node, path, span);
@@ -9305,6 +9846,55 @@ impl<'a> TypeChecker<'a> {
                 self.check_std_path_value(node, path, span)
             }
         }
+    }
+
+    fn check_path_read_conflict(&mut self, path: &gossamer_ast::PathExpr, span: Span) {
+        if self.suppress_borrow_read_conflict {
+            return;
+        }
+        let [segment] = path.segments.as_slice() else {
+            return;
+        };
+        let Some(borrower) = self
+            .active_mutable_borrower(&segment.name.name)
+            .map(str::to_string)
+        else {
+            return;
+        };
+        self.emit(
+            TypeError::BorrowedPlaceConflict {
+                root: segment.name.name.clone(),
+                borrower,
+                action: "read",
+            },
+            span,
+        );
+    }
+
+    fn reject_unknown_variant_path(&mut self, path: &gossamer_ast::PathExpr, span: Span) -> bool {
+        let n = path.segments.len();
+        if n < 2 {
+            return false;
+        }
+        let enum_name = path.segments[n - 2].name.name.as_str();
+        let variant = path.segments[n - 1].name.name.as_str();
+        let unknown = self.enum_variants.get(enum_name).is_some_and(|variants| {
+            !variants.contains(variant)
+                && !self
+                    .user_method_owners
+                    .get(variant)
+                    .is_some_and(|owners| owners.contains(enum_name))
+        });
+        if unknown {
+            self.emit(
+                TypeError::UnknownVariant {
+                    enum_name: enum_name.to_string(),
+                    variant: variant.to_string(),
+                },
+                span,
+            );
+        }
+        unknown
     }
 
     /// Types an unresolved path expression, handling std free
@@ -9694,6 +10284,15 @@ impl<'a> TypeChecker<'a> {
                     .copied()
                     .unwrap_or_else(|| self.fresh());
                 return self.tcx.intern(TyKind::Vec(elem));
+            }
+            "Iterator" => {
+                let substs = self.substs_from_ast(path);
+                let item = substs
+                    .types()
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| self.fresh());
+                return self.tcx.intern(TyKind::Iterator(item));
             }
             // `Sender<T>` / `Receiver<T>` / `JoinHandle<T>` carry their
             // element type in a dedicated `TyKind`. Resolving the
@@ -10982,6 +11581,178 @@ fn strip_int_suffix(text: &str) -> String {
     text.to_string()
 }
 
+fn is_stable_borrow_place(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Path(_) => true,
+        ExprKind::FieldAccess { receiver, .. } => is_stable_borrow_place(receiver),
+        ExprKind::Index { base, .. } => is_stable_borrow_place(base),
+        ExprKind::Unary {
+            op: UnaryOp::Deref,
+            operand,
+        } => is_stable_borrow_place(operand),
+        _ => false,
+    }
+}
+
+fn expr_is_static_string_value(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Literal(Literal::String(_) | Literal::RawString { .. }) => true,
+        ExprKind::Block(block) | ExprKind::Unsafe(block) => block
+            .tail
+            .as_deref()
+            .is_some_and(expr_is_static_string_value),
+        ExprKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => expr_is_static_string_value(then_branch) && expr_is_static_string_value(else_branch),
+        ExprKind::Match { arms, .. } => {
+            !arms.is_empty()
+                && arms
+                    .iter()
+                    .all(|arm| expr_is_static_string_value(&arm.body))
+        }
+        _ => false,
+    }
+}
+
+fn pattern_binding_names(pattern: &Pattern, out: &mut Vec<String>) {
+    match &pattern.kind {
+        PatternKind::Ident {
+            name, subpattern, ..
+        } => {
+            out.push(name.name.clone());
+            if let Some(subpattern) = subpattern {
+                pattern_binding_names(subpattern, out);
+            }
+        }
+        PatternKind::Tuple(items) | PatternKind::Or(items) => {
+            for item in items {
+                pattern_binding_names(item, out);
+            }
+        }
+        PatternKind::Slice {
+            prefix,
+            rest,
+            suffix,
+        } => {
+            for item in prefix {
+                pattern_binding_names(item, out);
+            }
+            if let Some(rest) = rest {
+                pattern_binding_names(rest, out);
+            }
+            for item in suffix {
+                pattern_binding_names(item, out);
+            }
+        }
+        PatternKind::Struct { fields, .. } => {
+            for field in fields {
+                if let Some(pattern) = &field.pattern {
+                    pattern_binding_names(pattern, out);
+                } else {
+                    out.push(field.name.name.clone());
+                }
+            }
+        }
+        PatternKind::TupleStruct { elems, .. } => {
+            for item in elems {
+                pattern_binding_names(item, out);
+            }
+        }
+        PatternKind::Ref { inner, .. } => pattern_binding_names(inner, out),
+        PatternKind::Wildcard
+        | PatternKind::Literal(_)
+        | PatternKind::Path(_)
+        | PatternKind::Range { .. }
+        | PatternKind::Rest
+        | PatternKind::Error => {}
+    }
+}
+
+fn expr_tree_has_reference(expr: &Expr, table: &TypeTable, tcx: &TyCtxt) -> bool {
+    struct Finder<'a> {
+        table: &'a TypeTable,
+        tcx: &'a TyCtxt,
+        found: bool,
+    }
+
+    fn contains(tcx: &TyCtxt, ty: Ty) -> bool {
+        match tcx.kind_of(ty) {
+            TyKind::Ref { .. } => true,
+            TyKind::Array { elem, .. }
+            | TyKind::Slice(elem)
+            | TyKind::Vec(elem)
+            | TyKind::Iterator(elem)
+            | TyKind::Sender(elem)
+            | TyKind::Receiver(elem)
+            | TyKind::JoinHandle(elem) => contains(tcx, *elem),
+            TyKind::Tuple(items) => items.iter().any(|item| contains(tcx, *item)),
+            TyKind::HashMap { key, value } => contains(tcx, *key) || contains(tcx, *value),
+            TyKind::Adt { substs, .. } | TyKind::FnDef { substs, .. } => {
+                substs.types().iter().any(|item| contains(tcx, *item))
+            }
+            TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
+                contains(tcx, sig.output) || sig.inputs.iter().any(|item| contains(tcx, *item))
+            }
+            _ => false,
+        }
+    }
+
+    impl gossamer_ast::visitor::Visitor for Finder<'_> {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if self.found {
+                return;
+            }
+            self.found = self
+                .table
+                .get(expr.id)
+                .is_some_and(|ty| contains(self.tcx, ty));
+            if !self.found {
+                gossamer_ast::visitor::walk_expr(self, expr);
+            }
+        }
+    }
+
+    let mut finder = Finder {
+        table,
+        tcx,
+        found: false,
+    };
+    gossamer_ast::visitor::Visitor::visit_expr(&mut finder, expr);
+    finder.found
+}
+
+fn expr_mentions_any_name(expr: &Expr, names: &HashSet<String>) -> bool {
+    struct Finder<'a> {
+        names: &'a HashSet<String>,
+        found: bool,
+    }
+
+    impl gossamer_ast::visitor::Visitor for Finder<'_> {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if self.found {
+                return;
+            }
+            if let ExprKind::Path(path) = &expr.kind
+                && let [segment] = path.segments.as_slice()
+                && self.names.contains(&segment.name.name)
+            {
+                self.found = true;
+                return;
+            }
+            gossamer_ast::visitor::walk_expr(self, expr);
+        }
+    }
+
+    let mut finder = Finder {
+        names,
+        found: false,
+    };
+    gossamer_ast::visitor::Visitor::visit_expr(&mut finder, expr);
+    finder.found
+}
+
 fn kind_is_concrete(checker: &TypeChecker<'_>, kind: &TyKind) -> bool {
     match kind {
         TyKind::Var(_) | TyKind::Error => false,
@@ -11431,7 +12202,42 @@ pub fn is_slice_sequence_method(name: &str) -> bool {
 /// available through Rust-like array-to-slice receiver coercion.
 #[must_use]
 pub fn is_array_sequence_method(name: &str) -> bool {
-    name == "clone" || is_slice_sequence_method(name)
+    matches!(name, "clone" | "into") || is_slice_sequence_method(name)
+}
+
+/// Returns whether a method is implemented for an `Iterator<T>` receiver on
+/// every execution tier. Keep discovery and type checking on this single list
+/// so `%info` and `%explain` never advertise eager Vec-only helpers as lazy
+/// iterator operations.
+#[must_use]
+pub fn is_iterator_method(name: &str) -> bool {
+    matches!(
+        name,
+        "take"
+            | "skip"
+            | "step_by"
+            | "enumerate"
+            | "chain"
+            | "zip"
+            | "map"
+            | "filter"
+            | "rev"
+            | "dedup"
+            | "flatten"
+            | "pairwise"
+            | "windows"
+            | "chunks"
+            | "collect"
+            | "count"
+            | "sum"
+            | "product"
+            | "min"
+            | "max"
+            | "fold"
+            | "any"
+            | "all"
+            | "find"
+    )
 }
 
 /// Best-effort human-readable name for a call's callee expression,

@@ -103,7 +103,7 @@ type AggFieldPaths = Vec<(Vec<u32>, FieldRcKind)>;
 
 /// Heap-managed field projection paths within a by-value aggregate, each
 /// paired with the runtime helper family that frees it. Recurses through
-/// by-value struct and tuple fields, so an `Outer { inner: Inner { s:
+/// by-value struct, tuple, and fixed-array fields, so an `Outer { inner: Inner { s:
 /// String } }` releases `inner.s` when `Outer` dies; a non-recursive walk
 /// left the nested `String` retained forever. `Vec` / `[T]` fields are
 /// included with [`FieldRcKind::Vec`] so a struct's backing vector is freed
@@ -120,7 +120,7 @@ pub(crate) fn aggregate_rc_field_paths(tcx: &TyCtxt, ty: Ty) -> AggFieldPaths {
         use gossamer_types::TyKind;
         match tcx.kind_of(ty) {
             TyKind::Adt { def, .. } => def.local < u32::MAX - 16 && !tcx.is_inline_enum_ty(ty),
-            TyKind::Tuple(_) => true,
+            TyKind::Tuple(_) | TyKind::Array { .. } => true,
             _ => false,
         }
     }
@@ -146,13 +146,11 @@ pub(crate) fn aggregate_rc_field_paths(tcx: &TyCtxt, ty: Ty) -> AggFieldPaths {
             None
         }
     }
-    fn walk(tcx: &TyCtxt, ty: Ty, prefix: &mut Vec<u32>, depth: usize, out: &mut AggFieldPaths) {
+    fn walk(tcx: &TyCtxt, ty: Ty, prefix: &mut Vec<u32>, out: &mut AggFieldPaths) {
         use gossamer_types::TyKind;
-        // By-value aggregates cannot contain themselves (infinite size), so
-        // this terminates; the depth cap is a defensive backstop only.
-        if depth > 16 {
-            return;
-        }
+        // By-value aggregates cannot contain themselves because that would
+        // have infinite size, so the structural walk terminates without an
+        // arbitrary nesting limit.
         let field_tys: Vec<Ty> = match tcx.kind_of(ty) {
             TyKind::Adt { def, .. } if def.local < u32::MAX - 16 && !tcx.is_inline_enum_ty(ty) => {
                 match tcx.struct_field_tys(*def) {
@@ -161,6 +159,7 @@ pub(crate) fn aggregate_rc_field_paths(tcx: &TyCtxt, ty: Ty) -> AggFieldPaths {
                 }
             }
             TyKind::Tuple(elems) => elems.clone(),
+            TyKind::Array { elem, len } => vec![*elem; len.to_usize()],
             _ => return,
         };
         for (i, t) in field_tys.iter().enumerate() {
@@ -171,14 +170,14 @@ pub(crate) fn aggregate_rc_field_paths(tcx: &TyCtxt, ty: Ty) -> AggFieldPaths {
                 prefix.pop();
             } else if recursable(tcx, *t) {
                 prefix.push(idx);
-                walk(tcx, *t, prefix, depth + 1, out);
+                walk(tcx, *t, prefix, out);
                 prefix.pop();
             }
         }
     }
     let mut out = Vec::new();
     let mut prefix = Vec::new();
-    walk(tcx, ty, &mut prefix, 0, &mut out);
+    walk(tcx, ty, &mut prefix, &mut out);
     out
 }
 
@@ -205,6 +204,7 @@ pub(crate) fn propagate_copy_types(body: &mut Body, tcx: &gossamer_types::TyCtxt
                 .struct_field_tys(*def)
                 .and_then(|tys| tys.get(idx as usize).copied()),
             TyKind::Tuple(elems) => elems.get(idx as usize).copied(),
+            TyKind::Array { elem, len } if (idx as usize) < len.to_usize() => Some(*elem),
             _ => None,
         }
     };

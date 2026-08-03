@@ -1645,6 +1645,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1680,6 +1682,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/sequence_reference_safety/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Sequence and reference safety
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
 
 
 
@@ -2226,7 +2256,7 @@ dispatch-table additions.</p>
 </tr>
 <tr>
 <td><code>s.chars()</code></td>
-<td><code>[char]</code></td>
+<td><code>Vec&lt;char&gt;</code></td>
 <td>Unicode scalar values.</td>
 </tr>
 <tr>
@@ -2261,7 +2291,7 @@ dispatch-table additions.</p>
 </tr>
 <tr>
 <td><code>s.split(delim)</code></td>
-<td><code>[String]</code></td>
+<td><code>Vec&lt;String&gt;</code></td>
 <td>Splits on every delimiter occurrence.</td>
 </tr>
 <tr>
@@ -2286,8 +2316,8 @@ dispatch-table additions.</p>
 </tr>
 <tr>
 <td><code>s.as_bytes()</code></td>
-<td><code>&amp;[u8]</code></td>
-<td>Zero-copy borrow.</td>
+<td><code>Vec&lt;u8&gt;</code></td>
+<td>Materializes the UTF-8 bytes. This is an intentional divergence from Rust's borrowed <code>&amp;[u8]</code> result because the current cross-tier string ABI does not expose a stable borrowed byte view.</td>
 </tr>
 <tr>
 <td><code>s.parse&lt;T&gt;()</code> / <code>s.parse::&lt;T&gt;()</code></td>
@@ -2322,9 +2352,34 @@ dispatch-table additions.</p>
 </tbody>
 </table>
 <h2 id="vec">Vec<a class="headerlink" href="#vec" title="Permanent link">&para;</a></h2>
-<p>Ranges are plain <code>Vec&lt;i64&gt;</code> values - <code>(2..n)</code> and <code>(1..=n)</code> build the
-sequence directly, so every method below chains off a range too:
-<code>(1..=5).filter(|n| n % 2 == 1).sum()</code>.</p>
+<p><code>Vec&lt;T&gt;</code> is the only owned growable sequence. A bracket literal is a fixed
+array, so use <code>Vec::from([a, b, c])</code> when growth or capacity is required.
+<code>[T; N]</code>, <code>&amp;[T]</code>, and <code>&amp;mut [T]</code> share only the non-resizing methods listed
+below. Mutable arrays and slices may reorder or replace existing elements, but
+cannot change their length or capacity. Iterator combinators are used through
+<code>.iter()</code> on arrays and slices.</p>
+<table>
+<thead>
+<tr>
+<th>Receiver</th>
+<th>Available surface</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>[T; N]</code>, <code>&amp;[T; N]</code>, <code>&amp;[T]</code></td>
+<td><code>len</code>, <code>is_empty</code>, <code>slice</code>, <code>first</code>, <code>last</code>, <code>get</code>, <code>contains</code>, <code>index_of</code>, <code>count_of</code>, <code>windows</code>, <code>chunks</code>, <code>join</code>, <code>to_vec</code>, <code>iter</code>; fixed arrays also have value-preserving <code>clone</code></td>
+</tr>
+<tr>
+<td><code>&amp;mut [T; N]</code>, <code>&amp;mut [T]</code></td>
+<td>Shared methods plus in-place <code>sort</code>, <code>sort_by</code>, <code>sort_by_key</code>, <code>reverse</code>, <code>swap</code>, and <code>fill</code></td>
+</tr>
+<tr>
+<td><code>Vec&lt;T&gt;</code>, <code>&amp;Vec&lt;T&gt;</code>, <code>&amp;mut Vec&lt;T&gt;</code></td>
+<td>Shared methods plus eager combinators, resizing, and capacity operations</td>
+</tr>
+</tbody>
+</table>
 <table>
 <thead>
 <tr>
@@ -2336,12 +2391,12 @@ sequence directly, so every method below chains off a range too:
 <tbody>
 <tr>
 <td><code>Vec::new()</code></td>
-<td><code>[T]</code></td>
+<td><code>Vec&lt;T&gt;</code></td>
 <td>Associated function; empty vector.</td>
 </tr>
 <tr>
 <td><code>Vec::with_capacity(n)</code></td>
-<td><code>[T]</code></td>
+<td><code>Vec&lt;T&gt;</code></td>
 <td>Associated function; preallocates in compiled tiers, accepted as an advisory hint in the VM.</td>
 </tr>
 <tr>
@@ -2370,6 +2425,16 @@ sequence directly, so every method below chains off a range too:
 <td>Appends elements from another vector or inline array with matching element layout.</td>
 </tr>
 <tr>
+<td><code>v.reserve(n)</code> / <code>v.reserve_exact(n)</code></td>
+<td><code>()</code></td>
+<td>Ensures room for at least <code>n</code> total elements.</td>
+</tr>
+<tr>
+<td><code>v.capacity()</code></td>
+<td><code>i64</code></td>
+<td>Returns allocated element capacity.</td>
+</tr>
+<tr>
 <td><code>v.len()</code></td>
 <td><code>i64</code></td>
 <td></td>
@@ -2386,12 +2451,12 @@ sequence directly, so every method below chains off a range too:
 </tr>
 <tr>
 <td><code>v.filter(pred)</code></td>
-<td><code>[T]</code></td>
+<td><code>Vec&lt;T&gt;</code></td>
 <td>Elements where <code>pred</code> holds.</td>
 </tr>
 <tr>
 <td><code>v.map(f)</code></td>
-<td><code>[U]</code></td>
+<td><code>Vec&lt;U&gt;</code></td>
 <td>Transform every element.</td>
 </tr>
 <tr>
@@ -2431,12 +2496,12 @@ sequence directly, so every method below chains off a range too:
 </tr>
 <tr>
 <td><code>v.take(n)</code></td>
-<td><code>[T]</code></td>
+<td><code>Vec&lt;T&gt;</code></td>
 <td>First <code>n</code> elements (fewer if short).</td>
 </tr>
 <tr>
 <td><code>v.step_by(n)</code></td>
-<td><code>[T]</code></td>
+<td><code>Vec&lt;T&gt;</code></td>
 <td>Every <code>n</code>-th element, starting at index 0.</td>
 </tr>
 <tr>
@@ -2456,7 +2521,7 @@ sequence directly, so every method below chains off a range too:
 </tr>
 <tr>
 <td><code>v.rev()</code></td>
-<td><code>[T]</code></td>
+<td><code>Vec&lt;T&gt;</code></td>
 <td>Non-mutating; <code>v.reverse()</code> is in-place.</td>
 </tr>
 <tr>
@@ -2471,8 +2536,13 @@ sequence directly, so every method below chains off a range too:
 </tr>
 <tr>
 <td><code>v.swap(i, j)</code></td>
+<td><code>Result&lt;(), errors::Error&gt;</code></td>
+<td>Exchanges two existing elements or returns a bounds error.</td>
+</tr>
+<tr>
+<td><code>v.fill(value)</code></td>
 <td><code>()</code></td>
-<td></td>
+<td>Clones <code>value</code> into every existing element without changing length or capacity; also available on mutable arrays and slices.</td>
 </tr>
 </tbody>
 </table>
@@ -2488,8 +2558,8 @@ sequence directly, so every method below chains off a range too:
 <tbody>
 <tr>
 <td><code>m.insert(k, v)</code></td>
-<td><code>()</code></td>
-<td>Inserts or overwrites in place; does not return the previous value.</td>
+<td><code>Option&lt;V&gt;</code></td>
+<td>Inserts or overwrites in place and returns the previous value when present.</td>
 </tr>
 <tr>
 <td><code>m.get(k)</code></td>
@@ -2507,9 +2577,9 @@ sequence directly, so every method below chains off a range too:
 <td>Key-membership test (<code>m.contains(k)</code> is an alias).</td>
 </tr>
 <tr>
-<td><code>m.remove(k)</code></td>
-<td><code>()</code></td>
-<td>Deletes the key in place. Use <code>HashMap::pop(m, k) -&gt; Option&lt;V&gt;</code> to recover the removed value.</td>
+<td><code>m.remove(k)</code> / <code>m.pop(k)</code></td>
+<td><code>Option&lt;V&gt;</code></td>
+<td>Deletes the key and returns its previous value when present.</td>
 </tr>
 <tr>
 <td><code>m.inc(k)</code> / <code>m.inc(k, by)</code></td>
@@ -2528,8 +2598,8 @@ sequence directly, so every method below chains off a range too:
 </tr>
 <tr>
 <td><code>m.iter()</code></td>
-<td><code>[(K, V)]</code></td>
-<td><code>keys()</code> / <code>values()</code> return the halves.</td>
+<td><code>Vec&lt;(K, V)&gt;</code></td>
+<td><code>keys()</code> / <code>values()</code> return <code>Vec&lt;K&gt;</code> / <code>Vec&lt;V&gt;</code>.</td>
 </tr>
 </tbody>
 </table>
@@ -2548,8 +2618,8 @@ yields pairs in ascending key order.</p>
 <tbody>
 <tr>
 <td><code>m.insert(k, v)</code></td>
-<td><code>()</code></td>
-<td>Inserts or overwrites in place.</td>
+<td><code>Option&lt;V&gt;</code></td>
+<td>Inserts or overwrites and returns the previous value when present.</td>
 </tr>
 <tr>
 <td><code>m.get(k)</code></td>
@@ -2573,7 +2643,7 @@ yields pairs in ascending key order.</p>
 </tr>
 <tr>
 <td><code>m.iter()</code></td>
-<td><code>[(K, V)]</code></td>
+<td><code>Vec&lt;(K, V)&gt;</code></td>
 <td>Yields pairs in ascending key order.</td>
 </tr>
 </tbody>
@@ -2590,8 +2660,8 @@ yields pairs in ascending key order.</p>
 <tbody>
 <tr>
 <td><code>s.insert(v)</code></td>
-<td><code>()</code></td>
-<td>Inserts the value in place.</td>
+<td><code>bool</code></td>
+<td>Inserts the value and reports whether it was newly added.</td>
 </tr>
 <tr>
 <td><code>s.contains(v)</code></td>
@@ -2600,8 +2670,8 @@ yields pairs in ascending key order.</p>
 </tr>
 <tr>
 <td><code>s.remove(v)</code></td>
-<td><code>()</code></td>
-<td>Deletes the value in place.</td>
+<td><code>bool</code></td>
+<td>Deletes the value and reports whether it was present.</td>
 </tr>
 <tr>
 <td><code>s.len()</code></td>
@@ -2615,7 +2685,7 @@ yields pairs in ascending key order.</p>
 </tr>
 <tr>
 <td><code>s.to_vec()</code></td>
-<td><code>[T]</code></td>
+<td><code>Vec&lt;T&gt;</code></td>
 <td>Materialises the set values.</td>
 </tr>
 <tr>

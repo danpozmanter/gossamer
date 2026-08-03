@@ -44,6 +44,7 @@ struct Run {
 
 fn run_interpreter(source: &Path) -> Run {
     let out = Command::new(gos_bin())
+        .arg("run")
         .arg(source)
         .output()
         .expect("spawn gos");
@@ -275,7 +276,7 @@ mod full {
 
     /// Examples deliberately excluded from the parity walks because
     /// they are non-terminating, require external state, or depend
-    /// on CLI args / a live server that the bare `gos <path>`
+    /// on CLI args / a live server that the bare `gos run <path>`
     /// shape can't supply. Each is covered by a dedicated
     /// integration test elsewhere.
     const NON_TERMINATING_EXAMPLES: &[&str] = &[

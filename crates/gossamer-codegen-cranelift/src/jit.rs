@@ -445,14 +445,14 @@ fn jit_compile_set<'a>(
         let (calls, _) = body_user_calls(body, &all_names, &def_to_name);
         for callee in calls {
             let ok = body_map.get(callee).is_some_and(|b| {
-                // Native-only dependencies do not cross the VM trampoline,
-                // but the same unsupported aggregate boundary shapes also
-                // lack a proven native call ABI. Compiling a caller while
-                // admitting such a callee produced malformed calls for
-                // generic structs and aggregate sret helpers. Keep the whole
-                // dependent closure on bytecode until that ABI is lowerable.
-                body_kinds(b, tcx, enum_shapes, struct_shapes).is_some()
-                    && !body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes)
+                // A dependency pulled into the same native module never
+                // crosses the VM trampoline. Its parameters and return may
+                // therefore use the native aggregate ABI even when `JitKind`
+                // cannot marshal that shape at a VM entry. Requiring
+                // `body_kinds` here rejected callers such as n-body's hot
+                // `main`, solely because its internal `energy(&[Body; 5])`
+                // helper accepts a fixed-array reference.
+                !body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes)
                     && !body_has_cross_goroutine_ops(b)
                     && !body_jit_unsupported(b, tcx)
             });
@@ -1409,7 +1409,9 @@ fn jit_local_ty_needs_bytecode_inner(
 ) -> bool {
     let mut ty = ty;
     while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
-        if matches!(tcx.kind_of(*inner), TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1)
+        if matches!(tcx.kind_of(*inner), TyKind::Adt { def, .. } if def.local == u32::MAX)
+            || matches!(tcx.kind_of(*inner), TyKind::Adt { def, .. } if def.local == u32::MAX - 1)
+                && !jit_option_locals_ok()
         {
             return true;
         }
@@ -1434,7 +1436,7 @@ fn jit_local_ty_needs_bytecode_inner(
         TyKind::Tuple(elems) => elems
             .iter()
             .any(|elem| jit_local_ty_needs_bytecode_inner(tcx, *elem, visiting)),
-        TyKind::Adt { def, .. } if def.local == u32::MAX - 1 => true,
+        TyKind::Adt { def, .. } if def.local == u32::MAX - 1 => !jit_option_locals_ok(),
         TyKind::Adt { def, substs } if def.local == u32::MAX => {
             substs.types().into_iter().any(|payload| {
                 !matches!(tcx.kind_of(payload), TyKind::DynError)
@@ -2607,6 +2609,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_map_free"            => rt::gos_rt_map_free,
         "gos_rt_vec_free"            => rt::gos_rt_vec_free,
         "gos_rt_vec_retain"          => rt::gos_rt_vec_retain,
+        "gos_rt_vec_mark_shared"     => rt::gos_rt_vec_mark_shared,
         "gos_rt_set_free"            => rt::gos_rt_set_free,
         "gos_rt_btmap_free"          => rt::gos_rt_btmap_free,
         "gos_rt_map_keys_i64"        => rt::gos_rt_map_keys_i64,
@@ -2931,7 +2934,7 @@ mod promotion_report_tests {
         BasicBlock, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Terminator,
     };
     use gossamer_resolve::DefId;
-    use gossamer_types::{IntTy, Mutbl, Substs, TyCtxt, TyKind};
+    use gossamer_types::{ArrayLen, IntTy, Mutbl, Substs, TyCtxt, TyKind};
     use std::collections::HashMap;
 
     fn span() -> Span {
@@ -3059,6 +3062,61 @@ mod promotion_report_tests {
     }
 
     #[test]
+    fn fixed_array_reference_dependency_uses_native_only_abi() {
+        let mut tcx = TyCtxt::new();
+        let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+        let body_def = DefId::local(17);
+        let body_ty = tcx.intern(TyKind::Adt {
+            def: body_def,
+            substs: Substs::new(),
+        });
+        tcx.register_struct_fields(body_def, vec![i64_ty]);
+        let array_ty = tcx.intern(TyKind::Array {
+            elem: body_ty,
+            len: ArrayLen::Concrete(5),
+        });
+        let array_ref_ty = tcx.intern(TyKind::Ref {
+            mutability: Mutbl::Not,
+            inner: array_ty,
+        });
+
+        let mut main = body("main", i64_ty, true);
+        let span = main.span;
+        main.blocks[0].terminator = Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("energy".to_string())),
+            args: Vec::new(),
+            destination: Place::local(Local(0)),
+            target: Some(BlockId(1)),
+        };
+        main.blocks.push(BasicBlock {
+            id: BlockId(1),
+            stmts: Vec::new(),
+            terminator: Terminator::Goto { target: BlockId(1) },
+            span,
+        });
+        let mut energy = body("energy", i64_ty, false);
+        energy.arity = 1;
+        energy.locals.push(LocalDecl {
+            ty: array_ref_ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        });
+
+        let bodies = vec![main, energy];
+        let admitted = jit_compile_body_names(&bodies, &tcx, &HashMap::new(), &HashMap::new());
+        assert_eq!(
+            admitted,
+            std::collections::HashSet::from(["energy".to_string(), "main".to_string()])
+        );
+        let entries = jit_entry_body_names(&bodies, &tcx, &HashMap::new(), &HashMap::new());
+        assert_eq!(
+            entries,
+            std::collections::HashSet::from(["main".to_string()])
+        );
+    }
+
+    #[test]
     fn straight_line_link_dependency_is_not_a_vm_entry() {
         let mut tcx = TyCtxt::new();
         let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
@@ -3131,7 +3189,7 @@ mod promotion_report_tests {
     }
 
     #[test]
-    fn recursive_user_enum_is_safe_but_option_is_not() {
+    fn recursive_user_enum_and_internal_option_are_safe() {
         let mut tcx = TyCtxt::new();
         let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
         let tree_def = DefId::local(9);
@@ -3150,7 +3208,21 @@ mod promotion_report_tests {
         });
 
         assert!(!jit_local_ty_needs_bytecode(&tcx, tree_ty));
-        assert!(jit_local_ty_needs_bytecode(&tcx, option_ty));
-        assert!(jit_local_ty_needs_bytecode(&tcx, option_ref_ty));
+        assert!(!jit_local_ty_needs_bytecode(&tcx, option_ty));
+        assert!(!jit_local_ty_needs_bytecode(&tcx, option_ref_ty));
+
+        let mut pop_loop = body("pop_loop", i64_ty, true);
+        pop_loop.locals.push(LocalDecl {
+            ty: option_ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        });
+        let admitted = jit_compile_body_names(&[pop_loop], &tcx, &HashMap::new(), &HashMap::new());
+        assert_eq!(
+            admitted,
+            std::collections::HashSet::from(["pop_loop".to_string()]),
+            "an internal Option result such as discarded Vec::pop must not block promotion"
+        );
     }
 }

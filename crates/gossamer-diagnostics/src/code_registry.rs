@@ -267,6 +267,17 @@ pub const REGISTRY: &[(&str, &str)] = &[
             `break`, a `continue`, or replace with a real wait primitive.",
     ),
     (
+        "GL0051",
+        "A counted loop only assigns the same value to every element of a\n\
+            sequence. Use `.fill(value)` to state the operation directly.",
+    ),
+    (
+        "GL0052",
+        "A loop scans a string one byte at a time to find a substring. Use\n\
+            the string search methods so UTF-8 boundaries and optimized search\n\
+            behavior are handled consistently.",
+    ),
+    (
         "GM0001",
         "Generic monomorphization received a type substitution that the\n\
                      compiler does not yet support - typically a generic parameter\n\
@@ -659,6 +670,12 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      downgrade a heap aggregate (struct / payload enum) instead.",
     ),
     (
+        "GT0029",
+        "An `option::*` or `result::*` combinator received its data argument\n\
+                     in the wrong position. These functions are data-last: pass the\n\
+                     closure first and the `Option` or `Result` value last.",
+    ),
+    (
         "GT0030",
         "An assignment targeted a binding that was not declared `mut`.\n\
                      `let` and parameter bindings are immutable by default, so a\n\
@@ -681,6 +698,43 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      Declare the source binding `mut` before taking `&mut`.",
     ),
     (
+        "GT0033",
+        "A nominal struct or enum value was destructured without naming its\n\
+                     declared struct or variant. Use the named pattern so field layout\n\
+                     cannot be bypassed by an anonymous tuple pattern.",
+    ),
+    (
+        "GT0034",
+        "A struct constructor used syntax that does not match its declaration.\n\
+                     Named structs use braces and named fields; tuple structs use\n\
+                     parentheses and positional fields.",
+    ),
+    (
+        "GT0035",
+        "A struct initializer omitted a required field. Supply every declared\n\
+                     field, or use an explicit constructor that provides defaults.",
+    ),
+    (
+        "GT0036",
+        "A struct initializer specified the same field more than once. Remove\n\
+                     the duplicate so each field has exactly one value.",
+    ),
+    (
+        "GT0037",
+        "A struct initializer supplied more positional values than the type has\n\
+                     fields. Remove the extra values or use the correct constructor.",
+    ),
+    (
+        "GT0041",
+        "A lazy iterator was formatted or printed directly. Consume it with a\n\
+                     terminal such as `.collect()`, `.count()`, or `.fold(...)` first.",
+    ),
+    (
+        "GT0042",
+        "A lazy iterator binding was used after an adapter or terminal consumed\n\
+                     its state. Build a fresh iterator for the second traversal.",
+    ),
+    (
         "GT0043",
         "A second named mutable reference would overlap an active `&mut` binding.\n\
                      Named mutable references are exclusive for their lexical scope.\n\
@@ -688,10 +742,34 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      same root binding.",
     ),
     (
+        "GT0044",
+        "A generic function's return type parameter could not be inferred from\n\
+                     its arguments or expected result. Add an explicit type annotation\n\
+                     or turbofish type argument.",
+    ),
+    (
+        "GT0045",
+        "The `?` operator was used on a value that is not `Option` or `Result`,\n\
+                     or in a function whose return type cannot propagate that family.\n\
+                     Handle the value explicitly or change the enclosing return type.",
+    ),
+    (
         "GT0046",
         "A call omitted `&mut` for a parameter that can modify its argument.\n\
                      Ensure the source binding uses `let mut`, then pass its place as\n\
                      `&mut value`. An existing `&mut T` value can be forwarded directly.",
+    ),
+    (
+        "GT0047",
+        "A plain `let` used an irrefutable assignment position with a literal or\n\
+                     another pattern that may fail. Use `if let` or `match` for a\n\
+                     refutable pattern, or bind the value to a name.",
+    ),
+    (
+        "GT0048",
+        "A `let &...` or `let &mut ...` pattern was applied to a non-reference\n\
+                     initializer. Borrow the initializer explicitly, or remove the\n\
+                     reference marker to bind the value directly.",
     ),
     (
         "GT0049",
@@ -704,6 +782,35 @@ pub const REGISTRY: &[(&str, &str)] = &[
     (
         "GT0051",
         "A fixed array length was not known at compile time. Array lengths are part of `[T; N]`, so `[value; N]` requires a constant `N`. Use an explicit `Vec<T>` construction when the length is only known at runtime.",
+    ),
+    (
+        "GT0052",
+        "A reference would escape the lexical storage boundary that keeps its\n\
+                     referent valid, such as a return, aggregate field, closure,\n\
+                     channel, or goroutine. Keep the reference local or pass an owned\n\
+                     value across that boundary.",
+    ),
+    (
+        "GT0053",
+        "An access conflicts with an active lexical reference to the same root\n\
+                     binding. End or narrow the existing borrow before reading,\n\
+                     mutating, resizing, or borrowing that place incompatibly.",
+    ),
+    (
+        "GT0054",
+        "A reference pattern attempted to copy an aggregate referent by value.\n\
+                     Bind the reference itself, or destructure the owned aggregate\n\
+                     without a reference pattern.",
+    ),
+    (
+        "GT0055",
+        "A by-value aggregate would cross a concurrency boundary whose compiled\n\
+                     publication ABI cannot preserve that layout and all nested child\n\
+                     ownership. Direct goroutine arguments therefore accept scalar and\n\
+                     supported top-level runtime containers, not inline structs, tuples,\n\
+                     or arrays. Channels also reject aggregates containing nested Vec\n\
+                     storage. Publish supported fields separately and reconstruct the\n\
+                     aggregate in the receiver.",
     ),
     (
         "GX0001",
@@ -757,6 +864,12 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      most common cause. Add a terminating condition, convert to an\n\
                      iterative loop, or use `gos build` where the native codegen\n\
                      produces standard call instructions the OS can grow to handle.",
+    ),
+    (
+        "GX0009",
+        "The configured execution budget was exhausted. This limit is used by\n\
+                     fuel-enabled hosts such as the playground to stop unbounded\n\
+                     programs. Reduce the work or fix the non-terminating loop.",
     ),
 ];
 

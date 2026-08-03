@@ -5,7 +5,7 @@
  * `{:>14}` right) rather than hand-rolled padding helpers.
  *
  * Run:
- *     gos examples/list_dir.gos -- examples
+ *     gos run examples/list_dir.gos examples
  */
 
 use std::env

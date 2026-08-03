@@ -109,6 +109,7 @@ fn run_timed(bin: &Path) -> TimedOutput {
 fn run_vm_timed(src: &Path) -> TimedOutput {
     let start = Instant::now();
     let out = Command::new(gos_bin())
+        .arg("run")
         .arg(src)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

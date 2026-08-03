@@ -3,7 +3,7 @@
 //! Kept in its own module so `main.rs` stays under the 2000-line
 //! hard limit defined in `GUIDELINES.md`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io::Write as _;
 
 use anyhow::{Result, anyhow};
@@ -125,7 +125,7 @@ struct CoreMethodHelp {
     doc: &'static str,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct CoreMethodEntry {
     owner: String,
     name: String,
@@ -384,6 +384,13 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         kind: "assoc",
         signature: "fn new<T>() -> Vec<T>",
         doc: "Creates an empty vector.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "from",
+        kind: "assoc",
+        signature: "fn from<T, const N: usize>(values: [T; N]) -> Vec<T>",
+        doc: "Creates a growable vector by moving values from a fixed-size array.",
     },
     CoreMethodHelp {
         owner: "Vec",
@@ -1433,6 +1440,12 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     match result {
                         Some(Ok(text)) => print_repl_output(&text),
                         Some(Err(msg)) => print_repl_error(&msg),
+                        None if catalog_has_exact_match(normalize_query(&options.pattern)) => {
+                            match repl_info_matches(&options.pattern, options.details) {
+                                Ok(text) => print_repl_output(&text),
+                                Err(msg) => print_repl_error(&msg),
+                            }
+                        }
                         None => print_repl_error(&format!(
                             "no persistent binding named `{}`",
                             options.pattern
@@ -1510,7 +1523,8 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
 
         // Assignments and collection mutation calls must be replayed with the
         // preceding bindings so their effects survive into later inputs.
-        if input_mutates_binding(trimmed) {
+        let user_mutating_methods = collect_repl_mut_self_method_names(&declarations);
+        if input_mutates_binding(trimmed, &user_mutating_methods) {
             let prefix = lets.join("\n    ");
             let probe_body = if prefix.is_empty() {
                 trimmed.to_string()
@@ -1687,7 +1701,7 @@ fn render_repl_bindings(
                 lets = let_body,
                 name = var.name,
             );
-            let (value, ty) = match build_and_call_with_type(&source, &entry) {
+            let (value, ty) = match build_and_call_with_type_for_inspection(&source, &entry) {
                 Ok((value, ty)) => (render_repl_binding_value(&value, &ty), ty.rendered),
                 Err(msg) => (
                     format!("<error: {}>", msg.lines().next().unwrap_or("unknown")),
@@ -1828,7 +1842,7 @@ fn resolve_repl_binding(
         declarations.join("\n"),
         lets = let_body,
     );
-    build_and_call_with_type(&source, entry)
+    build_and_call_with_type_for_inspection(&source, entry)
 }
 
 fn repl_binding_from_let_source(input: &str) -> std::result::Result<ReplBinding, String> {
@@ -2390,13 +2404,21 @@ fn push_catalog_match(
             out.push_str(signature);
         }
     }
-    out.push_str(&format!(" [{kind}]\n"));
+    out.push_str(&format!(" [{}]\n", catalog_kind_label(kind)));
     if details {
         out.push_str(&format!("    {description}\n"));
         out.push_str(&format!(
             "    Example: {}\n",
             catalog_example(path, kind, signature)
         ));
+    }
+}
+
+fn catalog_kind_label(kind: &str) -> &str {
+    if kind == "assoc" {
+        "associated function"
+    } else {
+        kind
     }
 }
 
@@ -2407,6 +2429,9 @@ fn catalog_example(path: &str, kind: &str, signature: &str) -> String {
         }
         "HashSet::from" => {
             return "let set: HashSet<i64> = HashSet::from([1, 2, 2, 3])".to_string();
+        }
+        "Vec::from" => {
+            return "let values: Vec<i64> = Vec::from([1, 2, 3])".to_string();
         }
         _ => {}
     }
@@ -2621,6 +2646,9 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
     add_data_last_std_methods(&mut entries, "Iterator", "std::iter");
     for registered in gossamer_interp::registered_names() {
         if let Some((owner, name)) = registered_core_method_path(registered) {
+            if owner == "Iterator" && !gossamer_types::is_iterator_method(&name) {
+                continue;
+            }
             let kind = if runtime_assoc_name(&name) {
                 "assoc"
             } else {
@@ -2708,6 +2736,9 @@ fn add_data_last_std_methods(
         if item.kind != StdItemKind::Function {
             continue;
         }
+        if owner == "Iterator" && !gossamer_types::is_iterator_method(item.name) {
+            continue;
+        }
         let Some(signature) = data_last_method_signature(owner, module_path, item.name) else {
             continue;
         };
@@ -2718,7 +2749,13 @@ fn add_data_last_std_methods(
                 name: item.name.to_string(),
                 kind: "method",
                 signature,
-                doc: item.doc.to_string(),
+                doc: if owner == "Iterator" {
+                    iterator_method_doc(item.name)
+                        .unwrap_or(item.doc)
+                        .to_string()
+                } else {
+                    item.doc.to_string()
+                },
             },
         );
     }
@@ -2739,17 +2776,69 @@ fn data_last_method_signature(owner: &str, module_path: &str, name: &str) -> Opt
     let name_start = row.find(name)?;
     let open = row[name_start..].find('(')? + name_start;
     let generics = row.get(name_start + name.len()..open)?;
-    let mut params = vec![format!("self: {}", receiver.ty)];
-    params.extend(
-        leading
-            .iter()
-            .map(|param| format!("{}: {}", param.name, param.ty)),
-    );
+    if owner == "Iterator" {
+        if name == "chain" {
+            return Some(
+                "fn chain<T>(self: Iterator<T>, other: Iterator<T>) -> Iterator<T>".to_string(),
+            );
+        }
+        if name == "zip" {
+            return Some(
+                "fn zip<A, B>(self: Iterator<A>, other: Iterator<B>) -> Iterator<(A, B)>"
+                    .to_string(),
+            );
+        }
+    }
+    let receiver_ty = if owner == "Iterator" {
+        receiver.ty.replacen("Vec<", "Iterator<", 1)
+    } else {
+        receiver.ty.to_string()
+    };
+    let mut params = vec![format!("self: {receiver_ty}")];
+    if owner == "Iterator" && name == "fold" && leading.len() == 2 {
+        params.push(format!("{}: {}", leading[1].name, leading[1].ty));
+        params.push(format!("{}: {}", leading[0].name, leading[0].ty));
+    } else {
+        params.extend(
+            leading
+                .iter()
+                .map(|param| format!("{}: {}", param.name, param.ty)),
+        );
+    }
+    let return_ty = if owner == "Iterator" {
+        match name {
+            "take" | "skip" | "step_by" | "filter" | "rev" => {
+                shape.return_ty.replacen("Vec<", "Iterator<", 1)
+            }
+            "enumerate" => "Iterator<(i64, T)>".to_string(),
+            "chain" => "Iterator<T>".to_string(),
+            "zip" => "Iterator<(A, B)>".to_string(),
+            "map" => "Iterator<U>".to_string(),
+            _ => shape.return_ty.to_string(),
+        }
+    } else {
+        shape.return_ty.to_string()
+    };
     Some(format!(
         "fn {name}{generics}({}) -> {}",
         params.join(", "),
-        shape.return_ty
+        return_ty
     ))
+}
+
+fn iterator_method_doc(name: &str) -> Option<&'static str> {
+    match name {
+        "take" => Some("Returns a lazy iterator over at most the first n values."),
+        "skip" => Some("Returns a lazy iterator that skips the first n values."),
+        "step_by" => Some("Returns a lazy iterator yielding every step-th value."),
+        "enumerate" => Some("Returns a lazy iterator of index and value pairs."),
+        "chain" => Some("Returns a lazy iterator followed by another iterator."),
+        "zip" => Some("Returns a lazy iterator pairing values from two iterators."),
+        "map" => Some("Returns a lazy iterator that applies a function to each value."),
+        "filter" => Some("Returns a lazy iterator containing values accepted by a predicate."),
+        "rev" => Some("Returns a lazy iterator in reverse order."),
+        _ => None,
+    }
 }
 
 fn runtime_core_method_signature(owner: &str, name: &str, kind: &str) -> Option<String> {
@@ -2776,6 +2865,19 @@ fn runtime_core_method_signature(owner: &str, name: &str, kind: &str) -> Option<
         ("RwLock", "new") => Some("fn new<T>(value: T) -> RwLock<T>"),
         ("Once", "new") => Some("fn new() -> Once"),
         ("WaitGroup", "new") => Some("fn new() -> WaitGroup"),
+        ("Map" | "sync::Map", "new") => Some("fn new() -> sync::Map"),
+        ("Map" | "sync::Map", "insert") => {
+            Some("fn insert(self: &sync::Map, key: String, value: String) -> ()")
+        }
+        ("Map" | "sync::Map", "get") => {
+            Some("fn get(self: &sync::Map, key: String) -> Option<String>")
+        }
+        ("Map" | "sync::Map", "remove") => Some("fn remove(self: &sync::Map, key: String) -> ()"),
+        ("Map" | "sync::Map", "len") => Some("fn len(self: &sync::Map) -> i64"),
+        ("Map" | "sync::Map", "contains_key") => {
+            Some("fn contains_key(self: &sync::Map, key: String) -> bool")
+        }
+        ("Map" | "sync::Map", "keys") => Some("fn keys(self: &sync::Map) -> Vec<String>"),
         ("Errors" | "validate::Errors", "new") => Some("fn new() -> validate::Errors"),
         ("FieldError" | "validate::FieldError", "new") => {
             Some("fn new(path: String, message: String, code: String) -> validate::FieldError")
@@ -2819,6 +2921,18 @@ fn runtime_core_method_signature(owner: &str, name: &str, kind: &str) -> Option<
     reason = "flat metadata table keeps REPL core-method docs auditable"
 )]
 fn runtime_core_method_doc(owner: &str, name: &str) -> Option<&'static str> {
+    if matches!(owner, "Map" | "sync::Map") {
+        return match name {
+            "new" => Some("Creates an empty concurrent string map."),
+            "insert" => Some("Associates a string key with a string value."),
+            "get" => Some("Returns the value for a key, or None when absent."),
+            "remove" => Some("Removes a key and its value when present."),
+            "len" => Some("Returns the number of entries."),
+            "contains_key" => Some("Reports whether the map contains a key."),
+            "keys" => Some("Returns a snapshot of the current keys."),
+            _ => None,
+        };
+    }
     if matches!(
         owner,
         "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
@@ -3170,7 +3284,7 @@ fn item_kind_label(kind: StdItemKind) -> &'static str {
 /// can mutate through a mutable reference.
 /// Type checking remains authoritative for receiver mutability and whether
 /// the method exists. This parser-only classification only controls replay.
-fn input_mutates_binding(input: &str) -> bool {
+fn input_mutates_binding(input: &str, user_mutating_methods: &HashSet<String>) -> bool {
     use gossamer_ast::{ExprKind, ItemKind, StmtKind};
 
     // End the input before the synthetic closing brace so a trailing line
@@ -3202,16 +3316,54 @@ fn input_mutates_binding(input: &str) -> bool {
         None => None,
     });
 
-    target.is_some_and(repl_expr_mutates_binding)
+    target.is_some_and(|expr| repl_expr_mutates_binding(expr, user_mutating_methods))
 }
 
-fn repl_stmt_mutates_binding(stmt: &gossamer_ast::Stmt) -> bool {
+fn collect_repl_mut_self_method_names(declarations: &[String]) -> HashSet<String> {
+    use gossamer_ast::{FnParam, ImplItem, ItemKind, Receiver};
+
+    let source = declarations.join("\n");
+    if source.trim().is_empty() {
+        return HashSet::new();
+    }
+    let mut map = gossamer_lex::SourceMap::new();
+    let file = map.add_file("irepl-mut-self-methods".to_string(), source.clone());
+    let (sf, diags) = gossamer_parse::parse_source_file(&source, file);
+    if !diags.is_empty() {
+        return HashSet::new();
+    }
+    let mut names = HashSet::new();
+    for item in sf.items {
+        let ItemKind::Impl(decl) = item.kind else {
+            continue;
+        };
+        for item in decl.items {
+            let ImplItem::Fn(method) = item else {
+                continue;
+            };
+            if matches!(
+                method.params.first(),
+                Some(FnParam::Receiver(Receiver::RefMut))
+            ) {
+                names.insert(method.name.name);
+            }
+        }
+    }
+    names
+}
+
+fn repl_stmt_mutates_binding(
+    stmt: &gossamer_ast::Stmt,
+    user_mutating_methods: &HashSet<String>,
+) -> bool {
     use gossamer_ast::StmtKind;
 
     match &stmt.kind {
-        StmtKind::Let { init, .. } => init.as_deref().is_some_and(repl_expr_mutates_binding),
+        StmtKind::Let { init, .. } => init
+            .as_deref()
+            .is_some_and(|expr| repl_expr_mutates_binding(expr, user_mutating_methods)),
         StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
-            repl_expr_mutates_binding(expr)
+            repl_expr_mutates_binding(expr, user_mutating_methods)
         }
         StmtKind::Item(_) => false,
     }
@@ -3337,7 +3489,10 @@ fn repl_array_expr_contains_ref_mut(array: &gossamer_ast::expr::ArrayExpr) -> bo
     }
 }
 
-fn repl_expr_mutates_binding(expr: &gossamer_ast::Expr) -> bool {
+fn repl_expr_mutates_binding(
+    expr: &gossamer_ast::Expr,
+    user_mutating_methods: &HashSet<String>,
+) -> bool {
     use gossamer_ast::ExprKind;
 
     match &expr.kind {
@@ -3349,70 +3504,82 @@ fn repl_expr_mutates_binding(expr: &gossamer_ast::Expr) -> bool {
             ..
         } => {
             gossamer_types::is_mutating_method_name(&name.name)
-                || repl_expr_mutates_binding(receiver)
-                || args.iter().any(repl_expr_mutates_binding)
+                || user_mutating_methods.contains(&name.name)
+                || repl_expr_mutates_binding(receiver, user_mutating_methods)
+                || args
+                    .iter()
+                    .any(|arg| repl_expr_mutates_binding(arg, user_mutating_methods))
         }
         ExprKind::Call { callee, args } => {
             repl_callee_is_mutating_name(callee)
-                || repl_expr_mutates_binding(callee)
-                || args.iter().any(repl_expr_mutates_binding)
+                || repl_expr_mutates_binding(callee, user_mutating_methods)
+                || args
+                    .iter()
+                    .any(|arg| repl_expr_mutates_binding(arg, user_mutating_methods))
         }
         ExprKind::For { iter, body, .. } => {
-            repl_expr_contains_ref_mut(iter) || repl_expr_mutates_binding(body)
+            repl_expr_contains_ref_mut(iter)
+                || repl_expr_mutates_binding(body, user_mutating_methods)
         }
         ExprKind::Block(block) | ExprKind::Unsafe(block) => {
-            block.stmts.iter().any(repl_stmt_mutates_binding)
-                || block.tail.as_deref().is_some_and(repl_expr_mutates_binding)
+            repl_block_mutates_binding(block, user_mutating_methods)
         }
         ExprKind::If {
             condition,
             then_branch,
             else_branch,
-        } => {
-            repl_expr_mutates_binding(condition)
-                || repl_expr_mutates_binding(then_branch)
-                || else_branch
-                    .as_deref()
-                    .is_some_and(repl_expr_mutates_binding)
-        }
+        } => repl_if_mutates_binding(
+            condition,
+            then_branch,
+            else_branch.as_deref(),
+            user_mutating_methods,
+        ),
         ExprKind::Match { scrutinee, arms } => {
-            repl_expr_mutates_binding(scrutinee)
-                || arms.iter().any(|arm| {
-                    arm.guard.as_ref().is_some_and(repl_expr_mutates_binding)
-                        || repl_expr_mutates_binding(&arm.body)
-                })
+            repl_match_mutates_binding(scrutinee, arms, user_mutating_methods)
         }
-        ExprKind::Loop { body, .. } => repl_expr_mutates_binding(body),
+        ExprKind::Loop { body, .. } => repl_expr_mutates_binding(body, user_mutating_methods),
         ExprKind::While {
             condition, body, ..
-        } => repl_expr_mutates_binding(condition) || repl_expr_mutates_binding(body),
-        ExprKind::FieldAccess { receiver, .. } => repl_expr_mutates_binding(receiver),
-        ExprKind::Index { base, index } => {
-            repl_expr_mutates_binding(base) || repl_expr_mutates_binding(index)
+        } => repl_pair_mutates_binding(condition, body, user_mutating_methods),
+        ExprKind::FieldAccess { receiver, .. } => {
+            repl_expr_mutates_binding(receiver, user_mutating_methods)
         }
-        ExprKind::Unary { operand, .. } => repl_expr_mutates_binding(operand),
+        ExprKind::Index { base, index } => {
+            repl_expr_mutates_binding(base, user_mutating_methods)
+                || repl_expr_mutates_binding(index, user_mutating_methods)
+        }
+        ExprKind::Unary { operand, .. } => {
+            repl_expr_mutates_binding(operand, user_mutating_methods)
+        }
         ExprKind::Binary { lhs, rhs, .. } => {
-            repl_expr_mutates_binding(lhs) || repl_expr_mutates_binding(rhs)
+            repl_expr_mutates_binding(lhs, user_mutating_methods)
+                || repl_expr_mutates_binding(rhs, user_mutating_methods)
         }
         ExprKind::Cast { value, .. } | ExprKind::Try(value) | ExprKind::Go(value) => {
-            repl_expr_mutates_binding(value)
+            repl_expr_mutates_binding(value, user_mutating_methods)
         }
-        ExprKind::Closure { body, .. } => repl_expr_mutates_binding(body),
-        ExprKind::Return(value) => value.as_deref().is_some_and(repl_expr_mutates_binding),
-        ExprKind::Break { value, .. } => value.as_deref().is_some_and(repl_expr_mutates_binding),
-        ExprKind::Tuple(elems) => elems.iter().any(repl_expr_mutates_binding),
+        ExprKind::Closure { body, .. } => repl_expr_mutates_binding(body, user_mutating_methods),
+        ExprKind::Return(value) => value
+            .as_deref()
+            .is_some_and(|expr| repl_expr_mutates_binding(expr, user_mutating_methods)),
+        ExprKind::Break { value, .. } => value
+            .as_deref()
+            .is_some_and(|expr| repl_expr_mutates_binding(expr, user_mutating_methods)),
+        ExprKind::Tuple(elems) => elems
+            .iter()
+            .any(|expr| repl_expr_mutates_binding(expr, user_mutating_methods)),
         ExprKind::Struct { fields, base, .. } => {
-            fields
-                .iter()
-                .any(|field| field.value.as_ref().is_some_and(repl_expr_mutates_binding))
-                || base.as_deref().is_some_and(repl_expr_mutates_binding)
+            repl_struct_expr_mutates_binding(fields, base.as_deref(), user_mutating_methods)
         }
-        ExprKind::Array(array) => repl_array_expr_mutates_binding(array),
-        ExprKind::Range { start, end, .. } => {
-            start.as_deref().is_some_and(repl_expr_mutates_binding)
-                || end.as_deref().is_some_and(repl_expr_mutates_binding)
-        }
-        ExprKind::Select(arms) => arms.iter().any(|arm| repl_expr_mutates_binding(&arm.body)),
+        ExprKind::Array(array) => repl_array_expr_mutates_binding(array, user_mutating_methods),
+        ExprKind::Range { start, end, .. } => repl_optional_pair_mutates_binding(
+            start.as_deref(),
+            end.as_deref(),
+            user_mutating_methods,
+        ),
+        ExprKind::Select(arms) => arms
+            .iter()
+            .any(|arm| repl_expr_mutates_binding(&arm.body, user_mutating_methods)),
         ExprKind::Literal(_)
         | ExprKind::Path(_)
         | ExprKind::Continue { .. }
@@ -3421,11 +3588,86 @@ fn repl_expr_mutates_binding(expr: &gossamer_ast::Expr) -> bool {
     }
 }
 
-fn repl_array_expr_mutates_binding(array: &gossamer_ast::expr::ArrayExpr) -> bool {
+fn repl_block_mutates_binding(
+    block: &gossamer_ast::expr::Block,
+    user_mutating_methods: &HashSet<String>,
+) -> bool {
+    block
+        .stmts
+        .iter()
+        .any(|stmt| repl_stmt_mutates_binding(stmt, user_mutating_methods))
+        || block
+            .tail
+            .as_deref()
+            .is_some_and(|expr| repl_expr_mutates_binding(expr, user_mutating_methods))
+}
+
+fn repl_if_mutates_binding(
+    condition: &gossamer_ast::Expr,
+    then_branch: &gossamer_ast::Expr,
+    else_branch: Option<&gossamer_ast::Expr>,
+    user_mutating_methods: &HashSet<String>,
+) -> bool {
+    repl_pair_mutates_binding(condition, then_branch, user_mutating_methods)
+        || else_branch.is_some_and(|expr| repl_expr_mutates_binding(expr, user_mutating_methods))
+}
+
+fn repl_match_mutates_binding(
+    scrutinee: &gossamer_ast::Expr,
+    arms: &[gossamer_ast::expr::MatchArm],
+    user_mutating_methods: &HashSet<String>,
+) -> bool {
+    repl_expr_mutates_binding(scrutinee, user_mutating_methods)
+        || arms.iter().any(|arm| {
+            arm.guard
+                .as_ref()
+                .is_some_and(|expr| repl_expr_mutates_binding(expr, user_mutating_methods))
+                || repl_expr_mutates_binding(&arm.body, user_mutating_methods)
+        })
+}
+
+fn repl_pair_mutates_binding(
+    left: &gossamer_ast::Expr,
+    right: &gossamer_ast::Expr,
+    user_mutating_methods: &HashSet<String>,
+) -> bool {
+    repl_expr_mutates_binding(left, user_mutating_methods)
+        || repl_expr_mutates_binding(right, user_mutating_methods)
+}
+
+fn repl_optional_pair_mutates_binding(
+    left: Option<&gossamer_ast::Expr>,
+    right: Option<&gossamer_ast::Expr>,
+    user_mutating_methods: &HashSet<String>,
+) -> bool {
+    left.is_some_and(|expr| repl_expr_mutates_binding(expr, user_mutating_methods))
+        || right.is_some_and(|expr| repl_expr_mutates_binding(expr, user_mutating_methods))
+}
+
+fn repl_struct_expr_mutates_binding(
+    fields: &[gossamer_ast::expr::StructExprField],
+    base: Option<&gossamer_ast::Expr>,
+    user_mutating_methods: &HashSet<String>,
+) -> bool {
+    fields.iter().any(|field| {
+        field
+            .value
+            .as_ref()
+            .is_some_and(|expr| repl_expr_mutates_binding(expr, user_mutating_methods))
+    }) || base.is_some_and(|expr| repl_expr_mutates_binding(expr, user_mutating_methods))
+}
+
+fn repl_array_expr_mutates_binding(
+    array: &gossamer_ast::expr::ArrayExpr,
+    user_mutating_methods: &HashSet<String>,
+) -> bool {
     match array {
-        gossamer_ast::expr::ArrayExpr::List(elems) => elems.iter().any(repl_expr_mutates_binding),
+        gossamer_ast::expr::ArrayExpr::List(elems) => elems
+            .iter()
+            .any(|expr| repl_expr_mutates_binding(expr, user_mutating_methods)),
         gossamer_ast::expr::ArrayExpr::Repeat { value, count } => {
-            repl_expr_mutates_binding(value) || repl_expr_mutates_binding(count)
+            repl_expr_mutates_binding(value, user_mutating_methods)
+                || repl_expr_mutates_binding(count, user_mutating_methods)
         }
     }
 }
@@ -3498,6 +3740,21 @@ fn build_and_call_with_type(
     source: &str,
     entry: &str,
 ) -> std::result::Result<(gossamer_interp::Value, ReplValueType), String> {
+    build_and_call_with_type_inner(source, entry, false)
+}
+
+fn build_and_call_with_type_for_inspection(
+    source: &str,
+    entry: &str,
+) -> std::result::Result<(gossamer_interp::Value, ReplValueType), String> {
+    build_and_call_with_type_inner(source, entry, true)
+}
+
+fn build_and_call_with_type_inner(
+    source: &str,
+    entry: &str,
+    inspection: bool,
+) -> std::result::Result<(gossamer_interp::Value, ReplValueType), String> {
     let source = gossamer_parse::autoderive::augment_source(source);
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file("irepl".to_string(), source.clone());
@@ -3510,7 +3767,11 @@ fn build_and_call_with_type(
         return Err(format_semantic_diags("resolution", &resolve_diags));
     }
     let mut tcx = gossamer_types::TyCtxt::new();
-    let (tbl, type_diags) = gossamer_types::typecheck_source_file(&sf, &res, &mut tcx);
+    let (tbl, type_diags) = if inspection {
+        gossamer_types::typecheck_source_file_for_repl_inspection(&sf, &res, &mut tcx)
+    } else {
+        gossamer_types::typecheck_source_file(&sf, &res, &mut tcx)
+    };
     // REPL expressions are installed as the tail of a generated function with
     // no written return annotation. The REPL deliberately returns that value
     // as REPL output, so its tail is neither discarded nor a user error.
@@ -3693,6 +3954,40 @@ mod tests {
     }
 
     #[test]
+    fn sync_map_info_lists_complete_callable_signatures() {
+        for owner in ["Map", "sync::Map"] {
+            let entries = core_method_entries()
+                .into_iter()
+                .filter(|entry| entry.owner == owner)
+                .collect::<Vec<_>>();
+            assert_eq!(entries.len(), 7, "incomplete {owner} surface: {entries:?}");
+            assert!(
+                entries.iter().all(|entry| {
+                    !entry.signature.trim().is_empty()
+                        && entry.signature.starts_with("fn ")
+                        && !entry.doc.starts_with("Built-in ")
+                }),
+                "{owner} contains placeholder metadata: {entries:?}"
+            );
+        }
+        let rendered = render_catalog_query_matches("sync::Map", false);
+        for expected in [
+            "sync::Map::new() -> sync::Map [associated function]",
+            "sync::Map::insert(self: &sync::Map, key: String, value: String) -> () [method]",
+            "sync::Map::get(self: &sync::Map, key: String) -> Option<String> [method]",
+            "sync::Map::remove(self: &sync::Map, key: String) -> () [method]",
+            "sync::Map::len(self: &sync::Map) -> i64 [method]",
+            "sync::Map::contains_key(self: &sync::Map, key: String) -> bool [method]",
+            "sync::Map::keys(self: &sync::Map) -> Vec<String> [method]",
+        ] {
+            assert!(
+                rendered.contains(expected),
+                "missing `{expected}`:\n{rendered}"
+            );
+        }
+    }
+
+    #[test]
     fn audited_byte_handle_builtins_have_concrete_public_contracts() {
         let mut incomplete = core_method_entries()
             .into_iter()
@@ -3870,6 +4165,9 @@ mod tests {
             let Some((owner, name)) = registered_core_method_path(registered) else {
                 continue;
             };
+            if owner == "Iterator" && !gossamer_types::is_iterator_method(&name) {
+                continue;
+            }
             let short_owner = owner.rsplit("::").next().unwrap_or(&owner);
             if std_type_names.contains(short_owner)
                 && !catalog
@@ -3918,6 +4216,24 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(!entries.is_empty(), "Iterator has no %explain methods");
         assert!(entries.iter().all(|entry| !entry.signature.contains("...")));
+        assert!(entries.iter().all(|entry| !entry.signature.is_empty()));
+        assert!(
+            entries
+                .iter()
+                .all(|entry| gossamer_types::is_iterator_method(&entry.name))
+        );
+        let names = entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        for unavailable in ["next", "for_each", "position", "max_by_key"] {
+            assert!(!names.contains(unavailable));
+        }
+        let map = entries.iter().find(|entry| entry.name == "map").unwrap();
+        assert!(map.signature.contains("self: Iterator<T>"));
+        assert!(map.signature.ends_with("-> Iterator<U>"));
+        let fold = entries.iter().find(|entry| entry.name == "fold").unwrap();
+        assert!(fold.signature.contains("init: U, f: Fn(U, T) -> U"));
     }
 
     #[test]

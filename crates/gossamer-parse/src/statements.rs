@@ -16,6 +16,21 @@ impl Parser<'_> {
     pub(crate) fn parse_stmt(&mut self) -> Stmt {
         let start_span = self.peek_span();
         let kind = self.parse_stmt_kind();
+        let consumed_semicolon = self.slice(self.last_span()) == ";";
+        if requires_statement_separator(&kind)
+            && !consumed_semicolon
+            && !self.at_eof()
+            && !self.at_punct(Punct::RBrace)
+            && !self.newline_before_peek()
+        {
+            self.record(
+                crate::diagnostic::ParseError::Unexpected {
+                    expected: "`;` or a newline between statements".to_string(),
+                    found: self.peek_text(),
+                },
+                self.peek_span(),
+            );
+        }
         let end_span = self.last_span();
         let span = self.join(start_span, end_span);
         let id = self.alloc_id();
@@ -258,6 +273,32 @@ impl Parser<'_> {
         } else {
             Pattern::new(self.alloc_id(), span, PatternKind::Tuple(pats))
         }
+    }
+}
+
+/// Returns whether another statement on the same line needs an explicit `;`.
+/// Like Rust, block-shaped expressions delimit themselves. Every other
+/// expression or declaration needs either a semicolon or an authored newline,
+/// so `println value` cannot silently become two expression statements.
+fn requires_statement_separator(kind: &StmtKind) -> bool {
+    match kind {
+        StmtKind::Let { .. } | StmtKind::Defer(_) | StmtKind::Go(_) => true,
+        StmtKind::Item(_) => false,
+        StmtKind::Expr { has_semi: true, .. } => false,
+        StmtKind::Expr {
+            expr,
+            has_semi: false,
+        } => !matches!(
+            expr.kind,
+            ExprKind::Block(_)
+                | ExprKind::Unsafe(_)
+                | ExprKind::If { .. }
+                | ExprKind::Match { .. }
+                | ExprKind::Loop { .. }
+                | ExprKind::While { .. }
+                | ExprKind::For { .. }
+                | ExprKind::Select(_)
+        ),
     }
 }
 

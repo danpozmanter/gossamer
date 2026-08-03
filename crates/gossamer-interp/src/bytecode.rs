@@ -535,7 +535,7 @@ pub enum Op {
         /// `i64` register holding the new element.
         value_i: Reg,
     },
-    /// Fused in-place swap on a `Value::IntArray`. Replaces the
+    /// Fused discarded-result swap on a `Value::IntArray`. Replaces the
     /// 4-op sequence (two `IntArrayGetI64` + two `IntArraySetI64`)
     /// the swap super-instruction would otherwise emit. fannkuch's
     /// `perm.swap(a, k - a)` runs millions of times per workload.
@@ -883,6 +883,17 @@ pub enum Op {
     VecSwap {
         /// Register receiving `Ok(())` or `Err(errors::Error)`.
         dst: Reg,
+        /// Register holding the Vec, mutated only on success.
+        receiver: Reg,
+        /// First index.
+        a: Reg,
+        /// Second index.
+        b: Reg,
+    },
+    /// `receiver.swap(a, b)` when the `Result` is discarded. Invalid indexes
+    /// leave the receiver unchanged, exactly as constructing and discarding
+    /// `Err` would, without allocating either `Ok` or `Err` on the hot path.
+    VecSwapDiscard {
         /// Register holding the Vec, mutated only on success.
         receiver: Reg,
         /// First index.

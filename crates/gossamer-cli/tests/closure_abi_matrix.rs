@@ -90,6 +90,7 @@ fn build_native(src: &std::path::Path, release: bool, scratch: &std::path::Path)
 
 fn run_vm(src: &std::path::Path) -> String {
     let out = Command::new(gos_bin())
+        .arg("run")
         .arg(src)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

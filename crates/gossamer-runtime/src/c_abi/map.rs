@@ -1719,10 +1719,6 @@ fn map_has_owned_values(m: &GosMap) -> bool {
     map_value_owner(m) != MAP_VALUE_NONE
 }
 
-fn map_has_blob_values(m: &GosMap) -> bool {
-    map_value_owner(m) == MAP_VALUE_RC
-}
-
 /// Release one stored blob value word (set-gated inside the RC layer
 /// via the copy blob's explicit owner carrier).
 unsafe fn release_blob_value(word: i64) {
@@ -1775,17 +1771,37 @@ pub unsafe extern "C" fn gos_rt_map_mark_shared(m: *mut GosMap) {
             return;
         }
         let map = unsafe { &*m };
-        if map_has_blob_values(map) {
+        if map_has_owned_values(map) {
             let storage = map.storage.lock();
             match &*storage {
                 MapStorage::I64I64(inner) => {
                     for &v in inner.values() {
-                        unsafe { crate::c_abi::rc::gos_rt_rc_mark_shared(v as usize as *mut u8) };
+                        if map_value_owner(map) == MAP_VALUE_VEC {
+                            unsafe {
+                                crate::c_abi::vec::gos_rt_vec_mark_shared(
+                                    v as usize as *mut GosVec,
+                                );
+                            };
+                        } else {
+                            unsafe {
+                                crate::c_abi::rc::gos_rt_rc_mark_shared(v as usize as *mut u8);
+                            };
+                        }
                     }
                 }
                 MapStorage::StrI64(inner) | MapStorage::SkeyVal(inner) => {
                     for &v in inner.values() {
-                        unsafe { crate::c_abi::rc::gos_rt_rc_mark_shared(v as usize as *mut u8) };
+                        if map_value_owner(map) == MAP_VALUE_VEC {
+                            unsafe {
+                                crate::c_abi::vec::gos_rt_vec_mark_shared(
+                                    v as usize as *mut GosVec,
+                                );
+                            };
+                        } else {
+                            unsafe {
+                                crate::c_abi::rc::gos_rt_rc_mark_shared(v as usize as *mut u8);
+                            };
+                        }
                     }
                 }
                 _ => {}

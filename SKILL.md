@@ -11,7 +11,7 @@ deterministic memory management (reference counting with cycle
 collection, plus `arena { }` regions - no borrow checker, no
 lifetimes, no tracing-GC pauses). Syntax is Rust-flavoured; the
 runtime is Go-shaped (goroutines, channels). Source files conventionally end
-in `.gos`, but `gos TARGET` runs an existing file with any extension. The
+in `.gos`, but `gos run TARGET` runs an existing file with any extension. The
 toolchain binary is `gos`, and projects carry a
 `project.toml` manifest. Pre-1.0.0: APIs may change. Most documented
 surface is available on the bytecode VM, in-process JIT, and LLVM AOT,
@@ -32,9 +32,9 @@ card:
   `doc` lists a file's items. This card ships as its
   `gossamer://skill-card` resource.
 - Without MCP: `gos check FILE` (rustc-class diagnostics with
-  did-you-mean), `gos FILE`, `gos explain CODE`, `gos doc FILE`.
+  did-you-mean), `gos run FILE`, `gos explain CODE`, `gos doc FILE`.
 - `gos check` is necessary, not sufficient - semantics are proven by
-  `gos`, and compiled behavior by `gos build`.
+  `gos run`, and compiled behavior by `gos build`.
 
 ## 3. Cheat sheet
 
@@ -189,8 +189,8 @@ let n = 3 |> double |> add(10) |> clamp(0, 100)
 
 - **Comments**: `//` and non-nesting `/* */` only. A run of `//`
   lines directly above an item is its documentation; `gos test` runs
-  fenced code inside doc comments (mark non-runnable fences
-  ` ```text `).
+  fenced code inside doc comments. Mark a non-runnable fence with the
+  `text` info string, written as `` ```text ... ``` ``.
 - **Semicolons are same-line separators only**: `let a = 1; let b = 2`
   replaces a newline between statements. A trailing semicolon, or one before
   a newline or `}`, is invalid. A newline followed by leading `&`, `*`, or `-`
@@ -472,8 +472,10 @@ build`. Known sharp edges:
 
 ## 15. The `gos` toolchain
 
-Bare `gos` opens the REPL. `gos FILE [ARGS...]` runs a source file; in a
-project, `gos .` / `gos build` resolve the entry themselves.
+Bare `gos` opens the REPL. `gos run FILE [ARGS...]` runs a source file; in a
+project, `gos run .` / `gos build` resolve the entry themselves. Every token
+after `FILE`, including `--`, is a program argument. Put `gos run` options
+before `FILE`.
 
 The REPL starts with `gos <version> REPL [<architecture>-<os>]` and uses the
 `>>>` prompt. Expression output is the value only, with no numbered markers.
@@ -486,7 +488,7 @@ output wraps to the terminal width, capped at 80 columns.
 
 | Command | Purpose |
 |---------|---------|
-| `gos check / parse / build FILE`; `gos FILE` | Typecheck; AST dump; fast native build; VM+JIT execution. |
+| `gos check / parse / build FILE`; `gos run FILE` | Typecheck; AST dump; fast native build; VM+JIT execution. |
 | `gos build --release [--target T]` | Full LLVM `-O3` (static-musl on Linux); cross to `{x86_64,aarch64}-unknown-linux-{gnu,musl}`. |
 | `gos test / bench PATH` | `#[test]` / `#[bench]`; `--coverage`, `--parallel N`, `--format junit`, `--tier-parity`. |
 | `gos fmt [--check] / lint / doc / explain CODE` | Format; lints; item docs; diagnostic rationale. |

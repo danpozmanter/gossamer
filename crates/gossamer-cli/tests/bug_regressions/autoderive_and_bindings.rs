@@ -244,7 +244,7 @@ fn main() {
 }
 
 #[test]
-fn returned_mut_vec_reference_aliases_original_binding_in_vm() {
+fn returned_mut_vec_reference_is_rejected_before_vm_execution() {
     let src = r#"
 fn change(v: &mut Vec<i64>) -> &mut Vec<i64> {
     v[0] = 0
@@ -265,8 +265,12 @@ fn main() {
     let path = write_source(&dir, "returned_mut_vec_ref", src);
     let (stdout, stderr, code) = run_vm(&path);
     let _ = std::fs::remove_dir_all(&dir);
-    assert_eq!(code, Some(0), "stderr: {stderr}");
-    assert_eq!(stdout, "a: [0, 2]\nb: [0, 2]\na: [2, 2]\nb: [2, 2]\n");
+    assert_eq!(code, Some(1), "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stderr.contains("GT0052"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("reference cannot escape through a function return"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]

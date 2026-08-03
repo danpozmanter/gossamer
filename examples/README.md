@@ -29,15 +29,15 @@ JIT, and the `gos build` native binary).
 ## Running
 
 ```sh
-gos examples/hello_world.gos
-gos examples/input.gos
-gos examples/web_server.gos &
+gos run examples/hello_world.gos
+gos run examples/input.gos
+gos run examples/web_server.gos &
 curl 'http://localhost:8080/echo?msg=hi'
 gos test examples/testing.gos
 
 cd examples/projects/web_service
 gos test           # no args - walks up to project.toml, scans src/
-gos src/main.gos
+gos run src/main.gos
 ```
 
 ## Conventions

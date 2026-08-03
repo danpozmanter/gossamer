@@ -638,7 +638,7 @@ fn repl_info_and_explain_details_always_follow_descriptions_with_examples() {
     assert!(info.success, "stderr: {}", info.stderr);
     assert!(
         info.stdout.contains(
-            "HashMap::from<K, V>(entries: {K: V}) -> HashMap<K, V> [assoc]\n    Creates a hash map from a map literal.\n    Example: let empty: HashMap<String, i64> = HashMap::from({});"
+            "HashMap::from<K, V>(entries: {K: V}) -> HashMap<K, V> [associated function]\n    Creates a hash map from a map literal.\n    Example: let empty: HashMap<String, i64> = HashMap::from({});"
         ) && info.stdout.contains("let map:")
             && info.stdout.contains("HashMap<String, i64> = HashMap::from({")
             && info.stdout.contains("\"one\": 1, \"two\":")
@@ -655,6 +655,52 @@ fn repl_info_and_explain_details_always_follow_descriptions_with_examples() {
         ),
         "binding method example did not use the binding: {}",
         explained.stdout
+    );
+}
+
+#[test]
+fn repl_info_vec_from_has_the_array_conversion_contract() {
+    let out = run_repl("%i Vec::from\n%i Vec::from -d\n%e Vec::from -d\n");
+    assert!(out.success, "stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains(
+            "Vec::from<T, const N: usize>(values: [T; N]) -> Vec<T> [associated function]"
+        ),
+        "Vec::from signature fell back to an opaque assoc entry: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains(
+            "Creates a growable vector by moving values from a fixed-size array.\n    Example: let values: Vec<i64> = Vec::from([1, 2, 3])"
+        ),
+        "Vec::from details are incomplete: {}",
+        out.stdout
+    );
+    assert_eq!(
+        out.stdout
+            .matches("Vec::from<T, const N: usize>(values: [T; N]) -> Vec<T> [associated function]")
+            .count(),
+        3,
+        "%i and %e must resolve Vec::from through the same catalog entry: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn iterator_parameter_for_loop_preserves_single_pass_state() {
+    let out = run_repl(
+        "use Iterator\nfn list_range(v: Vec<i64>, r: Iterator<i64>) { for i in r { println(v[i]) } }\nlet values = Vec::from([1, 2, 3])\nlet fresh = 0..2\nlist_range(values, fresh)\n",
+    );
+    assert!(out.success, "stderr: {}", out.stderr);
+    let values: Vec<&str> = out
+        .stdout
+        .lines()
+        .filter(|line| line.parse::<i64>().is_ok())
+        .collect();
+    assert_eq!(
+        values,
+        ["1", "2"],
+        "a fresh Iterator parameter must be driven through its single-pass state"
     );
 }
 
@@ -724,7 +770,7 @@ fn repl_info_resolves_qualified_http_constructor_with_a_real_signature() {
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout
-            .contains("http::Client::new() -> http::Client [assoc]"),
+            .contains("http::Client::new() -> http::Client [associated function]"),
         "%info should resolve the exact catalog path with its contract: {}",
         out.stdout
     );
@@ -993,7 +1039,7 @@ fn repl_mutable_assignment_persists_across_lines() {
 fn repl_rejects_rebinding_a_reference_with_its_referent() {
     // `let mut` permits assigning a new `&[i64; 2]`, not replacing the
     // reference binding with a bare `[i64; 2]` value.
-    let out = run_repl("let mut x = &[1, 2]\nx = [2, 3]\n");
+    let out = run_repl("let source = [1, 2]\nlet mut x = &source\nx = [2, 3]\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr.contains("type mismatch"),
@@ -1009,7 +1055,7 @@ fn repl_rejects_rebinding_a_reference_with_its_referent() {
 }
 
 #[test]
-fn repl_reference_rebind_to_temporary_does_not_mutate_old_referent() {
+fn repl_reference_rebind_rejects_temporaries_without_mutating_named_referents() {
     let out = run_repl(
         "let a = [1, 2]\n\
          let b = [3, 4]\n\
@@ -1035,8 +1081,8 @@ fn repl_reference_rebind_to_temporary_does_not_mutate_old_referent() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("mut c: &[i64; 2] = &[5, 6]"),
-        "reference binding did not move to the new temporary referent: {}",
+        out.stdout.contains("mut c: &[i64; 2] = &[3, 4]"),
+        "rejected temporary rebind did not preserve the named referent: {}",
         out.stdout
     );
     assert!(
@@ -1045,20 +1091,27 @@ fn repl_reference_rebind_to_temporary_does_not_mutate_old_referent() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("mut x: [i64; 2] = [10, 20]")
-            && out.stdout.contains("mut y: [i64; 2] = [30, 40]"),
-        "mutable reference rebind changed an old named referent: {}",
+        out.stdout.contains("mut x: [i64; 2] = [10, 20]"),
+        "mutable reference rebind changed the old named referent: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("mut r: &mut [i64; 2] = &mut [50, 60]"),
-        "mutable reference binding did not move to the new temporary referent: {}",
+        out.stdout.contains("mut r: &mut [i64; 2] = &mut [30, 40]"),
+        "rejected mutable temporary rebind did not preserve the named referent: {}",
         out.stdout
     );
     assert!(
         !out.stdout.contains("mut y: [i64; 2] = [50, 60]"),
         "mutable reference rebind leaked through and mutated old `y`: {}",
         out.stdout
+    );
+    assert!(
+        out.stderr
+            .matches("reference cannot be rebound through an alias or from a temporary")
+            .count()
+            >= 2,
+        "temporary-backed reference rebinds were not rejected: {}",
+        out.stderr
     );
 }
 
@@ -1201,10 +1254,11 @@ fn repl_bindings_preserve_reference_and_destructured_types() {
     let out = run_repl(
         "struct Pair { left: i64, right: String }\n\
          let mut m = [1, 2, 3, 4]\n\
-         let shared = &[5, 6]\n\
+         let shared_source = [5, 6]\n\
+         let shared = &shared_source\n\
          let mut n = [7, 8]\n\
          let exclusive = &mut n\n\
-         let &(a, b) = &(9, \"ten\")\n\
+         let (a, b) = (9, \"ten\")\n\
          let p = Pair { left: 11, right: \"twelve\" }\n\
          let Pair { left, right } = p\n\
          %b\n",
@@ -1213,6 +1267,7 @@ fn repl_bindings_preserve_reference_and_destructured_types() {
     for expected in [
         "mut m: [i64; 4] = [1, 2, 3, 4]",
         "shared: &[i64; 2] = &[5, 6]",
+        "mut n: [i64; 2] = [7, 8]",
         "exclusive: &mut [i64; 2] = &mut [7, 8]",
         "a: i64 = 9",
         "b: String = \"ten\"",
@@ -1233,11 +1288,71 @@ fn repl_bindings_preserve_reference_and_destructured_types() {
 }
 
 #[test]
+fn repl_bindings_show_owner_after_mut_ref_and_deref_copy() {
+    let out = run_repl(
+        "let mut a = [1,2,3]\n\
+         let b = &mut a\n\
+         let c = *b\n\
+         %b\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for expected in [
+        "mut a: [i64; 3] = [1, 2, 3]",
+        "b: &mut [i64; 3] = &mut [1, 2, 3]",
+        "c: [i64; 3] = [1, 2, 3]",
+    ] {
+        assert!(
+            out.stdout.lines().any(|line| line == expected),
+            "missing exact binding `{expected}`; stdout: {}",
+            out.stdout
+        );
+    }
+    assert!(
+        !out.stdout.contains("<unknown>") && !out.stdout.contains("<error:"),
+        "valid owner and deref bindings must render cleanly: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_replays_user_mut_self_methods() {
+    let out = run_repl(
+        "struct Mutable {\n\
+             content: Vec<i64>\n\
+         }\n\
+         impl Mutable {\n\
+             fn change(&mut self, index: i64, value: i64) {\n\
+                 self.content[index] = value\n\
+             }\n\
+         }\n\
+         let mut m = Mutable { content: Vec::from([1, 2, 3]) }\n\
+         m.change(1, 5)\n\
+         println(m)\n\
+         %b\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout
+            .lines()
+            .any(|line| line == "Mutable { content: [1, 5, 3] }"),
+        "println should see the mutation; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout
+            .lines()
+            .any(|line| line == "mut m: Mutable = Mutable { content: [1, 5, 3] }"),
+        "%b should replay the user mutator; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_explain_resolves_binding_types_and_callable_method_capabilities() {
     let out = run_repl(
         "let mut m = [1, 2, 3, 4]\n\
-         let r = &mut m\n\
          %e m -d\n\
+         let r = &mut m\n\
          %e r -d\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -1765,7 +1880,7 @@ fn repl_executes_nested_function_items() {
 #[test]
 fn repl_constructs_nested_struct_items() {
     let out = run_repl(
-        "fn answer() -> i64 { struct Pair { left: i64, right: i64 } let p = Pair { left: 20, right: 22 } println(p) p.left + p.right }\n\
+        "fn answer() -> i64 { struct Pair { left: i64, right: i64 } let p = Pair { left: 20, right: 22 }; println(p); p.left + p.right }\n\
          answer()\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -2481,6 +2596,29 @@ fn repl_meta_info_for_shared_method_name_does_not_append_an_owner_listing() {
         "%i should not append the arbitrary BTreeMap listing: {}",
         out.stdout
     );
+}
+
+#[test]
+fn repl_info_shows_every_sync_map_method_signature() {
+    for query in ["sync::Map", "Map"] {
+        let out = run_repl(&format!("%i {query}\n"));
+        assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+        for expected in [
+            "contains_key(self: &sync::Map, key: String) -> bool [method]",
+            "get(self: &sync::Map, key: String) -> Option<String> [method]",
+            "insert(self: &sync::Map, key: String, value: String) -> () [method]",
+            "keys(self: &sync::Map) -> Vec<String> [method]",
+            "len(self: &sync::Map) -> i64 [method]",
+            "new() -> sync::Map [associated function]",
+            "remove(self: &sync::Map, key: String) -> () [method]",
+        ] {
+            assert!(
+                out.stdout.contains(expected),
+                "%i {query} omitted `{expected}`: {}",
+                out.stdout
+            );
+        }
+    }
 }
 
 #[test]

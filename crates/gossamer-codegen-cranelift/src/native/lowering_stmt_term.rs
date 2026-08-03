@@ -588,9 +588,8 @@ fn return_local_is_fresh_aggregate(body: &Body) -> bool {
 /// callee uses the structural-return (sret) ABI for a by-value aggregate
 /// return. Allocate a stack slot sized to the callee's return aggregate
 /// (`ret_slots` 8-byte words) and append its address as the hidden result-slot
-/// arg; the callee fills it (no per-call heap block) and returns the same
-/// pointer. The slot lives in this frame, so it is reused across loop
-/// iterations and reclaimed on frame exit - nothing to free.
+/// arg; the callee fills it and returns the same pointer. The slot lives in
+/// this frame and is copied into the owning destination before cleanup.
 ///
 /// `ret_slots` is resolved from the callee's own return type ([`callee_sret_slots`]).
 /// A fixed guess would overflow whenever the aggregate exceeds two words (a

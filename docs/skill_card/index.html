@@ -1431,6 +1431,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1466,6 +1468,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/sequence_reference_safety/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Sequence and reference safety
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
 
 
 
@@ -2176,8 +2206,9 @@ Self-contained. For anything not covered here, lean on the toolchain
 deterministic memory management (reference counting with cycle
 collection, plus <code>arena { }</code> regions - no borrow checker, no
 lifetimes, no tracing-GC pauses). Syntax is Rust-flavoured; the
-runtime is Go-shaped (goroutines, channels). Source files end in
-<code>.gos</code>, the toolchain binary is <code>gos</code>, projects carry a
+runtime is Go-shaped (goroutines, channels). Source files conventionally end
+in <code>.gos</code>, but <code>gos run TARGET</code> runs an existing file with any extension. The
+toolchain binary is <code>gos</code>, and projects carry a
 <code>project.toml</code> manifest. Pre-1.0.0: APIs may change. Most documented
 surface is available on the bytecode VM, in-process JIT, and LLVM AOT,
 but support is item- and platform-specific; check <code>gos feature-status</code>
@@ -2187,7 +2218,7 @@ and validate the target tier before relying on an API in production.</p>
 card:</p>
 <ul>
 <li><code>gos mcp</code> (stdio MCP server, e.g. <code>claude mcp add gossamer -- gos
-  mcp</code>) exposes <code>check</code> (structured diagnostics), <code>run</code>, <code>build</code>,
+  mcp</code>) exposes <code>check</code> (structured diagnostics), <code>execute</code>, <code>build</code>,
   <code>test</code>, <code>fmt</code>, <code>doc</code>, <code>explain</code>, and semantic navigation (<code>hover</code>,
   <code>definition</code>, <code>references</code>, <code>workspace_symbols</code>). Prefer these to
   memorized API detail: <code>hover</code> answers "what is this and its type",
@@ -2195,9 +2226,9 @@ card:</p>
   <code>doc</code> lists a file's items. This card ships as its
   <code>gossamer://skill-card</code> resource.</li>
 <li>Without MCP: <code>gos check FILE</code> (rustc-class diagnostics with
-  did-you-mean), <code>gos FILE</code>, <code>gos explain CODE</code>, <code>gos doc FILE</code>.</li>
+  did-you-mean), <code>gos run FILE</code>, <code>gos explain CODE</code>, <code>gos doc FILE</code>.</li>
 <li><code>gos check</code> is necessary, not sufficient - semantics are proven by
-  <code>gos</code>, and compiled behavior by <code>gos build</code>.</li>
+  <code>gos run</code>, and compiled behavior by <code>gos build</code>.</li>
 </ul>
 <h2 id="3-cheat-sheet">3. Cheat sheet<a class="headerlink" href="#3-cheat-sheet" title="Permanent link">&para;</a></h2>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">io</span>
@@ -2254,10 +2285,9 @@ card:</p>
   <code>0</code>, <code>1</code>, <code>2</code>). A range can also be stored and consumed later:
   <code>let a = 0..3</code>, then <code>for i in a { println(i) }</code>.</li>
 <li><strong>Bare integer indices</strong> - <code>arr[i]</code> takes <code>i64</code>, no <code>as usize</code>.
-  Reads and writes outside <code>[0, len)</code> panic on every tier. Method-form
-  Vec <code>insert</code> accepts <code>0..=len</code>; <code>remove</code> accepts <code>0..len</code>; invalid
-  indices panic in method and qualified forms. Use <code>len()</code> guards when
-  absence is recoverable.</li>
+  Indexed reads and writes outside <code>[0, len)</code> panic on every tier. Vec
+  <code>insert</code> accepts <code>0..=len</code> and returns <code>Result&lt;(), errors::Error&gt;</code>;
+  <code>remove</code> accepts <code>0..len</code> and returns <code>Result&lt;T, errors::Error&gt;</code>.</li>
 <li><strong><code>m.inc(k)</code> / <code>m.inc(k, by)</code></strong> for counters; <code>m.or_insert(k,
   default)</code> for get-or-fill (<code>m.or_insert(k, d).method(args)</code> writes
   the mutation back into the stored value). <code>arr.swap(i, j)</code>.</li>
@@ -2277,10 +2307,12 @@ card:</p>
 <li><strong><code>s.to_i64()</code> / <code>to_f64()</code> / <code>to_bool()</code></strong> - strict full-string
   parses returning <code>Option&lt;T&gt;</code>:
   <code>env::args().first().unwrap_or("8").to_i64().unwrap_or(8)</code>.</li>
-<li><strong><code>[v; n]</code> with runtime <code>n</code> builds a Vec</strong> - never write a push loop
-  for a constant fill.</li>
+<li><strong><code>[v; N]</code> is a fixed array and <code>N</code> is compile-time constant</strong>. Use
+  <code>Vec::from([v; N])</code> for growable storage.</li>
 <li><strong>Collection constructors infer</strong>: <code>let mut m = HashMap::new()</code>,
-  <code>let mut xs = []</code> ground from first use.</li>
+  <code>let empty: HashMap&lt;String, i64&gt; = HashMap::from({})</code>, and
+  <code>let map: HashMap&lt;String, i64&gt; = HashMap::from({"one": 1})</code>.
+  <code>HashSet::from</code> accepts a fixed array of values.</li>
 <li><strong>Byte reads</strong>: <code>s[i]</code> is the byte as <code>i64</code>; compare with byte
   literals (<code>s[i] &gt;= b'0'</code>), render with <code>s[i] as char</code>. Prefer this
   over per-byte <code>substring</code>.</li>
@@ -2344,57 +2376,62 @@ Left-associative, very low precedence.</p>
 <ul>
 <li><strong>Comments</strong>: <code>//</code> and non-nesting <code>/* */</code> only. A run of <code>//</code>
   lines directly above an item is its documentation; <code>gos test</code> runs
-  fenced code inside doc comments (mark non-runnable fences
-  <code>```text</code>).</li>
-<li><strong>Semicolons are same-line separators only</strong>: <code>let a = 1; let b = 2</code>
+  fenced code inside doc comments. Mark non-runnable fences with:</li>
+</ul>
+<p><div class="language-markdown highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="sb">```text</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>non-runnable example
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="sb">```</span>
+</code></pre></div>
+- <strong>Semicolons are same-line separators only</strong>: <code>let a = 1; let b = 2</code>
   replaces a newline between statements. A trailing semicolon, or one before
   a newline or <code>}</code>, is invalid. A newline followed by leading <code>&amp;</code>, <code>*</code>, or <code>-</code>
   starts a NEW statement; for multi-line continuation, end the previous line
-  with the operator or parenthesize.</li>
-<li><strong>Delimited lists</strong> use commas on one line and newlines when multiline.
+  with the operator or parenthesize.
+- <strong>Delimited lists</strong> use commas on one line and newlines when multiline.
   This covers function arguments and parameters, closure parameters,
   struct fields and literals, and enum variants and payload fields.
-  Legacy multiline commas parse, and <code>gos fmt</code> removes them.</li>
-<li><strong>Struct construction follows declaration shape</strong>: unit structs use
+  Legacy multiline commas parse, and <code>gos fmt</code> removes them.
+- <strong>Struct construction follows declaration shape</strong>: unit structs use
   <code>Unit</code> or <code>Unit {}</code>, tuple structs use <code>Pair(a, b)</code>, and named structs
   require keyed <code>Point { x: 1, y: 2 }</code> fields. Positional or mixed
-  braced named-struct literals are rejected.</li>
-<li><strong>Imports</strong>: <code>use std::{iter, os, strings}</code>, alias via <code>{HashMap as
+  braced named-struct literals are rejected.
+- <strong>Imports</strong>: <code>use std::{iter, os, strings}</code>, alias via <code>{HashMap as
   Map}</code>; always spell the full path (<code>std::encoding::json</code>, not
   <code>std::json</code>) - paths validate against the std manifest (GR0005).
-  Cross-module: <code>super::item</code>, <code>crate::path::item</code>, <code>self::child::item</code>.</li>
-<li><strong>Entry file may omit <code>fn main</code></strong>: top-level statements become the
+  Cross-module: <code>super::item</code>, <code>crate::path::item</code>, <code>self::child::item</code>.
+- <strong>Entry file may omit <code>fn main</code></strong>: top-level statements become the
   implicit main (only the entry file; <code>?</code> there makes it return
-  <code>Result&lt;(), errors::Error&gt;</code>; exit code via <code>process::exit(n)</code>).</li>
-<li><strong>Generics</strong>: <code>fn f&lt;T: Trait&gt;(x: &amp;T)</code> monomorphises per call site
+  <code>Result&lt;(), errors::Error&gt;</code>; exit code via <code>process::exit(n)</code>).
+- <strong>Generics</strong>: <code>fn f&lt;T: Trait&gt;(x: &amp;T)</code> monomorphises per call site
   on every tier (single bound, struct-typed params; no <code>dyn Trait</code>).
   Generic structs <code>struct Wrapper&lt;T&gt;</code> + <code>impl&lt;T&gt;</code> work. Const-generic
   array length <code>fn sum&lt;const N: usize&gt;(xs: [i64; N])</code> is inferred
-  from the argument (not usable as a bare value or repeat count).</li>
-<li><strong>References</strong>: <code>&amp;x</code> is shared and <code>&amp;mut x</code> writes through to the same
+  from the argument (not usable as a bare value or repeat count).
+- <strong>References</strong>: <code>&amp;x</code> is shared and <code>&amp;mut x</code> writes through to the same
   source place; both are aliases, never copies. There are no lifetimes or
-  borrow checker, so <code>&amp;mut</code> is writable rather than fully exclusive.
+  non-lexical borrow analysis. A lightweight lexical check rejects a second
+  named <code>&amp;mut</code> to the same root, overlap with an active named mutable alias,
+  and repeated mutable roots in one call.
   Calls never create <code>&amp;mut</code> implicitly: pass a writable place as
-  <code>change(&amp;mut value)</code>. Forward an existing <code>&amp;mut T</code> as <code>change(value)</code>.</li>
-<li><strong>Types</strong>: <code>bool char i8..i64 u8..u64 isize usize f32 f64 String
+  <code>change(&amp;mut value)</code>. Forward an existing <code>&amp;mut T</code> as <code>change(value)</code>.
+- <strong>Types</strong>: <code>bool char i8..i64 u8..u64 isize usize f32 f64 String
   [T] [T; N] (A, B) Option&lt;T&gt; Result&lt;T, E&gt; &amp;T</code> + user types. <code>i128</code>
   / <code>u128</code> are rejected (GT0014). Transparent <code>type Id = i64</code> /
   <code>type Pair&lt;A&gt; = (A, A)</code> aliases substitute everywhere (cycle =
-  GT0024).</li>
-<li><strong>Casts</strong>: <code>x as T</code> is whitelist-checked (numeric&lt;-&gt;numeric,
+  GT0024).
+- <strong>Casts</strong>: <code>x as T</code> is whitelist-checked (numeric&lt;-&gt;numeric,
   bool/char-&gt;int, u8-&gt;char). Int-&gt;narrow-int masks at width (<code>300 as
   u8 == 44</code>); float-&gt;int truncates toward zero and saturates at i64
-  width, NO narrow mask (<code>300.7 as u8 == 300</code>, NaN -&gt; 0).</li>
-<li><strong>Patterns</strong>: literals, <code>_</code>, <code>name</code>, <code>mut name</code>, variants, structs,
+  width, NO narrow mask (<code>300.7 as u8 == 300</code>, NaN -&gt; 0).
+- <strong>Patterns</strong>: literals, <code>_</code>, <code>name</code>, <code>mut name</code>, variants, structs,
   tuples, ranges (<code>1..=5</code>, <code>1..5</code>, open-ended <code>lo..</code> / <code>..=hi</code>;
   range arms still need a <code>_</code> arm - opaque to exhaustiveness),
   or-patterns, <code>@</code>-bindings, rest <code>..</code> (slice head/tail: <code>if let
   [first, ..rest] = xs</code>), guards. Irrefutable <code>let</code> destructuring
   covers structs (with renames), nested enums/tuple-structs, and
-  or-patterns binding the same names.</li>
-<li><strong>Byte literals</strong>: <code>b'A'</code> is a <code>u8</code>.</li>
-<li>Enums cap at 256 variants (GT0012).</li>
-</ul>
+  or-patterns binding the same names.
+- <strong>Byte literals</strong>: <code>b'A'</code> is a <code>u8</code>.
+- Enums cap at 256 variants (GT0012).</p>
 <h2 id="7-comptime-the-metaprogramming-story">7. Comptime (the metaprogramming story)<a class="headerlink" href="#7-comptime-the-metaprogramming-story" title="Permanent link">&para;</a></h2>
 <p>Zig-style <code>comptime</code>, not macros: <code>comptime { }</code> blocks, <code>comptime
 fn</code> calls, and <code>comptime</code> params run on the bytecode VM during
@@ -2408,12 +2445,12 @@ a <code>comptime fn</code>-built <code>String</code> as source.</p>
 <p>Fallible functions return <code>Result&lt;T, E&gt;</code>; propagate with <code>?</code> (also
 works on <code>Option</code> inside Option-returning functions, auto-converts
 errors through <code>From</code>, and works inside macro args).</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="p">{</span><span class="n">errors</span><span class="p">,</span><span class="w"> </span><span class="n">fs</span><span class="p">}</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">fn</span> <span class="nf">load</span><span class="p">(</span><span class="n">path</span>: <span class="kp">&amp;</span><span class="nb">String</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">errors</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="n">fs</span>::<span class="n">read_to_string</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">        </span><span class="p">.</span><span class="n">map_err</span><span class="p">(</span><span class="o">|</span><span class="n">e</span><span class="o">|</span><span class="w"> </span><span class="n">errors</span>::<span class="n">wrap</span><span class="p">(</span><span class="n">e</span><span class="p">,</span><span class="w"> </span><span class="fm">format!</span><span class="p">(</span><span class="s">&quot;reading {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">path</span><span class="p">)))</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">}</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="p">{</span><span class="n">errors</span><span class="p">,</span><span class="w"> </span><span class="n">fs</span><span class="p">}</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="k">fn</span> <span class="nf">load</span><span class="p">(</span><span class="n">path</span>: <span class="kp">&amp;</span><span class="nb">String</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">errors</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="n">fs</span>::<span class="n">read_to_string</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">        </span><span class="p">.</span><span class="n">map_err</span><span class="p">(</span><span class="o">|</span><span class="n">e</span><span class="o">|</span><span class="w"> </span><span class="n">errors</span>::<span class="n">wrap</span><span class="p">(</span><span class="n">e</span><span class="p">,</span><span class="w"> </span><span class="fm">format!</span><span class="p">(</span><span class="s">&quot;reading {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">path</span><span class="p">)))</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">}</span>
 </code></pre></div>
 <p><code>errors::new(msg)</code> / <code>newf(fmt, ..)</code> / <code>wrap(cause, msg)</code> /
 <code>is(err, needle)</code> / <code>join([..])</code>; walk chains with <code>err.cause()</code>.
@@ -2431,20 +2468,20 @@ silently corrupting memory.</p>
 <p><code>go expr</code> is fire-and-forget; <code>spawn(f)</code> returns a <code>JoinHandle&lt;T&gt;</code>
 (<code>handle.join()</code> -&gt; <code>Result&lt;T, String&gt;</code>). Typed channels: <code>recv()</code>
 blocks until a value or every sender is gone; producers <code>close()</code>.</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">sync</span>::<span class="n">channel</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="k">fn</span> <span class="nf">produce</span><span class="p">(</span><span class="n">tx</span>: <span class="nc">Sender</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span><span class="w"> </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">2</span><span class="p">);</span><span class="w"> </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="n">tx</span><span class="p">.</span><span class="n">close</span><span class="p">()</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">}</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="p">(</span><span class="n">tx</span><span class="p">,</span><span class="w"> </span><span class="n">rx</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">channel</span><span class="p">()</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="n">go</span><span class="w"> </span><span class="n">produce</span><span class="p">(</span><span class="n">tx</span><span class="p">)</span>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">total</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span>
-<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rx</span><span class="p">.</span><span class="n">recv</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">total</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;total: {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">total</span><span class="p">)</span>
-<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="p">}</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">sync</span>::<span class="n">channel</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">fn</span> <span class="nf">produce</span><span class="p">(</span><span class="n">tx</span>: <span class="nc">Sender</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span><span class="w"> </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">2</span><span class="p">);</span><span class="w"> </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="n">tx</span><span class="p">.</span><span class="n">close</span><span class="p">()</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="p">}</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="p">(</span><span class="n">tx</span><span class="p">,</span><span class="w"> </span><span class="n">rx</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">channel</span><span class="p">()</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">    </span><span class="n">go</span><span class="w"> </span><span class="n">produce</span><span class="p">(</span><span class="n">tx</span><span class="p">)</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">total</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rx</span><span class="p">.</span><span class="n">recv</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">total</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;total: {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">total</span><span class="p">)</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="p">}</span>
 </code></pre></div>
 <p><code>select { x = rx_a.recv() =&gt; .., default =&gt; .. }</code> multiplexes (arms
 poll in source order; <code>default</code> makes it non-blocking). One-shot
@@ -2462,11 +2499,17 @@ in <code>for</code>. Sequence combinators (<code>map</code>/<code>filter</code>/
 are callable as methods/free functions and materialize results.</p>
 <h2 id="10-data-structures">10. Data structures<a class="headerlink" href="#10-data-structures" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>[T]</code> growable (push/pop/swap/sort/sort_by, <code>contains</code>, <code>index_of</code>,
-  <code>first</code>/<code>last</code>, <code>rev</code>, <code>slice(a, b) -&gt; Result</code>); <code>[T; N]</code>
-  fixed; tuples <code>.0</code>/<code>.1</code>; tuple structs fully usable. Method-call
-  <code>xs.insert/remove</code> mutate in place and panic when the index is out of
-  bounds. Qualified calls use the same contract:
+<li><code>[T; N]</code> is an owned fixed array, <code>[T]</code> is an unsized borrowed slice,
+  and <code>Vec&lt;T&gt;</code> is the only owned growable sequence. Arrays, slices, and Vec
+  share the implemented slice method surface. Eager collection combinators
+  are Vec methods; arrays and slices use <code>iter()</code> first. Only Vec has
+  push/pop/insert/remove/clear, truncation, extension, reservation, and
+  capacity methods. Mutable arrays and slices support <code>sort</code>, <code>reverse</code>,
+  <code>swap</code>, and <code>fill</code> without resizing. <code>%i</code> reports each type's real surface, while <code>%e</code> also removes
+  methods that the binding's mutability cannot call. Tuples use <code>.0</code>/<code>.1</code>;
+  tuple structs are fully usable. Method-call
+  <code>xs.insert/remove/swap</code> mutate in place and return <code>Result</code>, with an
+  <code>Err</code> for an out-of-bounds index. Qualified calls use the same contract:
   <code>Vec::insert(&amp;mut xs, i, v)</code> / <code>Vec::remove(&amp;mut xs, i)</code>.</li>
 <li><code>std::collections</code>: <code>Vec</code>, <code>HashMap</code> (struct/tuple keys by value;
   aggregate-key maps use <code>iter()</code> rather than <code>keys()</code> until typed key
@@ -2476,8 +2519,8 @@ are callable as methods/free functions and materialize results.</p>
   keys), <code>VecDeque</code>. A separate i64-only <code>queue</code>/<code>stack</code>/<code>deque</code>/
   <code>heap</code>/<code>ordered_*</code> family is functional re-bind style
   (<code>let q = queue::push(q, v)</code>), not mutating.</li>
-<li>Collection literals coerce to <code>Vec&lt;T&gt;</code>/<code>[T]</code> wherever the expected
-  type calls for one.</li>
+<li>Array literals never silently become Vec or an owned slice. Use
+  <code>Vec::from([...])</code>; borrow arrays or Vecs as <code>&amp;[T]</code> / <code>&amp;mut [T]</code>.</li>
 <li><strong>Weak references</strong>: RC means a genuine cycle leaks unless one edge
   is non-owning: <code>strong.downgrade() -&gt; Weak&lt;T&gt;</code>,
   <code>w.upgrade() -&gt; Option&lt;T&gt;</code>; <code>runtime::collect_cycles()</code> runs the
@@ -2493,12 +2536,12 @@ multiple <code>mod tests</code> across bundled siblings collide (GR0003).
 <code>assert(cond[, msg])</code> / <code>assert_eq(a, b[, msg])</code> are prelude
 builtins; <code>std::testing::check*</code> record without panicking. <code>gos
 test</code> also compiles and runs fenced code in doc comments.</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="cp">#[cfg(test)]</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">mod</span> <span class="nn">arith_tests</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">testing</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="cp">#[test]</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">add_adds</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">testing</span>::<span class="n">check_eq</span><span class="p">(</span><span class="o">&amp;</span><span class="k">super</span>::<span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">),</span><span class="w"> </span><span class="o">&amp;</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;2+3&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="p">}</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="cp">#[cfg(test)]</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">mod</span> <span class="nn">arith_tests</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">testing</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="cp">#[test]</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">add_adds</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">testing</span>::<span class="n">check_eq</span><span class="p">(</span><span class="o">&amp;</span><span class="k">super</span>::<span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">),</span><span class="w"> </span><span class="o">&amp;</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;2+3&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="p">}</span>
 </code></pre></div>
 <h2 id="12-stdlib-map">12. Stdlib map<a class="headerlink" href="#12-stdlib-map" title="Permanent link">&para;</a></h2>
 <p>Full path spelling is validated (GR0005); discover signatures with
@@ -2552,21 +2595,21 @@ test</code> also compiles and runs fenced code in doc comments.</p>
   tar}</code>, <code>metrics</code>, <code>trace</code>, <code>slog</code>, <code>lifecycle</code>, <code>validate</code>,
   <code>testing</code>, <code>runtime</code> (<code>collect_cycles</code>, <code>set_panic_hook</code>).</li>
 </ul>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>::<span class="n">router</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">r</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">router</span>::<span class="n">Router</span>::<span class="n">new</span><span class="p">()</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">_</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;/&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">handler_fn</span><span class="p">)</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">_</span><span class="p">.</span><span class="n">get_fn</span><span class="p">(</span><span class="s">&quot;/ping&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">|</span><span class="n">_r</span><span class="o">|</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">text</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ok&quot;</span><span class="p">)))</span>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">http</span>::<span class="n">serve</span><span class="p">(</span><span class="s">&quot;0.0.0.0:8080&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">)</span><span class="o">?</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>::<span class="n">router</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">r</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">router</span>::<span class="n">Router</span>::<span class="n">new</span><span class="p">()</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">_</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;/&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">handler_fn</span><span class="p">)</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">_</span><span class="p">.</span><span class="n">get_fn</span><span class="p">(</span><span class="s">&quot;/ping&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">|</span><span class="n">_r</span><span class="o">|</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">text</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ok&quot;</span><span class="p">)))</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="n">http</span>::<span class="n">serve</span><span class="p">(</span><span class="s">&quot;0.0.0.0:8080&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
 <h2 id="13-project-layout">13. Project layout<a class="headerlink" href="#13-project-layout" title="Permanent link">&para;</a></h2>
-<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>project.toml       # [project] id/version; [dependencies]; optional
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>                   # entry = &quot;src/app.gos&quot;; [rust-bindings] for
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>                   # native Rust crates (gos bindgen skeletons)
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>src/main.gos       # binary entry (lib.gos for libraries;
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>                   # subdir/mod.gos for module `subdir`)
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>tests/             # integration tests
+<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>project.toml       # [project] id/version; [dependencies]; optional
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>                   # entry = &quot;src/app.gos&quot;; [rust-bindings] for
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>                   # native Rust crates (gos bindgen skeletons)
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>src/main.gos       # binary entry (lib.gos for libraries;
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>                   # subdir/mod.gos for module `subdir`)
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>tests/             # integration tests
 </code></pre></div>
 <p>A multi-package checkout uses <code>[workspace] members = ["packages/*"]</code>
 at the root (<code>gos new ID --template workspace</code>). Only the resolved
@@ -2591,13 +2634,13 @@ build</code>. Known sharp edges:</p>
   <code>gos feature-status</code> lists Experimental/Planned surface.</li>
 </ul>
 <h2 id="15-the-gos-toolchain">15. The <code>gos</code> toolchain<a class="headerlink" href="#15-the-gos-toolchain" title="Permanent link">&para;</a></h2>
-<p>Bare <code>gos</code> opens the REPL. <code>gos FILE [ARGS...]</code> runs a source file; in a
-project, <code>gos .</code> / <code>gos build</code> resolve the entry themselves.</p>
+<p>Bare <code>gos</code> opens the REPL. <code>gos run FILE [ARGS...]</code> runs a source file; in a
+project, <code>gos run .</code> / <code>gos build</code> resolve the entry themselves.</p>
 <p>The REPL starts with <code>gos &lt;version&gt; REPL [&lt;architecture&gt;-&lt;os&gt;]</code> and uses the
 <code>&gt;&gt;&gt;</code> prompt. Expression output is the value only, with no numbered markers.
 Binding and declaration progress is quiet unless <code>-v</code> is enabled. <code>%help</code>
-lists commands. <code>%info</code>/<code>%i</code> shows item help, <code>%find</code>/<code>%f</code> searches public
-symbols, <code>%bindings</code>/<code>%b</code>, <code>%declarations</code>/<code>%d</code>, and <code>%history</code>/<code>%h</code> inspect
+lists commands. <code>%info</code>/<code>%i</code> searches public symbols and shows item help,
+<code>%bindings</code>/<code>%b</code>, <code>%declarations</code>/<code>%d</code>, and <code>%history</code>/<code>%h</code> inspect
 the session, <code>%reset</code>/<code>%r</code> clears it, and <code>%quit</code>/<code>%q</code> exits. Up/down cycles
 history; Enter continues until braces close; Ctrl-D also exits. Meta-command
 output wraps to the terminal width, capped at 80 columns.</p>
@@ -2610,8 +2653,8 @@ output wraps to the terminal width, capped at 80 columns.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>gos check / parse / run / build FILE</code></td>
-<td>Typecheck; AST dump; VM+JIT run; fast native build.</td>
+<td><code>gos check / parse / build FILE</code>; <code>gos run FILE</code></td>
+<td>Typecheck; AST dump; fast native build; VM+JIT execution.</td>
 </tr>
 <tr>
 <td><code>gos build --release [--target T]</code></td>

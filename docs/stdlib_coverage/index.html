@@ -1524,6 +1524,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1559,6 +1561,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/sequence_reference_safety/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Sequence and reference safety
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
 
 
 
@@ -1956,7 +1986,7 @@ evidence visible.</p>
 <tr>
 <td><code>std::os::exec</code></td>
 <td>shipped</td>
-<td style="text-align: right;">11</td>
+<td style="text-align: right;">12</td>
 <td>module-only</td>
 <td>module-only</td>
 <td>module-only</td>
@@ -2001,7 +2031,7 @@ evidence visible.</p>
 <tr>
 <td><code>std::strings</code></td>
 <td>experimental</td>
-<td style="text-align: right;">40</td>
+<td style="text-align: right;">41</td>
 <td>module-only</td>
 <td>module-only</td>
 <td>module-only</td>
@@ -2064,7 +2094,7 @@ evidence visible.</p>
 <tr>
 <td><code>std::time</code></td>
 <td>experimental</td>
-<td style="text-align: right;">13</td>
+<td style="text-align: right;">18</td>
 <td>module-only</td>
 <td>module-only</td>
 <td>module-only</td>
@@ -2109,7 +2139,7 @@ evidence visible.</p>
 <tr>
 <td><code>std::fs</code></td>
 <td>experimental</td>
-<td style="text-align: right;">23</td>
+<td style="text-align: right;">25</td>
 <td>module-only</td>
 <td>module-only</td>
 <td>module-only</td>
@@ -2251,6 +2281,24 @@ evidence visible.</p>
 <td>Runner, check, check_eq, check_ok.</td>
 </tr>
 <tr>
+<td><code>std::httptest</code></td>
+<td>experimental</td>
+<td style="text-align: right;">1</td>
+<td>none</td>
+<td>none</td>
+<td>none</td>
+<td>No module-level evidence record.</td>
+</tr>
+<tr>
+<td><code>std::image</code></td>
+<td>experimental</td>
+<td style="text-align: right;">9</td>
+<td>none</td>
+<td>none</td>
+<td>none</td>
+<td>No module-level evidence record.</td>
+</tr>
+<tr>
 <td><code>std::runtime</code></td>
 <td>experimental</td>
 <td style="text-align: right;">6</td>
@@ -2333,8 +2381,8 @@ evidence visible.</p>
 </tr>
 <tr>
 <td><code>std::crypto::x509</code></td>
-<td>experimental</td>
-<td style="text-align: right;">2</td>
+<td>shipped</td>
+<td style="text-align: right;">3</td>
 <td>none</td>
 <td>none</td>
 <td>none</td>
@@ -3557,6 +3605,12 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::crypto::x509::verify_server_certificate_with_crls</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::database::sql::Conn</code></td>
 <td>Type</td>
 <td>experimental</td>
@@ -4427,6 +4481,18 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::fs::temp_dir</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::fs::temp_file</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::fs::walk_dir</code></td>
 <td>Function</td>
 <td>experimental</td>
@@ -5178,6 +5244,66 @@ the canonical item path.</p>
 </tr>
 <tr>
 <td><code>std::http_h3::serve</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::httptest::server</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::image::decode_base64</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::image::encode_jpeg_base64</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::image::encode_png_base64</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::image::filled</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::image::height</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::image::new</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::image::pixel</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::image::set_pixel</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::image::width</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td>not item-audited</td>
@@ -6533,6 +6659,12 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::os::exec::Path</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::os::exec::Pipeline</code></td>
 <td>Type</td>
 <td>experimental</td>
@@ -7145,6 +7277,12 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::strings::parse</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::strings::repeat</code></td>
 <td>Function</td>
 <td>experimental</td>
@@ -7421,6 +7559,18 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::time::CivilResolution</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::time::CivilTime</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::time::Duration</code></td>
 <td>Type</td>
 <td>experimental</td>
@@ -7433,8 +7583,26 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::time::Location</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::time::SystemTime</code></td>
 <td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::time::add_date</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::time::format_in</code></td>
+<td>Function</td>
 <td>experimental</td>
 <td>not item-audited</td>
 </tr>

@@ -7,6 +7,7 @@ fn run_executes_every_terminating_example() {
     for name in ["hello_world.gos", "line_count.gos"] {
         let path = examples_dir().join(name);
         let out = Command::new(gos_bin())
+            .arg("run")
             .arg(&path)
             .output()
             .expect("spawn run");
@@ -19,7 +20,7 @@ fn run_executes_every_terminating_example() {
 }
 
 /// End-to-end smoke test of the echo example. Spawns
-/// `gos examples/web_server.gos` in a child process, connects,
+/// `gos run examples/web_server.gos` in a child process, connects,
 /// drives a real HTTP/1.1 request, and inspects the response.
 ///
 /// The example hardcodes port 8080. If that port is already bound
@@ -42,6 +43,7 @@ fn web_server_example_binds_and_serves_real_requests() {
     // connection failures below as "skip" rather than "fail".
 
     let mut child = match std::process::Command::new(gos_bin())
+        .arg("run")
         .arg(examples_dir().join("web_server.gos"))
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -681,7 +683,7 @@ fn explain_prints_description_for_known_code() {
 /// a docs gap.
 #[test]
 fn explain_covers_checker_rejection_codes() {
-    for code in ["GT0013", "GT0014", "GT0015"] {
+    for (code, _) in gossamer_diagnostics::REGISTRY {
         let out = Command::new(gos_bin())
             .args(["explain", code])
             .output()
@@ -712,6 +714,7 @@ fn panic_error_includes_call_stack() {
         "fn inner() { panic(\"boom\") }\nfn main() { inner() }\n",
     );
     let out = Command::new(gos_bin())
+        .arg("run")
         .arg(&fixture)
         .output()
         .expect("spawn run");
@@ -735,6 +738,7 @@ fn every_terminating_example_executes_cleanly() {
     for name in examples {
         let path = examples_dir().join(name);
         let out = Command::new(gos_bin())
+            .arg("run")
             .arg(&path)
             .output()
             .expect("spawn run");

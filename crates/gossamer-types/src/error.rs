@@ -508,6 +508,40 @@ pub enum TypeError {
         /// Earlier named mutable-reference binding.
         borrower: String,
     },
+    /// A reference was placed in storage or crossed a boundary where the
+    /// current runtime cannot keep its referent valid.
+    #[error("reference cannot {context}")]
+    ReferenceEscapeUnsupported {
+        /// Source-level boundary that would let the reference escape.
+        context: String,
+    },
+    /// An access conflicts with a lexically active reference.
+    #[error("cannot {action} `{root}` while reference `{borrower}` is active")]
+    BorrowedPlaceConflict {
+        /// Root binding protected by the active reference.
+        root: String,
+        /// Binding holding the active reference.
+        borrower: String,
+        /// Rejected operation, such as read or mutate.
+        action: &'static str,
+    },
+    /// A reference pattern attempted to copy an aggregate referent.
+    #[error("reference pattern cannot bind aggregate value `{ty}` by value")]
+    ReferencePatternAggregateUnsupported {
+        /// Aggregate referent type.
+        ty: String,
+    },
+    /// A concurrency boundary attempted a by-value aggregate shape whose
+    /// compiled publication ABI cannot preserve all child ownership.
+    #[error(
+        "by-value aggregate `{ty}` cannot {boundary} with the current compiled concurrency ABI"
+    )]
+    ConcurrentAggregateUnsupported {
+        /// Aggregate type whose nested Vec storage cannot be published safely.
+        ty: String,
+        /// Concurrency boundary being crossed.
+        boundary: &'static str,
+    },
     /// A call omitted `&mut` for a parameter that may modify its argument.
     /// Mutable access must be visible at the call site as `&mut place`.
     #[error(
@@ -579,6 +613,12 @@ impl TypeError {
             Self::AssignThroughSharedReference { .. } => "assign-through-shared-reference",
             Self::MutableReferenceToImmutable { .. } => "mutable-reference-to-immutable",
             Self::MutableReferenceConflict { .. } => "mutable-reference-conflict",
+            Self::ReferenceEscapeUnsupported { .. } => "reference-escape-unsupported",
+            Self::BorrowedPlaceConflict { .. } => "borrowed-place-conflict",
+            Self::ReferencePatternAggregateUnsupported { .. } => {
+                "reference-pattern-aggregate-unsupported"
+            }
+            Self::ConcurrentAggregateUnsupported { .. } => "concurrent-aggregate-unsupported",
             Self::MutableArgumentRequiresReference { .. } => "mutable-argument-requires-reference",
         }
     }
@@ -636,6 +676,10 @@ impl TypeError {
             Self::AssignThroughSharedReference { .. } => "GT0031",
             Self::MutableReferenceToImmutable { .. } => "GT0032",
             Self::MutableReferenceConflict { .. } => "GT0043",
+            Self::ReferenceEscapeUnsupported { .. } => "GT0052",
+            Self::BorrowedPlaceConflict { .. } => "GT0053",
+            Self::ReferencePatternAggregateUnsupported { .. } => "GT0054",
+            Self::ConcurrentAggregateUnsupported { .. } => "GT0055",
             Self::MutableArgumentRequiresReference { .. } => "GT0046",
         }
     }
@@ -1071,6 +1115,40 @@ impl TypeDiagnostic {
                         "end or narrow `{borrower}` before borrowing `{root}` mutably again"
                     ))
                     .with_note("named mutable references are exclusive for their lexical scope");
+            }
+            TypeError::ReferenceEscapeUnsupported { .. } => {
+                out = out
+                    .with_help(
+                        "keep the reference call-scoped or bind it directly to a named local place",
+                    )
+                    .with_note(
+                        "references are non-owning views; storing or returning one could outlive its referent",
+                    );
+            }
+            TypeError::BorrowedPlaceConflict { borrower, .. } => {
+                out = out
+                    .with_help(format!(
+                        "access the value through `{borrower}`, or narrow that reference's lexical scope"
+                    ))
+                    .with_note(
+                        "a mutable reference is exclusive; any live reference prevents mutation of its source",
+                    );
+            }
+            TypeError::ReferencePatternAggregateUnsupported { .. } => {
+                out = out
+                    .with_help("bind the reference itself, then access its elements or fields")
+                    .with_note(
+                        "reference-pattern destructuring is limited to scalar referents in Gossamer",
+                    );
+            }
+            TypeError::ConcurrentAggregateUnsupported { .. } => {
+                out = out
+                    .with_help(
+                        "publish the Vec separately, or pass scalar fields and reconstruct the aggregate in the receiving goroutine",
+                    )
+                    .with_note(
+                        "nested growable storage does not yet have one ownership descriptor shared by every concurrency ABI",
+                    );
             }
             TypeError::MutableArgumentRequiresReference { argument } => {
                 out = out

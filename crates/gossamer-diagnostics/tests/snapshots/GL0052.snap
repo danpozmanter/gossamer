@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GL0052]: A loop scans a string one byte at a time to find a substring. Use - here
+--- framed ---
+error[GL0052]: A loop scans a string one byte at a time to find a substring. Use
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0048]: A `let &...` or `let &mut ...` pattern was applied to a non-reference - here
+--- framed ---
+error[GT0048]: A `let &...` or `let &mut ...` pattern was applied to a non-reference
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

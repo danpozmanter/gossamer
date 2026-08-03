@@ -94,6 +94,7 @@ nav:
       - From F#: migration/fsharp.md
       - From Kotlin: migration/kotlin.md
   - Design notes:
+      - Sequence and reference safety: design/sequence_reference_safety.md
       - Diagnostics style: design/diagnostics.md
       - Lazy iterators: design/lazy_iterators.md
       - Runtime internals: design/runtime.md

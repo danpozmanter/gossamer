@@ -708,19 +708,18 @@ impl SyncIntVec {
         self.inner.lock().is_empty()
     }
 
-    /// Reads slot `idx`. Returns `0` for out-of-bounds, matching
-    /// the runtime helper's saturating read.
+    /// Reads slot `idx` when it is in bounds.
     #[must_use]
-    pub fn get(&self, idx: usize) -> i64 {
-        self.inner.lock().get(idx).copied().unwrap_or(0)
+    pub fn get(&self, idx: usize) -> Option<i64> {
+        self.inner.lock().get(idx).copied()
     }
 
-    /// Writes slot `idx`. No-op for out-of-bounds.
-    pub fn set(&self, idx: usize, value: i64) {
+    /// Writes slot `idx`, returning `None` when it is out of bounds.
+    pub fn set(&self, idx: usize, value: i64) -> Option<()> {
         let mut g = self.inner.lock();
-        if let Some(slot) = g.get_mut(idx) {
-            *slot = value;
-        }
+        let slot = g.get_mut(idx)?;
+        *slot = value;
+        Some(())
     }
 
     /// Appends a new slot.
@@ -728,16 +727,12 @@ impl SyncIntVec {
         self.inner.lock().push(value);
     }
 
-    /// Atomic increment of slot `idx` by `delta`. Returns the new
-    /// value. Equivalent to a brief lock; `0` on out-of-bounds.
-    pub fn add(&self, idx: usize, delta: i64) -> i64 {
+    /// Atomic increment of slot `idx` by `delta`, returning the new value.
+    pub fn add(&self, idx: usize, delta: i64) -> Option<i64> {
         let mut g = self.inner.lock();
-        if let Some(slot) = g.get_mut(idx) {
-            *slot = slot.wrapping_add(delta);
-            *slot
-        } else {
-            0
-        }
+        let slot = g.get_mut(idx)?;
+        *slot = slot.wrapping_add(delta);
+        Some(*slot)
     }
 
     /// Snapshots the current contents.
@@ -786,18 +781,18 @@ impl SyncByteVec {
         self.inner.lock().is_empty()
     }
 
-    /// Reads byte `idx`. Returns `0` for out-of-bounds.
+    /// Reads byte `idx` when it is in bounds.
     #[must_use]
-    pub fn get(&self, idx: usize) -> u8 {
-        self.inner.lock().get(idx).copied().unwrap_or(0)
+    pub fn get(&self, idx: usize) -> Option<u8> {
+        self.inner.lock().get(idx).copied()
     }
 
-    /// Writes byte `idx`. No-op for out-of-bounds.
-    pub fn set(&self, idx: usize, value: u8) {
+    /// Writes byte `idx`, returning `None` when it is out of bounds.
+    pub fn set(&self, idx: usize, value: u8) -> Option<()> {
         let mut g = self.inner.lock();
-        if let Some(slot) = g.get_mut(idx) {
-            *slot = value;
-        }
+        let slot = g.get_mut(idx)?;
+        *slot = value;
+        Some(())
     }
 
     /// Appends a single byte.
@@ -1193,14 +1188,27 @@ mod tests {
             let v = Arc::clone(&v);
             handles.push(thread::spawn(move || {
                 for _ in 0..1000 {
-                    v.add(0, 1);
+                    assert!(v.add(0, 1).is_some());
                 }
             }));
         }
         for h in handles {
             h.join().unwrap();
         }
-        assert_eq!(v.get(0), 16 * 1000);
+        assert_eq!(v.get(0), Some(16 * 1000));
+        assert_eq!(v.get(1), None);
+        assert_eq!(v.set(1, 4), None);
+        assert_eq!(v.add(1, 4), None);
+    }
+
+    #[test]
+    fn sync_byte_vec_reports_out_of_bounds_access() {
+        let v = SyncByteVec::with_len(1);
+        assert_eq!(v.get(0), Some(0));
+        assert_eq!(v.set(0, 7), Some(()));
+        assert_eq!(v.get(0), Some(7));
+        assert_eq!(v.get(1), None);
+        assert_eq!(v.set(1, 7), None);
     }
 
     #[test]

@@ -134,6 +134,52 @@ use rayon::prelude::*;
 
 use super::*;
 
+fn repeated_vec_child_words(tcx: &TyCtxt, ty: Ty) -> Vec<u32> {
+    fn walk(tcx: &TyCtxt, ty: Ty, base: u32, out: &mut Vec<u32>, depth: u8) {
+        if depth > 16 {
+            return;
+        }
+        match tcx.kind_of(ty) {
+            TyKind::Vec(_) => out.push(base),
+            TyKind::Tuple(fields) => {
+                let mut word = base;
+                for field in fields {
+                    walk(tcx, *field, word, out, depth + 1);
+                    word = word.saturating_add(type_slot_count(tcx, *field).max(1));
+                }
+            }
+            TyKind::Adt { def, substs } if !tcx.is_inline_enum_ty(ty) => {
+                if let Some(fields) = tcx.adt_field_tys(*def, substs) {
+                    let mut word = base;
+                    for field in fields {
+                        walk(tcx, *field, word, out, depth + 1);
+                        word = word.saturating_add(type_slot_count(tcx, *field).max(1));
+                    }
+                }
+            }
+            TyKind::Array { elem, len } => {
+                let stride = type_slot_count(tcx, *elem).max(1);
+                if let Ok(count) = u32::try_from(len.to_usize()) {
+                    for index in 0..count {
+                        walk(
+                            tcx,
+                            *elem,
+                            base.saturating_add(index.saturating_mul(stride)),
+                            out,
+                            depth + 1,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut out = Vec::new();
+    walk(tcx, ty, 0, &mut out, 0);
+    out
+}
+
 pub(super) fn lower_rvalue(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -659,6 +705,10 @@ pub(super) fn lower_rvalue_into(
             let operand_agg_slots: Option<u32> =
                 operand_elem_slots(&intrinsics.local_slots, tcx, body, value);
             let elem_slots: u32 = operand_agg_slots.unwrap_or(1);
+            let vec_child_words = match value {
+                Operand::Copy(place) => repeated_vec_child_words(tcx, body.local_ty(place.local)),
+                Operand::Const(_) | Operand::FnRef { .. } => Vec::new(),
+            };
             let total_slots = u32::try_from(*count)
                 .map_err(|_| anyhow!("native codegen: repeat count too large"))?
                 .saturating_mul(elem_slots);
@@ -761,6 +811,31 @@ pub(super) fn lower_rvalue_into(
                                     ir::immediates::Offset32::new((dst_offset as i32) + off),
                                 );
                             }
+                            for child_word in &vec_child_words {
+                                let child = builder.ins().load(
+                                    ptr_ty,
+                                    MemFlagsData::trusted(),
+                                    src,
+                                    ir::immediates::Offset32::new(*child_word as i32 * 8),
+                                );
+                                let clone_fn = intrinsics.extern_fn(
+                                    module,
+                                    "gos_rt_vec_clone",
+                                    &[ptr_ty],
+                                    &[ptr_ty],
+                                )?;
+                                let clone_ref = module.declare_func_in_func(clone_fn, builder.func);
+                                let call = builder.ins().call(clone_ref, &[child]);
+                                let cloned = builder.inst_results(call)[0];
+                                builder.ins().store(
+                                    MemFlagsData::trusted(),
+                                    cloned,
+                                    base,
+                                    ir::immediates::Offset32::new(
+                                        dst_offset as i32 + *child_word as i32 * 8,
+                                    ),
+                                );
+                            }
                         }
                     } else {
                         // Counted loop: counter in loop_header block param.
@@ -793,6 +868,33 @@ pub(super) fn lower_rvalue_into(
                                 MemFlagsData::trusted(),
                                 word,
                                 dst,
+                                ir::immediates::Offset32::new(0),
+                            );
+                        }
+                        for child_word in &vec_child_words {
+                            let child = builder.ins().load(
+                                ptr_ty,
+                                MemFlagsData::trusted(),
+                                src,
+                                ir::immediates::Offset32::new(*child_word as i32 * 8),
+                            );
+                            let clone_fn = intrinsics.extern_fn(
+                                module,
+                                "gos_rt_vec_clone",
+                                &[ptr_ty],
+                                &[ptr_ty],
+                            )?;
+                            let clone_ref = module.declare_func_in_func(clone_fn, builder.func);
+                            let call = builder.ins().call(clone_ref, &[child]);
+                            let cloned = builder.inst_results(call)[0];
+                            let child_off = builder
+                                .ins()
+                                .iadd_imm_s(dst_base, i64::from(*child_word) * 8);
+                            let child_dst = builder.ins().iadd(base, child_off);
+                            builder.ins().store(
+                                MemFlagsData::trusted(),
+                                cloned,
+                                child_dst,
                                 ir::immediates::Offset32::new(0),
                             );
                         }
@@ -1168,9 +1270,22 @@ pub(super) fn lower_binop(
             BinOp::Ge => fcmp_bool(builder, ir::condcodes::FloatCC::GreaterThanOrEqual, a, b),
             // Bitwise on float is a typecheck error; reaching
             // here is a compiler bug.
-            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+            BinOp::WrappingAdd
+            | BinOp::WrappingMul
+            | BinOp::BitAnd
+            | BinOp::BitOr
+            | BinOp::BitXor
+            | BinOp::Shl
+            | BinOp::Shr => {
                 unreachable!("bitwise op on float - should be a type error")
             }
+        });
+    }
+    if matches!(op, BinOp::WrappingAdd | BinOp::WrappingMul) {
+        return Ok(match op {
+            BinOp::WrappingAdd => builder.ins().iadd(a, b),
+            BinOp::WrappingMul => builder.ins().imul(a, b),
+            _ => unreachable!(),
         });
     }
     if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) {
@@ -1222,7 +1337,9 @@ pub(super) fn lower_binop(
         return Ok(value);
     }
     Ok(match op {
-        BinOp::Add | BinOp::Sub | BinOp::Mul => unreachable!(),
+        BinOp::Add | BinOp::WrappingAdd | BinOp::Sub | BinOp::Mul | BinOp::WrappingMul => {
+            unreachable!()
+        }
         BinOp::Div => {
             if unsigned {
                 builder.ins().udiv(a, b)

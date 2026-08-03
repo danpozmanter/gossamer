@@ -77,16 +77,16 @@ pub mod ordered_map {
         xs
     }
 
-    /// Lookup `key`; returns 0 if not found.
+    /// Lookup `key`.
     #[must_use]
-    pub fn get(xs: &[i64], key: i64) -> i64 {
+    pub fn get(xs: &[i64], key: i64) -> Option<i64> {
         let pairs = xs.len() / 2;
         for i in 0..pairs {
             if xs[i * 2] == key {
-                return xs[i * 2 + 1];
+                return Some(xs[i * 2 + 1]);
             }
         }
-        0
+        None
     }
 
     #[must_use]
@@ -131,10 +131,10 @@ mod tests {
         let m = ordered_map::insert(m, 7, 70);
         // Sorted by key: [5,50, 7,70, 10,100]
         assert_eq!(m, vec![5, 50, 7, 70, 10, 100]);
-        assert_eq!(ordered_map::get(&m, 7), 70);
+        assert_eq!(ordered_map::get(&m, 7), Some(70));
         assert_eq!(ordered_map::len(&m), 3);
         let m = ordered_map::insert(m, 7, 700);
-        assert_eq!(ordered_map::get(&m, 7), 700);
+        assert_eq!(ordered_map::get(&m, 7), Some(700));
         let m = ordered_map::remove(m, 5);
         assert_eq!(ordered_map::len(&m), 2);
     }

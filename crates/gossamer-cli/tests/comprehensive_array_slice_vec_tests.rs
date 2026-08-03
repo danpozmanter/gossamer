@@ -1,8 +1,10 @@
 //! Rust-oracle coverage for fixed arrays, unsized slices, and growable Vecs.
 
+mod common;
+
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -101,6 +103,69 @@ fn rust_and_gossamer_agree_on_owned_sequence_assignments() {
         "expected `Vec<i64>`, found `[i64; 3]`",
     );
     assert_rejected("owned slice local", "let _a: [i64] = [1, 2, 3]", "GT0049");
+}
+
+#[test]
+fn arrays_never_implicitly_convert_to_vecs_in_any_assignment_context() {
+    let rejected = [
+        (
+            "named array local initializer",
+            "let a = [1, 2, 3]\nlet _v: Vec<i64> = a",
+        ),
+        (
+            "array literal local initializer",
+            "let _v: Vec<i64> = [1, 2, 3]",
+        ),
+        (
+            "whole-local reassignment",
+            "let a = [1, 2, 3]\nlet mut v: Vec<i64> = Vec::from([0])\nv = a",
+        ),
+        (
+            "function argument",
+            "fn consume(_v: Vec<i64>) {}\nlet a = [1, 2, 3]\nconsume(a)",
+        ),
+        (
+            "function return",
+            "fn make() -> Vec<i64> { let a = [1, 2, 3]\na }\nlet _v = make()",
+        ),
+        (
+            "branch under Vec expectation",
+            "let _v: Vec<i64> = if true { [1, 2, 3] } else { [4, 5, 6] }",
+        ),
+        (
+            "nested tuple element",
+            "let a = [1, 2, 3]\nlet _pair: (Vec<i64>, i64) = (a, 4)",
+        ),
+    ];
+    for (label, body) in rejected {
+        assert_rejected(label, body, "expected `Vec<i64>`, found `[i64; 3]`");
+    }
+}
+
+#[test]
+fn explicit_array_to_vec_conversions_are_accepted_and_execute() {
+    let body = "let first = [1, 2, 3]\n\
+        let mut via_into: Vec<i64> = first.into()\n\
+        via_into.push(4)\n\
+        let second = [5, 6]\n\
+        let via_from: Vec<i64> = Vec::from(second)\n\
+        println(via_into)\n\
+        println(via_from)";
+    assert_accepted("explicit array to Vec conversions", body);
+
+    let output = Command::new(gos_bin())
+        .args(["-e", body])
+        .output()
+        .expect("execute explicit array conversions");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "[1, 2, 3, 4]\n[5, 6]\n"
+    );
 }
 
 #[test]
@@ -272,7 +337,7 @@ fn every_cataloged_shared_sequence_method_typechecks_on_its_valid_receiver() {
 
 #[test]
 fn indexing_iteration_and_non_resizing_mutation_execute() {
-    let source = "let mut array = [3, 1, 2]; let slice: &mut [i64] = &mut array; let _ = slice.swap(0, 1); slice.sort(); slice.reverse(); slice.fill(4); let mut total = 0; for value in slice { total += *value }; println(array); println(total)";
+    let source = "let mut array = [3, 1, 2]; let mut total = 0; { let slice: &mut [i64] = &mut array; let _ = slice.swap(0, 1); slice.sort(); slice.reverse(); slice.fill(4); for value in slice { total += *value } }; println(array); println(total)";
     let output = Command::new(gos_bin())
         .args(["-e", source])
         .output()
@@ -313,20 +378,28 @@ fn array_slice_and_vec_execution_matches_vm_forced_jit_and_llvm_release() {
         &source,
         "fn sequence_total() -> i64 {\n\
             let mut fixed = [3, 1, 2]\n\
-            let view: &mut [i64] = &mut fixed\n\
-            view.sort()\n\
-            view.reverse()\n\
-            view.fill(2)\n\
-            let mut grown: Vec<i64> = Vec::from([4, 5])\n\
+            {\n\
+                let view: &mut [i64] = &mut fixed\n\
+                view.sort()\n\
+                view.reverse()\n\
+                view.fill(2)\n\
+            }\n\
+            let grown_source = [4, 5]\n\
+            let mut grown: Vec<i64> = grown_source.into()\n\
             grown.push(6)\n\
             grown.fill(3)\n\
-            let shared: &[i64] = &grown\n\
-            let mut total = fixed[0] + view[1] + shared[2]\n\
+            let mut total = fixed[0] + fixed[1]\n\
             for value in &fixed { total += *value }\n\
-            for value in shared { total += *value }\n\
+            {\n\
+                let shared: &[i64] = &grown\n\
+                total += shared[2]\n\
+                for value in shared { total += *value }\n\
+            }\n\
             let mut fixed_words = [\"a\", \"b\"]\n\
-            let word_view: &mut [String] = &mut fixed_words\n\
-            word_view.fill(\"x\")\n\
+            {\n\
+                let word_view: &mut [String] = &mut fixed_words\n\
+                word_view.fill(\"x\")\n\
+            }\n\
             println(fixed_words)\n\
             let mut grown_words: Vec<String> = Vec::from([\"c\", \"d\"])\n\
             grown_words.fill(\"y\")\n\
@@ -338,6 +411,7 @@ fn array_slice_and_vec_execution_matches_vm_forced_jit_and_llvm_release() {
     .expect("write sequence tier fixture");
 
     let vm = Command::new(gos_bin())
+        .arg("run")
         .arg(&source)
         .env("GOS_JIT", "0")
         .output()
@@ -350,6 +424,7 @@ fn array_slice_and_vec_execution_matches_vm_forced_jit_and_llvm_release() {
     assert_eq!(String::from_utf8_lossy(&vm.stdout), "[x, x]\n[y, y]\n22\n");
 
     let jit = Command::new(gos_bin())
+        .arg("run")
         .arg(&source)
         .env("GOS_JIT_ONLY", "sequence_total")
         .env("GOS_JIT_TRACE", "1")
@@ -378,12 +453,12 @@ fn array_slice_and_vec_execution_matches_vm_forced_jit_and_llvm_release() {
         "LLVM build stderr: {}",
         String::from_utf8_lossy(&build.stderr)
     );
-    let binary = fs::read_dir(&root)
-        .expect("read LLVM output directory")
-        .flatten()
-        .map(|entry| entry.path())
-        .find(|path| path.is_file() && path.extension().is_none())
-        .expect("find LLVM sequence binary");
+    let binary = common::native_executable(&root, "sequence_parity");
+    assert!(
+        binary.is_file(),
+        "LLVM build did not produce {}",
+        binary.display()
+    );
     let llvm = Command::new(binary)
         .output()
         .expect("run LLVM sequence fixture");
@@ -393,5 +468,128 @@ fn array_slice_and_vec_execution_matches_vm_forced_jit_and_llvm_release() {
         String::from_utf8_lossy(&llvm.stderr)
     );
     assert_eq!(llvm.stdout, vm.stdout);
+    let _ = fs::remove_dir_all(root);
+}
+
+fn write_owned_sequence_parameter_fixture(source: &Path) {
+    fs::write(
+        source,
+        "struct Wrapped {\n\
+             values: Vec<i64>,\n\
+         }\n\
+         fn mutate_array(mut value: [i64; 3]) -> i64 {\n\
+             value[0] = 9\n\
+             value[0]\n\
+         }\n\
+         fn mutate_vec(mut value: Vec<i64>) -> i64 {\n\
+             value[0] = 8\n\
+             value.push(4)\n\
+             value.len()\n\
+         }\n\
+         fn mutate_nested(mut value: Vec<Vec<i64>>) -> i64 {\n\
+             value[0].push(7)\n\
+             value[0].len()\n\
+         }\n\
+         fn mutate_wrapped(mut value: Wrapped) -> i64 {\n\
+             value.values.push(6)\n\
+             value.values.len()\n\
+         }\n\
+         fn mutate_array_of_vec(mut value: [Vec<i64>; 1]) -> i64 {\n\
+             value[0].push(6)\n\
+             value[0].len()\n\
+         }\n\
+         fn publish_words(value: Vec<String>, done: Sender<i64>) {\n\
+             done.send(value.len())\n\
+         }\n\
+         let array = [1, 2, 3]\n\
+         let vector: Vec<i64> = Vec::from([1, 2, 3])\n\
+         println!(\"{} {} {:?} {:?}\", mutate_array(array), mutate_vec(vector), array, vector)\n\
+         let nested: Vec<Vec<i64>> = Vec::from([Vec::from([1, 2])])\n\
+         println!(\"{} {:?}\", mutate_nested(nested), nested)\n\
+         let wrapped = Wrapped { values: Vec::from([1, 2]) }\n\
+         println!(\"{} {:?}\", mutate_wrapped(wrapped), wrapped.values)\n\
+         let array_of_vec = [Vec::from([1, 2])]\n\
+         println!(\"{} {}\", mutate_array_of_vec(array_of_vec), array_of_vec[0].len())\n\
+         let (tx, rx) = channel::<Vec<i64>>(1)\n\
+         tx.send(vector)\n\
+         let mut received = rx.recv().unwrap()\n\
+         received.push(5)\n\
+         println!(\"{:?} {:?}\", vector, received)\n\
+         let words: Vec<String> = Vec::from([\"alpha\", \"beta\"])\n\
+         let (word_tx, word_rx) = channel::<Vec<String>>(1)\n\
+         word_tx.send(words)\n\
+         let mut received_words = word_rx.recv().unwrap()\n\
+         received_words.push(\"gamma\")\n\
+         println!(\"{:?} {:?}\", words, received_words)\n\
+         let (done_tx, done_rx) = channel::<i64>(1)\n\
+         go publish_words(words, done_tx)\n\
+         println!(\"{}\", done_rx.recv().unwrap())\n\
+         println!(\"{}\", wrapped.values.len())\n",
+    )
+    .expect("write owned parameter fixture");
+}
+
+#[test]
+fn owned_sequence_parameters_do_not_alias_the_caller_on_any_tier() {
+    let root = env::temp_dir().join(format!(
+        "gossamer-owned-sequence-parameter-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create owned parameter directory");
+    let source = root.join("owned_sequence_parameter.gos");
+    write_owned_sequence_parameter_fixture(&source);
+
+    let vm = Command::new(gos_bin())
+        .arg("run")
+        .arg(&source)
+        .env("GOS_JIT", "0")
+        .output()
+        .expect("run owned parameter fixture in VM");
+    assert!(
+        vm.status.success(),
+        "VM stderr: {}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&vm.stdout),
+        "9 4 [1, 2, 3] [1, 2, 3]\n3 [[1, 2]]\n3 [1, 2]\n3 2\n[1, 2, 3] [1, 2, 3, 5]\n[alpha, beta] [alpha, beta, gamma]\n2\n2\n"
+    );
+
+    for function in ["mutate_wrapped", "mutate_array_of_vec", "main"] {
+        let jit = Command::new(gos_bin())
+            .arg("run")
+            .arg(&source)
+            .env("GOS_JIT_ONLY", function)
+            .output()
+            .expect("run owned parameter fixture in JIT");
+        assert!(
+            jit.status.success(),
+            "JIT {function} stderr: {}",
+            String::from_utf8_lossy(&jit.stderr)
+        );
+        assert_eq!(jit.stdout, vm.stdout, "JIT mismatch for {function}");
+    }
+
+    let build = Command::new(gos_bin())
+        .args(["build", "--release", "--out-dir"])
+        .arg(&root)
+        .arg(&source)
+        .output()
+        .expect("build owned parameter fixture");
+    assert!(
+        build.status.success(),
+        "LLVM build stderr: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let native = Command::new(common::native_executable(&root, "owned_sequence_parameter"))
+        .output()
+        .expect("run owned parameter LLVM fixture");
+    assert!(
+        native.status.success(),
+        "LLVM stderr: {}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
     let _ = fs::remove_dir_all(root);
 }

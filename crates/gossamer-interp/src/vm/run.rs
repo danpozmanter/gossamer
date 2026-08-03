@@ -3,6 +3,7 @@
     reason = "VM dispatch loop - see vm/run.rs roadmap for arm-group decomp"
 )]
 use super::*;
+use crate::bytecode::InstrIdx;
 use std::fmt::Write as _;
 
 const VM_PREEMPT_INTERVAL: u16 = 1024;
@@ -115,6 +116,43 @@ fn checked_integer_arithmetic(
                 return Err(overflow());
             }
             Ok(value as i64)
+        }
+    }
+}
+
+/// Defers publishing a bytecode frame's current source position until the
+/// frame exits or suspends. Tracebacks only observe the call stack after an
+/// error has left the dispatch loop, so mutably borrowing the shared stack at
+/// every source-expression boundary was pure hot-path overhead.
+struct TracebackLocationGuard<'a> {
+    call_stack: &'a RefCell<Vec<VmCallStackFrame>>,
+    /// Index of this bytecode frame in the logical call stack. A nested
+    /// direct call may leave its own failing frame on top before this guard
+    /// drops, so updating `last_mut()` would overwrite the callee's location.
+    frame_index: usize,
+    locations: &'a [crate::bytecode::InstructionLocation],
+    /// Address of the dispatch loop's program counter. `pc` is declared
+    /// before this guard and therefore outlives it. Every opcode increments
+    /// `pc` before execution, so `pc - 1` is the failing or suspending opcode.
+    next_instruction: *const InstrIdx,
+}
+
+impl Drop for TracebackLocationGuard<'_> {
+    fn drop(&mut self) {
+        // SAFETY: `next_instruction` points to `run_with_frame`'s local `pc`.
+        // That local is declared before this guard, so Rust drops the guard
+        // first. The VM is single-threaded and reads it only during Drop.
+        let next_instruction = unsafe { *self.next_instruction };
+        let location = next_instruction.checked_sub(1).and_then(|instruction| {
+            let after = self
+                .locations
+                .partition_point(|entry| entry.instruction <= instruction);
+            after
+                .checked_sub(1)
+                .and_then(|idx| self.locations[idx].location)
+        });
+        if let Some(frame) = self.call_stack.borrow_mut().get_mut(self.frame_index) {
+            frame.location = location;
         }
     }
 }
@@ -317,10 +355,12 @@ impl Vm {
         let _prof_dump = ProfDump(chunk.name);
         let instrs: &[Op] = &chunk.instrs;
         let instr_count = instrs.len();
-        let locations = &chunk.instruction_locations;
-        let mut location_cursor = 0usize;
-        let mut previous_location_pc = None;
-        let mut active_location = None;
+        let _traceback_location = TracebackLocationGuard {
+            call_stack: &self.call_stack,
+            frame_index: self.call_stack.borrow().len().saturating_sub(1),
+            locations: &chunk.instruction_locations,
+            next_instruction: std::ptr::addr_of!(pc),
+        };
         let mut preempt_countdown = VM_PREEMPT_INTERVAL;
         // Several specialized opcodes have a generic method-call fallback.
         // A user-defined method resolves to `Global::Fn`; it must use the
@@ -379,25 +419,6 @@ impl Vm {
             // without invoking `<Op as Clone>::clone`.
             debug_assert!((pc as usize) < instr_count, "fell off end of bytecode");
             let _ = instr_count;
-            let sequential = previous_location_pc.is_some_and(|previous| pc == previous + 1);
-            if !sequential {
-                location_cursor = locations.partition_point(|entry| entry.instruction <= pc);
-            } else if locations
-                .get(location_cursor)
-                .is_some_and(|entry| entry.instruction == pc)
-            {
-                location_cursor += 1;
-            }
-            let location = location_cursor
-                .checked_sub(1)
-                .and_then(|idx| locations[idx].location);
-            if active_location != Some(location) {
-                if let Some(frame) = self.call_stack.borrow_mut().last_mut() {
-                    frame.location = location;
-                }
-                active_location = Some(location);
-            }
-            previous_location_pc = Some(pc);
             let op = unsafe { *instrs.get_unchecked(pc as usize) };
             crate::profile::record_op(op);
             pc += 1;
@@ -2257,6 +2278,31 @@ impl Vm {
                     }
                     registers[dst as usize] = Value::variant("Ok", vec![Value::Unit]);
                 }
+                Op::VecSwapDiscard { receiver, a, b } => {
+                    let a = super::index_value(&registers[a as usize])?;
+                    let b = super::index_value(&registers[b as usize])?;
+                    if a < 0 || b < 0 {
+                        continue;
+                    }
+                    let (a, b) = (a as usize, b as usize);
+                    let valid = match &registers[receiver as usize] {
+                        Value::Array(values) => a < values.len() && b < values.len(),
+                        Value::IntArray(values) => a < values.len() && b < values.len(),
+                        Value::ByteVec(values) => a < values.len() && b < values.len(),
+                        Value::FloatVec(values) => a < values.len() && b < values.len(),
+                        _ => false,
+                    };
+                    if !valid {
+                        continue;
+                    }
+                    match &mut registers[receiver as usize] {
+                        Value::Array(values) => Arc::make_mut(values).swap(a, b),
+                        Value::IntArray(values) => Arc::make_mut(values).swap(a, b),
+                        Value::ByteVec(values) => Arc::make_mut(values).swap(a, b),
+                        Value::FloatVec(values) => Arc::make_mut(values).swap(a, b),
+                        _ => unreachable!("validated Vec swap receiver"),
+                    }
+                }
                 Op::VecRemove { receiver, index } => {
                     let idx = super::index_value(&registers[index as usize])?;
                     let len = match &registers[receiver as usize] {
@@ -2716,12 +2762,23 @@ impl Vm {
                     rhs_i,
                     overflow_ty,
                 } => unsafe {
-                    *ints.get_unchecked_mut(dst_i as usize) = checked_integer_arithmetic(
-                        *ints.get_unchecked(lhs_i as usize),
-                        *ints.get_unchecked(rhs_i as usize),
+                    let lhs = *ints.get_unchecked(lhs_i as usize);
+                    let rhs = *ints.get_unchecked(rhs_i as usize);
+                    *ints.get_unchecked_mut(dst_i as usize) = if matches!(
                         overflow_ty,
-                        ImmArithKind::Add,
-                    )?;
+                        gossamer_types::IntTy::I64 | gossamer_types::IntTy::Isize
+                    ) {
+                        match lhs.checked_add(rhs) {
+                            Some(value) => value,
+                            None => {
+                                return Err(RuntimeError::Panic(
+                                    "attempt to add with overflow".to_string(),
+                                ));
+                            }
+                        }
+                    } else {
+                        checked_integer_arithmetic(lhs, rhs, overflow_ty, ImmArithKind::Add)?
+                    };
                 },
                 Op::SubI64 {
                     dst_i,
@@ -2738,12 +2795,23 @@ impl Vm {
                     rhs_i,
                     overflow_ty,
                 } => unsafe {
-                    *ints.get_unchecked_mut(dst_i as usize) = checked_integer_arithmetic(
-                        *ints.get_unchecked(lhs_i as usize),
-                        *ints.get_unchecked(rhs_i as usize),
+                    let lhs = *ints.get_unchecked(lhs_i as usize);
+                    let rhs = *ints.get_unchecked(rhs_i as usize);
+                    *ints.get_unchecked_mut(dst_i as usize) = if matches!(
                         overflow_ty,
-                        ImmArithKind::Sub,
-                    )?;
+                        gossamer_types::IntTy::I64 | gossamer_types::IntTy::Isize
+                    ) {
+                        match lhs.checked_sub(rhs) {
+                            Some(value) => value,
+                            None => {
+                                return Err(RuntimeError::Panic(
+                                    "attempt to subtract with overflow".to_string(),
+                                ));
+                            }
+                        }
+                    } else {
+                        checked_integer_arithmetic(lhs, rhs, overflow_ty, ImmArithKind::Sub)?
+                    };
                 },
                 Op::MulI64 {
                     dst_i,
@@ -2760,12 +2828,23 @@ impl Vm {
                     rhs_i,
                     overflow_ty,
                 } => unsafe {
-                    *ints.get_unchecked_mut(dst_i as usize) = checked_integer_arithmetic(
-                        *ints.get_unchecked(lhs_i as usize),
-                        *ints.get_unchecked(rhs_i as usize),
+                    let lhs = *ints.get_unchecked(lhs_i as usize);
+                    let rhs = *ints.get_unchecked(rhs_i as usize);
+                    *ints.get_unchecked_mut(dst_i as usize) = if matches!(
                         overflow_ty,
-                        ImmArithKind::Mul,
-                    )?;
+                        gossamer_types::IntTy::I64 | gossamer_types::IntTy::Isize
+                    ) {
+                        match lhs.checked_mul(rhs) {
+                            Some(value) => value,
+                            None => {
+                                return Err(RuntimeError::Panic(
+                                    "attempt to multiply with overflow".to_string(),
+                                ));
+                            }
+                        }
+                    } else {
+                        checked_integer_arithmetic(lhs, rhs, overflow_ty, ImmArithKind::Mul)?
+                    };
                 },
                 Op::DivI64 {
                     dst_i,
@@ -4040,31 +4119,59 @@ impl Vm {
                     let i_idx = *ints.get_unchecked(i_i as usize);
                     let j_idx = *ints.get_unchecked(j_i as usize);
                     if i_idx < 0 || j_idx < 0 {
-                        return Err(RuntimeError::Arithmetic(
-                            "negative index into sequence".to_string(),
-                        ));
+                        continue;
                     }
                     let i = i_idx as usize;
                     let j = j_idx as usize;
                     let b = registers.get_unchecked_mut(base as usize);
-                    let Value::IntArray(data) = b else {
-                        return Err(RuntimeError::Type(
-                            "IntArraySwap: receiver lost flat invariant".to_string(),
-                        ));
-                    };
-                    let v = Arc::make_mut(data);
-                    if i >= v.len() || j >= v.len() {
-                        return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
+                    match b {
+                        Value::IntArray(data) => {
+                            let values = Arc::make_mut(data);
+                            if i >= values.len() || j >= values.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                            values.swap(i, j);
+                        }
+                        Value::ByteArray(data) => {
+                            let values = Arc::make_mut(data);
+                            if i >= values.len() || j >= values.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                            values.swap(i, j);
+                        }
+                        Value::InlineByteArray(data) => {
+                            let values = Arc::make_mut(data);
+                            if i >= values.len() || j >= values.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                            values.swap(i, j);
+                        }
+                        Value::ByteVec(data) => {
+                            let values = Arc::make_mut(data);
+                            if i >= values.len() || j >= values.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                            values.swap(i, j);
+                        }
+                        Value::Array(data) => {
+                            let values = Arc::make_mut(data);
+                            if i >= values.len() || j >= values.len() {
+                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            }
+                            values.swap(i, j);
+                        }
+                        _ => {
+                            return Err(RuntimeError::Type(
+                                "IntArraySwap: receiver lost flat invariant".to_string(),
+                            ));
+                        }
                     }
-                    v.swap(i, j);
                 },
                 Op::FloatVecSwap { base, i_i, j_i } => unsafe {
                     let i_idx = *ints.get_unchecked(i_i as usize);
                     let j_idx = *ints.get_unchecked(j_i as usize);
                     if i_idx < 0 || j_idx < 0 {
-                        return Err(RuntimeError::Arithmetic(
-                            "negative index into sequence".to_string(),
-                        ));
+                        continue;
                     }
                     let i = i_idx as usize;
                     let j = j_idx as usize;
@@ -4076,7 +4183,7 @@ impl Vm {
                     };
                     let v = Arc::make_mut(data);
                     if i >= v.len() || j >= v.len() {
-                        return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
+                        return Err(RuntimeError::Panic("index out of bounds".to_string()));
                     }
                     v.swap(i, j);
                 },

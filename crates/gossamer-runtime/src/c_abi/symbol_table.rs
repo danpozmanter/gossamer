@@ -5332,6 +5332,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_vec_retain as *const u8,
         ),
         (
+            "gos_rt_vec_mark_shared",
+            crate::c_abi::gos_rt_vec_mark_shared as *const u8,
+        ),
+        (
             "gos_rt_vec_from_arr",
             crate::c_abi::gos_rt_vec_from_arr as *const u8,
         ),

@@ -6,7 +6,7 @@
  * handle errors in the pipe, and `{name}` named-capture.
  *
  * Run:
- *     gos examples/cat.gos -- examples/cat.gos
+ *     gos run examples/cat.gos examples/cat.gos
  */
 
 use std::{env, errors, fs, iter, result}

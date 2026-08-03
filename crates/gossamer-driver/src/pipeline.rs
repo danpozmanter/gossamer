@@ -361,6 +361,7 @@ fn lower_to_mir_with_tcx(
 #[cfg(test)]
 mod tests {
     use super::{MirProfile, lower_to_mir_with_tcx};
+    use gossamer_types::TyKind;
 
     #[test]
     fn release_mir_inlines_small_callees_while_debug_keeps_call_boundaries() {
@@ -382,6 +383,31 @@ mod tests {
             format!("{debug_main:?}"),
             format!("{release_main:?}"),
             "debug and release MIR must retain distinct optimization contracts"
+        );
+    }
+
+    #[test]
+    fn inferred_integer_wrapping_chain_has_concrete_mir_locals() {
+        let source = r"
+            fn step() -> i64 {
+                let state = 17
+                state.wrapping_mul(6364136223846793005).wrapping_add(1)
+            }
+        ";
+        let (bodies, tcx) = lower_to_mir_with_tcx(source, "wrapping.gos", MirProfile::Debug);
+        let step = bodies
+            .iter()
+            .find(|body| body.name == "step")
+            .expect("step body");
+        assert!(
+            step.locals
+                .iter()
+                .all(|local| !matches!(tcx.kind_of(local.ty), TyKind::Var(_))),
+            "wrapping arithmetic left an unresolved MIR local: {:?}",
+            step.locals
+                .iter()
+                .map(|local| tcx.kind_of(local.ty))
+                .collect::<Vec<_>>()
         );
     }
 }

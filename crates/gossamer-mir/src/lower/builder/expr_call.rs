@@ -901,6 +901,49 @@ impl<'a> Builder<'a> {
                     local
                 }
             };
+            // Gossamer has value semantics for owned arguments. The VM already
+            // clones its Value at this boundary; compiled tiers must likewise
+            // give the callee independent growable storage, including Vec
+            // fields nested in a by-value struct or tuple. A reference
+            // parameter keeps the original storage and preserves write-through
+            // behavior.
+            let local = {
+                use gossamer_types::TyKind;
+                let source_ty = self.locals[local.0 as usize].ty;
+                let expected_ty = callee_param_tys.as_ref().and_then(|p| p.get(idx).copied());
+                let owned_clone_parameter = expected_ty.is_some_and(|expected| {
+                    matches!(
+                        self.tcx.kind_of(expected),
+                        TyKind::Vec(_)
+                            | TyKind::Adt { .. }
+                            | TyKind::Tuple(_)
+                            | TyKind::Array { .. }
+                    )
+                });
+                let caller_visible_place = matches!(
+                    &arg.kind,
+                    HirExprKind::Path { .. }
+                        | HirExprKind::Field { .. }
+                        | HirExprKind::TupleIndex { .. }
+                        | HirExprKind::Index { .. }
+                );
+                if owned_clone_parameter
+                    && caller_visible_place
+                    && matches!(
+                        self.tcx.kind_of(source_ty),
+                        TyKind::Vec(_)
+                            | TyKind::Adt { .. }
+                            | TyKind::Tuple(_)
+                            | TyKind::Array { .. }
+                    )
+                {
+                    let cloned = self.fresh(source_ty);
+                    self.emit_owned_clone_binding(local, cloned, span);
+                    cloned
+                } else {
+                    local
+                }
+            };
             // Debug routing: render a struct/enum `__concat` argument through
             // its derived `Type::fmt` (a String), so a `println!("{:?}", s)`
             // compiles on Cranelift / LLVM instead of bailing on an aggregate.

@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0037]: A struct initializer supplied more positional values than the type has - here
+--- framed ---
+error[GT0037]: A struct initializer supplied more positional values than the type has
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

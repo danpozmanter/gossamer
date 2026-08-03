@@ -5,7 +5,7 @@
  * them back and prints the sizes. No filesystem writes.
  *
  * Run:
- *     gos examples/archive_zip.gos
+ *     gos run examples/archive_zip.gos
  */
 
 use std::archive

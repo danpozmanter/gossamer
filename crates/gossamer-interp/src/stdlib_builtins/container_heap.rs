@@ -152,7 +152,8 @@ pub(crate) fn builtin_heap_pop(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_heap_peek(args: &[Value]) -> RuntimeResult<Value> {
     let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
-    Ok(Value::Int(gossamer_std::container_heap::peek(&xs)))
+    Ok(gossamer_std::container_heap::peek(&xs)
+        .map_or_else(none_variant, |value| some_variant(Value::Int(value))))
 }
 
 pub(crate) fn builtin_heap_len(args: &[Value]) -> RuntimeResult<Value> {
@@ -176,9 +177,12 @@ mod tests {
         let empty = heap_to_value(Vec::new());
         let one = builtin_heap_push(&[empty, Value::Int(5)]).unwrap();
         let two = builtin_heap_push(&[one, Value::Int(1)]).unwrap();
+        let peeked = builtin_heap_peek(std::slice::from_ref(&two)).unwrap();
         assert!(matches!(
-            builtin_heap_peek(std::slice::from_ref(&two)).unwrap(),
-            Value::Int(1)
+            &peeked,
+            Value::Variant(inner)
+                if inner.name == "Some"
+                    && matches!(inner.fields.as_slice(), [Value::Int(1)])
         ));
         let popped = builtin_heap_pop(&[two]).unwrap();
         assert!(matches!(&popped, Value::IntArray(xs) if xs.as_slice() == [5]));

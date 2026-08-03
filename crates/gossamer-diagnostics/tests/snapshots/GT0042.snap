@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0042]: A lazy iterator binding was used after an adapter or terminal consumed - here
+--- framed ---
+error[GT0042]: A lazy iterator binding was used after an adapter or terminal consumed
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

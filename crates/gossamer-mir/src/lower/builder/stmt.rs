@@ -132,24 +132,27 @@ impl<'a> Builder<'a> {
         if self.current.is_none() { None } else { result }
     }
 
-    /// If `value` is the freshly-produced result of a recognised constructor
-    /// (a container `Call` like `HashMap::new`, or a `gos_rt_result_new`
-    /// `CallIntrinsic` for `Some`/`Ok`/`Err`), rewrite that constructor to
-    /// write `binding` directly and return true - the caller then skips the
-    /// redundant `binding = Copy(value)`. This keeps the constructor result
-    /// un-aliased so the drop pass treats the binding as the single owner: a
-    /// loop-local map is reclaimed like a directly-bound `Vec`, and a by-value
-    /// enum's payload is released exactly once (the copy would otherwise mark
-    /// the binding an alias and defeat the single-use ownership check).
+    /// If `value` is the freshly-produced result of a call or inline enum
+    /// constructor, rewrite that producer to write `binding` directly. The
+    /// result temporary has no source-language identity and its only use is
+    /// this binding, so copying it cannot be observed. This is ordinary return
+    /// value copy elision, not ownership transfer between user bindings.
+    ///
+    /// Besides avoiding a redundant scalar or aggregate copy, direct binding
+    /// is essential for aggregates containing Vec fields. Deep-cloning the Vec
+    /// out of a fresh function result allocated a new non-region buffer on
+    /// every loop iteration, while the dead temporary's region cleanup could
+    /// not release that detached buffer.
     fn try_rebind_ctor_call(&mut self, value: Local, binding: Local) -> bool {
         let Some(cur) = self.current else {
             return false;
         };
-        // Container constructors lower to a terminator `Call` in a prior block
-        // whose continuation is the current block.
+        // Calls lower to a terminator in a prior block whose continuation is
+        // the current block. Their destination temporary is fresh by
+        // construction and is consumed immediately by this let binding.
         for blk in &mut self.blocks {
             if let Terminator::Call {
-                callee: Operand::Const(ConstValue::Str(name)),
+                callee,
                 destination,
                 target: Some(t),
                 ..
@@ -157,7 +160,7 @@ impl<'a> Builder<'a> {
                 && *t == cur
                 && destination.local == value
                 && destination.projection.is_empty()
-                && is_container_ctor(name)
+                && matches!(callee, Operand::Const(ConstValue::Str(name)) if is_container_ctor(name))
             {
                 *destination = Place::local(binding);
                 return true;
@@ -183,11 +186,30 @@ impl<'a> Builder<'a> {
         false
     }
 
+    fn is_fresh_user_call_result(&self, value: Local) -> bool {
+        let Some(cur) = self.current else {
+            return false;
+        };
+        self.blocks.iter().any(|block| {
+            matches!(
+                &block.terminator,
+                Terminator::Call {
+                    callee: Operand::FnRef { .. },
+                    destination,
+                    target: Some(target),
+                    ..
+                } if *target == cur
+                    && destination.local == value
+                    && destination.projection.is_empty()
+            )
+        })
+    }
+
     fn is_vec_like_ty(&self, ty: gossamer_types::Ty) -> bool {
         matches!(self.tcx.kind_of(ty), gossamer_types::TyKind::Vec(_))
     }
 
-    fn emit_vec_clone_binding(&mut self, value: Local, binding: Local, span: Span) {
+    pub(crate) fn emit_vec_clone_binding(&mut self, value: Local, binding: Local, span: Span) {
         let next = self.new_block(span);
         self.terminate(Terminator::Call {
             callee: Operand::Const(ConstValue::Str("gos_rt_vec_clone".to_string())),
@@ -196,6 +218,82 @@ impl<'a> Builder<'a> {
             target: Some(next),
         });
         self.set_current(next);
+    }
+
+    /// Copies an owned value into `binding`, cloning every growable vector
+    /// header nested in a by-value struct or tuple. A flat aggregate memcpy is
+    /// sufficient for fixed storage and RC-managed scalar children, but it
+    /// would otherwise let a later `push` through the copy replace the source
+    /// value's vector buffer in the LLVM and Cranelift tiers.
+    pub(crate) fn emit_owned_clone_binding(&mut self, value: Local, binding: Local, span: Span) {
+        use gossamer_types::TyKind;
+
+        let ty = self.locals[binding.0 as usize].ty;
+        if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
+            self.emit_vec_clone_binding(value, binding, span);
+            return;
+        }
+
+        self.emit_assign(
+            Place::local(binding),
+            Rvalue::Use(Operand::Copy(Place::local(value))),
+            span,
+        );
+
+        for (path, kind) in crate::lower::aggregate_rc_field_paths(self.tcx, ty) {
+            if kind != crate::lower::FieldRcKind::Vec {
+                continue;
+            }
+            let mut field_ty = ty;
+            let mut place = Place::local(binding);
+            let mut valid = true;
+            for index in path {
+                field_ty = match self.tcx.kind_of(field_ty) {
+                    TyKind::Adt { def, substs } => self
+                        .tcx
+                        .adt_field_tys(*def, substs)
+                        .and_then(|fields| fields.get(index as usize).copied())
+                        .unwrap_or_else(|| {
+                            valid = false;
+                            field_ty
+                        }),
+                    TyKind::Tuple(fields) => {
+                        fields.get(index as usize).copied().unwrap_or_else(|| {
+                            valid = false;
+                            field_ty
+                        })
+                    }
+                    TyKind::Array { elem, len } if (index as usize) < len.to_usize() => *elem,
+                    _ => {
+                        valid = false;
+                        field_ty
+                    }
+                };
+                place.projection.push(crate::ir::Projection::Field(index));
+            }
+            if !valid
+                || !matches!(
+                    self.tcx.kind_of(field_ty),
+                    TyKind::Vec(_) | TyKind::Slice(_)
+                )
+            {
+                continue;
+            }
+            let cloned = self.fresh(field_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_clone".to_string())),
+                args: vec![Operand::Copy(place.clone())],
+                destination: Place::local(cloned),
+                target: Some(next),
+            });
+            self.set_current(next);
+            self.emit_assign(
+                place,
+                Rvalue::Use(Operand::Copy(Place::local(cloned))),
+                span,
+            );
+        }
     }
 
     pub(crate) fn lower_stmt(&mut self, stmt: &HirStmt) {
@@ -465,20 +563,33 @@ impl<'a> Builder<'a> {
                         if let Some(layout) = self.local_define_layout.get(&value).cloned() {
                             self.local_define_layout.insert(local, layout);
                         }
-                        // `let m = HashMap::new()` lowers `value = map_new();`
-                        // then a copy into the binding. Array literals bind
-                        // direct (see `lower_let_array_as_vec`); maps/sets do
-                        // not, and the copy pins the constructor result as
-                        // aliased so the drop pass cannot reclaim a loop-local
-                        // one. Rewrite the constructor call to write the binding
-                        // directly and drop the redundant copy - `value` is the
-                        // freshly-lowered init, used only by this copy, so this
-                        // is sound and leaves the result un-aliased.
+                        // Bind fresh call and constructor results directly.
                         if !self.try_rebind_ctor_call(value, local) {
                             let init_ty = self.locals[value.0 as usize].ty;
                             let binding_ty = self.locals[local.0 as usize].ty;
-                            if self.is_vec_like_ty(init_ty) && self.is_vec_like_ty(binding_ty) {
-                                self.emit_vec_clone_binding(value, local, stmt.span);
+                            if self.is_fresh_user_call_result(value) {
+                                // The call-result temporary has no
+                                // source-language identity. Copy its aggregate
+                                // words and managed child handles, allowing RC
+                                // insertion to retain the children before the
+                                // temporary dies. Deep-cloning a nested Vec
+                                // here detached a fresh buffer on every loop
+                                // iteration.
+                                self.emit_assign(
+                                    Place::local(local),
+                                    Rvalue::Use(Operand::Copy(Place::local(value))),
+                                    stmt.span,
+                                );
+                            } else if self.is_vec_like_ty(init_ty)
+                                && self.is_vec_like_ty(binding_ty)
+                                || matches!(
+                                    self.tcx.kind_of(binding_ty),
+                                    gossamer_types::TyKind::Adt { .. }
+                                        | gossamer_types::TyKind::Tuple(_)
+                                        | gossamer_types::TyKind::Array { .. }
+                                )
+                            {
+                                self.emit_owned_clone_binding(value, local, stmt.span);
                             } else {
                                 self.emit_assign(
                                     Place::local(local),
@@ -570,6 +681,22 @@ impl<'a> Builder<'a> {
                                     {
                                         a = self.coerce_array_to_vec(a, elem, len, expr.span);
                                     }
+                                    if matches!(
+                                        self.tcx.kind_of(lt),
+                                        gossamer_types::TyKind::Vec(_)
+                                            | gossamer_types::TyKind::Adt { .. }
+                                            | gossamer_types::TyKind::Tuple(_)
+                                    ) && matches!(
+                                        &arg.kind,
+                                        HirExprKind::Path { .. }
+                                            | HirExprKind::Field { .. }
+                                            | HirExprKind::TupleIndex { .. }
+                                            | HirExprKind::Index { .. }
+                                    ) {
+                                        let cloned = self.fresh(lt);
+                                        self.emit_owned_clone_binding(a, cloned, expr.span);
+                                        a = cloned;
+                                    }
                                     // The arg escapes to the spawned goroutine:
                                     // switch any RC-managed value to atomic
                                     // reference counting and flip a shared map to
@@ -603,8 +730,9 @@ impl<'a> Builder<'a> {
     }
 }
 
-/// Recognised container constructors whose `let`-binding result the lowerer
-/// rewrites to bind directly (see `try_rebind_ctor_call`).
+/// Runtime constructors whose results are fresh owned values. Other runtime
+/// calls may return a borrowed or write-back-related handle and must keep their
+/// original temporary so the drop pass can honor that ABI contract.
 fn is_container_ctor(name: &str) -> bool {
     matches!(
         name,

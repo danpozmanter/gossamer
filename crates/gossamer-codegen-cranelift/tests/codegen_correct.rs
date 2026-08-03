@@ -4,7 +4,7 @@
 //! a sibling `<name>.expected` containing the expected stdout, and
 //! runs the program three ways:
 //!
-//! 1. `gos <name>.gos` (bytecode VM).
+//! 1. `gos run <name>.gos` (bytecode VM).
 //! 2. `gos build <name>.gos` + execute (Cranelift debug).
 //! 3. `gos build --release <name>.gos` + execute (LLVM with
 //!    Cranelift fallback).
@@ -84,6 +84,7 @@ struct TierOutcome {
 
 fn run_interp(src: &Path) -> TierOutcome {
     let out = Command::new(gos_binary())
+        .arg("run")
         .arg(src)
         .output()
         .expect("spawn gos");

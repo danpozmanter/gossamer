@@ -258,10 +258,19 @@ fn try_fold_typed_int(
     else {
         return try_fold(rvalue);
     };
-    if !matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) {
+    if !matches!(
+        op,
+        BinOp::Add | BinOp::WrappingAdd | BinOp::Sub | BinOp::Mul | BinOp::WrappingMul
+    ) {
         return fold_binary(*op, &ConstValue::Int(*lhs), &ConstValue::Int(*rhs));
     }
-    fold_typed_integer_arithmetic(*op, *lhs, *rhs, int_ty, checked_overflow)
+    let fold_op = match op {
+        BinOp::WrappingAdd => BinOp::Add,
+        BinOp::WrappingMul => BinOp::Mul,
+        _ => *op,
+    };
+    let checked = checked_overflow && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul);
+    fold_typed_integer_arithmetic(fold_op, *lhs, *rhs, int_ty, checked)
         .map(ConstValue::Int)
 }
 
@@ -357,9 +366,9 @@ fn try_fold(rvalue: &Rvalue) -> Option<ConstValue> {
 fn fold_binary(op: BinOp, lhs: &ConstValue, rhs: &ConstValue) -> Option<ConstValue> {
     match (lhs, rhs) {
         (ConstValue::Int(x), ConstValue::Int(y)) => match op {
-            BinOp::Add => Some(ConstValue::Int(x.wrapping_add(*y))),
+            BinOp::Add | BinOp::WrappingAdd => Some(ConstValue::Int(x.wrapping_add(*y))),
             BinOp::Sub => Some(ConstValue::Int(x.wrapping_sub(*y))),
-            BinOp::Mul => Some(ConstValue::Int(x.wrapping_mul(*y))),
+            BinOp::Mul | BinOp::WrappingMul => Some(ConstValue::Int(x.wrapping_mul(*y))),
             // Div/rem signedness is carried by the typed lowering context, not
             // by `ConstValue`; folding here would make `u64`/`usize` operands
             // at or above 2^63 indistinguishable from signed i64 values.
@@ -426,9 +435,9 @@ fn identity_fold_with_const(
     let bool_const = |b: bool| Some(Rvalue::Use(Operand::Const(ConstValue::Bool(b))));
     match c {
         ConstValue::Int(n) => match (op, *n) {
-            (BinOp::Add | BinOp::BitOr | BinOp::BitXor, 0) => keep(),
-            (BinOp::Mul, 1) => keep(),
-            (BinOp::Mul, 0) => int_const(0),
+            (BinOp::Add | BinOp::WrappingAdd | BinOp::BitOr | BinOp::BitXor, 0) => keep(),
+            (BinOp::Mul | BinOp::WrappingMul, 1) => keep(),
+            (BinOp::Mul | BinOp::WrappingMul, 0) => int_const(0),
             (BinOp::BitAnd, 0) => int_const(0),
             // Right-hand-side-only identities: subtraction and
             // division are not commutative, and a zero shift *amount*

@@ -302,6 +302,9 @@ pub(crate) fn field_slot_offset(tcx: &TyCtxt, ty: Ty, idx: u32) -> u32 {
                     .sum()
             })
         }
+        Some(TyKind::Array { elem, .. }) => {
+            idx.saturating_mul(slot_count(tcx, *elem).unwrap_or(1).max(1))
+        }
         Some(TyKind::Ref { inner, .. }) => field_slot_offset(tcx, *inner, idx),
         _ => idx,
     }

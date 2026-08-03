@@ -150,7 +150,8 @@ pub(crate) fn builtin_q_pop(args: &[Value]) -> RuntimeResult<Value> {
 }
 pub(crate) fn builtin_q_peek(args: &[Value]) -> RuntimeResult<Value> {
     let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
-    Ok(Value::Int(gossamer_std::container_seq::queue::peek(&xs)))
+    Ok(gossamer_std::container_seq::queue::peek(&xs)
+        .map_or_else(none_variant, |value| some_variant(Value::Int(value))))
 }
 pub(crate) fn builtin_q_len(args: &[Value]) -> RuntimeResult<Value> {
     let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
@@ -169,7 +170,8 @@ pub(crate) fn builtin_s_pop(args: &[Value]) -> RuntimeResult<Value> {
 }
 pub(crate) fn builtin_s_peek(args: &[Value]) -> RuntimeResult<Value> {
     let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
-    Ok(Value::Int(gossamer_std::container_seq::stack::peek(&xs)))
+    Ok(gossamer_std::container_seq::stack::peek(&xs)
+        .map_or_else(none_variant, |value| some_variant(Value::Int(value))))
 }
 pub(crate) fn builtin_s_len(args: &[Value]) -> RuntimeResult<Value> {
     let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
@@ -201,15 +203,13 @@ pub(crate) fn builtin_d_pop_front(args: &[Value]) -> RuntimeResult<Value> {
 }
 pub(crate) fn builtin_d_peek_front(args: &[Value]) -> RuntimeResult<Value> {
     let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
-    Ok(Value::Int(gossamer_std::container_seq::deque::peek_front(
-        &xs,
-    )))
+    Ok(gossamer_std::container_seq::deque::peek_front(&xs)
+        .map_or_else(none_variant, |value| some_variant(Value::Int(value))))
 }
 pub(crate) fn builtin_d_peek_back(args: &[Value]) -> RuntimeResult<Value> {
     let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
-    Ok(Value::Int(gossamer_std::container_seq::deque::peek_back(
-        &xs,
-    )))
+    Ok(gossamer_std::container_seq::deque::peek_back(&xs)
+        .map_or_else(none_variant, |value| some_variant(Value::Int(value))))
 }
 pub(crate) fn builtin_d_len(args: &[Value]) -> RuntimeResult<Value> {
     let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));

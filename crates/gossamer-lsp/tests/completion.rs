@@ -187,6 +187,114 @@ fn method_completion_on_vec_receiver() {
 }
 
 #[test]
+fn iterator_completion_matches_the_checker_surface() {
+    let uri = "file:///iterator.gos";
+    let source = "fn main() {\n    let values: Iterator<i64> = 0..4\n    values.\n}\n";
+    let server = server_with(uri, source);
+    let params = position_params(uri, 2, 11);
+    let labels = completion_labels(&server.completion(&params));
+    for expected in [
+        "map",
+        "filter",
+        "fold",
+        "collect",
+        "count",
+        "sum",
+        "product",
+        "min",
+        "max",
+        "any",
+        "all",
+        "find",
+        "take",
+        "skip",
+        "step_by",
+        "enumerate",
+        "chain",
+        "zip",
+        "dedup",
+        "flatten",
+        "pairwise",
+        "windows",
+        "chunks",
+        "rev",
+    ] {
+        assert!(
+            labels.iter().any(|label| label == expected),
+            "missing Iterator method {expected}: {labels:?}"
+        );
+    }
+    for unavailable in ["next", "for_each", "position", "max_by_key"] {
+        assert!(
+            !labels.iter().any(|label| label == unavailable),
+            "unavailable Iterator method {unavailable} was offered: {labels:?}"
+        );
+    }
+}
+
+#[test]
+fn option_completion_matches_the_single_std_option_surface() {
+    let uri = "file:///option.gos";
+    let source = "fn main() {\n    let value: Option<i64> = Some(1)\n    value.\n}\n";
+    let server = server_with(uri, source);
+    let params = position_params(uri, 2, 10);
+    let labels = completion_labels(&server.completion(&params));
+    let expected = gossamer_std::registry::module("std::option")
+        .expect("std::option registry entry")
+        .items
+        .iter()
+        .filter(|item| item.kind == gossamer_std::registry::StdItemKind::Function)
+        .map(|item| item.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    let actual = labels
+        .iter()
+        .map(String::as_str)
+        .filter(|name| expected.contains(name))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        actual, expected,
+        "Option completion drifted from std::option"
+    );
+}
+
+#[test]
+fn hashset_completion_never_leaks_hashmap_methods() {
+    let uri = "file:///set.gos";
+    let source = "fn main() {\n    let mut values: HashSet<i64> = HashSet::new()\n    values.\n}\n";
+    let server = server_with(uri, source);
+    let params = position_params(uri, 2, 11);
+    let labels = completion_labels(&server.completion(&params));
+    for expected in [
+        "insert",
+        "remove",
+        "contains",
+        "union",
+        "intersection",
+        "difference",
+        "symmetric_difference",
+        "len",
+        "is_empty",
+        "clear",
+        "iter",
+        "to_vec",
+        "is_subset",
+        "is_superset",
+        "is_disjoint",
+    ] {
+        assert!(
+            labels.iter().any(|label| label == expected),
+            "missing HashSet method {expected}: {labels:?}"
+        );
+    }
+    for map_only in ["get", "get_or", "contains_key", "keys", "values"] {
+        assert!(
+            !labels.iter().any(|label| label == map_only),
+            "HashMap-only method {map_only} leaked into HashSet completion: {labels:?}"
+        );
+    }
+}
+
+#[test]
 fn array_and_slice_completion_exclude_vec_only_methods() {
     for (uri, source, line) in [
         (

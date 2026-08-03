@@ -75,6 +75,52 @@ use gossamer_mir::{
 };
 use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 
+fn repeated_vec_child_words(tcx: &TyCtxt, ty: Ty) -> Vec<u32> {
+    fn walk(tcx: &TyCtxt, ty: Ty, base: u32, out: &mut Vec<u32>, depth: u8) {
+        if depth > 16 {
+            return;
+        }
+        match tcx.kind_of(ty) {
+            TyKind::Vec(_) => out.push(base),
+            TyKind::Tuple(fields) => {
+                let mut word = base;
+                for field in fields {
+                    walk(tcx, *field, word, out, depth + 1);
+                    word = word.saturating_add(slot_count(tcx, *field).unwrap_or(1));
+                }
+            }
+            TyKind::Adt { def, substs } if !tcx.is_inline_enum_ty(ty) => {
+                if let Some(fields) = tcx.adt_field_tys(*def, substs) {
+                    let mut word = base;
+                    for field in fields {
+                        walk(tcx, *field, word, out, depth + 1);
+                        word = word.saturating_add(slot_count(tcx, *field).unwrap_or(1));
+                    }
+                }
+            }
+            TyKind::Array { elem, len } => {
+                let stride = slot_count(tcx, *elem).unwrap_or(1);
+                if let Ok(count) = u32::try_from(len.to_usize()) {
+                    for index in 0..count {
+                        walk(
+                            tcx,
+                            *elem,
+                            base.saturating_add(index.saturating_mul(stride)),
+                            out,
+                            depth + 1,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut out = Vec::new();
+    walk(tcx, ty, 0, &mut out, 0);
+    out
+}
+
 impl<'a> Lowerer<'a> {
     /// Populates an aggregate stack slot (the destination
     /// `place`'s flat layout) with each operand in order.
@@ -239,6 +285,10 @@ impl<'a> Lowerer<'a> {
             };
             let src = self.lower_place_address(src_place);
             let bytes = u64::from(op_slots) * 8;
+            let vec_child_words = repeated_vec_child_words(self.tcx, op_ty);
+            if !vec_child_words.is_empty() {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_clone");
+            }
             if count <= 16 {
                 for i in 0..count {
                     let dst = self.fresh();
@@ -253,6 +303,29 @@ impl<'a> Lowerer<'a> {
                         "  call void @llvm.memcpy.p0.p0.i64(ptr {dst}, ptr {src}, i64 {bytes}, i1 false)"
                     )
                     .unwrap();
+                    for child_word in &vec_child_words {
+                        let child_src = self.fresh();
+                        let child = self.fresh();
+                        let cloned = self.fresh();
+                        let child_dst = self.fresh();
+                        writeln!(
+                            self.out,
+                            "  {child_src} = getelementptr i64, ptr {src}, i64 {child_word}"
+                        )
+                        .unwrap();
+                        writeln!(self.out, "  {child} = load ptr, ptr {child_src}").unwrap();
+                        writeln!(
+                            self.out,
+                            "  {cloned} = call ptr @gos_rt_vec_clone(ptr {child})"
+                        )
+                        .unwrap();
+                        writeln!(
+                            self.out,
+                            "  {child_dst} = getelementptr i64, ptr {dst}, i64 {child_word}"
+                        )
+                        .unwrap();
+                        writeln!(self.out, "  store ptr {cloned}, ptr {child_dst}").unwrap();
+                    }
                 }
             } else {
                 let head = self.fresh_label("repeat_head");
@@ -287,6 +360,29 @@ impl<'a> Lowerer<'a> {
                     "  call void @llvm.memcpy.p0.p0.i64(ptr {dst}, ptr {src}, i64 {bytes}, i1 false)"
                 )
                 .unwrap();
+                for child_word in &vec_child_words {
+                    let child_src = self.fresh();
+                    let child = self.fresh();
+                    let cloned = self.fresh();
+                    let child_dst = self.fresh();
+                    writeln!(
+                        self.out,
+                        "  {child_src} = getelementptr i64, ptr {src}, i64 {child_word}"
+                    )
+                    .unwrap();
+                    writeln!(self.out, "  {child} = load ptr, ptr {child_src}").unwrap();
+                    writeln!(
+                        self.out,
+                        "  {cloned} = call ptr @gos_rt_vec_clone(ptr {child})"
+                    )
+                    .unwrap();
+                    writeln!(
+                        self.out,
+                        "  {child_dst} = getelementptr i64, ptr {dst}, i64 {child_word}"
+                    )
+                    .unwrap();
+                    writeln!(self.out, "  store ptr {cloned}, ptr {child_dst}").unwrap();
+                }
                 let next = self.fresh();
                 writeln!(self.out, "  {next} = add i64 {cur}, 1").unwrap();
                 writeln!(self.out, "  store i64 {next}, ptr {counter}").unwrap();

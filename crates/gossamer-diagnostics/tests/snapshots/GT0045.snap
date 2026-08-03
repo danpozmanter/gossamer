@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0045]: The `?` operator was used on a value that is not `Option` or `Result`, - here
+--- framed ---
+error[GT0045]: The `?` operator was used on a value that is not `Option` or `Result`,
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

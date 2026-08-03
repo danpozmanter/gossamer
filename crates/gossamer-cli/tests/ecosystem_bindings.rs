@@ -15,6 +15,15 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
+fn assert_expected_output(stdout: &str) {
+    for expected in ["rows=1", "attrs=2", "args=2", "token=access-token"] {
+        assert!(
+            stdout.contains(expected),
+            "missing {expected:?} in {stdout}"
+        );
+    }
+}
+
 #[test]
 fn external_binding_supports_ecosystem_library_shapes_without_builtins() {
     let root = workspace_root();
@@ -107,6 +116,7 @@ fn main() {
     .expect("write Gossamer source");
 
     let out = Command::new(gos_bin())
+        .arg("run")
         .arg("src/main.gos")
         .current_dir(&dir)
         .env("GOSSAMER_ROOT", &root)
@@ -120,10 +130,5 @@ fn main() {
         out.status.success(),
         "ecosystem binding fixture failed\nstdout: {stdout}\nstderr: {stderr}"
     );
-    for expected in ["rows=1", "attrs=2", "args=2", "token=access-token"] {
-        assert!(
-            stdout.contains(expected),
-            "missing {expected:?} in {stdout}"
-        );
-    }
+    assert_expected_output(&stdout);
 }

@@ -17,6 +17,9 @@ enum ExpectedError {
     MutableReferenceToImmutable,
     ExplicitMutableArgument,
     MutableReferenceConflict,
+    ReferenceEscape,
+    BorrowedPlaceConflict,
+    ConcurrentInlineAggregate,
 }
 
 impl ExpectedError {
@@ -35,6 +38,15 @@ impl ExpectedError {
             Self::MutableReferenceConflict => {
                 matches!(error, TypeError::MutableReferenceConflict { .. })
             }
+            Self::ReferenceEscape => {
+                matches!(error, TypeError::ReferenceEscapeUnsupported { .. })
+            }
+            Self::BorrowedPlaceConflict => {
+                matches!(error, TypeError::BorrowedPlaceConflict { .. })
+            }
+            Self::ConcurrentInlineAggregate => {
+                matches!(error, TypeError::ConcurrentAggregateUnsupported { .. })
+            }
         }
     }
 
@@ -45,6 +57,9 @@ impl ExpectedError {
             Self::MutableReferenceToImmutable => "GT0032",
             Self::ExplicitMutableArgument => "GT0046",
             Self::MutableReferenceConflict => "GT0043",
+            Self::ReferenceEscape => "GT0052",
+            Self::BorrowedPlaceConflict => "GT0053",
+            Self::ConcurrentInlineAggregate => "GT0055",
         }
     }
 }
@@ -127,14 +142,95 @@ fn explicit_and_forwarded_mutable_references_remain_usable() {
             "fn change(v: &mut i64) { *v = 0 }\nfn main() { let mut a = 1\n let r = &mut a\n r |> change }",
         ),
         (
-            "returned mutable reference writes through immutable alias binding",
-            "fn change(v: &mut [i64]) -> &mut [i64] { v[0] = 0\n v }\nfn main() { let mut a = [1, 2]\n let b = change(&mut a)\n b[0] = 2 }",
+            "closure accepts call-scoped mutable reference",
+            "fn main() { let mut values: Vec<i64> = Vec::from([1])\n let change = |v: &mut Vec<i64>| { v[0] = 7 }\n change(&mut values) }",
         ),
     ];
 
     for (name, source) in cases {
         assert_accepted(name, source);
     }
+}
+
+#[test]
+fn references_cannot_escape_through_function_returns() {
+    assert_rejected(
+        "returned mutable reference",
+        "fn change(v: &mut [i64]) -> &mut [i64] { v[0] = 0\n v }\nfn main() { let mut a = [1, 2]\n let b = change(&mut a)\n b[0] = 2 }",
+        ExpectedError::ReferenceEscape,
+    );
+}
+
+#[test]
+fn lexical_references_protect_their_source_places() {
+    for (name, source) in [
+        (
+            "shared reference blocks source mutation",
+            "fn main() { let mut values = [1, 2]\n let view = &values\n values[0] = 9\n println!(\"{}\", view[0]) }",
+        ),
+        (
+            "mutable reference blocks source reads",
+            "fn main() { let mut values = [1, 2]\n let view = &mut values\n println!(\"{}\", values[0])\n view[0] = 9 }",
+        ),
+    ] {
+        assert_rejected(name, source, ExpectedError::BorrowedPlaceConflict);
+    }
+
+    assert_rejected(
+        "shared reference blocks mutable reference",
+        "fn main() { let mut values = [1, 2]\n let view = &values\n let writable = &mut values\n println!(\"{} {}\", view[0], writable[0]) }",
+        ExpectedError::MutableReferenceConflict,
+    );
+
+    assert_accepted(
+        "source access resumes after the lexical reference scope",
+        "fn main() { let mut values = [1, 2]\n { let view = &mut values\n view[0] = 7 }\n values[1] = 9 }",
+    );
+}
+
+#[test]
+fn references_are_call_scoped_and_cannot_enter_owned_or_concurrent_storage() {
+    for (name, source) in [
+        (
+            "reference field",
+            "struct Bad { value: &i64 }\nfn main() {}",
+        ),
+        (
+            "reference nested in Vec parameter",
+            "fn bad(values: Vec<&i64>) {}\nfn main() {}",
+        ),
+        (
+            "reference nested in tuple local",
+            "fn main() { let value = 1\n let bad = (&value,) }",
+        ),
+        (
+            "reference inferred into channel storage",
+            "fn main() { let (tx, rx) = channel()\n let value = 1\n tx.send(&value)\n let _ = rx }",
+        ),
+        (
+            "reference crosses go boundary",
+            "fn see(value: &i64) {}\nfn main() { let value = 1\n go see(&value) }",
+        ),
+        (
+            "closure captures reference binding",
+            "fn main() { let value = 1\n let view = &value\n let bad = || *view\n let _ = bad() }",
+        ),
+        (
+            "closure returns reference",
+            "fn main() { let value = 1\n let bad = || &value\n let _ = bad() }",
+        ),
+        (
+            "named reference borrows temporary",
+            "fn main() { let bad = &[1, 2, 3]\n println!(\"{}\", bad.len()) }",
+        ),
+    ] {
+        assert_rejected(name, source, ExpectedError::ReferenceEscape);
+    }
+
+    assert_accepted(
+        "temporary and named-place slices are valid for one call",
+        "fn sum(values: &[i64]) -> i64 { values[0] + values[1] }\nfn main() { let values = [3, 4]\n let a = sum(&values)\n let b = sum(&[5, 6])\n println!(\"{} {}\", a, b) }",
+    );
 }
 
 #[test]
@@ -601,10 +697,6 @@ fn mutable_places_and_reference_capabilities_remain_usable() {
             "fn main() { let mut value = 1\n let first = &mut value\n let second = &mut *first\n *second = 9 }",
         ),
         (
-            "mutable outer reference may rebind shared-reference slot",
-            "fn main() { let first = [1, 2]\n let second = [3, 4]\n let mut shared = &first\n let outer = &mut shared\n *outer = &second }",
-        ),
-        (
             "mutable user method on mutable value",
             "struct Counter { value: i64 }\nimpl Counter { fn bump(&mut self) { self.value += 1 } }\nfn main() { let mut counter = Counter { value: 0 }\n counter.bump() }",
         ),
@@ -652,9 +744,63 @@ fn mutable_places_and_reference_capabilities_remain_usable() {
             "value alias mutation does not require the source binding to be mutable",
             "fn main() { let original = [1, 2]\n let mut copy = original\n copy[0] = 9 }",
         ),
+        (
+            "scalar aggregate channel transfer remains available",
+            "struct Pair { left: i64, right: i64 }\nfn main() { let value = Pair { left: 1, right: 2 }\n let (tx, rx) = channel::<Pair>(1)\n tx.send(value) }",
+        ),
+        (
+            "reference cursor advances through matched recursive child",
+            "enum Node { Link(Node), End }\nfn walk(head: &Node) { let mut cursor = head\n loop { match cursor { Node::Link(next) => cursor = next, Node::End => break } } }",
+        ),
     ];
 
     for (name, source) in cases {
         assert_accepted(name, source);
+    }
+}
+
+#[test]
+fn reference_slots_cannot_be_rebound_through_an_alias() {
+    assert_rejected(
+        "mutable outer reference cannot rebind shared-reference slot",
+        "fn main() { let first = [1, 2]\n let second = [3, 4]\n let mut shared = &first\n let outer = &mut shared\n *outer = &second }",
+        ExpectedError::ReferenceEscape,
+    );
+}
+
+#[test]
+fn reference_cursor_cannot_rebind_to_a_shorter_lived_alias() {
+    assert_rejected(
+        "outer cursor cannot retain an inner local through its reference alias",
+        "fn main() { let outer = [1, 2]\n let mut cursor = &outer\n if true { let inner = [3, 4]\n let alias = &inner\n cursor = alias }\n let value = cursor[0] }",
+        ExpectedError::ReferenceEscape,
+    );
+}
+
+#[test]
+fn concurrency_rejects_unmarshalable_inline_aggregates() {
+    for (name, source) in [
+        (
+            "struct argument",
+            "struct Wrapped { values: Vec<i64> }\nfn work(value: Wrapped) {}\nfn main() { let value = Wrapped { values: Vec::from([1, 2]) }\n go work(value) }",
+        ),
+        (
+            "scalar struct goroutine argument",
+            "struct Pair { left: i64, right: i64 }\nfn work(value: Pair) {}\nfn main() { let value = Pair { left: 1, right: 2 }\n go work(value) }",
+        ),
+        (
+            "fixed array goroutine argument",
+            "fn work(value: [i64; 2]) {}\nfn main() { let value = [1, 2]\n go work(value) }",
+        ),
+        (
+            "tuple containing Vec argument",
+            "fn work(value: (Vec<i64>, i64)) {}\nfn main() { let value = (Vec::from([1, 2]), 2)\n go work(value) }",
+        ),
+        (
+            "channel struct containing Vec",
+            "struct Wrapped { values: Vec<i64> }\nfn main() { let value = Wrapped { values: Vec::from([1, 2]) }\n let (tx, rx) = channel::<Wrapped>(1)\n tx.send(value) }",
+        ),
+    ] {
+        assert_rejected(name, source, ExpectedError::ConcurrentInlineAggregate);
     }
 }

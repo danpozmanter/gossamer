@@ -26,8 +26,8 @@ fn doc_root() -> String {
     path::join(&env::temp_dir(), &"gossamer_static_range_fixture")
 }
 
-fn serve_files(root: &String) {
-    let server = static_files::FileServer::new(root, "")
+fn serve_files(root: String) {
+    let server = static_files::FileServer::new(&root, "")
     if let Err(e) = http::serve("127.0.0.1:23912", server) {
         eprintln!("serve failed: {e}")
     }
@@ -62,7 +62,7 @@ fn main() {
     // 16-byte body so range arithmetic is easy to read.
     let _ = fs::write(path::join(&root, &"data.txt"), "0123456789ABCDEF".to_string().as_bytes())
 
-    go serve_files(&root)
+    go serve_files(root)
     let url = "http://127.0.0.1:23912/data.txt"
     await_ready(&url)
 

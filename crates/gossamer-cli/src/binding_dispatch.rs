@@ -1,4 +1,4 @@
-//! Pre-clap dispatch step that diverts direct scripts, `gos build`, and
+//! Pre-clap dispatch step that diverts `gos run`, `gos build`, and
 //! `gos check` to a per-project Rust-binding runner when the
 //! current project's `project.toml` declares `[rust-bindings]`.
 //!
@@ -27,7 +27,7 @@ pub enum DispatchOutcome {
 }
 
 /// Subcommands that load user code and therefore want a runner.
-const RUNNER_SUBCOMMANDS: &[&str] = &["build", "check", "doc", "repl", "test"];
+const RUNNER_SUBCOMMANDS: &[&str] = &["build", "check", "doc", "repl", "run", "test"];
 
 /// Returns whether the parsed argv warrants a runner dispatch.
 ///
@@ -45,7 +45,7 @@ pub fn needs_runner_dispatch(args: &[OsString]) -> bool {
     let Some(sub) = first_subcommand(args) else {
         return false;
     };
-    RUNNER_SUBCOMMANDS.contains(&sub.as_str()) || crate::cli::is_direct_script_invocation(args)
+    RUNNER_SUBCOMMANDS.contains(&sub.as_str())
 }
 
 /// Walks `argv` past the binary name and global flags, returning

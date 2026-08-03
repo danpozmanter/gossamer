@@ -50,15 +50,16 @@ fn version_flag_prints_package_version() {
 }
 
 #[test]
-fn direct_gos_script_accepts_a_hashbang() {
+fn gos_run_script_accepts_a_hashbang() {
     let fixture = write_fixture(
         "hashbang",
-        "#!/usr/bin/env gos\nfn main() { println(\"hashbang works\") }\n",
+        "#!/bin/env -S gos run\nfn main() { println(\"hashbang works\") }\n",
     );
     let out = Command::new(gos_bin())
+        .arg("run")
         .arg(&fixture)
         .output()
-        .expect("spawn direct script");
+        .expect("spawn gos run");
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -68,7 +69,7 @@ fn direct_gos_script_accepts_a_hashbang() {
 }
 
 #[test]
-fn direct_script_executes_existing_files_with_any_extension() {
+fn gos_run_executes_existing_files_with_any_extension() {
     for suffix in ["", ".txt"] {
         let fixture = env::temp_dir().join(format!(
             "gossamer-cli-any-extension-{}{}",
@@ -81,9 +82,10 @@ fn direct_script_executes_existing_files_with_any_extension() {
         )
         .expect("write fixture");
         let out = Command::new(gos_bin())
+            .arg("run")
             .arg(&fixture)
             .output()
-            .expect("spawn direct script");
+            .expect("spawn gos run");
         assert!(
             out.status.success(),
             "{}: {}",
@@ -96,7 +98,7 @@ fn direct_script_executes_existing_files_with_any_extension() {
 }
 
 #[test]
-fn direct_script_infers_a_gos_extension_when_omitted() {
+fn gos_run_infers_a_gos_extension_when_omitted() {
     let fixture = env::temp_dir().join(format!(
         "gossamer-cli-inferred-extension-{}.gos",
         std::process::id()
@@ -106,9 +108,10 @@ fn direct_script_infers_a_gos_extension_when_omitted() {
     let mut omitted = fixture.clone();
     omitted.set_extension("");
     let out = Command::new(gos_bin())
+        .arg("run")
         .arg(&omitted)
         .output()
-        .expect("spawn direct script");
+        .expect("spawn gos run");
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -147,6 +150,34 @@ fn execute_flag_executes_inline_source() {
 }
 
 #[test]
+fn adjacent_expression_is_not_implicit_function_application() {
+    let invalid = Command::new(gos_bin())
+        .args([
+            "-e",
+            "for e in Vec::from([1, 2, 3]) { println e }",
+        ])
+        .output()
+        .expect("spawn invalid adjacent expressions");
+    assert!(!invalid.status.success());
+    let stderr = String::from_utf8_lossy(&invalid.stderr);
+    assert!(
+        stderr.contains("expected `;` or a newline between statements"),
+        "{stderr}"
+    );
+
+    let first_class = Command::new(gos_bin())
+        .args(["-e", "let output = println\noutput(7)"])
+        .output()
+        .expect("spawn first-class println");
+    assert!(
+        first_class.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&first_class.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&first_class.stdout), "7\n");
+}
+
+#[test]
 fn help_wraps_to_narrow_terminal_width() {
     let out = Command::new(gos_bin())
         .arg("--help")
@@ -166,26 +197,50 @@ fn help_wraps_to_narrow_terminal_width() {
 }
 
 #[test]
-fn help_distinguishes_default_file_execution_from_inline_source() {
+fn help_distinguishes_run_from_inline_source() {
     let out = Command::new(gos_bin())
         .arg("-h")
         .output()
         .expect("spawn -h");
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).expect("utf8");
-    assert!(
-        stdout.contains("gos [OPTIONS] [FILE] [ARGS]..."),
-        "{stdout}"
-    );
-    assert!(stdout.contains("    gos [OPTIONS] <COMMAND>"), "{stdout}");
-    assert!(
-        stdout.contains("gos FILE [ARGS]... runs FILE"),
-        "{stdout}"
-    );
+    assert!(stdout.contains("gos [OPTIONS] <COMMAND>"), "{stdout}");
+    assert!(stdout.contains("gos run [FILE] [ARGS]..."), "{stdout}");
     assert!(stdout.contains("--eval <STRING>"), "{stdout}");
     assert!(!stdout.contains("--command"), "{stdout}");
     assert!(!stdout.contains("<SUBCOMMAND>"), "{stdout}");
-    assert!(!stdout.contains("Usage: gos [OPTIONS] [COMMAND]"), "{stdout}");
+}
+
+#[test]
+fn run_forwards_script_arguments_without_a_separator() {
+    let fixture = write_fixture(
+        "run-script-args",
+        "use std::env\nprintln!(\"{} {}\", env::args()[0], env::args()[1])\n",
+    );
+    let out = Command::new(gos_bin())
+        .arg("run")
+        .arg(&fixture)
+        .args(["first", "--second"])
+        .output()
+        .expect("spawn run with script arguments");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "first --second\n");
+}
+
+#[test]
+fn bare_file_invocation_is_rejected() {
+    let fixture = write_fixture("bare-file-rejected", "fn main() {}\n");
+    let out = Command::new(gos_bin())
+        .arg(&fixture)
+        .output()
+        .expect("spawn rejected bare file");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("unrecognized subcommand"), "{stderr}");
 }
 
 #[test]
@@ -340,6 +395,7 @@ fn check_subcommand_reports_type_mismatch() {
 fn run_subcommand_executes_via_vm() {
     let fixture = write_fixture("run", "fn main() { println(\"cli-vm-run\") }\n");
     let out = Command::new(gos_bin())
+        .arg("run")
         .arg(&fixture)
         .output()
         .expect("spawn run");
@@ -527,6 +583,7 @@ fn run_absolute_project_uses_entry_edition_for_lazy_iterators() {
     .expect("write manifest");
     std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_TIER_SOURCE).expect("write source");
     let out = Command::new(gos_bin())
+        .arg("run")
         .arg(&dir)
         .output()
         .expect("spawn run");
@@ -537,6 +594,7 @@ fn run_absolute_project_uses_entry_edition_for_lazy_iterators() {
     );
     assert_eq!(String::from_utf8_lossy(&out.stdout), LAZY_ITERATOR_TIER_OUTPUT);
     let jit_out = Command::new(gos_bin())
+        .arg("run")
         .arg(&dir)
         .env("GOSSAMER_JIT_THRESHOLD", "1")
         .output()
@@ -632,6 +690,7 @@ fn eager_iterator_migration_aliases_run_on_vm_jit_and_llvm() {
     std::fs::write(dir.join("main.gos"), EAGER_ITERATOR_ALIAS_SOURCE).expect("write source");
 
     let vm = Command::new(gos_bin())
+        .arg("run")
         .arg(&dir)
         .output()
         .expect("spawn VM run");
@@ -639,6 +698,7 @@ fn eager_iterator_migration_aliases_run_on_vm_jit_and_llvm() {
     assert_eq!(String::from_utf8_lossy(&vm.stdout), EAGER_ITERATOR_ALIAS_OUTPUT);
 
     let jit = Command::new(gos_bin())
+        .arg("run")
         .arg(&dir)
         .env("GOSSAMER_JIT_THRESHOLD", "1")
         .output()
@@ -697,12 +757,13 @@ fn edition_2026_iterator_surface_remains_eager_on_all_tiers() {
     for mut command in [
         {
             let mut command = Command::new(gos_bin());
-            command.arg(&dir);
+            command.arg("run").arg(&dir);
             command
         },
         {
             let mut command = Command::new(gos_bin());
             command
+                .arg("run")
                 .arg(&dir)
                 .env("GOSSAMER_JIT_THRESHOLD", "1");
             command
@@ -804,12 +865,13 @@ fn borrowed_lazy_vec_structural_mutation_fails_on_all_tiers() {
     for mut command in [
         {
             let mut command = Command::new(gos_bin());
-            command.arg(&dir);
+            command.arg("run").arg(&dir);
             command
         },
         {
             let mut command = Command::new(gos_bin());
             command
+                .arg("run")
                 .arg(&dir)
                 .env("GOSSAMER_JIT_THRESHOLD", "1");
             command
@@ -867,12 +929,13 @@ fn lazy_adapter_panic_propagates_on_all_tiers() {
     for mut command in [
         {
             let mut command = Command::new(gos_bin());
-            command.arg("--no-jit").arg(&dir);
+            command.args(["run", "--no-jit"]).arg(&dir);
             command
         },
         {
             let mut command = Command::new(gos_bin());
             command
+                .arg("run")
                 .arg(&dir)
                 .env("GOSSAMER_JIT_THRESHOLD", "1")
                 .env("GOSSAMER_JIT_MIN_WORK", "1");
@@ -928,6 +991,7 @@ fn main() {
 "#,
     );
     let mut child = Command::new(gos_bin())
+        .arg("run")
         .arg(&fixture)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -972,6 +1036,7 @@ fn main() {
     );
 
     let mut vm = Command::new(gos_bin())
+        .arg("run")
         .arg(&fixture)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1050,6 +1115,7 @@ fn intcode_day2_native_matches_vm() {
     let expected = "pos0=3500\nsample=30 2\n";
 
     let vm = Command::new(gos_bin())
+        .arg("run")
         .arg(&fixture)
         .output()
         .expect("spawn vm run");
@@ -1099,6 +1165,7 @@ fn intcode_day2_mut_slice_matches_vm_debug_and_release() {
     let expected = "sample=30\npos0=3500\ncopy=99, base=1\npart2=22\npart2_base=1\n";
 
     let vm = Command::new(gos_bin())
+        .arg("run")
         .arg(&fixture)
         .output()
         .expect("spawn vm run");
@@ -1157,6 +1224,7 @@ fn intcode_day2_mut_slice_matches_vm_debug_and_release() {
 fn run_subcommand_executes_via_vm_by_default() {
     let fixture = write_fixture("runvm", "fn main() { println(\"cli-vm\") }\n");
     let out = Command::new(gos_bin())
+        .arg("run")
         .arg(&fixture)
         .output()
         .expect("spawn run");
@@ -1467,6 +1535,7 @@ fn vm_and_native_client_builder_chain_outputs_match() {
     std::fs::write(&source_path, source).unwrap();
 
     let vm = Command::new(gos_bin())
+        .arg("run")
         .arg(&source_path)
         .output()
         .expect("spawn gos");

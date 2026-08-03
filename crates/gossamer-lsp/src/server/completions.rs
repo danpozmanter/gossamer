@@ -771,6 +771,99 @@ const HASHMAP_METHODS: &[BuiltinMethod] = &[
     },
 ];
 
+const HASHSET_METHODS: &[BuiltinMethod] = &[
+    BuiltinMethod {
+        name: "insert",
+        signature: "fn insert(&mut self, value: T) -> bool",
+        doc: "Adds a value and reports whether it was newly inserted.",
+        snippet: "insert($0)",
+    },
+    BuiltinMethod {
+        name: "remove",
+        signature: "fn remove(&mut self, value: T) -> bool",
+        doc: "Removes a value and reports whether it was present.",
+        snippet: "remove($0)",
+    },
+    BuiltinMethod {
+        name: "contains",
+        signature: "fn contains(&self, value: T) -> bool",
+        doc: "Reports whether the set contains a value.",
+        snippet: "contains($0)",
+    },
+    BuiltinMethod {
+        name: "union",
+        signature: "fn union(&self, other: HashSet<T>) -> HashSet<T>",
+        doc: "Returns values present in either set.",
+        snippet: "union($0)",
+    },
+    BuiltinMethod {
+        name: "intersection",
+        signature: "fn intersection(&self, other: HashSet<T>) -> HashSet<T>",
+        doc: "Returns values present in both sets.",
+        snippet: "intersection($0)",
+    },
+    BuiltinMethod {
+        name: "difference",
+        signature: "fn difference(&self, other: HashSet<T>) -> HashSet<T>",
+        doc: "Returns values present only in this set.",
+        snippet: "difference($0)",
+    },
+    BuiltinMethod {
+        name: "symmetric_difference",
+        signature: "fn symmetric_difference(&self, other: HashSet<T>) -> HashSet<T>",
+        doc: "Returns values present in exactly one set.",
+        snippet: "symmetric_difference($0)",
+    },
+    BuiltinMethod {
+        name: "len",
+        signature: "fn len(&self) -> i64",
+        doc: "Returns the number of values.",
+        snippet: "len()$0",
+    },
+    BuiltinMethod {
+        name: "is_empty",
+        signature: "fn is_empty(&self) -> bool",
+        doc: "Reports whether the set has no values.",
+        snippet: "is_empty()$0",
+    },
+    BuiltinMethod {
+        name: "clear",
+        signature: "fn clear(&mut self)",
+        doc: "Removes every value.",
+        snippet: "clear()$0",
+    },
+    BuiltinMethod {
+        name: "iter",
+        signature: "fn iter(&self) -> Vec<T>",
+        doc: "Returns the set values as a vector.",
+        snippet: "iter()$0",
+    },
+    BuiltinMethod {
+        name: "to_vec",
+        signature: "fn to_vec(&self) -> Vec<T>",
+        doc: "Returns the set values as a vector.",
+        snippet: "to_vec()$0",
+    },
+    BuiltinMethod {
+        name: "is_subset",
+        signature: "fn is_subset(&self, other: HashSet<T>) -> bool",
+        doc: "Reports whether every value is in the other set.",
+        snippet: "is_subset($0)",
+    },
+    BuiltinMethod {
+        name: "is_superset",
+        signature: "fn is_superset(&self, other: HashSet<T>) -> bool",
+        doc: "Reports whether this set contains every value in the other set.",
+        snippet: "is_superset($0)",
+    },
+    BuiltinMethod {
+        name: "is_disjoint",
+        signature: "fn is_disjoint(&self, other: HashSet<T>) -> bool",
+        doc: "Reports whether the sets share no values.",
+        snippet: "is_disjoint($0)",
+    },
+];
+
 const OPTION_METHODS: &[BuiltinMethod] = &[
     BuiltinMethod {
         name: "and_then",
@@ -853,14 +946,23 @@ const ITERATOR_METHODS: &[BuiltinMethod] = &[
     BuiltinMethod { name: "collect", signature: "fn collect(self) -> Vec<T>", doc: "Materializes all items.", snippet: "collect()$0" },
     BuiltinMethod { name: "count", signature: "fn count(self) -> i64", doc: "Counts all items.", snippet: "count()$0" },
     BuiltinMethod { name: "sum", signature: "fn sum(self) -> T", doc: "Sums all items.", snippet: "sum()$0" },
+    BuiltinMethod { name: "product", signature: "fn product(self) -> T", doc: "Multiplies all items.", snippet: "product()$0" },
     BuiltinMethod { name: "min", signature: "fn min(self) -> Option<T>", doc: "Returns the minimum item.", snippet: "min()$0" },
     BuiltinMethod { name: "max", signature: "fn max(self) -> Option<T>", doc: "Returns the maximum item.", snippet: "max()$0" },
+    BuiltinMethod { name: "any", signature: "fn any(self, predicate: fn(T) -> bool) -> bool", doc: "Tests whether any item is accepted.", snippet: "any(|value| $0)" },
+    BuiltinMethod { name: "all", signature: "fn all(self, predicate: fn(T) -> bool) -> bool", doc: "Tests whether every item is accepted.", snippet: "all(|value| $0)" },
+    BuiltinMethod { name: "find", signature: "fn find(self, predicate: fn(T) -> bool) -> Option<T>", doc: "Returns the first accepted item.", snippet: "find(|value| $0)" },
     BuiltinMethod { name: "take", signature: "fn take(self, count: i64) -> Iterator<T>", doc: "Yields at most count items.", snippet: "take($0)" },
     BuiltinMethod { name: "skip", signature: "fn skip(self, count: i64) -> Iterator<T>", doc: "Skips the first count items.", snippet: "skip($0)" },
+    BuiltinMethod { name: "step_by", signature: "fn step_by(self, step: i64) -> Iterator<T>", doc: "Yields every step-th item.", snippet: "step_by($0)" },
     BuiltinMethod { name: "enumerate", signature: "fn enumerate(self) -> Iterator<(i64, T)>", doc: "Pairs items with indexes.", snippet: "enumerate()$0" },
     BuiltinMethod { name: "chain", signature: "fn chain(self, other: Iterator<T>) -> Iterator<T>", doc: "Yields this iterator then another.", snippet: "chain($0)" },
     BuiltinMethod { name: "zip", signature: "fn zip<U>(self, other: Iterator<U>) -> Iterator<(T, U)>", doc: "Pairs items from two iterators.", snippet: "zip($0)" },
-    BuiltinMethod { name: "flatten", signature: "fn flatten(self) -> Iterator<T>", doc: "Flattens one nested iterator level.", snippet: "flatten()$0" },
+    BuiltinMethod { name: "dedup", signature: "fn dedup(self) -> Vec<T>", doc: "Collects adjacent distinct items.", snippet: "dedup()$0" },
+    BuiltinMethod { name: "flatten", signature: "fn flatten<U>(self: Iterator<Vec<U>>) -> Vec<U>", doc: "Collects one flattened nesting level.", snippet: "flatten()$0" },
+    BuiltinMethod { name: "pairwise", signature: "fn pairwise(self) -> Vec<(T, T)>", doc: "Collects adjacent item pairs.", snippet: "pairwise()$0" },
+    BuiltinMethod { name: "windows", signature: "fn windows(self, size: i64) -> Vec<Vec<T>>", doc: "Collects overlapping windows.", snippet: "windows($0)" },
+    BuiltinMethod { name: "chunks", signature: "fn chunks(self, size: i64) -> Vec<Vec<T>>", doc: "Collects fixed-size chunks.", snippet: "chunks($0)" },
     BuiltinMethod { name: "rev", signature: "fn rev(self) -> Iterator<T>", doc: "Reverses iteration order.", snippet: "rev()$0" },
 ];
 
@@ -939,7 +1041,8 @@ fn builtin_methods_for(receiver: &ReceiverDescriptor) -> Vec<&'static BuiltinMet
         BuiltinReceiver::Vec => VEC_METHODS.iter().chain(ARRAY_SLICE_METHODS).collect(),
         BuiltinReceiver::Array | BuiltinReceiver::Slice => ARRAY_SLICE_METHODS.iter().collect(),
         BuiltinReceiver::String => STRING_METHODS.iter().collect(),
-        BuiltinReceiver::HashMap | BuiltinReceiver::HashSet => HASHMAP_METHODS.iter().collect(),
+        BuiltinReceiver::HashMap => HASHMAP_METHODS.iter().collect(),
+        BuiltinReceiver::HashSet => HASHSET_METHODS.iter().collect(),
         BuiltinReceiver::Iterator => ITERATOR_METHODS.iter().collect(),
         BuiltinReceiver::Option => OPTION_METHODS.iter().collect(),
         BuiltinReceiver::Result => RESULT_METHODS.iter().collect(),
