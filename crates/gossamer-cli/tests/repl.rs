@@ -656,7 +656,7 @@ fn repl_info_lists_matches_unless_details_are_requested() {
             .contains("std::strings::trim(text: String) -> String [fn]")
             && out
                 .stdout
-                .contains("Removes leading and trailing whitespace."),
+                .contains("Removes leading and trailing whitespace.\n    Defined in: std::strings"),
         "%i should show signatures by default and documentation with -d: {}",
         out.stdout
     );
@@ -668,7 +668,7 @@ fn repl_info_and_explain_details_always_follow_descriptions_with_examples() {
     assert!(info.success, "stderr: {}", info.stderr);
     assert!(
         info.stdout.contains(
-            "HashMap::from<K, V>(entries: {K: V}) -> HashMap<K, V> [associated function]\n    Creates a hash map from a map literal.\n    Defined in: \n    Example: let empty: HashMap<String, i64> = HashMap::from({});"
+            "HashMap::from<K, V>(entries: {K: V}) -> HashMap<K, V> [associated function]\n    Creates a hash map from a map literal.\n    Builtin\n    Example: let empty: HashMap<String, i64> = HashMap::from({});"
         ) && info.stdout.contains("let map:")
             && info.stdout.contains("HashMap<String, i64> = HashMap::from({")
             && info.stdout.contains("\"one\": 1, \"two\":")
@@ -681,7 +681,7 @@ fn repl_info_and_explain_details_always_follow_descriptions_with_examples() {
     assert!(explained.success, "stderr: {}", explained.stderr);
     assert!(
         explained.stdout.contains(
-            "Returns whether the string starts with a prefix.\n    Defined in: \n    Example: text.starts_with(needle)"
+            "Returns whether the string starts with a prefix.\n    Builtin\n    Example: text.starts_with(needle)"
         ),
         "binding method example did not use the binding: {}",
         explained.stdout
@@ -718,7 +718,7 @@ fn repl_info_vec_from_has_the_array_conversion_contract() {
     );
     assert!(
         out.stdout.contains(
-            "Creates a growable vector by moving values from a fixed-size array.\n    Defined in: \n    Example: let values: Vec<i64> = Vec::from([1, 2, 3])"
+            "Creates a growable vector by moving values from a fixed-size array.\n    Builtin\n    Example: let values: Vec<i64> = Vec::from([1, 2, 3])"
         ),
         "Vec::from details are incomplete: {}",
         out.stdout

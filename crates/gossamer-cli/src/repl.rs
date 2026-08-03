@@ -1764,7 +1764,7 @@ fn repl_binding_info(
             found = true;
             let signature = signature_suffix(&method.signature, &method.name);
             out.push_str(&format!(
-                "{}.{}{signature} [method]\n    {}\n    Defined in: \n    Example: {}.{}({})\n",
+                "{}.{}{signature} [method]\n    {}\n    Builtin\n    Example: {}.{}({})\n",
                 var.name,
                 method.name,
                 method.doc,
@@ -2281,7 +2281,7 @@ fn render_catalog_matches(pattern: &Regex, details: bool) -> String {
                 "type",
                 "",
                 "Built-in receiver and associated methods.",
-                Some(""),
+                Some("Builtin"),
                 details,
             );
             entries.push(entry);
@@ -2351,7 +2351,7 @@ fn render_catalog_query_matches(query: &str, details: bool) -> String {
             "type",
             "",
             "Built-in receiver and associated methods.",
-            Some(""),
+            Some("Builtin"),
             details,
         );
         entries.push(entry);
@@ -2420,13 +2420,22 @@ fn push_catalog_match(
     out.push_str(&format!(" [{}]\n", catalog_kind_label(kind)));
     if details {
         out.push_str(&format!("    {description}\n"));
-        if let Some(defined_in) = defined_in {
-            out.push_str(&format!("    Defined in: {defined_in}\n"));
-        }
+        let defined_in = defined_in
+            .filter(|location| !location.is_empty())
+            .unwrap_or("Builtin");
+        push_catalog_origin(out, defined_in);
         out.push_str(&format!(
             "    Example: {}\n",
             catalog_example(path, kind, signature)
         ));
+    }
+}
+
+fn push_catalog_origin(out: &mut String, defined_in: &str) {
+    if defined_in == "Builtin" {
+        out.push_str("    Builtin\n");
+    } else {
+        out.push_str(&format!("    Defined in: {defined_in}\n"));
     }
 }
 
@@ -2551,7 +2560,7 @@ fn push_module_match(out: &mut String, module: &StdModule, details: bool) {
         "module",
         "",
         module.summary,
-        Some(""),
+        Some(module.path),
         details,
     );
 }
@@ -2566,7 +2575,7 @@ fn push_item_match(out: &mut String, module: &StdModule, item: &StdItem, details
         item_kind_label(item.kind),
         &signature,
         item.doc,
-        Some(""),
+        Some(module.path),
         details,
     );
 }
@@ -2579,7 +2588,7 @@ fn push_core_method_match(out: &mut String, method: &CoreMethodEntry, details: b
         method.kind,
         signature,
         &method.doc,
-        Some(""),
+        Some("Builtin"),
         details,
     );
 }
@@ -4155,10 +4164,7 @@ mod tests {
             let mut rendered = String::new();
             push_core_method_match(&mut rendered, &method, true);
             assert!(
-                rendered.contains(&format!(
-                    "    {}\n    Defined in: \n    Example: ",
-                    method.doc
-                )),
+                rendered.contains(&format!("    {}\n    Builtin\n    Example: ", method.doc)),
                 "missing example for {}::{}:\n{rendered}",
                 method.owner,
                 method.name
@@ -4170,8 +4176,8 @@ mod tests {
             push_module_match(&mut rendered, module, true);
             assert!(
                 rendered.contains(&format!(
-                    "    {}\n    Defined in: \n    Example: ",
-                    module.summary
+                    "    {}\n    Defined in: {}\n    Example: ",
+                    module.summary, module.path
                 )),
                 "missing module example for {}:\n{rendered}",
                 module.path
@@ -4181,8 +4187,8 @@ mod tests {
                 push_item_match(&mut rendered, module, item, true);
                 assert!(
                     rendered.contains(&format!(
-                        "    {}\n    Defined in: \n    Example: ",
-                        item.doc
+                        "    {}\n    Defined in: {}\n    Example: ",
+                        item.doc, module.path
                     )),
                     "missing item example for {}::{}:\n{rendered}",
                     module.path,
@@ -4203,7 +4209,7 @@ mod tests {
                 true,
             );
             assert!(
-                rendered.contains(&format!("    {}\n    Example: ", builtin.doc)),
+                rendered.contains(&format!("    {}\n    Builtin\n    Example: ", builtin.doc)),
                 "missing builtin example for {}:\n{rendered}",
                 builtin.name
             );
@@ -4220,7 +4226,7 @@ mod tests {
                 true,
             );
             assert!(
-                rendered.contains(&format!("    {}\n    Example: ", builtin.doc)),
+                rendered.contains(&format!("    {}\n    Builtin\n    Example: ", builtin.doc)),
                 "missing macro example for {}:\n{rendered}",
                 builtin.name
             );
