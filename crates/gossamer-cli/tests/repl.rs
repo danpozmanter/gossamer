@@ -2125,6 +2125,89 @@ fn repl_drop_ends_reference_lifetime_and_preserves_mutation() {
 }
 
 #[test]
+fn repl_drop_cascades_dependent_references_without_internal_errors() {
+    let out = run_repl(
+        "let mut v = Vec::from([1, 2])\n\
+         let a = &mut v\n\
+         let b = &a\n\
+         v[0]\n\
+         %drop a\n\
+         v[0]\n\
+         %bindings\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("cannot read `v` while reference `a` is active"),
+        "the source should be locked before `%drop a`: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("dropped `a` and dependent `b`"),
+        "`%drop a` should report the dependent binding it removed: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.lines().any(|line| line == "1"),
+        "`v` should be readable after dropping `a`: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("mut v: Vec<i64> = [1, 2]")
+            && !out.stdout.lines().any(|line| line.starts_with("a:"))
+            && !out.stdout.lines().any(|line| line.starts_with("b:")),
+        "`%bindings` should keep only the source binding: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stderr.contains("reference cannot be copied")
+            && !out.stderr.contains("parse error")
+            && !out.stderr.contains("unexpected keyword"),
+        "`%drop a` should not expose internal replay diagnostics: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn repl_drop_leaf_reference_keeps_source_locked_until_owner_drop() {
+    let out = run_repl(
+        "let mut v = Vec::from([1, 2])\n\
+         let a = &mut v\n\
+         let b = &a\n\
+         %drop b\n\
+         v[0]\n\
+         %drop a\n\
+         v[0]\n\
+         %bindings\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("dropped `b`") && out.stdout.contains("dropped `a`"),
+        "`%drop` should report leaf and owner drops clearly: {}",
+        out.stdout
+    );
+    assert!(
+        out.stderr
+            .contains("cannot read `v` while reference `a` is active"),
+        "dropping `b` should not implicitly drop `a`: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.lines().any(|line| line == "1")
+            && out.stdout.contains("mut v: Vec<i64> = [1, 2]")
+            && !out.stdout.lines().any(|line| line.starts_with("a:"))
+            && !out.stdout.lines().any(|line| line.starts_with("b:")),
+        "`v` should become readable only after dropping `a`: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stderr.contains("parse error") && !out.stderr.contains("unexpected keyword"),
+        "`%drop b` should not expose parser diagnostics: {}",
+        out.stderr
+    );
+}
+
+#[test]
 fn repl_drop_validates_its_binding_name() {
     let out = run_repl("%drop\n%drop missing\n%drop one two\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);

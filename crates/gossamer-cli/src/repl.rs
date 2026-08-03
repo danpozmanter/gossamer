@@ -1349,13 +1349,11 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                         print_repl_error("usage: %drop NAME");
                         continue;
                     }
-                    let Some((candidate_lets, candidate_bindings)) =
-                        prepare_repl_drop(&lets, &bindings, name)
-                    else {
+                    let Some(drop_plan) = prepare_repl_drop(&lets, &bindings, name) else {
                         print_repl_error(&format!("no persistent binding named `{name}`"));
                         continue;
                     };
-                    let probe_body = format!("{}()\n", render_repl_setup(&candidate_lets));
+                    let probe_body = format!("{}()\n", render_repl_setup(&drop_plan.lets));
                     let entry = format!("__irepl_drop_{input_no}");
                     let probe = format!(
                         "{}\nfn {entry}() {{\n    {probe_body}}}\n",
@@ -1363,18 +1361,21 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     );
                     match build_and_call(&probe, &entry) {
                         Ok(_) => {
-                            lets = candidate_lets;
-                            bindings = candidate_bindings;
+                            lets = drop_plan.lets;
+                            bindings = drop_plan.bindings;
                             if let Some(helper) = editor.helper_mut() {
-                                helper.forget_binding(name);
+                                for dropped in &drop_plan.dropped_names {
+                                    helper.forget_binding(dropped);
+                                }
                             }
+                            let dropped = render_dropped_binding_names(&drop_plan.dropped_names);
                             println!(
                                 "{}",
-                                crate::style::repl_meta_accent(&format!("dropped `{name}`"))
+                                crate::style::repl_meta_accent(&format!("dropped {dropped}"))
                             );
                         }
                         Err(message) => print_repl_error(&format!(
-                            "cannot drop `{name}` while later bindings depend on it:\n{message}"
+                            "cannot drop `{name}`: remaining REPL bindings could not be replayed after ending it:\n{message}"
                         )),
                     }
                     continue;
@@ -1727,6 +1728,12 @@ struct ReplBindingVar {
     mutable: bool,
 }
 
+struct ReplDropPlan {
+    lets: Vec<String>,
+    bindings: Vec<ReplBinding>,
+    dropped_names: Vec<String>,
+}
+
 fn update_repl_bindings(bindings: &mut Vec<ReplBinding>, new_binding: ReplBinding) {
     if !new_binding.vars.is_empty() {
         for binding in bindings.iter_mut() {
@@ -1746,22 +1753,45 @@ fn prepare_repl_drop(
     lets: &[String],
     bindings: &[ReplBinding],
     name: &str,
-) -> Option<(Vec<String>, Vec<ReplBinding>)> {
+) -> Option<ReplDropPlan> {
     let target_index = bindings
         .iter()
         .find(|binding| binding.vars.iter().any(|var| var.name == name))?
         .source_index;
 
+    let mut dropped_names = vec![name.to_string()];
+    let mut dropped_set = HashSet::from([name.to_string()]);
+    let mut later_bindings = bindings
+        .iter()
+        .filter(|binding| binding.source_index > target_index)
+        .collect::<Vec<_>>();
+    later_bindings.sort_by_key(|binding| binding.source_index);
+    for binding in later_bindings {
+        let source = lets
+            .get(binding.source_index)
+            .map_or("", std::string::String::as_str);
+        if dropped_set
+            .iter()
+            .any(|dropped| source_mentions_binding(source, dropped))
+        {
+            for var in &binding.vars {
+                if dropped_set.insert(var.name.clone()) {
+                    dropped_names.push(var.name.clone());
+                }
+            }
+        }
+    }
+
     let surviving_vars = bindings
         .iter()
         .filter(|binding| binding.source_index >= target_index)
         .flat_map(|binding| binding.vars.iter())
-        .filter(|var| var.name != name)
+        .filter(|var| !dropped_set.contains(&var.name))
         .cloned()
         .collect::<Vec<_>>();
     let scoped_source = lets[target_index..].join("\n    ");
     let replacement = match surviving_vars.as_slice() {
-        [] => format!("{{\n    {scoped_source}\n}}"),
+        [] => format!("let _ = {{\n    {scoped_source}\n    ()\n}}"),
         [var] => format!(
             "let {mutability}{name} = {{\n    {scoped_source}\n    {name}\n}}",
             mutability = if var.mutable { "mut " } else { "" },
@@ -1792,13 +1822,44 @@ fn prepare_repl_drop(
     new_lets.push(replacement);
     let mut new_bindings = bindings.to_vec();
     for binding in &mut new_bindings {
-        binding.vars.retain(|var| var.name != name);
+        binding.vars.retain(|var| !dropped_set.contains(&var.name));
         if binding.source_index >= target_index {
             binding.source_index = target_index;
         }
     }
     new_bindings.retain(|binding| !binding.vars.is_empty());
-    Some((new_lets, new_bindings))
+    Some(ReplDropPlan {
+        lets: new_lets,
+        bindings: new_bindings,
+        dropped_names,
+    })
+}
+
+fn source_mentions_binding(source: &str, name: &str) -> bool {
+    source.match_indices(name).any(|(start, _)| {
+        let before = source[..start].chars().next_back();
+        let after = source[start + name.len()..].chars().next();
+        !before.is_some_and(is_ident_continue) && !after.is_some_and(is_ident_continue)
+    })
+}
+
+fn is_ident_continue(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphanumeric()
+}
+
+fn render_dropped_binding_names(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [name] => format!("`{name}`"),
+        [first, rest @ ..] => {
+            let also = rest
+                .iter()
+                .map(|name| format!("`{name}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("`{first}` and dependent {also}")
+        }
+    }
 }
 
 fn render_repl_bindings(
