@@ -1489,8 +1489,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     continue;
                 }
             };
-            lets.push(candidate.clone());
-            let probe_body = format!("{}\n    ()\n", lets.join("\n    "));
+            let probe_body = format!("{}{candidate}\n    ()\n", render_repl_setup(&lets));
             let probe = format!(
                 "{}\nfn __irepl_{n}() {{\n    {body}}}\n",
                 declarations.join("\n"),
@@ -1508,12 +1507,12 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                         helper.observe_let(&candidate, &names);
                     }
                     update_repl_bindings(&mut bindings, new_binding);
+                    lets.push(candidate.clone());
                     if verbose {
                         println!("    binding added ({} total)", bindings.len());
                     }
                 }
                 Err(msg) => {
-                    lets.pop();
                     print_repl_error(&format!("    {msg}"));
                 }
             }
@@ -1525,12 +1524,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
         // preceding bindings so their effects survive into later inputs.
         let user_mutating_methods = collect_repl_mut_self_method_names(&declarations);
         if input_mutates_binding(trimmed, &user_mutating_methods) {
-            let prefix = lets.join("\n    ");
-            let probe_body = if prefix.is_empty() {
-                trimmed.to_string()
-            } else {
-                format!("{prefix}\n    {trimmed}")
-            };
+            let probe_body = format!("{}{trimmed}", render_repl_setup(&lets));
             let probe = format!(
                 "{}\nfn __irepl_{n}() {{\n    {body}}}\n",
                 declarations.join("\n"),
@@ -1558,11 +1552,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
             continue;
         }
 
-        let let_body = if lets.is_empty() {
-            String::new()
-        } else {
-            format!("{}\n    ", lets.join("\n    "))
-        };
+        let let_body = render_repl_setup(&lets);
         let program_source = format!(
             "{}\nfn __irepl_{n}() {{ {lets}{expr}\n}}\n",
             declarations.join("\n"),
@@ -1657,6 +1647,31 @@ fn print_repl_result(value: &gossamer_interp::Value) {
         .expect("flush REPL expression result");
 }
 
+fn render_repl_setup(lets: &[String]) -> String {
+    if lets.is_empty() {
+        String::new()
+    } else {
+        let replay = lets
+            .iter()
+            .map(|line| suppress_replayed_prints(line))
+            .collect::<Vec<_>>()
+            .join("\n    ");
+        format!("{replay}\n    ")
+    }
+}
+
+fn suppress_replayed_prints(input: &str) -> String {
+    input
+        .replace("println!(", "format!(")
+        .replace("eprintln!(", "format!(")
+        .replace("print!(", "format!(")
+        .replace("eprint!(", "format!(")
+        .replace("println(", "__repl_discard(")
+        .replace("eprintln(", "__repl_discard(")
+        .replace("print(", "__repl_discard(")
+        .replace("eprint(", "__repl_discard(")
+}
+
 struct ReplBinding {
     vars: Vec<ReplBindingVar>,
 }
@@ -1686,11 +1701,7 @@ fn render_repl_bindings(
     lets: &[String],
     bindings: &[ReplBinding],
 ) -> Vec<String> {
-    let let_body = if lets.is_empty() {
-        String::new()
-    } else {
-        format!("{}\n    ", lets.join("\n    "))
-    };
+    let let_body = render_repl_setup(lets);
     let mut lines = Vec::new();
     for binding in bindings {
         for var in &binding.vars {
@@ -1830,11 +1841,7 @@ fn resolve_repl_binding(
     lets: &[String],
     name: &str,
 ) -> std::result::Result<(gossamer_interp::Value, ReplValueType), String> {
-    let let_body = if lets.is_empty() {
-        String::new()
-    } else {
-        format!("{}\n    ", lets.join("\n    "))
-    };
+    let let_body = render_repl_setup(lets);
     let entry = "__irepl_binding_info";
     let source = format!(
         "{}\nfn {entry}() {{ {lets}{name} }}\n",
@@ -3752,14 +3759,7 @@ fn build_and_call(
     source: &str,
     entry: &str,
 ) -> std::result::Result<gossamer_interp::Value, String> {
-    build_and_call_with_type(source, entry).map(|(value, _)| value)
-}
-
-fn build_and_call_with_type(
-    source: &str,
-    entry: &str,
-) -> std::result::Result<(gossamer_interp::Value, ReplValueType), String> {
-    build_and_call_with_type_inner(source, entry, false)
+    build_and_call_with_type_inner(source, entry, false).map(|(value, _)| value)
 }
 
 fn build_and_call_with_type_for_inspection(

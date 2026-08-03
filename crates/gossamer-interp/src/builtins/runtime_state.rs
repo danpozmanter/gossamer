@@ -240,6 +240,10 @@ fn write_stderr(text: &str) {
     STDERR_WRITER.with(|cell| (cell.get())(text));
 }
 
+fn builtin_repl_discard(_: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Unit)
+}
+
 fn builtin_println(args: &[Value]) -> RuntimeResult<Value> {
     let rendered = render_args(args);
     write_stdout(&rendered);
@@ -251,4 +255,3 @@ fn builtin_print(args: &[Value]) -> RuntimeResult<Value> {
     write_stdout(&render_args(args));
     Ok(Value::Unit)
 }
-

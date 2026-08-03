@@ -187,6 +187,36 @@ fn direct_vec_insert_results_replay_without_poisoning_the_repl() {
 }
 
 #[test]
+fn repl_binding_and_declaration_listing_do_not_replay_program_output() {
+    let out = run_repl(
+        "fn id(x: i64) -> i64 { x }\n\
+         let v = Vec::from([1, 2])\n\
+         let a = for e in v { println(e) }\n\
+         a\n\
+         %b\n\
+         %d\n",
+    );
+    assert!(out.success, "stderr: {}", out.stderr);
+    assert!(out.stderr.is_empty(), "stderr: {}", out.stderr);
+
+    let one_count = out.stdout.lines().filter(|line| *line == "1").count();
+    let two_count = out.stdout.lines().filter(|line| *line == "2").count();
+    assert_eq!(one_count, 1, "stdout: {}", out.stdout);
+    assert_eq!(two_count, 1, "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("v: Vec<i64> = [1, 2]"),
+        "stdout: {}",
+        out.stdout
+    );
+    assert!(out.stdout.contains("a:"), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("fn id(x: i64) -> i64 { x }"),
+        "stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_reports_the_computed_operand_in_chained_numeric_mismatches() {
     let out = run_repl("0.38 * 40.0 * 50\n0.48 * 40.0 * 40\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);

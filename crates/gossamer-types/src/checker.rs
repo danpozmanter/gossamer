@@ -5031,6 +5031,7 @@ impl<'a> TypeChecker<'a> {
                 }
                 self.tcx.string_ty()
             }
+            "__repl_discard" => self.tcx.unit(),
             // `channel()` / `channel(n)` / `channel::unbounded()` ->
             // `(Sender<?T>, Receiver<?T>)` sharing one element var, so
             // `tx.send(v)` unifies the element through the shared `?T` and

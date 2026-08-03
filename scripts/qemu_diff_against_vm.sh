@@ -50,7 +50,7 @@ for artifact in "$BINS_ROOT"/*/; do
             # must be restored before running.
             [ -f "$bin" ] && chmod +x "$bin"
             [ -x "$bin" ] || { echo "::error::missing binary $bin"; rc=1; continue; }
-            vm_out="$("$GOS" "$ROOT/$src")"
+            vm_out="$("$GOS" run "$ROOT/$src")"
             if [ -z "$runner" ]; then
                 run_out="$("$bin")"
             else

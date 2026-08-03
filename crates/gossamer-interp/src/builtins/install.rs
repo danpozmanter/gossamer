@@ -67,6 +67,7 @@ fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("__fmt_radix", builtin("__fmt_radix", builtin_fmt_radix)));
     globals.push(("__fmt_upper", builtin("__fmt_upper", builtin_fmt_upper)));
     globals.push(("__fmt_pad", builtin("__fmt_pad", builtin_fmt_pad)));
+    globals.push(("__repl_discard", builtin("__repl_discard", builtin_repl_discard)));
     globals.push(("__struct", builtin("__struct", builtin_struct_new)));
 }
 
