@@ -319,6 +319,12 @@ impl<'a> Builder<'a> {
                         return Some(dest);
                     }
                 }
+                if let HirExprKind::Array(gossamer_hir::HirArrayExpr::Repeat { value, count }) =
+                    &args[0].kind
+                {
+                    let dest = self.fresh(ty);
+                    return self.lower_array_repeat_into(value, count, ty, span, Some(dest));
+                }
                 let source = self.lower_expr(&args[0])?;
                 if let TyKind::Array { elem, len } =
                     self.tcx.kind_of(self.locals[source.0 as usize].ty).clone()

@@ -524,6 +524,20 @@ impl<'a> Builder<'a> {
                                 }
                                 _ => false,
                             };
+                            let promote_vec_elem = match (binding_kind, init_kind) {
+                                (TyKind::Vec(be), TyKind::Vec(ie)) => {
+                                    let be_unresolved = matches!(
+                                        self.tcx.kind_of(*be),
+                                        TyKind::Var(_) | TyKind::Error
+                                    );
+                                    let ie_resolved = !matches!(
+                                        self.tcx.kind_of(*ie),
+                                        TyKind::Var(_) | TyKind::Error
+                                    );
+                                    be_unresolved && ie_resolved
+                                }
+                                _ => false,
+                            };
                             if !matches!(
                                 binding_kind,
                                 TyKind::Bool
@@ -541,6 +555,7 @@ impl<'a> Builder<'a> {
                             ) || promote_inner
                                 || promote_handle
                                 || promote_array_elem
+                                || promote_vec_elem
                             {
                                 self.locals[local.0 as usize].ty = init_ty;
                             }

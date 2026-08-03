@@ -225,6 +225,14 @@ impl<'a> Lowerer<'a> {
         for proj in &place.projection {
             match proj {
                 Projection::Field(idx) => {
+                    if matches!(self.tcx.kind(current_ty), Some(TyKind::Int(_))) {
+                        let raw_ptr_bits = self.fresh();
+                        writeln!(self.out, "  {raw_ptr_bits} = load i64, ptr {current}").unwrap();
+                        let as_ptr = self.fresh();
+                        writeln!(self.out, "  {as_ptr} = inttoptr i64 {raw_ptr_bits} to ptr")
+                            .unwrap();
+                        current = as_ptr;
+                    }
                     // Sum prior fields' slot widths so a nested
                     // struct field (`outer.inner.x`) lands past
                     // the embedded inner's full layout instead of

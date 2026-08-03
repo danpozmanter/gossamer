@@ -852,6 +852,16 @@ impl<'a> Builder<'a> {
             );
             return Some(dest);
         }
+        if matches!(op, HirUnaryOp::RefMut)
+            && let Some(place) = self.lower_place_expr(operand)
+            && place.projection.is_empty()
+            && matches!(
+                self.tcx.kind_of(self.locals[place.local.0 as usize].ty),
+                TyKind::Ref { .. }
+            )
+        {
+            return Some(place.local);
+        }
         let inner = self.lower_expr(operand)?;
         // `-x` on a user struct / enum routes to its `neg` impl method.
         if matches!(op, HirUnaryOp::Neg) {
@@ -2433,9 +2443,34 @@ impl<'a> Builder<'a> {
                         other => other,
                     }
                 };
-                if let gossamer_types::TyKind::Vec(elem) | gossamer_types::TyKind::Slice(elem) =
-                    base_kind
-                {
+                let tagged_elem_ty = if let HirExprKind::Path { segments, .. } = &base.kind {
+                    segments
+                        .first()
+                        .and_then(|seg| self.lookup_local(&seg.name))
+                        .and_then(|local| self.local_elem_struct.get(&local))
+                        .and_then(|elem_struct| {
+                            self.struct_defs.iter().find_map(|(def, name)| {
+                                (name == elem_struct).then(|| {
+                                    self.tcx.intern(gossamer_types::TyKind::Adt {
+                                        def: *def,
+                                        substs: gossamer_types::Substs::new(),
+                                    })
+                                })
+                            })
+                        })
+                } else {
+                    None
+                };
+                let vec_elem = match base_kind {
+                    gossamer_types::TyKind::Vec(elem) | gossamer_types::TyKind::Slice(elem) => {
+                        Some(tagged_elem_ty.unwrap_or(elem))
+                    }
+                    gossamer_types::TyKind::Var(_) | gossamer_types::TyKind::Error => {
+                        tagged_elem_ty
+                    }
+                    _ => None,
+                };
+                if let Some(elem) = vec_elem {
                     // Any struct/tuple element lives by value inside the Vec's
                     // data buffer, so a `vec[i].field` place must take the
                     // element's address (`gos_rt_vec_get_ptr`) and walk the
@@ -2444,10 +2479,16 @@ impl<'a> Builder<'a> {
                     // `> 8` gate and fell through to the flat-projection path,
                     // which strides off the GosVec header instead of its data
                     // pointer (segfault on `buckets[i].items.push(...)`).
+                    let elem_is_user_struct = self.struct_name_of(elem).is_some_and(|name| {
+                        self.struct_defs
+                            .values()
+                            .any(|struct_name| struct_name == &name)
+                    });
                     let elem_aggregate = matches!(
                         self.tcx.kind_of(elem),
                         gossamer_types::TyKind::Tuple(_) | gossamer_types::TyKind::Adt { .. }
-                    ) && self.type_slot_bytes(elem) >= 8;
+                    ) && (self.type_slot_bytes(elem) >= 8
+                        || elem_is_user_struct);
                     if elem_aggregate {
                         // Materialise the element address with
                         // `gos_rt_vec_get_ptr` and bind it to a
@@ -2908,7 +2949,28 @@ impl<'a> Builder<'a> {
             // shortcut assumed a happy-path encoding the compiled
             // push side never used, so `xs[i]` handed back the raw
             // handle pointer as if it were the payload.)
-            let elem_unwrapped = elem;
+            let expected_elem_ty = self
+                .struct_name_of(ty)
+                .filter(|name| {
+                    self.struct_defs
+                        .values()
+                        .any(|struct_name| struct_name == name)
+                })
+                .map(|_| ty);
+            let tagged_elem_ty = self
+                .local_elem_struct
+                .get(&base_local)
+                .and_then(|elem_struct| {
+                    self.struct_defs.iter().find_map(|(def, name)| {
+                        (name == elem_struct).then(|| {
+                            self.tcx.intern(TyKind::Adt {
+                                def: *def,
+                                substs: gossamer_types::Substs::new(),
+                            })
+                        })
+                    })
+                });
+            let elem_unwrapped = expected_elem_ty.or(tagged_elem_ty).unwrap_or(elem);
             let elem_kind_now = self.tcx.kind_of(elem_unwrapped);
             let dest_ty = match elem_kind_now {
                 TyKind::String | TyKind::Bool | TyKind::Char | TyKind::Float(_) => elem_unwrapped,
@@ -2960,14 +3022,23 @@ impl<'a> Builder<'a> {
             // pointer, so it must come back through `gos_rt_vec_get_ptr`
             // like any multi-slot aggregate. Read as an `i64` scalar it
             // would hand back the boxed pointer's bits, and the following
-            // `.field` access would dereference a wrong address. Opaque
-            // stdlib handle structs (`def.local` in the sentinel range)
-            // carry their handle inline and stay on the scalar read; enums
-            // (no struct fields) keep the get_i64 handle the matcher wants.
+            // `.field` access would dereference a wrong address. Key this
+            // off the resolved struct name rather than numeric DefId ranges:
+            // user code can flow through inferred repeat-array/Vec shapes
+            // that still name the struct even when the raw local id is not
+            // useful for distinguishing it from stdlib sentinels. Opaque
+            // stdlib handle structs are absent from `struct_defs` and stay on
+            // the scalar read; enums (no struct fields) keep the get_i64
+            // handle the matcher wants.
+            let elem_is_user_struct = self.struct_name_of(elem_unwrapped).is_some_and(|name| {
+                self.struct_defs
+                    .values()
+                    .any(|struct_name| struct_name == &name)
+            });
             let elem_is_struct_adt = matches!(
                 self.tcx.kind_of(elem_unwrapped),
                 TyKind::Adt { def, .. }
-                    if def.local < u32::MAX - 16 && self.tcx.struct_field_tys(*def).is_some()
+                    if elem_is_user_struct && self.tcx.struct_field_tys(*def).is_some()
             );
             // A tuple element is address-is-value at any width, exactly like a
             // user struct - a single-element tuple `(T,)` occupies one 8-byte

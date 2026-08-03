@@ -714,6 +714,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_lazy_iter_fold_i64" => Some("gos_rt_lazy_iter_fold_i64"),
         "gos_rt_lazy_iter_any_i64" => Some("gos_rt_lazy_iter_any_i64"),
         "gos_rt_lazy_iter_all_i64" => Some("gos_rt_lazy_iter_all_i64"),
+        "gos_rt_iter_all_ptr" => Some("gos_rt_iter_all_ptr"),
         "gos_rt_lazy_iter_find_i64" => Some("gos_rt_lazy_iter_find_i64"),
         "gos_rt_iter_filter_map_i64" => Some("gos_rt_iter_filter_map_i64"),
         "gos_rt_iter_find_map_i64" => Some("gos_rt_iter_find_map_i64"),

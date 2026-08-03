@@ -947,6 +947,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_lazy_iter_any_i64" | "gos_rt_lazy_iter_all_i64" => {
             (&[ptr_ty, ptr_ty], Some(types::I64))
         }
+        "gos_rt_iter_all_ptr" => (&[ptr_ty, ptr_ty], Some(types::I64)),
         "gos_rt_lazy_iter_find_i64" => (&[ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_lazy_iter_min_i64" | "gos_rt_lazy_iter_max_i64" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_lazy_iter_next_i64" => (&[ptr_ty], Some(types::I128)),

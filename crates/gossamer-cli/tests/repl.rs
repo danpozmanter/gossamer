@@ -800,6 +800,27 @@ fn repl_range_binding_inspection_does_not_poison_iterator_reuse() {
 }
 
 #[test]
+fn iterator_parameter_count_method_does_not_drain_range_binding() {
+    let out = run_repl(
+        "use Iterator\n\
+         let r = 0..2\n\
+         fn count_many_range(r: Iterator<i64>) { for i in 0..3 { println(r.count()) } }\n\
+         count_many_range(r)\n",
+    );
+    assert!(out.success, "stderr: {}", out.stderr);
+    let values: Vec<&str> = out
+        .stdout
+        .lines()
+        .filter(|line| line.parse::<i64>().is_ok())
+        .collect();
+    assert_eq!(
+        values,
+        ["2", "2", "2"],
+        "Iterator method calls must fork range state instead of draining the caller binding"
+    );
+}
+
+#[test]
 fn repl_info_default_listing_has_no_blank_lines_between_entries() {
     let out = run_repl("%i starts_with\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);

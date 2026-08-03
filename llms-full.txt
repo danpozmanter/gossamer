@@ -196,7 +196,7 @@ let n = 3 |> double |> add(10) |> clamp(0, 100)
 - **Comments**: `//` and non-nesting `/* */` only. A run of `//`
   lines directly above an item is its documentation; `gos test` runs
   fenced code inside doc comments. Mark a non-runnable fence with the
-  `text` info string, written as `` ```text ... ``` ``.
+  `text` info string, written as "```text ... ```".
 - **Semicolons are same-line separators only**: `let a = 1; let b = 2`
   replaces a newline between statements. A trailing semicolon, or one before
   a newline or `}`, is invalid. A newline followed by leading `&`, `*`, or `-`

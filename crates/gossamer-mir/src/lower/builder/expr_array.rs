@@ -249,7 +249,27 @@ impl<'a> Builder<'a> {
         if !wants_vec {
             if let Some(count_u64) = literal_u64(count) {
                 let value_local = self.lower_expr(value)?;
-                let dest = self.fresh(ty);
+                let value_ty = self.locals[value_local.0 as usize].ty;
+                let value_struct = self
+                    .local_struct
+                    .get(&value_local)
+                    .cloned()
+                    .or_else(|| self.struct_name_of(value_ty));
+                let dest_ty = match self.tcx.kind_of(ty) {
+                    TyKind::Array { elem, len }
+                        if matches!(self.tcx.kind_of(*elem), TyKind::Var(_) | TyKind::Error) =>
+                    {
+                        self.tcx.intern(TyKind::Array {
+                            elem: value_ty,
+                            len: *len,
+                        })
+                    }
+                    _ => ty,
+                };
+                let dest = self.fresh(dest_ty);
+                if let Some(name) = value_struct {
+                    self.local_elem_struct.insert(dest, name);
+                }
                 self.emit_assign(
                     Place::local(dest),
                     Rvalue::Repeat {
@@ -269,12 +289,18 @@ impl<'a> Builder<'a> {
         }
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let value_local = self.lower_expr(value)?;
+        let value_ty = self.locals[value_local.0 as usize].ty;
+        let value_struct = self
+            .local_struct
+            .get(&value_local)
+            .cloned()
+            .or_else(|| self.struct_name_of(value_ty));
         let count_local = self.lower_expr(count)?;
         // Size each slot by the element's own byte width so a Vec of
         // multi-slot elements (tuples, String, fixed arrays) copies the
         // whole element on every push rather than truncating to 8 bytes.
         let elem_src_ty = match self.tcx.kind_of(ty) {
-            TyKind::Vec(e) => *e,
+            TyKind::Vec(e) if !matches!(self.tcx.kind_of(*e), TyKind::Var(_) | TyKind::Error) => *e,
             _ => self.locals[value_local.0 as usize].ty,
         };
         let elem_bytes_val = i128::from(self.elem_bytes_of(elem_src_ty).max(1));
@@ -284,7 +310,17 @@ impl<'a> Builder<'a> {
             Rvalue::Use(Operand::Const(ConstValue::Int(elem_bytes_val))),
             span,
         );
-        let vec_local = destination.unwrap_or_else(|| self.fresh(ty));
+        let vec_ty = match self.tcx.kind_of(ty) {
+            TyKind::Vec(e) if matches!(self.tcx.kind_of(*e), TyKind::Var(_) | TyKind::Error) => {
+                self.tcx.intern(TyKind::Vec(elem_src_ty))
+            }
+            _ => ty,
+        };
+        let vec_local = destination.unwrap_or_else(|| self.fresh(vec_ty));
+        self.locals[vec_local.0 as usize].ty = vec_ty;
+        if let Some(name) = value_struct {
+            self.local_elem_struct.insert(vec_local, name);
+        }
         let primitive_repeat = elem_bytes_val <= 8
             && matches!(
                 self.tcx.kind_of(elem_src_ty),

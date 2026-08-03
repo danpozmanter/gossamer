@@ -1429,6 +1429,31 @@ pub unsafe extern "C" fn gos_rt_iter_all_i64(env: *const u8, v: *const GosVec) -
     })
 }
 
+/// `iter::all(p, xs)` for vectors whose elements must be passed by slot
+/// address, such as user structs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_all_ptr(env: *const u8, v: *const GosVec) -> i64 {
+    ffi_entry!(-1, {
+        if env.is_null() || v.is_null() {
+            return 1;
+        }
+        let vec = unsafe { &*v };
+        type PredFn = unsafe extern "C" fn(env: *const u8, x: *mut u8) -> bool;
+        let fn_addr_raw = unsafe { (env as *const usize).read() };
+        if fn_addr_raw == 0 {
+            return 1;
+        }
+        let p: PredFn = unsafe { std::mem::transmute(fn_addr_raw) };
+        for i in 0..vec.len {
+            let x = unsafe { gos_rt_vec_get_ptr(v, i) };
+            if !unsafe { p(env, x) } {
+                return 0;
+            }
+        }
+        1
+    })
+}
+
 /// `iter::find(p, xs)` for `Vec<i64>` -> `(found, value)` packed: returns
 /// `(1, x)` for first match and `(0, 0)` for none. Caller pulls the
 /// match flag through `gos_rt_iter_find_i64_flag`; this entry returns

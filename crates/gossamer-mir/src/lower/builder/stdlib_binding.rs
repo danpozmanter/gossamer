@@ -275,6 +275,9 @@ impl<'a> Builder<'a> {
             target: Some(next),
         });
         self.set_current(next);
+        if let Some(name) = self.local_elem_struct.get(&raw).cloned() {
+            self.local_elem_struct.insert(dest, name);
+        }
         dest
     }
 

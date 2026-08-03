@@ -280,6 +280,52 @@ fn main() {
 }
 
 #[test]
+fn repeated_vec_struct_elements_with_qualified_calls_match_across_tiers() {
+    // Regression for the native d07 failure: `Vec::from([S::new(); N])`
+    // over a struct with Vec fields must not raw-copy owned Vec handles, and
+    // qualified calls through `&mut xs[i]` plus `.all(|x| S::pred(x))` must
+    // operate on the Vec element slot, not a stack copy or scalarized pointer.
+    let src = r#"
+struct Amp {
+    memory: Vec<i64>,
+    halted: bool,
+    output: i64,
+}
+
+impl Amp {
+    fn new() -> Self {
+        Amp { memory: Vec::from([1, 2]), halted: false, output: 0 }
+    }
+
+    fn run(&mut self, value: i64) {
+        self.memory[0] = value
+        self.output = self.memory[0] + self.memory[1]
+        self.halted = true
+    }
+
+    fn is_halted(self) -> bool {
+        self.halted
+    }
+}
+
+fn main() {
+    let mut amps = Vec::from([Amp::new(); 3])
+    for i in 0..3 {
+        Amp::run(&mut amps[i], i + 10)
+    }
+    println!("all={}", amps.all(|amp| Amp::is_halted(amp)))
+    println!("outputs={} {} {}", amps[0].output, amps[1].output, amps[2].output)
+    println!("memory={} {}", amps[0].memory[0], amps[1].memory[0])
+}
+"#;
+    assert_three_tier_stdout(
+        "repeated_vec_struct_elements_qualified_calls",
+        src,
+        "all=true\noutputs=12 13 14\nmemory=10 11",
+    );
+}
+
+#[test]
 fn mutable_methods_on_indexed_fixed_array_elements_match_across_tiers() {
     // Regression for #128. A projected `&mut self` receiver must write the
     // changed aggregate back through a fixed-array element place, just as it

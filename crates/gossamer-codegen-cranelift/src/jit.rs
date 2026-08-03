@@ -2457,6 +2457,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_lazy_iter_fold_i64" => rt::gos_rt_lazy_iter_fold_i64,
         "gos_rt_lazy_iter_any_i64" => rt::gos_rt_lazy_iter_any_i64,
         "gos_rt_lazy_iter_all_i64" => rt::gos_rt_lazy_iter_all_i64,
+        "gos_rt_iter_all_ptr"      => rt::gos_rt_iter_all_ptr,
         "gos_rt_lazy_iter_find_i64" => rt::gos_rt_lazy_iter_find_i64,
         "gos_rt_testing_check"       => rt::gos_rt_testing_check,
         "gos_rt_testing_check_eq_i64" => rt::gos_rt_testing_check_eq_i64,

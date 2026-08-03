@@ -119,7 +119,7 @@ thread_local! {
     static LAZY_VEC_REPLACEMENTS: RefCell<StdHashMap<usize, StdHashMap<usize, Value>>> = RefCell::new(StdHashMap::new());
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum LazyIterState {
     Array {
         items: Arc<Vec<Value>>,
@@ -247,6 +247,179 @@ fn new_lazy_iter(state: LazyIterState) -> Value {
         states.borrow_mut().insert(id, state);
     });
     Value::LazyIter(id)
+}
+
+/// Returns an independent lazy-iterator state when `value` is a lazy iterator.
+///
+/// Method-call lowering copies the receiver into the argument list before
+/// dispatch. For registry-backed iterators, a plain `Value::clone` aliases the
+/// same handle, so terminal methods such as `r.count()` drain the caller's
+/// binding. Forking at that boundary gives copied range values normal by-value
+/// behavior while preserving the current cursor of the copied state.
+pub(crate) fn fork_lazy_iter_value(value: &Value) -> Value {
+    let Value::LazyIter(id) = value else {
+        return value.clone();
+    };
+    let state = LAZY_ITER_STATES.with(|states| states.borrow().get(id).cloned());
+    state
+        .as_ref()
+        .map(fork_lazy_state)
+        .unwrap_or_else(|| value.clone())
+}
+
+fn fork_lazy_value(value: &Value) -> Value {
+    if matches!(value, Value::LazyIter(_)) {
+        fork_lazy_iter_value(value)
+    } else {
+        value.clone()
+    }
+}
+
+fn fork_lazy_state(state: &LazyIterState) -> Value {
+    match state {
+        LazyIterState::Array {
+            items,
+            source_id,
+            generation,
+            index,
+        } => {
+            retain_lazy_vec_source(*source_id);
+            new_lazy_iter(LazyIterState::Array {
+                items: Arc::clone(items),
+                source_id: *source_id,
+                generation: *generation,
+                index: *index,
+            })
+        }
+        LazyIterState::IntArray {
+            items,
+            source_id,
+            generation,
+            index,
+        } => {
+            retain_lazy_vec_source(*source_id);
+            new_lazy_iter(LazyIterState::IntArray {
+                items: Arc::clone(items),
+                source_id: *source_id,
+                generation: *generation,
+                index: *index,
+            })
+        }
+        LazyIterState::FloatVec {
+            items,
+            source_id,
+            generation,
+            index,
+        } => {
+            retain_lazy_vec_source(*source_id);
+            new_lazy_iter(LazyIterState::FloatVec {
+                items: Arc::clone(items),
+                source_id: *source_id,
+                generation: *generation,
+                index: *index,
+            })
+        }
+        LazyIterState::Range {
+            current,
+            end,
+            inclusive,
+            start_open,
+            end_open,
+            finished,
+        } => new_lazy_iter(LazyIterState::Range {
+            current: *current,
+            end: *end,
+            inclusive: *inclusive,
+            start_open: *start_open,
+            end_open: *end_open,
+            finished: *finished,
+        }),
+        LazyIterState::Once { item } => new_lazy_iter(LazyIterState::Once { item: item.clone() }),
+        LazyIterState::Repeat { item, remaining } => new_lazy_iter(LazyIterState::Repeat {
+            item: item.clone(),
+            remaining: *remaining,
+        }),
+        LazyIterState::Take {
+            upstream,
+            remaining,
+        } => new_lazy_iter(LazyIterState::Take {
+            upstream: fork_lazy_value(upstream),
+            remaining: *remaining,
+        }),
+        LazyIterState::Skip {
+            upstream,
+            remaining,
+        } => new_lazy_iter(LazyIterState::Skip {
+            upstream: fork_lazy_value(upstream),
+            remaining: *remaining,
+        }),
+        LazyIterState::StepBy {
+            upstream,
+            step,
+            skip_before,
+        } => new_lazy_iter(LazyIterState::StepBy {
+            upstream: fork_lazy_value(upstream),
+            step: *step,
+            skip_before: *skip_before,
+        }),
+        LazyIterState::Enumerate { upstream, index } => new_lazy_iter(LazyIterState::Enumerate {
+            upstream: fork_lazy_value(upstream),
+            index: *index,
+        }),
+        LazyIterState::Chain {
+            first,
+            second,
+            in_second,
+        } => new_lazy_iter(LazyIterState::Chain {
+            first: fork_lazy_value(first),
+            second: fork_lazy_value(second),
+            in_second: *in_second,
+        }),
+        LazyIterState::Zip { left, right } => new_lazy_iter(LazyIterState::Zip {
+            left: fork_lazy_value(left),
+            right: fork_lazy_value(right),
+        }),
+        LazyIterState::Map { f, upstream } => new_lazy_iter(LazyIterState::Map {
+            f: f.clone(),
+            upstream: fork_lazy_value(upstream),
+        }),
+        LazyIterState::Filter { p, upstream } => new_lazy_iter(LazyIterState::Filter {
+            p: p.clone(),
+            upstream: fork_lazy_value(upstream),
+        }),
+        LazyIterState::FilterMap { f, upstream } => new_lazy_iter(LazyIterState::FilterMap {
+            f: f.clone(),
+            upstream: fork_lazy_value(upstream),
+        }),
+        LazyIterState::FlatMap {
+            f,
+            upstream,
+            current,
+        } => new_lazy_iter(LazyIterState::FlatMap {
+            f: f.clone(),
+            upstream: fork_lazy_value(upstream),
+            current: current.as_ref().map(fork_lazy_value),
+        }),
+        LazyIterState::Scan { acc, f, upstream } => new_lazy_iter(LazyIterState::Scan {
+            acc: acc.clone(),
+            f: f.clone(),
+            upstream: fork_lazy_value(upstream),
+        }),
+        LazyIterState::TakeWhile { p, upstream, done } => new_lazy_iter(LazyIterState::TakeWhile {
+            p: p.clone(),
+            upstream: fork_lazy_value(upstream),
+            done: *done,
+        }),
+        LazyIterState::SkipWhile {
+            p,
+            upstream,
+            skipping,
+        } => new_lazy_iter(LazyIterState::SkipWhile {
+            p: p.clone(),
+            upstream: fork_lazy_value(upstream),
+            skipping: *skipping,
+        }),
+    }
 }
 
 /// Creates a lazy integer range while preserving which bounds were omitted so

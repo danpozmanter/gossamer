@@ -1575,8 +1575,9 @@ impl<'a> Builder<'a> {
             }
             ("iter::all", 2) => {
                 let bool_ty = self.tcx.bool_ty();
-                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
                 if matches!(self.tcx.kind_of(args[1].ty), TyKind::Iterator(_)) {
+                    let closure_local =
+                        self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
                     let iter_local = self.lower_expr(&args[1])?;
                     let dest = self.fresh(bool_ty);
                     let next = self.new_block(span);
@@ -1595,12 +1596,31 @@ impl<'a> Builder<'a> {
                     return Some(dest);
                 }
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let vec_elem_ty = match self.tcx.kind_of(self.locals[vec_local.0 as usize].ty) {
+                    TyKind::Vec(elem) | TyKind::Slice(elem) => Some(*elem),
+                    _ => None,
+                };
+                let ptr_elem_ty = vec_elem_ty.filter(|elem| {
+                    self.struct_name_of(*elem).is_some_and(|name| {
+                        self.struct_defs
+                            .values()
+                            .any(|struct_name| struct_name == &name)
+                    })
+                });
+                let closure_inputs = ptr_elem_ty.map_or_else(|| vec![i64_ty], |elem| vec![elem]);
+                let closure_local =
+                    self.lower_iter_closure(&args[0], &closure_inputs, bool_ty, span)?;
+                let helper = if ptr_elem_ty.is_some() {
+                    "gos_rt_iter_all_ptr"
+                } else {
+                    "gos_rt_iter_all_i64"
+                };
                 // Bool-typed destination so `{}` renders true/false
                 // like the VM; the shim returns i64 0/1.
                 let dest = self.fresh(bool_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_all_i64".to_string())),
+                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
                     args: vec![
                         Operand::Copy(Place::local(closure_local)),
                         Operand::Copy(Place::local(vec_local)),

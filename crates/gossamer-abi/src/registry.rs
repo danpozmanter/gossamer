@@ -518,6 +518,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_io_stdin", () -> Ptr, Both, "Return a pointer to the process stdin stream."),
     rt!("gos_rt_io_stdout", () -> Ptr, Both, "Return a pointer to the process stdout stream."),
     rt!("gos_rt_iter_all_i64", (Ptr, Ptr) -> I64, Both, "iter::all over Vec<i64>: returns 1 if every element satisfies the closure predicate."),
+    rt!("gos_rt_iter_all_ptr", (Ptr, Ptr) -> I64, Both, "iter::all over Vec elements passed by slot pointer, such as user structs."),
     rt!("gos_rt_iter_any_i64", (Ptr, Ptr) -> I64, Both, "iter::any over Vec<i64>: returns 1 if some element satisfies the closure predicate."),
     rt!("gos_rt_iter_chain_i64", (Ptr, Ptr) -> Ptr, Both, "iter::chain over Vec<i64>: returns a fresh Vec<i64> concatenating both inputs."),
     rt!("gos_rt_iter_chunk_by_size_i64", (I64, Ptr) -> Ptr, Both, "iter::chunks(n, xs) -> Vec<Vec<i64>> of consecutive width-n chunks (final may be short)."),

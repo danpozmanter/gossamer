@@ -1043,7 +1043,13 @@ impl Vm {
                             Value::Void,
                             Value::Void,
                         ];
-                        buf[0] = registers[receiver as usize].clone();
+                        buf[0] = if name == "next" {
+                            registers[receiver as usize].clone()
+                        } else {
+                            crate::stdlib_builtins::iter::fork_lazy_iter_value(
+                                &registers[receiver as usize],
+                            )
+                        };
                         for i in 0..argc_usz {
                             // 0.7.0 flag::Cell auto-deref at the
                             // call boundary - same rule as `Op::Call`.
@@ -1089,7 +1095,13 @@ impl Vm {
                             }
                         }
                     } else {
-                        let recv = registers[receiver as usize].clone();
+                        let recv = if name == "next" {
+                            registers[receiver as usize].clone()
+                        } else {
+                            crate::stdlib_builtins::iter::fork_lazy_iter_value(
+                                &registers[receiver as usize],
+                            )
+                        };
                         let mut call_args: Vec<Value> = Vec::with_capacity(total);
                         call_args.push(recv);
                         for i in 0..argc_usz {
