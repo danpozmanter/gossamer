@@ -642,6 +642,168 @@ fn bump_clone_elision_reads(op: &Operand, reads: &mut [u32], clone_source: Optio
     }
 }
 
+struct VecCloneRewrite {
+    block: usize,
+    source: Local,
+    destination: Place,
+    target: BlockId,
+    span: Span,
+}
+
+fn count_vec_clone_elision_reads(body: &Body) -> Vec<u32> {
+    let mut reads = vec![0u32; body.locals.len()];
+    for block in &body.blocks {
+        count_vec_clone_elision_stmt_reads(block, &mut reads);
+        count_vec_clone_elision_terminator_reads(block, &mut reads);
+    }
+    reads
+}
+
+fn count_vec_clone_elision_stmt_reads(block: &BasicBlock, reads: &mut [u32]) {
+    for stmt in &block.stmts {
+        let StatementKind::Assign { rvalue, .. } = &stmt.kind else {
+            continue;
+        };
+        match rvalue {
+            Rvalue::Use(op)
+            | Rvalue::UnaryOp { operand: op, .. }
+            | Rvalue::Cast { operand: op, .. }
+            | Rvalue::Repeat { value: op, .. } => {
+                bump_clone_elision_reads(op, reads, None);
+            }
+            Rvalue::BinaryOp { lhs, rhs, .. } => {
+                bump_clone_elision_reads(lhs, reads, None);
+                bump_clone_elision_reads(rhs, reads, None);
+            }
+            Rvalue::Aggregate { operands, .. } => {
+                for op in operands {
+                    bump_clone_elision_reads(op, reads, None);
+                }
+            }
+            Rvalue::CallIntrinsic { name, args } => {
+                if is_vec_accounting_call(name) {
+                    continue;
+                }
+                for op in args {
+                    bump_clone_elision_reads(op, reads, None);
+                }
+            }
+            Rvalue::Len(place) | Rvalue::Ref { place, .. } => {
+                if place.projection.is_empty()
+                    && let Some(read) = reads.get_mut(place.local.0 as usize)
+                {
+                    *read = read.saturating_add(1);
+                }
+            }
+            Rvalue::StaticLoad(_) => {}
+        }
+    }
+}
+
+fn count_vec_clone_elision_terminator_reads(block: &BasicBlock, reads: &mut [u32]) {
+    let Terminator::Call {
+        callee,
+        args,
+        destination,
+        ..
+    } = &block.terminator
+    else {
+        return;
+    };
+    let clone_source = match (callee, args.as_slice()) {
+        (Operand::Const(ConstValue::Str(name)), [Operand::Copy(place)])
+            if name == "gos_rt_vec_clone" && place.projection.is_empty() =>
+        {
+            Some(place.local)
+        }
+        _ => None,
+    };
+    bump_clone_elision_reads(callee, reads, clone_source);
+    for arg in args {
+        bump_clone_elision_reads(arg, reads, clone_source);
+    }
+    if !destination.projection.is_empty()
+        && let Some(read) = reads.get_mut(destination.local.0 as usize)
+    {
+        *read = read.saturating_add(1);
+    }
+}
+
+fn collect_fresh_vec_clone_rewrites(
+    body: &Body,
+    fresh: &HashSet<Local>,
+    reads: &[u32],
+) -> Vec<VecCloneRewrite> {
+    let mut rewrites = Vec::new();
+    for (bi, block) in body.blocks.iter().enumerate() {
+        let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            args,
+            destination,
+            target: Some(target),
+        } = &block.terminator
+        else {
+            continue;
+        };
+        if name != "gos_rt_vec_clone" || !destination.projection.is_empty() {
+            continue;
+        }
+        let [Operand::Copy(source)] = args.as_slice() else {
+            continue;
+        };
+        if !source.projection.is_empty() || !fresh.contains(&source.local) {
+            continue;
+        }
+        if reads.get(source.local.0 as usize).copied().unwrap_or(0) != 0 {
+            continue;
+        }
+        rewrites.push(VecCloneRewrite {
+            block: bi,
+            source: source.local,
+            destination: destination.clone(),
+            target: *target,
+            span: block.span,
+        });
+    }
+    rewrites
+}
+
+fn apply_fresh_vec_clone_rewrites(
+    body: &mut Body,
+    unit_ty: Ty,
+    rewrites: Vec<VecCloneRewrite>,
+) {
+    for rewrite in rewrites {
+        let retain_dest = Local(u32::try_from(body.locals.len()).expect("local overflow"));
+        body.locals.push(LocalDecl {
+            ty: unit_ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        });
+        body.blocks[rewrite.block].stmts.push(Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(retain_dest),
+                rvalue: Rvalue::CallIntrinsic {
+                    name: "gos_rt_vec_retain",
+                    args: vec![Operand::Copy(Place::local(rewrite.source))],
+                },
+            },
+            span: rewrite.span,
+        });
+        body.blocks[rewrite.block].stmts.push(Statement {
+            kind: StatementKind::Assign {
+                place: rewrite.destination,
+                rvalue: Rvalue::Use(Operand::Copy(Place::local(rewrite.source))),
+            },
+            span: rewrite.span,
+        });
+        body.blocks[rewrite.block].terminator = Terminator::Goto {
+            target: rewrite.target,
+        };
+    }
+}
+
 /// Rewrites a deep clone of an unnameable fresh Vec temporary into a retained
 /// pointer alias:
 ///
@@ -667,128 +829,10 @@ pub(crate) fn elide_vec_clone_of_fresh_temporary(body: &mut Body, tcx: &TyCtxt) 
         return;
     }
 
-    let mut reads = vec![0u32; body.locals.len()];
-    for block in &body.blocks {
-        for stmt in &block.stmts {
-            let StatementKind::Assign { rvalue, .. } = &stmt.kind else {
-                continue;
-            };
-            match rvalue {
-                Rvalue::Use(op)
-                | Rvalue::UnaryOp { operand: op, .. }
-                | Rvalue::Cast { operand: op, .. }
-                | Rvalue::Repeat { value: op, .. } => {
-                    bump_clone_elision_reads(op, &mut reads, None);
-                }
-                Rvalue::BinaryOp { lhs, rhs, .. } => {
-                    bump_clone_elision_reads(lhs, &mut reads, None);
-                    bump_clone_elision_reads(rhs, &mut reads, None);
-                }
-                Rvalue::Aggregate { operands, .. } => {
-                    for op in operands {
-                        bump_clone_elision_reads(op, &mut reads, None);
-                    }
-                }
-                Rvalue::CallIntrinsic { name, args } => {
-                    if is_vec_accounting_call(name) {
-                        continue;
-                    }
-                    for op in args {
-                        bump_clone_elision_reads(op, &mut reads, None);
-                    }
-                }
-                Rvalue::Len(place) | Rvalue::Ref { place, .. } => {
-                    if place.projection.is_empty()
-                        && let Some(read) = reads.get_mut(place.local.0 as usize)
-                    {
-                        *read = read.saturating_add(1);
-                    }
-                }
-                Rvalue::StaticLoad(_) => {}
-            }
-        }
-        if let Terminator::Call {
-            callee,
-            args,
-            destination,
-            ..
-        } = &block.terminator
-        {
-            let clone_source = match (callee, args.as_slice()) {
-                (
-                    Operand::Const(ConstValue::Str(name)),
-                    [Operand::Copy(place)],
-                ) if name == "gos_rt_vec_clone" && place.projection.is_empty() => {
-                    Some(place.local)
-                }
-                _ => None,
-            };
-            bump_clone_elision_reads(callee, &mut reads, clone_source);
-            for arg in args {
-                bump_clone_elision_reads(arg, &mut reads, clone_source);
-            }
-            if !destination.projection.is_empty()
-                && let Some(read) = reads.get_mut(destination.local.0 as usize)
-            {
-                *read = read.saturating_add(1);
-            }
-        }
-    }
-
+    let reads = count_vec_clone_elision_reads(body);
     let unit_ty = tcx
         .unit_interned()
         .unwrap_or_else(|| body.locals.first().expect("body has return local").ty);
-    let mut rewrites = Vec::new();
-    for (bi, block) in body.blocks.iter().enumerate() {
-        let Terminator::Call {
-            callee: Operand::Const(ConstValue::Str(name)),
-            args,
-            destination,
-            target: Some(target),
-        } = &block.terminator
-        else {
-            continue;
-        };
-        if name != "gos_rt_vec_clone" || !destination.projection.is_empty() {
-            continue;
-        }
-        let [Operand::Copy(source)] = args.as_slice() else {
-            continue;
-        };
-        if !source.projection.is_empty() || !fresh.contains(&source.local) {
-            continue;
-        }
-        if reads.get(source.local.0 as usize).copied().unwrap_or(0) != 0 {
-            continue;
-        }
-        rewrites.push((bi, source.local, destination.clone(), *target, block.span));
-    }
-
-    for (bi, source, destination, target, span) in rewrites {
-        let retain_dest = Local(u32::try_from(body.locals.len()).expect("local overflow"));
-        body.locals.push(LocalDecl {
-            ty: unit_ty,
-            debug_name: None,
-            mutable: false,
-            region: false,
-        });
-        body.blocks[bi].stmts.push(Statement {
-            kind: StatementKind::Assign {
-                place: Place::local(retain_dest),
-                rvalue: Rvalue::CallIntrinsic {
-                    name: "gos_rt_vec_retain",
-                    args: vec![Operand::Copy(Place::local(source))],
-                },
-            },
-            span,
-        });
-        body.blocks[bi].stmts.push(Statement {
-            kind: StatementKind::Assign {
-                place: destination,
-                rvalue: Rvalue::Use(Operand::Copy(Place::local(source))),
-            },
-            span,
-        });
-        body.blocks[bi].terminator = Terminator::Goto { target };
-    }
+    let rewrites = collect_fresh_vec_clone_rewrites(body, &fresh, &reads);
+    apply_fresh_vec_clone_rewrites(body, unit_ty, rewrites);
 }

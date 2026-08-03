@@ -1574,8 +1574,11 @@ fn combinator_free_calls_lower_to_runtime_shims() {
             .find(|b| b.name == "main")
             .unwrap_or_else(|| panic!("{label}: missing main body"));
         let names = call_names(main);
+        let fresh_collect_elided = matches!(*label, "iter::collect" | "Vec::collect")
+            && *shim == "gos_rt_vec_clone"
+            && names.iter().any(|n| n == "gos_rt_vec_from_arr");
         assert!(
-            names.iter().any(|n| n == shim),
+            names.iter().any(|n| n == shim) || fresh_collect_elided,
             "{label}: expected `{shim}` call, got {names:?}"
         );
         assert!(
