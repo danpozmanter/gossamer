@@ -21,7 +21,7 @@ REPL commands
   %info (%i) [pattern] [-d|--details] [-a|--all] [-p N|--page N]
     List language and standard-library matches; use -d for documentation.
   %explain (%e) NAME [-d|--details]
-    Inspect a persistent `let` binding; use -d for methods and capability.
+    Inspect a persistent `let` binding or declaration; use -d for methods and capability.
   %bindings (%b) [regex] [-a|--all] [-p N|--page N]
     Show persistent `let` bindings.
   %drop NAME
@@ -811,8 +811,8 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "HashMap",
         name: "from",
         kind: "assoc",
-        signature: "fn from<K, V, const N: usize>(entries: {K: V} | [(K, V); N]) -> HashMap<K, V>",
-        doc: "Creates a hash map from a map literal or key-value tuple array.",
+        signature: "fn from<K, V, const N: usize>(entries: [(K, V); N]) -> HashMap<K, V>",
+        doc: "Creates a hash map from a fixed array of key-value tuples.",
     },
     CoreMethodHelp {
         owner: "HashMap",
@@ -1078,6 +1078,125 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         name: "is_disjoint",
         kind: "method",
         signature: "fn is_disjoint<T>(self: HashSet<T>, other: HashSet<T>) -> bool",
+        doc: "Returns true when the sets have no values in common.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "new",
+        kind: "assoc",
+        signature: "fn new<T>() -> BTreeSet<T>",
+        doc: "Creates an empty ordered set.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "from",
+        kind: "assoc",
+        signature: "fn from<T, const N: usize>(values: [T; N]) -> BTreeSet<T>",
+        doc: "Creates an ordered set from a collection, removing duplicate values.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "insert",
+        kind: "method",
+        signature: "fn insert<T>(self: &mut BTreeSet<T>, value: T) -> bool",
+        doc: "Adds a value to the set.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "remove",
+        kind: "method",
+        signature: "fn remove<T>(self: &mut BTreeSet<T>, value: T) -> bool",
+        doc: "Removes a value from the set.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "contains",
+        kind: "method",
+        signature: "fn contains<T>(self: BTreeSet<T>, value: T) -> bool",
+        doc: "Returns true when the set contains a value.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "union",
+        kind: "method",
+        signature: "fn union<T>(self: BTreeSet<T>, other: BTreeSet<T>) -> BTreeSet<T>",
+        doc: "Returns the union of two sets.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "intersection",
+        kind: "method",
+        signature: "fn intersection<T>(self: BTreeSet<T>, other: BTreeSet<T>) -> BTreeSet<T>",
+        doc: "Returns the intersection of two sets.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "difference",
+        kind: "method",
+        signature: "fn difference<T>(self: BTreeSet<T>, other: BTreeSet<T>) -> BTreeSet<T>",
+        doc: "Returns values present only in the receiver.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "symmetric_difference",
+        kind: "method",
+        signature: "fn symmetric_difference<T>(self: BTreeSet<T>, other: BTreeSet<T>) -> BTreeSet<T>",
+        doc: "Returns values present in exactly one set.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "len",
+        kind: "method",
+        signature: "fn len<T>(self: BTreeSet<T>) -> i64",
+        doc: "Returns the number of values.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "is_empty",
+        kind: "method",
+        signature: "fn is_empty<T>(self: BTreeSet<T>) -> bool",
+        doc: "Returns true when the set has no values.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "clear",
+        kind: "method",
+        signature: "fn clear<T>(self: &mut BTreeSet<T>) -> ()",
+        doc: "Removes every value.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "iter",
+        kind: "method",
+        signature: "fn iter<T>(self: BTreeSet<T>) -> Vec<T>",
+        doc: "Returns a deterministic snapshot suitable for iterator methods.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "to_vec",
+        kind: "method",
+        signature: "fn to_vec<T>(self: BTreeSet<T>) -> Vec<T>",
+        doc: "Returns the values in deterministic order.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "is_subset",
+        kind: "method",
+        signature: "fn is_subset<T>(self: BTreeSet<T>, other: BTreeSet<T>) -> bool",
+        doc: "Returns true when every value is present in the other set.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "is_superset",
+        kind: "method",
+        signature: "fn is_superset<T>(self: BTreeSet<T>, other: BTreeSet<T>) -> bool",
+        doc: "Returns true when the set contains every value from the other set.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeSet",
+        name: "is_disjoint",
+        kind: "method",
+        signature: "fn is_disjoint<T>(self: BTreeSet<T>, other: BTreeSet<T>) -> bool",
         doc: "Returns true when the sets have no values in common.",
     },
     CoreMethodHelp {
@@ -1483,16 +1602,13 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     match result {
                         Some(Ok(text)) => print_repl_output(&text),
                         Some(Err(msg)) => print_repl_error(&msg),
-                        None if catalog_has_exact_match(normalize_query(&options.pattern)) => {
-                            match repl_info_matches(&options.pattern, options.details) {
-                                Ok(text) => print_repl_output(&text),
-                                Err(msg) => print_repl_error(&msg),
-                            }
-                        }
-                        None => print_repl_error(&format!(
-                            "no persistent binding named `{}`",
-                            options.pattern
-                        )),
+                        None => match repl_declaration_info(&declarations, &options.pattern) {
+                            Some(text) => print_repl_output(&text),
+                            None => print_repl_error(&format!(
+                                "no persistent binding or declaration named `{}`",
+                                options.pattern
+                            )),
+                        },
                     }
                     continue;
                 }
@@ -1974,6 +2090,24 @@ fn repl_binding_listing(
             out.trim_end().to_string()
         }),
     )
+}
+
+fn repl_declaration_info(declarations: &[String], name: &str) -> Option<String> {
+    declarations
+        .iter()
+        .rev()
+        .find(|declaration| declaration_declares_name(declaration, name))
+        .map(|declaration| format!("{name} [declaration]\n  {declaration}"))
+}
+
+fn declaration_declares_name(declaration: &str, name: &str) -> bool {
+    let mut map = gossamer_lex::SourceMap::new();
+    let file = map.add_file(
+        "irepl-declaration-explain".to_string(),
+        declaration.to_string(),
+    );
+    let (sf, diags) = gossamer_parse::parse_source_file(declaration, file);
+    diags.is_empty() && collect_source_file_names(&sf).contains(&name)
 }
 
 fn binding_can_mutate(var: &ReplBindingVar, ty: &ReplValueType) -> bool {
@@ -2619,13 +2753,16 @@ fn catalog_kind_label(kind: &str) -> &str {
 fn catalog_example(path: &str, kind: &str, signature: &str) -> String {
     match path {
         "HashMap::from" => {
-            return "let empty: HashMap<String, i64> = HashMap::from({}); let map: HashMap<String, i64> = HashMap::from({\"one\": 1, \"two\": 2}); let also = HashMap::from([(\"one\", 1), (\"two\", 2)])".to_string();
+            return "let empty: HashMap<String, i64> = HashMap::from([]); let map = {\"one\": 1, \"two\": 2}; let also = HashMap::from([(\"one\", 1), (\"two\", 2)])".to_string();
         }
         "HashSet::from" => {
             return "let set: HashSet<i64> = HashSet::from([1, 2, 2, 3])".to_string();
         }
+        "BTreeSet::from" => {
+            return "let set: BTreeSet<i64> = BTreeSet::from(#[1, 2, 2, 3])".to_string();
+        }
         "Vec::from" => {
-            return "let values: Vec<i64> = Vec::from([1, 2, 3])".to_string();
+            return "let values = Vec::from(#[1, 2, 3])".to_string();
         }
         _ => {}
     }
@@ -2651,7 +2788,7 @@ fn example_receiver(owner: &str) -> &'static str {
         "String" | "str" => "\"text\"",
         "Vec" | "Slice" | "Array" => "values",
         "HashMap" | "BTreeMap" => "map",
-        "HashSet" => "set",
+        "HashSet" | "BTreeSet" => "set",
         "VecDeque" => "queue",
         "Option" => "option",
         "Result" => "result",
@@ -3661,14 +3798,18 @@ fn repl_expr_contains_ref_mut(expr: &gossamer_ast::Expr) -> bool {
         ExprKind::Closure { body, .. } => repl_expr_contains_ref_mut(body),
         ExprKind::Return(value) => value.as_deref().is_some_and(repl_expr_contains_ref_mut),
         ExprKind::Break { value, .. } => value.as_deref().is_some_and(repl_expr_contains_ref_mut),
-        ExprKind::Tuple(elems) => elems.iter().any(repl_expr_contains_ref_mut),
+        ExprKind::Tuple(elems) | ExprKind::MapLiteral(elems) | ExprKind::SetLiteral(elems) => {
+            elems.iter().any(repl_expr_contains_ref_mut)
+        }
         ExprKind::Struct { fields, base, .. } => {
             fields
                 .iter()
                 .any(|field| field.value.as_ref().is_some_and(repl_expr_contains_ref_mut))
                 || base.as_deref().is_some_and(repl_expr_contains_ref_mut)
         }
-        ExprKind::Array(array) => repl_array_expr_contains_ref_mut(array),
+        ExprKind::Array(array) | ExprKind::FixedArray(array) => {
+            repl_array_expr_contains_ref_mut(array)
+        }
         ExprKind::Range { start, end, .. } => {
             start.as_deref().is_some_and(repl_expr_contains_ref_mut)
                 || end.as_deref().is_some_and(repl_expr_contains_ref_mut)
@@ -3769,13 +3910,15 @@ fn repl_expr_mutates_binding(
         ExprKind::Break { value, .. } => value
             .as_deref()
             .is_some_and(|expr| repl_expr_mutates_binding(expr, user_mutating_methods)),
-        ExprKind::Tuple(elems) => elems
+        ExprKind::Tuple(elems) | ExprKind::MapLiteral(elems) | ExprKind::SetLiteral(elems) => elems
             .iter()
             .any(|expr| repl_expr_mutates_binding(expr, user_mutating_methods)),
         ExprKind::Struct { fields, base, .. } => {
             repl_struct_expr_mutates_binding(fields, base.as_deref(), user_mutating_methods)
         }
-        ExprKind::Array(array) => repl_array_expr_mutates_binding(array, user_mutating_methods),
+        ExprKind::Array(array) | ExprKind::FixedArray(array) => {
+            repl_array_expr_mutates_binding(array, user_mutating_methods)
+        }
         ExprKind::Range { start, end, .. } => repl_optional_pair_mutates_binding(
             start.as_deref(),
             end.as_deref(),
@@ -4270,7 +4413,8 @@ mod tests {
     #[test]
     fn repl_metadata_does_not_leak_runtime_registration_text_for_core_types() {
         let checked = [
-            "String", "Vec", "HashMap", "BTreeMap", "HashSet", "VecDeque", "Option", "Result",
+            "String", "Vec", "HashMap", "BTreeMap", "HashSet", "BTreeSet", "VecDeque", "Option",
+            "Result",
         ];
         let mut leaked = Vec::new();
         for entry in core_method_entries() {
@@ -4298,6 +4442,7 @@ mod tests {
             "HashMap::insert",
             "BTreeMap::insert",
             "HashSet::union",
+            "BTreeSet::union",
             "VecDeque::push_back",
             "Option::map",
             "Result::map_err",

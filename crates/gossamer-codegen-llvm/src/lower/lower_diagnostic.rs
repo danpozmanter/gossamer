@@ -150,11 +150,6 @@ impl<'a> Lowerer<'a> {
         destination: &Place,
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
-        if !destination.projection.is_empty() {
-            return Err(BuildError::Unsupported(
-                "println destination cannot have projections",
-            ));
-        }
         for sym in [
             "gos_rt_eprint_str",
             "gos_rt_eprintln",
@@ -196,19 +191,14 @@ impl<'a> Lowerer<'a> {
             }
             writeln!(self.out, "  call void @gos_rt_stdout_release()").unwrap();
         }
-        if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
-            let dest_llvm = render_ty(self.tcx, self.body.local_ty(destination.local));
-            let slot = local_slot(destination.local);
+        let dest_ty_mir = self.place_leaf_ty(destination);
+        if !is_unit(self.tcx, dest_ty_mir) {
+            let dest_llvm = render_ty(self.tcx, dest_ty_mir);
             // `println`'s return value is `()` per the prelude;
             // give the destination slot a zero value of its
             // declared type so any unexpected reader sees a sane
             // bit pattern.
-            let zero = match dest_llvm.as_str() {
-                "double" | "float" => "0.0".to_string(),
-                "ptr" => "null".to_string(),
-                _ => "0".to_string(),
-            };
-            writeln!(self.out, "  store {dest_llvm} {zero}, ptr {slot}").unwrap();
+            self.store_zero_to_place(destination, &dest_llvm);
         }
         match target {
             Some(t) => {

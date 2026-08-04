@@ -782,6 +782,9 @@ impl Parser<'_> {
         if self.eat_punct(Punct::LBracket) {
             return self.parse_array_expr();
         }
+        if self.eat_punct(Punct::Hash) {
+            return self.parse_hash_prefixed_literal();
+        }
         if self.eat_punct(Punct::LBrace) {
             if let Some(map) = self.try_parse_map_literal() {
                 return map;
@@ -863,13 +866,33 @@ impl Parser<'_> {
         ExprKind::Error
     }
 
-    /// Parses `{key: value, ...}` as the key-value pair array accepted by
-    /// `HashMap::from`. The AST desugaring keeps every existing backend on the
-    /// same constructor path while giving source code a dedicated map syntax.
+    fn parse_hash_prefixed_literal(&mut self) -> ExprKind {
+        if self.eat_punct(Punct::LBracket) {
+            return self.parse_fixed_array_expr();
+        }
+        if self.eat_punct(Punct::LBrace) {
+            return self.parse_set_literal_expr();
+        }
+        self.record(
+            ParseError::Unexpected {
+                expected: "`[` for fixed array or `{` for hash set literal after `#`".to_string(),
+                found: self.peek_text(),
+            },
+            self.peek_span(),
+        );
+        ExprKind::Error
+    }
+
+    /// Parses `{}` or `{key: value, ...}` as a hash map literal. HIR lowering keeps every
+    /// existing backend on the `HashMap::from([(key, value), ...])` constructor
+    /// path while giving source code a dedicated map syntax.
     /// If the contents are an ordinary block, the token stream and diagnostics
     /// are restored and the caller parses a block normally.
     fn try_parse_map_literal(&mut self) -> Option<ExprKind> {
-        if self.at_punct(Punct::RBrace) || !self.first_brace_entry_has_top_level_colon() {
+        if self.eat_punct(Punct::RBrace) {
+            return Some(ExprKind::MapLiteral(Vec::new()));
+        }
+        if !self.first_brace_entry_has_top_level_colon() {
             return None;
         }
         let checkpoint = self.tokens.checkpoint();
@@ -909,7 +932,7 @@ impl Parser<'_> {
             }
         }
         self.expect_punct(Punct::RBrace, "to close map literal");
-        Some(ExprKind::Array(ArrayExpr::List(entries)))
+        Some(ExprKind::MapLiteral(entries))
     }
 
     /// Checks the first brace-delimited entry for a map separator without
@@ -971,6 +994,14 @@ impl Parser<'_> {
         self.with_struct_literals_allowed(Self::parse_array_expr_inner)
     }
 
+    fn parse_fixed_array_expr(&mut self) -> ExprKind {
+        self.with_struct_literals_allowed(Self::parse_fixed_array_expr_inner)
+    }
+
+    fn parse_set_literal_expr(&mut self) -> ExprKind {
+        self.with_struct_literals_allowed(Self::parse_set_literal_expr_inner)
+    }
+
     fn parse_array_expr_inner(&mut self) -> ExprKind {
         if self.eat_punct(Punct::RBracket) {
             return ExprKind::Array(ArrayExpr::List(Vec::new()));
@@ -993,6 +1024,45 @@ impl Parser<'_> {
         }
         self.expect_punct(Punct::RBracket, "to close array expression");
         ExprKind::Array(ArrayExpr::List(elements))
+    }
+
+    fn parse_fixed_array_expr_inner(&mut self) -> ExprKind {
+        if self.eat_punct(Punct::RBracket) {
+            return ExprKind::FixedArray(ArrayExpr::List(Vec::new()));
+        }
+        let first = self.parse_expr_no_assign();
+        if self.eat_punct(Punct::Semi) {
+            let count = self.parse_expr_no_assign();
+            self.expect_punct(Punct::RBracket, "to close fixed array expression");
+            return ExprKind::FixedArray(ArrayExpr::Repeat {
+                value: Box::new(first),
+                count: Box::new(count),
+            });
+        }
+        let mut elements = vec![first];
+        while self.eat_punct(Punct::Comma) {
+            if self.at_punct(Punct::RBracket) {
+                break;
+            }
+            elements.push(self.parse_expr_no_assign());
+        }
+        self.expect_punct(Punct::RBracket, "to close fixed array expression");
+        ExprKind::FixedArray(ArrayExpr::List(elements))
+    }
+
+    fn parse_set_literal_expr_inner(&mut self) -> ExprKind {
+        if self.eat_punct(Punct::RBrace) {
+            return ExprKind::SetLiteral(Vec::new());
+        }
+        let mut elements = vec![self.parse_expr_no_assign()];
+        while self.eat_punct(Punct::Comma) {
+            if self.at_punct(Punct::RBrace) {
+                break;
+            }
+            elements.push(self.parse_expr_no_assign());
+        }
+        self.expect_punct(Punct::RBrace, "to close hash set literal");
+        ExprKind::SetLiteral(elements)
     }
 
     fn parse_if_expr(&mut self) -> ExprKind {
@@ -1856,12 +1926,12 @@ impl Parser<'_> {
             return self.expand_builtin_macro(&macro_name);
         }
 
-        // Gossamer has no `vec!`: collection literals use the array
-        // form `[...]` / `[v; n]`, which coerces to `Vec<T>` at every
-        // expected-type site (SPEC §3.3). Steer the common Rust habit
-        // there rather than to the misleading "drop the `!`" form.
+        // Gossamer has no `vec!`: bracket literals create Vec values by
+        // default, and `#[...]` is the explicit fixed-array form. Steer the
+        // common Rust habit there rather than to the misleading "drop the `!`"
+        // form.
         let expected = if macro_name == "vec" {
-            "an array literal `[...]` - Gossamer has no `vec!`; `[...]` coerces to `Vec<T>`"
+            "a bracket literal `[...]` - Gossamer has no `vec!`; `[...]` creates a `Vec<T>`"
                 .to_string()
         } else {
             format!("`{macro_name}(...)` - Gossamer has no user-defined macros, drop the `!`")
@@ -2518,6 +2588,7 @@ pub(crate) fn is_expression_start(parser: &Parser<'_>) -> bool {
                 | Punct::Bang
                 | Punct::Amp
                 | Punct::Star
+                | Punct::Hash
                 | Punct::Pipe
                 | Punct::PipePipe
                 | Punct::DotDot
@@ -2711,9 +2782,14 @@ fn contains_pipe_placeholder(expr: &Expr) -> bool {
             value: rhs,
             ..
         } => contains_pipe_placeholder(lhs) || contains_pipe_placeholder(rhs),
-        ExprKind::Tuple(items) => items.iter().any(contains_pipe_placeholder),
-        ExprKind::Array(ArrayExpr::List(items)) => items.iter().any(contains_pipe_placeholder),
-        ExprKind::Array(ArrayExpr::Repeat { value, count }) => {
+        ExprKind::Tuple(items) | ExprKind::MapLiteral(items) | ExprKind::SetLiteral(items) => {
+            items.iter().any(contains_pipe_placeholder)
+        }
+        ExprKind::Array(ArrayExpr::List(items)) | ExprKind::FixedArray(ArrayExpr::List(items)) => {
+            items.iter().any(contains_pipe_placeholder)
+        }
+        ExprKind::Array(ArrayExpr::Repeat { value, count })
+        | ExprKind::FixedArray(ArrayExpr::Repeat { value, count }) => {
             contains_pipe_placeholder(value) || contains_pipe_placeholder(count)
         }
         ExprKind::Range { start, end, .. } => {

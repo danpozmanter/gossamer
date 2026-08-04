@@ -2637,6 +2637,17 @@ impl fmt::Display for Value {
                 if matches!(inner.name.as_str(), "bytes::Buffer" | "bytes::Builder") {
                     return out.write_str(inner.name.as_str());
                 }
+                if matches!(inner.name.as_str(), "HashSet" | "BTreeSet") {
+                    let values =
+                        crate::stdlib_builtins::set::set_snapshot(self).unwrap_or_default();
+                    write!(
+                        out,
+                        "{} {{{}}}",
+                        inner.name,
+                        values.iter().map(repr_value).collect::<Vec<_>>().join(", ")
+                    )?;
+                    return Ok(());
+                }
                 // `errors::Error` prints Go-style as its colon-joined
                 // cause chain ("outer: mid: root") so `format!("{}", e)`
                 // and `?`-surfaced errors match the compiled tiers'
@@ -2744,10 +2755,11 @@ fn repr_value(value: &Value) -> String {
         {
             inner.name.as_str().to_string()
         }
-        Value::Struct(inner) if inner.name == "HashSet" => {
+        Value::Struct(inner) if matches!(inner.name.as_str(), "HashSet" | "BTreeSet") => {
             let values = crate::stdlib_builtins::set::set_snapshot(value).unwrap_or_default();
             format!(
-                "HashSet {{{}}}",
+                "{} {{{}}}",
+                inner.name,
                 values.iter().map(repr_value).collect::<Vec<_>>().join(", ")
             )
         }

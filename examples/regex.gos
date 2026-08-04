@@ -26,7 +26,7 @@ fn parse_pairs(line: String) -> Vec<Vec<Option<String>>> {
     let re = match regex::compile("(\\w+)=(\\w+)") {
         Ok(r) => r
         Err(e) => { eprintln!("bad pattern: {}", e)
-            return Vec::from([]) }
+            return [] }
     }
     regex::captures_all(&re, &line)
 }

@@ -46,7 +46,7 @@ fn vec_insert_returns_result_without_replacing_the_receiver() {
 #[test]
 fn map_insert_and_collection_from_follow_rust_shaped_contracts() {
     let output = run(
-        "use std::collections::{HashMap, HashSet}\n\nfn main() {\n    let mut map: HashMap<String, i64> = HashMap::from({})\n    println(map.len())\n    println(map.insert(\"a\", 1))\n    println(map.insert(\"a\", 2))\n    println(map.get(\"a\"))\n    println(map.remove(\"a\"))\n    println(map.remove(\"a\"))\n    let made: HashMap<String, i64> = HashMap::from({\"x\": 3, \"y\": 4})\n    println(made.len())\n    let set: HashSet<i64> = HashSet::from([1, 2, 2, 3])\n    println(set.len())\n}\n",
+        "use std::collections::{HashMap, HashSet, BTreeSet}\n\nfn main() {\n    let mut map: HashMap<String, i64> = HashMap::new()\n    println(map.len())\n    println(map.insert(\"a\", 1))\n    println(map.insert(\"a\", 2))\n    println(map.get(\"a\"))\n    println(map.remove(\"a\"))\n    println(map.remove(\"a\"))\n    let made = {\"x\": 3, \"y\": 4}\n    println(made.len())\n    let b = {}\n    println(b.len())\n    let also: HashMap<String, i64> = HashMap::from([(\"z\", 5)])\n    println(also.get(\"z\"))\n    let empty: HashMap<String, i64> = {}\n    println(empty.len())\n    let set: HashSet<i64> = #{1, 2, 2, 3}\n    println(set.len())\n    let ordered: BTreeSet<i64> = #{3, 1, 2, 1}\n    println(ordered.len())\n    println(ordered.to_vec())\n    let also_ordered: BTreeSet<i64> = BTreeSet::from(#[4, 4, 5])\n    println(also_ordered.to_vec())\n}\n",
     );
     assert!(
         output.status.success(),
@@ -55,7 +55,7 @@ fn map_insert_and_collection_from_follow_rust_shaped_contracts() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "0\nNone\nSome(1)\nSome(2)\nSome(2)\nNone\n2\n3\n"
+        "0\nNone\nSome(1)\nSome(2)\nSome(2)\nNone\n2\n0\nSome(5)\n0\n3\n3\n[1, 2, 3]\n[4, 5]\n"
     );
 }
 

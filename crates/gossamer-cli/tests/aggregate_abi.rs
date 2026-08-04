@@ -341,7 +341,7 @@ fn find(target: i64, grid: [Coord; 3]) -> Option<Coord> {
 }
 
 fn main() {
-    let grid = [
+    let grid = #[
         Coord { row: 1, col: 2 },
         Coord { row: 3, col: 4 },
         Coord { row: 5, col: 6 },

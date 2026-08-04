@@ -193,6 +193,7 @@ const PRELUDE_TYPES: &[&str] = &[
     "Vec",
     "HashMap",
     "HashSet",
+    "BTreeSet",
     "BTreeMap",
     "VecDeque",
     "Box",

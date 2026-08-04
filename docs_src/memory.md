@@ -103,7 +103,7 @@ Taking a mutable reference to an existing mutable-reference binding creates a
 nested exclusive view of that reference slot:
 
 ```gossamer
-let mut a = [1, 2]
+let mut a: [i64; 2] = [1, 2]
 let mut b = &mut a       // b: &mut [i64; 2]
 let c = &mut b           // c: &mut &mut [i64; 2]
 c[0] = 0                 // auto-dereferences both layers

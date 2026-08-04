@@ -51,11 +51,10 @@ fn rand_suffix() -> u64 {
 
 /// Build `source` in release mode with `GOS_LLVM_DUMP=1` and
 /// `GOSSAMER_FAIL_ON_LLVM_FALLBACK=1`, return the `unit.ll` IR
-/// string and the produced binary path. The fallback gate is
-/// the negative form: a body that the LLVM lowerer rejects (and
-/// would normally route to Cranelift) fails the build instead.
-/// Together with the per-fn `define` check below this gives both
-/// shape-positive and shape-negative coverage.
+/// string and the produced binary path. A body that trips a backend
+/// lowering bug fails the build. Together with the per-fn `define`
+/// check below this gives both shape-positive and shape-negative
+/// coverage.
 fn build_and_capture_ir(source: &str, tag: &str) -> (String, PathBuf) {
     let dir = fresh_dir(tag);
     let src = dir.join(format!("{tag}.gos"));
@@ -315,7 +314,7 @@ fn first_negative(xs: [i64; 5]) -> i64 {
     0
 }
 fn main() {
-    let xs = [1, 2, -3, 4, 5]
+    let xs = #[1, 2, -3, 4, 5]
     println!("{}", first_negative(xs))
 }
 "#,
@@ -460,8 +459,7 @@ fn llvm_lowers_each_shape_to_a_real_define() {
             assert!(
                 ir_contains_define(&ir, fn_name),
                 "shape {tag}: LLVM IR is missing `define ... @\"{fn_name}\"(...)` - \
-                 the body silently fell through to a Cranelift fallback or was \
-                 skipped entirely. \n\nIR head:\n{head}",
+                 the body was skipped entirely. \n\nIR head:\n{head}",
                 tag = shape.tag,
                 head = ir.lines().take(40).collect::<Vec<_>>().join("\n"),
             );

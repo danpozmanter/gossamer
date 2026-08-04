@@ -93,7 +93,10 @@ impl Printer {
                 self.print_expr(body);
             }
             ExprKind::Tuple(items) => self.print_tuple_expr(items),
+            ExprKind::MapLiteral(entries) => self.print_map_literal(entries),
+            ExprKind::SetLiteral(entries) => self.print_set_literal(entries),
             ExprKind::Array(array) => self.print_array(array),
+            ExprKind::FixedArray(array) => self.print_fixed_array(array),
             ExprKind::MacroCall(call) => self.print_macro_call(call),
             ExprKind::Select(arms) => self.print_select(arms),
             _ => self.print_expr_control(expr),
@@ -480,6 +483,58 @@ impl Printer {
         }
     }
 
+    fn print_map_literal(&mut self, entries: &[Expr]) {
+        self.write("{");
+        for (index, entry) in entries.iter().enumerate() {
+            if index > 0 {
+                self.write(", ");
+            }
+            if let ExprKind::Tuple(parts) = &entry.kind
+                && let [key, value] = parts.as_slice()
+            {
+                self.print_expr(key);
+                self.write(": ");
+                self.print_expr(value);
+                continue;
+            }
+            self.print_expr(entry);
+        }
+        self.write("}");
+    }
+
+    fn print_set_literal(&mut self, entries: &[Expr]) {
+        self.write("#{");
+        for (index, entry) in entries.iter().enumerate() {
+            if index > 0 {
+                self.write(", ");
+            }
+            self.print_expr(entry);
+        }
+        self.write("}");
+    }
+
+    fn print_fixed_array(&mut self, array: &ArrayExpr) {
+        match array {
+            ArrayExpr::List(items) => {
+                self.write("#[");
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        self.write(", ");
+                    }
+                    self.print_expr(item);
+                }
+                self.write("]");
+            }
+            ArrayExpr::Repeat { value, count } => {
+                self.write("#[");
+                self.print_expr(value);
+                self.write("; ");
+                self.print_expr(count);
+                self.write("]");
+            }
+        }
+    }
+
     fn print_select(&mut self, arms: &[SelectArm]) {
         self.write("select {");
         self.newline();
@@ -619,7 +674,10 @@ fn expr_precedence(expr: &Expr) -> Precedence {
         | ExprKind::Path(_)
         | ExprKind::Block(_)
         | ExprKind::Tuple(_)
+        | ExprKind::MapLiteral(_)
+        | ExprKind::SetLiteral(_)
         | ExprKind::Array(_)
+        | ExprKind::FixedArray(_)
         | ExprKind::Struct { .. }
         | ExprKind::Unsafe(_)
         | ExprKind::If { .. }

@@ -1046,7 +1046,7 @@ fn cast_expression_lowers_to_rvalue_cast() {
 #[test]
 fn array_repeat_lowers_to_rvalue_repeat() {
     let source = r"fn main() -> i64 {
-    let xs = [42i64; 3i64]
+    let xs = #[42i64; 3i64]
     xs[1i64]
 }
 ";
@@ -1383,7 +1383,7 @@ fn main() -> i64 {
 #[test]
 fn optimise_preserves_index_const_behind_projection_read() {
     let source = r"fn main() -> i64 {
-    let xs = [5i64, 7i64, 9i64]
+    let xs = #[5i64, 7i64, 9i64]
     xs[2i64]
 }
 ";

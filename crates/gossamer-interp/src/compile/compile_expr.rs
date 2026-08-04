@@ -3043,7 +3043,7 @@ impl<'tcx> FnBuilder<'tcx> {
             );
         let qualified_collection_method = match self.tcx.kind(resolved_receiver_ty) {
             Some(TyKind::Adt { def, .. })
-                if def.local == u32::MAX - 7
+                if matches!(def.local, x if x == u32::MAX - 7 || x == u32::MAX - 10)
                     && matches!(
                         name.name.as_str(),
                         "insert"
@@ -3063,7 +3063,12 @@ impl<'tcx> FnBuilder<'tcx> {
                             | "is_disjoint"
                     ) =>
             {
-                Some(format!("HashSet::{}", name.name))
+                let owner = if def.local == u32::MAX - 10 {
+                    "BTreeSet"
+                } else {
+                    "HashSet"
+                };
+                Some(format!("{owner}::{}", name.name))
             }
             Some(TyKind::Adt { def, .. })
                 if def.local == u32::MAX - 9

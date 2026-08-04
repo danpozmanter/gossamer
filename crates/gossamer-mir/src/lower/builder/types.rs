@@ -962,7 +962,10 @@ impl<'a> Builder<'a> {
             cur = *inner;
         }
         matches!(self.tcx.kind_of(cur), TyKind::HashMap { .. })
-            || self.runtime_kind_from_ty(receiver.ty) == Some("collections::HashSet")
+            || matches!(
+                self.runtime_kind_from_ty(receiver.ty),
+                Some("collections::HashSet" | "collections::BTreeSet")
+            )
     }
 
     /// Recovers the runtime-kind tag of an opaque-handle stdlib type from
@@ -981,6 +984,7 @@ impl<'a> Builder<'a> {
         let name = bare.split('<').next().unwrap_or(bare).trim();
         match name {
             "HashSet" => Some("collections::HashSet"),
+            "BTreeSet" => Some("collections::BTreeSet"),
             "BTreeMap" => Some("collections::BTreeMap"),
             // A `sync::AtomicBool` reaching a method call by parameter
             // (no local construction to tag) still routes `load`/`store`

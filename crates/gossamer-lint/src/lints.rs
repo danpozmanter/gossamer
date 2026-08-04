@@ -179,12 +179,22 @@ pub(crate) fn walk_expr(expr: &Expr, visitor: &mut dyn FnMut(&Expr)) {
             walk_expr(inner, visitor);
         }
         ExprKind::Break { value: Some(v), .. } => walk_expr(v, visitor),
-        ExprKind::Tuple(elems) => {
+        ExprKind::Tuple(elems) | ExprKind::MapLiteral(elems) | ExprKind::SetLiteral(elems) => {
             for e in elems {
                 walk_expr(e, visitor);
             }
         }
-        ExprKind::Array(_) => {}
+        ExprKind::Array(array) | ExprKind::FixedArray(array) => match array {
+            gossamer_ast::ArrayExpr::List(elems) => {
+                for e in elems {
+                    walk_expr(e, visitor);
+                }
+            }
+            gossamer_ast::ArrayExpr::Repeat { value, count } => {
+                walk_expr(value, visitor);
+                walk_expr(count, visitor);
+            }
+        },
         ExprKind::Struct { fields, base, .. } => {
             for field in fields {
                 if let Some(value) = &field.value {

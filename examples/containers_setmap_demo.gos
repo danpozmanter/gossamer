@@ -8,7 +8,7 @@ use std::collections::ordered_set
 use std::collections::ordered_map
 
 fn main() {
-    let s: Vec<i64> = Vec::from([])
+    let s: Vec<i64> = []
     let s = ordered_set::insert(s, 3)
     let s = ordered_set::insert(s, 1)
     let s = ordered_set::insert(s, 2)
@@ -19,7 +19,7 @@ fn main() {
     let s = ordered_set::remove(s, 2)
     println!("after remove 2, len: {}", ordered_set::len(&s))
 
-    let m: Vec<i64> = Vec::from([])
+    let m: Vec<i64> = []
     let m = ordered_map::insert(m, 10, 100)
     let m = ordered_map::insert(m, 5, 50)
     let m = ordered_map::insert(m, 7, 70)

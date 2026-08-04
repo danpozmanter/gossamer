@@ -296,7 +296,7 @@ impl<'a> Lowerer<'a> {
                 // routes this body to Cranelift, whose `bail!`
                 // emits a user-facing message naming the
                 // specific operand kind (tuple, Vec, struct, …).
-                return Err(BuildError::Unsupported(
+                return Err(BuildError::InternalLoweringBug(
                     "println/format of aggregate or variant types",
                 ));
             }
@@ -412,7 +412,7 @@ impl<'a> Lowerer<'a> {
         destination: &Place,
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
-        let dest_ty_mir = self.body.local_ty(destination.local);
+        let dest_ty_mir = self.place_leaf_ty(destination);
         let dest_ty = render_ty(self.tcx, dest_ty_mir);
         if dest_ty == "void" || is_unit(self.tcx, dest_ty_mir) {
             emit_terminator_branch(&mut self.out, target);
@@ -432,8 +432,7 @@ impl<'a> Lowerer<'a> {
                 (zero, dest_ty.clone())
             };
         let coerced = self.coerce_llvm_value(&value, &value_ty, &dest_ty);
-        let slot = local_slot(destination.local);
-        writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+        self.store_value_to_place(destination, &dest_ty, &coerced);
         emit_terminator_branch(&mut self.out, target);
         Ok(())
     }
@@ -674,13 +673,7 @@ impl<'a> Lowerer<'a> {
             // accidental read doesn't see undefined memory.
             writeln!(self.out, "  call void @\"{symbol}\"({arg_text})").unwrap();
             if !dest_is_void {
-                let slot = local_slot(destination.local);
-                let zero = match dest_ty.as_str() {
-                    "ptr" => "null".to_string(),
-                    "double" | "float" => "0.0".to_string(),
-                    _ => "0".to_string(),
-                };
-                writeln!(self.out, "  store {dest_ty} {zero}, ptr {slot}").unwrap();
+                self.store_zero_to_place(destination, &dest_ty);
             }
         } else {
             let tmp = self.fresh();
@@ -753,7 +746,11 @@ impl<'a> Lowerer<'a> {
             } else {
                 tmp
             };
-            let slot = local_slot(destination.local);
+            let slot = if destination.projection.is_empty() {
+                local_slot(destination.local)
+            } else {
+                self.lower_place_address(destination)
+            };
             if is_aggregate(self.tcx, dest_ty_mir) {
                 if call_ret_ty == "i128" && slot_count(self.tcx, dest_ty_mir) == Some(2) {
                     // Result and Option use an inline two-word carrier. Runtime
@@ -800,7 +797,7 @@ impl<'a> Lowerer<'a> {
                     // slot, so the next discriminant / field read would
                     // double-indirect through it and crash. Mirrors the
                     // store-the-handle shape used by enum construction.
-                    writeln!(self.out, "  store ptr {tmp}, ptr {slot}").unwrap();
+                    self.store_value_to_place(destination, "ptr", &tmp);
                 }
             } else if call_ret_ty != dest_ty {
                 // Registry-typed call result differs from the
@@ -828,9 +825,9 @@ impl<'a> Lowerer<'a> {
                 } else {
                     self.coerce_llvm_value(&tmp, &call_ret_ty, &dest_ty)
                 };
-                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+                self.store_value_to_place(destination, &dest_ty, &coerced);
             } else {
-                writeln!(self.out, "  store {dest_ty} {tmp}, ptr {slot}").unwrap();
+                self.store_value_to_place(destination, &dest_ty, &tmp);
             }
         }
         emit_terminator_branch(&mut self.out, target);

@@ -770,6 +770,8 @@ fn is_container_ctor(name: &str) -> bool {
             | "collections::HashMap::new"
             | "HashSet::new"
             | "collections::HashSet::new"
+            | "BTreeSet::new"
+            | "collections::BTreeSet::new"
             | "BTreeMap::new"
             | "collections::BTreeMap::new"
             | "gos_rt_map_new"

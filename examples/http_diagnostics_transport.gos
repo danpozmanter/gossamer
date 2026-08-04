@@ -5,7 +5,7 @@
 use std::{http, httptest}
 
 fn readiness_message(url: String) -> String {
-    match http::get(url + "/ready", Vec::from([])) {
+    match http::get(url + "/ready", []) {
         Ok(response) => {
             if response.status >= 200 && response.status < 300 {
                 format!("ready status={} body={}", response.status, response.body)

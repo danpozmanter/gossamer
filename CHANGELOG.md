@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.41.0 - Collection literals and native lowering fixes
+
+- Add collection literals: `[a, b]` for `Vec`, `#[a, b]` for fixed arrays,
+  `{key: value}` and `{}` for `HashMap`, and `#{a, b}` for `HashSet` or a
+  typed `BTreeSet`.
+- Make empty `{}` infer as an empty `HashMap`, including typed empty map
+  lowering across interpreter and native builds.
+- Fix native LLVM lowering for projected call destinations, aggregate writes,
+  and intrinsic result stores, including the `@is_halted` undefined-symbol
+  build failure.
+- Treat native lowering gaps as backend bugs instead of per-function fallback
+  cases, with regression tests guarding the old lowering-gap contract.
+- Lower set literals, `HashSet::from`, and `BTreeSet::from` through native
+  codegen for scalar and aggregate elements.
+- Restrict REPL discovery so `%i` covers language and standard-library entries
+  while `%e` covers user bindings and declarations.
+- Update examples, docs, REPL discovery text, and migration guides for the new
+  collection literal syntax.
+
 ## 0.40.0 - Coherent sequences, safer execution, and complete discovery
 
 - Restore explicit script execution with `gos run [FILE] [ARGS]...` and reject

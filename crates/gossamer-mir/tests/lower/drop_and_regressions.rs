@@ -1479,8 +1479,8 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
         "gos_rt_vec_step_by",
     ),
     (
-        "iter::flat_map (array literal)",
-        "use std::iter\nfn main() { let xs = [1, 2] |> iter::flat_map(|x: i64| [x, x * 10])\nlet _ = xs }",
+        "iter::flat_map (fixed array literal)",
+        "use std::iter\nfn main() { let xs = #[1, 2] |> iter::flat_map(|x: i64| #[x, x * 10])\nlet _ = xs }",
         "gos_rt_iter_flat_map_arr_i64",
     ),
     (

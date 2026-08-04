@@ -140,9 +140,11 @@ impl Checker<'_> {
             ExprKind::Return(value) | ExprKind::Break { value, .. } => {
                 self.walk_optional(value.as_deref());
             }
-            ExprKind::Tuple(elems) => self.walk_exprs(elems),
+            ExprKind::Tuple(elems) | ExprKind::MapLiteral(elems) | ExprKind::SetLiteral(elems) => {
+                self.walk_exprs(elems);
+            }
             ExprKind::Struct { fields, base, .. } => self.walk_struct(fields, base.as_deref()),
-            ExprKind::Array(arr) => self.walk_array(arr),
+            ExprKind::Array(arr) | ExprKind::FixedArray(arr) => self.walk_array(arr),
             ExprKind::Range { start, end, .. } => {
                 self.walk_optional(start.as_deref());
                 self.walk_optional(end.as_deref());

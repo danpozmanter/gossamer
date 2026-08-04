@@ -1009,7 +1009,7 @@ fn main() {
 fn hashmap_insert_option_matches_across_tiers() {
     let src = r#"
 fn main() {
-    let mut values: HashMap<i64, i64> = HashMap::from({})
+	    let mut values: HashMap<i64, i64> = HashMap::new()
     println!("{}", values.insert(4, 10).is_none())
     println!("{}", values.insert(4, 12).unwrap_or(-1))
     println!("{}", values.get(4).unwrap_or(-1))

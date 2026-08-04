@@ -111,7 +111,9 @@ impl<'a> Lowerer<'a> {
                 writeln!(self.out, "  {tmp} = xor {ty} {operand_v}, -1").unwrap();
             }
             _ => {
-                return Err(BuildError::Unsupported("unary op on non-numeric type"));
+                return Err(BuildError::InternalLoweringBug(
+                    "unary op on non-numeric type",
+                ));
             }
         }
         Ok(tmp)
@@ -668,7 +670,7 @@ impl<'a> Lowerer<'a> {
                          operand_ty={operand_llvm}"
                     );
                 }
-                return Err(BuildError::Unsupported(
+                return Err(BuildError::InternalLoweringBug(
                     "binary op / operand-type combination",
                 ));
             }
@@ -896,7 +898,9 @@ impl<'a> Lowerer<'a> {
                 format!("fptrunc {src_llvm} {src_v} to {dst_llvm}")
             }
             _ => {
-                return Err(BuildError::Unsupported("cast between non-numeric types"));
+                return Err(BuildError::InternalLoweringBug(
+                    "cast between non-numeric types",
+                ));
             }
         };
         writeln!(self.out, "  {tmp} = {instr}").unwrap();
@@ -916,11 +920,6 @@ impl<'a> Lowerer<'a> {
         destination: &Place,
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
-        if !destination.projection.is_empty() {
-            return Err(BuildError::Unsupported(
-                "__concat destination cannot have projections",
-            ));
-        }
         for sym in [
             "gos_rt_concat_init",
             "gos_rt_concat_str",
@@ -937,7 +936,7 @@ impl<'a> Lowerer<'a> {
         for arg in args {
             let kind = self.concat_print_kind(arg);
             if matches!(kind, ConcatKind::Unsupported) {
-                return Err(BuildError::Unsupported(
+                return Err(BuildError::InternalLoweringBug(
                     "println/format of aggregate or variant types",
                 ));
             }
@@ -993,10 +992,10 @@ impl<'a> Lowerer<'a> {
         }
         let result = self.fresh();
         writeln!(self.out, "  {result} = call ptr @gos_rt_concat_finish()").unwrap();
-        if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
-            let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
-            let slot = local_slot(destination.local);
-            writeln!(self.out, "  store {dest_ty} {result}, ptr {slot}").unwrap();
+        let dest_ty_mir = self.place_leaf_ty(destination);
+        if !is_unit(self.tcx, dest_ty_mir) {
+            let dest_ty = render_ty(self.tcx, dest_ty_mir);
+            self.store_value_to_place(destination, &dest_ty, &result);
         }
         match target {
             Some(t) => {
@@ -1019,13 +1018,8 @@ impl<'a> Lowerer<'a> {
         destination: &Place,
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
-        if !destination.projection.is_empty() {
-            return Err(BuildError::Unsupported(
-                "__fmt_prec destination cannot have projections",
-            ));
-        }
         if args.len() != 2 {
-            return Err(BuildError::Unsupported(
+            return Err(BuildError::InternalLoweringBug(
                 "__fmt_prec expects exactly two arguments",
             ));
         }
@@ -1040,10 +1034,10 @@ impl<'a> Lowerer<'a> {
             "  {result} = call ptr @gos_rt_f64_prec_to_str(double {value}, i64 {prec})"
         )
         .unwrap();
-        if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
-            let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
-            let slot = local_slot(destination.local);
-            writeln!(self.out, "  store {dest_ty} {result}, ptr {slot}").unwrap();
+        let dest_ty_mir = self.place_leaf_ty(destination);
+        if !is_unit(self.tcx, dest_ty_mir) {
+            let dest_ty = render_ty(self.tcx, dest_ty_mir);
+            self.store_value_to_place(destination, &dest_ty, &result);
         }
         match target {
             Some(t) => {
@@ -1080,7 +1074,8 @@ impl<'a> Lowerer<'a> {
         } else {
             arg_v
         };
-        let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
+        let dest_ty_mir = self.place_leaf_ty(destination);
+        let dest_ty = render_ty(self.tcx, dest_ty_mir);
         self.runtime_refs
             .insert(format!("declare double @{intrinsic_name}(double)"));
         let tmp = self.fresh();
@@ -1089,9 +1084,8 @@ impl<'a> Lowerer<'a> {
             "  {tmp} = call {dest_ty} @{intrinsic_name}(double {arg_v})"
         )
         .unwrap();
-        if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
-            let slot = local_slot(destination.local);
-            writeln!(self.out, "  store {dest_ty} {tmp}, ptr {slot}").unwrap();
+        if !is_unit(self.tcx, dest_ty_mir) {
+            self.store_value_to_place(destination, &dest_ty, &tmp);
         }
         emit_terminator_branch(&mut self.out, target);
         Ok(())

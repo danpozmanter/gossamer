@@ -7,10 +7,9 @@
 //! in-process JIT used by `gossamer-interp` to compile hot
 //! bytecode bodies. Any MIR shape the LLVM lowerer refuses
 //! produces a hard `gos build` failure: a per-function
-//! Cranelift fallback would silently introduce ABI divergence
-//! between the JIT and the AOT path, so the CLI sets
-//! `GOSSAMER_FAIL_ON_LLVM_FALLBACK=1` for itself before
-//! invoking the driver.
+//! mixed backend object would silently introduce ABI divergence
+//! between the JIT and the AOT path, so the CLI enables strict LLVM
+//! lowering before invoking the driver.
 //!
 //! Two opt levels are exposed:
 //!
@@ -648,8 +647,8 @@ struct NativeBuildOutcome {
 /// Why the native-build path bailed. Each variant carries a pre-
 /// formatted one-line reason suitable for user output.
 pub(crate) enum NativeBuildError {
-    /// Cranelift/MIR couldn't lower some construct.
-    LowerFailed(String),
+    /// MIR-to-native codegen failed after frontend validation succeeded.
+    BackendFailed(String),
     /// Host `cc` ran but returned non-zero.
     LinkerFailed(String),
     /// Host `cc` (or `$CC`) was not executable.
@@ -661,9 +660,7 @@ pub(crate) enum NativeBuildError {
 impl NativeBuildError {
     pub(crate) fn user_message(&self) -> String {
         match self {
-            Self::LowerFailed(reason) => {
-                format!("native codegen cannot yet lower this program: {reason}")
-            }
+            Self::BackendFailed(reason) => format!("native backend failed: {reason}"),
             Self::LinkerFailed(reason) => format!("linker failed: {reason}"),
             Self::LinkerMissing(reason) => format!("linker unavailable: {reason}"),
             Self::Io(err) => format!("filesystem error during build: {err:#}"),
@@ -1727,13 +1724,11 @@ fn emit_native_objects(
     checked: gossamer_driver::CheckedFrontend,
     timings: &mut BuildTimings,
 ) -> std::result::Result<(Vec<PathBuf>, Option<String>), NativeBuildError> {
-    // LLVM is the canonical native backend. Strict-lowering is
-    // default-on (`STRICT_LOWERING = true`) so any
-    // `BuildError::Unsupported` from a body lowering is a hard
-    // top-level error rather than a silent per-function
-    // Cranelift fallback. `gos build --release` re-asserts that
-    // default explicitly here so callers cannot accidentally see
-    // a fallback-tier release binary.
+    // LLVM is the canonical native backend. Strict lowering is
+    // default-on so any backend lowering bug is a hard top-level
+    // error. `gos build --release` re-asserts that default
+    // explicitly here so callers cannot accidentally get a mixed
+    // native binary.
     gossamer_codegen_llvm::set_strict_lowering(true);
     gossamer_codegen_llvm::set_opt_profile(if release {
         gossamer_codegen_llvm::OptProfile::Release
@@ -1757,7 +1752,7 @@ fn emit_native_objects(
     let cl_path = tmp_dir.join(format!("{unit_name}.cl.o"));
     let build =
         gossamer_driver::compile_at_paths_from_frontend(checked, &llvm_obj_dir, &cl_path, release)
-            .map_err(|err| NativeBuildError::LowerFailed(err.to_string()))?;
+            .map_err(|err| NativeBuildError::BackendFailed(err.to_string()))?;
     timings.body_count = build.body_count;
     timings.llvm_object_count = build.llvm_object_count;
     timings.cranelift_companion = build.has_cranelift_companion;

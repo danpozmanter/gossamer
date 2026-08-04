@@ -94,11 +94,6 @@ impl<'a> Lowerer<'a> {
         destination: &Place,
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
-        if !destination.projection.is_empty() {
-            return Err(BuildError::Unsupported(
-                "indirect call destination cannot have projections",
-            ));
-        }
         let callee_ty = self.body.local_ty(place.local);
         // Mirrors the Cranelift narrowing: only `FnDef`-typed
         // locals (the result of `Operand::FnRef`) hold a raw
@@ -129,7 +124,7 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  {tmp} = load ptr, ptr {env_value}").unwrap();
             tmp
         };
-        let dest_ty_mir = self.body.local_ty(destination.local);
+        let dest_ty_mir = self.place_leaf_ty(destination);
         let dest_llvm = render_ty(self.tcx, dest_ty_mir);
         let mut arg_text = String::new();
         if !is_plain_fn {
@@ -155,7 +150,11 @@ impl<'a> Lowerer<'a> {
             // left every field past the first reading uninitialised memory.
             let tmp = self.fresh();
             writeln!(self.out, "  {tmp} = call ptr {fn_ptr}({arg_text})").unwrap();
-            let slot = local_slot(destination.local);
+            let slot = if destination.projection.is_empty() {
+                local_slot(destination.local)
+            } else {
+                self.lower_place_address(destination)
+            };
             if let Some(slots) = slot_count(self.tcx, dest_ty_mir) {
                 let bytes = u64::from(slots.max(1)) * 8;
                 writeln!(
@@ -170,13 +169,12 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             } else {
-                writeln!(self.out, "  store ptr {tmp}, ptr {slot}").unwrap();
+                self.store_value_to_place(destination, "ptr", &tmp);
             }
         } else {
             let tmp = self.fresh();
             writeln!(self.out, "  {tmp} = call {dest_llvm} {fn_ptr}({arg_text})").unwrap();
-            let slot = local_slot(destination.local);
-            writeln!(self.out, "  store {dest_llvm} {tmp}, ptr {slot}").unwrap();
+            self.store_value_to_place(destination, &dest_llvm, &tmp);
         }
         match target {
             Some(t) => {
@@ -204,7 +202,7 @@ impl<'a> Lowerer<'a> {
         }
         let kind = self.concat_print_kind(arg);
         if matches!(kind, ConcatKind::Unsupported) {
-            return Err(BuildError::Unsupported(
+            return Err(BuildError::InternalLoweringBug(
                 "stringify of aggregate or variant types",
             ));
         }
@@ -292,9 +290,6 @@ impl<'a> Lowerer<'a> {
         destination: &Place,
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
-        if !destination.projection.is_empty() {
-            return Err(BuildError::Unsupported("call with projected destination"));
-        }
         let target_name: Option<String> = match callee {
             Operand::FnRef { def, .. } => {
                 // Resolve through the per-module `DefId.local` →
@@ -302,9 +297,8 @@ impl<'a> Lowerer<'a> {
                 // `def.local` means the referenced function isn't
                 // in this MIR module - typically a stdlib helper
                 // the frontend was expected to monomorphise but
-                // didn't. 0.8.0: this is a hard error (no
-                // Cranelift fallback) so the missing
-                // monomorphisation surfaces at compile time.
+                // didn't. This is a hard backend error so the
+                // missing monomorphisation surfaces at compile time.
                 self.fn_name_by_def.get(&def.local).cloned()
             }
             Operand::Const(ConstValue::Str(name)) => Some(name.clone()),
@@ -332,7 +326,7 @@ impl<'a> Lowerer<'a> {
                 Operand::Const(c) => format!("Const({c:?})"),
                 Operand::Copy(_) => "Copy".to_string(),
             };
-            return Err(BuildError::Unsupported(Box::leak(
+            return Err(BuildError::InternalLoweringBug(Box::leak(
                 format!(
                     "indirect / closure call not lowered: callee shape {kind_label} \
                     has no resolvable name in fn_name_by_def - frontend monomorphisation \
@@ -472,7 +466,6 @@ impl<'a> Lowerer<'a> {
                 let c_widened = self.widen_char_to_i32(&args[1], &c_raw);
                 let sep_ptr = self.fresh();
                 let tmp = self.fresh();
-                let dst = local_slot(destination.local);
                 writeln!(
                     self.out,
                     "  {sep_ptr} = call ptr @gos_rt_char_to_str(i32 {c_widened})"
@@ -483,7 +476,7 @@ impl<'a> Lowerer<'a> {
                     "  {tmp} = call ptr @gos_rt_str_split(ptr {s}, ptr {sep_ptr})"
                 )
                 .unwrap();
-                writeln!(self.out, "  store ptr {tmp}, ptr {dst}").unwrap();
+                self.store_value_to_place(destination, "ptr", &tmp);
                 emit_terminator_branch(&mut self.out, target);
                 return Ok(());
             }
@@ -720,8 +713,12 @@ impl<'a> Lowerer<'a> {
             )
             .unwrap();
             writeln!(self.out, "  store ptr {tmp}, ptr {slot1}").unwrap();
-            let dest_slot = local_slot(destination.local);
-            let dest_ty = self.body.local_ty(destination.local);
+            let dest_slot = if destination.projection.is_empty() {
+                local_slot(destination.local)
+            } else {
+                self.lower_place_address(destination)
+            };
+            let dest_ty = self.place_leaf_ty(destination);
             if slot_count(self.tcx, dest_ty).is_some_and(|n| n >= 2) {
                 // Typeck preserved the `(Sender, Receiver)` tuple shape, so the
                 // destination is a multi-slot alloca that holds the handle
@@ -803,8 +800,7 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  {shifted} = shl i128 {payload128}, 64").unwrap();
             let packed = self.fresh();
             writeln!(self.out, "  {packed} = or i128 {shifted}, {disc128}").unwrap();
-            let slot = local_slot(destination.local);
-            writeln!(self.out, "  store i128 {packed}, ptr {slot}").unwrap();
+            self.store_value_to_place(destination, "i128", &packed);
             emit_terminator_branch(&mut self.out, target);
             return Ok(());
         }
@@ -813,7 +809,6 @@ impl<'a> Lowerer<'a> {
         // width as `i64`, so we truncate to `i32` before the call.
         if matches!(name.as_str(), "Vec::new" | "gos_rt_vec_new") {
             let kind = llvm_vec_elem_kind_from_local(self.body, self.tcx, destination.local);
-            let dst = local_slot(destination.local);
             let eb_i64 = if let Some(a) = args.first() {
                 self.lower_operand(a)?
             } else {
@@ -839,7 +834,7 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
-            writeln!(self.out, "  store ptr {tmp}, ptr {dst}").unwrap();
+            self.store_value_to_place(destination, "ptr", &tmp);
             emit_terminator_branch(&mut self.out, target);
             return Ok(());
         }
@@ -850,7 +845,6 @@ impl<'a> Lowerer<'a> {
             "Vec::with_capacity" | "gos_rt_vec_with_capacity"
         ) {
             let kind = llvm_vec_elem_kind_from_local(self.body, self.tcx, destination.local);
-            let dst = local_slot(destination.local);
             let eb_i64 = if let Some(a) = args.first() {
                 self.lower_operand(a)?
             } else {
@@ -881,7 +875,7 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
-            writeln!(self.out, "  store ptr {tmp}, ptr {dst}").unwrap();
+            self.store_value_to_place(destination, "ptr", &tmp);
             emit_terminator_branch(&mut self.out, target);
             return Ok(());
         }
@@ -896,10 +890,9 @@ impl<'a> Lowerer<'a> {
                 | "gos_rt_map_new"
         ) {
             declare_rt(&mut self.runtime_refs, "gos_rt_map_new");
-            let dst = local_slot(destination.local);
             let tmp = self.fresh();
             writeln!(self.out, "  {tmp} = call ptr @gos_rt_map_new(i32 8, i32 8)").unwrap();
-            writeln!(self.out, "  store ptr {tmp}, ptr {dst}").unwrap();
+            self.store_value_to_place(destination, "ptr", &tmp);
             if let Some(tgt) = target {
                 writeln!(self.out, "  br label %bb{}", tgt.as_u32()).unwrap();
             }
@@ -912,7 +905,6 @@ impl<'a> Lowerer<'a> {
                 | "std::collections::HashMap::with_capacity"
                 | "gos_rt_map_new_with_capacity"
         ) {
-            let dst = local_slot(destination.local);
             let tmp = self.fresh();
             let typed_kinds = self
                 .body
@@ -955,7 +947,7 @@ impl<'a> Lowerer<'a> {
                 declare_rt(&mut self.runtime_refs, "gos_rt_map_new");
                 writeln!(self.out, "  {tmp} = call ptr @gos_rt_map_new(i32 8, i32 8)").unwrap();
             }
-            writeln!(self.out, "  store ptr {tmp}, ptr {dst}").unwrap();
+            self.store_value_to_place(destination, "ptr", &tmp);
             if let Some(tgt) = target {
                 writeln!(self.out, "  br label %bb{}", tgt.as_u32()).unwrap();
             }
@@ -979,7 +971,6 @@ impl<'a> Lowerer<'a> {
                 "gos_rt_vec_from_packed_arr"
             };
             declare_rt(&mut self.runtime_refs, symbol);
-            let dst = local_slot(destination.local);
             let elem_bytes = if let Some(arg) = args.first() {
                 self.lower_operand(arg)?
             } else {
@@ -1011,7 +1002,7 @@ impl<'a> Lowerer<'a> {
                 "  {tmp} = call ptr @\"{symbol}\"(i32 {elem_bytes_i32}, ptr {data_ptr}, i64 {len_i64})"
             )
             .unwrap();
-            writeln!(self.out, "  store ptr {tmp}, ptr {dst}").unwrap();
+            self.store_value_to_place(destination, "ptr", &tmp);
             emit_terminator_branch(&mut self.out, target);
             return Ok(());
         }
@@ -1191,7 +1182,7 @@ impl<'a> Lowerer<'a> {
         destination: &Place,
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
-        let dest_ty_mir = self.body.local_ty(destination.local);
+        let dest_ty_mir = self.place_leaf_ty(destination);
         let dest_ty = render_ty(self.tcx, dest_ty_mir);
         match name {
             "gos_enum_load" => {
@@ -1199,7 +1190,7 @@ impl<'a> Lowerer<'a> {
                 // Enum payload read: the mask strips a tagged repr's disc
                 // bits and is a no-op for aligned header-repr pointers.
                 if args.len() < 2 {
-                    return Err(BuildError::Unsupported("gos_enum_load arity"));
+                    return Err(BuildError::InternalLoweringBug("gos_enum_load arity"));
                 }
                 let pv = self.lower_operand(&args[0])?;
                 let p_ty = self.operand_llvm_ty(&args[0]);
@@ -1259,7 +1250,11 @@ impl<'a> Lowerer<'a> {
                 };
                 if let Some(n) = dest_slots {
                     let bytes = u64::from(n) * 8;
-                    let slot = local_slot(destination.local);
+                    let slot = if destination.projection.is_empty() {
+                        local_slot(destination.local)
+                    } else {
+                        self.lower_place_address(destination)
+                    };
                     let boxp = self.fresh();
                     writeln!(self.out, "  {boxp} = inttoptr i64 {v} to ptr").unwrap();
                     let nonnull = self.fresh();
@@ -1296,15 +1291,14 @@ impl<'a> Lowerer<'a> {
                 } else {
                     self.coerce_llvm_value(&v, "i64", &dest_ty)
                 };
-                let slot = local_slot(destination.local);
-                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+                self.store_value_to_place(destination, &dest_ty, &coerced);
             }
             "gos_enum_tag" => {
                 // gos_enum_tag(ptr, disc) -> ptr | (disc << 1). Tagged-repr
                 // enums (<= 4 variants) carry the discriminant in pointer
                 // bits 1-2; bit 0 stays 0 (odd pointers are string bodies).
                 if args.len() < 2 {
-                    return Err(BuildError::Unsupported("gos_enum_tag arity"));
+                    return Err(BuildError::InternalLoweringBug("gos_enum_tag arity"));
                 }
                 let pv = self.lower_operand(&args[0])?;
                 let p_ty = self.operand_llvm_ty(&args[0]);
@@ -1317,13 +1311,12 @@ impl<'a> Lowerer<'a> {
                 let or = self.fresh();
                 writeln!(self.out, "  {or} = or i64 {p64}, {sh}").unwrap();
                 let coerced = self.coerce_llvm_value(&or, "i64", &dest_ty);
-                let slot = local_slot(destination.local);
-                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+                self.store_value_to_place(destination, &dest_ty, &coerced);
             }
             "gos_enum_disc_tag" => {
                 // gos_enum_disc_tag(ptr) -> (ptr >> 1) & 3.
                 if args.is_empty() {
-                    return Err(BuildError::Unsupported("gos_enum_disc_tag arity"));
+                    return Err(BuildError::InternalLoweringBug("gos_enum_disc_tag arity"));
                 }
                 let pv = self.lower_operand(&args[0])?;
                 let p_ty = self.operand_llvm_ty(&args[0]);
@@ -1333,13 +1326,12 @@ impl<'a> Lowerer<'a> {
                 let m = self.fresh();
                 writeln!(self.out, "  {m} = and i64 {sh}, 3").unwrap();
                 let coerced = self.coerce_llvm_value(&m, "i64", &dest_ty);
-                let slot = local_slot(destination.local);
-                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+                self.store_value_to_place(destination, &dest_ty, &coerced);
             }
             "gos_enum_untag" => {
                 // gos_enum_untag(ptr) -> ptr & !7 (payload base).
                 if args.is_empty() {
-                    return Err(BuildError::Unsupported("gos_enum_untag arity"));
+                    return Err(BuildError::InternalLoweringBug("gos_enum_untag arity"));
                 }
                 let pv = self.lower_operand(&args[0])?;
                 let p_ty = self.operand_llvm_ty(&args[0]);
@@ -1347,15 +1339,14 @@ impl<'a> Lowerer<'a> {
                 let m = self.fresh();
                 writeln!(self.out, "  {m} = and i64 {p64}, -8").unwrap();
                 let coerced = self.coerce_llvm_value(&m, "i64", &dest_ty);
-                let slot = local_slot(destination.local);
-                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+                self.store_value_to_place(destination, &dest_ty, &coerced);
             }
             "gos_enum_disc" => {
                 // gos_enum_disc(payload_ptr) -> i64. The discriminant is
                 // the byte at payload-3 (inside the RC header: strong u32,
                 // weak u8, disc u8, meta_id u16).
                 if args.is_empty() {
-                    return Err(BuildError::Unsupported("gos_enum_disc arity"));
+                    return Err(BuildError::InternalLoweringBug("gos_enum_disc arity"));
                 }
                 let p = self.lower_raw_ptr_arg(&args[0])?;
                 let addr = self.fresh();
@@ -1365,14 +1356,13 @@ impl<'a> Lowerer<'a> {
                 let v = self.fresh();
                 writeln!(self.out, "  {v} = zext i8 {b} to i64").unwrap();
                 let coerced = self.coerce_llvm_value(&v, "i64", &dest_ty);
-                let slot = local_slot(destination.local);
-                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+                self.store_value_to_place(destination, &dest_ty, &coerced);
             }
             "gos_enum_set_disc" => {
                 // gos_enum_set_disc(payload_ptr, disc_i64): store the low
                 // byte of the discriminant at payload-3.
                 if args.len() < 2 {
-                    return Err(BuildError::Unsupported("gos_enum_set_disc arity"));
+                    return Err(BuildError::InternalLoweringBug("gos_enum_set_disc arity"));
                 }
                 let p = self.lower_raw_ptr_arg(&args[0])?;
                 let d = self.lower_operand(&args[1])?;
@@ -1387,7 +1377,7 @@ impl<'a> Lowerer<'a> {
             "gos_load" => {
                 // gos_load(ptr_i64, offset_i64) -> i64
                 if args.len() < 2 {
-                    return Err(BuildError::Unsupported("gos_load arity"));
+                    return Err(BuildError::InternalLoweringBug("gos_load arity"));
                 }
                 let p = self.lower_raw_ptr_arg(&args[0])?;
                 let off_v = self.lower_operand(&args[1])?;
@@ -1428,7 +1418,11 @@ impl<'a> Lowerer<'a> {
                 {
                     let src = self.fresh();
                     writeln!(self.out, "  {src} = inttoptr i64 {loaded} to ptr").unwrap();
-                    let slot = local_slot(destination.local);
+                    let slot = if destination.projection.is_empty() {
+                        local_slot(destination.local)
+                    } else {
+                        self.lower_place_address(destination)
+                    };
                     writeln!(
                         self.out,
                         "  call void @llvm.memcpy.p0.p0.i64(ptr {slot}, ptr {src}, i64 {}, i1 false)",
@@ -1454,13 +1448,12 @@ impl<'a> Lowerer<'a> {
                 } else {
                     self.coerce_llvm_value(&loaded, "i64", &dest_ty)
                 };
-                let slot = local_slot(destination.local);
-                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+                self.store_value_to_place(destination, &dest_ty, &coerced);
             }
             "gos_store" => {
                 // gos_store(ptr, offset, value) - writes 8 bytes.
                 if args.len() < 3 {
-                    return Err(BuildError::Unsupported("gos_store arity"));
+                    return Err(BuildError::InternalLoweringBug("gos_store arity"));
                 }
                 let p = self.lower_raw_ptr_arg(&args[0])?;
                 let off_v = self.lower_operand(&args[1])?;
@@ -1513,16 +1506,10 @@ impl<'a> Lowerer<'a> {
                 }
                 writeln!(self.out, "  store i64 {val64}, ptr {addr}").unwrap();
                 if dest_ty != "void" && !is_unit(self.tcx, dest_ty_mir) {
-                    let slot = local_slot(destination.local);
                     // Sink stores: pick a zero-shaped literal that
                     // matches the destination's LLVM type so `opt`
                     // doesn't reject `store ptr 0` / `store double 0`.
-                    let zero = match dest_ty.as_str() {
-                        "ptr" => "null".to_string(),
-                        "double" | "float" => "0.0".to_string(),
-                        _ => "0".to_string(),
-                    };
-                    writeln!(self.out, "  store {dest_ty} {zero}, ptr {slot}").unwrap();
+                    self.store_zero_to_place(destination, &dest_ty);
                 }
             }
             "gos_alloc" => {
@@ -1543,8 +1530,7 @@ impl<'a> Lowerer<'a> {
                 let tmp = self.fresh();
                 writeln!(self.out, "  {tmp} = call ptr @malloc(i64 {size_v})").unwrap();
                 let coerced = self.coerce_llvm_value(&tmp, "ptr", &dest_ty);
-                let slot = local_slot(destination.local);
-                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+                self.store_value_to_place(destination, &dest_ty, &coerced);
             }
             "gos_rc_alloc_reuse" => {
                 // gos_rc_alloc_reuse(token_ptr, size_i64, meta_symbol) -> ptr.
@@ -1579,8 +1565,7 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
                 let coerced = self.coerce_llvm_value(&tmp, "ptr", &dest_ty);
-                let slot = local_slot(destination.local);
-                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+                self.store_value_to_place(destination, &dest_ty, &coerced);
             }
             "gos_rt_enum_struct_eq" => {
                 // gos_rt_enum_struct_eq(a_ptr, b_ptr, desc_symbol) -> i64. The
@@ -1604,8 +1589,7 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
                 let coerced = self.coerce_llvm_value(&tmp, "i64", &dest_ty);
-                let slot = local_slot(destination.local);
-                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+                self.store_value_to_place(destination, &dest_ty, &coerced);
             }
             "gos_rc_alloc" | "gos_rc_alloc_tagged" => {
                 // gos_rc_alloc(size_i64, meta_symbol) -> ptr to a
@@ -1646,13 +1630,12 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
                 let coerced = self.coerce_llvm_value(&tmp, "ptr", &dest_ty);
-                let slot = local_slot(destination.local);
-                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+                self.store_value_to_place(destination, &dest_ty, &coerced);
             }
             "gos_fn_addr" => {
                 // gos_fn_addr("name") -> ptr to that function.
                 let Some(Operand::Const(ConstValue::Str(fname))) = args.first() else {
-                    return Err(BuildError::Unsupported("gos_fn_addr arg"));
+                    return Err(BuildError::InternalLoweringBug("gos_fn_addr arg"));
                 };
                 // LLVM IR pointer-to-function constants are written
                 // as the function symbol itself; declare-only is OK
@@ -1685,11 +1668,12 @@ impl<'a> Lowerer<'a> {
                 let tmp = self.fresh();
                 writeln!(self.out, "  {tmp} = bitcast ptr @\"{sym}\" to ptr").unwrap();
                 let coerced = self.coerce_llvm_value(&tmp, "ptr", &dest_ty);
-                let slot = local_slot(destination.local);
-                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+                self.store_value_to_place(destination, &dest_ty, &coerced);
             }
             _ => {
-                return Err(BuildError::Unsupported("unrecognised raw intrinsic"));
+                return Err(BuildError::InternalLoweringBug(
+                    "unrecognised raw intrinsic",
+                ));
             }
         }
         // The Terminator::Call caller passes a target and expects

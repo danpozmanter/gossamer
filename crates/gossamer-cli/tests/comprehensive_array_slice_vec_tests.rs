@@ -93,32 +93,36 @@ fn rust_and_gossamer_agree_on_owned_sequence_assignments() {
         assert_accepted(label, body);
     }
 
-    assert!(
-        !rust_accepts("let _a: Vec<i64> = [1, 2, 3];"),
-        "Rust unexpectedly converted an array to Vec"
+    assert_accepted(
+        "bracket literal creates Vec by default",
+        "let _a: Vec<i64> = [1, 2, 3]",
+    );
+    assert_accepted(
+        "expected fixed array shapes bracket literal",
+        "let _a: [i64; 3] = [1, 2, 3]",
     );
     assert_rejected(
-        "array does not become Vec",
-        "let _a: Vec<i64> = [1, 2, 3]",
+        "explicit fixed array does not become Vec",
+        "let _a: Vec<i64> = #[1, 2, 3]",
         "expected `Vec<i64>`, found `[i64; 3]`",
     );
     assert_rejected("owned slice local", "let _a: [i64] = [1, 2, 3]", "GT0049");
 }
 
 #[test]
-fn arrays_never_implicitly_convert_to_vecs_in_any_assignment_context() {
-    let rejected = [
+fn bracket_literals_create_vecs_in_assignment_contexts() {
+    let accepted = [
         (
-            "named array local initializer",
+            "named Vec local initializer",
             "let a = [1, 2, 3]\nlet _v: Vec<i64> = a",
         ),
         (
-            "array literal local initializer",
+            "Vec literal local initializer",
             "let _v: Vec<i64> = [1, 2, 3]",
         ),
         (
             "whole-local reassignment",
-            "let a = [1, 2, 3]\nlet mut v: Vec<i64> = Vec::from([0])\nv = a",
+            "let a = [1, 2, 3]\nlet mut v: Vec<i64> = [0]\nv = a",
         ),
         (
             "function argument",
@@ -137,17 +141,17 @@ fn arrays_never_implicitly_convert_to_vecs_in_any_assignment_context() {
             "let a = [1, 2, 3]\nlet _pair: (Vec<i64>, i64) = (a, 4)",
         ),
     ];
-    for (label, body) in rejected {
-        assert_rejected(label, body, "expected `Vec<i64>`, found `[i64; 3]`");
+    for (label, body) in accepted {
+        assert_accepted(label, body);
     }
 }
 
 #[test]
 fn explicit_array_to_vec_conversions_are_accepted_and_execute() {
-    let body = "let first = [1, 2, 3]\n\
+    let body = "let first = #[1, 2, 3]\n\
         let mut via_into: Vec<i64> = first.into()\n\
         via_into.push(4)\n\
-        let second = [5, 6]\n\
+        let second = #[5, 6]\n\
         let via_from: Vec<i64> = Vec::from(second)\n\
         println(via_into)\n\
         println(via_from)";
@@ -170,11 +174,11 @@ fn explicit_array_to_vec_conversions_are_accepted_and_execute() {
 
 #[test]
 fn all_four_rust_unsizing_coercions_are_accepted() {
-    let gossamer = "    let array = [1, 2, 3];\n\
+    let gossamer = "    let array: [i64; 3] = [1, 2, 3];\n\
         let array_slice: &[i64] = &array;\n\
         let vector: Vec<i64> = Vec::from([4, 5, 6]);\n\
         let vec_slice: &[i64] = &vector;\n\
-        let mut mutable_array = [7, 8, 9];\n\
+        let mut mutable_array: [i64; 3] = [7, 8, 9];\n\
         let mutable_array_slice: &mut [i64] = &mut mutable_array;\n\
         mutable_array_slice[0] = 10;\n\
         let mut mutable_vector: Vec<i64> = Vec::from([11, 12, 13]);\n\
@@ -208,10 +212,9 @@ fn parameters_returns_and_owned_assignments_keep_each_sequence_identity() {
         "fn bad() -> [i64] { [1, 2, 3] }",
         "GT0049",
     );
-    assert_rejected(
-        "Vec return does not accept an array",
-        "fn bad() -> Vec<i64> { [1, 2, 3] }",
-        "expected `Vec<i64>`, found `[i64; 3]`",
+    assert_accepted(
+        "Vec return accepts a bracket literal",
+        "fn ok() -> Vec<i64> { [1, 2, 3] }\nlet _v = ok()",
     );
 }
 
@@ -233,13 +236,13 @@ fn slices_and_arrays_reject_every_vec_only_operation() {
     for method in methods {
         assert_rejected(
             &format!("array {method}"),
-            &format!("let mut values = [1, 2, 3]\nvalues.{method}"),
+            &format!("let mut values = #[1, 2, 3]\nvalues.{method}"),
             "GT0050",
         );
         assert_rejected(
             &format!("slice {method}"),
             &format!(
-                "let mut storage = [1, 2, 3]\nlet values: &mut [i64] = &mut storage\nvalues.{method}"
+                "let mut storage = #[1, 2, 3]\nlet values: &mut [i64] = &mut storage\nvalues.{method}"
             ),
             "GT0050",
         );
@@ -262,23 +265,23 @@ fn collection_methods_do_not_leak_eager_vec_combinators_into_arrays_or_slices() 
         );
         assert_rejected(
             &format!("array {method}"),
-            &format!("let values = [1, 2, 3]\nvalues.{method}"),
+            &format!("let values = #[1, 2, 3]\nvalues.{method}"),
             "no method named",
         );
         assert_rejected(
             &format!("slice {method}"),
-            &format!("let storage = [1, 2, 3]\nlet values: &[i64] = &storage\nvalues.{method}"),
+            &format!("let storage = #[1, 2, 3]\nlet values: &[i64] = &storage\nvalues.{method}"),
             "no method named",
         );
     }
 
     assert_accepted(
         "Vec eager combinators remain Vec methods",
-        "let values: Vec<i64> = Vec::from([1, 2, 3])\nlet _sum = values.sum()\nlet _head = values.take(2)",
+        "let values = [1, 2, 3]\nlet _sum = values.sum()\nlet _head = values.take(2)",
     );
     assert_accepted(
         "fixed array clone preserves its fixed type",
-        "let values = [1, 2, 3]\nlet copy: [i64; 3] = values.clone()",
+        "let values = #[1, 2, 3]\nlet copy: [i64; 3] = values.clone()",
     );
 }
 
@@ -303,12 +306,12 @@ fn every_cataloged_shared_sequence_method_typechecks_on_its_valid_receiver() {
     for call in immutable_calls {
         assert_accepted(
             &format!("fixed array shared method {call}"),
-            &format!("let values = [1, 2, 3]\nlet _result = {call}"),
+            &format!("let values = #[1, 2, 3]\nlet _result = {call}"),
         );
         assert_accepted(
             &format!("slice shared method {call}"),
             &format!(
-                "let storage = [1, 2, 3]\nlet values: &[i64] = &storage\nlet _result = {call}"
+                "let storage = #[1, 2, 3]\nlet values: &[i64] = &storage\nlet _result = {call}"
             ),
         );
     }
@@ -324,12 +327,12 @@ fn every_cataloged_shared_sequence_method_typechecks_on_its_valid_receiver() {
     for call in mutable_calls {
         assert_accepted(
             &format!("mutable array shared method {call}"),
-            &format!("let mut values = [3, 1, 2]\nlet _result = {call}"),
+            &format!("let mut values = #[3, 1, 2]\nlet _result = {call}"),
         );
         assert_accepted(
             &format!("mutable slice shared method {call}"),
             &format!(
-                "let mut storage = [3, 1, 2]\nlet values: &mut [i64] = &mut storage\nlet _result = {call}"
+                "let mut storage = #[3, 1, 2]\nlet values: &mut [i64] = &mut storage\nlet _result = {call}"
             ),
         );
     }
@@ -337,7 +340,7 @@ fn every_cataloged_shared_sequence_method_typechecks_on_its_valid_receiver() {
 
 #[test]
 fn indexing_iteration_and_non_resizing_mutation_execute() {
-    let source = "let mut array = [3, 1, 2]; let mut total = 0; { let slice: &mut [i64] = &mut array; let _ = slice.swap(0, 1); slice.sort(); slice.reverse(); slice.fill(4); for value in slice { total += *value } }; println(array); println(total)";
+    let source = "let mut array = #[3, 1, 2]; let mut total = 0; { let slice: &mut [i64] = &mut array; let _ = slice.swap(0, 1); slice.sort(); slice.reverse(); slice.fill(4); for value in slice { total += *value } }; println(array); println(total)";
     let output = Command::new(gos_bin())
         .args(["-e", source])
         .output()
@@ -351,8 +354,8 @@ fn indexing_iteration_and_non_resizing_mutation_execute() {
 }
 
 #[test]
-fn hashmap_from_uses_map_literal_syntax() {
-    let source = "use std::collections::HashMap; let map: HashMap<String, i64> = HashMap::from({\"one\": 1, \"two\": 2}); println(map.get(\"one\")); println(map.len())";
+fn map_literal_constructs_hashmap_and_from_accepts_pairs() {
+    let source = "use std::collections::HashMap; let map = {\"one\": 1, \"two\": 2}; println(map.get(\"one\")); println(map.len()); let also: HashMap<String, i64> = HashMap::from([(\"three\", 3)]); println(also.get(\"three\"))";
     let output = Command::new(gos_bin())
         .args(["-e", source])
         .output()
@@ -362,7 +365,10 @@ fn hashmap_from_uses_map_literal_syntax() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "Some(1)\n2\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "Some(1)\n2\nSome(3)\n"
+    );
 }
 
 #[test]
@@ -377,14 +383,14 @@ fn array_slice_and_vec_execution_matches_vm_forced_jit_and_llvm_release() {
     fs::write(
         &source,
         "fn sequence_total() -> i64 {\n\
-            let mut fixed = [3, 1, 2]\n\
+            let mut fixed = #[3, 1, 2]\n\
             {\n\
                 let view: &mut [i64] = &mut fixed\n\
                 view.sort()\n\
                 view.reverse()\n\
                 view.fill(2)\n\
             }\n\
-            let grown_source = [4, 5]\n\
+            let grown_source = #[4, 5]\n\
             let mut grown: Vec<i64> = grown_source.into()\n\
             grown.push(6)\n\
             grown.fill(3)\n\
@@ -395,13 +401,13 @@ fn array_slice_and_vec_execution_matches_vm_forced_jit_and_llvm_release() {
                 total += shared[2]\n\
                 for value in shared { total += *value }\n\
             }\n\
-            let mut fixed_words = [\"a\", \"b\"]\n\
+            let mut fixed_words = #[\"a\", \"b\"]\n\
             {\n\
                 let word_view: &mut [String] = &mut fixed_words\n\
                 word_view.fill(\"x\")\n\
             }\n\
             println(fixed_words)\n\
-            let mut grown_words: Vec<String> = Vec::from([\"c\", \"d\"])\n\
+            let mut grown_words = [\"c\", \"d\"]\n\
             grown_words.fill(\"y\")\n\
             println(grown_words)\n\
             total\n\
@@ -501,21 +507,21 @@ fn write_owned_sequence_parameter_fixture(source: &Path) {
          fn publish_words(value: Vec<String>, done: Sender<i64>) {\n\
              done.send(value.len())\n\
          }\n\
-         let array = [1, 2, 3]\n\
-         let vector: Vec<i64> = Vec::from([1, 2, 3])\n\
+         let array = #[1, 2, 3]\n\
+         let vector = [1, 2, 3]\n\
          println!(\"{} {} {:?} {:?}\", mutate_array(array), mutate_vec(vector), array, vector)\n\
-         let nested: Vec<Vec<i64>> = Vec::from([Vec::from([1, 2])])\n\
+         let nested = [[1, 2]]\n\
          println!(\"{} {:?}\", mutate_nested(nested), nested)\n\
-         let wrapped = Wrapped { values: Vec::from([1, 2]) }\n\
+         let wrapped = Wrapped { values: [1, 2] }\n\
          println!(\"{} {:?}\", mutate_wrapped(wrapped), wrapped.values)\n\
-         let array_of_vec = [Vec::from([1, 2])]\n\
+         let array_of_vec = #[[1, 2]]\n\
          println!(\"{} {}\", mutate_array_of_vec(array_of_vec), array_of_vec[0].len())\n\
          let (tx, rx) = channel::<Vec<i64>>(1)\n\
          tx.send(vector)\n\
          let mut received = rx.recv().unwrap()\n\
          received.push(5)\n\
          println!(\"{:?} {:?}\", vector, received)\n\
-         let words: Vec<String> = Vec::from([\"alpha\", \"beta\"])\n\
+         let words = [\"alpha\", \"beta\"]\n\
          let (word_tx, word_rx) = channel::<Vec<String>>(1)\n\
          word_tx.send(words)\n\
          let mut received_words = word_rx.recv().unwrap()\n\

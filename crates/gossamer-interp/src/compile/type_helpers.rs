@@ -47,13 +47,14 @@ impl<'tcx> FnBuilder<'tcx> {
         }
     }
 
-    /// True when `expr` has the `HashSet` sentinel `Adt` type (def
-    /// `u32::MAX - 7`, set by the checker), seeing through references.
+    /// True when `expr` has a set sentinel `Adt` type, seeing through
+    /// references.
     /// Used by the for-loop fast path to snapshot a bare set to a Vec.
     pub(crate) fn expr_is_hashset(&self, expr: &HirExpr) -> bool {
         matches!(
             self.tcx.kind(self.unwrap_ref(expr.ty)),
-            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 7
+            Some(TyKind::Adt { def, .. })
+                if matches!(def.local, x if x == u32::MAX - 7 || x == u32::MAX - 10)
         )
     }
 

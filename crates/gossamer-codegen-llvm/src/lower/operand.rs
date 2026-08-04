@@ -103,14 +103,16 @@ impl<'a> Lowerer<'a> {
                     // reference to an undefined symbol that dies
                     // inside `opt`.
                     if gossamer_resolve::lookup_external_item(&name).is_some() {
-                        return Err(BuildError::Unsupported(
+                        return Err(BuildError::InternalLoweringBug(
                             "a [rust-bindings] function cannot be passed as a value yet - \
                              wrap it in a closure: `|x| f(x)`",
                         ));
                     }
                     return Ok(format!("@\"{}\"", mangle_fn_name(&name)));
                 }
-                Err(BuildError::Unsupported("FnRef operand not yet lowered"))
+                Err(BuildError::InternalLoweringBug(
+                    "FnRef operand has no resolvable function name",
+                ))
             }
         }
     }
@@ -191,6 +193,35 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  {tmp} = load {leaf_llvm}, ptr {addr}").unwrap();
             tmp
         }
+    }
+
+    /// Stores an SSA value into a MIR place, including projected destinations.
+    /// This is the write-side twin of `lower_place_read`: a bare local stores
+    /// into its alloca, while field/index/deref projections first compute the
+    /// leaf address. Packed byte-array elements are stored as `i8` regardless
+    /// of their logical integer-shaped leaf type.
+    pub(crate) fn store_value_to_place(&mut self, place: &Place, llvm_ty: &str, value: &str) {
+        let addr = if place.projection.is_empty() {
+            local_slot(place.local)
+        } else {
+            self.lower_place_address(place)
+        };
+        if self.place_is_packed_byte_element(place) {
+            let byte = self.fresh();
+            writeln!(self.out, "  {byte} = trunc {llvm_ty} {value} to i8").unwrap();
+            writeln!(self.out, "  store i8 {byte}, ptr {addr}").unwrap();
+        } else {
+            writeln!(self.out, "  store {llvm_ty} {value}, ptr {addr}").unwrap();
+        }
+    }
+
+    pub(crate) fn store_zero_to_place(&mut self, place: &Place, llvm_ty: &str) {
+        let zero = match llvm_ty {
+            "ptr" => "null",
+            "double" | "float" => "0.0",
+            _ => "0",
+        };
+        self.store_value_to_place(place, llvm_ty, zero);
     }
 
     /// Computes the pointer address for a projected place.

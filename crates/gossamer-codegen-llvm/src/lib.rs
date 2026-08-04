@@ -15,15 +15,10 @@
 //! the LLVM-produced object against it the same way as
 //! Cranelift's.
 //!
-//! Coverage today is an MVP: `i64` / `f64` / `bool` / `()`
-//! primitives, arithmetic and comparison `BinaryOp`, `Neg`
-//! and `Not` `UnaryOp`, numeric `Cast`, direct calls to user
-//! functions and `gos_rt_*` intrinsics, and `Goto` /
-//! `SwitchInt` / `Return`. Bodies that exercise shapes
-//! outside this set (closures, heap-backed aggregates, field
-//! projections through `Arc`ed values) return
-//! `BuildError::Unsupported` so the driver can fall back to
-//! Cranelift for those programs.
+//! Frontend-valid MIR is expected to lower through LLVM. A missed
+//! MIR shape is reported as `BuildError::InternalLoweringBug` so
+//! the driver fails loudly instead of producing a mixed-tier native
+//! artifact.
 
 // Allow patterns this backend deliberately uses:
 //   - `doc_markdown` flags every reference to `i64`, `fasta_mt`,

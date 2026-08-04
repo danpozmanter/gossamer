@@ -1,7 +1,7 @@
 # Methods by type
 
 This page is the source-facing reference for inherent methods on core
-types such as `String`, `Vec`, `HashMap`, `HashSet`, `Option`, and
+types such as `String`, `Vec`, `HashMap`, `HashSet`, `BTreeSet`, `Option`, and
 `Result`.
 
 Items listed here resolve in `gos` (interpreter), forced-JIT execution,
@@ -54,8 +54,10 @@ dispatch-table additions.
 
 ## Vec
 
-`Vec<T>` is the only owned growable sequence. A bracket literal is a fixed
-array, so use `Vec::from([a, b, c])` when growth or capacity is required.
+`Vec<T>` is the only owned growable sequence. A bracket literal such as
+`[a, b, c]` creates a Vec by default. Use `#[a, b, c]` for an explicit fixed
+array, or let an expected fixed type such as `[T; 3]` shape a plain bracket
+literal.
 `[T; N]`, `&[T]`, and `&mut [T]` share only the non-resizing methods listed
 below. Mutable arrays and slices may reorder or replace existing elements, but
 cannot change their length or capacity. Iterator combinators are used through
@@ -66,6 +68,10 @@ cannot change their length or capacity. Iterator combinators are used through
 | `[T; N]`, `&[T; N]`, `&[T]` | `len`, `is_empty`, `slice`, `first`, `last`, `get`, `contains`, `index_of`, `count_of`, `windows`, `chunks`, `join`, `to_vec`, `iter`; fixed arrays also have value-preserving `clone` |
 | `&mut [T; N]`, `&mut [T]` | Shared methods plus in-place `sort`, `sort_by`, `sort_by_key`, `reverse`, `swap`, and `fill` |
 | `Vec<T>`, `&Vec<T>`, `&mut Vec<T>` | Shared methods plus eager combinators, resizing, and capacity operations |
+
+Map literals such as `{"one": 1}` construct `HashMap` values. Set literals
+such as `#{1, 2, 2}` construct `HashSet` values, or `BTreeSet` values when an
+expected `BTreeSet<T>` type is present.
 
 | Method | Returns | Notes |
 |---|---|---|
@@ -105,7 +111,7 @@ cannot change their length or capacity. Iterator combinators are used through
 
 | Method | Returns | Notes |
 |---|---|---|
-| `HashMap::from<K, V, const N: usize>({K: V} \| [(K, V); N])` | `HashMap<K, V>` | Associated function; accepts map literals and key-value tuple arrays. |
+| `HashMap::from<K, V, const N: usize>([(K, V); N])` | `HashMap<K, V>` | Associated function; accepts array pairs. Map literals such as `{"one": 1}` construct `HashMap` values directly. |
 | `m.insert(k, v)` | `Option<V>` | Inserts or overwrites in place and returns the previous value when present. |
 | `m.get(k)` | `Option<V>` | `None` when the key is absent. |
 | `m.get_or(k, default)` | `V` | Value for `k`, or `default` when absent. |
@@ -147,6 +153,11 @@ yields pairs in ascending key order.
 | `s.symmetric_difference(other)` | `HashSet<T>` | Values present in exactly one set. |
 | `s.is_subset(other)` / `s.is_superset(other)` | `bool` | Inclusion checks. |
 | `s.is_disjoint(other)` | `bool` | True when the sets share no values. |
+
+## BTreeSet
+
+`BTreeSet<T>` has the same method surface as `HashSet<T>`, with ordered
+iteration and `to_vec` output.
 
 ## VecDeque
 

@@ -160,7 +160,7 @@ fn tuple_destructuring_produces_field_projection_reads() {
 
 #[test]
 fn array_index_produces_projection_index_with_local_offset() {
-    let bodies = build("fn main() -> i64 { let xs = [5i64, 7i64, 9i64]\n xs[1i64] }\n");
+    let bodies = build("fn main() -> i64 { let xs = #[5i64, 7i64, 9i64]\n xs[1i64] }\n");
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
     let has_index_proj = main.blocks.iter().flat_map(|b| &b.stmts).any(|s| {
         matches!(
@@ -271,7 +271,7 @@ fn function_call_preserves_argument_order_in_terminator() {
 
 #[test]
 fn array_repeat_produces_rvalue_repeat_with_compile_time_count() {
-    let bodies = build("fn main() -> i64 { let xs = [42i64; 5i64]\n xs[0i64] }\n");
+    let bodies = build("fn main() -> i64 { let xs = #[42i64; 5i64]\n xs[0i64] }\n");
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
     let has_repeat = main.blocks.iter().flat_map(|b| &b.stmts).any(|s| {
         matches!(
@@ -284,7 +284,7 @@ fn array_repeat_produces_rvalue_repeat_with_compile_time_count() {
     });
     assert!(
         has_repeat,
-        "[42; 5] must lower to Rvalue::Repeat with count 5"
+        "#[42; 5] must lower to Rvalue::Repeat with count 5"
     );
 }
 

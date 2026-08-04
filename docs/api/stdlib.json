@@ -363,6 +363,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-collections-BTreeSet",
+      "name": "std::collections::BTreeSet",
+      "kind": "type",
+      "signature": null,
+      "description": "Ordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdcollections",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-collections-HashMap",
       "name": "std::collections::HashMap",
       "kind": "type",

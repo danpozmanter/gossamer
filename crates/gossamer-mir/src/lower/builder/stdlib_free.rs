@@ -264,6 +264,62 @@ impl<'a> Builder<'a> {
         Some(dest)
     }
 
+    fn lower_set_from_array(
+        &mut self,
+        arg: &HirExpr,
+        span: Span,
+        runtime_kind: &'static str,
+    ) -> Option<Local> {
+        let HirExprKind::Array(gossamer_hir::HirArrayExpr::List(items)) = &arg.kind else {
+            return None;
+        };
+        let set_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let set = self.emit_stdlib_free_call("gos_rt_set_new", set_ty, &[], span)?;
+        self.local_runtime_kind.insert(set, runtime_kind);
+        let bool_ty = self.tcx.bool_ty();
+        for item in items {
+            let mut value = self.lower_expr(item)?;
+            value = self.auto_deref_cell(value, item.span);
+            let value_ty = self.peel_ref_ty(item.ty);
+            let aggregate_desc = self
+                .is_aggregate_key(value_ty)
+                .then(|| self.key_descriptor(value_ty))
+                .flatten();
+            let rt = if aggregate_desc.is_some() {
+                "gos_rt_set_insert_skey"
+            } else if matches!(map_key_kind_from(self.tcx, value_ty), MapKeyKind::I64) {
+                "gos_rt_set_insert_i64"
+            } else {
+                "gos_rt_set_insert"
+            };
+            let mut call_args = vec![
+                Operand::Copy(Place::local(set)),
+                Operand::Copy(Place::local(value)),
+            ];
+            if let Some(desc) = aggregate_desc {
+                call_args.push(Operand::Const(ConstValue::Str(desc)));
+            }
+            let inserted = self.fresh(bool_ty);
+            let next = self.new_block(item.span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(rt.to_string())),
+                args: call_args,
+                destination: Place::local(inserted),
+                target: Some(next),
+            });
+            self.set_current(next);
+        }
+        Some(set)
+    }
+
+    fn hashmap_from_arg_is_empty(&self, arg: &HirExpr) -> bool {
+        matches!(self.tcx.kind(arg.ty), Some(gossamer_types::TyKind::Unit))
+            || matches!(
+                &arg.kind,
+                HirExprKind::Array(gossamer_hir::HirArrayExpr::List(items)) if items.is_empty()
+            )
+    }
+
     pub(crate) fn lower_stdlib_free_call(
         &mut self,
         callee: &HirExpr,
@@ -285,16 +341,42 @@ impl<'a> Builder<'a> {
             &names[..]
         };
         let joined = strip_std.join("::");
+        if matches!(
+            joined.as_str(),
+            "BTreeSet::new" | "collections::BTreeSet::new"
+        ) && args.is_empty()
+        {
+            let set_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+            let set = self.emit_stdlib_free_call("gos_rt_set_new", set_ty, &[], span)?;
+            self.local_runtime_kind.insert(set, "collections::BTreeSet");
+            return Some(set);
+        }
         // `HashMap::from({})` is the typed empty-map constructor. Lower it to
         // the same zero-argument intrinsic as `HashMap::new` so no unit value
         // reaches the native call ABI.
         if matches!(
             joined.as_str(),
             "HashMap::from" | "collections::HashMap::from"
-        ) && matches!(args, [arg] if matches!(self.tcx.kind(arg.ty), Some(gossamer_types::TyKind::Unit)))
+        ) && matches!(args, [arg] if self.hashmap_from_arg_is_empty(arg))
         {
             let map_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
             return self.emit_stdlib_free_call("HashMap::new", map_ty, &[], span);
+        }
+        if matches!(
+            joined.as_str(),
+            "HashSet::from" | "collections::HashSet::from"
+        ) && let [arg] = args
+            && let Some(set) = self.lower_set_from_array(arg, span, "collections::HashSet")
+        {
+            return Some(set);
+        }
+        if matches!(
+            joined.as_str(),
+            "BTreeSet::from" | "collections::BTreeSet::from"
+        ) && let [arg] = args
+            && let Some(set) = self.lower_set_from_array(arg, span, "collections::BTreeSet")
+        {
+            return Some(set);
         }
         // A loop region proves every region-owned allocation dies at the
         // iteration boundary. Collection while the region is still active is
@@ -2854,6 +2936,10 @@ impl<'a> Builder<'a> {
             // local can be tagged with a runtime kind for method
             // dispatch.
             "HashSet::new" | "collections::HashSet::new" => (
+                "gos_rt_set_new",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "BTreeSet::new" | "collections::BTreeSet::new" => (
                 "gos_rt_set_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),

@@ -303,8 +303,9 @@ const DEFAULT_PORT: i64 = 5432
 | `s.toInt()` | `strconv::parse_i64(&s)` |
 | `listOf(...)` | `[...]` |
 | `mutableListOf(...)` | `let mut xs = [...]` |
-| `mapOf(k to v)` | `HashMap::new()` plus `insert` |
-| `setOf(...)` | `HashSet::new()` plus `insert` |
+| `arrayOf(...)` | `#[...]` |
+| `mapOf(k to v)` | `{key: value}` or `{}` for an empty `HashMap` |
+| `setOf(...)` | `#{...}` for `HashSet`, or typed `BTreeSet` |
 | `OkHttp` / `Ktor HttpClient` | `http::Client::new()` or `http::get(url, [])` |
 | `ktor server { ... }` | `http::serve(addr, handler)` |
 | `kotlinx.serialization` | `encoding::json` |

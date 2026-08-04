@@ -129,6 +129,28 @@ pub(crate) fn install_set(globals: &mut Vec<(&'static str, Value)>) {
         ("HashSet::is_disjoint", builtin_set_is_disjoint),
         ("collections::HashSet::new", builtin_set_new),
         ("collections::HashSet::from", builtin_set_from),
+        ("BTreeSet::new", builtin_btreeset_new),
+        ("BTreeSet::from", builtin_btreeset_from),
+        ("BTreeSet::insert", builtin_set_insert),
+        ("BTreeSet::remove", builtin_set_remove),
+        ("BTreeSet::contains", builtin_set_contains),
+        ("BTreeSet::len", builtin_set_len),
+        ("BTreeSet::is_empty", builtin_set_is_empty),
+        ("BTreeSet::clear", builtin_set_clear),
+        ("BTreeSet::to_vec", builtin_set_to_vec),
+        ("BTreeSet::iter", builtin_set_to_vec),
+        ("BTreeSet::union", builtin_set_union),
+        ("BTreeSet::intersection", builtin_set_intersection),
+        ("BTreeSet::difference", builtin_set_difference),
+        (
+            "BTreeSet::symmetric_difference",
+            builtin_set_symmetric_difference,
+        ),
+        ("BTreeSet::is_subset", builtin_set_is_subset),
+        ("BTreeSet::is_superset", builtin_set_is_superset),
+        ("BTreeSet::is_disjoint", builtin_set_is_disjoint),
+        ("collections::BTreeSet::new", builtin_btreeset_new),
+        ("collections::BTreeSet::from", builtin_btreeset_from),
     ];
     for (name, call) in entries {
         globals.push((*name, crate::builtins::builtin_pub(name, *call)));
@@ -145,15 +167,19 @@ pub(crate) fn next_set_handle() -> i64 {
 }
 
 pub(crate) fn set_handle(id: i64) -> Value {
+    set_handle_named("HashSet", id)
+}
+
+pub(crate) fn set_handle_named(name: &'static str, id: i64) -> Value {
     Value::struct_(
-        "HashSet",
+        name,
         Arc::unwrap_or_clone(Arc::new(vec![("__set", Value::Int(id))])),
     )
 }
 
 pub(crate) fn set_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
-        if inner.name == "HashSet" {
+        if matches!(inner.name.as_str(), "HashSet" | "BTreeSet") {
             for (i, v) in &inner.fields {
                 if (*i) == "__set" {
                     if let Value::Int(n) = v {
@@ -167,15 +193,31 @@ pub(crate) fn set_id_of(value: &Value) -> Option<i64> {
 }
 
 pub(crate) fn builtin_set_new(_args: &[Value]) -> RuntimeResult<Value> {
+    builtin_set_new_named("HashSet")
+}
+
+pub(crate) fn builtin_btreeset_new(_args: &[Value]) -> RuntimeResult<Value> {
+    builtin_set_new_named("BTreeSet")
+}
+
+fn builtin_set_new_named(name: &'static str) -> RuntimeResult<Value> {
     let id = next_set_handle();
     SET_REGISTRY.with(|r| {
         r.borrow_mut().insert(id, StdHashMap::default());
     });
-    Ok(set_handle(id))
+    Ok(set_handle_named(name, id))
 }
 
 fn builtin_set_from(args: &[Value]) -> RuntimeResult<Value> {
-    let handle = builtin_set_new(&[])?;
+    builtin_set_from_named("HashSet", args)
+}
+
+fn builtin_btreeset_from(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_set_from_named("BTreeSet", args)
+}
+
+fn builtin_set_from_named(name: &'static str, args: &[Value]) -> RuntimeResult<Value> {
+    let handle = builtin_set_new_named(name)?;
     let Some(values) = args.first().and_then(array_as_values) else {
         return Ok(handle);
     };
@@ -294,6 +336,13 @@ fn set_pair_ids(args: &[Value]) -> Option<(i64, i64)> {
     ))
 }
 
+fn set_handle_name(value: Option<&Value>) -> &'static str {
+    match value {
+        Some(Value::Struct(inner)) if inner.name == "BTreeSet" => "BTreeSet",
+        _ => "HashSet",
+    }
+}
+
 /// Runs a binary set operation over the two operand handles and stores the
 /// result under a fresh handle.
 fn set_binary_op(
@@ -313,7 +362,7 @@ fn set_binary_op(
     SET_REGISTRY.with(|r| {
         r.borrow_mut().insert(id, result);
     });
-    Ok(set_handle(id))
+    Ok(set_handle_named(set_handle_name(args.first()), id))
 }
 
 fn set_predicate(

@@ -7,7 +7,7 @@
 use std::collections::ordered_vec
 
 fn main() {
-    let v: Vec<i64> = Vec::from([])
+    let v: Vec<i64> = []
     let v = ordered_vec::insert(v, 3)
     let v = ordered_vec::insert(v, 1)
     let v = ordered_vec::insert(v, 4)

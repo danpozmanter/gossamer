@@ -106,3 +106,4 @@ go-to-definition, references, rename, and inlay hints.
 
 - [Running](running.md)
 - [Syntax](syntax.md)
+- [Collection literals](collection_literals.md)

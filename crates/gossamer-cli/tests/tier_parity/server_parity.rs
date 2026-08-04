@@ -832,15 +832,12 @@ fn probe_once(
 }
 
 // ----------------------------------------------------------------
-// LLVM strict-fallback gate.
+// LLVM strict-backend gate.
 //
-// `gos build --release` silently routes a body to Cranelift if
-// LLVM's lowerer raises `BuildError::Unsupported`. That fallback
-// hides LLVM lowering gaps. With `GOSSAMER_FAIL_ON_LLVM_FALLBACK=1`
-// the per-function fallback turns into a hard error, so this test
-// fails the moment any example body cannot be lowered to LLVM
-// directly. The list of currently-failing programs is captured in
-// `~/dev/contexts/lang/ai_driven_gaps.md` and tracked one by one.
+// `gos build --release` must lower frontend-valid programs through
+// LLVM directly. The legacy strict-lowering environment variable is
+// still accepted, and this test fails the moment any example body
+// trips an LLVM backend lowering bug.
 // ----------------------------------------------------------------
 
 /// One round-robin group of the strict-lowering battery (invoked by the
@@ -872,12 +869,10 @@ fn lowers_without_fallback_group(group: usize) {
             continue;
         }
         let stderr = String::from_utf8_lossy(&out.stderr);
-        if stderr.contains("would fall back to Cranelift") {
-            // First line typically reads:
-            //   error: llvm backend: `<fn>` would fall back to Cranelift (<reason>) ...
+        if stderr.contains("llvm backend internal lowering bug") {
             let summary = stderr
                 .lines()
-                .find(|l| l.contains("would fall back"))
+                .find(|l| l.contains("llvm backend internal lowering bug"))
                 .unwrap_or(&stderr)
                 .trim()
                 .to_string();

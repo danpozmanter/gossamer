@@ -27,7 +27,7 @@ fn main() {
 
     if let Some(v) = maximum(&xs) { println!("maximum = {}", v) }
 
-    let empty: Vec<i64> = Vec::from([])
+    let empty: Vec<i64> = []
     if let Some(v) = maximum(&empty) {
         println!("maximum of empty = {}", v)
     } else {

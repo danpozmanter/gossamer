@@ -1,8 +1,8 @@
-//! Release-tier silent-fallback regression gate.
+//! Release-tier backend regression gate.
 //!
 //! The 2026-04-30 spectral-norm incident (`spectral_norm_regression_fix.md`)
 //! shipped a malformed `runtime_refs` entry that corrupted the LLVM IR
-//! and forced a silent per-fn Cranelift fallback for unrelated bodies.
+//! and forced unrelated bodies off the intended LLVM path.
 //! Spectral-norm slowed from 0.93s to 21.6s - a 23× regression - and
 //! the existing test suite was *green*. The same shape regressed again
 //! a few weeks later (`spectral_norm_regression_fix.md` 2026-04-30).

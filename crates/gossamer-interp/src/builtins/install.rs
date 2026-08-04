@@ -630,6 +630,16 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
     install_module("HashSet", &[("new", builtin_set_new)], globals);
     install_module("collections::HashSet", &[("new", builtin_set_new)], globals);
     install_module(
+        "BTreeSet",
+        &[("new", crate::stdlib_builtins::builtin_btreeset_new)],
+        globals,
+    );
+    install_module(
+        "collections::BTreeSet",
+        &[("new", crate::stdlib_builtins::builtin_btreeset_new)],
+        globals,
+    );
+    install_module(
         "time::Duration",
         &[
             ("from_millis", builtin_duration_passthrough),

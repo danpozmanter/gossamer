@@ -291,7 +291,7 @@ fn mutate_copy(a: &mut [i64; 2]) {
 }
 
 fn main() {
-    let mut a = [1, 2]
+    let mut a = #[1, 2]
     {
         let b = &mut a
         mutate_copy(b)
@@ -313,7 +313,7 @@ fn mutate_copy(a: &mut [i64; 2]) {
 }
 
 fn main() {
-    let mut a = [1, 2]
+    let mut a = #[1, 2]
     {
         let b = &mut a
         mutate_copy(b)
@@ -335,7 +335,7 @@ fn first(a: &[i64; 2]) -> i64 {
 }
 
 fn main() {
-    let a = [1, 2]
+    let a = #[1, 2]
     let b = &a
     let result = first(b)
     println!("{a}")

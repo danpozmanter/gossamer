@@ -47,7 +47,7 @@ mod tests {
 
     #[test]
     fn defers_run_lifo_at_block_exit() {
-        let mut order: Vec<i64> = Vec::from([])
+        let mut order: Vec<i64> = []
         order.push(0)
         {
             defer order.push(1) // runs last

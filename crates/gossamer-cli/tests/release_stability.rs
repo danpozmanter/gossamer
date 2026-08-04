@@ -1,9 +1,9 @@
 //! Release-tier stability gauge.
 //!
 //! Each test below writes a small deterministic Gossamer program,
-//! builds it with `gos build --release` (LLVM + Cranelift fallback -
-//! the production tier), runs the binary, and asserts the
-//! produced stdout byte-for-byte against a fixed expected string.
+//! builds it with `gos build --release`, runs the binary, and
+//! asserts the produced stdout byte-for-byte against a fixed
+//! expected string.
 //!
 //! The `--release` pipeline is the gold-standard target: interp
 //! and `gos build` (debug/Cranelift) are dev-loop tooling, but

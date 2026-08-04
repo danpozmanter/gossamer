@@ -16,9 +16,9 @@ are returned as `Result<T, E>` instead of raised as exceptions.
 | `None` | `Option<T>` with `Some(v)` or `None` |
 | `try` / `except` | `Result<T, E>` with `?` or `match` |
 | `isinstance` dispatch | `enum` plus `match`, or traits |
-| list | `Vec<T>`; use `[T; N]` for a fixed array and `&[T]` for a borrowed slice |
-| dict | `HashMap<K, V>` |
-| set | `HashSet<T>` |
+| list | `Vec<T>` with `[...]`; use `#[...]` for a fixed array and `&[T]` for a borrowed slice |
+| dict | `HashMap<K, V>` with `{key: value}` and `{}` literals |
+| set | `HashSet<T>` with `#{...}` literals, or typed `BTreeSet<T>` with `#{...}` |
 | `asyncio.create_task` | `go fn() { ... }()` |
 | `if __name__ == "__main__"` | entry-file top-level statements |
 

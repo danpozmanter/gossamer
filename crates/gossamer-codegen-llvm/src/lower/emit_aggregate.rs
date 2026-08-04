@@ -131,14 +131,13 @@ impl<'a> Lowerer<'a> {
         place: &Place,
         operands: &[Operand],
     ) -> Result<(), BuildError> {
-        if !place.projection.is_empty() {
-            return Err(BuildError::Unsupported(
-                "Aggregate assignment through projection",
-            ));
-        }
-        let base = local_slot(place.local);
-        let packed_bytes =
-            packed_byte_array_len(self.tcx, self.body.local_ty(place.local)).is_some();
+        let base = if place.projection.is_empty() {
+            local_slot(place.local)
+        } else {
+            self.lower_place_address(place)
+        };
+        let place_ty = self.place_leaf_ty(place);
+        let packed_bytes = packed_byte_array_len(self.tcx, place_ty).is_some();
         let mut slot_idx = 0u32;
         for operand in operands {
             let op_ty = self.operand_ty(operand);
@@ -216,7 +215,7 @@ impl<'a> Lowerer<'a> {
                         // branch is unreachable on well-formed
                         // input; we surface it as a hard error
                         // rather than a silent miscompile.
-                        return Err(BuildError::Unsupported(
+                        return Err(BuildError::InternalLoweringBug(
                             "nested aggregate operand must be a Copy(place); \
                              multi-slot constants and FnRef values are not \
                              materialised through the aggregate-store path",
@@ -252,14 +251,13 @@ impl<'a> Lowerer<'a> {
         value: &Operand,
         count: u64,
     ) -> Result<(), BuildError> {
-        if !place.projection.is_empty() {
-            return Err(BuildError::Unsupported(
-                "Repeat assignment through projection",
-            ));
-        }
-        let base = local_slot(place.local);
-        let packed_bytes =
-            packed_byte_array_len(self.tcx, self.body.local_ty(place.local)).is_some();
+        let base = if place.projection.is_empty() {
+            local_slot(place.local)
+        } else {
+            self.lower_place_address(place)
+        };
+        let place_ty = self.place_leaf_ty(place);
+        let packed_bytes = packed_byte_array_len(self.tcx, place_ty).is_some();
         let op_ty = self.operand_ty(value);
         let mut op_slots = slot_count(self.tcx, op_ty).unwrap_or(1);
         if matches!(value, Operand::Const(_) | Operand::FnRef { .. }) {
@@ -278,7 +276,7 @@ impl<'a> Lowerer<'a> {
                     // Multi-slot constructors are materialised into a temp
                     // local before Repeat, so a non-place element here is
                     // malformed input; fail loudly over a silent miscompile.
-                    return Err(BuildError::Unsupported(
+                    return Err(BuildError::InternalLoweringBug(
                         "aggregate repeat element must be a Copy(place)",
                     ));
                 }
@@ -662,13 +660,13 @@ impl<'a> Lowerer<'a> {
     /// `tags`.
     fn emit_tuple_format(&mut self, arg: &Operand, value: &str) -> Result<String, BuildError> {
         let Operand::Copy(p) = arg else {
-            return Err(BuildError::Unsupported(
+            return Err(BuildError::InternalLoweringBug(
                 "tuple format expects a place operand",
             ));
         };
         let leaf = self.unwrap_ref(self.place_leaf_ty(p));
         let Some(TyKind::Tuple(elems)) = self.tcx.kind(leaf) else {
-            return Err(BuildError::Unsupported(
+            return Err(BuildError::InternalLoweringBug(
                 "tuple format on a non-tuple operand",
             ));
         };
@@ -678,7 +676,7 @@ impl<'a> Lowerer<'a> {
             match self.tuple_elem_tag(*e) {
                 Some(t) => tags.push(t),
                 None => {
-                    return Err(BuildError::Unsupported(
+                    return Err(BuildError::InternalLoweringBug(
                         "tuple element type is not formattable on the compiled tier",
                     ));
                 }

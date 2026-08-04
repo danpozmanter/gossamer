@@ -23,7 +23,7 @@ evidence visible.
 | `std::thread` | shipped | 2 | none | none | none | No module-level evidence record. |
 | `std::strings` | experimental | 41 | module-only | module-only | module-only | split, trim, contains, find, replace, to_lower, to_upper, starts_with, ends_with. |
 | `std::strconv` | experimental | 10 | module-only | module-only | module-only | parse_i64, parse_u64, parse_f64, parse_bool, format_i64, format_f64. |
-| `std::collections` | experimental | 5 | module-only | module-only | module-only | Vec, HashMap, HashSet, VecDeque (both ends), BTreeMap (String/i64 keys). |
+| `std::collections` | experimental | 6 | module-only | module-only | module-only | Vec, HashMap, HashSet, BTreeSet, VecDeque (both ends), BTreeMap (String/i64 keys). |
 | `std::net` | experimental | 6 | module-only | module-only | module-only | TcpListener, TcpStream. UdpSocket partial. |
 | `std::http` | experimental | 29 | module-only | module-only | module-only | HTTP/1.1 + HTTP/2 server + client (push + trailers); HTTP/3 via std::http_h3. |
 | `std::encoding::json` | experimental | 21 | module-only | module-only | module-only | encode + decode + Value. |
@@ -153,6 +153,7 @@ the canonical item path.
 | `std::bytes::replace` | Function | experimental | not item-audited |
 | `std::bytes::split` | Function | experimental | not item-audited |
 | `std::collections::BTreeMap` | Type | experimental | not item-audited |
+| `std::collections::BTreeSet` | Type | experimental | not item-audited |
 | `std::collections::HashMap` | Type | experimental | not item-audited |
 | `std::collections::HashSet` | Type | experimental | not item-audited |
 | `std::collections::Vec` | Type | experimental | not item-audited |

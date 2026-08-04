@@ -268,14 +268,19 @@ gos
 
 Sequence types follow Rust's model. `[T; N]` is an owned fixed-size array,
 `[T]` is an unsized slice used behind `&` or `&mut`, and `Vec<T>` is the only
-owned growable sequence. Array literals never silently become Vec values, so
-write `Vec::from([1, 2, 3])` when growable storage is required. References to
-arrays and Vec values coerce to slice references in the same four shared and
-mutable forms as Rust. Arrays and slices expose the implemented slice-method
-surface, while Vec additionally owns eager collection combinators, resizing,
-and capacity operations. Mutable arrays and slices support non-resizing
-mutation such as `sort`, `reverse`, `swap`, and `fill`. `%i` shows these distinct type surfaces and `%e`
-filters them further by the binding's writable capability.
+owned growable sequence. A bracket literal such as `[1, 2, 3]` creates a
+`Vec` by default. Use `#[1, 2, 3]` when a fixed array is required explicitly,
+or let an expected fixed type such as `[i64; 3]` shape a plain bracket literal.
+Map literals use `{key: value}` and construct `HashMap` values. Set literals
+use `#{value, ...}` and construct `HashSet` values, or `BTreeSet` values when
+an expected `BTreeSet<T>` type is present.
+References to arrays and Vec values coerce to slice references in the same
+four shared and mutable forms as Rust. Arrays and slices expose the implemented
+slice-method surface, while Vec additionally owns eager collection
+combinators, resizing, and capacity operations. Mutable arrays and slices
+support non-resizing mutation such as `sort`, `reverse`, `swap`, and `fill`.
+`%i` shows these distinct type surfaces and `%e` filters them further by the
+binding's writable capability.
 
 ## Foreign Function Interface (FFI)
 

@@ -11,7 +11,7 @@ use std::collections::stack
 use std::collections::deque
 
 fn main() {
-    let mut q: Vec<i64> = Vec::from([])
+    let mut q: Vec<i64> = []
     q = queue::push(q, 1)
     q = queue::push(q, 2)
     q = queue::push(q, 3)
@@ -20,7 +20,7 @@ fn main() {
     println!("after pop, front: {}", queue::peek(&q))
     println!("queue len: {}", queue::len(&q))
 
-    let mut s: Vec<i64> = Vec::from([])
+    let mut s: Vec<i64> = []
     s = stack::push(s, 10)
     s = stack::push(s, 20)
     s = stack::push(s, 30)
@@ -28,7 +28,7 @@ fn main() {
     s = stack::pop(s)
     println!("after pop, top: {}", stack::peek(&s))
 
-    let mut d: Vec<i64> = Vec::from([])
+    let mut d: Vec<i64> = []
     d = deque::push_back(d, 2)
     d = deque::push_front(d, 1)
     d = deque::push_back(d, 3)

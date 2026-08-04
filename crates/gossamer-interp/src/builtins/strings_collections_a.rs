@@ -810,28 +810,30 @@ fn builtin_map_new(_args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_map_from(args: &[Value]) -> RuntimeResult<Value> {
     let map = Arc::new(parking_lot::Mutex::new(dense_map_with_capacity(16)));
-    if let Some(source) = args.first()
-        && !matches!(source, Value::Unit)
-    {
+    if let Some(source) = args.first() {
         let Some(entries) = array_as_values(source) else {
             return Err(RuntimeError::Type(
-                "HashMap::from expects a map literal such as {\"key\": value}".to_string(),
+                "HashMap::from expects a fixed array of key-value tuples".to_string(),
             ));
         };
         let mut output = map.lock();
         for entry in entries {
             let Some(parts) = array_as_values(&entry) else {
                 return Err(RuntimeError::Type(
-                    "HashMap::from expects key-value entries from a map literal".to_string(),
+                    "HashMap::from expects key-value tuple entries".to_string(),
                 ));
             };
             let [key, value] = parts.as_slice() else {
                 return Err(RuntimeError::Type(
-                    "HashMap::from expects key-value entries from a map literal".to_string(),
+                    "HashMap::from expects key-value tuple entries".to_string(),
                 ));
             };
             output.insert(MapKey::from_value(key), value.clone());
         }
+    } else {
+        return Err(RuntimeError::Type(
+            "HashMap::from expects a fixed array of key-value tuples".to_string(),
+        ));
     }
     Ok(Value::Map(map))
 }

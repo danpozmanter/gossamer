@@ -8,7 +8,7 @@
 use std::collections::heap
 
 fn main() {
-    let h: Vec<i64> = Vec::from([])
+    let h: Vec<i64> = []
     let h = heap::push(h, 5)
     let h = heap::push(h, 1)
     let h = heap::push(h, 3)

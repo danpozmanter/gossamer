@@ -122,7 +122,7 @@ compile time.
 |---|---|---|
 | Primitives | `bool`, `char`, signed and unsigned integers, `isize`, `usize`, `f32`, `f64`, `String`, `str` | Scalar and text types. |
 | Wrappers | `Option<T>`, `Result<T, E>`, `Box<T>`, `Rc<T>`, `Arc<T>`, `Weak<T>` | Sum types and managed-runtime compatibility wrappers. |
-| Collections | `Vec<T>`, `HashMap<K, V>`, `HashSet<T>`, `BTreeMap<K, V>`, `VecDeque<T>`, `Range` | Core collection types. |
+| Collections | `Vec<T>`, `HashMap<K, V>`, `HashSet<T>`, `BTreeSet<T>`, `BTreeMap<K, V>`, `VecDeque<T>`, `Range` | Core collection types. |
 | Concurrency | `Sender<T>`, `Receiver<T>`, `Mutex<T>`, `WaitGroup`, `JoinHandle<T>` | Channel, lock, wait, and goroutine-handle types. |
 
 ## Runtime statements

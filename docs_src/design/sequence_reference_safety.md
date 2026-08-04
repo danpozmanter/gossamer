@@ -16,10 +16,10 @@ reasoning.
 | `&mut [T]` | Exclusive lexical view that may replace elements but not resize. |
 | `Vec<T>` | Owned growable contiguous value. |
 
-Array literals always create arrays. Use `Vec::from(array)` or `array.into()`
-for an explicit array-to-Vec conversion. `.slice(start, end)` is a checked
-copy and returns `Result<Vec<T>, errors::Error>`; it is not a borrowed
-sub-slice.
+Bracket literals create Vec values by default. Use `#[a, b]` for an explicit
+fixed array, or let an expected `[T; N]` type shape a plain bracket literal.
+`.slice(start, end)` is a checked copy and returns `Result<Vec<T>,
+errors::Error>`; it is not a borrowed sub-slice.
 
 Owned Vec assignment and by-value calls produce independent writable storage.
 Nested Vec elements are cloned recursively. Named Vec values sent to a

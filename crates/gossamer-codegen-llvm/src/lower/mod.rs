@@ -240,7 +240,7 @@ impl StringPool {
 /// `Unsupported` covers operand types we can't print without a
 /// Display impl (tuples, structs, Vec, HashMap, Option, Result,
 /// etc.). The LLVM backend turns this into a generic
-/// `BuildError::Unsupported` so the per-function driver routes
+/// `BuildError::InternalLoweringBug` so the per-function driver routes
 /// the body to Cranelift; Cranelift then bails with a user-facing
 /// message naming the specific operand kind.
 #[derive(Debug, Clone, Copy)]

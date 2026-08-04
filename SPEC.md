@@ -387,7 +387,8 @@ through `.as_bytes()` which returns an owned `Vec<u8>`.
 | `[T]` | Unsized slice. Ordinarily used as `&[T]` or `&mut [T]`. |
 | `HashMap<K, V>` | Hash map. Analogue of Go's `map[K]V`. |
 | `BTreeMap<K, V>` | Ordered map. |
-| `HashSet<T>` | Sets. |
+| `HashSet<T>` | Unordered set. |
+| `BTreeSet<T>` | Ordered set. |
 | `Sender<T>`, `Receiver<T>` | Channel endpoints. Always come as a pair from `channel<T>()`. |
 
 Arrays and Vec use value semantics. A writable Vec copy has independent
@@ -396,16 +397,20 @@ and Vec is the only sequence type that owns growable storage.
 
 #### Collection literals
 
-`[a, b, c]` and `[value; N]` always produce fixed `[T; N]` arrays. `N`
-must be a compile-time constant. An expected Vec or slice type never changes
-an array literal's identity. Construct a growable sequence explicitly:
+`[a, b, c]` creates a `Vec<T>` by default. Use `#[a, b, c]` and
+`#[value; N]` for fixed `[T; N]` arrays. `N` must be a compile-time constant.
+An expected fixed-array type can also shape `[a, b, c]` into `[T; N]`.
 
 ```gossamer
-let words: Vec<String> = Vec::from(["yes", "wow"])
-let zeros: Vec<i64> = Vec::from([0; 4])
+let words = ["yes", "wow"]
+let fixed = #["m", "n"]
+let zeros = #[0; 4]
 fn count(xs: &[String]) -> i64 { xs.len() }
-let names = ["m", "n"]
+let names: [String; 2] = ["m", "n"]
 count(&names)
+let map = {"ada": 36, "grace": 37}
+let set = #{"compiler", "runtime"}
+let ordered: BTreeSet<String> = #{"compiler", "runtime"}
 ```
 
 Different array lengths are different types and do not silently join to Vec.
@@ -2292,8 +2297,10 @@ includes the Rust macros a newcomer reaches for: there is no `vec!`,
 `map!`, `set!`, `write!`, `writeln!`, `assert!`, `assert_eq!`,
 `debug_assert!`, `include_str!`, `include_bytes!`, or `env!`.
 
-- Collection literals use the fixed-array form `[...]` / `[v; N]`. Use
-  `Vec::from([...])` for an owned growable sequence; there is no `vec!`.
+- Collection literals use `[a, b]` / `[v; N]` for `Vec` values by default.
+  Use `#[a, b]` / `#[v; N]` for fixed arrays, `{}` or `{k: v}` for
+  `HashMap`, and `#{a, b}` for set values; there is no `vec!`, `map!`, or
+  `set!`.
 - `assert(cond[, msg])` and `assert_eq(a, b[, msg])` are prelude
   *functions* called without a `!`; `std::testing` provides the
   non-panicking `check*` variants.

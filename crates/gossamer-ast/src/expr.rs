@@ -181,6 +181,10 @@ pub enum ExprKind {
     /// Tuple expression `(a, b, c)` with two or more elements. The empty tuple
     /// `()` is represented by `Literal(Literal::Unit)`.
     Tuple(Vec<Expr>),
+    /// Hash map literal `{key: value, ...}`.
+    MapLiteral(Vec<Expr>),
+    /// Hash set literal `#{a, b, c}`.
+    SetLiteral(Vec<Expr>),
     /// Struct construction represented with named fields internally.
     Struct {
         /// Path naming the struct.
@@ -192,8 +196,10 @@ pub enum ExprKind {
         /// Source form that produced this construction.
         syntax: StructExprSyntax,
     },
-    /// Array expression `[a, b, c]` or `[value; count]`.
+    /// Vec literal `[a, b, c]` or `[value; count]`.
     Array(ArrayExpr),
+    /// Fixed array literal `#[a, b, c]` or `#[value; count]`.
+    FixedArray(ArrayExpr),
     /// Range expression `lo..hi` / `lo..=hi`; bounds may be omitted.
     Range {
         /// Lower bound, if present.

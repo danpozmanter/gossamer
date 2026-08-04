@@ -13,6 +13,7 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
 | [`BTreeMap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BTreeMap` | Ordered map. |
+| [`BTreeSet`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BTreeSet` | Ordered set. |
 | [`HashMap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type HashMap` | Hash map backed by the swiss-table layout. |
 | [`HashSet`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type HashSet` | Unordered set built on top of `HashMap`. |
 | [`Vec`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Vec` | Growable contiguous sequence. |
@@ -58,6 +59,18 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 `HashSet` provides `new`, `insert`, `remove`, `contains`, `len`, `is_empty`,
 `clear`, `iter`, `to_vec`, `union`, `intersection`, `difference`,
 `symmetric_difference`, `is_subset`, `is_superset`, and `is_disjoint`.
+Use `#{a, b, c}` for a `HashSet` literal.
 
 As in Rust, `map` is an iterator method rather than a `HashSet` method. Use
 `set.iter().map(f)`. Calling `set.map(f)` is a type error.
+
+## `BTreeSet<T>` methods
+
+`BTreeSet` provides the same set method surface as `HashSet`, but iteration
+and `to_vec` return values in sorted order. Use an expected type to shape a
+set literal:
+
+```gos
+let ordered: BTreeSet<i64> = #{3, 1, 2, 1}
+println(ordered.to_vec())
+```

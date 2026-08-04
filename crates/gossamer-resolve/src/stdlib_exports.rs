@@ -270,6 +270,8 @@ pub const STDLIB_QUALIFIED: &[&str] = &[
     "collections::HashMap::pop",
     "collections::HashSet::from",
     "collections::HashSet::new",
+    "collections::BTreeSet::from",
+    "collections::BTreeSet::new",
     "collections::Vec::from",
     "collections::Vec::insert",
     "collections::Vec::push",

@@ -76,12 +76,7 @@ use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 
 impl<'a> Lowerer<'a> {
     fn store_typed_iter_value(&mut self, place: &Place, llvm_ty: &str, value: &str) {
-        let addr = if place.projection.is_empty() {
-            local_slot(place.local)
-        } else {
-            self.lower_place_address(place)
-        };
-        writeln!(self.out, "  store {llvm_ty} {value}, ptr {addr}").unwrap();
+        self.store_value_to_place(place, llvm_ty, value);
     }
 
     fn emit_typed_iter_call(
@@ -283,17 +278,7 @@ impl<'a> Lowerer<'a> {
                 // Stores the variant index at offset 0 of the
                 // enum's backing place. Matches the Cranelift
                 // convention: tag at slot 0, payload at +8.
-                let addr = if place.projection.is_empty() {
-                    local_slot(place.local)
-                } else {
-                    self.lower_place_address(place)
-                };
-                writeln!(
-                    self.out,
-                    "  store i64 {variant}, ptr {addr}",
-                    variant = *variant,
-                )
-                .unwrap();
+                self.store_value_to_place(place, "i64", &variant.to_string());
             }
         }
         Ok(())
@@ -412,31 +397,33 @@ impl<'a> Lowerer<'a> {
         // projected aggregate field - `let p = pts[i]`), memcpy
         // the flat storage rather than trying to load/store it
         // as a single scalar.
-        if place.projection.is_empty() && is_aggregate(self.tcx, dest_ty_mir) {
+        let leaf_ty = self.place_leaf_ty(place);
+        if is_aggregate(self.tcx, leaf_ty) {
             if let Rvalue::Use(Operand::Copy(src_place)) = rvalue {
                 let src_leaf_ty = self.place_leaf_ty(src_place);
                 if is_aggregate(self.tcx, src_leaf_ty) {
-                    let bytes =
-                        aggregate_storage_bytes(self.tcx, dest_ty_mir).unwrap_or_else(|| {
-                            u64::from(slot_count(self.tcx, dest_ty_mir).unwrap_or(1).max(1)) * 8
-                        });
+                    let bytes = aggregate_storage_bytes(self.tcx, leaf_ty).unwrap_or_else(|| {
+                        u64::from(slot_count(self.tcx, leaf_ty).unwrap_or(1).max(1)) * 8
+                    });
                     let src_addr = if src_place.projection.is_empty() {
                         local_slot(src_place.local)
                     } else {
                         self.lower_place_address(src_place)
                     };
+                    let dst_addr = if place.projection.is_empty() {
+                        local_slot(place.local)
+                    } else {
+                        self.lower_place_address(place)
+                    };
                     writeln!(
                         self.out,
-                        "  call void @llvm.memcpy.p0.p0.i64(ptr {dst}, ptr {src}, i64 {bytes}, i1 false)",
-                        dst = local_slot(place.local),
-                        src = src_addr,
+                        "  call void @llvm.memcpy.p0.p0.i64(ptr {dst_addr}, ptr {src_addr}, i64 {bytes}, i1 false)"
                     )
                     .unwrap();
                     return Ok(());
                 }
             }
         }
-        let leaf_ty = self.place_leaf_ty(place);
         let leaf_llvm = render_ty(self.tcx, leaf_ty);
         let value = self.lower_rvalue(rvalue, place.local)?;
         // The rvalue's LLVM type may differ from the destination
@@ -455,9 +442,8 @@ impl<'a> Lowerer<'a> {
         //     shaped (rare; format-precision args route this
         //     way), coerce double → i64.
         //
-        // The pre-0.5.0 silent Cranelift fallback masked these
-        // mismatches because Cranelift accepted them. Strict
-        // LLVM verification surfaces them; coerce here.
+        // Strict LLVM verification surfaces these mismatches, so
+        // coerce here.
         let rvalue_llvm = self.rvalue_llvm_ty(rvalue);
         // When the rvalue is void (e.g. `Use(Copy(_tmp))` where the
         // source local was assigned the result of a void-returning
@@ -521,9 +507,7 @@ impl<'a> Lowerer<'a> {
             )
             .unwrap();
         } else if self.place_is_packed_byte_element(place) {
-            let byte = self.fresh();
-            writeln!(self.out, "  {byte} = trunc {leaf_llvm} {value} to i8").unwrap();
-            writeln!(self.out, "  store i8 {byte}, ptr {addr}").unwrap();
+            self.store_value_to_place(place, &leaf_llvm, &value);
         } else {
             writeln!(self.out, "  store {leaf_llvm} {value}, ptr {addr}").unwrap();
         }

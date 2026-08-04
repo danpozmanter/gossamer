@@ -12,7 +12,7 @@ fn array_for_loop() -> i64 {
     let mut v = Vec::new()
     let mut i = 0
     while i < 30 {
-        v.push([i, i + 1])
+        v.push(#[i, i + 1])
         i += 1
     }
     let mut sum = 0
@@ -72,7 +72,7 @@ fn nested_literal_start() -> i64 {
     let mut v: Vec<[i64; 2]> = Vec::new()
     let mut i = 0
     while i < 30 {
-        v.push([i, i + 1])
+        v.push(#[i, i + 1])
         i += 1
     }
     let mut sum = 0

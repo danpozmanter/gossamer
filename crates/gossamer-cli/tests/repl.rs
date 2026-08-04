@@ -433,7 +433,7 @@ fn repl_bindings_show_the_concrete_type_of_a_clone() {
 fn repl_supports_reference_let_patterns_and_explains_invalid_syntax() {
     let out = run_repl(
         "let mut &d = m\n\
-         let mut m = [1, 2, 3, 4]\n\
+         let mut m = #[1, 2, 3, 4]\n\
          let &mut d = m\n\
          let value = 7\n\
          let &shared = &value\n\
@@ -526,6 +526,39 @@ fn repl_explain_owns_persistent_binding_inspection() {
             && explained.stdout.contains("type: i64"),
         "%e must inspect bindings: {}",
         explained.stdout
+    );
+
+    let stdlib = run_repl("%e HashMap\n%e Vec::from -d\n");
+    assert!(stdlib.success, "stderr: {}", stdlib.stderr);
+    assert!(
+        stdlib
+            .stderr
+            .contains("no persistent binding or declaration named `HashMap`")
+            && stdlib
+                .stderr
+                .contains("no persistent binding or declaration named `Vec::from`")
+            && !stdlib.stdout.contains("HashMap [type]")
+            && !stdlib.stdout.contains("Vec::from"),
+        "%e must not fall through to language or stdlib catalog entries: stdout: {}; stderr: {}",
+        stdlib.stdout,
+        stdlib.stderr
+    );
+}
+
+#[test]
+fn repl_explain_owns_persistent_declaration_inspection() {
+    let out = run_repl(
+        "fn wow() -> String { \"heyoooo\" }\n\
+         %i wow\n\
+         %e wow\n",
+    );
+    assert!(out.success, "stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("nothing found for `wow`")
+            && out.stdout.contains("wow [declaration]")
+            && out.stdout.contains("fn wow() -> String { \"heyoooo\" }"),
+        "%e should inspect declarations while %i remains catalog-only: {}",
+        out.stdout
     );
 }
 
@@ -669,13 +702,11 @@ fn repl_info_and_explain_details_always_follow_descriptions_with_examples() {
     let compact_info = info.stdout.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
         compact_info.contains(
-            "HashMap::from<K, V, const N: usize>(entries: {K: V} | [(K, V); N]) -> HashMap<K, V> [associated function]"
-        ) && info.stdout.contains("Creates a hash map from a map literal or key-value tuple array.")
+            "HashMap::from<K, V, const N: usize>(entries: [(K, V); N]) -> HashMap<K, V> [associated function]"
+        ) && info.stdout.contains("Creates a hash map from a fixed array of key-value tuples.")
             && info.stdout.contains("    Builtin")
-            && compact_info.contains("Example: let empty: HashMap<String, i64> = HashMap::from({});")
-            && compact_info.contains("let map: HashMap<String, i64> = HashMap::from({")
-            && compact_info.contains("\"one\": 1, \"two\":")
-            && compact_info.contains("2})")
+            && compact_info.contains("Example: let empty: HashMap<String, i64> = HashMap::from([]);")
+            && compact_info.contains("let map = {\"one\": 1, \"two\": 2};")
             && compact_info.contains("let also = HashMap::from([(\"one\", 1), (\"two\", 2)])"),
         "HashMap::from help is incomplete: {}",
         info.stdout
@@ -693,9 +724,9 @@ fn repl_info_and_explain_details_always_follow_descriptions_with_examples() {
 }
 
 #[test]
-fn repl_hashmap_from_accepts_map_literals_and_tuple_arrays() {
+fn repl_hashmap_literals_and_from_tuple_arrays_work() {
     let out = run_repl(
-        "let m = HashMap::from({\"a\": 1, \"b\": 2})\n\
+        "let m = {\"a\": 1, \"b\": 2}\n\
          let n = HashMap::from([(\"a\", 1), (\"b\", 2)])\n\
          m.len()\n\
          n.len()\n\
@@ -709,6 +740,18 @@ fn repl_hashmap_from_accepts_map_literals_and_tuple_arrays() {
             && lines.iter().filter(|line| **line == "Some(1)").count() >= 2,
         "HashMap::from forms did not expose matching entries: {}",
         out.stdout
+    );
+}
+
+#[test]
+fn repl_hashmap_from_rejects_map_literal_argument() {
+    let out = run_repl("let m: HashMap<String, i64> = HashMap::from({\"a\": 1})\n");
+    assert!(out.success, "stderr: {}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("expected `fixed array of key-value tuples`, found `HashMap<String, i64>`"),
+        "HashMap::from accepted a map literal argument: {}",
+        out.stderr
     );
 }
 
@@ -766,7 +809,7 @@ fn repl_info_vec_from_has_the_array_conversion_contract() {
     );
     assert!(
         out.stdout.contains(
-            "Creates a growable vector by moving values from a fixed-size array.\n    Builtin\n    Example: let values: Vec<i64> = Vec::from([1, 2, 3])"
+            "Creates a growable vector by moving values from a fixed-size array.\n    Builtin\n    Example: let values = Vec::from(#[1, 2, 3])"
         ),
         "Vec::from details are incomplete: {}",
         out.stdout
@@ -775,9 +818,15 @@ fn repl_info_vec_from_has_the_array_conversion_contract() {
         out.stdout
             .matches("Vec::from<T, const N: usize>(values: [T; N]) -> Vec<T> [associated function]")
             .count(),
-        3,
-        "%i and %e must resolve Vec::from through the same catalog entry: {}",
+        2,
+        "%i should resolve Vec::from, while %e should not use the catalog: {}",
         out.stdout
+    );
+    assert!(
+        out.stderr
+            .contains("no persistent binding or declaration named `Vec::from`"),
+        "%e should reject stdlib-only Vec::from: {}",
+        out.stderr
     );
 }
 
@@ -1203,7 +1252,7 @@ fn repl_mutable_assignment_persists_across_lines() {
 fn repl_rejects_rebinding_a_reference_with_its_referent() {
     // `let mut` permits assigning a new `&[i64; 2]`, not replacing the
     // reference binding with a bare `[i64; 2]` value.
-    let out = run_repl("let source = [1, 2]\nlet mut x = &source\nx = [2, 3]\n");
+    let out = run_repl("let source = #[1, 2]\nlet mut x = &source\nx = #[2, 3]\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr.contains("type mismatch"),
@@ -1221,16 +1270,16 @@ fn repl_rejects_rebinding_a_reference_with_its_referent() {
 #[test]
 fn repl_reference_rebind_rejects_temporaries_without_mutating_named_referents() {
     let out = run_repl(
-        "let a = [1, 2]\n\
-         let b = [3, 4]\n\
+        "let a = #[1, 2]\n\
+         let b = #[3, 4]\n\
          let mut c = &a\n\
          c = &b\n\
-         c = &[5, 6]\n\
-         let mut x = [10, 20]\n\
-         let mut y = [30, 40]\n\
+         c = &#[5, 6]\n\
+         let mut x = #[10, 20]\n\
+         let mut y = #[30, 40]\n\
          let mut r = &mut x\n\
          r = &mut y\n\
-         r = &mut [50, 60]\n\
+         r = &mut #[50, 60]\n\
          %bindings\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -1282,7 +1331,7 @@ fn repl_reference_rebind_rejects_temporaries_without_mutating_named_referents() 
 #[test]
 fn repl_cannot_mutate_immutable_value_through_mutable_reference_chain() {
     let out = run_repl(
-        "let a = [1, 2]\n\
+        "let a = #[1, 2]\n\
          let mut b = &a\n\
          let mut c = &mut b\n\
          c[0] = 0\n\
@@ -1393,22 +1442,20 @@ fn repl_bindings_show_immutable_values_without_let_prefix() {
 
 #[test]
 fn repl_bindings_show_full_inferred_types() {
-    let out = run_repl(
-        "let x = [1,2,3]\nlet words: Vec<String> = Vec::from([\"a\", \"b\"])\n%bindings\n",
-    );
+    let out = run_repl("let x = [1,2,3]\nlet words = [\"a\", \"b\"]\n%bindings\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout
             .lines()
-            .any(|line| line == "x: [i64; 3] = [1, 2, 3]"),
-        "fixed array binding should show full inferred type; stdout: {}",
+            .any(|line| line == "x: Vec<i64> = [1, 2, 3]"),
+        "Vec binding should show full inferred type; stdout: {}",
         out.stdout
     );
     assert!(
         out.stdout
             .lines()
             .any(|line| line == "words: Vec<String> = [\"a\", \"b\"]"),
-        "Vec<String> binding should show full annotated type; stdout: {}",
+        "Vec<String> binding should show full inferred type; stdout: {}",
         out.stdout
     );
 }
@@ -1417,10 +1464,10 @@ fn repl_bindings_show_full_inferred_types() {
 fn repl_bindings_preserve_reference_and_destructured_types() {
     let out = run_repl(
         "struct Pair { left: i64, right: String }\n\
-         let mut m = [1, 2, 3, 4]\n\
-         let shared_source = [5, 6]\n\
+         let mut m = #[1, 2, 3, 4]\n\
+         let shared_source = #[5, 6]\n\
          let shared = &shared_source\n\
-         let mut n = [7, 8]\n\
+         let mut n = #[7, 8]\n\
          let exclusive = &mut n\n\
          let (a, b) = (9, \"ten\")\n\
          let p = Pair { left: 11, right: \"twelve\" }\n\
@@ -1454,7 +1501,7 @@ fn repl_bindings_preserve_reference_and_destructured_types() {
 #[test]
 fn repl_bindings_show_owner_after_mut_ref_and_deref_copy() {
     let out = run_repl(
-        "let mut a = [1,2,3]\n\
+        "let mut a = #[1,2,3]\n\
          let b = &mut a\n\
          let c = *b\n\
          %b\n",
@@ -1489,7 +1536,7 @@ fn repl_replays_user_mut_self_methods() {
                  self.content[index] = value\n\
              }\n\
          }\n\
-         let mut m = Mutable { content: Vec::from([1, 2, 3]) }\n\
+         let mut m = Mutable { content: [1, 2, 3] }\n\
          m.change(1, 5)\n\
          println(m)\n\
          %b\n",
@@ -1514,7 +1561,7 @@ fn repl_replays_user_mut_self_methods() {
 #[test]
 fn repl_explain_resolves_binding_types_and_callable_method_capabilities() {
     let out = run_repl(
-        "let mut m = [1, 2, 3, 4]\n\
+        "let mut m = #[1, 2, 3, 4]\n\
          %e m -d\n\
          let r = &mut m\n\
          %e r -d\n",
@@ -1599,7 +1646,7 @@ fn repl_rejects_literal_let_patterns_and_remains_live() {
 
 #[test]
 fn repl_rejects_push_on_fixed_array_binding() {
-    let out = run_repl("let mut a = [1;3]\na.push(3)\n%bindings\n");
+    let out = run_repl("let mut a = #[1;3]\na.push(3)\n%bindings\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr
@@ -2989,7 +3036,7 @@ fn repl_reports_each_invalid_string_argument_once_with_its_value() {
 
 #[test]
 fn repl_reports_array_arguments_without_inference_variable_types() {
-    let out = run_repl("use std::strings\nstrings::slice([1, 2, 3], 1, 2)\n");
+    let out = run_repl("use std::strings\nstrings::slice(#[1, 2, 3], 1, 2)\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr.contains("found `array`"),
@@ -3206,7 +3253,7 @@ fn repl_reports_collection_argument_mismatches_in_expected_found_order() {
         "let mut v = Vec::from([1, 2])\n\
          v.push(\"x\")\n\
          v.push('a')\n\
-         v.push([3, 4, 5])\n\
+         v.push(#[3, 4, 5])\n\
          let mut strings = Vec::from([\"a\"])\n\
          strings.push(1)\n\
          let mut floats = Vec::from([1.0])\n\

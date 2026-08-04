@@ -991,7 +991,7 @@ impl<'a> Lowerer<'a> {
         let word_elem = self.vec_operand_has_word_elem(&args[0]);
         let byte_elem = !word_elem && self.vec_operand_has_byte_elem(&args[0]);
         if !word_elem && !byte_elem {
-            return Err(BuildError::Unsupported(
+            return Err(BuildError::InternalLoweringBug(
                 "inline Vec::swap requires statically word- or byte-sized elements",
             ));
         }
@@ -1079,7 +1079,7 @@ impl<'a> Lowerer<'a> {
         let word_elem = self.vec_operand_has_word_elem(&args[0]);
         let byte_elem = !word_elem && self.vec_operand_has_byte_elem(&args[0]);
         if !word_elem && !byte_elem {
-            return Err(BuildError::Unsupported(
+            return Err(BuildError::InternalLoweringBug(
                 "inline Vec::swap requires statically word- or byte-sized elements",
             ));
         }
@@ -1979,7 +1979,7 @@ impl<'a> Lowerer<'a> {
         let word_elem = self.vec_operand_has_word_elem(&args[0]);
         let byte_elem = !word_elem && self.vec_operand_has_byte_elem(&args[0]);
         if !word_elem && !byte_elem {
-            return Err(BuildError::Unsupported(
+            return Err(BuildError::InternalLoweringBug(
                 "inline Vec::pop requires statically word- or byte-sized elements",
             ));
         }

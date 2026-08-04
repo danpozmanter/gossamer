@@ -190,5 +190,10 @@ pub const COLLECTIONS: StdModule = StdModule {
             kind: StdItemKind::Type,
             doc: "Unordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods. Like Rust's `HashSet`, mapping is an iterator operation: use `set.iter().map(f)`, not `set.map(f)`.",
         },
+        StdItem {
+            name: "BTreeSet",
+            kind: StdItemKind::Type,
+            doc: "Ordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods.",
+        },
     ],
 };

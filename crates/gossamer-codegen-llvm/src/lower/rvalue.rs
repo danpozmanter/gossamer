@@ -207,7 +207,7 @@ impl<'a> Lowerer<'a> {
                 // dedicated in-place aggregate store. Reaching
                 // them here means the MIR used them as an
                 // operand, which the MVP doesn't cover.
-                Err(BuildError::Unsupported(
+                Err(BuildError::InternalLoweringBug(
                     "Aggregate / Repeat as non-assignment rvalue",
                 ))
             }
@@ -620,9 +620,9 @@ impl<'a> Lowerer<'a> {
         // skip this insertion. Multiple distinct signatures for the
         // same name make `opt` reject the IR with `invalid
         // redefinition of function`, which then drops the whole module
-        // into the Cranelift fallback (Result/Option constructors with
+        // into an LLVM verifier failure. Result/Option constructors with
         // mixed `i64` / `ptr` / `void` payload args are the canonical
-        // trigger).
+        // trigger.
         let needle = format!("@{name}(");
         if !self.runtime_refs.iter().any(|d| d.contains(&needle)) {
             self.runtime_refs
@@ -729,11 +729,15 @@ impl<'a> Lowerer<'a> {
                 return self.lower_runtime_call_intrinsic(other, args, dest_local);
             }
             _ => {
-                return Err(BuildError::Unsupported("unknown CallIntrinsic name"));
+                return Err(BuildError::InternalLoweringBug(
+                    "unknown CallIntrinsic name",
+                ));
             }
         };
         if args.len() != expected_arity {
-            return Err(BuildError::Unsupported("CallIntrinsic arity mismatch"));
+            return Err(BuildError::InternalLoweringBug(
+                "CallIntrinsic arity mismatch",
+            ));
         }
         // Ensure a `declare` for this intrinsic lands in the
         // module header.

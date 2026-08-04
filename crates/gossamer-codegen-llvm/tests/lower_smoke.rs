@@ -470,11 +470,35 @@ fn llvm_dynamic_string_len_calls_scalar_length_helper() {
 }
 
 #[test]
-fn llvm_build_error_displays_unsupported_kind() {
-    let err = BuildError::Unsupported("test only");
+fn llvm_build_error_displays_internal_lowering_bug() {
+    let err = BuildError::InternalLoweringBug("test only");
     let msg = format!("{err}");
-    assert!(msg.contains("unsupported"));
+    assert!(msg.contains("internal lowering bug"));
     assert!(msg.contains("test only"));
+}
+
+#[test]
+fn llvm_backend_does_not_expose_unsupported_lowering_contract() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest_dir.parent().unwrap().parent().unwrap();
+    let files = [
+        workspace.join("crates/gossamer-codegen-llvm/src/emit.rs"),
+        workspace.join("crates/gossamer-codegen-llvm/src/lib.rs"),
+        workspace.join("crates/gossamer-cli/src/cmd/build.rs"),
+    ];
+    for file in files {
+        let text = std::fs::read_to_string(&file).expect("read source file");
+        assert!(
+            !text.contains("BuildError::Unsupported"),
+            "{} still names the removed backend gap variant",
+            file.display()
+        );
+        assert!(
+            !text.contains("cannot yet lower"),
+            "{} still exposes the old native-codegen diagnostic",
+            file.display()
+        );
+    }
 }
 
 #[test]

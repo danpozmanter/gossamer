@@ -95,6 +95,22 @@ let found = Lookup::Found {
 }
 ```
 
+## Collection Literals
+
+Use `[a, b]` for `Vec<T>`, `#[a, b]` or `#[value; N]` for fixed arrays,
+`{key: value}` and `{}` for `HashMap<K, V>`, and `#{a, b}` for `HashSet<T>`.
+An expected `BTreeSet<T>` type shapes the same set literal into an ordered
+set.
+
+```gos
+let values = [1, 2, 3]
+let fixed = #[1, 2, 3]
+let map = {"ada": 36, "grace": 37}
+let empty: HashMap<String, i64> = {}
+let set = #{"parse", "lower", "parse"}
+let ordered: BTreeSet<String> = #{"lower", "parse"}
+```
+
 ## Ownership And References
 
 Gossamer does not expose Rust's ownership-by-move model or lifetime

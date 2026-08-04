@@ -172,7 +172,7 @@ impl Walker<'_> {
                 self.walk_expr(base);
                 self.walk_expr(index);
             }
-            ExprKind::Tuple(parts) => {
+            ExprKind::Tuple(parts) | ExprKind::MapLiteral(parts) | ExprKind::SetLiteral(parts) => {
                 for part in parts {
                     self.walk_expr(part);
                 }
@@ -187,7 +187,7 @@ impl Walker<'_> {
                     self.walk_expr(base);
                 }
             }
-            ExprKind::Array(arr) => match arr {
+            ExprKind::Array(arr) | ExprKind::FixedArray(arr) => match arr {
                 ArrayExpr::List(elems) => {
                     for elem in elems {
                         self.walk_expr(elem);

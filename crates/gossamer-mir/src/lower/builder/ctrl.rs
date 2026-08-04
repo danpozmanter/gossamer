@@ -2588,7 +2588,10 @@ impl<'a> Builder<'a> {
                 // handle type is erased to `i64`; recover the element type
                 // from the receiver's HIR generic so the loop binds it.
                 "to_vec" | "iter"
-                    if self.runtime_kind_from_ty(receiver.ty) == Some("collections::HashSet") =>
+                    if matches!(
+                        self.runtime_kind_from_ty(receiver.ty),
+                        Some("collections::HashSet" | "collections::BTreeSet")
+                    ) =>
                 {
                     Some(match self.set_elem_kind_of(receiver) {
                         MapKeyKind::I64 => self.tcx.int_ty(gossamer_types::IntTy::I64),
@@ -2630,12 +2633,14 @@ impl<'a> Builder<'a> {
         // iterations on the VM, an undefined `@next` on the compiled tier).
         // Snapshot it to a sorted `Vec<T>` - the same order `set.iter()` /
         // `set.to_vec()` yield - and iterate that.
-        if self.runtime_kind_from_ty(probe_expr.ty) == Some("collections::HashSet")
-            || (matches!(&probe_expr.kind, HirExprKind::Path { .. })
-                && self
-                    .receiver_local_from_path(probe_expr)
-                    .and_then(|l| self.local_runtime_kind.get(&l).copied())
-                    == Some("collections::HashSet"))
+        if matches!(
+            self.runtime_kind_from_ty(probe_expr.ty),
+            Some("collections::HashSet" | "collections::BTreeSet")
+        ) || (matches!(&probe_expr.kind, HirExprKind::Path { .. })
+            && self
+                .receiver_local_from_path(probe_expr)
+                .and_then(|l| self.local_runtime_kind.get(&l).copied())
+                .is_some_and(|rk| matches!(rk, "collections::HashSet" | "collections::BTreeSet")))
         {
             let is_i64 = matches!(self.set_elem_kind_of(probe_expr), MapKeyKind::I64);
             let elem_ty = if is_i64 {
@@ -3002,8 +3007,10 @@ impl<'a> Builder<'a> {
                         // whose handle type is erased to `i64`; recover the
                         // element kind from the receiver's HIR generic.
                         if matches!(name.name.as_str(), "to_vec" | "iter")
-                            && self.runtime_kind_from_ty(receiver.ty)
-                                == Some("collections::HashSet")
+                            && matches!(
+                                self.runtime_kind_from_ty(receiver.ty),
+                                Some("collections::HashSet" | "collections::BTreeSet")
+                            )
                         {
                             for_vec_elem = Some(match self.set_elem_kind_of(receiver) {
                                 MapKeyKind::I64 => self.tcx.int_ty(gossamer_types::IntTy::I64),

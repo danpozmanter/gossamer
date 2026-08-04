@@ -598,6 +598,62 @@ fn main() {
 }
 
 #[test]
+fn llvm_projected_destinations_accept_calls_aggregates_and_collection_literals() {
+    let src = r#"
+use std::collections::{HashMap, HashSet, BTreeSet}
+
+struct Inner {
+    xs: [i64; 2],
+    name: String,
+}
+
+struct Boxy {
+    inner: Inner,
+    map: HashMap<String, i64>,
+    set: HashSet<i64>,
+    tree: BTreeSet<i64>,
+}
+
+fn make_name(n: i64) -> String {
+    format!("n={}", n)
+}
+
+fn make_pair(a: i64) -> [i64; 2] {
+    #[a, a + 1]
+}
+
+fn main() {
+    let mut b = Boxy {
+        inner: Inner { xs: #[0, 0], name: "" },
+        map: {},
+        set: #{},
+        tree: BTreeSet::new(),
+    }
+    b.inner.name = make_name(7)
+    b.inner.xs = make_pair(3)
+    b.inner.xs[1] = 9
+    b.map.insert("a", b.inner.xs[0])
+    b.set.insert(b.inner.xs[1])
+    b.tree.insert(4)
+    println!("{} {} {} {}", b.inner.name, b.map.get("a").unwrap(), b.set.contains(9), b.tree.contains(4))
+}
+"#;
+    let expected = "n=7 3 true true\n";
+    let dir = fresh_dir("llvm_projected_dest_literals");
+    let path = write_source(&dir, "llvm_projected_dest_literals", src);
+    let vm = run_vm(&path);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, expected);
+    let scratch = dir.join("rel");
+    fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("llvm release build");
+    let native = run_native(&bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(native.0, expected);
+}
+
+#[test]
 fn llvm_tuple_return_from_nested_loop_keeps_second_slot() {
     // `return (a, b)` from inside a nested loop used to drop the
     // second slot - the temporary `(Var, Var)` tuple's alloca

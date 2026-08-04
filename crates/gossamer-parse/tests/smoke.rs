@@ -107,6 +107,23 @@ fn generic_arg_list_on_user_type_still_parses() {
     assert_eq!(sf.items.len(), 1);
 }
 
+#[test]
+fn fixed_array_literal_at_statement_start_is_not_parsed_as_attribute() {
+    let source = "fn fixed() -> [i64; 2] {\n    #[1, 2]\n}\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("fixed_literal.gos", source.to_string());
+    let (sf, diags) = parse_source_file(source, file);
+    for diag in &diags {
+        eprintln!("  {diag}");
+    }
+    assert!(
+        diags.is_empty(),
+        "fixed array literal must parse cleanly; got {} diag(s)",
+        diags.len()
+    );
+    assert_eq!(sf.items.len(), 1);
+}
+
 /// A leading UTF-8 BOM (the Windows-editor default) is stripped at the
 /// parse entry, so a BOM-prefixed file parses identically to a plain
 /// one rather than choking on the marker.

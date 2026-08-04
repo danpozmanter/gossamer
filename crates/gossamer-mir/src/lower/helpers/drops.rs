@@ -3637,7 +3637,10 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             | "HashMap::with_capacity"
             | "collections::HashMap::with_capacity" => Some("gos_rt_map_free"),
             "Vec::new" | "Vec::with_capacity" => Some("gos_rt_vec_free"),
-            "HashSet::new" | "collections::HashSet::new" => Some("gos_rt_set_free"),
+            "HashSet::new"
+            | "collections::HashSet::new"
+            | "BTreeSet::new"
+            | "collections::BTreeSet::new" => Some("gos_rt_set_free"),
             "BTreeMap::new" | "collections::BTreeMap::new" => Some("gos_rt_btmap_free"),
             "gos_rt_deque_new" | "VecDeque::new" | "collections::VecDeque::new" => {
                 Some("gos_rt_deque_free")

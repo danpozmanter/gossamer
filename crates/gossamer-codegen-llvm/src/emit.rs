@@ -38,13 +38,11 @@ pub struct NativeObject {
     pub bytes: Vec<u8>,
 }
 
-/// Reasons the LLVM backend refuses a build. The driver uses
-/// `Unsupported` as a signal to fall back to the Cranelift
-/// pipeline for programs the MVP doesn't cover.
+/// Reasons the LLVM backend refuses a build after frontend validation.
 #[derive(Debug)]
 pub enum BuildError {
-    /// MIR construct not yet lowered by this backend.
-    Unsupported(&'static str),
+    /// Valid MIR reached an impossible or unimplemented LLVM lowering shape.
+    InternalLoweringBug(&'static str),
     /// `llc` not reachable or returned non-zero.
     Tool(String),
     /// IR rendering or temp-file I/O failed.
@@ -54,7 +52,9 @@ pub enum BuildError {
 impl std::fmt::Display for BuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Unsupported(what) => write!(f, "llvm backend: unsupported: {what}"),
+            Self::InternalLoweringBug(what) => {
+                write!(f, "llvm backend internal lowering bug: {what}")
+            }
             Self::Tool(msg) => write!(f, "llvm backend: tool: {msg}"),
             Self::Io(err) => write!(f, "llvm backend: {err}"),
         }
@@ -132,17 +132,16 @@ const TBAA_METADATA: &str = r#"!1 = !{!"gos_tbaa_root"}
 !5 = !{!3, !3, i64 0}
 "#;
 
-/// Outcome of a per-function fallback build.
+/// Outcome of an LLVM object build.
 ///
-/// `object` is the LLVM-emitted object containing every body
-/// the lowerer accepted. `fallback_bodies` is the list of body
-/// names the lowerer rejected - the driver feeds those into the
-/// Cranelift backend, then links the two objects together.
+/// `fallback_bodies` is retained for API compatibility with older
+/// drivers. LLVM lowering bugs are now hard errors, so successful
+/// builds leave it empty.
 #[derive(Debug, Clone)]
 pub struct CompileOutcome {
     /// Object file with the LLVM-lowered bodies.
     pub object: NativeObject,
-    /// Names of bodies the LLVM backend declined to lower.
+    /// Always empty for successful LLVM builds.
     pub fallback_bodies: Vec<String>,
 }
 
@@ -197,10 +196,8 @@ pub fn compile_to_object_at_path(
 /// Lowers `bodies` through the standard LLVM pipeline and returns the
 /// resulting `.ll` IR as a UTF-8 string instead of writing an object.
 /// Used by snapshot / smoke tests that need to inspect the IR shape
-/// without driving `opt`+`llc` over it. `allow_fallback` mirrors
-/// [`compile_to_object`]: when `false`, an unsupported body returns
-/// `Err(BuildError::Unsupported)` instead of a Cranelift-stub
-/// declaration.
+/// without driving `opt`+`llc` over it. `allow_fallback` is retained
+/// for API compatibility; LLVM lowering bugs are always hard errors.
 pub fn render_ir_to_string(bodies: &[Body], tcx: &TyCtxt, allow_fallback: bool) -> Result<String> {
     let tmp_dir = pipeline_tmp_dir()?;
     let ll_path = tmp_dir.join("unit.ll");
@@ -546,7 +543,6 @@ struct ModuleCtx<'a> {
     param_tys_by_name: &'a std::collections::HashMap<String, Vec<gossamer_types::Ty>>,
     capture_summary: &'a gossamer_mir::CaptureSummary,
     triple: &'a str,
-    allow_fallback: bool,
 }
 
 /// Module data layout for 64-bit native targets: the LLVM defaults with one
@@ -662,16 +658,8 @@ fn codegen_chunks(bodies: &[Body], requested_chunks: usize) -> Vec<Vec<usize>> {
 /// Renders all bodies in `chunk_indices` as a single LLVM IR module.
 ///
 /// Bodies not in the chunk get `declare` stubs; bodies in the chunk get
-/// `define`. Falls-back bodies (unsupported lowering) are appended to
-/// `fallback_bodies` and emitted as `declare` stubs instead of `define`.
-/// The C `@main` shim is included whenever `main` appears in `chunk_indices`,
-/// regardless of whether it was LLVM-lowered or fell back: when it falls
-/// back, `@"gos_main"` is an extern resolved at link time by Cranelift.
-fn render_chunk_module(
-    chunk_indices: &[usize],
-    ctx: &ModuleCtx<'_>,
-    fallback_bodies: &mut Vec<String>,
-) -> Result<String, BuildError> {
+/// `define`. Lowering bugs are returned immediately.
+fn render_chunk_module(chunk_indices: &[usize], ctx: &ModuleCtx<'_>) -> Result<String, BuildError> {
     let chunk_set: std::collections::HashSet<usize> = chunk_indices.iter().copied().collect();
 
     let string_pool =
@@ -680,7 +668,6 @@ fn render_chunk_module(
     let mut body_irs: Vec<String> = Vec::new();
     let mut globals_raw: Vec<String> = Vec::new();
     let mut thunk_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut chunk_fallback_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut main_idx: Option<usize> = None;
 
     // Handler ABI bridge: user functions whose address is
@@ -710,22 +697,8 @@ fn render_chunk_module(
                 collect_thunk_names_in_body(body, &mut thunk_names);
                 body_irs.push(text);
             }
-            Err(BuildError::Unsupported(msg)) => {
-                if want_strict_lowering() {
-                    return Err(BuildError::Unsupported(msg));
-                }
-                if ctx.allow_fallback {
-                    if std::env::var("GOS_LLVM_TRACE").is_ok() {
-                        eprintln!(
-                            "llvm backend: routing `{}` to Cranelift fallback ({msg})",
-                            body.name,
-                        );
-                    }
-                    fallback_bodies.push(body.name.clone());
-                    chunk_fallback_set.insert(idx);
-                } else {
-                    return Err(BuildError::Unsupported(msg));
-                }
+            Err(BuildError::InternalLoweringBug(msg)) => {
+                return Err(BuildError::InternalLoweringBug(msg));
             }
             Err(e) => return Err(e),
         }
@@ -743,9 +716,9 @@ fn render_chunk_module(
     }
     writeln!(out).unwrap();
 
-    // Extern declares for bodies outside the chunk plus fallback bodies inside it.
+    // Extern declares for bodies outside the chunk.
     for (i, body) in ctx.all_bodies.iter().enumerate() {
-        if !chunk_set.contains(&i) || chunk_fallback_set.contains(&i) {
+        if !chunk_set.contains(&i) {
             let decl = extern_declare(body, ctx.tcx);
             out.push_str(decl.trim_end());
             writeln!(out).unwrap();
@@ -921,7 +894,7 @@ fn compile_bodies_parallel_incremental(
     bodies: &[Body],
     tcx: &TyCtxt,
     obj_dir: &std::path::Path,
-    allow_fallback: bool,
+    _allow_fallback: bool,
 ) -> Result<(Vec<PathBuf>, String, Vec<String>)> {
     let triple = host_triple();
     let llvm_triple = llvm_target_triple_for(&triple);
@@ -968,7 +941,6 @@ fn compile_bodies_parallel_incremental(
         param_tys_by_name: &param_tys_by_name,
         capture_summary: &capture_summary,
         triple: &llvm_triple,
-        allow_fallback,
     };
 
     // Partition all bodies into N chunks. Chunk assignment is deterministic
@@ -991,7 +963,7 @@ fn compile_bodies_parallel_incremental(
     let mut result_objects: Vec<(usize, PathBuf)> = Vec::new(); // (chunk_idx, path)
     // (chunk_idx, body_indices, cache_key, ll_path, obj_path)
     let mut chunks_to_compile: Vec<(usize, Vec<usize>, String, PathBuf, PathBuf)> = Vec::new();
-    let mut fallback_bodies: Vec<String> = Vec::new();
+    let fallback_bodies: Vec<String> = Vec::new();
 
     for (chunk_idx, body_indices) in body_chunks.into_iter().enumerate() {
         let obj_path = obj_dir.join(format!("chunk{chunk_idx}.o"));
@@ -1024,12 +996,13 @@ fn compile_bodies_parallel_incremental(
     // Phase 2 - render chunk .ll files (serial)
     // ---------------------------------------------------------------
     for (_, body_indices, _, ll_path, _) in &chunks_to_compile {
-        let ir =
-            render_chunk_module(body_indices, &ctx, &mut fallback_bodies).map_err(|e| match e {
-                BuildError::Unsupported(msg) => anyhow!("llvm backend: unsupported: {msg}"),
-                BuildError::Tool(msg) => anyhow!("llvm backend: tool: {msg}"),
-                BuildError::Io(err) => err,
-            })?;
+        let ir = render_chunk_module(body_indices, &ctx).map_err(|e| match e {
+            BuildError::InternalLoweringBug(msg) => {
+                anyhow!("llvm backend internal lowering bug: {msg}")
+            }
+            BuildError::Tool(msg) => anyhow!("llvm backend: tool: {msg}"),
+            BuildError::Io(err) => err,
+        })?;
         std::fs::write(ll_path, ir.as_bytes())
             .with_context(|| format!("writing {}", ll_path.display()))?;
     }
@@ -1113,13 +1086,9 @@ fn dump_mir(bodies: &[Body], _tcx: &TyCtxt) {
     }
 }
 
-/// Per-function fallback build. Each body is attempted
-/// individually; bodies the lowerer rejects are returned in
-/// `fallback_bodies` so the caller can route them through the
-/// Cranelift backend. The LLVM-emitted object includes only the
-/// accepted bodies plus an `extern` declaration for each
-/// fallback symbol so the linker can resolve them against the
-/// Cranelift-built companion object.
+/// LLVM build entry point with the legacy fallback-shaped return
+/// type. Lowering bugs are hard errors, so successful calls return
+/// an empty `fallback_bodies` list.
 pub fn compile_with_fallback(bodies: &[Body], tcx: &TyCtxt) -> Result<CompileOutcome> {
     if std::env::var("GOS_LLVM_DUMP_MIR").is_ok() {
         dump_mir(bodies, tcx);
@@ -1145,11 +1114,10 @@ pub fn compile_with_fallback(bodies: &[Body], tcx: &TyCtxt) -> Result<CompileOut
 
 /// Path-oriented variant of [`compile_with_fallback`].
 ///
-/// Writes per-body LLVM objects into `obj_dir` and returns the list
-/// of object paths, the host triple, and the names of bodies that
-/// fell back to Cranelift. When the program has fewer than two bodies
-/// or DWARF emission is requested, the function falls back to the
-/// serial single-file pipeline for simplicity.
+/// Writes LLVM objects into `obj_dir` and returns the list of object
+/// paths, the host triple, and an empty fallback-body list. When the
+/// program has fewer than two bodies or DWARF emission is requested,
+/// the function uses the serial single-file pipeline for simplicity.
 ///
 /// The parallel path compiles each body in its own mini `.ll` module
 /// and runs `opt` + `llc` concurrently across up to
@@ -1191,14 +1159,13 @@ pub fn compile_with_fallback_at_path(
 /// directly to a temp body file as they're lowered, then spliced
 /// into the final IR file behind the header / globals / pool.
 ///
-/// Returns the names of bodies that fell back to Cranelift when
-/// `allow_fallback` is true. Bodies that emit an LLVM-internal
-/// tool error always abort regardless of `allow_fallback`.
+/// Returns an empty body list on success. `allow_fallback` is retained
+/// for API compatibility; lowering bugs always abort.
 fn render_module_to_path(
     bodies: &[Body],
     tcx: &TyCtxt,
     ll_path: &std::path::Path,
-    allow_fallback: bool,
+    _allow_fallback: bool,
 ) -> Result<Vec<String>> {
     use std::io::{BufWriter, Write as _};
 
@@ -1232,7 +1199,7 @@ fn render_module_to_path(
     }
 
     let mut globals: Vec<String> = Vec::new();
-    let mut fallback_bodies: Vec<String> = Vec::new();
+    let fallback_bodies: Vec<String> = Vec::new();
     let string_pool = std::rc::Rc::new(std::cell::RefCell::new(StringPool::default()));
 
     // Inter-procedural capture summary: feeds the cleanup pass so
@@ -1261,46 +1228,12 @@ fn render_module_to_path(
                     .with_context(|| format!("writing {}", body_path.display()))?;
                 globals.extend(lowerer.take_module_globals());
             }
-            Err(BuildError::Unsupported(msg)) => {
-                // `GOSSAMER_FAIL_ON_LLVM_FALLBACK=1` turns the
-                // silent per-fn Cranelift fallback into a hard
-                // error. Used in CI to gate "must stay on the
-                // LLVM backend" programs against silent
-                // regressions like the 2026-04-28 / 2026-04-30
-                // spectral-norm slowdowns where a malformed
-                // `runtime_refs` entry kicked the body off LLVM
-                // without surfacing in any human-readable signal.
-                if want_strict_lowering() {
-                    let _ = std::fs::remove_file(&body_path);
-                    return Err(anyhow!(
-                        "llvm backend: `{fn_name}` would fall back to Cranelift ({msg}) but \
-                         strict-lowering is enabled (set_strict_lowering(true) or \
-                         GOSSAMER_FAIL_ON_LLVM_FALLBACK=1)",
-                        fn_name = body.name,
-                    ));
-                }
-                if allow_fallback {
-                    if std::env::var("GOS_LLVM_TRACE").is_ok() {
-                        eprintln!(
-                            "llvm backend: routing `{name}` to Cranelift fallback ({msg})",
-                            name = body.name,
-                        );
-                    }
-                    fallback_bodies.push(body.name.clone());
-                    let decl = extern_declare(body, tcx);
-                    body_w
-                        .write_all(decl.as_bytes())
-                        .with_context(|| format!("writing {}", body_path.display()))?;
-                    body_w
-                        .write_all(b"\n")
-                        .with_context(|| format!("writing {}", body_path.display()))?;
-                } else {
-                    let _ = std::fs::remove_file(&body_path);
-                    return Err(anyhow!(
-                        "llvm backend: cannot lower `{fn_name}`: {msg}",
-                        fn_name = body.name,
-                    ));
-                }
+            Err(BuildError::InternalLoweringBug(msg)) => {
+                let _ = std::fs::remove_file(&body_path);
+                return Err(anyhow!(
+                    "llvm backend internal lowering bug in `{fn_name}`: {msg}",
+                    fn_name = body.name,
+                ));
             }
             Err(BuildError::Tool(msg)) => {
                 let _ = std::fs::remove_file(&body_path);
@@ -1394,9 +1327,8 @@ fn render_module_to_path(
     writeln!(ll_w)?;
     // Shape-validate each accumulated global. The `runtime_refs`
     // BTreeSet inside `Lowerer` accepts arbitrary strings; a
-    // malformed entry corrupts the IR string and silently flips
-    // affected bodies to the Cranelift fallback. Each entry must
-    // be either an `@symbol = ...` definition or a `declare ...`
+    // malformed entry corrupts the IR string. Each entry must be
+    // either an `@symbol = ...` definition or a `declare ...`
     // function declaration.
     // Dedupe declarations by symbol name: each lowerer body
     // accumulates its own `declare` lines, but two bodies that call
@@ -1486,16 +1418,8 @@ static DEBUG_INFO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 /// header, and forces a sorted symbol table on the output.
 static REPRODUCIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Process-wide flag toggled by [`set_strict_lowering`] requesting
-/// that any `BuildError::Unsupported` produce a top-level error
-/// rather than the historical per-function Cranelift fallback.
-/// Default-on as of 0.8.0: any `BuildError::Unsupported` from a
-/// body lowering is a hard error. The historical silent Cranelift
-/// fallback path is forbidden under the user's "no fallbacks"
-/// policy - if something doesn't lower, it's a compiler bug, not
-/// a runtime tier-mismatch. Test runners that need to exercise
-/// the legacy permissive path can call
-/// [`set_strict_lowering`] with `false`.
+/// Process-wide flag retained for embedding callers. Native lowering bugs are
+/// always hard errors; this switch no longer enables a per-function fallback.
 static STRICT_LOWERING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// Process-wide flag toggled by [`set_race_instrumentation`]. When on,
@@ -1571,13 +1495,8 @@ pub fn reproducible_enabled() -> bool {
     want_reproducible()
 }
 
-/// Enables (or disables) strict-lowering mode. When on, the LLVM
-/// emitter treats any `BuildError::Unsupported` as a top-level
-/// error and refuses to fall back to Cranelift per-function. The
-/// `gos build` CLI sets this true for itself so the canonical-
-/// LLVM policy holds without touching env vars (the workspace
-/// forbids `unsafe_code` in the CLI crate, so `std::env::set_var`
-/// is unavailable there).
+/// Enables or disables the legacy strict-lowering flag for embedding callers.
+/// Native lowering bugs remain hard errors regardless of this value.
 pub fn set_strict_lowering(enabled: bool) {
     STRICT_LOWERING.store(enabled, std::sync::atomic::Ordering::Release);
 }
@@ -1596,18 +1515,6 @@ pub fn set_race_instrumentation(enabled: bool) {
 #[must_use]
 pub fn want_race_instrumentation() -> bool {
     RACE_INSTRUMENTATION.load(std::sync::atomic::Ordering::Acquire)
-}
-
-/// `true` when strict lowering is requested - either by
-/// [`set_strict_lowering`] or by the legacy
-/// `GOSSAMER_FAIL_ON_LLVM_FALLBACK` env var.
-fn want_strict_lowering() -> bool {
-    if STRICT_LOWERING.load(std::sync::atomic::Ordering::Acquire) {
-        return true;
-    }
-    std::env::var("GOSSAMER_FAIL_ON_LLVM_FALLBACK")
-        .ok()
-        .is_some_and(|v| !v.is_empty() && v != "0")
 }
 
 /// Optimisation profile selector for [`set_opt_profile`].
@@ -1754,10 +1661,9 @@ fn emit_dwarf_metadata(out: &mut String, bodies: &[Body]) {
     }
 }
 
-/// Renders an `extern declare` for a body LLVM is offloading
-/// to the Cranelift fallback. The signature must match what
-/// the Cranelift backend will emit for the same MIR body so the
-/// linker can hook them up.
+/// Renders an `extern declare` for a body outside the current
+/// chunk. The signature must match what its defining LLVM chunk
+/// emits so the linker can hook them up.
 /// Verifies a single module-level global declaration string has
 /// the structural shape LLVM IR expects. We don't parse the full
 /// grammar - we only check the prefix tokens an entry must lead

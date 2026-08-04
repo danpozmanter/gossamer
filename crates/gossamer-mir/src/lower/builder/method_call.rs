@@ -156,7 +156,10 @@ impl<'a> Builder<'a> {
             } = &receiver.kind
             && intersection.name == "intersection"
             && intersection_args.len() == 1
-            && self.runtime_kind_from_ty(left.ty) == Some("collections::HashSet")
+            && matches!(
+                self.runtime_kind_from_ty(left.ty),
+                Some("collections::HashSet" | "collections::BTreeSet")
+            )
         {
             let right = &intersection_args[0];
             let left_local = self.lower_expr(left)?;
@@ -2386,21 +2389,45 @@ impl<'a> Builder<'a> {
             (Some("regex::Pattern"), "replace") => Some("gos_rt_regex_replace"),
             (Some("regex::Pattern"), "replace_all") => Some("gos_rt_regex_replace_all"),
             (Some("regex::Pattern"), "split") => Some("gos_rt_regex_split"),
-            (Some("collections::HashSet"), "insert") => Some("gos_rt_set_insert"),
-            (Some("collections::HashSet"), "contains") => Some("gos_rt_set_contains"),
-            (Some("collections::HashSet"), "remove") => Some("gos_rt_set_remove"),
-            (Some("collections::HashSet"), "len") => Some("gos_rt_set_len"),
-            (Some("collections::HashSet"), "union") => Some("gos_rt_set_union"),
-            (Some("collections::HashSet"), "intersection") => Some("gos_rt_set_intersection"),
-            (Some("collections::HashSet"), "difference") => Some("gos_rt_set_difference"),
-            (Some("collections::HashSet"), "symmetric_difference") => {
+            (Some("collections::HashSet" | "collections::BTreeSet"), "insert") => {
+                Some("gos_rt_set_insert")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "contains") => {
+                Some("gos_rt_set_contains")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "remove") => {
+                Some("gos_rt_set_remove")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "len") => {
+                Some("gos_rt_set_len")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "union") => {
+                Some("gos_rt_set_union")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "intersection") => {
+                Some("gos_rt_set_intersection")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "difference") => {
+                Some("gos_rt_set_difference")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "symmetric_difference") => {
                 Some("gos_rt_set_symmetric_difference")
             }
-            (Some("collections::HashSet"), "is_subset") => Some("gos_rt_set_is_subset"),
-            (Some("collections::HashSet"), "is_superset") => Some("gos_rt_set_is_superset"),
-            (Some("collections::HashSet"), "is_disjoint") => Some("gos_rt_set_is_disjoint"),
-            (Some("collections::HashSet"), "to_vec" | "iter") => Some("gos_rt_set_to_vec"),
-            (Some("collections::HashSet"), "clear") => Some("gos_rt_set_clear"),
+            (Some("collections::HashSet" | "collections::BTreeSet"), "is_subset") => {
+                Some("gos_rt_set_is_subset")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "is_superset") => {
+                Some("gos_rt_set_is_superset")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "is_disjoint") => {
+                Some("gos_rt_set_is_disjoint")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "to_vec" | "iter") => {
+                Some("gos_rt_set_to_vec")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "clear") => {
+                Some("gos_rt_set_clear")
+            }
             (Some("collections::VecDeque"), "push_back") => Some("gos_rt_deque_push_back"),
             (Some("collections::VecDeque"), "push_front") => Some("gos_rt_deque_push_front"),
             (Some("collections::VecDeque"), "pop_front") => Some("gos_rt_deque_pop_front"),
@@ -2571,6 +2598,13 @@ impl<'a> Builder<'a> {
         let pinned = self.dispatch_pinned_ty(rt, receiver, receiver_local, ty);
         let dest = self.fresh(pinned);
         if let Some(k) = self.dispatch_dest_kind(rt) {
+            let k = if k == "collections::HashSet"
+                && self.runtime_kind_from_ty(receiver.ty) == Some("collections::BTreeSet")
+            {
+                "collections::BTreeSet"
+            } else {
+                k
+            };
             self.local_runtime_kind.insert(dest, k);
         }
         let next = self.new_block(span);
@@ -3239,19 +3273,39 @@ impl<'a> Builder<'a> {
             (Some("regex::Pattern"), "replace") => Some("gos_rt_regex_replace"),
             (Some("regex::Pattern"), "replace_all") => Some("gos_rt_regex_replace_all"),
             (Some("regex::Pattern"), "split") => Some("gos_rt_regex_split"),
-            (Some("collections::HashSet"), "insert") => Some("gos_rt_set_insert"),
-            (Some("collections::HashSet"), "contains") => Some("gos_rt_set_contains"),
-            (Some("collections::HashSet"), "remove") => Some("gos_rt_set_remove"),
-            (Some("collections::HashSet"), "len") => Some("gos_rt_set_len"),
-            (Some("collections::HashSet"), "union") => Some("gos_rt_set_union"),
-            (Some("collections::HashSet"), "intersection") => Some("gos_rt_set_intersection"),
-            (Some("collections::HashSet"), "difference") => Some("gos_rt_set_difference"),
-            (Some("collections::HashSet"), "symmetric_difference") => {
+            (Some("collections::HashSet" | "collections::BTreeSet"), "insert") => {
+                Some("gos_rt_set_insert")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "contains") => {
+                Some("gos_rt_set_contains")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "remove") => {
+                Some("gos_rt_set_remove")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "len") => {
+                Some("gos_rt_set_len")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "union") => {
+                Some("gos_rt_set_union")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "intersection") => {
+                Some("gos_rt_set_intersection")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "difference") => {
+                Some("gos_rt_set_difference")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "symmetric_difference") => {
                 Some("gos_rt_set_symmetric_difference")
             }
-            (Some("collections::HashSet"), "is_subset") => Some("gos_rt_set_is_subset"),
-            (Some("collections::HashSet"), "is_superset") => Some("gos_rt_set_is_superset"),
-            (Some("collections::HashSet"), "is_disjoint") => Some("gos_rt_set_is_disjoint"),
+            (Some("collections::HashSet" | "collections::BTreeSet"), "is_subset") => {
+                Some("gos_rt_set_is_subset")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "is_superset") => {
+                Some("gos_rt_set_is_superset")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "is_disjoint") => {
+                Some("gos_rt_set_is_disjoint")
+            }
             (Some("collections::VecDeque"), "push_back") => Some("gos_rt_deque_push_back"),
             (Some("collections::VecDeque"), "push_front") => Some("gos_rt_deque_push_front"),
             (Some("collections::VecDeque"), "pop_front") => Some("gos_rt_deque_pop_front"),
@@ -3420,6 +3474,13 @@ impl<'a> Builder<'a> {
         let pinned = self.dispatch_pinned_ty(rt, receiver, receiver_local, ty);
         let dest = self.fresh(pinned);
         if let Some(k) = self.dispatch_dest_kind(rt) {
+            let k = if k == "collections::HashSet"
+                && self.runtime_kind_from_ty(receiver.ty) == Some("collections::BTreeSet")
+            {
+                "collections::BTreeSet"
+            } else {
+                k
+            };
             self.local_runtime_kind.insert(dest, k);
         }
         let next = self.new_block(span);
@@ -3996,8 +4057,13 @@ impl<'a> Builder<'a> {
         // tree-walker's qualified-method lookup so user code can
         // build natively without rewriting every method as a free
         // function.
+        let lowered_receiver_ty = self
+            .locals
+            .get(receiver_local.0 as usize)
+            .map(|decl| decl.ty);
         let struct_name = self
             .struct_name_of(receiver_ty)
+            .or_else(|| lowered_receiver_ty.and_then(|ty| self.struct_name_of(ty)))
             .or_else(|| {
                 self.local_struct
                     .get(&receiver_local)
@@ -4009,10 +4075,19 @@ impl<'a> Builder<'a> {
                 // to `Enum::method` when that impl method actually exists (so a
                 // derived `clone`/`eq`/`fmt` on an enum resolves instead of
                 // emitting an undefined bare `@method`).
-                self.adt_dispatch_name(receiver_ty).filter(|n| {
-                    self.impl_methods
-                        .contains_key(&format!("{n}::{}", method.name))
-                })
+                self.adt_dispatch_name(receiver_ty)
+                    .filter(|n| {
+                        self.impl_methods
+                            .contains_key(&format!("{n}::{}", method.name))
+                    })
+                    .or_else(|| {
+                        lowered_receiver_ty.and_then(|ty| {
+                            self.adt_dispatch_name(ty).filter(|n| {
+                                self.impl_methods
+                                    .contains_key(&format!("{n}::{}", method.name))
+                            })
+                        })
+                    })
             });
         if let Some(sname) = struct_name {
             let mangled = format!("{}::{}", sname, method.name);
@@ -4051,6 +4126,44 @@ impl<'a> Builder<'a> {
             let next = self.new_block(span);
             self.terminate(Terminator::Call {
                 callee: Operand::Const(ConstValue::Str(mangled)),
+                args: arg_operands,
+                destination: Place::local(dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+            return Some(dest);
+        }
+
+        let mut unique_impl = None;
+        for name in self.impl_methods.keys() {
+            if name
+                .rsplit_once("::")
+                .is_some_and(|(_, tail)| tail == method.name.as_str())
+            {
+                if unique_impl.is_some() {
+                    unique_impl = None;
+                    break;
+                }
+                unique_impl = Some(name.as_str());
+            }
+        }
+        if let Some(mangled) = unique_impl {
+            let dest_ty = match self.tcx.kind_of(ty) {
+                gossamer_types::TyKind::Error | gossamer_types::TyKind::Var(_) => self
+                    .impl_methods
+                    .get(mangled)
+                    .copied()
+                    .flatten()
+                    .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64)),
+                _ => ty,
+            };
+            let dest = self.fresh(dest_ty);
+            if let Some(out_struct) = self.struct_name_of(dest_ty) {
+                self.local_struct.insert(dest, out_struct);
+            }
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(mangled.to_string())),
                 args: arg_operands,
                 destination: Place::local(dest),
                 target: Some(next),

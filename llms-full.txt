@@ -123,12 +123,13 @@ Write clear, low-complexity, concise code.
 - **`s.to_i64()` / `to_f64()` / `to_bool()`** - strict full-string
   parses returning `Option<T>`:
   `env::args().first().unwrap_or("8").to_i64().unwrap_or(8)`.
-- **`[v; N]` is a fixed array and `N` is compile-time constant**. Use
-  `Vec::from([v; N])` for growable storage.
+- **`[v; N]` creates a Vec by default**. Use `#[v; N]` or an expected
+  `[T; N]` type for fixed arrays; the count is compile-time constant.
 - **Collection constructors infer**: `let mut m = HashMap::new()`,
-  `let empty: HashMap<String, i64> = HashMap::from({})`, and
-  `let map: HashMap<String, i64> = HashMap::from({"one": 1})`.
-  `HashSet::from` accepts a fixed array of values.
+  `let empty: HashMap<String, i64> = HashMap::from([])`, and
+  `let map = {"one": 1}`. `HashMap::from` accepts array pairs, while
+  map literals construct `HashMap` values directly. `#{a, b}` constructs
+  a `HashSet`, or a `BTreeSet` when an expected `BTreeSet<T>` type is present.
 - **Byte reads**: `s[i]` is the byte as `i64`; compare with byte
   literals (`s[i] >= b'0'`), render with `s[i] as char`. Prefer this
   over per-byte `substring`.
@@ -331,13 +332,15 @@ are callable as methods/free functions and materialize results.
 ## 10. Data structures
 
 - `[T; N]` is an owned fixed array, `[T]` is an unsized borrowed slice,
-  and `Vec<T>` is the only owned growable sequence. Arrays, slices, and Vec
-  share the implemented slice method surface. Eager collection combinators
-  are Vec methods; arrays and slices use `iter()` first. Only Vec has
-  push/pop/insert/remove/clear, truncation, extension, reservation, and
-  capacity methods. Mutable arrays and slices support `sort`, `reverse`,
-  `swap`, and `fill` without resizing. `%i` reports each type's real surface, while `%e` also removes
-  methods that the binding's mutability cannot call. Tuples use `.0`/`.1`;
+  and `Vec<T>` is the only owned growable sequence. Bracket literals create
+  Vec values by default; use `#[a, b]` or an expected `[T; N]` type for
+  fixed arrays. Arrays, slices, and Vec share the implemented slice method
+  surface. Eager collection combinators are Vec methods; arrays and slices
+  use `iter()` first. Only Vec has push/pop/insert/remove/clear, truncation,
+  extension, reservation, and capacity methods. Mutable arrays and slices
+  support `sort`, `reverse`, `swap`, and `fill` without resizing. `%i`
+  reports each type's real surface, while `%e` also removes methods that the
+  binding's mutability cannot call. Tuples use `.0`/`.1`;
   tuple structs are fully usable. Method-call
   `xs.insert/remove/swap` mutate in place and return `Result`, with an
   `Err` for an out-of-bounds index. Qualified calls use the same contract:
@@ -346,12 +349,12 @@ are callable as methods/free functions and materialize results.
   aggregate-key maps use `iter()` rather than `keys()` until typed key
   snapshots are available;
   `iter()` yields `[(K, V)]`, `keys`, `values`, `HashMap::pop`),
-  `HashSet` (full set algebra), `BTreeMap` (sorted; `String` or `i64`
+  `HashSet` / `BTreeSet` (`#{...}` literals and full set algebra), `BTreeMap` (sorted; `String` or `i64`
   keys), `VecDeque`. A separate i64-only `queue`/`stack`/`deque`/
   `heap`/`ordered_*` family is functional re-bind style
   (`let q = queue::push(q, v)`), not mutating.
-- Array literals never silently become Vec or an owned slice. Use
-  `Vec::from([...])`; borrow arrays or Vecs as `&[T]` / `&mut [T]`.
+- Bracket literals create Vec values unless an expected fixed-array type is
+  present. Borrow arrays or Vecs as `&[T]` / `&mut [T]`.
 - **Weak references**: RC means a genuine cycle leaks unless one edge
   is non-owning: `strong.downgrade() -> Weak<T>`,
   `w.upgrade() -> Option<T>`; `runtime::collect_cycles()` runs the

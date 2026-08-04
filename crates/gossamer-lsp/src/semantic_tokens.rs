@@ -486,7 +486,7 @@ fn visit_expr(expr: &Expr, out: &mut Vec<RawToken>) {
             visit_type(ty, out);
         }
         ExprKind::Try(value) => visit_expr(value, out),
-        ExprKind::Tuple(parts) => {
+        ExprKind::Tuple(parts) | ExprKind::MapLiteral(parts) | ExprKind::SetLiteral(parts) => {
             for part in parts {
                 visit_expr(part, out);
             }
@@ -509,7 +509,7 @@ fn visit_expr(expr: &Expr, out: &mut Vec<RawToken>) {
                 visit_expr(base, out);
             }
         }
-        ExprKind::Array(arr) => match arr {
+        ExprKind::Array(arr) | ExprKind::FixedArray(arr) => match arr {
             ArrayExpr::List(elems) => {
                 for elem in elems {
                     visit_expr(elem, out);

@@ -12,7 +12,7 @@ use gossamer_ast::{
 };
 use gossamer_lex::Span;
 use gossamer_resolve::{Resolution, Resolutions};
-use gossamer_types::{TyCtxt, TypeTable};
+use gossamer_types::{Ty, TyCtxt, TypeTable};
 
 use crate::ids::{HirId, HirIdGenerator};
 use crate::tree::{
@@ -870,7 +870,17 @@ impl Lowerer<'_> {
                 path, fields, base, ..
             } => self.lower_struct_literal(expr.id, path, fields, base.as_deref(), expr.span),
             AstExprKind::MacroCall(_) => HirExprKind::Placeholder,
-            AstExprKind::Array(arr) => HirExprKind::Array(self.lower_array(arr)),
+            AstExprKind::MapLiteral(entries) => {
+                let map_ty = self.ty_of(expr.id);
+                self.lower_map_literal(entries, expr.span, map_ty)
+            }
+            AstExprKind::SetLiteral(entries) => {
+                let set_ty = self.ty_of(expr.id);
+                self.lower_set_literal(entries, expr.span, set_ty)
+            }
+            AstExprKind::Array(arr) | AstExprKind::FixedArray(arr) => {
+                HirExprKind::Array(self.lower_array(arr))
+            }
             AstExprKind::Range {
                 start, end, kind, ..
             } => HirExprKind::Range {
@@ -1065,7 +1075,9 @@ impl Lowerer<'_> {
         // iter shapes (ranges, arrays, vecs), the MIR fast paths
         // walk the receiver expression directly, so we keep the
         // inline shape that those detectors recognise.
-        let needs_state_binding = self.iter_needs_state_binding(iter_ty);
+        let needs_state_binding = self.iter_needs_state_binding(iter_ty)
+            || (matches!(self.tcx.kind(iter_ty), Some(gossamer_types::TyKind::Vec(_)))
+                && matches!(&iter_expr.kind, HirExprKind::Array(_)));
         if needs_state_binding {
             return self.lower_for_user_iter(pattern, iter_expr, body, label, span);
         }
@@ -1269,12 +1281,14 @@ impl Lowerer<'_> {
         for _ in 0..8 {
             match self.tcx.kind(cur) {
                 Some(TyKind::Ref { inner, .. }) => cur = *inner,
-                // `HashSet` (sentinel Adt, def `u32::MAX - 7`) is not a
+                // `HashSet` / `BTreeSet` sentinels are not
                 // stateful iterator: it snapshots to a sorted Vec on the
                 // inline path (VM and compiled both materialise `to_vec`),
                 // so keep it off the `&mut __for_iter.next()` desugar that
                 // a real `impl Iterator` struct needs.
-                Some(TyKind::Adt { def, .. }) => return def.local != u32::MAX - 7,
+                Some(TyKind::Adt { def, .. }) => {
+                    return !matches!(def.local, x if x == u32::MAX - 7 || x == u32::MAX - 10);
+                }
                 _ => return false,
             }
         }
@@ -1962,6 +1976,90 @@ impl Lowerer<'_> {
                 value: Box::new(self.lower_expr(value)),
                 count: Box::new(self.lower_expr(count)),
             },
+        }
+    }
+
+    fn lower_map_literal(&mut self, entries: &[AstExpr], span: Span, map_ty: Ty) -> HirExprKind {
+        use gossamer_types::{ArrayLen, TyKind};
+
+        let lowered_entries: Vec<HirExpr> = entries.iter().map(|e| self.lower_expr(e)).collect();
+        let pair_ty = lowered_entries.first().map_or_else(
+            || match self.tcx.kind(map_ty) {
+                Some(TyKind::HashMap { key, value }) => {
+                    self.tcx.intern(TyKind::Tuple(vec![*key, *value]))
+                }
+                _ => self.error_ty(),
+            },
+            |entry| entry.ty,
+        );
+        let array_ty = self.tcx.intern(TyKind::Array {
+            elem: pair_ty,
+            len: ArrayLen::Concrete(lowered_entries.len()),
+        });
+        let array_arg = HirExpr {
+            id: self.fresh(),
+            span,
+            ty: array_ty,
+            kind: HirExprKind::Array(HirArrayExpr::List(lowered_entries)),
+        };
+        let callee = HirExpr {
+            id: self.fresh(),
+            span,
+            ty: self.error_ty(),
+            kind: HirExprKind::Path {
+                segments: vec![Ident::new("HashMap"), Ident::new("from")],
+                def: None,
+            },
+        };
+        HirExprKind::Call {
+            callee: Box::new(callee),
+            args: vec![array_arg],
+        }
+    }
+
+    fn lower_set_literal(&mut self, entries: &[AstExpr], span: Span, set_ty: Ty) -> HirExprKind {
+        use gossamer_types::{ArrayLen, TyKind};
+
+        let lowered_entries: Vec<HirExpr> = entries.iter().map(|e| self.lower_expr(e)).collect();
+        let owner = match self.tcx.kind(set_ty) {
+            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 10 => "BTreeSet",
+            _ => "HashSet",
+        };
+        let elem_ty = lowered_entries
+            .first()
+            .map(|entry| entry.ty)
+            .or_else(|| match self.tcx.kind(set_ty) {
+                Some(TyKind::Adt { def, substs }) if def.local == u32::MAX - 7 => {
+                    substs.types().first().copied()
+                }
+                Some(TyKind::Adt { def, substs }) if def.local == u32::MAX - 10 => {
+                    substs.types().first().copied()
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| self.error_ty());
+        let array_ty = self.tcx.intern(TyKind::Array {
+            elem: elem_ty,
+            len: ArrayLen::Concrete(lowered_entries.len()),
+        });
+        let array_arg = HirExpr {
+            id: self.fresh(),
+            span,
+            ty: array_ty,
+            kind: HirExprKind::Array(HirArrayExpr::List(lowered_entries)),
+        };
+        let callee = HirExpr {
+            id: self.fresh(),
+            span,
+            ty: self.error_ty(),
+            kind: HirExprKind::Path {
+                segments: vec![Ident::new(owner), Ident::new("from")],
+                def: None,
+            },
+        };
+        HirExprKind::Call {
+            callee: Box::new(callee),
+            args: vec![array_arg],
         }
     }
 

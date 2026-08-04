@@ -183,8 +183,12 @@ pub fn walk_expr_mut<V: VisitorMut + ?Sized>(visitor: &mut V, expr: &mut Expr) {
             receiver: operand, ..
         } => visitor.visit_expr(operand),
         ExprKind::Loop { body, .. } => visitor.visit_expr(body),
-        ExprKind::Tuple(items) => walk_exprs_mut(visitor, items),
-        ExprKind::Array(array_expr) => walk_array_expr_mut(visitor, array_expr),
+        ExprKind::Tuple(items) | ExprKind::MapLiteral(items) | ExprKind::SetLiteral(items) => {
+            walk_exprs_mut(visitor, items);
+        }
+        ExprKind::Array(array_expr) | ExprKind::FixedArray(array_expr) => {
+            walk_array_expr_mut(visitor, array_expr);
+        }
         ExprKind::Select(arms) => {
             for arm in arms {
                 visitor.visit_select_arm(arm);

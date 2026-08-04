@@ -1,19 +1,10 @@
-//! Catches the M3 finding (LLVM "aggregate-print refused" error
-//! path is not exercised) from
+//! Catches the historical LLVM aggregate-print path from
 //! `~/dev/contexts/lang/adversarial_analysis.md`.
-//!
-//! The LLVM lowerer rejects `println!("{}", some_aggregate)` with
-//! `BuildError::Unsupported`. Per `compile_with_fallback`
-//! (`crates/gossamer-codegen-llvm/src/emit.rs`) the rejected body
-//! falls back to Cranelift while the rest of the program continues
-//! through LLVM. Without a regression test this seam silently
-//! breaks the moment either side stops handling the shape.
 //!
 //! The program below builds a struct, prints it through the
 //! `Display`-style format implementation it carries, and exits.
-//! Both `gos build` (pure Cranelift) and `gos build --release`
-//! (LLVM + Cranelift fallback) must produce a binary that exits
-//! cleanly and prints something.
+//! Both `gos build` and `gos build --release` must produce a
+//! binary that exits cleanly and prints the same text.
 
 use std::env;
 use std::path::PathBuf;
@@ -24,17 +15,12 @@ fn gos_bin() -> PathBuf {
 }
 
 #[test]
-fn aggregate_println_falls_back_through_release_pipeline() {
+fn aggregate_println_lowers_through_release_pipeline() {
     let dir = env::temp_dir().join(format!("gos-agg-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let source = dir.join("agg.gos");
-    // `Point` is a tuple-struct held by value. `format!("{}",
-    // point.x)` lowers cleanly through the LLVM print intrinsics
-    // (scalar `i64`); the line that prints the whole point goes
-    // through the Display-style helper, which is the case
-    // `concat_print_kind() == ConcatKind::Unsupported` rejects.
-    // The release build must still link end-to-end thanks to the
-    // Cranelift fallback object.
+    // The release build must lower the display helper without
+    // relying on a companion backend object.
     std::fs::write(
         &source,
         r#"

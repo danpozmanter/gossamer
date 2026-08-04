@@ -178,10 +178,10 @@ fn classify_receiver(doc: &DocumentAnalysis, expr: &str) -> ReceiverDescriptor {
             writable: false,
         };
     }
-    // A bracket literal is always a fixed array, never a Vec or slice.
+    // A bracket literal is a Vec unless an expected fixed-array type shapes it.
     if head.starts_with('[') {
         return ReceiverDescriptor {
-            builtin: BuiltinReceiver::Array,
+            builtin: BuiltinReceiver::Vec,
             type_name: None,
             writable: false,
         };

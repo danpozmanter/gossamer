@@ -2915,6 +2915,8 @@ impl<'a> TypeChecker<'a> {
                 let tys: Vec<Ty> = elems.iter().map(|e| self.check_expr(e)).collect();
                 self.tcx.intern(TyKind::Tuple(tys))
             }
+            ExprKind::MapLiteral(entries) => self.check_map_literal(entries, expected),
+            ExprKind::SetLiteral(entries) => self.check_set_literal(entries, expected),
             ExprKind::Struct {
                 path,
                 fields,
@@ -3079,7 +3081,16 @@ impl<'a> TypeChecker<'a> {
                 }
                 struct_ty
             }
-            ExprKind::Array(arr) => self.check_array(arr, expected),
+            ExprKind::Array(arr) => {
+                if self.expectation_target(expected).is_some_and(|target| {
+                    matches!(self.tcx.kind(target), Some(TyKind::Array { .. }))
+                }) {
+                    self.check_array(arr, expected)
+                } else {
+                    self.check_vec_literal(arr, expected)
+                }
+            }
+            ExprKind::FixedArray(arr) => self.check_array(arr, expected),
             ExprKind::Range { start, end, .. } => {
                 // Rust-style ranges are lazy values. Index and for-loop
                 // positions still consume their bounds syntactically.
@@ -3800,7 +3811,9 @@ impl<'a> TypeChecker<'a> {
                 let e = self.tcx.dyn_error_ty();
                 return self.result_adt_ty(vec_u8, e);
             }
-            if let Some(ty) = self.check_stdlib_module_ret_ty(module, last, callee, args, arg_tys) {
+            if let Some(ty) =
+                self.check_stdlib_module_ret_ty(module, last, callee, args, arg_tys, expected)
+            {
                 return ty;
             }
             if let Some(ty) = self.stdlib_signature_return_ty(module, last) {
@@ -4572,18 +4585,21 @@ impl<'a> TypeChecker<'a> {
                 let value = self.fresh();
                 Some(self.tcx.intern(TyKind::HashMap { key, value }))
             }
-            "HashSet" => {
+            "HashSet" | "BTreeSet" => {
                 let elem = self.fresh();
-                let substs = crate::Substs::from_types([elem]);
-                let def = gossamer_resolve::DefId::local(u32::MAX - 7);
-                self.tcx.register_def_name(def, "HashSet");
-                Some(self.tcx.intern(TyKind::Adt { def, substs }))
+                Some(self.set_ty(tail, elem))
             }
             _ => None,
         }
     }
 
-    fn collection_from_ty(&mut self, module: &[&str], source: Ty) -> Option<Ty> {
+    fn collection_from_ty(
+        &mut self,
+        module: &[&str],
+        source: Ty,
+        expected: Expectation,
+        span: Span,
+    ) -> Option<Ty> {
         let owner = match module {
             [owner] | ["collections", owner] | ["std", "collections", owner] => *owner,
             _ => return None,
@@ -4599,28 +4615,41 @@ impl<'a> TypeChecker<'a> {
                 };
                 Some(self.tcx.intern(TyKind::Vec(elem)))
             }
-            "HashSet" => {
+            "HashSet" | "BTreeSet" => {
                 let elem = match self.tcx.kind(source) {
                     Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => {
                         *elem
                     }
                     _ => return None,
                 };
-                let substs = crate::Substs::from_types([elem]);
-                let def = gossamer_resolve::DefId::local(u32::MAX - 7);
-                self.tcx.register_def_name(def, "HashSet");
-                Some(self.tcx.intern(TyKind::Adt { def, substs }))
+                Some(self.set_ty(owner, elem))
             }
             "HashMap" | "BTreeMap" => {
-                let (key, value) = match self.tcx.kind(source) {
-                    Some(TyKind::Unit) => (self.fresh(), self.fresh()),
-                    Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => {
-                        match self.tcx.kind(*elem) {
-                            Some(TyKind::Tuple(parts)) if parts.len() == 2 => (parts[0], parts[1]),
-                            _ => return None,
+                let (key, value) = if let Some(
+                    TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem),
+                ) = self.tcx.kind(source)
+                {
+                    match self.tcx.kind(*elem) {
+                        Some(TyKind::Tuple(parts)) if parts.len() == 2 => (parts[0], parts[1]),
+                        Some(TyKind::Var(_)) => {
+                            let target = self.expectation_target(expected)?;
+                            match self.tcx.kind(target) {
+                                Some(TyKind::HashMap { key, value }) => (*key, *value),
+                                _ => return None,
+                            }
                         }
+                        _ => return None,
                     }
-                    _ => return None,
+                } else {
+                    let found = self.render_public_ty(source);
+                    self.emit(
+                        TypeError::TypeMismatch {
+                            expected: "fixed array of key-value tuples".to_string(),
+                            found,
+                        },
+                        span,
+                    );
+                    return Some(self.fresh());
                 };
                 Some(self.tcx.intern(TyKind::HashMap { key, value }))
             }
@@ -4632,11 +4661,15 @@ impl<'a> TypeChecker<'a> {
         &mut self,
         module: &[&str],
         method: &str,
+        args: &[Expr],
         arg_tys: &[Ty],
+        expected: Expectation,
     ) -> Option<Ty> {
         match method {
             "new" | "with_capacity" => self.collection_ctor_ty(module),
-            "from" => self.collection_from_ty(module, *arg_tys.first()?),
+            "from" => {
+                self.collection_from_ty(module, *arg_tys.first()?, expected, args.first()?.span)
+            }
             _ => None,
         }
     }
@@ -4808,6 +4841,7 @@ impl<'a> TypeChecker<'a> {
         callee: &Expr,
         args: &[Expr],
         arg_tys: &[Ty],
+        expected: Expectation,
     ) -> Option<Ty> {
         if let Some(ty) = self.check_qualified_map_accessor_ret(module, last, arg_tys) {
             return Some(ty);
@@ -4904,7 +4938,7 @@ impl<'a> TypeChecker<'a> {
                 _ => None,
             };
         }
-        if let Some(ty) = self.collection_call_ret_ty(module, last, arg_tys) {
+        if let Some(ty) = self.collection_call_ret_ty(module, last, args, arg_tys, expected) {
             return Some(ty);
         }
         if matches!(module, ["fs" | "os"] | ["std", "fs" | "os"]) {
@@ -5446,6 +5480,44 @@ impl<'a> TypeChecker<'a> {
         self.tcx.intern(TyKind::Adt { def, substs })
     }
 
+    fn hashset_ty(&mut self, elem: Ty) -> Ty {
+        self.set_ty("HashSet", elem)
+    }
+
+    fn btreeset_ty(&mut self, elem: Ty) -> Ty {
+        self.set_ty("BTreeSet", elem)
+    }
+
+    fn set_ty(&mut self, owner: &str, elem: Ty) -> Ty {
+        let substs = crate::Substs::from_types([elem]);
+        let (local, name) = match owner {
+            "BTreeSet" => (u32::MAX - 10, "BTreeSet"),
+            _ => (u32::MAX - 7, "HashSet"),
+        };
+        let def = gossamer_resolve::DefId::local(local);
+        self.tcx.register_def_name(def, name);
+        self.tcx.intern(TyKind::Adt { def, substs })
+    }
+
+    fn set_elem_ty(&self, ty: Ty) -> Option<(String, Ty)> {
+        match self.tcx.kind(ty) {
+            Some(TyKind::Adt { def, substs }) if matches!(def.local, x if x == u32::MAX - 7 || x == u32::MAX - 10) =>
+            {
+                let owner = if def.local == u32::MAX - 10 {
+                    "BTreeSet"
+                } else {
+                    "HashSet"
+                };
+                substs
+                    .types()
+                    .first()
+                    .copied()
+                    .map(|elem| (owner.to_string(), elem))
+            }
+            _ => None,
+        }
+    }
+
     /// Returns true when `.downgrade()` on this (already ref-peeled)
     /// receiver type has no runtime RC header: a by-value scalar, `Unit` /
     /// `Never`, a transparent time newtype, `Option` / `Result`, or an
@@ -5914,7 +5986,7 @@ impl<'a> TypeChecker<'a> {
     fn reject_unknown_set_method(&mut self, resolved: Ty, method: &str, span: Span) -> bool {
         let is_hash_set = matches!(
             self.tcx.kind(resolved),
-            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 7
+            Some(TyKind::Adt { def, .. }) if matches!(def.local, x if x == u32::MAX - 7 || x == u32::MAX - 10)
         );
         if !is_hash_set {
             return false;
@@ -5944,18 +6016,20 @@ impl<'a> TypeChecker<'a> {
                 "clear" | "len" | "is_empty" | "keys" | "values" | "iter" => Some(0),
                 _ => None,
             },
-            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 7 => match method {
-                "insert" | "remove" | "contains" => Some(1),
-                "clear" | "len" | "is_empty" | "to_vec" | "iter" => Some(0),
-                "union"
-                | "intersection"
-                | "difference"
-                | "symmetric_difference"
-                | "is_subset"
-                | "is_superset"
-                | "is_disjoint" => Some(1),
-                _ => None,
-            },
+            Some(TyKind::Adt { def, .. }) if matches!(def.local, x if x == u32::MAX - 7 || x == u32::MAX - 10) => {
+                match method {
+                    "insert" | "remove" | "contains" => Some(1),
+                    "clear" | "len" | "is_empty" | "to_vec" | "iter" => Some(0),
+                    "union"
+                    | "intersection"
+                    | "difference"
+                    | "symmetric_difference"
+                    | "is_subset"
+                    | "is_superset"
+                    | "is_disjoint" => Some(1),
+                    _ => None,
+                }
+            }
             Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 9 => match method {
                 "push_back" | "push_front" => Some(1),
                 "pop_back" | "pop_front" | "peek_back" | "peek_front" | "len" | "is_empty"
@@ -6333,7 +6407,8 @@ impl<'a> TypeChecker<'a> {
             {
                 return false;
             }
-            matches!(owner, "HashMap" | "HashSet") && crate::is_mutating_method_name(method)
+            matches!(owner, "HashMap" | "HashSet" | "BTreeSet")
+                && crate::is_mutating_method_name(method)
         });
         if requires_mut && let Some(receiver) = args.first() {
             if user_requirement == Some(true) {
@@ -6570,20 +6645,12 @@ impl<'a> TypeChecker<'a> {
     /// a fresh `Var`, so iterating their result (`for e in a.union(&b)`)
     /// could not recover the set kind and read the handle as a vec.
     fn set_method_ret(&mut self, method: &str, resolved: Ty) -> Option<Ty> {
-        let elem = match self.tcx.kind(resolved) {
-            Some(TyKind::Adt { def, substs }) if def.local == u32::MAX - 7 => {
-                substs.types().first().copied()
-            }
-            _ => return None,
-        };
+        let (_owner, elem) = self.set_elem_ty(resolved)?;
         match method {
             // New sets - same element type as the receiver.
             "union" | "intersection" | "difference" | "symmetric_difference" => Some(resolved),
             // Snapshot to a Vec of the element type.
-            "to_vec" | "iter" => {
-                let elem = elem.unwrap_or_else(|| self.tcx.string_ty());
-                Some(self.tcx.intern(TyKind::Vec(elem)))
-            }
+            "to_vec" | "iter" => Some(self.tcx.intern(TyKind::Vec(elem))),
             "insert" | "remove" | "contains" | "is_empty" | "is_subset" | "is_superset"
             | "is_disjoint" => Some(self.tcx.bool_ty()),
             "len" => Some(self.tcx.int_ty(IntTy::I64)),
@@ -9697,10 +9764,152 @@ impl<'a> TypeChecker<'a> {
         self.tcx.intern(TyKind::FnPtr(FnSig { inputs, output }))
     }
 
+    fn check_map_literal(&mut self, entries: &[Expr], expected: Expectation) -> Ty {
+        let expected_pair =
+            self.expectation_target(expected)
+                .and_then(|target| match self.tcx.kind(target) {
+                    Some(TyKind::HashMap { key, value }) => Some((*key, *value)),
+                    _ => None,
+                });
+        let (mut key_ty, mut value_ty) =
+            expected_pair.unwrap_or_else(|| (self.fresh(), self.fresh()));
+
+        for entry in entries {
+            let ExprKind::Tuple(parts) = &entry.kind else {
+                let entry_ty = self.check_expr(entry);
+                let found = self.render_public_ty(entry_ty);
+                self.emit(
+                    TypeError::TypeMismatch {
+                        expected: "(K, V)".to_string(),
+                        found,
+                    },
+                    entry.span,
+                );
+                continue;
+            };
+            let [key, value] = parts.as_slice() else {
+                let entry_ty = self.check_expr(entry);
+                let found = self.render_public_ty(entry_ty);
+                self.emit(
+                    TypeError::TypeMismatch {
+                        expected: "(K, V)".to_string(),
+                        found,
+                    },
+                    entry.span,
+                );
+                continue;
+            };
+            let got_key = self.check_expr_expecting(key, expected.rewrap(key_ty));
+            let got_value = self.check_expr_expecting(value, expected.rewrap(value_ty));
+            if expected_pair.is_some() && expected.unifies() {
+                self.unify(key_ty, got_key, key.span);
+                self.unify(value_ty, got_value, value.span);
+            } else {
+                key_ty = self.join_branch_tys(key_ty, got_key, key.span);
+                value_ty = self.join_branch_tys(value_ty, got_value, value.span);
+            }
+            let pair = self.tcx.intern(TyKind::Tuple(vec![key_ty, value_ty]));
+            self.record(entry.id, pair);
+        }
+
+        self.tcx.intern(TyKind::HashMap {
+            key: key_ty,
+            value: value_ty,
+        })
+    }
+
+    fn check_set_literal(&mut self, entries: &[Expr], expected: Expectation) -> Ty {
+        let expected_elem =
+            self.expectation_target(expected)
+                .and_then(|target| match self.tcx.kind(target) {
+                    Some(TyKind::Adt { def, substs })
+                        if matches!(def.local, x if x == u32::MAX - 7 || x == u32::MAX - 10) =>
+                    {
+                        substs
+                            .types()
+                            .first()
+                            .copied()
+                            .map(|elem| (def.local, elem))
+                    }
+                    _ => None,
+                });
+
+        if let Some((want_owner, want_elem)) = expected_elem {
+            for entry in entries {
+                let got = self.check_expr_expecting(entry, expected.rewrap(want_elem));
+                if expected.unifies() {
+                    self.unify(want_elem, got, entry.span);
+                }
+            }
+            return if want_owner == u32::MAX - 10 {
+                self.btreeset_ty(want_elem)
+            } else {
+                self.hashset_ty(want_elem)
+            };
+        }
+
+        let mut elem_ty = if let Some(first) = entries.first() {
+            self.check_expr(first)
+        } else {
+            self.fresh()
+        };
+        for entry in entries.iter().skip(1) {
+            let ty = self.check_expr(entry);
+            elem_ty = self.join_branch_tys(elem_ty, ty, entry.span);
+        }
+        self.hashset_ty(elem_ty)
+    }
+
+    fn check_vec_literal(&mut self, arr: &ArrayExpr, expected: Expectation) -> Ty {
+        let expected_elem =
+            self.expectation_target(expected)
+                .and_then(|target| match self.tcx.kind(target) {
+                    Some(TyKind::Vec(elem) | TyKind::Slice(elem)) => Some(*elem),
+                    _ => None,
+                });
+        match arr {
+            ArrayExpr::List(elems) => {
+                if let Some(want_elem) = expected_elem {
+                    for elem in elems {
+                        let got = self.check_expr_expecting(elem, expected.rewrap(want_elem));
+                        if expected.unifies() {
+                            self.unify(want_elem, got, elem.span);
+                        }
+                    }
+                    return self.tcx.intern(TyKind::Vec(want_elem));
+                }
+                let mut elem_ty = if let Some(first) = elems.first() {
+                    self.check_expr(first)
+                } else {
+                    self.fresh()
+                };
+                for elem in elems.iter().skip(1) {
+                    let ty = self.check_expr(elem);
+                    elem_ty = self.join_branch_tys(elem_ty, ty, elem.span);
+                }
+                self.tcx.intern(TyKind::Vec(elem_ty))
+            }
+            ArrayExpr::Repeat { value, count } => {
+                let elem_ty = match expected_elem {
+                    Some(want_elem) => {
+                        let got = self.check_expr_expecting(value, expected.rewrap(want_elem));
+                        if expected.unifies() {
+                            self.unify(want_elem, got, value.span);
+                        }
+                        want_elem
+                    }
+                    None => self.check_expr(value),
+                };
+                self.check_expr(count);
+                self.tcx.intern(TyKind::Vec(elem_ty))
+            }
+        }
+    }
+
     fn check_array(&mut self, arr: &ArrayExpr, expected: Expectation) -> Ty {
-        // Array literals always produce fixed-size arrays. A fixed-array
-        // expectation may shape their element type, but Vec and slice
-        // expectations never change the literal's container identity.
+        // This handles explicit fixed-array literals (`#[...]`) and
+        // expectation-shaped `[T; N]` arrays. Plain `[...]` literals are checked
+        // through `check_vec` unless an array expectation selected this path.
         match arr {
             ArrayExpr::List(elems) => {
                 let expected_elem = self
@@ -10343,16 +10552,25 @@ impl<'a> TypeChecker<'a> {
                 let value = tys.get(1).copied().unwrap_or_else(|| self.fresh());
                 return self.tcx.intern(TyKind::HashMap { key, value });
             }
-            // `HashSet<T>` / `BTreeMap<K, V>` are opaque i64 handles at
+            // `HashSet<T>` / `BTreeSet<T>` / `BTreeMap<K, V>` are opaque i64 handles at
             // runtime with no dedicated `TyKind`. Resolving the annotation to
             // a named sentinel Adt (rather than a fresh inference var) lets
             // method dispatch recover the receiver kind from its *type* when a
             // set/map flows across a function boundary and the construction
             // tag is gone.
-            "HashSet" => {
+            "HashSet" | "BTreeSet" => {
                 let substs = self.substs_from_ast(path);
-                let def = gossamer_resolve::DefId::local(u32::MAX - 7);
-                self.tcx.register_def_name(def, "HashSet");
+                let (local, name) = if path
+                    .segments
+                    .last()
+                    .is_some_and(|seg| seg.name.name == "BTreeSet")
+                {
+                    (u32::MAX - 10, "BTreeSet")
+                } else {
+                    (u32::MAX - 7, "HashSet")
+                };
+                let def = gossamer_resolve::DefId::local(local);
+                self.tcx.register_def_name(def, name);
                 return self.tcx.intern(TyKind::Adt { def, substs });
             }
             // `BTreeMap<K, V>` shares the `HashMap` runtime on every tier
@@ -11161,7 +11379,10 @@ fn argument_value_display(arg: &Expr) -> String {
 /// shape is more useful here than a partially inferred element type.
 fn string_argument_found_type(arg: &Expr, tcx: &TyCtxt, ty: Ty) -> String {
     match &arg.kind {
-        ExprKind::Array(_) => "array".to_string(),
+        ExprKind::Array(_) => "Vec".to_string(),
+        ExprKind::FixedArray(_) => "array".to_string(),
+        ExprKind::MapLiteral(_) => "map literal".to_string(),
+        ExprKind::SetLiteral(_) => "set literal".to_string(),
         ExprKind::Range { .. } => "range".to_string(),
         ExprKind::Tuple(_) => "tuple".to_string(),
         _ => match tcx.kind(ty) {

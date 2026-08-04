@@ -18,7 +18,7 @@ fn main() {
     println!("{}", at1(&b, us))      // 42
     println!("{}", at1(&b, 0))       // 99
 
-    let arr = [10, 20, 30, 40]
+    let arr = #[10, 20, 30, 40]
     let k = 2
     println!("{}", at_arr(&arr, k))  // 30
     println!("{}", at_arr(&arr, 0))  // 10

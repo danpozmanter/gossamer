@@ -113,7 +113,7 @@ impl<'a> Lowerer<'a> {
                     gossamer_types::IntTy::I128 | gossamer_types::IntTy::U128
                 ))
             ) {
-                return Err(BuildError::Unsupported(
+                return Err(BuildError::InternalLoweringBug(
                     "i128 / u128 is not supported by the compiled tier; \
                      use i64 / u64 or split the value into two 64-bit halves",
                 ));
