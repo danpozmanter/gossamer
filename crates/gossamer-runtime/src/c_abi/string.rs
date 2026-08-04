@@ -16,9 +16,11 @@
 #![allow(clippy::wildcard_imports)]
 
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
+use std::collections::HashSet;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use super::*;
 
@@ -57,18 +59,59 @@ const STRING_LEGACY_HEADER_BYTES: usize = 13;
 const STRING_BODY_OFFSET: usize = STRING_OWNER_BYTES + STRING_LEGACY_HEADER_BYTES;
 const STRING_BODY_TAG: usize = STRING_BODY_OFFSET & 7;
 static NEXT_STRING_GENERATION: AtomicU64 = AtomicU64::new(1);
+static HEAP_STRING_BODIES: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
 
 const _: () = assert!(STRING_OWNER_BYTES == 16);
 const _: () = assert!(STRING_BODY_TAG == 5);
+
+fn heap_string_bodies() -> &'static Mutex<HashSet<usize>> {
+    HEAP_STRING_BODIES.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn register_heap_string_body(s: *const c_char) {
+    heap_string_bodies()
+        .lock()
+        .expect("heap string registry poisoned")
+        .insert(s as usize);
+}
+
+fn unregister_heap_string_body(s: *const c_char) {
+    heap_string_bodies()
+        .lock()
+        .expect("heap string registry poisoned")
+        .remove(&(s as usize));
+}
+
+fn is_registered_heap_string_body(s: *const c_char) -> bool {
+    heap_string_bodies()
+        .lock()
+        .expect("heap string registry poisoned")
+        .contains(&(s as usize))
+}
 
 #[inline]
 fn str_owner(s: *const c_char) -> Option<&'static StringOwner> {
     if s.is_null() || (s as usize & 7) != STRING_BODY_TAG {
         return None;
     }
-    // The low-bit shape is assigned only by the three carrier layouts below;
-    // it is checked before the backwards offset, so ordinary foreign C
-    // strings (allocator-aligned bodies) stay borrowed and untouched.
+    if !is_registered_heap_string_body(s) {
+        return None;
+    }
+    // Membership in the heap-string registry proves this pointer was returned
+    // from `alloc_growable_with_fill`, so the fixed backwards offset stays
+    // within the original allocation. Foreign C strings never reach this read.
+    let owner = unsafe { &*s.cast::<u8>().sub(STRING_BODY_OFFSET).cast::<StringOwner>() };
+    (owner.abi_version == STRING_OWNER_VERSION
+        && owner.kind == STRING_OWNER_KIND
+        && owner.destructor == STRING_DTOR_HEAP)
+        .then_some(owner)
+}
+
+#[inline]
+unsafe fn typed_str_owner(s: *const c_char) -> Option<&'static StringOwner> {
+    if s.is_null() || (s as usize & 7) != STRING_BODY_TAG {
+        return None;
+    }
     let owner = unsafe { &*s.cast::<u8>().sub(STRING_BODY_OFFSET).cast::<StringOwner>() };
     (owner.abi_version == STRING_OWNER_VERSION
         && owner.kind == STRING_OWNER_KIND
@@ -519,6 +562,7 @@ where
         }
         rebuild_str_index(content.cast::<c_char>(), content_len, cap);
         if tag != STR_REGION_TAG {
+            register_heap_string_body(content.cast::<c_char>());
             crate::c_abi::ledger::str_inc();
         }
         content.cast::<c_char>()
@@ -574,6 +618,7 @@ pub unsafe extern "C" fn gos_rt_str_free(s: *mut c_char) {
         // SAFETY: builder allocation uses this exact layout, and this is the
         // last strong reference after the count logic above. The carrier owns
         // the allocation base; `hdr` is only its legacy suffix.
+        unregister_heap_string_body(s);
         unsafe { dealloc(s.cast::<u8>().sub(STRING_BODY_OFFSET), layout) };
         crate::c_abi::ledger::str_dec();
     });
@@ -612,7 +657,7 @@ pub(crate) unsafe fn consume_moved_string(s: *mut c_char) {
 /// away from the RC header path. Do not use this to validate a foreign pointer.
 #[inline]
 pub unsafe fn is_gos_string(s: *const c_char) -> bool {
-    str_owner(s).is_some()
+    unsafe { typed_str_owner(s).is_some() }
 }
 
 /// Increment a heap (`STR_BUILDER_TAG`) string's refcount; no-op otherwise.

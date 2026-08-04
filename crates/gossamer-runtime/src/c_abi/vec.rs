@@ -1743,8 +1743,23 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
         // tag-checks each pointer at deep-free, so a stored `.rodata` literal or
         // region string is skipped rather than mis-freed.
         let dst = unsafe { vec.ptr.add((vec.len as usize) * (vec.elem_bytes as usize)) };
-        unsafe {
-            std::ptr::copy_nonoverlapping(elem, dst, vec.elem_bytes as usize);
+        if vec.elem_bytes as usize == 8
+            && matches!(
+                vec.elem_kind,
+                vec_elem_kind::STRING
+                    | vec_elem_kind::VEC
+                    | vec_elem_kind::MAP
+                    | vec_elem_kind::ERROR
+                    | vec_elem_kind::RC_ENUM
+            )
+        {
+            let child = unsafe { elem.cast::<*mut u8>().read_unaligned() };
+            let _ = child.expose_provenance();
+            unsafe { dst.cast::<*mut u8>().write_unaligned(child) };
+        } else {
+            unsafe {
+                std::ptr::copy_nonoverlapping(elem, dst, vec.elem_bytes as usize);
+            }
         }
         vec.len += 1;
         // A guarded aggregate element shares its copy-blob children with

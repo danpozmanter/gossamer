@@ -12,6 +12,10 @@
   cases. This includes the `@is_halted` undefined-symbol build failure,
   non-empty `HashMap::from` and map literals, nested tuple formatting for
   maps and Vecs, and HashSet/BTreeSet display.
+- Fix runtime string ownership checks so foreign C strings are never probed
+  before their allocation, and keep `gos_rt_vec_get_ptr` from creating stale
+  shared borrows under Miri.
+- Restore the ABI registry sort invariant for the `gos_rt_btree_set_new` entry.
 - Treat native lowering gaps as backend bugs instead of per-function fallback
   cases, with MIR validation, LLVM symbol auditing, and regression tests
   guarding the old lowering-gap contract. Raw intrinsic arity is now checked
