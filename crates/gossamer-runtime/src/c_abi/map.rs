@@ -1622,6 +1622,7 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
             out.push_str(": ");
             out.push_str(v);
         };
+        let quote_key = |key: &[u8]| format!("{:?}", String::from_utf8_lossy(key));
         let mut first = true;
         match &*storage {
             MapStorage::I64I64(inner) => {
@@ -1641,7 +1642,7 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
                     inner.iter().map(|(k, v)| (k.as_ref(), *v)).collect();
                 entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
                 for (k, v) in entries {
-                    let key = String::from_utf8_lossy(k);
+                    let key = quote_key(k);
                     push_entry(&mut out, &mut first, &key, &crate::builtins::format_int(v));
                 }
             }
@@ -1652,7 +1653,7 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
                     .collect();
                 entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
                 for (k, v) in entries {
-                    let key = String::from_utf8_lossy(k);
+                    let key = quote_key(k);
                     push_entry(&mut out, &mut first, &key, &String::from_utf8_lossy(v));
                 }
             }
@@ -1673,7 +1674,7 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
                 let mut entries: Vec<(&[u8], &[u8])> = inner.iter().collect();
                 entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
                 for (k, v) in entries {
-                    let key = String::from_utf8_lossy(k);
+                    let key = quote_key(k);
                     let value = format!(
                         "[{}]",
                         v.iter().map(u8::to_string).collect::<Vec<_>>().join(", ")

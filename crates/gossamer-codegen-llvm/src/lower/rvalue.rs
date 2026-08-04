@@ -686,6 +686,10 @@ impl<'a> Lowerer<'a> {
                 "CallIntrinsic arity mismatch",
             ));
         }
+        let dest_ty = render_ty(self.tcx, self.body.local_ty(dest_local));
+        if let Some(inlined) = self.try_inline_result_carrier(name, args, &dest_ty)? {
+            return Ok(inlined);
+        }
         let llvm_intrinsic = match intrinsic {
             RawIntrinsic::F64Math(math) => {
                 // `abs` is shared by the integer and floating-point method
@@ -715,7 +719,6 @@ impl<'a> Lowerer<'a> {
                 let idx = self.lower_operand(&args[1])?;
                 let val = self.lower_operand(&args[2])?;
                 self.emit_heap_u8_set_branchless(&v, &idx, &val);
-                let dest_ty = render_ty(self.tcx, self.body.local_ty(dest_local));
                 return Ok(match dest_ty.as_str() {
                     "ptr" => "null",
                     "double" | "float" => "0.0",
@@ -757,7 +760,7 @@ impl<'a> Lowerer<'a> {
         self.runtime_refs
             .insert(format!("declare double @{llvm_intrinsic}(double)"));
         let arg_v = self.lower_operand(&args[0])?;
-        let dest_llvm = render_ty(self.tcx, self.body.local_ty(dest_local));
+        let dest_llvm = dest_ty;
         let tmp = self.fresh();
         writeln!(
             self.out,

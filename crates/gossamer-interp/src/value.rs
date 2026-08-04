@@ -2876,7 +2876,7 @@ fn write_map(out: &mut fmt::Formatter<'_>, map: &DenseMap<MapKey, Value>) -> fmt
         if i > 0 {
             out.write_str(", ")?;
         }
-        write!(out, "{}: {v}", k.to_value())?;
+        write!(out, "{}: {v}", repr_value(&k.to_value()))?;
     }
     out.write_str("}")
 }

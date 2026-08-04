@@ -1043,7 +1043,7 @@ fn main() {
 "#;
     let expected = "\
 (1, x, true)
-({a: 1, b: 2}, [1, 2, 3])
+({\"a\": 1, \"b\": 2}, [1, 2, 3])
 HashSet {1, 2, 3}
 BTreeSet {1, 2, 3}
 Rec { name: \"r\", nums: [1, 2] }
