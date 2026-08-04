@@ -2,7 +2,8 @@
 
 use gossamer_runtime::c_abi::vec::{GosVec, vec_owner_generation};
 use gossamer_runtime::c_abi::{
-    gos_rt_vec_free, gos_rt_vec_get_i64, gos_rt_vec_new, gos_rt_vec_push_i64, gos_rt_vec_swap_i64,
+    gos_rt_vec_free, gos_rt_vec_get_i64, gos_rt_vec_new, gos_rt_vec_push, gos_rt_vec_push_i64,
+    gos_rt_vec_swap_i64,
 };
 
 #[test]
@@ -25,6 +26,32 @@ fn vec_swap_i64_exchanges_in_range_elements_and_ignores_oob() {
         assert_eq!(gos_rt_vec_get_i64(v, 0), 30);
         assert_eq!(gos_rt_vec_get_i64(v, 1), 20);
         assert_eq!(gos_rt_vec_get_i64(v, 2), 10);
+
+        gos_rt_vec_free(v);
+    }
+}
+
+#[test]
+fn vec_swap_exchanges_multiword_elements() {
+    // SAFETY: The test writes two fixed-width elements into a runtime-owned
+    // Vec, swaps them, inspects the backing buffer while the Vec is live, and
+    // releases the Vec exactly once.
+    unsafe {
+        let v = gos_rt_vec_new(16);
+        let first = [1_i64, 2_i64];
+        let second = [3_i64, 4_i64];
+        gos_rt_vec_push(v, first.as_ptr().cast());
+        gos_rt_vec_push(v, second.as_ptr().cast());
+
+        gos_rt_vec_swap_i64(v, 0, 1);
+        let data = (*v).ptr.as_ptr();
+        let actual = [
+            std::ptr::read_unaligned(data.cast::<i64>()),
+            std::ptr::read_unaligned(data.add(8).cast::<i64>()),
+            std::ptr::read_unaligned(data.add(16).cast::<i64>()),
+            std::ptr::read_unaligned(data.add(24).cast::<i64>()),
+        ];
+        assert_eq!(actual, [3, 4, 1, 2]);
 
         gos_rt_vec_free(v);
     }

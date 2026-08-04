@@ -1032,7 +1032,7 @@ fn unsuffixed_integer_literal_rejected_in_string_position() {
 
 #[test]
 fn array_literal_does_not_coerce_to_vec_annotation() {
-    let checked = run("fn main() { let xs: Vec<String> = [\"a\", \"b\"] }\n");
+    let checked = run("fn main() { let xs: Vec<String> = #[\"a\", \"b\"] }\n");
     assert!(checked.diagnostics.iter().any(|diagnostic| matches!(
         &diagnostic.error,
         TypeError::TypeMismatch { expected, found }
@@ -1042,7 +1042,7 @@ fn array_literal_does_not_coerce_to_vec_annotation() {
 
 #[test]
 fn named_array_does_not_coerce_to_vec_annotation() {
-    let checked = run("fn main() { let a = [1, 2, 3]\n let mut v: Vec<i64> = a\n v.push(4) }\n");
+    let checked = run("fn main() { let a = #[1, 2, 3]\n let mut v: Vec<i64> = a\n v.push(4) }\n");
     assert!(checked.diagnostics.iter().any(|diagnostic| matches!(
         &diagnostic.error,
         TypeError::TypeMismatch { expected, found }
@@ -1088,7 +1088,7 @@ fn if_branches_of_differing_array_length_are_rejected() {
     // Differing lengths can only co-type as a Vec; this must check for any
     // element type, not only integer literals.
     let checked =
-        run("fn main() { let v: Vec<String> = if true { [\"a\", \"b\"] } else { [\"c\"] } }\n");
+        run("fn main() { let v: Vec<String> = if true { #[\"a\", \"b\"] } else { #[\"c\"] } }\n");
     assert!(!checked.diagnostics.is_empty());
 }
 
@@ -2388,7 +2388,7 @@ fn fixed_array_range_index_has_vec_type() {
 fn fixed_array_rejects_vec_only_methods() {
     let d = diagnostics_for(
         "fn main() {\n\
-         let mut a = [1; 3]\n\
+         let mut a = #[1; 3]\n\
          a.push(4)\n\
          let _ = a.pop()\n\
          a.insert(1, 9)\n\
@@ -2615,7 +2615,7 @@ fn strings_count_reports_exact_parameter_types_and_names() {
     let d = diagnostics_for(
         "use std::strings\n\
          fn main() {\n\
-         let _ = strings::count([1, 2], \"a\")\n\
+         let _ = strings::count(#[1, 2], \"a\")\n\
          let _ = strings::count('a', \"a\")\n\
          let _ = strings::count(\"a\", 1)\n\
          }\n",
@@ -2642,7 +2642,7 @@ fn strings_count_reports_exact_parameter_types_and_names() {
     assert_eq!(
         mismatches,
         vec![
-            ("strings::count", "text", "String", "array", "[1, 2]"),
+            ("strings::count", "text", "String", "array", "#[1, 2]"),
             ("strings::count", "text", "String", "char", "'a'"),
             ("strings::count", "needle", "String | char", "i64", "1"),
         ],
@@ -2653,13 +2653,13 @@ fn strings_count_reports_exact_parameter_types_and_names() {
 #[test]
 fn named_string_argument_mismatch_uses_a_user_facing_container_type() {
     let d = diagnostics_for(
-        "use std::strings\nfn main() { let _ = strings::slice([1, 2, 3], 1, 2) }\n",
+        "use std::strings\nfn main() { let _ = strings::slice(#[1, 2, 3], 1, 2) }\n",
     );
     assert!(
         d.iter().any(|diag| matches!(
             &diag.error,
             TypeError::ArgumentTypeMismatch { parameter, found, actual, .. }
-                if parameter == "text" && found == "array" && actual == "[1, 2, 3]"
+                if parameter == "text" && found == "array" && actual == "#[1, 2, 3]"
         )),
         "array mismatch must not expose an inference variable: {d:?}"
     );
@@ -2918,6 +2918,28 @@ fn flag_set_parse_supports_question_mark() {
          }\n",
     );
     assert!(!has_code(&d, "GT0045"), "{d:?}");
+}
+
+#[test]
+fn validate_handles_keep_methods_across_function_return() {
+    let d = diagnostics_for(
+        "use std::validate\n\
+         fn errors() -> validate::Errors {\n\
+         let errs = validate::Errors::new()\n\
+         errs.add(\"name\", validate::FieldError::new(\"name\", \"missing\", \"required\"))\n\
+         errs\n\
+         }\n\
+         fn field_error() -> validate::FieldError {\n\
+         validate::FieldError::new(\"email\", \"bad\", \"format\")\n\
+         }\n\
+         fn main() {\n\
+         let errs = errors()\n\
+         println!(\"{} {}\", errs.len(), errs.collect())\n\
+         let fe = field_error()\n\
+         println!(\"{} {} {}\", fe.path(), fe.message(), fe.code())\n\
+         }\n",
+    );
+    assert!(!has_code(&d, "GT0002"), "{d:?}");
 }
 
 #[test]

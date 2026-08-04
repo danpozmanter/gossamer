@@ -112,6 +112,11 @@ pub fn typecheck_source_file_with_lazy_iterators(
 /// guard and keeps adversarial input that survives parsing from
 /// blowing the C stack inside [`TypeChecker::check_expr`].
 const RECURSION_LIMIT: u32 = 256;
+const HASH_SET_DEF_LOCAL: u32 = u32::MAX - 7;
+const VALIDATE_ERRORS_DEF_LOCAL: u32 = u32::MAX - 9;
+const VALIDATE_FIELD_ERROR_DEF_LOCAL: u32 = u32::MAX - 10;
+const BTREE_SET_DEF_LOCAL: u32 = u32::MAX - 18;
+const VEC_DEQUE_DEF_LOCAL: u32 = u32::MAX - 19;
 
 /// Expected type pushed down into an expression while it is checked -
 /// the "checking mode" of bidirectional typechecking. The expectation
@@ -4576,7 +4581,7 @@ impl<'a> TypeChecker<'a> {
             "VecDeque" => {
                 let elem = self.fresh();
                 let substs = crate::Substs::from_types([elem]);
-                let def = gossamer_resolve::DefId::local(u32::MAX - 9);
+                let def = gossamer_resolve::DefId::local(VEC_DEQUE_DEF_LOCAL);
                 self.tcx.register_def_name(def, "VecDeque");
                 Some(self.tcx.intern(TyKind::Adt { def, substs }))
             }
@@ -4697,6 +4702,61 @@ impl<'a> TypeChecker<'a> {
         let vec = self.tcx.intern(TyKind::Vec(s));
         let err = self.tcx.dyn_error_ty();
         Some(self.result_adt_ty(vec, err))
+    }
+
+    fn validate_handle_method_ret(
+        &mut self,
+        method: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        resolved: Ty,
+        span: Span,
+    ) -> Option<Ty> {
+        let mut resolved = self.infer.resolve(self.tcx, resolved);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
+            resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        let public_owner = self.render_public_ty(resolved);
+        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
+            return None;
+        };
+        let owner = self
+            .tcx
+            .def_name(*def)
+            .map_or_else(|| public_owner.clone(), ToString::to_string);
+        let string = self.tcx.string_ty();
+        let field_error = self.stdlib_handle_ty(10, "validate::FieldError");
+        let owner_key = match public_owner.as_str() {
+            "validate::Errors" | "validate::FieldError" => public_owner.as_str(),
+            _ => owner.as_str(),
+        };
+        let (params, ret) = match (owner_key, method) {
+            ("Errors" | "validate::Errors", "add") => (vec![string, field_error], self.tcx.unit()),
+            ("Errors" | "validate::Errors", "is_empty") => (Vec::new(), self.tcx.bool_ty()),
+            ("Errors" | "validate::Errors", "len") => (Vec::new(), self.tcx.int_ty(IntTy::I64)),
+            ("Errors" | "validate::Errors", "count") => (vec![string], self.tcx.int_ty(IntTy::I64)),
+            ("Errors" | "validate::Errors", "get") => (vec![string], string),
+            ("Errors" | "validate::Errors", "collect") => (Vec::new(), string),
+            ("FieldError" | "validate::FieldError", "path" | "message" | "code") => {
+                (Vec::new(), string)
+            }
+            _ => return None,
+        };
+        if args.len() != params.len() {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: format!("{owner}::{method}"),
+                    expected: params.len(),
+                    found: args.len(),
+                },
+                span,
+            );
+            return Some(self.tcx.error_ty());
+        }
+        for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
+            self.check_sig_param_arg(*param, *arg_ty, arg);
+        }
+        Some(ret)
     }
 
     fn stdlib_handle_ty(&mut self, offset: u32, name: &str) -> Ty {
@@ -5491,8 +5551,8 @@ impl<'a> TypeChecker<'a> {
     fn set_ty(&mut self, owner: &str, elem: Ty) -> Ty {
         let substs = crate::Substs::from_types([elem]);
         let (local, name) = match owner {
-            "BTreeSet" => (u32::MAX - 10, "BTreeSet"),
-            _ => (u32::MAX - 7, "HashSet"),
+            "BTreeSet" => (BTREE_SET_DEF_LOCAL, "BTreeSet"),
+            _ => (HASH_SET_DEF_LOCAL, "HashSet"),
         };
         let def = gossamer_resolve::DefId::local(local);
         self.tcx.register_def_name(def, name);
@@ -5501,9 +5561,10 @@ impl<'a> TypeChecker<'a> {
 
     fn set_elem_ty(&self, ty: Ty) -> Option<(String, Ty)> {
         match self.tcx.kind(ty) {
-            Some(TyKind::Adt { def, substs }) if matches!(def.local, x if x == u32::MAX - 7 || x == u32::MAX - 10) =>
+            Some(TyKind::Adt { def, substs })
+                if matches!(def.local, HASH_SET_DEF_LOCAL | BTREE_SET_DEF_LOCAL) =>
             {
-                let owner = if def.local == u32::MAX - 10 {
+                let owner = if def.local == BTREE_SET_DEF_LOCAL {
                     "BTreeSet"
                 } else {
                     "HashSet"
@@ -5687,7 +5748,7 @@ impl<'a> TypeChecker<'a> {
             resolved = self.infer.resolve(self.tcx, *inner);
         }
         if let Some(TyKind::Adt { def, substs }) = self.tcx.kind(resolved)
-            && def.local == u32::MAX - 9
+            && def.local == VEC_DEQUE_DEF_LOCAL
         {
             let elem = substs.types().first().copied();
             let v = self.check_expr(&args[0]);
@@ -5814,6 +5875,11 @@ impl<'a> TypeChecker<'a> {
         }
         if self.reject_collection_method_arity(resolved, method, args.len(), receiver.span) {
             return self.tcx.error_ty();
+        }
+        if let Some(ty) =
+            self.validate_handle_method_ret(method, args, &arg_tys, resolved, receiver.span)
+        {
+            return ty;
         }
         self.check_user_method_args(resolved, method, args, &arg_tys);
         if method == "where_eq"
@@ -5986,7 +6052,7 @@ impl<'a> TypeChecker<'a> {
     fn reject_unknown_set_method(&mut self, resolved: Ty, method: &str, span: Span) -> bool {
         let is_hash_set = matches!(
             self.tcx.kind(resolved),
-            Some(TyKind::Adt { def, .. }) if matches!(def.local, x if x == u32::MAX - 7 || x == u32::MAX - 10)
+            Some(TyKind::Adt { def, .. }) if matches!(def.local, HASH_SET_DEF_LOCAL | BTREE_SET_DEF_LOCAL)
         );
         if !is_hash_set {
             return false;
@@ -6016,7 +6082,9 @@ impl<'a> TypeChecker<'a> {
                 "clear" | "len" | "is_empty" | "keys" | "values" | "iter" => Some(0),
                 _ => None,
             },
-            Some(TyKind::Adt { def, .. }) if matches!(def.local, x if x == u32::MAX - 7 || x == u32::MAX - 10) => {
+            Some(TyKind::Adt { def, .. })
+                if matches!(def.local, HASH_SET_DEF_LOCAL | BTREE_SET_DEF_LOCAL) =>
+            {
                 match method {
                     "insert" | "remove" | "contains" => Some(1),
                     "clear" | "len" | "is_empty" | "to_vec" | "iter" => Some(0),
@@ -6030,7 +6098,7 @@ impl<'a> TypeChecker<'a> {
                     _ => None,
                 }
             }
-            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 9 => match method {
+            Some(TyKind::Adt { def, .. }) if def.local == VEC_DEQUE_DEF_LOCAL => match method {
                 "push_back" | "push_front" => Some(1),
                 "pop_back" | "pop_front" | "peek_back" | "peek_front" | "len" | "is_empty"
                 | "clear" => Some(0),
@@ -9823,7 +9891,7 @@ impl<'a> TypeChecker<'a> {
             self.expectation_target(expected)
                 .and_then(|target| match self.tcx.kind(target) {
                     Some(TyKind::Adt { def, substs })
-                        if matches!(def.local, x if x == u32::MAX - 7 || x == u32::MAX - 10) =>
+                        if matches!(def.local, HASH_SET_DEF_LOCAL | BTREE_SET_DEF_LOCAL) =>
                     {
                         substs
                             .types()
@@ -9841,7 +9909,7 @@ impl<'a> TypeChecker<'a> {
                     self.unify(want_elem, got, entry.span);
                 }
             }
-            return if want_owner == u32::MAX - 10 {
+            return if want_owner == BTREE_SET_DEF_LOCAL {
                 self.btreeset_ty(want_elem)
             } else {
                 self.hashset_ty(want_elem)
@@ -10565,9 +10633,9 @@ impl<'a> TypeChecker<'a> {
                     .last()
                     .is_some_and(|seg| seg.name.name == "BTreeSet")
                 {
-                    (u32::MAX - 10, "BTreeSet")
+                    (BTREE_SET_DEF_LOCAL, "BTreeSet")
                 } else {
-                    (u32::MAX - 7, "HashSet")
+                    (HASH_SET_DEF_LOCAL, "HashSet")
                 };
                 let def = gossamer_resolve::DefId::local(local);
                 self.tcx.register_def_name(def, name);
@@ -10592,7 +10660,7 @@ impl<'a> TypeChecker<'a> {
             // right payload) even when the deque is consumed inline.
             "VecDeque" => {
                 let substs = self.substs_from_ast(path);
-                let def = gossamer_resolve::DefId::local(u32::MAX - 9);
+                let def = gossamer_resolve::DefId::local(VEC_DEQUE_DEF_LOCAL);
                 self.tcx.register_def_name(def, "VecDeque");
                 return self.tcx.intern(TyKind::Adt { def, substs });
             }
@@ -10678,8 +10746,7 @@ impl<'a> TypeChecker<'a> {
             // when a context flows in as a parameter (the canonical
             // request-propagation shape) and the construction tag is
             // gone - the `is_cancelled` / `cancel` / `done` / `done_chan`
-            // calls then route to the `gos_rt_ctx_*` shims. Offset 11:
-            // 9 and 10 are taken by `validate::Errors` / `FieldError`.
+            // calls then route to the `gos_rt_ctx_*` shims.
             "Context" => Some(11),
             // `U8Vec`: a byte-buffer handle. A concrete sentinel here lets
             // the JIT marshal a `buf: U8Vec` parameter across the trampoline
@@ -10719,12 +10786,12 @@ impl<'a> TypeChecker<'a> {
         // construction-site tag is gone - the same recovery `HashSet`
         // and `BTreeMap` rely on.
         let validate_handle: Option<(u32, &str)> = match tail {
-            "Errors" => Some((9, "Errors")),
-            "FieldError" => Some((10, "FieldError")),
+            "Errors" => Some((VALIDATE_ERRORS_DEF_LOCAL, "Errors")),
+            "FieldError" => Some((VALIDATE_FIELD_ERROR_DEF_LOCAL, "FieldError")),
             _ => None,
         };
-        if let Some((off, name)) = validate_handle {
-            let def = gossamer_resolve::DefId::local(u32::MAX - off);
+        if let Some((local, name)) = validate_handle {
+            let def = gossamer_resolve::DefId::local(local);
             self.tcx.register_def_name(def, name);
             return self.tcx.intern(TyKind::Adt {
                 def,
@@ -11355,6 +11422,21 @@ fn argument_value_display(arg: &Expr) -> String {
         ExprKind::Array(ArrayExpr::Repeat { value, count }) => {
             format!(
                 "[{}; {}]",
+                argument_value_display(value),
+                argument_value_display(count)
+            )
+        }
+        ExprKind::FixedArray(ArrayExpr::List(values)) => format!(
+            "#[{}]",
+            values
+                .iter()
+                .map(argument_value_display)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ExprKind::FixedArray(ArrayExpr::Repeat { value, count }) => {
+            format!(
+                "#[{}; {}]",
                 argument_value_display(value),
                 argument_value_display(count)
             )

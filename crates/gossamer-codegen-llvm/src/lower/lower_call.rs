@@ -70,10 +70,15 @@ use crate::ty::packed_byte_array_len;
 use anyhow::Result;
 use gossamer_abi as abi;
 use gossamer_mir::{
-    BasicBlock, BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, Statement,
-    StatementKind, Terminator, UnOp,
+    BasicBlock, BinOp, Body, ConstValue, Local, Operand, Place, Projection, RawIntrinsic, Rvalue,
+    Statement, StatementKind, Terminator, UnOp,
 };
 use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
+
+struct LoweredMapSlot {
+    llvm_ty: &'static str,
+    value: String,
+}
 
 impl<'a> Lowerer<'a> {
     /// Indirect call lowering for `f(args…)` where `f` is a
@@ -273,7 +278,9 @@ impl<'a> Lowerer<'a> {
             | ConcatKind::Tuple
             | ConcatKind::Option(_)
             | ConcatKind::Result(_, _)
-            | ConcatKind::Map) => self.emit_concat_aggregate(arg, kind, &value),
+            | ConcatKind::Map
+            | ConcatKind::SetI64(_)
+            | ConcatKind::SetString(_)) => self.emit_concat_aggregate(arg, kind, &value),
             ConcatKind::Unsupported => unreachable!("checked above"),
         }
     }
@@ -335,6 +342,7 @@ impl<'a> Lowerer<'a> {
                 .into_boxed_str(),
             )));
         };
+        let name = resolve_external_binding_symbol(&name, args.len()).unwrap_or(name);
         let name = if name == "gos_rt_bytearr_slice_result" {
             "gos_rt_packed_bytearr_slice_result".to_string()
         } else {
@@ -955,6 +963,14 @@ impl<'a> Lowerer<'a> {
         }
         if matches!(
             name.as_str(),
+            "HashMap::from" | "collections::HashMap::from" | "std::collections::HashMap::from"
+        ) && args.len() == 1
+        {
+            self.lower_hashmap_from_array(&args[0], destination, target)?;
+            return Ok(());
+        }
+        if matches!(
+            name.as_str(),
             "gos_rt_vec_from_arr" | "gos_rt_vec_borrow_arr"
         ) && args.get(1).is_some_and(|arg| {
             matches!(
@@ -1019,6 +1035,135 @@ impl<'a> Lowerer<'a> {
             mapped
         };
         self.emit_named_call(symbol, args, destination, target)
+    }
+
+    fn lower_hashmap_from_array(
+        &mut self,
+        arg: &Operand,
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let arg_ty = self.unwrap_ref(self.operand_ty(arg));
+        let Some(TyKind::Array { elem, len }) = self.tcx.kind(arg_ty).cloned() else {
+            return Err(BuildError::InternalLoweringBug(
+                "HashMap::from native lowering expects an array argument",
+            ));
+        };
+        let Some(TyKind::Tuple(fields)) = self.tcx.kind(elem).cloned() else {
+            return Err(BuildError::InternalLoweringBug(
+                "HashMap::from native lowering expects tuple array elements",
+            ));
+        };
+        let [key_ty, val_ty] = fields.as_slice() else {
+            return Err(BuildError::InternalLoweringBug(
+                "HashMap::from native lowering expects key/value tuple elements",
+            ));
+        };
+        let Some((key_kind, val_kind)) = self.hashmap_storage_kinds(*key_ty, *val_ty) else {
+            return Err(BuildError::InternalLoweringBug(
+                "HashMap::from native lowering only supports i64/String keys and values",
+            ));
+        };
+        let count = i64::try_from(len.to_usize()).unwrap_or(i64::MAX);
+        declare_rt(&mut self.runtime_refs, "gos_rt_map_new_with_capacity_typed");
+        let map = self.fresh();
+        writeln!(
+            self.out,
+            "  {map} = call ptr @gos_rt_map_new_with_capacity_typed(i32 {key_kind}, i32 {val_kind}, i64 {count})"
+        )
+        .unwrap();
+        let base = match arg {
+            Operand::Copy(place) => self.lower_place_address(place),
+            Operand::Const(_) | Operand::FnRef { .. } => {
+                return Err(BuildError::InternalLoweringBug(
+                    "HashMap::from native lowering expects a materialised array place",
+                ));
+            }
+        };
+        let stride = slot_count(self.tcx, elem).unwrap_or(2).max(1);
+        let value_offset = slot_count(self.tcx, *key_ty).unwrap_or(1).max(1);
+        for index in 0..len.to_usize() {
+            let offset = u64::try_from(index)
+                .unwrap_or(u64::MAX)
+                .saturating_mul(u64::from(stride));
+            let key = self.load_hashmap_from_slot(&base, offset, *key_ty)?;
+            let val = self.load_hashmap_from_slot(
+                &base,
+                offset.saturating_add(u64::from(value_offset)),
+                *val_ty,
+            )?;
+            let helper = match (key.llvm_ty, val.llvm_ty) {
+                ("i64", "i64") => "gos_rt_map_insert_i64_i64",
+                ("i64", "ptr") => "gos_rt_map_insert_i64_str",
+                ("ptr", "i64") => "gos_rt_map_insert_str_i64",
+                ("ptr", "ptr") => "gos_rt_map_insert_str_str",
+                _ => {
+                    return Err(BuildError::InternalLoweringBug(
+                        "HashMap::from native lowering produced unsupported key/value ABI",
+                    ));
+                }
+            };
+            declare_rt(&mut self.runtime_refs, helper);
+            writeln!(
+                self.out,
+                "  call void @\"{helper}\"(ptr {map}, {} {}, {} {})",
+                key.llvm_ty, key.value, val.llvm_ty, val.value
+            )
+            .unwrap();
+        }
+        self.store_value_to_place(destination, "ptr", &map);
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
+    fn hashmap_storage_kinds(&self, key: Ty, value: Ty) -> Option<(i32, i32)> {
+        Some((
+            self.hashmap_storage_kind(key)?,
+            self.hashmap_storage_kind(value)?,
+        ))
+    }
+
+    fn hashmap_storage_kind(&self, ty: Ty) -> Option<i32> {
+        match self.tcx.kind(self.unwrap_ref(ty)) {
+            Some(TyKind::Int(i)) if int_width(*i) == 64 => Some(0),
+            Some(TyKind::String) => Some(1),
+            _ => None,
+        }
+    }
+
+    fn load_hashmap_from_slot(
+        &mut self,
+        base: &str,
+        offset: u64,
+        ty: Ty,
+    ) -> Result<LoweredMapSlot, BuildError> {
+        let slot = self.fresh();
+        writeln!(
+            self.out,
+            "  {slot} = getelementptr i64, ptr {base}, i64 {offset}"
+        )
+        .unwrap();
+        match self.tcx.kind(self.unwrap_ref(ty)) {
+            Some(TyKind::Int(i)) if int_width(*i) == 64 => {
+                let value = self.fresh();
+                writeln!(self.out, "  {value} = load i64, ptr {slot}").unwrap();
+                Ok(LoweredMapSlot {
+                    llvm_ty: "i64",
+                    value,
+                })
+            }
+            Some(TyKind::String) => {
+                let value = self.fresh();
+                writeln!(self.out, "  {value} = load ptr, ptr {slot}").unwrap();
+                Ok(LoweredMapSlot {
+                    llvm_ty: "ptr",
+                    value,
+                })
+            }
+            _ => Err(BuildError::InternalLoweringBug(
+                "HashMap::from native lowering cannot load key/value type",
+            )),
+        }
     }
 
     /// Reads the heap pointer value addressed by an operand
@@ -1182,6 +1327,14 @@ impl<'a> Lowerer<'a> {
         destination: &Place,
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
+        let Some(intrinsic) = RawIntrinsic::from_name(name) else {
+            return Err(BuildError::InternalLoweringBug(
+                "unrecognised raw intrinsic",
+            ));
+        };
+        if !intrinsic.arity_for_name(name).accepts(args.len()) {
+            return Err(BuildError::InternalLoweringBug("raw intrinsic arity"));
+        }
         let dest_ty_mir = self.place_leaf_ty(destination);
         let dest_ty = render_ty(self.tcx, dest_ty_mir);
         match name {
@@ -1672,7 +1825,7 @@ impl<'a> Lowerer<'a> {
             }
             _ => {
                 return Err(BuildError::InternalLoweringBug(
-                    "unrecognised raw intrinsic",
+                    "raw intrinsic is not inline-lowerable",
                 ));
             }
         }
@@ -1684,6 +1837,53 @@ impl<'a> Lowerer<'a> {
             emit_terminator_branch(&mut self.out, target);
         }
         Ok(())
+    }
+}
+
+pub(crate) fn resolve_external_binding_symbol(name: &str, argc: usize) -> Option<String> {
+    let (module_path, item_name) = if let Some((module_path, item_name)) = name.rsplit_once("::") {
+        let item = gossamer_resolve::lookup_external_item(name)?;
+        if item.params.len() != argc {
+            return None;
+        }
+        (module_path.to_string(), item_name.to_string())
+    } else {
+        let mut matches = Vec::new();
+        for module in gossamer_resolve::all_external_modules() {
+            for item in module.items {
+                if item.name == name && item.params.len() == argc {
+                    matches.push((module.path.clone(), item.name));
+                }
+            }
+        }
+        if matches.len() != 1 {
+            return None;
+        }
+        matches.pop()?
+    };
+    Some(format!(
+        "gos_binding_{}__{}",
+        module_path.replace("::", "__"),
+        item_name
+    ))
+}
+
+pub(crate) fn external_binding_arity(name: &str) -> Option<usize> {
+    if let Some(item) = gossamer_resolve::lookup_external_item(name) {
+        return Some(item.params.len());
+    }
+    let mut matches = Vec::new();
+    for module in gossamer_resolve::all_external_modules() {
+        for item in module.items {
+            if item.name == name {
+                matches.push(item.params.len());
+            }
+        }
+    }
+    if matches.len() == 1 {
+        matches.pop()
+    } else {
+        None
     }
 }
 

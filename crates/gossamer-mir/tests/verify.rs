@@ -298,6 +298,43 @@ fn caller() -> i64 { callee(1, 2) }
 }
 
 #[test]
+fn unresolved_fn_ref_is_detected() {
+    use gossamer_resolve::DefId;
+    let source = r"
+fn callee(a: i64) -> i64 { a }
+fn caller() -> i64 { callee(1) }
+";
+    let (mut bodies, tcx) = build(source);
+    let missing = DefId::local(9_999);
+    let mut rewrote = false;
+    for body in &mut bodies {
+        for block in &mut body.blocks {
+            if let Terminator::Call { callee, .. } = &mut block.terminator
+                && body.name == "caller"
+            {
+                *callee = Operand::FnRef {
+                    def: missing,
+                    substs: gossamer_types::Substs::new(),
+                };
+                rewrote = true;
+                break;
+            }
+        }
+        if rewrote {
+            break;
+        }
+    }
+    assert!(rewrote, "test fixture: expected a Call terminator");
+    let errors = verify_program(&bodies, &tcx).expect_err("missing FnRef must fail");
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, VerifyError::UnresolvedFnRef { def, .. } if *def == missing)),
+        "expected UnresolvedFnRef in {errors:?}",
+    );
+}
+
+#[test]
 fn return_type_error_is_detected() {
     let (mut bodies, mut tcx) = build("fn id(x: i64) -> i64 { x }\n");
     let body = &mut bodies[0];
@@ -490,6 +527,68 @@ fn aggregate_operand_count_is_detected() {
             }
         )),
         "expected AggregateOperandCount in {errors:?}",
+    );
+}
+
+#[test]
+fn unknown_intrinsic_is_detected() {
+    let (mut bodies, tcx) = build("fn id(x: i64) -> i64 { x }\n");
+    let body = &mut bodies[0];
+    body.blocks[0].stmts.insert(
+        0,
+        Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(Local(0)),
+                rvalue: Rvalue::CallIntrinsic {
+                    name: "is_halted",
+                    args: Vec::new(),
+                },
+            },
+            span: body.span,
+        },
+    );
+    let errors = verify_body_typed(body, &tcx).expect_err("unknown intrinsic must fail");
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            VerifyError::UnknownIntrinsic {
+                name: "is_halted",
+                ..
+            }
+        )),
+        "expected UnknownIntrinsic in {errors:?}",
+    );
+}
+
+#[test]
+fn intrinsic_arity_mismatch_is_detected() {
+    let (mut bodies, tcx) = build("fn id(x: i64) -> i64 { x }\n");
+    let body = &mut bodies[0];
+    body.blocks[0].stmts.insert(
+        0,
+        Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(Local(0)),
+                rvalue: Rvalue::CallIntrinsic {
+                    name: "gos_load",
+                    args: vec![Operand::Const(ConstValue::Int(0))],
+                },
+            },
+            span: body.span,
+        },
+    );
+    let errors = verify_body_typed(body, &tcx).expect_err("bad intrinsic arity must fail");
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            VerifyError::IntrinsicArityMismatch {
+                name: "gos_load",
+                got: 1,
+                expected: "2",
+                ..
+            }
+        )),
+        "expected IntrinsicArityMismatch in {errors:?}",
     );
 }
 

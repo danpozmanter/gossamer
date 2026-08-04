@@ -69,8 +69,8 @@ use crate::BuildError;
 use anyhow::Result;
 use gossamer_abi as abi;
 use gossamer_mir::{
-    BasicBlock, BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, Statement,
-    StatementKind, Terminator, UnOp,
+    BasicBlock, BinOp, Body, ConstValue, Local, Operand, Place, Projection, RawIntrinsic, Rvalue,
+    Statement, StatementKind, Terminator, UnOp,
 };
 use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 
@@ -676,18 +676,25 @@ impl<'a> Lowerer<'a> {
         args: &[Operand],
         dest_local: Local,
     ) -> Result<String, BuildError> {
-        let (llvm_intrinsic, expected_arity) = match name {
-            "f64.sqrt" | "sqrt" => ("llvm.sqrt.f64", 1),
-            "f64.sin" | "sin" => ("llvm.sin.f64", 1),
-            "f64.cos" | "cos" => ("llvm.cos.f64", 1),
-            "f64.abs" | "fabs" | "abs" => {
+        let Some(intrinsic) = RawIntrinsic::from_name(name) else {
+            return Err(BuildError::InternalLoweringBug(
+                "unknown CallIntrinsic name",
+            ));
+        };
+        if !intrinsic.arity_for_name(name).accepts(args.len()) {
+            return Err(BuildError::InternalLoweringBug(
+                "CallIntrinsic arity mismatch",
+            ));
+        }
+        let llvm_intrinsic = match intrinsic {
+            RawIntrinsic::F64Math(math) => {
                 // `abs` is shared by the integer and floating-point method
                 // surfaces. MIR can retain the `f64.abs` spelling for an
                 // integer call while its typed destination is i64. Only a
                 // double result can use LLVM's `fabs` intrinsic; routing an
                 // integer receiver through it produces malformed IR
                 // (`call i64 @llvm.fabs.f64(double i64)`).
-                if args.len() == 1
+                if math == gossamer_mir::F64MathIntrinsic::Abs
                     && render_ty(self.tcx, self.body.local_ty(dest_local)) != "double"
                 {
                     return self.lower_runtime_call_intrinsic(
@@ -696,18 +703,14 @@ impl<'a> Lowerer<'a> {
                         dest_local,
                     );
                 }
-                ("llvm.fabs.f64", 1)
+                math.llvm_name()
             }
-            "f64.floor" | "floor" => ("llvm.floor.f64", 1),
-            "f64.ceil" | "ceil" => ("llvm.ceil.f64", 1),
-            "f64.exp" | "exp" => ("llvm.exp.f64", 1),
-            "f64.ln" | "ln" | "f64.log" | "log" => ("llvm.log.f64", 1),
             // Inline `buf.set_byte(i, x)` as a branchless bounds-guarded store
             // instead of a runtime call. `GosU8Vec` is `{ i64 len, ptr data }`;
             // an out-of-range / null access redirects to a scratch byte, which
             // reproduces `gos_rt_heap_u8_set`'s no-op-on-OOB semantics without
             // the per-byte call overhead (fasta's hot inner loop).
-            "gos_rt_heap_u8_set" if args.len() == 3 => {
+            RawIntrinsic::Runtime if name == "gos_rt_heap_u8_set" => {
                 let v = self.lower_operand(&args[0])?;
                 let idx = self.lower_operand(&args[1])?;
                 let val = self.lower_operand(&args[2])?;
@@ -720,25 +723,35 @@ impl<'a> Lowerer<'a> {
                 }
                 .to_string());
             }
-            other if other.starts_with("gos_rt_") => {
+            RawIntrinsic::Runtime => {
                 // Generic runtime-call intrinsic: emit a regular
                 // call against the named runtime symbol. Mirrors
                 // how the Cranelift backend's `lower_intrinsic_call`
                 // falls through to a named-call dispatch when the
                 // intrinsic isn't a recognised inline shape.
-                return self.lower_runtime_call_intrinsic(other, args, dest_local);
+                return self.lower_runtime_call_intrinsic(name, args, dest_local);
             }
-            _ => {
+            RawIntrinsic::EnumLoad
+            | RawIntrinsic::EnumTag
+            | RawIntrinsic::EnumDiscTag
+            | RawIntrinsic::EnumUntag
+            | RawIntrinsic::EnumDisc
+            | RawIntrinsic::EnumSetDisc
+            | RawIntrinsic::Load
+            | RawIntrinsic::Store
+            | RawIntrinsic::Alloc
+            | RawIntrinsic::RcAlloc
+            | RawIntrinsic::RcAllocTagged
+            | RawIntrinsic::RcAllocReuse
+            | RawIntrinsic::EnumStructEq
+            | RawIntrinsic::FnAddr
+            | RawIntrinsic::WeakOptPayload
+            | RawIntrinsic::JitUnsupportedUserIterator => {
                 return Err(BuildError::InternalLoweringBug(
-                    "unknown CallIntrinsic name",
+                    "raw pointer intrinsic reached rvalue lowering",
                 ));
             }
         };
-        if args.len() != expected_arity {
-            return Err(BuildError::InternalLoweringBug(
-                "CallIntrinsic arity mismatch",
-            ));
-        }
         // Ensure a `declare` for this intrinsic lands in the
         // module header.
         self.runtime_refs

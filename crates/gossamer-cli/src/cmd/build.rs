@@ -58,10 +58,9 @@ pub(crate) struct BuildRequest<'a> {
 /// `gos build` dispatcher: walks the project root for a default
 /// entry point when no path is supplied.
 pub(crate) fn dispatch(mut request: BuildRequest<'_>) -> Result<()> {
-    if let Err(err) = crate::binding_dispatch::ensure_external_signatures() {
-        eprintln!("warning: failed to load rust-binding signatures: {err}");
-    }
     let resolved = resolve_entry_arg(request.path.take())?;
+    crate::binding_dispatch::ensure_external_signatures_for_entry(&resolved)
+        .map_err(|err| anyhow!("failed to load rust-binding signatures: {err}"))?;
     run(&resolved, &request)
 }
 
@@ -974,10 +973,10 @@ fn try_native_build(
     } else {
         None
     };
-    let bindings_archive = build_static_bindings_lib(opts.release, bindings_target.as_deref())
-        .map_err(|err| {
-            NativeBuildError::LinkerMissing(format!("rust-bindings staticlib: {err}"))
-        })?;
+    let bindings_archive =
+        build_static_bindings_lib(input_path, opts.release, bindings_target.as_deref()).map_err(
+            |err| NativeBuildError::LinkerMissing(format!("rust-bindings staticlib: {err}")),
+        )?;
     let mut extra_archives: Vec<PathBuf> = Vec::new();
     if let Some(p) = bindings_archive {
         extra_archives.push(p);
@@ -1220,12 +1219,13 @@ fn find_clang_rt_profile() -> Option<PathBuf> {
 /// project declares `[rust-bindings]`. Returns the archive path
 /// or `None` when bindings are absent.
 fn build_static_bindings_lib(
+    entry: &Path,
     release: bool,
     cargo_target: Option<&str>,
 ) -> std::result::Result<Option<PathBuf>, gossamer_driver::binding_runner::BindingRunnerError> {
     use gossamer_driver::binding_runner::{Profile as RunnerProfile, StaticBindingsLib};
 
-    let project = crate::paths::project_context();
+    let project = crate::paths::project_context_for_entry(entry);
     // Mirror `dispatch_runner_if_needed`: a malformed manifest must
     // not silently degrade to "no bindings".
     let Some(manifest_result) = project.manifest_result() else {
@@ -1744,8 +1744,6 @@ fn emit_native_objects(
     if let Some(ref cd) = cache_dir {
         gossamer_codegen_llvm::set_cache_dir(cd.clone());
     }
-    // Per-body LLVM objects land in their own subdirectory so the
-    // Cranelift companion sits alongside without filename collisions.
     let llvm_obj_dir = tmp_dir.join("llvm");
     fs::create_dir_all(&llvm_obj_dir)
         .map_err(|e| NativeBuildError::Io(anyhow!("creating {}: {e}", llvm_obj_dir.display())))?;
@@ -1756,16 +1754,8 @@ fn emit_native_objects(
     timings.body_count = build.body_count;
     timings.llvm_object_count = build.llvm_object_count;
     timings.cranelift_companion = build.has_cranelift_companion;
-    let mut object_paths: Vec<PathBuf> = build.llvm_objects;
-    if build.has_cranelift_companion {
-        object_paths.push(cl_path);
-        eprintln!(
-            "build: per-function Cranelift companion engaged for {n} bodies: {names:?}",
-            n = build.fallback_bodies.len(),
-            names = build.fallback_bodies,
-        );
-    }
-    Ok((object_paths, Some(build.triple)))
+    let _ = cl_path;
+    Ok((build.llvm_objects, Some(build.triple)))
 }
 
 // The `Result` is load-bearing on unix (the `chmod` below can fail); on

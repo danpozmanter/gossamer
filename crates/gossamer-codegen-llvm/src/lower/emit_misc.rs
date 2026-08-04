@@ -343,7 +343,9 @@ impl<'a> Lowerer<'a> {
                 | ConcatKind::Tuple
                 | ConcatKind::Option(_)
                 | ConcatKind::Result(_, _)
-                | ConcatKind::Map) => {
+                | ConcatKind::Map
+                | ConcatKind::SetI64(_)
+                | ConcatKind::SetString(_)) => {
                     let str_ptr = self.emit_concat_aggregate(arg, kind, &value)?;
                     writeln!(self.out, "  call void @gos_rt_print_str(ptr {str_ptr})").unwrap();
                 }

@@ -807,7 +807,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_select_wait" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_select_value" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_select_free" => (&[ptr_ty], None),
-        "gos_rt_set_new" => (&[], Some(ptr_ty)),
+        "gos_rt_set_new" | "gos_rt_btree_set_new" => (&[], Some(ptr_ty)),
         "gos_rt_set_insert" => (&[ptr_ty, ptr_ty], Some(types::I64)),
         "gos_rt_set_contains" => (&[ptr_ty, ptr_ty], Some(types::I64)),
         "gos_rt_set_remove" => (&[ptr_ty, ptr_ty], Some(types::I64)),

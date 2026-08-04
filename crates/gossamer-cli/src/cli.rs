@@ -186,13 +186,6 @@ enum Command {
         /// created if it does not exist.
         #[arg(long = "out-dir")]
         out_dir: Option<PathBuf>,
-        /// Allow individual function bodies to silently fall back to
-        /// the Cranelift codegen when the LLVM backend hits an
-        /// unsupported MIR shape. Default release builds reject any
-        /// such fallback as a hard error so users get the LLVM
-        /// quality they pay for; this flag is the explicit opt-out.
-        #[arg(long = "allow-llvm-fallback")]
-        allow_llvm_fallback: bool,
         /// Require `project.lock` to be present and match the
         /// resolver's output for every dep. Drift is a hard error.
         /// CI builds should set this so a stale lockfile never
@@ -772,7 +765,7 @@ const BASH_COMPLETION_HELPERS: &str = r#"
 "#;
 
 const BASH_BUILD_COMPLETION: &str = r#"        gos__subcmd__build)
-            opts="-g -v -h --target --release --pgo-collect --pgo-profile --debug-info --dynamic --timings --explain-profile --reproducible --out-dir --allow-llvm-fallback --locked --verbose --help"
+            opts="-g -v -h --target --release --pgo-collect --pgo-profile --debug-info --dynamic --timings --explain-profile --reproducible --out-dir --locked --verbose --help"
             if [[ ${cur} == -* ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1054,17 +1047,10 @@ fn dispatch(
             reproducible,
             out_dir,
             locked,
-            allow_llvm_fallback,
         }) => {
             crate::cmd::pkg::enforce_lockfile_if_requested(locked)?;
             configure_pgo(release, pgo_collect, pgo_profile)?;
-            // 0.9.0 default: a release build that silently falls
-            // back to Cranelift is a regression dressed up as a
-            // feature. Default-on strict-lowering for --release
-            // unless the user explicitly opts out.
-            if release && !allow_llvm_fallback {
-                gossamer_codegen_llvm::set_strict_lowering(true);
-            }
+            gossamer_codegen_llvm::set_strict_lowering(true);
             dispatch_build(
                 file,
                 target.as_deref(),

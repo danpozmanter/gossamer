@@ -8,16 +8,25 @@
 - Make empty `{}` infer as an empty `HashMap`, including typed empty map
   lowering across interpreter and native builds.
 - Fix native LLVM lowering for projected call destinations, aggregate writes,
-  and intrinsic result stores, including the `@is_halted` undefined-symbol
-  build failure.
+  intrinsic result stores, validation handles, and multiword Vec swap/pop
+  cases. This includes the `@is_halted` undefined-symbol build failure,
+  non-empty `HashMap::from` and map literals, nested tuple formatting for
+  maps and Vecs, and HashSet/BTreeSet display.
 - Treat native lowering gaps as backend bugs instead of per-function fallback
-  cases, with regression tests guarding the old lowering-gap contract.
+  cases, with MIR validation, LLVM symbol auditing, and regression tests
+  guarding the old lowering-gap contract. Raw intrinsic arity is now checked
+  through one shared MIR catalogue before LLVM lowering, including weak
+  reference upgrade payload extraction.
+- Lower Rust binding function references through the generated binding symbols
+  instead of rejecting binding functions used as values.
 - Lower set literals, `HashSet::from`, and `BTreeSet::from` through native
   codegen for scalar and aggregate elements.
+- Fix project-relative Rust binding discovery and binding cache locking for
+  entry-file builds outside the project directory.
 - Restrict REPL discovery so `%i` covers language and standard-library entries
   while `%e` covers user bindings and declarations.
-- Update examples, docs, REPL discovery text, and migration guides for the new
-  collection literal syntax.
+- Update examples, docs, REPL discovery text, migration guides, and the Tour of
+  Gossamer for the new collection literal syntax and current stdlib names.
 
 ## 0.40.0 - Coherent sequences, safer execution, and complete discovery
 
@@ -3021,7 +3030,7 @@ Two coordinated fixes close a class of multi-slot-element corruption under `gos 
 ### Codegen - LLVM
 
 - **`render_ir_to_string(bodies, tcx, allow_fallback)`** - runs the standard LLVM pipeline and returns `.ll` IR as `String`. Used by snapshot / smoke tests in downstream crates.
-- **`gos build --release` strict-lowering on by default** - `set_strict_lowering(true)`; any MIR shape the LLVM backend can't lower is a hard build failure. `--allow-llvm-fallback` is the explicit opt-out.
+- **`gos build --release` strict-lowering on by default** - `set_strict_lowering(true)`; any MIR shape the LLVM backend cannot lower is a hard build failure.
 - **`pipeline_tmp_dir`** suffixes the per-process directory with a per-call atomic counter so parallel `render_ir_to_string` / `compile_to_object` calls don't trample each other's `unit.ll` / `unit.o`.
 - **`crates/gossamer-codegen-llvm/tests/lower_shapes.rs`** - 14 deterministic tests hand-roll a `Body` per MIR shape (constants + binop variants for add/sub/mul/div/rem/and/or/xor/shl/shr) and assert substring properties on the rendered IR.
 

@@ -573,6 +573,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_select_value" => Some("gos_rt_select_value"),
         "gos_rt_select_free" => Some("gos_rt_select_free"),
         "gos_rt_set_new" => Some("gos_rt_set_new"),
+        "gos_rt_btree_set_new" => Some("gos_rt_btree_set_new"),
         "gos_rt_set_insert" => Some("gos_rt_set_insert"),
         "gos_rt_set_insert_skey" => Some("gos_rt_set_insert_skey"),
         "gos_rt_set_contains" => Some("gos_rt_set_contains"),

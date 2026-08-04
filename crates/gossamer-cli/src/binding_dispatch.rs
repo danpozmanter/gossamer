@@ -202,13 +202,26 @@ pub fn locate_gossamer_root() -> Option<PathBuf> {
 /// Returns the number of external modules now visible to the
 /// resolver (zero is fine - caller treats it as "no bindings").
 pub fn ensure_external_signatures() -> Result<usize, BindingRunnerError> {
+    ensure_external_signatures_for_project(crate::paths::project_context())
+}
+
+/// Populates external binding signatures for the project containing `entry`.
+///
+/// This is used by explicit path builds/checks so the binding signature table
+/// follows the source file rather than the process cwd.
+pub fn ensure_external_signatures_for_entry(entry: &Path) -> Result<usize, BindingRunnerError> {
+    ensure_external_signatures_for_project(crate::paths::project_context_for_entry(entry))
+}
+
+fn ensure_external_signatures_for_project(
+    project: crate::paths::ProjectContext,
+) -> Result<usize, BindingRunnerError> {
     if std::env::var_os("GOSSAMER_IN_RUNNER").is_some() {
         return Ok(all_external_modules().len());
     }
     if !all_external_modules().is_empty() {
         return Ok(all_external_modules().len());
     }
-    let project = crate::paths::project_context();
     // Mirror `dispatch_runner_if_needed`: a malformed manifest must
     // not silently degrade to "no bindings".
     let Some(manifest_result) = project.manifest_result() else {

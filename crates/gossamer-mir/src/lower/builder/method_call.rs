@@ -65,6 +65,11 @@ enum SymbolLookup {
 
 type KindDispatchArgs = (Vec<Operand>, &'static str, Vec<(Local, Local)>);
 
+const HASH_SET_DEF_LOCAL: u32 = u32::MAX - 7;
+const VALIDATE_ERRORS_DEF_LOCAL: u32 = u32::MAX - 9;
+const VALIDATE_FIELD_ERROR_DEF_LOCAL: u32 = u32::MAX - 10;
+const BTREE_SET_DEF_LOCAL: u32 = u32::MAX - 18;
+
 impl<'a> Builder<'a> {
     pub(crate) fn lower_method_call(
         &mut self,
@@ -371,6 +376,8 @@ impl<'a> Builder<'a> {
             .receiver_local_from_path(receiver)
             .and_then(|l| self.local_runtime_kind.get(&l).copied())
             .or_else(|| self.expr_runtime_kind(receiver))
+            .or_else(|| Self::stdlib_runtime_kind_from_kind(&receiver_kind_flat))
+            .or_else(|| self.runtime_kind_from_ty(receiver_ty))
             .or_else(|| self.runtime_kind_from_ty(receiver.ty));
         if let Some(rt) = self.kind_dispatch_symbol(receiver_runtime_kind, method, args) {
             return self.lower_kind_dispatch_call(rt, receiver, args, ty, span);
@@ -1418,6 +1425,24 @@ impl<'a> Builder<'a> {
             receiver_kind_flat = k;
         }
         (receiver_ty, receiver_kind_flat)
+    }
+
+    fn stdlib_runtime_kind_from_kind(kind: &TyKind) -> Option<&'static str> {
+        match kind {
+            TyKind::Adt { def, .. } if def.local == HASH_SET_DEF_LOCAL => {
+                Some("collections::HashSet")
+            }
+            TyKind::Adt { def, .. } if def.local == BTREE_SET_DEF_LOCAL => {
+                Some("collections::BTreeSet")
+            }
+            TyKind::Adt { def, .. } if def.local == VALIDATE_ERRORS_DEF_LOCAL => {
+                Some("validate::Errors")
+            }
+            TyKind::Adt { def, .. } if def.local == VALIDATE_FIELD_ERROR_DEF_LOCAL => {
+                Some("validate::FieldError")
+            }
+            _ => None,
+        }
     }
 
     /// Fold `recv.headers.insert/get(...)` into a single runtime header call.

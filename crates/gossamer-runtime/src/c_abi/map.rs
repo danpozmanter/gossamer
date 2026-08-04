@@ -1299,8 +1299,9 @@ pub unsafe extern "C" fn gos_rt_map_clear(m: *mut GosMap) {
 /// `p` points at `n` contiguous 8-byte slots; `tags[i]` selects how
 /// slot `i` is interpreted: `0` = Int, `2` = Float (the slot's bits
 /// are an `f64`), `3` = Bool (low bit), `4` = Char (low 32 bits as a
-/// code point), `5` = Str (the slot is a c-string pointer). Integers
-/// and floats route through `crate::builtins::format_int` /
+/// code point), `5` = Str (the slot is a c-string pointer), `6` =
+/// Vec<i64>, `7` = HashMap. Integers and floats route through
+/// `crate::builtins::format_int` /
 /// `format_float` so the rendering is byte-identical to the VM.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_tuple_format(
@@ -1333,6 +1334,20 @@ pub unsafe extern "C" fn gos_rt_tuple_format(
                     let sp: *const c_char = std::ptr::with_exposed_provenance(word as usize);
                     if !sp.is_null() {
                         out.push_str(&unsafe { CStr::from_ptr(sp) }.to_string_lossy());
+                    }
+                }
+                6 => {
+                    let vp = std::ptr::with_exposed_provenance(word as usize);
+                    let rendered = unsafe { crate::c_abi::gos_rt_vec_format_i64(vp) };
+                    if !rendered.is_null() {
+                        out.push_str(&unsafe { CStr::from_ptr(rendered) }.to_string_lossy());
+                    }
+                }
+                7 => {
+                    let mp = std::ptr::with_exposed_provenance(word as usize);
+                    let rendered = unsafe { gos_rt_map_format(mp) };
+                    if !rendered.is_null() {
+                        out.push_str(&unsafe { CStr::from_ptr(rendered) }.to_string_lossy());
                     }
                 }
                 _ => {}
@@ -1626,7 +1641,7 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
                     inner.iter().map(|(k, v)| (k.as_ref(), *v)).collect();
                 entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
                 for (k, v) in entries {
-                    let key = format!("{:?}", String::from_utf8_lossy(k));
+                    let key = String::from_utf8_lossy(k);
                     push_entry(&mut out, &mut first, &key, &crate::builtins::format_int(v));
                 }
             }
@@ -1637,7 +1652,7 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
                     .collect();
                 entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
                 for (k, v) in entries {
-                    let key = format!("{:?}", String::from_utf8_lossy(k));
+                    let key = String::from_utf8_lossy(k);
                     push_entry(&mut out, &mut first, &key, &String::from_utf8_lossy(v));
                 }
             }
@@ -1658,7 +1673,7 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
                 let mut entries: Vec<(&[u8], &[u8])> = inner.iter().collect();
                 entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
                 for (k, v) in entries {
-                    let key = format!("{:?}", String::from_utf8_lossy(k));
+                    let key = String::from_utf8_lossy(k);
                     let value = format!(
                         "[{}]",
                         v.iter().map(u8::to_string).collect::<Vec<_>>().join(", ")

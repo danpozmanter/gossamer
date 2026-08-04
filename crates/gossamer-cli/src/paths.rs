@@ -422,6 +422,25 @@ impl ProjectContext {
     }
 }
 
+fn load_project_context(start: &Path) -> ProjectContext {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let anchor = if start.is_absolute() {
+        start.to_path_buf()
+    } else {
+        cwd.join(start)
+    };
+    let manifest_path = find_manifest(&anchor);
+    let manifest = manifest_path.as_ref().and_then(|path| {
+        let text = fs::read_to_string(path).ok()?;
+        Some(Manifest::parse(&text).map_err(|err| format!("{}: {err}", path.display())))
+    });
+    ProjectContext {
+        cwd,
+        manifest_path,
+        manifest,
+    }
+}
+
 /// Returns the memoized current-project context, recomputing when cwd changes.
 pub(crate) fn project_context() -> ProjectContext {
     static CACHE: Mutex<Option<ProjectContext>> = Mutex::new(None);
@@ -436,18 +455,16 @@ pub(crate) fn project_context() -> ProjectContext {
         return ctx.clone();
     }
 
-    let manifest_path = find_manifest(&cwd);
-    let manifest = manifest_path.as_ref().and_then(|path| {
-        let text = fs::read_to_string(path).ok()?;
-        Some(Manifest::parse(&text).map_err(|err| format!("{}: {err}", path.display())))
-    });
-    let ctx = ProjectContext {
-        cwd,
-        manifest_path,
-        manifest,
-    };
+    let ctx = load_project_context(&cwd);
     *guard = Some(ctx.clone());
     ctx
+}
+
+/// Returns the project context containing `entry`, independent of the process
+/// cwd. Explicit path builds/checks use this so project-local bindings and
+/// edition settings follow the source file the user named.
+pub(crate) fn project_context_for_entry(entry: &Path) -> ProjectContext {
+    load_project_context(entry)
 }
 
 /// The current project's source edition, falling back to the compatibility
@@ -844,6 +861,23 @@ mod tests {
         assert_eq!(
             project_edition_for_entry(&root.join("main.gos")),
             gossamer_pkg::Edition::E2027
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn entry_project_context_comes_from_entry_not_cwd() {
+        let root = scratch_project(
+            "entryctx",
+            "[project]\nid = \"example.com/entryctx\"\nversion = \"0.1.0\"\nedition = \"2026\"\n[rust-bindings]\naddlib = { path = \"bindings/addlib\" }\n",
+            &["src/main.gos"],
+        );
+        let ctx = project_context_for_entry(&root.join("src").join("main.gos"));
+        assert_eq!(ctx.manifest_dir().as_deref(), Some(root.as_path()));
+        assert!(
+            ctx.manifest_result()
+                .and_then(std::result::Result::ok)
+                .is_some_and(|manifest| manifest.rust_bindings.contains_key("addlib"))
         );
         let _ = fs::remove_dir_all(&root);
     }

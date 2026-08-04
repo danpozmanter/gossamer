@@ -99,10 +99,9 @@ impl<'a> Lowerer<'a> {
     /// remain in `self.runtime_refs` and are read by the
     /// caller to prepend to the module.
     pub(crate) fn lower(&mut self) -> Result<String, BuildError> {
-        // Reject i128 / u128 use up-front. The runtime ABI is i64
-        // throughout; codegen would silently truncate or emit an
-        // invalid `sext i128 to i64`. Surface a clear diagnostic
-        // mentioning the offending type and the compiled tier.
+        // The frontend rejects i128 / u128 before native codegen. Keep this
+        // guard as an internal invariant so malformed MIR cannot silently
+        // truncate or emit an invalid `sext i128 to i64`.
         for (i, _) in self.body.locals.iter().enumerate() {
             let ty = self
                 .body
@@ -114,8 +113,7 @@ impl<'a> Lowerer<'a> {
                 ))
             ) {
                 return Err(BuildError::InternalLoweringBug(
-                    "i128 / u128 is not supported by the compiled tier; \
-                     use i64 / u64 or split the value into two 64-bit halves",
+                    "frontend accepted i128 / u128 local in native lowering",
                 ));
             }
         }

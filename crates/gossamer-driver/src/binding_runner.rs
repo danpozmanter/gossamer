@@ -219,7 +219,7 @@ impl BindingRunner {
     pub fn ensure_built(&self) -> Result<PathBuf, BindingRunnerError> {
         let dir = self.workdir.join(SUBDIR_RUNNER);
         fs::create_dir_all(&dir)?;
-        let _lock = AdvisoryLock::acquire(&dir.join(".gos-build.lock"))?;
+        let _lock = AdvisoryLock::acquire(&self.workdir.join(".gos-build.lock"))?;
 
         let cargo_toml = dir.join("Cargo.toml");
         let main_rs = dir.join("main.rs");
@@ -265,7 +265,7 @@ impl BindingRunner {
         // alongside the runner bin in the same crate.
         let dir = self.workdir.join(SUBDIR_RUNNER);
         fs::create_dir_all(&dir)?;
-        let _lock = AdvisoryLock::acquire(&dir.join(".gos-build.lock"))?;
+        let _lock = AdvisoryLock::acquire(&self.workdir.join(".gos-build.lock"))?;
 
         let cargo_toml = dir.join("Cargo.toml");
         let main_rs = dir.join("main.rs");
@@ -391,7 +391,10 @@ impl BindingRunner {
         {
             return Ok(false);
         }
-        let artifact_mtime = artifact.metadata()?.modified()?;
+        let Ok(artifact_meta) = artifact.metadata() else {
+            return Ok(false);
+        };
+        let artifact_mtime = artifact_meta.modified()?;
         let max_dep_mtime = max_path_dep_mtime(&self.bindings, &self.gossamer_root)?;
         if let Some(dep_mtime) = max_dep_mtime
             && dep_mtime > artifact_mtime
@@ -567,7 +570,10 @@ impl StaticBindingsLib {
         {
             return Ok(false);
         }
-        let artifact_mtime = artifact.metadata()?.modified()?;
+        let Ok(artifact_meta) = artifact.metadata() else {
+            return Ok(false);
+        };
+        let artifact_mtime = artifact_meta.modified()?;
         let max_dep_mtime = max_path_dep_mtime(&self.bindings, &self.gossamer_root)?;
         if let Some(dep_mtime) = max_dep_mtime
             && dep_mtime > artifact_mtime

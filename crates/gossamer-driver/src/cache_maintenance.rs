@@ -351,6 +351,22 @@ mod tests {
     }
 
     #[test]
+    fn runner_fingerprint_lock_marks_sibling_artifacts_ineligible() {
+        let root = scratch("fingerprint-lock");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("runner")).unwrap();
+        fs::create_dir_all(root.join("sigs")).unwrap();
+        fs::write(root.join(".gos-build.lock"), b"lock").unwrap();
+        let sigs = root.join("sigs").join("signatures.json");
+        let runner = root.join("runner").join("gos-runner");
+        fs::write(&sigs, b"{}").unwrap();
+        fs::write(&runner, b"x").unwrap();
+        assert!(runner_locked(&sigs));
+        assert!(runner_locked(&runner));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn default_policy_has_a_smaller_frontend_cap_than_runner_cap() {
         let policy = CachePolicy::default();
         assert!(

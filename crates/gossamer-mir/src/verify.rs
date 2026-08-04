@@ -27,7 +27,8 @@ use gossamer_types::{Ty, TyCtxt, TyKind};
 
 use crate::ir::{
     AggregateKind, BasicBlock, BlockId, Body, ConstValue, IteratorOwnership, IteratorSourceKind,
-    Local, Operand, Place, Projection, Rvalue, StatementKind, Terminator, UnOp,
+    Local, Operand, Place, Projection, RawIntrinsic, RawIntrinsicArity, Rvalue, StatementKind,
+    Terminator, UnOp,
 };
 
 /// Single failure recorded by [`verify_body`].
@@ -96,6 +97,39 @@ pub enum VerifyError {
         got: u32,
         /// Declared arity of the callee.
         expected: u32,
+    },
+    /// A `Terminator::Call` references a function definition that is not
+    /// present in the program after monomorphisation.
+    UnresolvedFnRef {
+        /// Caller function name.
+        body: String,
+        /// Block containing the call.
+        block: BlockId,
+        /// Missing callee definition.
+        def: DefId,
+    },
+    /// A compiler-private or runtime intrinsic name in MIR is unknown.
+    UnknownIntrinsic {
+        /// Function name.
+        body: String,
+        /// Block containing the intrinsic assignment.
+        block: BlockId,
+        /// Intrinsic name.
+        name: &'static str,
+    },
+    /// A compiler-private or runtime intrinsic was emitted with an argument
+    /// count its lowering contract cannot accept.
+    IntrinsicArityMismatch {
+        /// Function name.
+        body: String,
+        /// Block containing the intrinsic assignment.
+        block: BlockId,
+        /// Intrinsic name.
+        name: &'static str,
+        /// Operand count at the intrinsic site.
+        got: u32,
+        /// Accepted operand count description.
+        expected: &'static str,
     },
     /// A `Terminator::Return` was found in a body whose return slot
     /// (`Local::RETURN`) has the poisoned [`TyKind::Error`] type. The
@@ -634,20 +668,27 @@ pub fn verify_program(bodies: &[Body], tcx: &TyCtxt) -> Result<(), Vec<VerifyErr
         for block in &body.blocks {
             if let Terminator::Call { callee, args, .. } = &block.terminator
                 && let Operand::FnRef { def, .. } = callee
-                && let Some(expected) = by_def.get(def).copied()
             {
-                let got = u32::try_from(args.len()).unwrap_or(u32::MAX);
-                if got != expected {
-                    let callee_name = bodies
-                        .iter()
-                        .find(|b| b.def == Some(*def))
-                        .map_or_else(|| format!("def#{}", def.local), |b| b.name.clone());
-                    errors.push(VerifyError::CallArityMismatch {
+                if let Some(expected) = by_def.get(def).copied() {
+                    let got = u32::try_from(args.len()).unwrap_or(u32::MAX);
+                    if got != expected {
+                        let callee_name = bodies
+                            .iter()
+                            .find(|b| b.def == Some(*def))
+                            .map_or_else(|| format!("def#{}", def.local), |b| b.name.clone());
+                        errors.push(VerifyError::CallArityMismatch {
+                            body: body.name.clone(),
+                            block: block.id,
+                            callee: callee_name,
+                            got,
+                            expected,
+                        });
+                    }
+                } else {
+                    errors.push(VerifyError::UnresolvedFnRef {
                         body: body.name.clone(),
                         block: block.id,
-                        callee: callee_name,
-                        got,
-                        expected,
+                        def: *def,
                     });
                 }
             }
@@ -736,7 +777,66 @@ fn check_rvalue_typed(
                 block,
             });
         }
+        Rvalue::CallIntrinsic { name, args } => {
+            check_intrinsic_contract(body, block, name, args.len(), errors);
+        }
         _ => {}
+    }
+}
+
+fn check_intrinsic_contract(
+    body: &Body,
+    block: BlockId,
+    name: &'static str,
+    arg_count: usize,
+    errors: &mut Vec<VerifyError>,
+) {
+    let expected = RawIntrinsic::from_name(name).map(|intrinsic| intrinsic.arity_for_name(name));
+    match expected {
+        Some(RawIntrinsicArity::Exact(n)) if arg_count != n => {
+            errors.push(VerifyError::IntrinsicArityMismatch {
+                body: body.name.clone(),
+                block,
+                name,
+                got: u32::try_from(arg_count).unwrap_or(u32::MAX),
+                expected: exact_arity_text(n),
+            });
+        }
+        Some(RawIntrinsicArity::Range { min, max }) if arg_count < min || arg_count > max => {
+            errors.push(VerifyError::IntrinsicArityMismatch {
+                body: body.name.clone(),
+                block,
+                name,
+                got: u32::try_from(arg_count).unwrap_or(u32::MAX),
+                expected: range_arity_text(min, max),
+            });
+        }
+        Some(_) => {}
+        None => errors.push(VerifyError::UnknownIntrinsic {
+            body: body.name.clone(),
+            block,
+            name,
+        }),
+    }
+}
+
+fn exact_arity_text(n: usize) -> &'static str {
+    match n {
+        0 => "0",
+        1 => "1",
+        2 => "2",
+        3 => "3",
+        4 => "4",
+        5 => "5",
+        _ => "registered arity",
+    }
+}
+
+fn range_arity_text(min: usize, max: usize) -> &'static str {
+    match (min, max) {
+        (0, 1) => "0..=1",
+        (0, 2) => "0..=2",
+        _ => "registered arity range",
     }
 }
 

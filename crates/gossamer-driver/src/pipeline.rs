@@ -5,9 +5,7 @@
 
 use anyhow::anyhow;
 use gossamer_ast::SourceFile;
-use gossamer_codegen_cranelift::{
-    CompileOptions, NativeObject, compile_to_object, compile_to_object_with_options, emit_module,
-};
+use gossamer_codegen_cranelift::{NativeObject, compile_to_object, emit_module};
 use gossamer_hir::{lift_closures, lower_source_file_with_edition};
 use gossamer_lex::SourceMap;
 use gossamer_mir::{
@@ -54,6 +52,7 @@ pub struct CheckedFrontend {
 /// short-circuit through this path.
 pub fn compile_source_native(source: &str, unit_name: &str) -> anyhow::Result<NativeObject> {
     let (bodies, tcx) = lower_to_mir_with_tcx(source, unit_name, MirProfile::Debug);
+    enforce_mir_backend_invariants(&bodies, &tcx)?;
     enforce_generic_abi(&bodies, &tcx)?;
     compile_to_object(&bodies, &tcx)
 }
@@ -64,6 +63,7 @@ pub fn compile_source_native_from_frontend(
     checked: CheckedFrontend,
 ) -> anyhow::Result<NativeObject> {
     let (bodies, tcx) = lower_to_mir_from_frontend(checked, MirProfile::Debug);
+    enforce_mir_backend_invariants(&bodies, &tcx)?;
     enforce_generic_abi(&bodies, &tcx)?;
     compile_to_object(&bodies, &tcx)
 }
@@ -77,21 +77,22 @@ pub fn compile_source_native_from_frontend_at_path(
     obj_out: &std::path::Path,
 ) -> anyhow::Result<String> {
     let (bodies, tcx) = lower_to_mir_from_frontend(checked, MirProfile::Debug);
+    enforce_mir_backend_invariants(&bodies, &tcx)?;
     enforce_generic_abi(&bodies, &tcx)?;
     gossamer_codegen_cranelift::compile_to_object_at_path(&bodies, &tcx, obj_out)
 }
 
 /// `--release` build path: lower through the LLVM backend
 /// (text IR + `llc -O3`) for release-quality optimisation.
-/// Falls back to `Err(BuildKind::Unsupported)`-wrapped errors
-/// on MIR shapes the LLVM lowerer doesn't yet cover, which the
-/// CLI can translate into a clear "drop `--release` to build
-/// via Cranelift" message for the user.
+/// Backend invariant failures are reported as compiler bugs before
+/// LLVM tool invocation; `gos build` no longer falls back to another
+/// native backend for accepted MIR.
 pub fn compile_source_native_release(
     source: &str,
     unit_name: &str,
 ) -> anyhow::Result<NativeObject> {
     let (bodies, tcx) = lower_to_mir_with_tcx(source, unit_name, MirProfile::Release);
+    enforce_mir_backend_invariants(&bodies, &tcx)?;
     enforce_generic_abi(&bodies, &tcx)?;
     let llvm_obj = gossamer_codegen_llvm::compile_to_object(&bodies, &tcx)?;
     Ok(NativeObject {
@@ -100,20 +101,14 @@ pub fn compile_source_native_release(
     })
 }
 
-/// Result of a per-function fallback release build.
-///
-/// `llvm` always carries the LLVM-lowered subset of the
-/// program. `cranelift` is `Some(_)` only when at least one
-/// body fell back; the linker step combines both objects.
+/// Result of a native LLVM release build.
 #[derive(Debug, Clone)]
 pub struct ReleaseBuild {
     /// Object emitted by the LLVM backend.
     pub llvm: NativeObject,
-    /// Cranelift-emitted companion object containing the
-    /// bodies LLVM rejected. Empty when LLVM lowered every
-    /// body in the program.
+    /// Always `None`; retained for API compatibility with older callers.
     pub cranelift: Option<NativeObject>,
-    /// Names of bodies that fell back. Useful for diagnostics.
+    /// Always empty; retained for API compatibility with older callers.
     pub fallback_bodies: Vec<String>,
 }
 
@@ -123,61 +118,39 @@ pub fn compile_source_native_release_with_fallback_from_frontend(
     checked: CheckedFrontend,
 ) -> anyhow::Result<ReleaseBuild> {
     let (bodies, tcx) = lower_to_mir_from_frontend(checked, MirProfile::Release);
+    enforce_mir_backend_invariants(&bodies, &tcx)?;
     enforce_generic_abi(&bodies, &tcx)?;
     let outcome = gossamer_codegen_llvm::compile_with_fallback(&bodies, &tcx)?;
-    let cranelift = if outcome.fallback_bodies.is_empty() {
-        None
-    } else {
-        let options = CompileOptions {
-            main_symbol_override: Some("gos_main".to_string()),
-            omit_c_main_shim: true,
-            define_only: Some(outcome.fallback_bodies.clone()),
-        };
-        Some(compile_to_object_with_options(&bodies, &tcx, options)?)
-    };
+    debug_assert!(outcome.fallback_bodies.is_empty());
     Ok(ReleaseBuild {
         llvm: NativeObject {
             triple: outcome.object.triple,
             bytes: outcome.object.bytes,
         },
-        cranelift,
-        fallback_bodies: outcome.fallback_bodies,
+        cranelift: None,
+        fallback_bodies: Vec::new(),
     })
 }
 
-/// Result of a path-oriented per-function fallback release build.
-/// Contrast with [`ReleaseBuild`], which carries object bytes.
-/// The path-oriented form keeps both objects on disk so peak RSS
-/// is not pushed up by simultaneous LLVM + Cranelift `Vec<u8>`
-/// retention.
+/// Result of a path-oriented native LLVM release build.
 #[derive(Debug, Clone)]
 pub struct ReleaseBuildPaths {
     /// Triple the LLVM backend reported for the emitted objects.
     pub triple: String,
-    /// Names of the bodies that fell back to Cranelift.
+    /// Always empty; retained for API compatibility with older callers.
     pub fallback_bodies: Vec<String>,
-    /// True iff the Cranelift companion object was actually written
-    /// (i.e. there was at least one fallback body). When false the
-    /// caller should skip the companion in the link step.
+    /// Always false; retained for API compatibility with older callers.
     pub has_cranelift_companion: bool,
     /// Number of MIR bodies presented to native code generation.
     pub body_count: usize,
     /// Number of LLVM object files emitted or restored for this build.
     pub llvm_object_count: usize,
-    /// Paths to the LLVM-emitted per-body object files. One entry per
-    /// non-fallback body; pass all of them to the linker alongside
-    /// the optional Cranelift companion.
+    /// Paths to the LLVM-emitted per-body object files.
     pub llvm_objects: Vec<std::path::PathBuf>,
 }
 
 /// Path-oriented variant of
 /// [`compile_source_native_release_with_fallback_from_frontend`].
-///
-/// The LLVM backend emits one object per non-fallback body into
-/// `llvm_obj_dir` (P2 parallel compilation + P3 incremental cache).
-/// If any bodies fell back to Cranelift, a single Cranelift companion
-/// object is written to `cl_obj_out`. The caller links all objects
-/// (both LLVM and the optional Cranelift companion) together.
 pub fn compile_release_at_paths_from_frontend(
     checked: CheckedFrontend,
     llvm_obj_dir: &std::path::Path,
@@ -192,7 +165,7 @@ pub fn compile_release_at_paths_from_frontend(
 pub fn compile_at_paths_from_frontend(
     checked: CheckedFrontend,
     llvm_obj_dir: &std::path::Path,
-    cl_obj_out: &std::path::Path,
+    _cl_obj_out: &std::path::Path,
     release: bool,
 ) -> anyhow::Result<ReleaseBuildPaths> {
     let profile = if release {
@@ -202,71 +175,39 @@ pub fn compile_at_paths_from_frontend(
     };
     let (bodies, tcx) = lower_to_mir_from_frontend(checked, profile);
     let body_count = bodies.len();
+    enforce_mir_backend_invariants(&bodies, &tcx)?;
     enforce_generic_abi(&bodies, &tcx)?;
     let (llvm_objects, triple, fallback_bodies) =
         gossamer_codegen_llvm::compile_with_fallback_at_path(&bodies, &tcx, llvm_obj_dir)?;
-    let has_cranelift_companion = !fallback_bodies.is_empty();
-    if has_cranelift_companion {
-        let options = CompileOptions {
-            main_symbol_override: Some("gos_main".to_string()),
-            omit_c_main_shim: true,
-            define_only: Some(fallback_bodies.clone()),
-        };
-        gossamer_codegen_cranelift::compile_to_object_at_path_with_options(
-            &bodies, &tcx, cl_obj_out, options,
-        )?;
-    }
+    debug_assert!(fallback_bodies.is_empty());
     Ok(ReleaseBuildPaths {
         triple,
-        fallback_bodies,
-        has_cranelift_companion,
+        fallback_bodies: Vec::new(),
+        has_cranelift_companion: false,
         body_count,
         llvm_object_count: llvm_objects.len(),
         llvm_objects,
     })
 }
 
-/// Per-function fallback release build. Bodies the LLVM
-/// lowerer rejects are routed to Cranelift; both objects are
-/// returned so the CLI can pass them to `cc` together.
+/// Native LLVM release build. The function name is retained for API
+/// compatibility; LLVM lowering bugs are hard errors.
 pub fn compile_source_native_release_with_fallback(
     source: &str,
     unit_name: &str,
 ) -> anyhow::Result<ReleaseBuild> {
     let (bodies, tcx) = lower_to_mir_with_tcx(source, unit_name, MirProfile::Release);
+    enforce_mir_backend_invariants(&bodies, &tcx)?;
     enforce_generic_abi(&bodies, &tcx)?;
     let outcome = gossamer_codegen_llvm::compile_with_fallback(&bodies, &tcx)?;
-    let cranelift = if outcome.fallback_bodies.is_empty() {
-        None
-    } else {
-        // Pass every body in the program to Cranelift so call
-        // sites and `Operand::FnRef` for non-fallback bodies
-        // (e.g. a fallback `main` that calls an
-        // LLVM-lowered helper) still resolve to a declared
-        // function id. Use `define_only` so Cranelift emits
-        // bodies for the fallback set and `Linkage::Import`
-        // declarations for the rest - the linker stitches them
-        // back to the LLVM-built primary.
-        //
-        // The companion also matches the LLVM module's
-        // expectation: it renames user `main` to `gos_main`
-        // and emits the C-ABI shim itself. Tell Cranelift to
-        // do the same rename and to skip its own shim so the
-        // linker sees exactly one `main`.
-        let options = CompileOptions {
-            main_symbol_override: Some("gos_main".to_string()),
-            omit_c_main_shim: true,
-            define_only: Some(outcome.fallback_bodies.clone()),
-        };
-        Some(compile_to_object_with_options(&bodies, &tcx, options)?)
-    };
+    debug_assert!(outcome.fallback_bodies.is_empty());
     Ok(ReleaseBuild {
         llvm: NativeObject {
             triple: outcome.object.triple,
             bytes: outcome.object.bytes,
         },
-        cranelift,
-        fallback_bodies: outcome.fallback_bodies,
+        cranelift: None,
+        fallback_bodies: Vec::new(),
     })
 }
 
@@ -332,6 +273,24 @@ fn enforce_generic_abi(bodies: &[Body], tcx: &TyCtxt) -> anyhow::Result<()> {
         return Ok(());
     }
     Err(anyhow!(errors.join("\n")))
+}
+
+/// Hard gate before any native backend sees MIR. Debug-only verifier
+/// assertions catch pass bugs during development; this production check
+/// keeps malformed MIR from surfacing later as backend panics or LLVM tool
+/// errors.
+fn enforce_mir_backend_invariants(bodies: &[Body], tcx: &TyCtxt) -> anyhow::Result<()> {
+    match gossamer_mir::verify::verify_program(bodies, tcx) {
+        Ok(()) => Ok(()),
+        Err(errors) => Err(anyhow!(
+            "MIR backend invariant violation:\n{}",
+            errors
+                .iter()
+                .map(|err| format!("  {err:?}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )),
+    }
 }
 
 /// Same as [`lower_to_mir`], but returns the [`TyCtxt`] alongside

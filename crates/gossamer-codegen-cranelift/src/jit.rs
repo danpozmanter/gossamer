@@ -2320,6 +2320,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_result_is_ok"        => rt::gos_rt_result_is_ok,
         "gos_rt_result_is_err"       => rt::gos_rt_result_is_err,
         "gos_rt_set_new"             => rt::gos_rt_set_new,
+        "gos_rt_btree_set_new"       => rt::gos_rt_btree_set_new,
         "gos_rt_set_insert"          => rt::gos_rt_set_insert,
         "gos_rt_set_insert_skey"     => rt::gos_rt_set_insert_skey,
         "gos_rt_set_contains"        => rt::gos_rt_set_contains,

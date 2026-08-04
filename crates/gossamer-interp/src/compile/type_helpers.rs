@@ -1,6 +1,9 @@
 #![allow(clippy::too_many_lines, clippy::wildcard_imports)]
 use super::*;
 
+const HASH_SET_DEF_LOCAL: u32 = u32::MAX - 7;
+const BTREE_SET_DEF_LOCAL: u32 = u32::MAX - 18;
+
 impl<'tcx> FnBuilder<'tcx> {
     /// Classifies an expression's natural result kind from its
     /// HIR `Ty`. Unknown / aggregate / polymorphic types stay in
@@ -54,7 +57,7 @@ impl<'tcx> FnBuilder<'tcx> {
         matches!(
             self.tcx.kind(self.unwrap_ref(expr.ty)),
             Some(TyKind::Adt { def, .. })
-                if matches!(def.local, x if x == u32::MAX - 7 || x == u32::MAX - 10)
+                if matches!(def.local, HASH_SET_DEF_LOCAL | BTREE_SET_DEF_LOCAL)
         )
     }
 

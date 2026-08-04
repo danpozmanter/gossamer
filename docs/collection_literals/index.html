@@ -12,27 +12,31 @@
         <meta name="author" content="Gossamer contributors">
 
 
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/language/let_mut/">
+        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/collection_literals/">
+
+
+        <link rel="prev" href="../syntax/">
+
+
+        <link rel="next" href="../language/">
 
 
 
 
 
-
-
-      <link rel="icon" href="../../img/GossamerLogo.png">
+      <link rel="icon" href="../img/GossamerLogo.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
 
 
 
-        <title>lang::let_mut - Gossamer</title>
+        <title>Collection literals - Gossamer</title>
 
 
 
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
 
 
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
 
 
 
@@ -51,9 +55,9 @@
 
 
 
-      <link rel="stylesheet" href="../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../stylesheets/extra.css">
 
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
 
 
 
@@ -78,7 +82,7 @@
     <div data-md-component="skip">
 
 
-        <a href="#langlet_mut" class="md-skip">
+        <a href="#collection-literals" class="md-skip">
           Skip to content
         </a>
 
@@ -94,9 +98,9 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Gossamer" class="md-header__button md-logo" aria-label="Gossamer" data-md-component="logo">
+    <a href=".." title="Gossamer" class="md-header__button md-logo" aria-label="Gossamer" data-md-component="logo">
 
-  <img src="../../img/GossamerLogo.png" alt="logo">
+  <img src="../img/GossamerLogo.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
 
-              lang::let_mut
+              Collection literals
 
           </span>
         </div>
@@ -231,9 +235,9 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Gossamer" class="md-nav__button md-logo" aria-label="Gossamer" data-md-component="logo">
+    <a href=".." title="Gossamer" class="md-nav__button md-logo" aria-label="Gossamer" data-md-component="logo">
 
-  <img src="../../img/GossamerLogo.png" alt="logo">
+  <img src="../img/GossamerLogo.png" alt="logo">
 
     </a>
     Gossamer
@@ -260,7 +264,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
 
 
 
@@ -287,7 +291,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../install/" class="md-nav__link">
+      <a href="../install/" class="md-nav__link">
 
 
 
@@ -314,7 +318,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../running/" class="md-nav__link">
+      <a href="../running/" class="md-nav__link">
 
 
 
@@ -341,7 +345,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../supported_targets/" class="md-nav__link">
+      <a href="../supported_targets/" class="md-nav__link">
 
 
 
@@ -368,7 +372,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../wasm/" class="md-nav__link">
+      <a href="../wasm/" class="md-nav__link">
 
 
 
@@ -395,7 +399,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../syntax/" class="md-nav__link">
+      <a href="../syntax/" class="md-nav__link">
 
 
 
@@ -421,8 +425,35 @@
 
 
 
-    <li class="md-nav__item">
-      <a href="../../collection_literals/" class="md-nav__link">
+
+
+    <li class="md-nav__item md-nav__item--active">
+
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+
+
+
+
+
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Collection literals
+
+
+
+  </span>
+
+
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+
+      <a href="./" class="md-nav__link md-nav__link--active">
 
 
 
@@ -438,6 +469,81 @@
 
 
       </a>
+
+
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+
+
+
+
+
+
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+
+        <li class="md-nav__item">
+  <a href="#vec" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Vec
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#fixed-arrays" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Fixed Arrays
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#hashmap" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        HashMap
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#hashset-and-btreeset" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        HashSet And BTreeSet
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Summary
+
+    </span>
+  </a>
+
+</li>
+
+    </ul>
+
+</nav>
+
     </li>
 
 
@@ -478,7 +584,7 @@
 
 
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../language/" class="md-nav__link ">
 
 
 
@@ -522,7 +628,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../top_level_statements/" class="md-nav__link">
+      <a href="../language/top_level_statements/" class="md-nav__link">
 
 
 
@@ -550,7 +656,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../arena/" class="md-nav__link">
+      <a href="../language/arena/" class="md-nav__link">
 
 
 
@@ -578,7 +684,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../comptime/" class="md-nav__link">
+      <a href="../language/comptime/" class="md-nav__link">
 
 
 
@@ -613,7 +719,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../memory/" class="md-nav__link">
+      <a href="../memory/" class="md-nav__link">
 
 
 
@@ -640,7 +746,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../libraries/" class="md-nav__link">
+      <a href="../libraries/" class="md-nav__link">
 
 
 
@@ -698,7 +804,7 @@
 
 
           <div class="md-nav__link md-nav__container">
-            <a href="../../stdlib/" class="md-nav__link ">
+            <a href="../stdlib/" class="md-nav__link ">
 
 
 
@@ -742,7 +848,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../stdlib/" class="md-nav__link">
+      <a href="../stdlib/" class="md-nav__link">
 
 
 
@@ -770,7 +876,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../prelude/" class="md-nav__link">
+      <a href="../prelude/" class="md-nav__link">
 
 
 
@@ -798,7 +904,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../method_support/" class="md-nav__link">
+      <a href="../method_support/" class="md-nav__link">
 
 
 
@@ -826,7 +932,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../stdlib_coverage/" class="md-nav__link">
+      <a href="../stdlib_coverage/" class="md-nav__link">
 
 
 
@@ -925,7 +1031,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../toolchain/" class="md-nav__link">
+      <a href="../toolchain/" class="md-nav__link">
 
 
 
@@ -953,7 +1059,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../misc/tooling_faithful_fmt/" class="md-nav__link">
+      <a href="../misc/tooling_faithful_fmt/" class="md-nav__link">
 
 
 
@@ -981,7 +1087,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../toolchain/lints/" class="md-nav__link">
+      <a href="../toolchain/lints/" class="md-nav__link">
 
 
 
@@ -1009,7 +1115,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../toolchain/diagnostics/" class="md-nav__link">
+      <a href="../toolchain/diagnostics/" class="md-nav__link">
 
 
 
@@ -1037,7 +1143,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../toolchain/zig/" class="md-nav__link">
+      <a href="../toolchain/zig/" class="md-nav__link">
 
 
 
@@ -1072,7 +1178,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../examples/" class="md-nav__link">
+      <a href="../examples/" class="md-nav__link">
 
 
 
@@ -1157,7 +1263,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../deployment/" class="md-nav__link">
+      <a href="../deployment/" class="md-nav__link">
 
 
 
@@ -1185,7 +1291,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../codegen_abi/" class="md-nav__link">
+      <a href="../codegen_abi/" class="md-nav__link">
 
 
 
@@ -1284,7 +1390,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../migration/rust/" class="md-nav__link">
+      <a href="../migration/rust/" class="md-nav__link">
 
 
 
@@ -1312,7 +1418,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../migration/go/" class="md-nav__link">
+      <a href="../migration/go/" class="md-nav__link">
 
 
 
@@ -1340,7 +1446,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../migration/python/" class="md-nav__link">
+      <a href="../migration/python/" class="md-nav__link">
 
 
 
@@ -1368,7 +1474,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../migration/fsharp/" class="md-nav__link">
+      <a href="../migration/fsharp/" class="md-nav__link">
 
 
 
@@ -1396,7 +1502,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../migration/kotlin/" class="md-nav__link">
+      <a href="../migration/kotlin/" class="md-nav__link">
 
 
 
@@ -1501,7 +1607,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../design/sequence_reference_safety/" class="md-nav__link">
+      <a href="../design/sequence_reference_safety/" class="md-nav__link">
 
 
 
@@ -1529,7 +1635,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../design/diagnostics/" class="md-nav__link">
+      <a href="../design/diagnostics/" class="md-nav__link">
 
 
 
@@ -1557,7 +1663,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../design/lazy_iterators/" class="md-nav__link">
+      <a href="../design/lazy_iterators/" class="md-nav__link">
 
 
 
@@ -1585,7 +1691,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../design/runtime/" class="md-nav__link">
+      <a href="../design/runtime/" class="md-nav__link">
 
 
 
@@ -1613,7 +1719,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../design/jit_native_memory_ownership/" class="md-nav__link">
+      <a href="../design/jit_native_memory_ownership/" class="md-nav__link">
 
 
 
@@ -1641,7 +1747,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../design/memory_model/" class="md-nav__link">
+      <a href="../design/memory_model/" class="md-nav__link">
 
 
 
@@ -1669,7 +1775,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../design/goroutine_stacks/" class="md-nav__link">
+      <a href="../design/goroutine_stacks/" class="md-nav__link">
 
 
 
@@ -1697,7 +1803,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../design/selfhosting/" class="md-nav__link">
+      <a href="../design/selfhosting/" class="md-nav__link">
 
 
 
@@ -1732,7 +1838,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../skill_card/" class="md-nav__link">
+      <a href="../skill_card/" class="md-nav__link">
 
 
 
@@ -1759,7 +1865,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../security/" class="md-nav__link">
+      <a href="../security/" class="md-nav__link">
 
 
 
@@ -1786,7 +1892,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../contributing/" class="md-nav__link">
+      <a href="../contributing/" class="md-nav__link">
 
 
 
@@ -1826,6 +1932,69 @@
 
 
 
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+
+        <li class="md-nav__item">
+  <a href="#vec" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Vec
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#fixed-arrays" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Fixed Arrays
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#hashmap" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        HashMap
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#hashset-and-btreeset" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        HashSet And BTreeSet
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Summary
+
+    </span>
+  </a>
+
+</li>
+
+    </ul>
+
 </nav>
                   </div>
                 </div>
@@ -1841,44 +2010,97 @@
 
 
 
-<h1 id="langlet_mut"><code>lang::let_mut</code><a class="headerlink" href="#langlet_mut" title="Permanent link">&para;</a></h1>
-<p>Mutable bindings can be reassigned and can be the source of <code>&amp;mut</code>.</p>
-<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
-
-<p>Binding mutability and reference capability are separate:</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">]</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">reference</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="n">value</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">reference</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="w">       </span><span class="c1">// writes value</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">shared</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="n">value</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">shared</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="p">[</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">]</span><span class="w">       </span><span class="c1">// rebinds shared; it remains read-only</span>
+<h1 id="collection-literals">Collection literals<a class="headerlink" href="#collection-literals" title="Permanent link">&para;</a></h1>
+<p>Gossamer has dedicated literal forms for the everyday collection shapes:
+growable vectors, fixed arrays, hash maps, hash sets, and ordered sets.</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">values</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">fixed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[1, 2, 3]</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">names</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="s">&quot;ada&quot;</span>: <span class="mi">36</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;grace&quot;</span>: <span class="mi">37</span><span class="p">}</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">tags</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>#<span class="p">{</span><span class="s">&quot;compiler&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;runtime&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;docs&quot;</span><span class="p">}</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="kd">let</span><span class="w"> </span><span class="n">ordered</span>: <span class="nc">BTreeSet</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>#<span class="p">{</span><span class="s">&quot;compiler&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;runtime&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;docs&quot;</span><span class="p">}</span>
 </code></pre></div>
-<p>The left side of <code>=</code> is a pattern and the right side is an expression.
-<code>&amp;mut value</code> on the right creates a mutable reference. <code>&amp;mut pattern</code> on the
-left matches a mutable reference, removes that reference layer, and copies the
-referent into the inner pattern:</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">]</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">reference</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="n">source</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="kd">let</span><span class="w"> </span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="n">copy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">reference</span>
+<h2 id="vec">Vec<a class="headerlink" href="#vec" title="Permanent link">&para;</a></h2>
+<p>A plain bracket literal creates a <code>Vec&lt;T&gt;</code> unless an expected fixed-array type
+shapes it.</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">scores</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="mi">20</span><span class="p">,</span><span class="w"> </span><span class="mi">30</span><span class="p">]</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">queue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[]</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">queue</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">40</span><span class="p">)</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">queue</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">50</span><span class="p">)</span>
 </code></pre></div>
-<p><code>copy</code> is an independent <code>[i64; 3]</code> value and is not reassignable. Only
-<code>mut name</code> makes a binding reassignable. Reference patterns also compose with
-other patterns, for example <code>let (name, &amp;mut count) = entry</code>. For a simple
-top-level copy, <code>let copy = *reference</code> is usually clearer.</p>
-<p>An immutable binding cannot be used as the source of <code>&amp;mut</code>, because that
-would create a write path around its immutability.</p>
-<p>Declaring a binding <code>mut</code> does not let a call infer mutable access. Pass the
-place explicitly as <code>change(&amp;mut value)</code>. <code>change(value)</code> is rejected when the
-parameter is <code>&amp;mut T</code>. A value already typed as <code>&amp;mut T</code> can be forwarded
-directly.</p>
-<p>Implicit dereferencing does not weaken this rule. If an access path contains
-any shared <code>&amp;T</code> layer, indexing, field assignment, and mutating method calls
-through that path are rejected even when every outer reference is <code>&amp;mut</code>.</p>
-<p>A named reference has an implicit lexical lifetime ending at the closing
-brace. While <code>let reference = &amp;mut value</code> remains active, <code>value</code> cannot be
-read or mutated through another path. Use a smaller block when source access
-must resume. In the persistent REPL scope, <code>%drop reference</code> ends and removes
-the reference binding explicitly.</p>
+<p>Use <code>Vec::with_capacity(n)</code> when capacity matters before pushing:</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">Vec</span>::<span class="o">&lt;</span><span class="kt">u8</span><span class="o">&gt;</span>::<span class="n">with_capacity</span><span class="p">(</span><span class="mi">1024</span><span class="p">)</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">bytes</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">65</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="fixed-arrays">Fixed Arrays<a class="headerlink" href="#fixed-arrays" title="Permanent link">&para;</a></h2>
+<p>Use <code>#[...]</code> when the value must be an owned fixed-size array.</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">point</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[3, 4]</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">zeros</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[0; 4]</span>
+</code></pre></div>
+<p>An expected <code>[T; N]</code> type can also shape a plain bracket literal:</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">point</span>: <span class="p">[</span><span class="kt">i64</span><span class="p">;</span><span class="w"> </span><span class="mi">2</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">]</span>
+</code></pre></div>
+<p>Fixed arrays and slices support non-resizing sequence methods. Use a <code>Vec&lt;T&gt;</code>
+when the collection must grow or shrink.</p>
+<h2 id="hashmap">HashMap<a class="headerlink" href="#hashmap" title="Permanent link">&para;</a></h2>
+<p>A brace literal creates a <code>HashMap&lt;K, V&gt;</code>.</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">ages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="s">&quot;ada&quot;</span>: <span class="mi">36</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;grace&quot;</span>: <span class="mi">37</span><span class="p">}</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">println</span><span class="p">(</span><span class="n">ages</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;ada&quot;</span><span class="p">))</span>
+</code></pre></div>
+<p>The empty brace literal creates an empty <code>HashMap</code>.</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">counts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{}</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">println</span><span class="p">(</span><span class="n">counts</span><span class="p">.</span><span class="n">len</span><span class="p">())</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">typed</span>: <span class="nc">HashMap</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{}</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">println</span><span class="p">(</span><span class="n">typed</span><span class="p">.</span><span class="n">len</span><span class="p">())</span>
+</code></pre></div>
+<p>Annotate an empty map when later code does not give the checker enough key and
+value information.</p>
+<h2 id="hashset-and-btreeset">HashSet And BTreeSet<a class="headerlink" href="#hashset-and-btreeset" title="Permanent link">&para;</a></h2>
+<p>Use <code>#{...}</code> for a <code>HashSet&lt;T&gt;</code>.</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">seen</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>#<span class="p">{</span><span class="s">&quot;ada&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;grace&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ada&quot;</span><span class="p">}</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">println</span><span class="p">(</span><span class="n">seen</span><span class="p">.</span><span class="n">len</span><span class="p">())</span><span class="w">       </span><span class="c1">// 2</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">println</span><span class="p">(</span><span class="n">seen</span><span class="p">.</span><span class="n">contains</span><span class="p">(</span><span class="s">&quot;ada&quot;</span><span class="p">))</span>
+</code></pre></div>
+<p>The literal removes duplicates just like repeated <code>insert</code> calls.</p>
+<p>An expected <code>BTreeSet&lt;T&gt;</code> type shapes the same literal into an ordered set:</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">ordered</span>: <span class="nc">BTreeSet</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>#<span class="p">{</span><span class="s">&quot;grace&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ada&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ada&quot;</span><span class="p">}</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">println</span><span class="p">(</span><span class="n">ordered</span><span class="p">.</span><span class="n">to_vec</span><span class="p">())</span>
+</code></pre></div>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Literal</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>[a, b]</code></td>
+<td><code>Vec&lt;T&gt;</code></td>
+</tr>
+<tr>
+<td><code>#[a, b]</code></td>
+<td><code>[T; N]</code> fixed array</td>
+</tr>
+<tr>
+<td><code>#[value; count]</code></td>
+<td>repeated fixed array</td>
+</tr>
+<tr>
+<td><code>{}</code></td>
+<td>empty <code>HashMap&lt;K, V&gt;</code></td>
+</tr>
+<tr>
+<td><code>{key: value}</code></td>
+<td><code>HashMap&lt;K, V&gt;</code></td>
+</tr>
+<tr>
+<td><code>#{a, b}</code></td>
+<td><code>HashSet&lt;T&gt;</code>, or <code>BTreeSet&lt;T&gt;</code> with an expected type</td>
+</tr>
+</tbody>
+</table>
 
 
 
@@ -1936,16 +2158,16 @@ the reference binding explicitly.</p>
 
 
 
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "navigation.sections", "navigation.indexes", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "navigation.sections", "navigation.indexes", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
 
 
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
 
-        <script src="../../js/repo_button.js"></script>
+        <script src="../js/repo_button.js"></script>
 
-        <script src="../../js/scroll_top.js"></script>
+        <script src="../js/scroll_top.js"></script>
 
-        <script src="../../js/hljs_gossamer.js"></script>
+        <script src="../js/hljs_gossamer.js"></script>
 
 
   </body>

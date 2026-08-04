@@ -3703,6 +3703,18 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_set_contains_skey as *const u8,
         ),
         (
+            "gos_rt_btree_set_new",
+            crate::c_abi::gos_rt_btree_set_new as *const u8,
+        ),
+        (
+            "gos_rt_set_format_i64",
+            crate::c_abi::gos_rt_set_format_i64 as *const u8,
+        ),
+        (
+            "gos_rt_set_format_string",
+            crate::c_abi::gos_rt_set_format_string as *const u8,
+        ),
+        (
             "gos_rt_set_free",
             crate::c_abi::gos_rt_set_free as *const u8,
         ),

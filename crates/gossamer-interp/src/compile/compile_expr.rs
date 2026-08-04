@@ -1,6 +1,10 @@
 #![allow(clippy::too_many_lines, clippy::wildcard_imports)]
 use super::*;
 
+const HASH_SET_DEF_LOCAL: u32 = u32::MAX - 7;
+const BTREE_SET_DEF_LOCAL: u32 = u32::MAX - 18;
+const VEC_DEQUE_DEF_LOCAL: u32 = u32::MAX - 19;
+
 /// Peels any `&expr` / `&mut expr` borrow wrappers off an expression,
 /// returning the underlying place. The for-loop desugar emits
 /// `(&mut __for_iter).next()`, so the `&mut self` writeback target is
@@ -3043,7 +3047,7 @@ impl<'tcx> FnBuilder<'tcx> {
             );
         let qualified_collection_method = match self.tcx.kind(resolved_receiver_ty) {
             Some(TyKind::Adt { def, .. })
-                if matches!(def.local, x if x == u32::MAX - 7 || x == u32::MAX - 10)
+                if matches!(def.local, HASH_SET_DEF_LOCAL | BTREE_SET_DEF_LOCAL)
                     && matches!(
                         name.name.as_str(),
                         "insert"
@@ -3063,7 +3067,7 @@ impl<'tcx> FnBuilder<'tcx> {
                             | "is_disjoint"
                     ) =>
             {
-                let owner = if def.local == u32::MAX - 10 {
+                let owner = if def.local == BTREE_SET_DEF_LOCAL {
                     "BTreeSet"
                 } else {
                     "HashSet"
@@ -3071,7 +3075,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 Some(format!("{owner}::{}", name.name))
             }
             Some(TyKind::Adt { def, .. })
-                if def.local == u32::MAX - 9
+                if def.local == VEC_DEQUE_DEF_LOCAL
                     && matches!(
                         name.name.as_str(),
                         "push_back"
@@ -3252,7 +3256,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 "sort" | "sort_by" | "sort_by_key" | "reverse" | "swap" | "fill"
             ),
             Some(TyKind::HashMap { .. }) => name.name == "clear",
-            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 9 => {
+            Some(TyKind::Adt { def, .. }) if def.local == VEC_DEQUE_DEF_LOCAL => {
                 matches!(name.name.as_str(), "push_back" | "push_front")
             }
             _ => false,

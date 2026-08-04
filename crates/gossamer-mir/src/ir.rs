@@ -483,6 +483,181 @@ pub enum Rvalue {
     StaticLoad(StaticRef),
 }
 
+/// A typed view over the raw intrinsic names that may appear in
+/// [`Rvalue::CallIntrinsic`]. The MIR still stores the source spelling for
+/// compact dumps and compatibility with existing builders, but every verifier
+/// and native backend should parse it through this enum before acting on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawIntrinsic {
+    /// `gos_enum_load(ptr, offset)`.
+    EnumLoad,
+    /// `gos_enum_tag(ptr, disc)`.
+    EnumTag,
+    /// `gos_enum_disc_tag(ptr)`.
+    EnumDiscTag,
+    /// `gos_enum_untag(ptr)`.
+    EnumUntag,
+    /// `gos_enum_disc(payload_ptr)`.
+    EnumDisc,
+    /// `gos_enum_set_disc(payload_ptr, disc)`.
+    EnumSetDisc,
+    /// `gos_load(ptr, offset)`.
+    Load,
+    /// `gos_store(ptr, offset, value)`.
+    Store,
+    /// `gos_alloc(size?)`.
+    Alloc,
+    /// `gos_rc_alloc(size?, meta?)`.
+    RcAlloc,
+    /// `gos_rc_alloc_tagged(size?, meta?)`.
+    RcAllocTagged,
+    /// `gos_rc_alloc_reuse(token, size, meta)`.
+    RcAllocReuse,
+    /// `gos_rt_enum_struct_eq(a, b, desc)`.
+    EnumStructEq,
+    /// `gos_fn_addr(name)`.
+    FnAddr,
+    /// `gos_rt_weak_opt_payload(option_carrier)`.
+    WeakOptPayload,
+    /// Runtime helper with an ABI registry entry.
+    Runtime,
+    /// Floating point LLVM intrinsic facade.
+    F64Math(F64MathIntrinsic),
+    /// Internal marker used to keep bytecode-only user iterators out of native
+    /// promotion.
+    JitUnsupportedUserIterator,
+}
+
+/// Floating point math intrinsic lowered directly to LLVM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum F64MathIntrinsic {
+    /// `llvm.sqrt.f64`.
+    Sqrt,
+    /// `llvm.sin.f64`.
+    Sin,
+    /// `llvm.cos.f64`.
+    Cos,
+    /// `llvm.fabs.f64`.
+    Abs,
+    /// `llvm.floor.f64`.
+    Floor,
+    /// `llvm.ceil.f64`.
+    Ceil,
+    /// `llvm.exp.f64`.
+    Exp,
+    /// `llvm.log.f64`.
+    Log,
+}
+
+/// Arity contract for a raw intrinsic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawIntrinsicArity {
+    /// Exactly this many operands.
+    Exact(usize),
+    /// Inclusive operand count range.
+    Range {
+        /// Minimum accepted operand count.
+        min: usize,
+        /// Maximum accepted operand count.
+        max: usize,
+    },
+}
+
+impl RawIntrinsicArity {
+    /// Returns true when `count` satisfies this arity.
+    #[must_use]
+    pub const fn accepts(self, count: usize) -> bool {
+        match self {
+            Self::Exact(n) => count == n,
+            Self::Range { min, max } => count >= min && count <= max,
+        }
+    }
+}
+
+impl F64MathIntrinsic {
+    /// LLVM intrinsic symbol.
+    #[must_use]
+    pub const fn llvm_name(self) -> &'static str {
+        match self {
+            Self::Sqrt => "llvm.sqrt.f64",
+            Self::Sin => "llvm.sin.f64",
+            Self::Cos => "llvm.cos.f64",
+            Self::Abs => "llvm.fabs.f64",
+            Self::Floor => "llvm.floor.f64",
+            Self::Ceil => "llvm.ceil.f64",
+            Self::Exp => "llvm.exp.f64",
+            Self::Log => "llvm.log.f64",
+        }
+    }
+}
+
+impl RawIntrinsic {
+    /// Parse a MIR intrinsic name into the typed catalogue.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        let intrinsic = match name {
+            "gos_enum_load" => Self::EnumLoad,
+            "gos_enum_tag" => Self::EnumTag,
+            "gos_enum_disc_tag" => Self::EnumDiscTag,
+            "gos_enum_untag" => Self::EnumUntag,
+            "gos_enum_disc" => Self::EnumDisc,
+            "gos_enum_set_disc" => Self::EnumSetDisc,
+            "gos_load" => Self::Load,
+            "gos_store" => Self::Store,
+            "gos_alloc" => Self::Alloc,
+            "gos_rc_alloc" => Self::RcAlloc,
+            "gos_rc_alloc_tagged" => Self::RcAllocTagged,
+            "gos_rc_alloc_reuse" => Self::RcAllocReuse,
+            "gos_rt_enum_struct_eq" => Self::EnumStructEq,
+            "gos_fn_addr" => Self::FnAddr,
+            "gos_rt_weak_opt_payload" => Self::WeakOptPayload,
+            "gos_jit_unsupported_user_iterator" => Self::JitUnsupportedUserIterator,
+            "f64.sqrt" | "sqrt" => Self::F64Math(F64MathIntrinsic::Sqrt),
+            "f64.sin" | "sin" => Self::F64Math(F64MathIntrinsic::Sin),
+            "f64.cos" | "cos" => Self::F64Math(F64MathIntrinsic::Cos),
+            "f64.abs" | "fabs" | "abs" => Self::F64Math(F64MathIntrinsic::Abs),
+            "f64.floor" | "floor" => Self::F64Math(F64MathIntrinsic::Floor),
+            "f64.ceil" | "ceil" => Self::F64Math(F64MathIntrinsic::Ceil),
+            "f64.exp" | "exp" => Self::F64Math(F64MathIntrinsic::Exp),
+            "f64.ln" | "ln" | "f64.log" | "log" => Self::F64Math(F64MathIntrinsic::Log),
+            other if gossamer_abi::lookup(other).is_some() => Self::Runtime,
+            _ => return None,
+        };
+        Some(intrinsic)
+    }
+
+    /// Expected argument count for this intrinsic.
+    #[must_use]
+    pub fn arity(self) -> RawIntrinsicArity {
+        self.arity_for_name("")
+    }
+
+    /// Expected argument count for this intrinsic using the original MIR
+    /// spelling for registry-backed runtime helpers.
+    #[must_use]
+    pub fn arity_for_name(self, name: &str) -> RawIntrinsicArity {
+        match self {
+            Self::EnumLoad | Self::EnumTag | Self::EnumSetDisc | Self::Load => {
+                RawIntrinsicArity::Exact(2)
+            }
+            Self::Store | Self::RcAllocReuse | Self::EnumStructEq => RawIntrinsicArity::Exact(3),
+            Self::EnumDiscTag
+            | Self::EnumUntag
+            | Self::EnumDisc
+            | Self::FnAddr
+            | Self::WeakOptPayload
+            | Self::F64Math(_) => RawIntrinsicArity::Exact(1),
+            Self::Alloc => RawIntrinsicArity::Range { min: 0, max: 1 },
+            Self::RcAlloc | Self::RcAllocTagged => RawIntrinsicArity::Range { min: 0, max: 2 },
+            Self::JitUnsupportedUserIterator => RawIntrinsicArity::Exact(0),
+            Self::Runtime => gossamer_abi::lookup(name)
+                .map_or(RawIntrinsicArity::Exact(usize::MAX), |entry| {
+                    RawIntrinsicArity::Exact(entry.sig.params.len())
+                }),
+        }
+    }
+}
+
 /// Reference to a `static mut` global. Every access (load or store)
 /// carries the static's mangled symbol, value type, and const
 /// initializer so any backend can materialise the backing global

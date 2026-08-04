@@ -544,6 +544,11 @@ impl<'a> Lowerer<'a> {
                     Some(TyKind::Float(_)) => ConcatKind::Float,
                     Some(TyKind::String | TyKind::Ref { .. }) => ConcatKind::StrPtr,
                     Some(TyKind::Int(int_ty)) => {
+                        if p.projection.is_empty()
+                            && let Some(kind) = self.set_handle_print_kind(p.local, 0)
+                        {
+                            return kind;
+                        }
                         // A `u64` / `usize` / `u128` is the only unsigned
                         // family whose value can exceed `i64::MAX`, so it
                         // selects the unsigned printer: a value above 2^63
@@ -617,7 +622,7 @@ impl<'a> Lowerer<'a> {
                     // Tuple of scalar elements: route through
                     // `gos_rt_tuple_format`. Mixed/aggregate element
                     // types (or narrow ints whose flat-slot bytes
-                    // aren't a full i64) fall back to Unsupported.
+                    // aren't a full i64) require richer display planning.
                     Some(TyKind::Tuple(elems)) => {
                         if !elems.is_empty()
                             && elems.iter().all(|e| self.tuple_elem_tag(*e).is_some())
@@ -634,6 +639,22 @@ impl<'a> Lowerer<'a> {
                             ConcatKind::Map
                         } else {
                             ConcatKind::Unsupported
+                        }
+                    }
+                    Some(TyKind::Adt { def, substs }) if matches!(def.local, n if n == u32::MAX - 7 || n == u32::MAX - 18) =>
+                    {
+                        let is_btree = def.local == u32::MAX - 18;
+                        match substs.types().first().and_then(|elem| {
+                            match self.tcx.kind(self.unwrap_ref(*elem)) {
+                                Some(TyKind::Int(i)) if int_width(*i) == 64 => {
+                                    Some(ConcatKind::SetI64(is_btree))
+                                }
+                                Some(TyKind::String) => Some(ConcatKind::SetString(is_btree)),
+                                _ => None,
+                            }
+                        }) {
+                            Some(kind) => kind,
+                            None => ConcatKind::Unsupported,
                         }
                     }
                     // `{:?}` of an `Option<T>` / `Result<T, E>` with scalar /
@@ -690,6 +711,65 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    fn set_handle_print_kind(&self, local: Local, depth: u8) -> Option<ConcatKind> {
+        if depth > 8 {
+            return None;
+        }
+        let mut saw_set_ctor = false;
+        let mut is_btree = false;
+        let mut elem_kind = None;
+        for block in &self.body.blocks {
+            for stmt in &block.stmts {
+                if let StatementKind::Assign { place, rvalue } = &stmt.kind
+                    && place.local == local
+                    && place.projection.is_empty()
+                    && let Rvalue::Use(Operand::Copy(src)) = rvalue
+                    && src.projection.is_empty()
+                    && let Some(kind) = self.set_handle_print_kind(src.local, depth + 1)
+                {
+                    return Some(kind);
+                }
+            }
+            if let Terminator::Call {
+                callee,
+                args,
+                destination,
+                ..
+            } = &block.terminator
+                && let Operand::Const(ConstValue::Str(name)) = callee
+            {
+                if destination.local == local && destination.projection.is_empty() {
+                    match name.as_str() {
+                        "gos_rt_btree_set_new" => {
+                            saw_set_ctor = true;
+                            is_btree = true;
+                        }
+                        "gos_rt_set_new" => saw_set_ctor = true,
+                        _ => {}
+                    }
+                }
+                if args.first().is_some_and(|arg| {
+                    matches!(
+                        arg,
+                        Operand::Copy(place)
+                            if place.local == local && place.projection.is_empty()
+                    )
+                }) {
+                    match name.as_str() {
+                        "gos_rt_set_insert_i64" => elem_kind = Some(ConcatKind::SetI64(is_btree)),
+                        "gos_rt_set_insert" => elem_kind = Some(ConcatKind::SetString(is_btree)),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if elem_kind.is_some() || saw_set_ctor {
+            elem_kind.or(Some(ConcatKind::SetString(is_btree)))
+        } else {
+            None
+        }
+    }
+
     /// Maps an `Option` / `Result` payload type to the `gos_rt_debug_*`
     /// formatter kind (0=i64, 1=u64, 2=f64, 3=bool, 4=char, 5=String), or
     /// `None` for an aggregate / nested payload the scalar helper can't render.
@@ -724,6 +804,16 @@ impl<'a> Lowerer<'a> {
             Some(TyKind::Bool) => Some(3),
             Some(TyKind::Char) => Some(4),
             Some(TyKind::String) => Some(5),
+            Some(TyKind::Vec(inner) | TyKind::Slice(inner))
+                if matches!(self.tcx.kind(self.unwrap_ref(*inner)), Some(TyKind::Int(_))) =>
+            {
+                Some(6)
+            }
+            Some(TyKind::HashMap { key, value })
+                if self.map_kv_supported(*key) && self.map_kv_supported(*value) =>
+            {
+                Some(7)
+            }
             _ => None,
         }
     }

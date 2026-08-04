@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
 
+use gossamer_ast::{ExprKind, ItemKind, StmtKind};
 use gossamer_lex::SourceMap;
 use gossamer_parse::{ParseError, parse_source_file};
 
@@ -122,6 +123,66 @@ fn fixed_array_literal_at_statement_start_is_not_parsed_as_attribute() {
         diags.len()
     );
     assert_eq!(sf.items.len(), 1);
+}
+
+#[test]
+fn empty_braces_stay_hash_map_in_let_initializer() {
+    let source = "fn main() { let b = {} }\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("empty_map_literal.gos", source.to_string());
+    let (sf, diags) = parse_source_file(source, file);
+    assert!(diags.is_empty(), "unexpected parse diagnostics: {diags:?}");
+    let ItemKind::Fn(function) = &sf.items[0].kind else {
+        panic!("expected function item");
+    };
+    let Some(body) = function.body.as_deref() else {
+        panic!("expected function body");
+    };
+    let ExprKind::Block(block) = &body.kind else {
+        panic!("expected function block");
+    };
+    let StmtKind::Let {
+        init: Some(init), ..
+    } = &block.stmts[0].kind
+    else {
+        panic!("expected initialized let statement");
+    };
+    assert!(
+        matches!(init.kind, ExprKind::MapLiteral(ref entries) if entries.is_empty()),
+        "expected empty map literal, got {:?}",
+        init.kind
+    );
+}
+
+#[test]
+fn empty_braces_in_match_arm_are_empty_block() {
+    let source = "fn main() { match Some(1) { Some(_) => {}, None => {} } }\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("empty_match_arm_block.gos", source.to_string());
+    let (sf, diags) = parse_source_file(source, file);
+    assert!(diags.is_empty(), "unexpected parse diagnostics: {diags:?}");
+    let ItemKind::Fn(function) = &sf.items[0].kind else {
+        panic!("expected function item");
+    };
+    let Some(body) = function.body.as_deref() else {
+        panic!("expected function body");
+    };
+    let ExprKind::Block(block) = &body.kind else {
+        panic!("expected function block");
+    };
+    let Some(expr) = block.tail.as_deref() else {
+        panic!("expected match expression tail");
+    };
+    let ExprKind::Match { arms, .. } = &expr.kind else {
+        panic!("expected match expression");
+    };
+    for arm in arms {
+        assert!(
+            matches!(arm.body.kind, ExprKind::Block(ref block) if block.stmts.is_empty() && block.tail.is_none()),
+            "expected empty block arm, got {:?}",
+            arm.body.kind
+        );
+    }
 }
 
 /// A leading UTF-8 BOM (the Windows-editor default) is stripped at the

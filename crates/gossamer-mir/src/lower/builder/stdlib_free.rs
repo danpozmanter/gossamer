@@ -274,7 +274,12 @@ impl<'a> Builder<'a> {
             return None;
         };
         let set_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-        let set = self.emit_stdlib_free_call("gos_rt_set_new", set_ty, &[], span)?;
+        let ctor = if runtime_kind == "collections::BTreeSet" {
+            "gos_rt_btree_set_new"
+        } else {
+            "gos_rt_set_new"
+        };
+        let set = self.emit_stdlib_free_call(ctor, set_ty, &[], span)?;
         self.local_runtime_kind.insert(set, runtime_kind);
         let bool_ty = self.tcx.bool_ty();
         for item in items {
@@ -347,7 +352,7 @@ impl<'a> Builder<'a> {
         ) && args.is_empty()
         {
             let set_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-            let set = self.emit_stdlib_free_call("gos_rt_set_new", set_ty, &[], span)?;
+            let set = self.emit_stdlib_free_call("gos_rt_btree_set_new", set_ty, &[], span)?;
             self.local_runtime_kind.insert(set, "collections::BTreeSet");
             return Some(set);
         }
@@ -2940,7 +2945,7 @@ impl<'a> Builder<'a> {
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
             "BTreeSet::new" | "collections::BTreeSet::new" => (
-                "gos_rt_set_new",
+                "gos_rt_btree_set_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
             // `BTreeMap` is backed by the same map runtime as `HashMap`
@@ -3818,6 +3823,7 @@ impl<'a> Builder<'a> {
             }
             "gos_rt_regex_compile" | "gos_rt_regex_compile_result" => Some("regex::Pattern"),
             "gos_rt_set_new" => Some("collections::HashSet"),
+            "gos_rt_btree_set_new" => Some("collections::BTreeSet"),
             "gos_rt_btmap_new" => Some("collections::BTreeMap"),
             "gos_rt_deque_new" => Some("collections::VecDeque"),
             "gos_rt_sync_map_new" => Some("sync::Map"),

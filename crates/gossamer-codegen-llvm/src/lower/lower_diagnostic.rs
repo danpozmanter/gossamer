@@ -178,9 +178,9 @@ impl<'a> Lowerer<'a> {
             // can't interleave their output mid-line. The lock is
             // reentrant, so the inner runtime helpers (which also
             // acquire) coexist with this outer acquire on the same
-            // thread. On `Unsupported` we abandon the whole build
-            // and fall back to Cranelift, so the dangling acquire
-            // is harmless - the LLVM module itself is dropped.
+            // thread. If an internal backend invariant fails later,
+            // the LLVM module is dropped before execution, so a
+            // dangling acquire in emitted text is harmless.
             writeln!(self.out, "  call void @gos_rt_stdout_acquire()").unwrap();
             // Spec: each arg is space-separated. Mirrors the
             // interpreter's `render_args` (which inserts a `' '`

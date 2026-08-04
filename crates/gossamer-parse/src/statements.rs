@@ -68,7 +68,7 @@ impl Parser<'_> {
             return StmtKind::Item(Box::new(item));
         }
         let before = self.tokens.checkpoint();
-        let expression = self.parse_expr();
+        let expression = self.with_empty_braces_as_blocks(Self::parse_expr);
         if self.tokens.checkpoint() == before && !is_stmt_start(self) {
             self.recover_in_block();
         }

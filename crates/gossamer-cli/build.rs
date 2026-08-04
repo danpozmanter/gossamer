@@ -113,6 +113,7 @@ fn main() {
         .nth(2)
         .expect("workspace root")
         .to_path_buf();
+    emit_rerun_if_changed_tree(&workspace_root.join("crates/gossamer-runtime/src"));
 
     if env::var_os("GOSSAMER_SKIP_DISPATCH_PARITY").is_none() {
         check_dispatch_parity(&workspace_root);
@@ -167,6 +168,20 @@ fn main() {
                 "cargo:rustc-env=GOSSAMER_RUNTIME_LIB_PATH_MUSL={}",
                 musl_lib_path.display()
             );
+        }
+    }
+}
+
+fn emit_rerun_if_changed_tree(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            emit_rerun_if_changed_tree(&path);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            println!("cargo:rerun-if-changed={}", path.display());
         }
     }
 }

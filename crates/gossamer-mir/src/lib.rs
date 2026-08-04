@@ -25,9 +25,10 @@ pub use escape::{
     analyse_with_summary as analyse_escape_with_summary, build_capture_summary,
 };
 pub use ir::{
-    AggregateKind, AssertMessage, BasicBlock, BinOp, BlockId, Body, ConstValue,
+    AggregateKind, AssertMessage, BasicBlock, BinOp, BlockId, Body, ConstValue, F64MathIntrinsic,
     IteratorAdapterKind, IteratorOwnership, IteratorSourceKind, Local, LocalDecl, Operand, Place,
-    Projection, Rvalue, Statement, StatementKind, StaticRef, Terminator, UnOp, local_is_uint_cast,
+    Projection, RawIntrinsic, RawIntrinsicArity, Rvalue, Statement, StatementKind, StaticRef,
+    Terminator, UnOp, local_is_uint_cast,
 };
 pub use lower::{lower_program, mangle_callable_shape};
 pub use monomorph::{check_generic_layouts, mangled_name, monomorphise};

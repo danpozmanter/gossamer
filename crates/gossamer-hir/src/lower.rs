@@ -22,6 +22,9 @@ use crate::tree::{
     HirUnaryOp,
 };
 
+const HASH_SET_DEF_LOCAL: u32 = u32::MAX - 7;
+const BTREE_SET_DEF_LOCAL: u32 = u32::MAX - 18;
+
 /// Lowers a resolved AST source file into HIR. The provided type table
 /// annotates expression nodes with their inferred types; entries
 /// missing from the table default to `TyCtxt::error_ty()`.
@@ -1287,7 +1290,7 @@ impl Lowerer<'_> {
                 // so keep it off the `&mut __for_iter.next()` desugar that
                 // a real `impl Iterator` struct needs.
                 Some(TyKind::Adt { def, .. }) => {
-                    return !matches!(def.local, x if x == u32::MAX - 7 || x == u32::MAX - 10);
+                    return !matches!(def.local, HASH_SET_DEF_LOCAL | BTREE_SET_DEF_LOCAL);
                 }
                 _ => return false,
             }
@@ -2022,17 +2025,17 @@ impl Lowerer<'_> {
 
         let lowered_entries: Vec<HirExpr> = entries.iter().map(|e| self.lower_expr(e)).collect();
         let owner = match self.tcx.kind(set_ty) {
-            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 10 => "BTreeSet",
+            Some(TyKind::Adt { def, .. }) if def.local == BTREE_SET_DEF_LOCAL => "BTreeSet",
             _ => "HashSet",
         };
         let elem_ty = lowered_entries
             .first()
             .map(|entry| entry.ty)
             .or_else(|| match self.tcx.kind(set_ty) {
-                Some(TyKind::Adt { def, substs }) if def.local == u32::MAX - 7 => {
+                Some(TyKind::Adt { def, substs }) if def.local == HASH_SET_DEF_LOCAL => {
                     substs.types().first().copied()
                 }
-                Some(TyKind::Adt { def, substs }) if def.local == u32::MAX - 10 => {
+                Some(TyKind::Adt { def, substs }) if def.local == BTREE_SET_DEF_LOCAL => {
                     substs.types().first().copied()
                 }
                 _ => None,

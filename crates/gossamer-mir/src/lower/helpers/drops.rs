@@ -3616,6 +3616,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             // below does not cover).
             "gos_rt_vec_clone" => Some("gos_rt_vec_free"),
             "gos_rt_set_new"
+            | "gos_rt_btree_set_new"
             | "gos_rt_set_union"
             | "gos_rt_set_intersection"
             | "gos_rt_set_difference"

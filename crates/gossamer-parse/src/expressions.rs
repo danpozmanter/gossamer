@@ -786,6 +786,9 @@ impl Parser<'_> {
             return self.parse_hash_prefixed_literal();
         }
         if self.eat_punct(Punct::LBrace) {
+            if self.prefer_empty_brace_block() && self.at_punct(Punct::RBrace) {
+                return ExprKind::Block(self.parse_block_body());
+            }
             if let Some(map) = self.try_parse_map_literal() {
                 return map;
             }
@@ -1413,7 +1416,7 @@ impl Parser<'_> {
                 Expr::new(self.alloc_id(), self.peek_span(), ExprKind::Error)
             } else {
                 self.enter_match_arm_body();
-                let body = self.parse_expr();
+                let body = self.with_empty_braces_as_blocks(Self::parse_expr);
                 self.leave_match_arm_body();
                 body
             };
@@ -1614,7 +1617,7 @@ impl Parser<'_> {
         } else {
             None
         };
-        let body = self.parse_expr();
+        let body = self.with_empty_braces_as_blocks(Self::parse_expr);
         ExprKind::Closure {
             params,
             ret,

@@ -609,6 +609,24 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
+            ConcatKind::SetI64(is_btree) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_set_format_i64");
+                let ordered = i32::from(is_btree);
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_set_format_i64(ptr {value}, i32 {ordered})"
+                )
+                .unwrap();
+            }
+            ConcatKind::SetString(is_btree) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_set_format_string");
+                let ordered = i32::from(is_btree);
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_set_format_string(ptr {value}, i32 {ordered})"
+                )
+                .unwrap();
+            }
             // The operand is the by-value `i128` enum (disc + payload), not a
             // buffer pointer. It crosses the `extern "C"` boundary through
             // `fat_i128_call_arg`, which on Win64 spills it to a 16-byte slot
@@ -649,6 +667,10 @@ impl<'a> Lowerer<'a> {
     ) -> Result<String, BuildError> {
         match kind {
             ConcatKind::Tuple => self.emit_tuple_format(arg, value),
+            ConcatKind::SetI64(_) | ConcatKind::SetString(_) => {
+                let ptr = self.coerce_llvm_value(value, &self.operand_llvm_ty(arg), "ptr");
+                Ok(self.emit_aggregate_format(kind, &ptr))
+            }
             _ => Ok(self.emit_aggregate_format(kind, value)),
         }
     }

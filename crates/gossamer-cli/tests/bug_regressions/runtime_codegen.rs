@@ -654,6 +654,33 @@ fn main() {
 }
 
 #[test]
+fn native_vec_swap_and_pop_preserve_multiword_elements() {
+    let src = r#"
+fn main() {
+    let mut xs = [(1, 2), (3, 4)]
+    let _ = xs.swap(0, 1)
+    match xs.pop() {
+        Some(v) => println!("{} {}", v.0, v.1),
+        None => println!("none"),
+    }
+}
+"#;
+    let expected = "1 2\n";
+    let dir = fresh_dir("native_vec_swap_pop_multiword");
+    let path = write_source(&dir, "native_vec_swap_pop_multiword", src);
+    let vm = run_vm(&path);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, expected);
+    let scratch = dir.join("native");
+    fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(native.0, expected);
+}
+
+#[test]
 fn llvm_tuple_return_from_nested_loop_keeps_second_slot() {
     // `return (a, b)` from inside a nested loop used to drop the
     // second slot - the temporary `(Var, Var)` tuple's alloca
@@ -995,6 +1022,48 @@ fn main() {
     let _ = fs::remove_dir_all(&dir);
     assert_eq!(release.2, Some(0), "release stderr: {}", release.1);
     assert_eq!(release.0.trim_end(), "42", "release output mismatch");
+}
+
+#[test]
+fn collection_display_literals_match_vm_and_native_tiers() {
+    let src = r#"
+use std::collections::BTreeSet
+
+#[derive(Debug)]
+struct Rec { name: String, nums: Vec<i64> }
+
+fn main() {
+    println!("{}", (1, "x", true))
+    let mut m = {"a": 1, "b": 2}
+    println!("{}", (m, [1, 2, 3]))
+    println!("{}", #{3, 1, 2})
+    println!("{}", BTreeSet::from(#[3, 1, 2]))
+    println!("{:?}", Rec { name: "r", nums: [1, 2] })
+}
+"#;
+    let expected = "\
+(1, x, true)
+({a: 1, b: 2}, [1, 2, 3])
+HashSet {1, 2, 3}
+BTreeSet {1, 2, 3}
+Rec { name: \"r\", nums: [1, 2] }
+";
+    let dir = fresh_dir("collection_display_literals");
+    let path = write_source(&dir, "collection_display_literals", src);
+
+    let vm = run_vm(&path);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, expected, "vm output mismatch");
+
+    for release in [false, true] {
+        let scratch = dir.join(if release { "release" } else { "debug" });
+        fs::create_dir_all(&scratch).unwrap();
+        let bin = build_native_with_flag(&path, &scratch, release).expect("native build");
+        let native = run_native(&bin);
+        assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+        assert_eq!(native.0, expected, "native output mismatch");
+    }
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]

@@ -44,6 +44,11 @@ pub unsafe extern "C" fn gos_rt_set_new() -> *mut GosSet {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_btree_set_new() -> *mut GosSet {
+    unsafe { gos_rt_set_new() }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_insert(s: *mut GosSet, key: *const c_char) -> i64 {
     ffi_entry!(-1, {
         if s.is_null() || key.is_null() {
@@ -130,6 +135,56 @@ pub unsafe extern "C" fn gos_rt_set_len(s: *const GosSet) -> i64 {
         }
         let s = unsafe { &*s };
         (s.inner.len() + s.struct_inner.len()) as i64
+    })
+}
+
+fn set_format_prefix(ordered: i32) -> &'static str {
+    if ordered != 0 { "BTreeSet" } else { "HashSet" }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_format_i64(s: *const GosSet, ordered: i32) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let mut out = String::from(set_format_prefix(ordered));
+        out.push_str(" {");
+        if !s.is_null() {
+            let set = unsafe { &*s };
+            let mut keys: Vec<i64> = set
+                .inner
+                .iter()
+                .filter_map(|key| key.parse::<i64>().ok())
+                .collect();
+            keys.sort_unstable();
+            for (index, key) in keys.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&crate::builtins::format_int(*key));
+            }
+        }
+        out.push('}');
+        crate::c_abi::string::alloc_cstring(out.as_bytes())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_format_string(s: *const GosSet, ordered: i32) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let mut out = String::from(set_format_prefix(ordered));
+        out.push_str(" {");
+        if !s.is_null() {
+            let set = unsafe { &*s };
+            let mut keys: Vec<&str> = set.inner.iter().map(String::as_str).collect();
+            keys.sort_unstable();
+            for (index, key) in keys.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(key);
+            }
+        }
+        out.push('}');
+        crate::c_abi::string::alloc_cstring(out.as_bytes())
     })
 }
 

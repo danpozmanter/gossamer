@@ -62,7 +62,7 @@ let n = 3 |> double |> add(10)
 println!("3 |> double |> add(10) = {n}")
 
 // \`_.method\` pipes a value through its own methods - \`_\` is the receiver.
-let shout = "  hi there  " |> _.trim |> _.to_upper
+let shout = "  hi there  " |> _.trim |> _.to_uppercase
 println!("shout = {shout}")
 
 // Ranges are values and combinators are methods - chain them directly.
@@ -122,8 +122,8 @@ fn main() {
 // \`match\` is exhaustive and yields a value - every variant is handled.
 fn area(shape: &Shape) -> f64 {
     match shape {
-        Shape::Circle(r) => 3.14159 * r * r,
-        Shape::Rect { w, h } => w * h,
+        Shape::Circle(r) => 3.14159 * *r * *r,
+        Shape::Rect { w, h } => *w * *h,
         Shape::Line => 0.0,
     }
 }
@@ -187,7 +187,7 @@ fn main() {
     code: `// \`?\` propagates \`None\` inside an Option-returning function.
 fn first_even(xs: &[i64]) -> Option<i64> {
     for x in xs {
-        if x % 2 == 0 { return Some(x) }
+        if *x % 2 == 0 { return Some(*x) }
     }
     None
 }
@@ -219,25 +219,28 @@ fn main() {
       <code>std::errors</code>: <code>errors::new</code>,
       <code>errors::wrap</code> for higher-level context, and printing a
       wrapped error shows the colon-joined cause chain.</p>
-      <p>On the ok-path, <code>result::map</code> transforms <code>Ok</code>
-      and leaves <code>Err</code> untouched, while
-      <code>result::default_with</code> handles the error in-line. Both are
-      data-last, so the whole flow threads through <code>|></code>.</p>`,
+      <p>Handle the present and error paths with a small <code>match</code>
+      when the recovery action is side-effecting. Use the data-last
+      <code>std::result</code> helpers when you are transforming values
+      inside a pipeline.</p>`,
     code: `use std::errors
-use std::result
 
 // Fallible work returns \`Result<T, E>\`; \`?\` propagates the \`Err\`.
 fn parse_port(text: &String) -> Result<i64, errors::Error> {
-    let n: i64 = text.parse().map_err(|_| errors::new(format!("not a number: {text}")))?
+    let n: i64 = match text.parse() {
+        Ok(n) => n,
+        Err(_) => return Err(errors::new(format!("not a number: {text}"))),
+    }
     if n <= 0 { return Err(errors::new(format!("must be positive: {n}"))) }
     Ok(n)
 }
 
 fn main() {
-    // Map the Ok value; handle the Err in-line - both thread through |>.
-    parse_port(&"8080")
-        |> result::map(|n| println!("port = {n}"))
-        |> result::default_with(|e| eprintln!("error: {}", e.message()))
+    // Match the Ok value; handle the Err in-line.
+    match parse_port(&"8080") {
+        Ok(n) => println!("port = {n}"),
+        Err(e) => eprintln!("error: {}", e.message()),
+    }
 
     // \`wrap\` adds context; printing shows the colon-joined cause chain.
     let bad = parse_port(&"oops").map_err(|e| errors::wrap(e, "loading config"))
@@ -259,9 +262,7 @@ fn main() {
       Combinators such as <code>filter</code> and <code>sum</code> are
       methods on any Vec or range, so a query never needs a manual
       loop.</p>`,
-    code: `use std::collections::HashMap
-
-fn main() {
+    code: `fn main() {
     // A growable Vec; iterate the values directly.
     let mut nums = [4, 8, 15, 16, 23]
     nums.push(42)
@@ -271,7 +272,7 @@ fn main() {
     println!("sum of evens = {}", nums.filter(|n| n % 2 == 0).sum())
 
     // HashMap counters: \`inc\` does the get-or-zero-then-add for you.
-    let mut tally = HashMap::new()
+    let mut tally = {}
     for word in ["go", "go", "rust", "go"] {
         tally.inc(word)
     }
@@ -395,17 +396,17 @@ fn main() {
       which is the subset the in-browser runtime supports.
       <strong>Full goroutine interleaving</strong> - goroutines that block
       and hand off mid-run - runs natively with <code>gos</code>.</p>`,
-    code: `use std::sync::channel
+    code: `use std::sync
 
 // The producer sends every value, then closes - it runs to
 // completion, so no mid-run hand-off is needed.
-fn produce(tx: Sender<i64>) {
+fn produce(tx: sync::Sender<i64>) {
     for n in 1..=5 { tx.send(n * n) }
     tx.close()
 }
 
 fn main() {
-    let (tx, rx) = channel()
+    let (tx, rx) = sync::channel(0)
     go produce(tx)
 
     // \`recv\` yields \`Some\` until the channel is closed and drained.
@@ -427,15 +428,15 @@ fn main() {
       merges their values as they arrive - the standard fan-in pattern.
       Full mid-run hand-off between goroutines that block and resume runs
       natively with <code>gos</code>.</p>`,
-    code: `use std::sync::channel
+    code: `use std::sync
 
-fn produce(tx: Sender<i64>, xs: [i64]) {
+fn produce(tx: sync::Sender<i64>, xs: Vec<i64>) {
     for x in xs { tx.send(x) }
 }
 
 fn main() {
-    let (tx_hi, rx_hi) = channel()
-    let (tx_lo, rx_lo) = channel()
+    let (tx_hi, rx_hi) = sync::channel(0)
+    let (tx_lo, rx_lo) = sync::channel(0)
 
     go produce(tx_hi, [1, 2, 3])
     go produce(tx_lo, [10, 20])
@@ -467,19 +468,18 @@ fn main() {
       lock. Sync handles are shared by value: a copy refers to the same
       underlying state.</p>`,
     code: `use std::sync
-use std::sync::WaitGroup
 
 // Each worker runs to completion: it folds its share into the shared
 // atomic counter, then signals the WaitGroup. Sync handles are shared
 // by value - a copy refers to the same underlying state.
-fn worker(total: sync::AtomicI64, wg: WaitGroup, i: i64) {
+fn worker(total: sync::AtomicI64, wg: sync::WaitGroup, i: i64) {
     sync::AtomicI64::fetch_add(total, i * i)
     wg.done()
 }
 
 fn main() {
     let total = sync::AtomicI64::new(0)
-    let wg = WaitGroup::new()
+    let wg = sync::WaitGroup::new()
 
     for i in 1..=4 {
         wg.add(1)
@@ -615,7 +615,7 @@ fn main() {
     let mut grand_total = 0
     for round in 1..=3 {
         arena {
-            let mut scratch: [i64] = []
+            let mut scratch: Vec<i64> = []
             for i in 0..1000 { scratch.push(i * round) }
 
             let mut sum = 0
@@ -671,16 +671,14 @@ fn main() {
       structs, sorts by count, and prints a tidy table. Edit the input text
       and run it again - that is the whole language in twenty lines. Go build
       something.</p>`,
-    code: `use std::collections::HashMap
-
-#[derive(Debug)]
+    code: `#[derive(Debug)]
 struct Tally { word: String, count: i64 }
 
 fn main() {
     let text = "go rust go gossamer rust go"
 
     // Count each word; \`inc\` does get-or-zero then add.
-    let mut counts = HashMap::new()
+    let mut counts = {}
     for word in text.split(" ") {
         counts.inc(word)
     }
@@ -688,7 +686,7 @@ fn main() {
     // Move the entries into structs and sort by count, descending.
     let mut rows = []
     for (word, count) in counts.iter() {
-        rows.push(Tally { word, count })
+        rows.push(Tally { word: word, count: count })
     }
     rows.sort_by_key(|r| Reverse(r.count))
 

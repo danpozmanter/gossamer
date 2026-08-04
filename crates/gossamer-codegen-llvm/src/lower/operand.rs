@@ -95,18 +95,15 @@ impl<'a> Lowerer<'a> {
                 // leaf type is integer-shaped, so both shapes get a
                 // well-typed `store`.
                 if let Some(name) = self.fn_name_by_def.get(&def.local).cloned() {
-                    // A `[rust-bindings]` import has a stub MIR body
-                    // but no emitted definition; its ABI also needs
-                    // the arg/return conversions only the direct-call
-                    // path performs. Reject it here with an
-                    // actionable message instead of emitting a
-                    // reference to an undefined symbol that dies
-                    // inside `opt`.
-                    if gossamer_resolve::lookup_external_item(&name).is_some() {
-                        return Err(BuildError::InternalLoweringBug(
-                            "a [rust-bindings] function cannot be passed as a value yet - \
-                             wrap it in a closure: `|x| f(x)`",
-                        ));
+                    if let Some(argc) = super::lower_call::external_binding_arity(&name) {
+                        let Some(symbol) =
+                            super::lower_call::resolve_external_binding_symbol(&name, argc)
+                        else {
+                            return Err(BuildError::InternalLoweringBug(
+                                "external binding FnRef symbol resolution failed",
+                            ));
+                        };
+                        return Ok(format!("@\"{symbol}\""));
                     }
                     return Ok(format!("@\"{}\"", mangle_fn_name(&name)));
                 }

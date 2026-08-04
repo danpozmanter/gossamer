@@ -237,12 +237,10 @@ impl StringPool {
 
 /// Operand classification for `__concat`'s per-arg dispatch.
 ///
-/// `Unsupported` covers operand types we can't print without a
-/// Display impl (tuples, structs, Vec, HashMap, Option, Result,
-/// etc.). The LLVM backend turns this into a generic
-/// `BuildError::InternalLoweringBug` so the per-function driver routes
-/// the body to Cranelift; Cranelift then bails with a user-facing
-/// message naming the specific operand kind.
+/// `Unsupported` is an internal classifier for operand types that
+/// need richer display planning before they can be concatenated.
+/// Reaching it after frontend validation is treated as a backend
+/// invariant failure.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum ConcatKind {
     StrPtr,
@@ -285,6 +283,12 @@ pub(super) enum ConcatKind {
     /// A scalar-keyed, scalar/string-valued `HashMap` rendered via
     /// `gos_rt_map_format`.
     Map,
+    /// `HashSet<T>` / `BTreeSet<T>` with i64 elements. The bool is true for
+    /// `BTreeSet`, which only changes the display prefix.
+    SetI64(bool),
+    /// `HashSet<T>` / `BTreeSet<T>` with String elements. The bool is true
+    /// for `BTreeSet`, which only changes the display prefix.
+    SetString(bool),
     /// `{:?}` of an `Option<T>` with a scalar / String payload, rendered
     /// via `gos_rt_debug_option`. The `u8` is the payload formatter kind
     /// (see `debug_payload_kind`).

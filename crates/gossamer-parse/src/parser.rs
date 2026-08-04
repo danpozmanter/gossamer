@@ -33,6 +33,9 @@ pub struct Parser<'src> {
     /// Depth of match-arm body parses where a newline may introduce the
     /// next arm's pattern.
     pub(crate) match_arm_body_depth: u32,
+    /// Depth of contexts where an empty brace pair should be parsed as a unit
+    /// block instead of the expression-position empty `HashMap` literal.
+    pub(crate) empty_brace_block_depth: u32,
     /// Running depth of recursive entries into expression, type, and
     /// pattern parsers. Compared against [`RECURSION_LIMIT`] by
     /// [`Parser::enter_recursion`].
@@ -85,6 +88,7 @@ impl<'src> Parser<'src> {
             no_struct_literal_depth: 0,
             pattern_pipe_depth: 0,
             match_arm_body_depth: 0,
+            empty_brace_block_depth: 0,
             recursion_depth: 0,
             recursion_limit_reported: false,
             hoisted_uses: Vec::new(),
@@ -315,6 +319,21 @@ impl<'src> Parser<'src> {
     #[must_use]
     pub(crate) const fn in_match_arm_body(&self) -> bool {
         self.match_arm_body_depth > 0
+    }
+
+    /// Parses `f` with empty `{}` treated as a block in brace-leading
+    /// expression positions.
+    pub(crate) fn with_empty_braces_as_blocks<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        self.empty_brace_block_depth = self.empty_brace_block_depth.saturating_add(1);
+        let out = f(self);
+        self.empty_brace_block_depth = self.empty_brace_block_depth.saturating_sub(1);
+        out
+    }
+
+    /// `true` when `{}` should parse as an empty block in the current context.
+    #[must_use]
+    pub(crate) const fn prefer_empty_brace_block(&self) -> bool {
+        self.empty_brace_block_depth > 0
     }
 
     /// Returns the raw source slice covered by `span`, or `""` if the
