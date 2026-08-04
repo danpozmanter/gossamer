@@ -114,6 +114,76 @@ pub fn split(path: &str) -> (String, String) {
     }
 }
 
+/// Returns Rust-like lexical path components.
+///
+/// Repeated separators and non-leading `.` components are skipped, `/` is
+/// preserved as its own root component, and `..` is retained instead of
+/// normalizing across parent directories.
+#[must_use]
+pub fn components(path: &str) -> Vec<String> {
+    let absolute = path.starts_with('/');
+    let mut out = Vec::new();
+    if absolute {
+        out.push("/".to_string());
+    }
+    let mut saw_normal = absolute;
+    for segment in path.split('/') {
+        match segment {
+            "" => {}
+            "." if !saw_normal && !absolute => {
+                out.push(".".to_string());
+                saw_normal = true;
+            }
+            "." => {}
+            other => {
+                out.push(other.to_string());
+                saw_normal = true;
+            }
+        }
+    }
+    out
+}
+
+/// Returns every cumulative Rust-like lexical path prefix.
+///
+/// Repeated separators and non-leading `.` components are skipped in the same
+/// way as [`components`]. This is useful for tree/index builders that need
+/// `["a", "a/b", "a/b/c"]` without first materializing components and then
+/// rebuilding each prefix in source code.
+#[must_use]
+pub fn prefixes(path: &str) -> Vec<String> {
+    let absolute = path.starts_with('/');
+    let mut out = Vec::new();
+    let mut prefix = String::with_capacity(path.len());
+    if absolute {
+        prefix.push('/');
+        out.push(prefix.clone());
+    }
+    let mut saw_normal = absolute;
+    for segment in path.split('/') {
+        match segment {
+            "" => {}
+            "." if !saw_normal && !absolute => {
+                prefix.push('.');
+                out.push(prefix.clone());
+                saw_normal = true;
+            }
+            "." => {}
+            other => {
+                if prefix.is_empty() || prefix == "/" {
+                    prefix.push_str(other);
+                } else {
+                    prefix.push('/');
+                    prefix.push_str(other);
+                }
+                out.push(prefix.clone());
+                saw_normal = true;
+            }
+        }
+    }
+    out
+}
+
 /// Returns the final component of `path` (the file name).
 #[must_use]
 pub fn base(path: &str) -> String {
@@ -339,6 +409,26 @@ mod tests {
         assert_eq!(join("a", "/b"), "/b");
         assert_eq!(join("", "b"), "b");
         assert_eq!(join("a", ""), "a/");
+    }
+
+    #[test]
+    fn components_follow_rust_like_lexical_rules() {
+        assert_eq!(components(""), Vec::<String>::new());
+        assert_eq!(components("/"), vec!["/"]);
+        assert_eq!(components("/a//b/."), vec!["/", "a", "b"]);
+        assert_eq!(components("a/./b//"), vec!["a", "b"]);
+        assert_eq!(components("./a/../b"), vec![".", "a", "..", "b"]);
+        assert_eq!(components("../a"), vec!["..", "a"]);
+    }
+
+    #[test]
+    fn prefixes_follow_component_semantics() {
+        assert_eq!(prefixes(""), Vec::<String>::new());
+        assert_eq!(prefixes("/"), vec!["/"]);
+        assert_eq!(prefixes("/a//b/."), vec!["/", "/a", "/a/b"]);
+        assert_eq!(prefixes("a/./b//"), vec!["a", "a/b"]);
+        assert_eq!(prefixes("./a/../b"), vec![".", "./a", "./a/..", "./a/../b"]);
+        assert_eq!(prefixes("../a"), vec!["..", "../a"]);
     }
 
     #[test]

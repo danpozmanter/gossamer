@@ -121,21 +121,26 @@ expected `BTreeSet<T>` type is present.
 | `m.or_insert(k, default)` | `V` | Value for `k`, inserting `default` first when absent; works for aggregate values (structs, tuples) too. |
 | `m.len()` | `i64` | |
 | `m.iter()` | `Vec<(K, V)>` | `keys()` / `values()` return `Vec<K>` / `Vec<V>`. |
+| `m.is_empty()` / `m.clear()` | `bool` / `()` | Empty test and in-place removal of all entries. |
 
 ## BTreeMap
 
-`BTreeMap<i64, i64>` and `BTreeMap<i64, String>` are backed by the
-key-sorted `IntMap` machinery (same as `HashMap<i64, _>`), so `iter()`
-yields pairs in ascending key order.
+Phase 1 `BTreeMap` support is `BTreeMap<String, i64>`, matching the compiled
+runtime ABI. Phase 2 will broaden this to generic ordered maps.
 
 | Method | Returns | Notes |
 |---|---|---|
-| `m.insert(k, v)` | `Option<V>` | Inserts or overwrites and returns the previous value when present. |
-| `m.get(k)` | `Option<V>` | `None` when the key is absent. |
-| `m.get_or(k, default)` | `V` | Value for `k`, or `default` when absent. |
+| `BTreeMap::from<const N: usize>([(String, i64); N])` | `BTreeMap<String, i64>` | Associated function; accepts array pairs. |
+| `m.insert(k, v)` | `Option<i64>` | Inserts or overwrites and returns the previous value when present. |
+| `m.get(k)` | `Option<i64>` | `None` when the key is absent. |
+| `m.get_or(k, default)` | `i64` | Value for `k`, or `default` when absent. |
+| `m.or_insert(k, default)` | `i64` | Value for `k`, inserting `default` first when absent. |
+| `m.remove(k)` / `m.pop(k)` | `Option<i64>` | Deletes the key and returns its previous value when present. |
 | `m.contains(k)` / `m.contains_key(k)` | `bool` | Key-membership test. |
 | `m.len()` | `i64` | |
-| `m.iter()` | `Vec<(K, V)>` | Yields pairs in ascending key order. |
+| `m.is_empty()` / `m.clear()` | `bool` / `()` | Empty test and in-place removal of all entries. |
+| `m.iter()` | `Vec<(String, i64)>` | Yields pairs in ascending key order. |
+| `m.keys()` / `m.values()` | `Vec<String>` / `Vec<i64>` | Snapshots keys or values in key order. |
 
 ## HashSet
 
@@ -161,19 +166,21 @@ iteration and `to_vec` output.
 
 ## VecDeque
 
-`VecDeque<i64>` is a double-ended ring buffer; both ends are
-constant-time. The pop / peek methods return `Option`.
+Phase 1 `VecDeque` support is `VecDeque<i64>`. It is a double-ended ring
+buffer; both ends are constant-time. The spelling `VecDequeue<i64>` is accepted
+as an alias. The pop / peek methods return `Option<i64>`.
 
 | Method | Returns | Notes |
 |---|---|---|
 | `d.push_back(v)` | `()` | Append to the back. |
 | `d.push_front(v)` | `()` | Prepend to the front. |
-| `d.pop_back()` | `Option<T>` | Remove and return the back element. |
-| `d.pop_front()` | `Option<T>` | Remove and return the front element. |
-| `d.peek_back()` | `Option<T>` | Back element without removing it. |
-| `d.peek_front()` | `Option<T>` | Front element without removing it. |
+| `d.pop_back()` | `Option<i64>` | Remove and return the back element. |
+| `d.pop_front()` | `Option<i64>` | Remove and return the front element. |
+| `d.peek_back()` | `Option<i64>` | Back element without removing it. |
+| `d.peek_front()` | `Option<i64>` | Front element without removing it. |
 | `d.len()` | `i64` | |
 | `d.is_empty()` | `bool` | |
+| `d.clear()` | `()` | Removes all values. |
 
 ## Option
 

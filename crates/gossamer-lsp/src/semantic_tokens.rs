@@ -509,7 +509,11 @@ fn visit_expr(expr: &Expr, out: &mut Vec<RawToken>) {
                 visit_expr(base, out);
             }
         }
-        ExprKind::Array(arr) | ExprKind::FixedArray(arr) => match arr {
+        ExprKind::Array(arr)
+        | ExprKind::FixedArray(arr)
+        | ExprKind::QueueLiteral(arr)
+        | ExprKind::MaxHeapLiteral(arr)
+        | ExprKind::MinHeapLiteral(arr) => match arr {
             ArrayExpr::List(elems) => {
                 for elem in elems {
                     visit_expr(elem, out);

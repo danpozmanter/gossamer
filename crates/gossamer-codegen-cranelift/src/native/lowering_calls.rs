@@ -411,6 +411,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_uuid_normalize" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_uuid_simple" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_path_base" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_path_components" | "gos_rt_path_prefixes" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_path_dir" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_path_ext" | "gos_rt_path_file_name" | "gos_rt_path_parent" | "gos_rt_path_stem" => {
             (&[ptr_ty], Some(types::I128))
@@ -439,10 +440,13 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_map_keys_vec" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_map_values_vec" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_map_pop_i64" => (&[ptr_ty, types::I64], Some(types::I128)),
-        "gos_rt_map_pop_str" => (&[ptr_ty, ptr_ty], Some(types::I128)),
+        "gos_rt_map_pop_str" | "gos_rt_map_pop_typed_str" => (&[ptr_ty, ptr_ty], Some(types::I128)),
+        "gos_rt_map_get_typed_str_opt" => (&[ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_map_insert_i64_i64_opt" => (&[ptr_ty, types::I64, types::I64], Some(types::I128)),
         "gos_rt_map_insert_i64_str_opt" => (&[ptr_ty, types::I64, ptr_ty], Some(types::I128)),
-        "gos_rt_map_insert_str_i64_opt" => (&[ptr_ty, ptr_ty, types::I64], Some(types::I128)),
+        "gos_rt_map_insert_str_i64_opt" | "gos_rt_map_insert_typed_str_i64_opt" => {
+            (&[ptr_ty, ptr_ty, types::I64], Some(types::I128))
+        }
         "gos_rt_map_insert_str_str_opt" => (&[ptr_ty, ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_map_insert_skey_opt" => (&[ptr_ty, ptr_ty, ptr_ty, types::I64], Some(types::I128)),
         "gos_rt_min_i64" => (&[types::I64, types::I64], Some(types::I64)),
@@ -608,6 +612,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_str_push_char" => (&[ptr_ty, types::I32], Some(ptr_ty)),
         "gos_rt_str_push_byte" => (&[ptr_ty, types::I32], Some(ptr_ty)),
         "gos_rt_deque_new" => (&[], Some(ptr_ty)),
+        "gos_rt_deque_from_vec_i64" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_deque_push_back" | "gos_rt_deque_push_front" => (&[ptr_ty, types::I64], None),
         "gos_rt_deque_pop_front"
         | "gos_rt_deque_pop_back"
@@ -615,6 +620,7 @@ pub(super) fn lower_generic_rt_call(
         | "gos_rt_deque_peek_back" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_deque_len" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_deque_is_empty" => (&[ptr_ty], Some(types::I32)),
+        "gos_rt_deque_clear" => (&[ptr_ty], None),
         "gos_rt_deque_free" => (&[ptr_ty], None),
         "gos_rt_bytes_builder_build" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_bytes_builder_as_str" => (&[ptr_ty], Some(ptr_ty)),
@@ -689,6 +695,18 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_bheap_pop_i64" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_bheap_peek_i64" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_bheap_len" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_bheap_is_empty" => (&[ptr_ty], Some(types::I32)),
+        "gos_rt_bheap_clear" => (&[ptr_ty], None),
+        "gos_rt_bheap_max_new_i64" => (&[], Some(ptr_ty)),
+        "gos_rt_bheap_max_from_vec_i64" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_bheap_max_push_i64" => (&[ptr_ty, types::I64], None),
+        "gos_rt_bheap_max_pop_i64" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_bheap_max_peek_i64" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_bheap_min_new_i64" => (&[], Some(ptr_ty)),
+        "gos_rt_bheap_min_from_vec_i64" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_bheap_min_push_i64" => (&[ptr_ty, types::I64], None),
+        "gos_rt_bheap_min_pop_i64" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_bheap_min_peek_i64" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_vec_first_i64" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_vec_last_i64" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_vec_pop_front_i64" => (&[ptr_ty], Some(ptr_ty)),
@@ -827,8 +845,12 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_str_as_bytes" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_string_from_utf8" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_vec_clone" => (&[ptr_ty], Some(ptr_ty)),
-        "gos_rt_map_inc_str_i64" => (&[ptr_ty, ptr_ty, types::I64], Some(types::I64)),
-        "gos_rt_map_or_insert_str_i64" => (&[ptr_ty, ptr_ty, types::I64], Some(types::I64)),
+        "gos_rt_map_inc_str_i64" | "gos_rt_map_inc_typed_str_i64" => {
+            (&[ptr_ty, ptr_ty, types::I64], Some(types::I64))
+        }
+        "gos_rt_map_or_insert_str_i64" | "gos_rt_map_or_insert_typed_str_i64" => {
+            (&[ptr_ty, ptr_ty, types::I64], Some(types::I64))
+        }
         "gos_rt_map_or_insert_i64_i64" => (&[ptr_ty, types::I64, types::I64], Some(types::I64)),
         "gos_rt_errors_join_vec" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_errors_join" => (&[ptr_ty, types::I64], Some(ptr_ty)),
@@ -958,13 +980,16 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_iter_group_by_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_max_by_i64" => (&[ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_iter_max_by_key_i64" => (&[ptr_ty, ptr_ty], Some(types::I128)),
+        "gos_rt_iter_max_by_key_ptr" => (&[ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_iter_min_by_i64" => (&[ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_iter_min_by_key_i64" => (&[ptr_ty, ptr_ty], Some(types::I128)),
+        "gos_rt_iter_min_by_key_ptr" => (&[ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_iter_partition_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_chunk_by_size_i64" => (&[types::I64, ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_dedup_i64" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_enumerate_i64" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_flatten_i64" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_iter_for_each_ptr" => (&[ptr_ty, ptr_ty], None),
         "gos_rt_iter_pairwise_i64" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_unzip_i64" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_windowed_i64" => (&[types::I64, ptr_ty], Some(ptr_ty)),
@@ -976,6 +1001,8 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_iter_skip_while_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_sorted_by_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_sorted_by_key_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_println_fn_f64" => (&[types::F64], Some(types::I64)),
+        "gos_rt_println_fn_i64" | "gos_rt_println_fn_str_word" => (&[types::I64], Some(types::I64)),
         "gos_rt_iter_take_while_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_option_and_then" => (&[types::I128, ptr_ty], Some(types::I128)),
         "gos_rt_option_default_with" => (&[types::I128, ptr_ty], Some(types::I64)),

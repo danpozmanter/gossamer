@@ -12,10 +12,10 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn len(xs: Deque<i64>) -> i64` | Element count. |
-| [`peek_back`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn peek_back(xs: Deque<i64>) -> i64` | Back element, or 0 if empty. |
-| [`peek_front`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn peek_front(xs: Deque<i64>) -> i64` | Front element, or 0 if empty. |
-| [`pop_back`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn pop_back(xs: Deque<i64>) -> Deque<i64>` | Drop the back. |
-| [`pop_front`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn pop_front(xs: Deque<i64>) -> Deque<i64>` | Drop the front. |
-| [`push_back`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn push_back(xs: Deque<i64>, value: i64) -> Deque<i64>` | Append to the back. |
-| [`push_front`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn push_front(xs: Deque<i64>, value: i64) -> Deque<i64>` | Prepend to the front. |
+| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn len(xs: Vec<i64>) -> i64` | Element count. |
+| [`peek_back`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn peek_back(xs: Vec<i64>) -> Option<i64>` | Back element, if present. |
+| [`peek_front`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn peek_front(xs: Vec<i64>) -> Option<i64>` | Front element, if present. |
+| [`pop_back`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn pop_back(xs: Vec<i64>) -> Vec<i64>` | Drop the back. |
+| [`pop_front`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn pop_front(xs: Vec<i64>) -> Vec<i64>` | Drop the front. |
+| [`push_back`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn push_back(xs: Vec<i64>, value: i64) -> Vec<i64>` | Append to the back. |
+| [`push_front`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn push_front(xs: Vec<i64>, value: i64) -> Vec<i64>` | Prepend to the front. |

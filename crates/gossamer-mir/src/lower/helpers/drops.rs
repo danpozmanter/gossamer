@@ -2113,9 +2113,9 @@ fn is_consuming_call(name: &str) -> bool {
 /// Picks the retain/release runtime helper for a heap value by its type. Vecs
 /// carry no RC header, so they route through the Vec allocator's reference
 /// count (`gos_rt_vec_retain` / `gos_rt_vec_free`); `Weak<T>` routes through the
-/// weak helpers; everything else (strings, enums, structs) uses the generic
-/// `gos_rt_rc_retain` / `gos_rt_rc_release` (which tag-dispatches strings to the
-/// string allocator).
+/// weak helpers; compiler-typed strings route through typed string helpers so
+/// generated cleanup does not lock the public raw-string registry; everything
+/// else uses the generic `gos_rt_rc_retain` / `gos_rt_rc_release`.
 fn rc_helper(
     tcx: &gossamer_types::TyCtxt,
     ty: gossamer_types::Ty,
@@ -2123,6 +2123,13 @@ fn rc_helper(
 ) -> &'static str {
     use gossamer_types::TyKind;
     match tcx.kind_of(ty) {
+        TyKind::String => {
+            if is_retain {
+                "gos_rt_str_retain_typed"
+            } else {
+                "gos_rt_str_free_typed"
+            }
+        }
         // A whole-local `Array` gap only arises for vec-carried arrays
         // (monomorphised `[T; N]` parameters); inline fixed arrays never
         // enter the retain/release schedule.
@@ -3607,9 +3614,13 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
         match name {
             // Runtime-symbol form (used by some peephole sites).
             "gos_rt_map_new" | "gos_rt_map_new_with_capacity" => Some("gos_rt_map_free"),
-            "gos_rt_vec_new" | "gos_rt_vec_with_capacity" | "gos_rt_vec_repeat_primitive" => {
-                Some("gos_rt_vec_free")
-            }
+            "gos_rt_vec_new"
+            | "gos_rt_vec_with_capacity"
+            | "gos_rt_vec_repeat_primitive"
+            | "gos_rt_bheap_max_new_i64"
+            | "gos_rt_bheap_max_from_vec_i64"
+            | "gos_rt_bheap_min_new_i64"
+            | "gos_rt_bheap_min_from_vec_i64" => Some("gos_rt_vec_free"),
             // Always returns a freshly allocated vec the frame owns,
             // whatever the destination's inferred type (a cloned borrowed
             // row lands in a Slice-typed local the type-based inference
@@ -3643,9 +3654,14 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             | "BTreeSet::new"
             | "collections::BTreeSet::new" => Some("gos_rt_set_free"),
             "BTreeMap::new" | "collections::BTreeMap::new" => Some("gos_rt_btmap_free"),
-            "gos_rt_deque_new" | "VecDeque::new" | "collections::VecDeque::new" => {
-                Some("gos_rt_deque_free")
-            }
+            "gos_rt_deque_new"
+            | "VecDeque::new"
+            | "collections::VecDeque::new"
+            | "VecDequeue::new"
+            | "collections::VecDequeue::new"
+            | "VecQueue::new"
+            | "collections::VecQueue::new"
+            | "gos_rt_deque_from_vec_i64" => Some("gos_rt_deque_free"),
             _ => None,
         }
     };
@@ -4056,22 +4072,15 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
         }
     }
 
-    // Every native lazy adapter and terminal takes ownership of its Iterator
-    // arguments. Once a handle is passed to one of these helpers, the runtime
-    // either embeds it in the returned adapter or consumes and drops it. Clear
-    // the frame's owner record so the return cleanup cannot free it twice.
+    // Iterator values are unique lazy-runtime handles. Passing one by value to
+    // another function transfers ownership to that callee, and the runtime
+    // lazy helpers either embed it in a returned adapter or consume and drop
+    // it. Clear this frame's owner record so return cleanup cannot free it
+    // after the callee already consumed it.
     for block in &body.blocks {
-        let Terminator::Call {
-            callee: Operand::Const(ConstValue::Str(name)),
-            args,
-            ..
-        } = &block.terminator
-        else {
+        let Terminator::Call { args, .. } = &block.terminator else {
             continue;
         };
-        if !name.starts_with("gos_rt_lazy_iter_") {
-            continue;
-        }
         for arg in args {
             let Operand::Copy(place) = arg else {
                 continue;
@@ -4937,7 +4946,11 @@ pub(crate) fn fuse_substring_map_inc(body: &mut Body) {
         let Operand::Const(ConstValue::Str(name)) = callee else {
             continue;
         };
-        if name != "gos_rt_map_inc_str_i64" || args.len() != 3 {
+        if !matches!(
+            name.as_str(),
+            "gos_rt_map_inc_str_i64" | "gos_rt_map_inc_typed_str_i64"
+        ) || args.len() != 3
+        {
             continue;
         }
         let Operand::Copy(key_place) = &args[1] else {

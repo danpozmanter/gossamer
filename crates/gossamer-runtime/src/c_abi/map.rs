@@ -263,6 +263,15 @@ unsafe fn byte_vec_from_slice(bytes: &[u8]) -> *mut GosVec {
     out
 }
 
+#[inline]
+unsafe fn string_key_bytes<'a>(key: *const c_char, typed: bool) -> &'a [u8] {
+    if typed {
+        unsafe { crate::c_abi::string::gos_typed_str_key_bytes(key) }
+    } else {
+        unsafe { crate::c_abi::string::gos_str_key_bytes(key) }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_new(_key_bytes: u32, _val_bytes: u32) -> *mut GosMap {
     ffi_entry!(std::ptr::null_mut(), {
@@ -438,11 +447,11 @@ pub unsafe extern "C" fn gos_rt_map_get_or_i64(m: *const GosMap, key: i64, defau
 /// `gos_rt_map_get_or_i64` but hashes the key via the same UTF-8
 /// byte slice the `_str_i64` insert path uses, so an `insert(k, v)`
 /// followed by `get_or(k, d)` round-trips.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_get_or_str_i64(
+unsafe fn map_get_or_str_i64_impl(
     m: *const GosMap,
     key: *const c_char,
     default: i64,
+    typed_key: bool,
 ) -> i64 {
     ffi_entry!(-1, {
         if m.is_null() || key.is_null() {
@@ -450,13 +459,31 @@ pub unsafe extern "C" fn gos_rt_map_get_or_str_i64(
         }
         let map = unsafe { &*m };
         crate::c_abi::ledger::map_str_probe();
-        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
+        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
         let storage = map.storage.lock();
         match &*storage {
             MapStorage::StrI64(inner) => inner.get(key_bytes).copied().unwrap_or(default),
             _ => default,
         }
     })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_or_str_i64(
+    m: *const GosMap,
+    key: *const c_char,
+    default: i64,
+) -> i64 {
+    unsafe { map_get_or_str_i64_impl(m, key, default, false) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_or_typed_str_i64(
+    m: *const GosMap,
+    key: *const c_char,
+    default: i64,
+) -> i64 {
+    unsafe { map_get_or_str_i64_impl(m, key, default, true) }
 }
 
 /// `get_or` for string-keyed, string-valued maps. Returns a fresh
@@ -802,15 +829,14 @@ pub unsafe extern "C" fn gos_rt_map_remove_i64(m: *mut GosMap, key: i64) -> bool
     })
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c_char, val: i64) {
+unsafe fn map_insert_str_i64_impl(m: *mut GosMap, key: *const c_char, val: i64, typed_key: bool) {
     ffi_entry!((), {
         if m.is_null() || key.is_null() {
             return;
         }
         let map = unsafe { &mut *m };
         crate::c_abi::ledger::map_str_probe();
-        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
+        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
         let mut storage = map.storage.lock();
         if let MapStorage::StrBytes(inner) = &mut *storage {
             let vec = val as usize as *mut GosVec;
@@ -824,7 +850,11 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c
                 map.len_cache += 1;
             }
             drop(storage);
-            unsafe { crate::c_abi::string::consume_moved_string(key.cast_mut()) };
+            if typed_key {
+                unsafe { crate::c_abi::string::consume_moved_string_typed(key.cast_mut()) };
+            } else {
+                unsafe { crate::c_abi::string::consume_moved_string(key.cast_mut()) };
+            }
             return;
         }
         if matches!(*storage, MapStorage::Empty) {
@@ -856,19 +886,36 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c
         }
         // Consuming insert copied the key bytes; release the moved-in gos-string
         // (rc-aware + tag-checked - safe for temps, shared, and literals).
-        unsafe { crate::c_abi::string::consume_moved_string(key.cast_mut()) };
+        if typed_key {
+            unsafe { crate::c_abi::string::consume_moved_string_typed(key.cast_mut()) };
+        } else {
+            unsafe { crate::c_abi::string::consume_moved_string(key.cast_mut()) };
+        }
     });
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_get_str_i64(m: *const GosMap, key: *const c_char) -> i64 {
+pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c_char, val: i64) {
+    unsafe { map_insert_str_i64_impl(m, key, val, false) };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_insert_typed_str_i64(
+    m: *mut GosMap,
+    key: *const c_char,
+    val: i64,
+) {
+    unsafe { map_insert_str_i64_impl(m, key, val, true) };
+}
+
+unsafe fn map_get_str_i64_impl(m: *const GosMap, key: *const c_char, typed_key: bool) -> i64 {
     ffi_entry!(-1, {
         if m.is_null() || key.is_null() {
             return 0;
         }
         let map = unsafe { &*m };
         crate::c_abi::ledger::map_str_probe();
-        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
+        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
         let storage = map.storage.lock();
         match &*storage {
             MapStorage::StrI64(inner) => inner.get(key_bytes).copied().unwrap_or(0),
@@ -877,17 +924,26 @@ pub unsafe extern "C" fn gos_rt_map_get_str_i64(m: *const GosMap, key: *const c_
     })
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_str_i64(m: *const GosMap, key: *const c_char) -> i64 {
+    unsafe { map_get_str_i64_impl(m, key, false) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_typed_str_i64(m: *const GosMap, key: *const c_char) -> i64 {
+    unsafe { map_get_str_i64_impl(m, key, true) }
+}
+
 /// `m.get(k) -> Option<V>` for a string-keyed map. Same `*mut GosResult`
 /// layout as [`gos_rt_map_get_i64_opt`]: 8-byte payload, MIR pin
 /// recovers V from the call's `Option<V>` substs.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_get_str_opt(m: *const GosMap, key: *const c_char) -> i128 {
+unsafe fn map_get_str_opt_impl(m: *const GosMap, key: *const c_char, typed_key: bool) -> i128 {
     ffi_entry!(0i128, {
         if m.is_null() || key.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
         let map = unsafe { &*m };
-        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
+        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
         let storage = map.storage.lock();
         let payload: Option<i64> = match &*storage {
             MapStorage::StrI64(inner) => inner.get(key_bytes).copied(),
@@ -915,6 +971,19 @@ pub unsafe extern "C" fn gos_rt_map_get_str_opt(m: *const GosMap, key: *const c_
             None => unsafe { gos_rt_result_new(1, 0) },
         }
     })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_str_opt(m: *const GosMap, key: *const c_char) -> i128 {
+    unsafe { map_get_str_opt_impl(m, key, false) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_typed_str_opt(
+    m: *const GosMap,
+    key: *const c_char,
+) -> i128 {
+    unsafe { map_get_str_opt_impl(m, key, true) }
 }
 
 #[unsafe(no_mangle)]
@@ -983,15 +1052,14 @@ pub unsafe extern "C" fn gos_rt_map_get_str_str(
     })
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_contains_key_str(m: *const GosMap, key: *const c_char) -> bool {
+unsafe fn map_contains_key_str_impl(m: *const GosMap, key: *const c_char, typed_key: bool) -> bool {
     ffi_entry!(false, {
         if m.is_null() || key.is_null() {
             return false;
         }
         let map = unsafe { &*m };
         crate::c_abi::ledger::map_str_probe();
-        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
+        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
         let storage = map.storage.lock();
         match &*storage {
             MapStorage::StrI64(inner) => inner.contains_key(key_bytes),
@@ -1003,13 +1071,25 @@ pub unsafe extern "C" fn gos_rt_map_contains_key_str(m: *const GosMap, key: *con
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_remove_str(m: *mut GosMap, key: *const c_char) -> bool {
+pub unsafe extern "C" fn gos_rt_map_contains_key_str(m: *const GosMap, key: *const c_char) -> bool {
+    unsafe { map_contains_key_str_impl(m, key, false) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_contains_key_typed_str(
+    m: *const GosMap,
+    key: *const c_char,
+) -> bool {
+    unsafe { map_contains_key_str_impl(m, key, true) }
+}
+
+unsafe fn map_remove_str_impl(m: *mut GosMap, key: *const c_char, typed_key: bool) -> bool {
     ffi_entry!(false, {
         if m.is_null() || key.is_null() {
             return false;
         }
         let map = unsafe { &mut *m };
-        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
+        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
         let mut storage = map.storage.lock();
         let owned_values = map_has_owned_values(map);
         let removed = match &mut *storage {
@@ -1031,6 +1111,16 @@ pub unsafe extern "C" fn gos_rt_map_remove_str(m: *mut GosMap, key: *const c_cha
         }
         removed
     })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_remove_str(m: *mut GosMap, key: *const c_char) -> bool {
+    unsafe { map_remove_str_impl(m, key, false) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_remove_typed_str(m: *mut GosMap, key: *const c_char) -> bool {
+    unsafe { map_remove_str_impl(m, key, true) }
 }
 
 /// `m.inc_at(seq, start, len, by)` for `HashMap<String, i64>` -
@@ -1064,15 +1154,12 @@ pub unsafe extern "C" fn gos_rt_map_inc_at_str_i64(
         if m.is_null() || seq.is_null() || len == 0 {
             return 0;
         }
-        // The true sequence length is read O(1) from the string's length
-        // header (every runtime-built string carries one; a foreign pointer
-        // falls back to `strlen`), the same source `gos_rt_map_inc_str_i64`
-        // uses. Reject a window that runs past the sequence and validate its
-        // UTF-8 before slicing, mirroring the interpreter builtin so an
-        // out-of-range or non-boundary `inc_at` yields 0 on every tier
-        // instead of reading adjacent heap.
+        // Generated code only calls this helper with a compiler-typed String,
+        // so borrow its bytes through the typed fast path. That keeps the
+        // defensive registry check on general C ABI helpers while avoiding a
+        // global lock for each k-mer window.
         crate::c_abi::ledger::map_str_probe();
-        let seq_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(seq) };
+        let seq_bytes = unsafe { crate::c_abi::string::gos_typed_str_key_bytes(seq) };
         let (start_u, len_u) = (start as usize, len as usize);
         let end_u = match start_u.checked_add(len_u) {
             Some(end) if end <= seq_bytes.len() => end,
@@ -1110,18 +1197,18 @@ pub unsafe extern "C" fn gos_rt_map_inc_at_str_i64(
 /// the entry if absent. Halves the lock + hash work compared to
 /// `m.insert(k, m.get_or(k, 0) + by)` and avoids the
 /// double-borrow that pattern triggers in compiled mode.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_inc_str_i64(
+unsafe fn map_inc_str_i64_impl(
     m: *mut GosMap,
     key: *const c_char,
     by: i64,
+    typed_key: bool,
 ) -> i64 {
     ffi_entry!(-1, {
         if m.is_null() || key.is_null() {
             return 0;
         }
         crate::c_abi::ledger::map_str_probe();
-        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
+        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
         let map = unsafe { &mut *m };
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
@@ -1141,20 +1228,38 @@ pub unsafe extern "C" fn gos_rt_map_inc_str_i64(
     })
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_inc_str_i64(
+    m: *mut GosMap,
+    key: *const c_char,
+    by: i64,
+) -> i64 {
+    unsafe { map_inc_str_i64_impl(m, key, by, false) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_inc_typed_str_i64(
+    m: *mut GosMap,
+    key: *const c_char,
+    by: i64,
+) -> i64 {
+    unsafe { map_inc_str_i64_impl(m, key, by, true) }
+}
+
 /// `m.or_insert(key, default)` - inserts `default` for `key` only when
 /// the key is absent; returns the current (possibly just-inserted) value.
 /// `HashMap<String, i64>` variant.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_or_insert_str_i64(
+unsafe fn map_or_insert_str_i64_impl(
     m: *mut GosMap,
     key: *const c_char,
     default: i64,
+    typed_key: bool,
 ) -> i64 {
     ffi_entry!(-1, {
         if m.is_null() || key.is_null() {
             return default;
         }
-        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
+        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
         let map = unsafe { &mut *m };
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
@@ -1178,7 +1283,11 @@ pub unsafe extern "C" fn gos_rt_map_or_insert_str_i64(
             }
             // The key was retained as a consuming-call argument and copied
             // into the map's owned byte key, so release its source share.
-            unsafe { crate::c_abi::string::consume_moved_string(key.cast_mut()) };
+            if typed_key {
+                unsafe { crate::c_abi::string::consume_moved_string_typed(key.cast_mut()) };
+            } else {
+                unsafe { crate::c_abi::string::consume_moved_string(key.cast_mut()) };
+            }
             return v;
         }
         // Key absent: the compiler's consuming-call retain supplies the
@@ -1186,9 +1295,31 @@ pub unsafe extern "C" fn gos_rt_map_or_insert_str_i64(
         // that stored value and therefore does not create another share.
         inner.insert(crate::c_abi::string::boxed_bytes(key_bytes), default);
         map.len_cache += 1;
-        unsafe { crate::c_abi::string::consume_moved_string(key.cast_mut()) };
+        if typed_key {
+            unsafe { crate::c_abi::string::consume_moved_string_typed(key.cast_mut()) };
+        } else {
+            unsafe { crate::c_abi::string::consume_moved_string(key.cast_mut()) };
+        }
         default
     })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_or_insert_str_i64(
+    m: *mut GosMap,
+    key: *const c_char,
+    default: i64,
+) -> i64 {
+    unsafe { map_or_insert_str_i64_impl(m, key, default, false) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_or_insert_typed_str_i64(
+    m: *mut GosMap,
+    key: *const c_char,
+    default: i64,
+) -> i64 {
+    unsafe { map_or_insert_str_i64_impl(m, key, default, true) }
 }
 
 /// `m.or_insert(key, default)` - `HashMap<i64, i64>` variant.
@@ -2346,14 +2477,13 @@ pub unsafe extern "C" fn gos_rt_map_pop_i64(m: *mut GosMap, key: i64) -> i128 {
 /// c-string pointer; the returned Option payload is the
 /// raw 8-byte previous value (i64 directly for `StrI64`,
 /// `*mut c_char` cast to i64 for `StrStr`).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_pop_str(m: *mut GosMap, key: *const c_char) -> i128 {
+unsafe fn map_pop_str_impl(m: *mut GosMap, key: *const c_char, typed_key: bool) -> i128 {
     ffi_entry!(0i128, {
         if m.is_null() || key.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
         let map = unsafe { &mut *m };
-        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
+        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
         let mut storage = map.storage.lock();
         let popped: Option<i64> = match &mut *storage {
             MapStorage::StrI64(inner) => inner.remove(key_bytes),
@@ -2376,6 +2506,16 @@ pub unsafe extern "C" fn gos_rt_map_pop_str(m: *mut GosMap, key: *const c_char) 
             None => unsafe { gos_rt_result_new(1, 0) },
         }
     })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_pop_str(m: *mut GosMap, key: *const c_char) -> i128 {
+    unsafe { map_pop_str_impl(m, key, false) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_pop_typed_str(m: *mut GosMap, key: *const c_char) -> i128 {
+    unsafe { map_pop_str_impl(m, key, true) }
 }
 
 /// `m.pop(k) -> Option<V>` for a struct / tuple-keyed map. Content-hashes
@@ -2452,6 +2592,17 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64_opt(
 ) -> i128 {
     let previous = unsafe { gos_rt_map_get_str_opt(m, key) };
     unsafe { gos_rt_map_insert_str_i64(m, key, val) };
+    previous
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_insert_typed_str_i64_opt(
+    m: *mut GosMap,
+    key: *const c_char,
+    val: i64,
+) -> i128 {
+    let previous = unsafe { map_get_str_opt_impl(m, key, true) };
+    unsafe { map_insert_str_i64_impl(m, key, val, true) };
     previous
 }
 

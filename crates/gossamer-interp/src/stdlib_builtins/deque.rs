@@ -31,6 +31,16 @@ pub(crate) fn install_deque(globals: &mut Vec<(&'static str, Value)>) {
     let entries: &[(&str, BuiltinFnPub)] = &[
         ("VecDeque::new", builtin_deque_new),
         ("collections::VecDeque::new", builtin_deque_new),
+        ("VecDequeue::new", builtin_deque_new),
+        ("collections::VecDequeue::new", builtin_deque_new),
+        ("VecQueue::new", builtin_deque_new),
+        ("collections::VecQueue::new", builtin_deque_new),
+        ("VecDeque::from", builtin_deque_from),
+        ("collections::VecDeque::from", builtin_deque_from),
+        ("VecDequeue::from", builtin_deque_from),
+        ("collections::VecDequeue::from", builtin_deque_from),
+        ("VecQueue::from", builtin_deque_from),
+        ("collections::VecQueue::from", builtin_deque_from),
         ("VecDeque::push_back", builtin_deque_push_back),
         ("VecDeque::push_front", builtin_deque_push_front),
         ("VecDeque::pop_front", builtin_deque_pop_front),
@@ -39,6 +49,7 @@ pub(crate) fn install_deque(globals: &mut Vec<(&'static str, Value)>) {
         ("VecDeque::peek_back", builtin_deque_peek_back),
         ("VecDeque::len", builtin_deque_len),
         ("VecDeque::is_empty", builtin_deque_is_empty),
+        ("VecDeque::clear", builtin_deque_clear),
     ];
     for (name, call) in entries {
         globals.push((*name, builtin_pub(name, *call)));
@@ -61,6 +72,11 @@ fn deque_handle(id: i64) -> Value {
     )
 }
 
+pub(crate) fn deque_snapshot(value: &Value) -> Option<Vec<Value>> {
+    let id = deque_id_of(value)?;
+    DEQUE_REGISTRY.with(|r| r.borrow().get(&id).map(|d| d.iter().cloned().collect()))
+}
+
 fn deque_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if inner.name == "VecDeque" {
@@ -80,6 +96,20 @@ fn builtin_deque_new(_args: &[Value]) -> RuntimeResult<Value> {
     let id = next_deque_handle();
     DEQUE_REGISTRY.with(|r| {
         r.borrow_mut().insert(id, StdVecDeque::new());
+    });
+    Ok(deque_handle(id))
+}
+
+fn builtin_deque_from(args: &[Value]) -> RuntimeResult<Value> {
+    let id = next_deque_handle();
+    let mut deque = StdVecDeque::new();
+    match args.first().unwrap_or(&Value::Unit) {
+        Value::Array(values) => deque.extend(values.iter().cloned()),
+        Value::IntArray(values) => deque.extend(values.iter().copied().map(Value::Int)),
+        other => deque.push_back(other.clone()),
+    }
+    DEQUE_REGISTRY.with(|r| {
+        r.borrow_mut().insert(id, deque);
     });
     Ok(deque_handle(id))
 }
@@ -170,6 +200,18 @@ fn builtin_deque_is_empty(args: &[Value]) -> RuntimeResult<Value> {
     };
     let empty = DEQUE_REGISTRY.with(|r| r.borrow().get(&id).is_none_or(StdVecDeque::is_empty));
     Ok(Value::Bool(empty))
+}
+
+fn builtin_deque_clear(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(deque_id_of) else {
+        return Ok(Value::Unit);
+    };
+    DEQUE_REGISTRY.with(|r| {
+        if let Some(d) = r.borrow_mut().get_mut(&id) {
+            d.clear();
+        }
+    });
+    Ok(Value::Unit)
 }
 
 #[cfg(test)]

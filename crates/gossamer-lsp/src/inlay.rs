@@ -187,7 +187,11 @@ impl Walker<'_> {
                     self.walk_expr(base);
                 }
             }
-            ExprKind::Array(arr) | ExprKind::FixedArray(arr) => match arr {
+            ExprKind::Array(arr)
+            | ExprKind::FixedArray(arr)
+            | ExprKind::QueueLiteral(arr)
+            | ExprKind::MaxHeapLiteral(arr)
+            | ExprKind::MinHeapLiteral(arr) => match arr {
                 ArrayExpr::List(elems) => {
                     for elem in elems {
                         self.walk_expr(elem);

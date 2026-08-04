@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use anyhow::{Result, anyhow};
 use cranelift_jit::{JITBuilder, JITModule};
 use gossamer_mir::Body;
-use gossamer_types::{Ty, TyCtxt, TyKind};
+use gossamer_types::{ArrayLen, Ty, TyCtxt, TyKind};
 
 use crate::jit_memory::NativeCodeHeap;
 use crate::native::{build_native_isa, lower_program_serial};
@@ -1275,6 +1275,13 @@ fn body_calls_jit_unsafe(
 fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
     use gossamer_mir::{ConstValue, Operand, Rvalue, StatementKind, Terminator};
     use gossamer_types::Mutbl;
+
+    if body_has_oversized_fixed_aggregate(body, tcx) {
+        if std::env::var("GOS_JIT_TRACE").is_ok() {
+            eprintln!("jit: unsupported {} oversized fixed aggregate", body.name);
+        }
+        return true;
+    }
     // A function-value local (a closure or `fn`/`Fn` pointer). The JIT has
     // no closure-invocation lowering: such a local is materialised as a
     // null placeholder, so a higher-order call through it (`iter::fold` and
@@ -1396,6 +1403,59 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
         }
     }
     false
+}
+
+const JIT_MAX_FIXED_AGGREGATE_SLOTS: u64 = (64 * 1024) / 8;
+
+fn body_has_oversized_fixed_aggregate(body: &Body, tcx: &TyCtxt) -> bool {
+    body.locals.iter().any(|local| {
+        fixed_aggregate_slots(tcx, local.ty, &mut std::collections::HashSet::new())
+            .is_some_and(|slots| slots > JIT_MAX_FIXED_AGGREGATE_SLOTS)
+    })
+}
+
+fn fixed_aggregate_slots(
+    tcx: &TyCtxt,
+    ty: Ty,
+    visiting: &mut std::collections::HashSet<Ty>,
+) -> Option<u64> {
+    let ty = match tcx.kind_of(ty) {
+        TyKind::Ref { inner, .. } => *inner,
+        _ => ty,
+    };
+    match tcx.kind_of(ty) {
+        TyKind::Bool
+        | TyKind::Char
+        | TyKind::Int(_)
+        | TyKind::Float(_)
+        | TyKind::String
+        | TyKind::Duration
+        | TyKind::Instant => Some(1),
+        TyKind::Array {
+            elem,
+            len: ArrayLen::Concrete(len),
+        } => fixed_aggregate_slots(tcx, *elem, visiting)
+            .map(|elem_slots| (*len as u64).saturating_mul(elem_slots)),
+        TyKind::Tuple(elems) => {
+            let mut total = 0u64;
+            for elem in elems {
+                total = total.saturating_add(fixed_aggregate_slots(tcx, *elem, visiting)?);
+            }
+            Some(total)
+        }
+        TyKind::Adt { def, substs } => {
+            if !visiting.insert(ty) {
+                return Some(1);
+            }
+            let fields = tcx.adt_field_tys(*def, substs)?;
+            let mut total = 0u64;
+            for field in fields {
+                total = total.saturating_add(fixed_aggregate_slots(tcx, *field, visiting)?);
+            }
+            Some(total.max(1))
+        }
+        _ => Some(1),
+    }
 }
 
 fn jit_local_ty_needs_bytecode(tcx: &TyCtxt, ty: Ty) -> bool {
@@ -1924,6 +1984,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_arr_len"             => rt::gos_rt_arr_len,
         "gos_rt_len"                 => rt::gos_rt_len,
         "gos_rt_str_len"             => rt::gos_rt_str_len,
+        "gos_rt_str_byte_len"        => rt::gos_rt_str_byte_len,
         "gos_rt_str_with_capacity"   => rt::gos_rt_str_with_capacity,
         "gos_rt_str_byte_at"         => rt::gos_rt_str_byte_at,
         "gos_rt_str_char_at"         => rt::gos_rt_str_char_at,
@@ -1958,6 +2019,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_str_push_char"       => rt::gos_rt_str_push_char,
         "gos_rt_str_push_byte"       => rt::gos_rt_str_push_byte,
         "gos_rt_deque_new"           => rt::gos_rt_deque_new,
+        "gos_rt_deque_from_vec_i64"  => rt::gos_rt_deque_from_vec_i64,
         "gos_rt_deque_push_back"     => rt::gos_rt_deque_push_back,
         "gos_rt_deque_push_front"    => rt::gos_rt_deque_push_front,
         "gos_rt_deque_pop_front"     => rt::gos_rt_deque_pop_front,
@@ -1966,9 +2028,12 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_deque_peek_back"     => rt::gos_rt_deque_peek_back,
         "gos_rt_deque_len"           => rt::gos_rt_deque_len,
         "gos_rt_deque_is_empty"      => rt::gos_rt_deque_is_empty,
+        "gos_rt_deque_clear"         => rt::gos_rt_deque_clear,
         "gos_rt_deque_free"          => rt::gos_rt_deque_free,
         "gos_rt_strings_join"        => rt::gos_rt_strings_join,
         "gos_rt_path_base"           => rt::gos_rt_path_base,
+        "gos_rt_path_components"     => rt::gos_rt_path_components,
+        "gos_rt_path_prefixes"       => rt::gos_rt_path_prefixes,
         "gos_rt_path_dir"            => rt::gos_rt_path_dir,
         "gos_rt_path_ext"            => rt::gos_rt_path_ext,
         "gos_rt_path_file_name"      => rt::gos_rt_path_file_name,
@@ -1997,6 +2062,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_map_values_vec"      => rt::gos_rt_map_values_vec,
         "gos_rt_map_pop_i64"         => rt::gos_rt_map_pop_i64,
         "gos_rt_map_pop_str"         => rt::gos_rt_map_pop_str,
+        "gos_rt_map_pop_typed_str"   => rt::gos_rt_map_pop_typed_str,
         "gos_rt_min_i64"             => rt::gos_rt_min_i64,
         "gos_rt_max_i64"             => rt::gos_rt_max_i64,
         "gos_rt_clamp_i64"           => rt::gos_rt_clamp_i64,
@@ -2008,6 +2074,8 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_str_compare"         => rt::gos_rt_str_compare,
         "gos_rt_str_is_empty"        => rt::gos_rt_str_is_empty,
         "gos_rt_str_free"            => rt::gos_rt_str_free,
+        "gos_rt_str_free_typed"      => rt::gos_rt_str_free_typed,
+        "gos_rt_str_retain_typed"    => rt::gos_rt_str_retain_typed,
         "gos_rt_len_is_zero"         => rt::gos_rt_len_is_zero,
         "gos_rt_error_new"           => rt::gos_rt_error_new,
         "gos_rt_error_from"          => rt::gos_rt_error_from,
@@ -2208,6 +2276,18 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_bheap_pop_i64"       => rt::gos_rt_bheap_pop_i64,
         "gos_rt_bheap_peek_i64"      => rt::gos_rt_bheap_peek_i64,
         "gos_rt_bheap_len"           => rt::gos_rt_bheap_len,
+        "gos_rt_bheap_is_empty"      => rt::gos_rt_bheap_is_empty,
+        "gos_rt_bheap_clear"         => rt::gos_rt_bheap_clear,
+        "gos_rt_bheap_max_new_i64"   => rt::gos_rt_bheap_max_new_i64,
+        "gos_rt_bheap_max_from_vec_i64" => rt::gos_rt_bheap_max_from_vec_i64,
+        "gos_rt_bheap_max_push_i64"  => rt::gos_rt_bheap_max_push_i64,
+        "gos_rt_bheap_max_pop_i64"   => rt::gos_rt_bheap_max_pop_i64,
+        "gos_rt_bheap_max_peek_i64"  => rt::gos_rt_bheap_max_peek_i64,
+        "gos_rt_bheap_min_new_i64"   => rt::gos_rt_bheap_min_new_i64,
+        "gos_rt_bheap_min_from_vec_i64" => rt::gos_rt_bheap_min_from_vec_i64,
+        "gos_rt_bheap_min_push_i64"  => rt::gos_rt_bheap_min_push_i64,
+        "gos_rt_bheap_min_pop_i64"   => rt::gos_rt_bheap_min_pop_i64,
+        "gos_rt_bheap_min_peek_i64"  => rt::gos_rt_bheap_min_peek_i64,
         "gos_rt_vec_first_i64"       => rt::gos_rt_vec_first_i64,
         "gos_rt_vec_last_i64"        => rt::gos_rt_vec_last_i64,
         "gos_rt_vec_pop_front_i64"   => rt::gos_rt_vec_pop_front_i64,
@@ -2352,7 +2432,9 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_vec_mark_rc_elems"   => rt::gos_rt_vec_mark_rc_elems,
         "gos_rt_vec_mark_vec_elems"  => rt::gos_rt_vec_mark_vec_elems,
         "gos_rt_map_inc_str_i64"        => rt::gos_rt_map_inc_str_i64,
+        "gos_rt_map_inc_typed_str_i64"  => rt::gos_rt_map_inc_typed_str_i64,
         "gos_rt_map_or_insert_str_i64"  => rt::gos_rt_map_or_insert_str_i64,
+        "gos_rt_map_or_insert_typed_str_i64" => rt::gos_rt_map_or_insert_typed_str_i64,
         "gos_rt_map_or_insert_i64_i64"  => rt::gos_rt_map_or_insert_i64_i64,
         "gos_rt_errors_join"            => rt::gos_rt_errors_join,
         "gos_rt_errors_join_vec"        => rt::gos_rt_errors_join_vec,
@@ -2485,17 +2567,23 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_iter_group_by_i64" => rt::gos_rt_iter_group_by_i64,
         "gos_rt_iter_max_by_i64" => rt::gos_rt_iter_max_by_i64,
         "gos_rt_iter_max_by_key_i64" => rt::gos_rt_iter_max_by_key_i64,
+        "gos_rt_iter_max_by_key_ptr" => rt::gos_rt_iter_max_by_key_ptr,
         "gos_rt_iter_min_by_i64" => rt::gos_rt_iter_min_by_i64,
         "gos_rt_iter_min_by_key_i64" => rt::gos_rt_iter_min_by_key_i64,
+        "gos_rt_iter_min_by_key_ptr" => rt::gos_rt_iter_min_by_key_ptr,
         "gos_rt_iter_partition_i64" => rt::gos_rt_iter_partition_i64,
         "gos_rt_iter_chunk_by_size_i64" => rt::gos_rt_iter_chunk_by_size_i64,
         "gos_rt_iter_dedup_i64" => rt::gos_rt_iter_dedup_i64,
         "gos_rt_iter_enumerate_i64" => rt::gos_rt_iter_enumerate_i64,
         "gos_rt_iter_flatten_i64" => rt::gos_rt_iter_flatten_i64,
+        "gos_rt_iter_for_each_ptr" => rt::gos_rt_iter_for_each_ptr,
         "gos_rt_iter_pairwise_i64" => rt::gos_rt_iter_pairwise_i64,
         "gos_rt_iter_unzip_i64" => rt::gos_rt_iter_unzip_i64,
         "gos_rt_iter_windowed_i64" => rt::gos_rt_iter_windowed_i64,
         "gos_rt_iter_zip_i64" => rt::gos_rt_iter_zip_i64,
+        "gos_rt_println_fn_f64" => rt::gos_rt_println_fn_f64,
+        "gos_rt_println_fn_i64" => rt::gos_rt_println_fn_i64,
+        "gos_rt_println_fn_str_word" => rt::gos_rt_println_fn_str_word,
         "gos_rt_iter_position_i64" => rt::gos_rt_iter_position_i64,
         "gos_rt_iter_product_by_i64" => rt::gos_rt_iter_product_by_i64,
         "gos_rt_iter_reduce_i64" => rt::gos_rt_iter_reduce_i64,
@@ -2587,6 +2675,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_map_get_or_i64"      => rt::gos_rt_map_get_or_i64,
         "gos_rt_map_inc_i64"         => rt::gos_rt_map_inc_i64,
         "gos_rt_map_or_insert_str_i64" => rt::gos_rt_map_or_insert_str_i64,
+        "gos_rt_map_or_insert_typed_str_i64" => rt::gos_rt_map_or_insert_typed_str_i64,
         "gos_rt_map_or_insert_i64_i64" => rt::gos_rt_map_or_insert_i64_i64,
         "gos_rt_map_remove"          => rt::gos_rt_map_remove,
         "gos_rt_map_insert_i64_i64"  => rt::gos_rt_map_insert_i64_i64,
@@ -2599,13 +2688,19 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_map_remove_i64"      => rt::gos_rt_map_remove_i64,
         "gos_rt_map_contains_key_i64" => rt::gos_rt_map_contains_key_i64,
         "gos_rt_map_insert_str_i64"  => rt::gos_rt_map_insert_str_i64,
+        "gos_rt_map_insert_typed_str_i64" => rt::gos_rt_map_insert_typed_str_i64,
         "gos_rt_map_insert_str_i64_opt" => rt::gos_rt_map_insert_str_i64_opt,
+        "gos_rt_map_insert_typed_str_i64_opt" => rt::gos_rt_map_insert_typed_str_i64_opt,
         "gos_rt_map_get_str_i64"     => rt::gos_rt_map_get_str_i64,
+        "gos_rt_map_get_typed_str_i64" => rt::gos_rt_map_get_typed_str_i64,
+        "gos_rt_map_get_typed_str_opt" => rt::gos_rt_map_get_typed_str_opt,
         "gos_rt_map_insert_str_str"  => rt::gos_rt_map_insert_str_str,
         "gos_rt_map_insert_str_str_opt" => rt::gos_rt_map_insert_str_str_opt,
         "gos_rt_map_get_str_str"     => rt::gos_rt_map_get_str_str,
         "gos_rt_map_contains_key_str" => rt::gos_rt_map_contains_key_str,
+        "gos_rt_map_contains_key_typed_str" => rt::gos_rt_map_contains_key_typed_str,
         "gos_rt_map_remove_str"      => rt::gos_rt_map_remove_str,
+        "gos_rt_map_remove_typed_str" => rt::gos_rt_map_remove_typed_str,
         "gos_rt_map_clear"           => rt::gos_rt_map_clear,
         "gos_rt_map_inc_at_str_i64"  => rt::gos_rt_map_inc_at_str_i64,
         "gos_rt_map_free"            => rt::gos_rt_map_free,
@@ -2619,6 +2714,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_map_keys_str"        => rt::gos_rt_map_keys_str,
         "gos_rt_map_values_str"      => rt::gos_rt_map_values_str,
         "gos_rt_map_get_or_str_i64"  => rt::gos_rt_map_get_or_str_i64,
+        "gos_rt_map_get_or_typed_str_i64" => rt::gos_rt_map_get_or_typed_str_i64,
         "gos_rt_map_get_or_str_str"  => rt::gos_rt_map_get_or_str_str,
         "gos_rt_map_get_or_i64_str"  => rt::gos_rt_map_get_or_i64_str,
         "gos_rt_map_insert_i64_str"  => rt::gos_rt_map_insert_i64_str,

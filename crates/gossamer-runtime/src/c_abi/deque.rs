@@ -27,6 +27,22 @@ pub unsafe extern "C" fn gos_rt_deque_new() -> *mut GosDeque {
     })
 }
 
+/// Create a VecDeque from a `Vec<i64>`, preserving iteration order.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_from_vec_i64(v: *const GosVec) -> *mut GosDeque {
+    ffi_entry!(std::ptr::null_mut(), {
+        let mut inner = std::collections::VecDeque::new();
+        if !v.is_null() {
+            let vec = unsafe { &*v };
+            let ptr = vec.ptr.cast::<i64>();
+            for i in 0..vec.len.max(0) as usize {
+                inner.push_back(unsafe { *ptr.add(i) });
+            }
+        }
+        Box::into_raw(Box::new(GosDeque { inner }))
+    })
+}
+
 /// Append `value` to the back of the deque.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_deque_push_back(d: *mut GosDeque, value: i64) {
@@ -127,6 +143,17 @@ pub unsafe extern "C" fn gos_rt_deque_is_empty(d: *const GosDeque) -> i32 {
         }
         i32::from(unsafe { &*d }.inner.is_empty())
     })
+}
+
+/// Remove all elements from the deque.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_clear(d: *mut GosDeque) {
+    ffi_entry!((), {
+        if d.is_null() {
+            return;
+        }
+        unsafe { &mut *d }.inner.clear();
+    });
 }
 
 /// Release the deque heap allocation.

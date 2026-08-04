@@ -575,6 +575,18 @@ impl<'a> Builder<'a> {
                         if let Some(rk) = self.local_runtime_kind.get(&value).copied() {
                             self.local_runtime_kind.insert(local, rk);
                         }
+                        if self
+                            .local_runtime_kind
+                            .get(&value)
+                            .is_some_and(|rk| *rk == "collections::BinaryHeap")
+                            && self
+                                .binary_heap_elem_is_reverse_i64(self.locals[local.0 as usize].ty)
+                        {
+                            self.local_binary_heap_min_i64.insert(value);
+                            self.local_binary_heap_min_i64.insert(local);
+                        } else if self.local_binary_heap_min_i64.contains(&value) {
+                            self.local_binary_heap_min_i64.insert(local);
+                        }
                         if let Some(layout) = self.local_define_layout.get(&value).cloned() {
                             self.local_define_layout.insert(local, layout);
                         }

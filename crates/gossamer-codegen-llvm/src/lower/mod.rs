@@ -633,6 +633,8 @@ fn map_prelude_symbol(name: &str) -> &str {
         // String allocator reclamation for owning bindings the
         // cleanup pass schedules to drop at body return.
         "gos_rt_str_free" => "gos_rt_str_free",
+        "gos_rt_str_free_typed" => "gos_rt_str_free_typed",
+        "gos_rt_str_retain_typed" => "gos_rt_str_retain_typed",
         "Atomic::new"
         | "sync::Atomic::new"
         | "atomic::new"

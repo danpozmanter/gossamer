@@ -905,6 +905,32 @@ pub unsafe extern "C" fn gos_rt_path_split(p: *const c_char) -> *mut i64 {
     })
 }
 
+/// `path::components(p) -> Vec<String>` - Rust-like lexical components.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_path_components(p: *const c_char) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let s = if p.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+        };
+        alloc_plain_str_vec(&path_components(s))
+    })
+}
+
+/// `path::prefixes(p) -> Vec<String>` - cumulative Rust-like lexical prefixes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_path_prefixes(p: *const c_char) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let s = if p.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+        };
+        alloc_plain_str_vec(&path_prefixes(s))
+    })
+}
+
 /// `path::extension(p) -> Option<String>` - extension with the leading
 /// dot wrapped in `Some`, or `None` if absent / the dot is at the
 /// very start of the file name. Mirrors the interp / stdlib
@@ -1126,6 +1152,11 @@ pub unsafe extern "C" fn gos_rt_fs_canonicalize(path: *const c_char) -> i128 {
 /// STRING-typed: the vec owns each element, so `gos_rt_vec_free`
 /// deep-frees them.
 fn ok_str_vec(parts: &[String]) -> i128 {
+    let vec = alloc_plain_str_vec(parts);
+    unsafe { gos_rt_result_new(0, vec as i64) }
+}
+
+fn alloc_plain_str_vec(parts: &[String]) -> *mut GosVec {
     let vec = unsafe {
         crate::c_abi::vec::gos_rt_vec_with_capacity_typed(
             8,
@@ -1137,7 +1168,7 @@ fn ok_str_vec(parts: &[String]) -> i128 {
         let pv = alloc_cstring(p.as_bytes()) as i64;
         unsafe { gos_rt_vec_push(vec, std::ptr::addr_of!(pv).cast::<u8>()) };
     }
-    unsafe { gos_rt_result_new(0, vec as i64) }
+    vec
 }
 
 fn err_io(e: &std::io::Error) -> i128 {
@@ -1226,6 +1257,63 @@ fn path_join(base: &str, segment: &str) -> String {
     let mut out = base.trim_end_matches('/').to_string();
     out.push('/');
     out.push_str(segment.trim_start_matches('/'));
+    out
+}
+
+fn path_components(path: &str) -> Vec<String> {
+    let absolute = path.starts_with('/');
+    let mut out = Vec::new();
+    if absolute {
+        out.push("/".to_string());
+    }
+    let mut saw_normal = absolute;
+    for segment in path.split('/') {
+        match segment {
+            "" => {}
+            "." if !saw_normal && !absolute => {
+                out.push(".".to_string());
+                saw_normal = true;
+            }
+            "." => {}
+            other => {
+                out.push(other.to_string());
+                saw_normal = true;
+            }
+        }
+    }
+    out
+}
+
+fn path_prefixes(path: &str) -> Vec<String> {
+    let absolute = path.starts_with('/');
+    let mut out = Vec::new();
+    let mut prefix = String::with_capacity(path.len());
+    if absolute {
+        prefix.push('/');
+        out.push(prefix.clone());
+    }
+    let mut saw_normal = absolute;
+    for segment in path.split('/') {
+        match segment {
+            "" => {}
+            "." if !saw_normal && !absolute => {
+                prefix.push('.');
+                out.push(prefix.clone());
+                saw_normal = true;
+            }
+            "." => {}
+            other => {
+                if prefix.is_empty() || prefix == "/" {
+                    prefix.push_str(other);
+                } else {
+                    prefix.push('/');
+                    prefix.push_str(other);
+                }
+                out.push(prefix.clone());
+                saw_normal = true;
+            }
+        }
+    }
     out
 }
 

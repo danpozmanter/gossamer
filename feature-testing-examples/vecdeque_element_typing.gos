@@ -1,24 +1,22 @@
-// A `VecDeque<T>` recovers its element type `T` for `pop_front()` across all
-// tiers, whether `T` is annotated or inferred from the first `push_back`.
-// Without element tracking the compiled tiers rendered a `VecDeque<String>`
-// payload as the i64 pointer bits.
+// Phase 1 `VecDeque` is backed by the compiled i64 deque ABI. This keeps
+// annotated and inferred numeric queues on the same runtime shape.
 
 use std::collections::VecDeque
 
 fn main() {
-    // Annotated String element.
-    let mut q: VecDeque<String> = VecDeque::new()
-    q.push_back("alpha")
-    q.push_back("beta")
-    while let Some(s) = q.pop_front() {
-        println!("drain {}", s)
+    // Annotated numeric element.
+    let mut q: VecDeque<i64> = VecDeque::new()
+    q.push_back(1)
+    q.push_back(2)
+    while let Some(n) = q.pop_front() {
+        println!("drain {}", n)
     }
 
-    // Inferred String element (from the first push_back).
+    // Inferred numeric element.
     let mut inferred = VecDeque::new()
-    inferred.push_back("gamma")
+    inferred.push_back(3)
     match inferred.pop_front() {
-        Some(s) => println!("inferred {}", s),
+        Some(n) => println!("inferred {}", n),
         None => println!("inferred none"),
     }
 

@@ -782,6 +782,15 @@ impl Parser<'_> {
         if self.eat_punct(Punct::LBracket) {
             return self.parse_array_expr();
         }
+        if self.eat_punct(Punct::Lt) {
+            return self.parse_queue_literal_expr();
+        }
+        if self.eat_punct(Punct::Caret) {
+            return self.parse_max_heap_literal_expr();
+        }
+        if self.eat_min_heap_literal_prefix() {
+            return self.parse_min_heap_literal_expr();
+        }
         if self.eat_punct(Punct::Hash) {
             return self.parse_hash_prefixed_literal();
         }
@@ -1005,6 +1014,38 @@ impl Parser<'_> {
         self.with_struct_literals_allowed(Self::parse_set_literal_expr_inner)
     }
 
+    fn eat_min_heap_literal_prefix(&mut self) -> bool {
+        if self.at_ident_text("_") && self.peek_nth(1).kind == TokenKind::Punct(Punct::LBracket) {
+            self.bump();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn parse_queue_literal_expr(&mut self) -> ExprKind {
+        if !self.expect_punct(Punct::LBracket, "to open queue literal after `<`") {
+            return ExprKind::Error;
+        }
+        let kind = self.with_struct_literals_allowed(Self::parse_queue_literal_expr_inner);
+        self.expect_punct(Punct::Gt, "to close queue literal");
+        kind
+    }
+
+    fn parse_max_heap_literal_expr(&mut self) -> ExprKind {
+        if !self.expect_punct(Punct::LBracket, "to open max heap literal after `^`") {
+            return ExprKind::Error;
+        }
+        self.with_struct_literals_allowed(Self::parse_max_heap_literal_expr_inner)
+    }
+
+    fn parse_min_heap_literal_expr(&mut self) -> ExprKind {
+        if !self.expect_punct(Punct::LBracket, "to open min heap literal after `_`") {
+            return ExprKind::Error;
+        }
+        self.with_struct_literals_allowed(Self::parse_min_heap_literal_expr_inner)
+    }
+
     fn parse_array_expr_inner(&mut self) -> ExprKind {
         if self.eat_punct(Punct::RBracket) {
             return ExprKind::Array(ArrayExpr::List(Vec::new()));
@@ -1051,6 +1092,78 @@ impl Parser<'_> {
         }
         self.expect_punct(Punct::RBracket, "to close fixed array expression");
         ExprKind::FixedArray(ArrayExpr::List(elements))
+    }
+
+    fn parse_queue_literal_expr_inner(&mut self) -> ExprKind {
+        if self.eat_punct(Punct::RBracket) {
+            return ExprKind::QueueLiteral(ArrayExpr::List(Vec::new()));
+        }
+        let first = self.parse_expr_no_assign();
+        if self.eat_punct(Punct::Semi) {
+            let count = self.parse_expr_no_assign();
+            self.expect_punct(Punct::RBracket, "to close queue literal");
+            return ExprKind::QueueLiteral(ArrayExpr::Repeat {
+                value: Box::new(first),
+                count: Box::new(count),
+            });
+        }
+        let mut elements = vec![first];
+        while self.eat_punct(Punct::Comma) {
+            if self.at_punct(Punct::RBracket) {
+                break;
+            }
+            elements.push(self.parse_expr_no_assign());
+        }
+        self.expect_punct(Punct::RBracket, "to close queue literal");
+        ExprKind::QueueLiteral(ArrayExpr::List(elements))
+    }
+
+    fn parse_max_heap_literal_expr_inner(&mut self) -> ExprKind {
+        if self.eat_punct(Punct::RBracket) {
+            return ExprKind::MaxHeapLiteral(ArrayExpr::List(Vec::new()));
+        }
+        let first = self.parse_expr_no_assign();
+        if self.eat_punct(Punct::Semi) {
+            let count = self.parse_expr_no_assign();
+            self.expect_punct(Punct::RBracket, "to close max heap literal");
+            return ExprKind::MaxHeapLiteral(ArrayExpr::Repeat {
+                value: Box::new(first),
+                count: Box::new(count),
+            });
+        }
+        let mut elements = vec![first];
+        while self.eat_punct(Punct::Comma) {
+            if self.at_punct(Punct::RBracket) {
+                break;
+            }
+            elements.push(self.parse_expr_no_assign());
+        }
+        self.expect_punct(Punct::RBracket, "to close max heap literal");
+        ExprKind::MaxHeapLiteral(ArrayExpr::List(elements))
+    }
+
+    fn parse_min_heap_literal_expr_inner(&mut self) -> ExprKind {
+        if self.eat_punct(Punct::RBracket) {
+            return ExprKind::MinHeapLiteral(ArrayExpr::List(Vec::new()));
+        }
+        let first = self.parse_expr_no_assign();
+        if self.eat_punct(Punct::Semi) {
+            let count = self.parse_expr_no_assign();
+            self.expect_punct(Punct::RBracket, "to close min heap literal");
+            return ExprKind::MinHeapLiteral(ArrayExpr::Repeat {
+                value: Box::new(first),
+                count: Box::new(count),
+            });
+        }
+        let mut elements = vec![first];
+        while self.eat_punct(Punct::Comma) {
+            if self.at_punct(Punct::RBracket) {
+                break;
+            }
+            elements.push(self.parse_expr_no_assign());
+        }
+        self.expect_punct(Punct::RBracket, "to close min heap literal");
+        ExprKind::MinHeapLiteral(ArrayExpr::List(elements))
     }
 
     fn parse_set_literal_expr_inner(&mut self) -> ExprKind {
@@ -2592,6 +2705,8 @@ pub(crate) fn is_expression_start(parser: &Parser<'_>) -> bool {
                 | Punct::Amp
                 | Punct::Star
                 | Punct::Hash
+                | Punct::Lt
+                | Punct::Caret
                 | Punct::Pipe
                 | Punct::PipePipe
                 | Punct::DotDot
@@ -2788,11 +2903,18 @@ fn contains_pipe_placeholder(expr: &Expr) -> bool {
         ExprKind::Tuple(items) | ExprKind::MapLiteral(items) | ExprKind::SetLiteral(items) => {
             items.iter().any(contains_pipe_placeholder)
         }
-        ExprKind::Array(ArrayExpr::List(items)) | ExprKind::FixedArray(ArrayExpr::List(items)) => {
+        ExprKind::Array(ArrayExpr::List(items))
+        | ExprKind::FixedArray(ArrayExpr::List(items))
+        | ExprKind::QueueLiteral(ArrayExpr::List(items))
+        | ExprKind::MaxHeapLiteral(ArrayExpr::List(items))
+        | ExprKind::MinHeapLiteral(ArrayExpr::List(items)) => {
             items.iter().any(contains_pipe_placeholder)
         }
         ExprKind::Array(ArrayExpr::Repeat { value, count })
-        | ExprKind::FixedArray(ArrayExpr::Repeat { value, count }) => {
+        | ExprKind::FixedArray(ArrayExpr::Repeat { value, count })
+        | ExprKind::QueueLiteral(ArrayExpr::Repeat { value, count })
+        | ExprKind::MaxHeapLiteral(ArrayExpr::Repeat { value, count })
+        | ExprKind::MinHeapLiteral(ArrayExpr::Repeat { value, count }) => {
             contains_pipe_placeholder(value) || contains_pipe_placeholder(count)
         }
         ExprKind::Range { start, end, .. } => {

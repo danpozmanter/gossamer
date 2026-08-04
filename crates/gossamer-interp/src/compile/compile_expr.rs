@@ -4,6 +4,8 @@ use super::*;
 const HASH_SET_DEF_LOCAL: u32 = u32::MAX - 7;
 const BTREE_SET_DEF_LOCAL: u32 = u32::MAX - 18;
 const VEC_DEQUE_DEF_LOCAL: u32 = u32::MAX - 19;
+const BINARY_HEAP_DEF_LOCAL: u32 = u32::MAX - 28;
+const MIN_HEAP_DEF_LOCAL: u32 = u32::MAX - 30;
 
 /// Peels any `&expr` / `&mut expr` borrow wrappers off an expression,
 /// returning the underlying place. The for-loop desugar emits
@@ -3084,9 +3086,26 @@ impl<'tcx> FnBuilder<'tcx> {
                             | "pop_front"
                             | "peek_back"
                             | "peek_front"
+                            | "len"
+                            | "is_empty"
+                            | "clear"
                     ) =>
             {
                 Some(format!("VecDeque::{}", name.name))
+            }
+            Some(TyKind::Adt { def, .. })
+                if matches!(def.local, BINARY_HEAP_DEF_LOCAL | MIN_HEAP_DEF_LOCAL)
+                    && matches!(
+                        name.name.as_str(),
+                        "push" | "pop" | "peek" | "len" | "is_empty" | "clear"
+                    ) =>
+            {
+                let owner = if def.local == MIN_HEAP_DEF_LOCAL {
+                    "MinHeap"
+                } else {
+                    "MaxHeap"
+                };
+                Some(format!("{owner}::{}", name.name))
             }
             _ => None,
         };
@@ -3258,6 +3277,11 @@ impl<'tcx> FnBuilder<'tcx> {
             Some(TyKind::HashMap { .. }) => name.name == "clear",
             Some(TyKind::Adt { def, .. }) if def.local == VEC_DEQUE_DEF_LOCAL => {
                 matches!(name.name.as_str(), "push_back" | "push_front")
+            }
+            Some(TyKind::Adt { def, .. })
+                if matches!(def.local, BINARY_HEAP_DEF_LOCAL | MIN_HEAP_DEF_LOCAL) =>
+            {
+                matches!(name.name.as_str(), "push" | "clear")
             }
             _ => false,
         };

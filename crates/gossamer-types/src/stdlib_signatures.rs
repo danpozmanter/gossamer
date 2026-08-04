@@ -2475,6 +2475,16 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::path",
+        name: "components",
+        signature: "fn components(path: String) -> Vec<String>",
+    },
+    StdFunctionSignature {
+        module_path: "std::path",
+        name: "prefixes",
+        signature: "fn prefixes(path: String) -> Vec<String>",
+    },
+    StdFunctionSignature {
+        module_path: "std::path",
         name: "normalize",
         signature: "fn normalize(path: String) -> String",
     },
@@ -2850,8 +2860,23 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::strings",
+        name: "byte_len",
+        signature: "fn byte_len(text: String) -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::strings",
+        name: "byte_at",
+        signature: "fn byte_at(text: String, index: i64) -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::strings",
         name: "slice",
         signature: "fn slice(text: String, start: i64, end: i64) -> Result<String, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::strings",
+        name: "substring",
+        signature: "fn substring(text: String, start: i64, end: i64) -> String",
     },
     StdFunctionSignature {
         module_path: "std::strings",

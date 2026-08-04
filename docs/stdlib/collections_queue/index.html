@@ -690,6 +690,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -806,6 +808,34 @@
 
 
     Methods by type
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../collection_patterns/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Collection patterns
 
 
 
@@ -1878,22 +1908,22 @@
 <tbody>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs"><code>len</code></a></td>
-<td><code>fn len(xs: Queue&lt;i64&gt;) -&gt; i64</code></td>
+<td><code>fn len(xs: Vec&lt;i64&gt;) -&gt; i64</code></td>
 <td>Element count.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs"><code>peek</code></a></td>
-<td><code>fn peek(xs: Queue&lt;i64&gt;) -&gt; i64</code></td>
-<td>Front element, or 0 if empty.</td>
+<td><code>fn peek(xs: Vec&lt;i64&gt;) -&gt; Option&lt;i64&gt;</code></td>
+<td>Front element, if present.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs"><code>pop</code></a></td>
-<td><code>fn pop(xs: Queue&lt;i64&gt;) -&gt; Queue&lt;i64&gt;</code></td>
+<td><code>fn pop(xs: Vec&lt;i64&gt;) -&gt; Vec&lt;i64&gt;</code></td>
 <td>Drop the front element; returns the new queue.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs"><code>push</code></a></td>
-<td><code>fn push(xs: Queue&lt;i64&gt;, value: i64) -&gt; Queue&lt;i64&gt;</code></td>
+<td><code>fn push(xs: Vec&lt;i64&gt;, value: i64) -&gt; Vec&lt;i64&gt;</code></td>
 <td>Append an i64 to the back; returns the new queue.</td>
 </tr>
 </tbody>

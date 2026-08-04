@@ -69,6 +69,16 @@ const HASH_SET_DEF_LOCAL: u32 = u32::MAX - 7;
 const VALIDATE_ERRORS_DEF_LOCAL: u32 = u32::MAX - 9;
 const VALIDATE_FIELD_ERROR_DEF_LOCAL: u32 = u32::MAX - 10;
 const BTREE_SET_DEF_LOCAL: u32 = u32::MAX - 18;
+const BINARY_HEAP_DEF_LOCAL: u32 = u32::MAX - 28;
+const REVERSE_DEF_LOCAL: u32 = u32::MAX - 29;
+const MIN_HEAP_DEF_LOCAL: u32 = u32::MAX - 30;
+
+fn tuple_get_const_index(expr: &HirExpr) -> Option<usize> {
+    match &expr.kind {
+        HirExprKind::Literal(HirLiteral::Int(raw)) => raw.parse::<usize>().ok(),
+        _ => None,
+    }
+}
 
 impl<'a> Builder<'a> {
     pub(crate) fn lower_method_call(
@@ -116,6 +126,35 @@ impl<'a> Builder<'a> {
             });
             self.set_current(next);
             return Some(dest);
+        }
+
+        if method.name == "iter"
+            && args.is_empty()
+            && matches!(self.tcx.kind_of(ty), TyKind::Iterator(item)
+                if matches!(self.tcx.kind_of(*item), TyKind::Int(gossamer_types::IntTy::I64)))
+        {
+            let mut receiver_ty = receiver.ty;
+            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(receiver_ty) {
+                receiver_ty = *inner;
+            }
+            if matches!(
+                self.tcx.kind_of(receiver_ty),
+                TyKind::Vec(_) | TyKind::Slice(_)
+            ) {
+                let source = self.lower_expr(receiver)?;
+                let dest = self.fresh(ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(
+                        "gos_rt_lazy_iter_from_vec_i64".to_string(),
+                    )),
+                    args: vec![Operand::Copy(Place::local(source))],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                return Some(dest);
+            }
         }
 
         if matches!(method.name.as_str(), "wrapping_add" | "wrapping_mul") && args.len() == 1 {
@@ -278,6 +317,11 @@ impl<'a> Builder<'a> {
             return r;
         }
         if let MethodLowering::Handled(r) =
+            self.lower_tuple_get_method(receiver, method, args, ty, span)
+        {
+            return r;
+        }
+        if let MethodLowering::Handled(r) =
             self.lower_hashmap_iter_binding_method(receiver, method, args, span)
         {
             return r;
@@ -379,7 +423,18 @@ impl<'a> Builder<'a> {
             .or_else(|| Self::stdlib_runtime_kind_from_kind(&receiver_kind_flat))
             .or_else(|| self.runtime_kind_from_ty(receiver_ty))
             .or_else(|| self.runtime_kind_from_ty(receiver.ty));
-        if let Some(rt) = self.kind_dispatch_symbol(receiver_runtime_kind, method, args) {
+        let receiver_heap_reverse_i64 = self
+            .receiver_local_from_path(receiver)
+            .is_some_and(|local| self.local_binary_heap_min_i64.contains(&local))
+            || self.binary_heap_elem_is_reverse_i64(receiver_ty)
+            || self.binary_heap_elem_is_reverse_i64(receiver.ty);
+        if let Some(rt) = self.kind_dispatch_symbol(
+            receiver_runtime_kind,
+            method,
+            args,
+            receiver_ty,
+            receiver_heap_reverse_i64,
+        ) {
             return self.lower_kind_dispatch_call(rt, receiver, args, ty, span);
         }
 
@@ -469,7 +524,16 @@ impl<'a> Builder<'a> {
             self.lower_expr(receiver)?
         };
         let lowered_runtime_kind = self.local_runtime_kind.get(&receiver_local).copied();
-        if let Some(rt) = self.lowered_kind_dispatch_symbol(lowered_runtime_kind, method, args) {
+        let lowered_heap_reverse_i64 = self.local_binary_heap_min_i64.contains(&receiver_local)
+            || self.binary_heap_elem_is_reverse_i64(receiver_ty)
+            || self.binary_heap_elem_is_reverse_i64(receiver.ty);
+        if let Some(rt) = self.lowered_kind_dispatch_symbol(
+            lowered_runtime_kind,
+            method,
+            args,
+            receiver_ty,
+            lowered_heap_reverse_i64,
+        ) {
             return self.lower_lowered_kind_dispatch_call(
                 rt,
                 receiver,
@@ -993,7 +1057,7 @@ impl<'a> Builder<'a> {
             }
             if matches!(val_kind, Some(MapValueKind::I64)) {
                 let (fn_name, key_kind_ok) = match key_kind {
-                    Some(MapKeyKind::String) => ("gos_rt_map_inc_str_i64", true),
+                    Some(MapKeyKind::String) => ("gos_rt_map_inc_typed_str_i64", true),
                     Some(MapKeyKind::I64) => ("gos_rt_map_inc_i64", true),
                     _ => ("", false),
                 };
@@ -1434,6 +1498,12 @@ impl<'a> Builder<'a> {
             }
             TyKind::Adt { def, .. } if def.local == BTREE_SET_DEF_LOCAL => {
                 Some("collections::BTreeSet")
+            }
+            TyKind::Adt { def, .. } if def.local == BINARY_HEAP_DEF_LOCAL => {
+                Some("collections::MaxHeap")
+            }
+            TyKind::Adt { def, .. } if def.local == MIN_HEAP_DEF_LOCAL => {
+                Some("collections::MinHeap")
             }
             TyKind::Adt { def, .. } if def.local == VALIDATE_ERRORS_DEF_LOCAL => {
                 Some("validate::Errors")
@@ -1932,13 +2002,16 @@ impl<'a> Builder<'a> {
             "pop" if matches!(&receiver_kind_flat, TyKind::HashMap { .. }) => {
                 let key = hashmap_key_kind(self.tcx, receiver_ty);
                 Some(if key == VecElemKind::Str {
-                    "gos_rt_map_pop_str"
+                    "gos_rt_map_pop_typed_str"
                 } else {
                     "gos_rt_map_pop_i64"
                 })
             }
             "lines" => Some("gos_rt_str_lines"),
             "repeat" => Some("gos_rt_str_repeat"),
+            "byte_len" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_byte_len")
+            }
             "byte_at" => Some("gos_rt_str_byte_at"),
             // `s.chars()` - materialise the Unicode scalars as a
             // `Vec<char>` (one i64 codepoint per slot) so the
@@ -2164,7 +2237,7 @@ impl<'a> Builder<'a> {
             "insert" => match &receiver_kind_flat {
                 TyKind::HashMap { .. } => match self.hash_map_value_kind(receiver_ty) {
                     Some(MapValueKind::I64) => match self.hash_map_key_kind(receiver_ty) {
-                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_i64_opt"),
+                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_typed_str_i64_opt"),
                         _ => Some("gos_rt_map_insert_i64_i64_opt"),
                     },
                     Some(MapValueKind::String) => match self.hash_map_key_kind(receiver_ty) {
@@ -2172,7 +2245,7 @@ impl<'a> Builder<'a> {
                         _ => Some("gos_rt_map_insert_i64_str_opt"),
                     },
                     Some(MapValueKind::Bytes) => match self.hash_map_key_kind(receiver_ty) {
-                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_i64_opt"),
+                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_typed_str_i64_opt"),
                         _ => Some("gos_rt_map_insert_i64_i64_opt"),
                     },
                     // Aggregate value (Vec / struct): stored as an
@@ -2180,7 +2253,7 @@ impl<'a> Builder<'a> {
                     // String key must still use the str path, not the
                     // i64/i64 path that reinterprets the key pointer.
                     _ => match self.hash_map_key_kind(receiver_ty) {
-                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_i64_opt"),
+                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_typed_str_i64_opt"),
                         _ => Some("gos_rt_map_insert_i64_i64_opt"),
                     },
                 },
@@ -2202,7 +2275,7 @@ impl<'a> Builder<'a> {
                 // struct-valued maps. See feature-testing-examples/
                 // hashmap_get_some_field.gos.
                 TyKind::HashMap { .. } => match self.hash_map_key_kind(receiver_ty) {
-                    Some(MapKeyKind::String) => Some("gos_rt_map_get_str_opt"),
+                    Some(MapKeyKind::String) => Some("gos_rt_map_get_typed_str_opt"),
                     _ => Some("gos_rt_map_get_i64_opt"),
                 },
                 _ => None,
@@ -2214,11 +2287,11 @@ impl<'a> Builder<'a> {
                         _ => Some("gos_rt_map_get_or_i64_str"),
                     },
                     Some(MapValueKind::Bytes) => match self.hash_map_key_kind(receiver_ty) {
-                        Some(MapKeyKind::String) => Some("gos_rt_map_get_or_str_i64"),
+                        Some(MapKeyKind::String) => Some("gos_rt_map_get_or_typed_str_i64"),
                         _ => Some("gos_rt_map_get_or_i64"),
                     },
                     _ => match self.hash_map_key_kind(receiver_ty) {
-                        Some(MapKeyKind::String) => Some("gos_rt_map_get_or_str_i64"),
+                        Some(MapKeyKind::String) => Some("gos_rt_map_get_or_typed_str_i64"),
                         _ => Some("gos_rt_map_get_or_i64"),
                     },
                 },
@@ -2231,14 +2304,14 @@ impl<'a> Builder<'a> {
             // undefined `@or_insert` call.
             "or_insert" => match &receiver_kind_flat {
                 TyKind::HashMap { .. } => match self.hash_map_key_kind(receiver_ty) {
-                    Some(MapKeyKind::String) => Some("gos_rt_map_or_insert_str_i64"),
+                    Some(MapKeyKind::String) => Some("gos_rt_map_or_insert_typed_str_i64"),
                     _ => Some("gos_rt_map_or_insert_i64_i64"),
                 },
                 _ => None,
             },
             "remove" => match &receiver_kind_flat {
                 TyKind::HashMap { .. } => match self.hash_map_key_kind(receiver_ty) {
-                    Some(MapKeyKind::String) => Some("gos_rt_map_pop_str"),
+                    Some(MapKeyKind::String) => Some("gos_rt_map_pop_typed_str"),
                     _ => Some("gos_rt_map_pop_i64"),
                 },
                 // Vec removal mutates in place and returns a bounds error.
@@ -2251,7 +2324,7 @@ impl<'a> Builder<'a> {
                 if matches!(&receiver_kind_flat, TyKind::HashMap { .. }) =>
             {
                 match self.hash_map_key_kind(receiver_ty) {
-                    Some(MapKeyKind::String) => Some("gos_rt_map_contains_key_str"),
+                    Some(MapKeyKind::String) => Some("gos_rt_map_contains_key_typed_str"),
                     _ => Some("gos_rt_map_contains_key_i64"),
                 }
             }
@@ -2333,9 +2406,13 @@ impl<'a> Builder<'a> {
         rk: Option<&'static str>,
         method: &Ident,
         args: &[HirExpr],
+        receiver_ty: Ty,
+        heap_reverse_i64: bool,
     ) -> Option<&'static str> {
-        self.kind_dispatch_symbol_a(rk, method, args)
-            .or_else(|| self.kind_dispatch_symbol_b(rk, method, args))
+        self.kind_dispatch_symbol_a(rk, method, args, receiver_ty, heap_reverse_i64)
+            .or_else(|| {
+                self.kind_dispatch_symbol_b(rk, method, args, receiver_ty, heap_reverse_i64)
+            })
     }
 
     /// First half of the receiver-runtime-kind dispatch table.
@@ -2344,7 +2421,15 @@ impl<'a> Builder<'a> {
         rk: Option<&'static str>,
         method: &Ident,
         _args: &[HirExpr],
+        receiver_ty: Ty,
+        heap_reverse_i64: bool,
     ) -> Option<&'static str> {
+        if matches!(
+            rk,
+            Some("collections::BinaryHeap" | "collections::MaxHeap" | "collections::MinHeap")
+        ) {
+            return self.binary_heap_runtime_symbol(rk, receiver_ty, method, heap_reverse_i64);
+        }
         match (rk, method.name.as_str()) {
             (Some("flag::Set"), "string") => Some("gos_rt_flag_set_string"),
             (Some("flag::Set"), "int") => Some("gos_rt_flag_set_int"),
@@ -2461,6 +2546,7 @@ impl<'a> Builder<'a> {
             (Some("collections::VecDeque"), "peek_back") => Some("gos_rt_deque_peek_back"),
             (Some("collections::VecDeque"), "len") => Some("gos_rt_deque_len"),
             (Some("collections::VecDeque"), "is_empty") => Some("gos_rt_deque_is_empty"),
+            (Some("collections::VecDeque"), "clear") => Some("gos_rt_deque_clear"),
             (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
             (Some("collections::BTreeMap"), "get") => Some("gos_rt_btmap_get"),
             (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),
@@ -2473,13 +2559,86 @@ impl<'a> Builder<'a> {
         }
     }
 
+    fn binary_heap_runtime_symbol(
+        &self,
+        rk: Option<&'static str>,
+        receiver_ty: Ty,
+        method: &Ident,
+        heap_reverse_i64: bool,
+    ) -> Option<&'static str> {
+        let min_heap = rk == Some("collections::MinHeap")
+            || heap_reverse_i64
+            || self.binary_heap_ty_is_min(receiver_ty)
+            || self.binary_heap_elem_is_reverse_i64(receiver_ty);
+        match (method.name.as_str(), min_heap) {
+            ("push", true) => Some("gos_rt_bheap_min_push_i64"),
+            ("pop", true) => Some("gos_rt_bheap_min_pop_i64"),
+            ("peek", true) => Some("gos_rt_bheap_min_peek_i64"),
+            ("push", false) => Some("gos_rt_bheap_max_push_i64"),
+            ("pop", false) => Some("gos_rt_bheap_max_pop_i64"),
+            ("peek", false) => Some("gos_rt_bheap_max_peek_i64"),
+            ("len", _) => Some("gos_rt_bheap_len"),
+            ("is_empty", _) => Some("gos_rt_bheap_is_empty"),
+            ("clear", _) => Some("gos_rt_bheap_clear"),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn binary_heap_elem_is_reverse_i64(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        let Some(TyKind::Adt { def, substs }) = self.tcx.kind(cur) else {
+            return false;
+        };
+        if def.local != BINARY_HEAP_DEF_LOCAL && self.tcx.def_name(*def) != Some("BinaryHeap") {
+            return false;
+        }
+        let Some(elem) = substs.types().first().copied() else {
+            return false;
+        };
+        let mut elem = elem;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(elem) {
+            elem = *inner;
+        }
+        self.is_reverse_i64_ty(elem)
+    }
+
+    pub(crate) fn binary_heap_ty_is_min(&self, ty: Ty) -> bool {
+        let mut cur = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        matches!(self.tcx.kind(cur), Some(TyKind::Adt { def, .. }) if def.local == MIN_HEAP_DEF_LOCAL)
+    }
+
+    pub(crate) fn is_reverse_i64_ty(&self, ty: Ty) -> bool {
+        use gossamer_types::{IntTy, TyKind};
+        let mut cur = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        let Some(TyKind::Adt { def, substs }) = self.tcx.kind(cur) else {
+            return false;
+        };
+        (def.local == REVERSE_DEF_LOCAL || self.tcx.def_name(*def) == Some("Reverse"))
+            && substs.types().first().is_some_and(|payload| {
+                matches!(self.tcx.kind_of(*payload), TyKind::Int(IntTy::I64))
+            })
+    }
+
     /// Second half of the receiver-runtime-kind dispatch table.
     fn kind_dispatch_symbol_b(
         &self,
         rk: Option<&'static str>,
         method: &Ident,
         args: &[HirExpr],
+        receiver_ty: Ty,
+        _heap_reverse_i64: bool,
     ) -> Option<&'static str> {
+        let _ = receiver_ty;
         match (rk, method.name.as_str()) {
             (Some("sync::Map"), "insert") => Some("gos_rt_sync_map_set"),
             (Some("sync::Map"), "get") => Some("gos_rt_sync_map_get"),
@@ -2896,13 +3055,37 @@ impl<'a> Builder<'a> {
                 })
             }
             "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
-            "gos_rt_deque_push_back" | "gos_rt_deque_push_front" => self.tcx.unit(),
+            "gos_rt_deque_push_back" | "gos_rt_deque_push_front" | "gos_rt_deque_clear" => {
+                self.tcx.unit()
+            }
+            "gos_rt_bheap_max_push_i64" | "gos_rt_bheap_min_push_i64" | "gos_rt_bheap_clear" => {
+                self.tcx.unit()
+            }
+            "gos_rt_bheap_max_pop_i64"
+            | "gos_rt_bheap_max_peek_i64"
+            | "gos_rt_bheap_min_pop_i64"
+            | "gos_rt_bheap_min_peek_i64" => ty,
+            "gos_rt_bheap_is_empty" => self.tcx.bool_ty(),
             // `Child::read_line() -> Option<String>`; `wait` returns
             // `Result<i64, errors::Error>`. Pinned so the while-let /
             // match extraction reads the packed enum correctly.
             "gos_rt_child_read_line" | "gos_rt_stream_next_line" => self.option_string_adt_ty(),
             "gos_rt_stream_read_line" => self.result_i64_error_adt_ty(),
             "gos_rt_child_read_stdout" => self.tcx.string_ty(),
+            "gos_rt_result_unwrap" | "gos_rt_result_unwrap_or" | "gos_rt_result_ok" => {
+                let inner = self
+                    .first_generic_of(receiver.ty)
+                    .or_else(|| {
+                        let recv_mir_ty = self.locals[receiver_local.0 as usize].ty;
+                        self.first_generic_of(recv_mir_ty)
+                    })
+                    .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
+                if self.is_reverse_i64_ty(inner) {
+                    self.tcx.int_ty(gossamer_types::IntTy::I64)
+                } else {
+                    inner
+                }
+            }
             "gos_rt_child_write_stdin" | "gos_rt_child_kill" => self.tcx.bool_ty(),
             "gos_rt_child_close_stdin" => self.tcx.unit(),
             "gos_rt_signal_wait" => self.tcx.unit(),
@@ -3217,9 +3400,13 @@ impl<'a> Builder<'a> {
         rk: Option<&'static str>,
         method: &Ident,
         args: &[HirExpr],
+        receiver_ty: Ty,
+        heap_reverse_i64: bool,
     ) -> Option<&'static str> {
-        self.lowered_kind_dispatch_symbol_a(rk, method, args)
-            .or_else(|| self.lowered_kind_dispatch_symbol_b(rk, method, args))
+        self.lowered_kind_dispatch_symbol_a(rk, method, args, receiver_ty, heap_reverse_i64)
+            .or_else(|| {
+                self.lowered_kind_dispatch_symbol_b(rk, method, args, receiver_ty, heap_reverse_i64)
+            })
     }
 
     /// First half of the lowered-receiver-runtime-kind dispatch table.
@@ -3228,7 +3415,15 @@ impl<'a> Builder<'a> {
         rk: Option<&'static str>,
         method: &Ident,
         _args: &[HirExpr],
+        receiver_ty: Ty,
+        heap_reverse_i64: bool,
     ) -> Option<&'static str> {
+        if matches!(
+            rk,
+            Some("collections::BinaryHeap" | "collections::MaxHeap" | "collections::MinHeap")
+        ) {
+            return self.binary_heap_runtime_symbol(rk, receiver_ty, method, heap_reverse_i64);
+        }
         match (rk, method.name.as_str()) {
             (Some("flag::Set"), "string") => Some("gos_rt_flag_set_string"),
             (Some("flag::Set"), "int") => Some("gos_rt_flag_set_int"),
@@ -3339,6 +3534,7 @@ impl<'a> Builder<'a> {
             (Some("collections::VecDeque"), "peek_back") => Some("gos_rt_deque_peek_back"),
             (Some("collections::VecDeque"), "len") => Some("gos_rt_deque_len"),
             (Some("collections::VecDeque"), "is_empty") => Some("gos_rt_deque_is_empty"),
+            (Some("collections::VecDeque"), "clear") => Some("gos_rt_deque_clear"),
             (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
             (Some("collections::BTreeMap"), "get") => Some("gos_rt_btmap_get"),
             (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),
@@ -3357,7 +3553,10 @@ impl<'a> Builder<'a> {
         rk: Option<&'static str>,
         method: &Ident,
         args: &[HirExpr],
+        receiver_ty: Ty,
+        _heap_reverse_i64: bool,
     ) -> Option<&'static str> {
+        let _ = receiver_ty;
         match (rk, method.name.as_str()) {
             (Some("sync::Map"), "insert") => Some("gos_rt_sync_map_set"),
             (Some("sync::Map"), "get") => Some("gos_rt_sync_map_get"),
@@ -3786,7 +3985,11 @@ impl<'a> Builder<'a> {
         // it only describes conditional Option/Result copy-blob payloads.
         if matches!(
             runtime_symbol,
-            Some("gos_rt_map_insert_i64_i64_opt" | "gos_rt_map_insert_str_i64_opt")
+            Some(
+                "gos_rt_map_insert_i64_i64_opt"
+                    | "gos_rt_map_insert_str_i64_opt"
+                    | "gos_rt_map_insert_typed_str_i64_opt"
+            )
         ) && let TyKind::HashMap { value, .. } = self.tcx.kind_of(lowered_recv_ty)
             && self.type_slot_bytes(*value) > 8
         {
@@ -3880,8 +4083,10 @@ impl<'a> Builder<'a> {
                     | "gos_rt_map_insert_str_i64"
                     | "gos_rt_map_insert_i64_i64_opt"
                     | "gos_rt_map_insert_str_i64_opt"
+                    | "gos_rt_map_insert_typed_str_i64_opt"
                     | "gos_rt_map_or_insert_i64_i64"
                     | "gos_rt_map_or_insert_str_i64"
+                    | "gos_rt_map_or_insert_typed_str_i64"
             )
         );
         let coerce_vec_extend_arg = matches!(runtime_symbol, Some("gos_rt_vec_extend"));
@@ -4257,6 +4462,8 @@ impl<'a> Builder<'a> {
         let joined: Option<&str> = match (method.name.as_str(), args.len()) {
             ("map", 1) => Some("iter::map"),
             ("filter", 1) => Some("iter::filter"),
+            ("take_while", 1) => Some("iter::take_while"),
+            ("skip_while", 1) => Some("iter::skip_while"),
             ("take", 1) => Some("iter::take"),
             ("skip", 1) => Some("iter::skip"),
             ("step_by", 1) => Some("iter::step_by"),
@@ -4274,6 +4481,8 @@ impl<'a> Builder<'a> {
             ("min", 0) => Some("iter::min"),
             ("max", 0) => Some("iter::max"),
             ("count", 0) => Some("iter::count"),
+            ("enumerate", 0) => Some("iter::enumerate"),
+            ("chunks", 1) => Some("iter::chunks"),
             _ => None,
         };
         let is_pred_count = method.name.as_str() == "count" && args.len() == 1;
@@ -4345,6 +4554,84 @@ impl<'a> Builder<'a> {
             Some(dest) => MethodLowering::Handled(Some(dest)),
             None => MethodLowering::Pass,
         }
+    }
+
+    fn lower_tuple_get_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+        ty: Ty,
+        span: Span,
+    ) -> MethodLowering {
+        if method.name != "get" || args.len() != 1 {
+            return MethodLowering::Pass;
+        }
+        let Some(index) = tuple_get_const_index(&args[0]) else {
+            return MethodLowering::Pass;
+        };
+        let (_, mut receiver_kind) = self.receiver_dispatch_kinds(receiver);
+        while let TyKind::Ref { inner, .. } = receiver_kind {
+            receiver_kind = self.tcx.kind_of(inner).clone();
+        }
+        let typecheck_fields = match receiver_kind {
+            TyKind::Tuple(fields) => Some(fields),
+            _ => None,
+        };
+        if typecheck_fields.is_none() {
+            return MethodLowering::Pass;
+        }
+        let receiver_local = match self.lower_expr(receiver) {
+            Some(local) => local,
+            None => return MethodLowering::Handled(None),
+        };
+        let receiver_ty = self.locals[receiver_local.0 as usize].ty;
+        let resolved_ty = self.resolve_var_tuple_fields(receiver_ty);
+        if resolved_ty != receiver_ty {
+            self.locals[receiver_local.0 as usize].ty = resolved_ty;
+        }
+        let fields = match self.tcx.kind_of(resolved_ty).clone() {
+            TyKind::Tuple(fields) => fields,
+            _ => typecheck_fields.expect("tuple gate checked before lowering"),
+        };
+        let payload_ty = fields
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
+        let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Adt { .. }) {
+            ty
+        } else {
+            self.option_payload_adt_ty(payload_ty)
+        };
+        let dest = self.fresh(dest_ty);
+        let payload = if index < fields.len() {
+            let idx = match u32::try_from(index) {
+                Ok(idx) => idx,
+                Err(_) => return MethodLowering::Pass,
+            };
+            let payload = self.fresh(payload_ty);
+            self.emit_assign(
+                Place::local(payload),
+                Rvalue::Use(Operand::Copy(Place {
+                    local: receiver_local,
+                    projection: vec![crate::ir::Projection::Field(idx)],
+                })),
+                span,
+            );
+            Operand::Copy(Place::local(payload))
+        } else {
+            Operand::Const(ConstValue::Int(0))
+        };
+        let disc = i128::from(index >= fields.len());
+        self.emit_assign(
+            Place::local(dest),
+            Rvalue::CallIntrinsic {
+                name: "gos_rt_result_new",
+                args: vec![Operand::Const(ConstValue::Int(disc)), payload],
+            },
+            span,
+        );
+        MethodLowering::Handled(Some(dest))
     }
 
     /// The join shim for a sequence receiver, keyed on the element
@@ -4465,7 +4752,7 @@ impl<'a> Builder<'a> {
             "values" if matches!(kind, TyKind::HashMap { .. }) => Some("gos_rt_map_values_vec"),
             "pop" if matches!(kind, TyKind::HashMap { .. }) => {
                 Some(if hashmap_key_kind(self.tcx, ty) == VecElemKind::Str {
-                    "gos_rt_map_pop_str"
+                    "gos_rt_map_pop_typed_str"
                 } else {
                     "gos_rt_map_pop_i64"
                 })

@@ -621,10 +621,14 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
-    install_module("BTreeMap", &[("new", builtin_btmap_new)], globals);
+    install_module(
+        "BTreeMap",
+        &[("new", builtin_btmap_new), ("from", builtin_map_from)],
+        globals,
+    );
     install_module(
         "collections::BTreeMap",
-        &[("new", builtin_btmap_new)],
+        &[("new", builtin_btmap_new), ("from", builtin_map_from)],
         globals,
     );
     install_module("HashSet", &[("new", builtin_set_new)], globals);
@@ -1190,6 +1194,11 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("ends_with", builtin("ends_with", builtin_ends_with)));
     globals.push(("replace", builtin("replace", builtin_str_replace)));
     globals.push(("find", builtin("find", builtin_str_find)));
+    globals.push((
+        "String::byte_len",
+        builtin("String::byte_len", builtin_str_byte_len),
+    ));
+    globals.push(("byte_len", builtin("byte_len", builtin_str_byte_len)));
     // `String::byte_at(s, i) -> i64`. Qualified key dominates any
     // user free fn named `byte_at` during method dispatch; bare key
     // lets `byte_at(s, i)` resolve too.

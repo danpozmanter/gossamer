@@ -653,11 +653,13 @@ pub(crate) fn stdlib_struct_def_offsets() -> &'static [(&'static str, u32)] {
         ("Output", 3),
         ("ResponseStream", 4),
         ("Response", 5),
+        ("Reverse", 29),
     ]
 }
 
 pub(crate) fn stdlib_struct_shapes() -> &'static [(&'static str, &'static [&'static str])] {
     &[
+        ("Reverse", &["0"]),
         ("Output", &["stdout", "stderr", "code"]),
         ("ExitStatus", &["code"]),
         (
@@ -1088,6 +1090,7 @@ pub(crate) fn lower_fn(
     let return_ty = const_generic_array_as_vec(builder.tcx, return_ty).unwrap_or(return_ty);
     builder.push_local(return_ty, None, false);
     let arity = u32::try_from(decl.params.len()).expect("arity overflow");
+    let mut param_patterns = Vec::with_capacity(decl.params.len());
     for param in &decl.params {
         // A const generic array parameter (`xs: [T; N]`) has a length that is
         // unknown in the generic body, so it is carried as a runtime-length
@@ -1102,6 +1105,7 @@ pub(crate) fn lower_fn(
             param_mutable(&param.pattern),
         );
         builder.param_locals.insert(local);
+        param_patterns.push((local, &param.pattern));
         if let HirPatKind::Binding { name, .. } = &param.pattern.kind {
             builder.bind_local(&name.name, local);
             // First-priority signal for the runtime-kind tag: the
@@ -1178,6 +1182,11 @@ pub(crate) fn lower_fn(
     }
     let entry = builder.new_block(span);
     builder.set_current(entry);
+    for (local, pattern) in param_patterns {
+        if !matches!(pattern.kind, HirPatKind::Binding { .. }) {
+            builder.bind_aggregate_let_pattern(local, pattern, span);
+        }
+    }
     let result_local = builder.lower_block(&body.block);
     if let Some(result) = result_local {
         if builder.current.is_some() {

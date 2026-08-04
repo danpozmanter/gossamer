@@ -8,6 +8,7 @@
 use std::io::Write;
 
 use gossamer_std::fs;
+use gossamer_std::path;
 use gossamer_std::regex;
 
 #[test]
@@ -63,4 +64,17 @@ fn tempfile_returns_unique_writable_handle() {
     drop(f2);
     let _ = std::fs::remove_file(&p1);
     let _ = std::fs::remove_file(&p2);
+}
+
+#[test]
+fn path_prefixes_match_component_semantics() {
+    assert_eq!(
+        path::prefixes("/a//./b/c"),
+        vec!["/", "/a", "/a/b", "/a/b/c"]
+    );
+    assert_eq!(
+        path::prefixes("./a/../b"),
+        vec![".", "./a", "./a/..", "./a/../b"]
+    );
+    assert!(path::prefixes("").is_empty());
 }

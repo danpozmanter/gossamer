@@ -106,6 +106,26 @@ use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
 /// Entry point invoked from `builtins::install`.
 use super::*;
 
+static NEXT_BINARY_HEAP_HANDLE: super::set::GlobalReg<i64> =
+    super::set::GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(1)));
+static BINARY_HEAP_REGISTRY: super::set::GlobalReg<StdHashMap<i64, HeapState>> =
+    super::set::GlobalReg::new(|| {
+        parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new()))
+    });
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HeapOrder {
+    Max,
+    Min,
+}
+
+#[derive(Clone, Debug)]
+struct HeapState {
+    owner: &'static str,
+    order: HeapOrder,
+    values: Vec<Value>,
+}
+
 pub(crate) fn install_container_heap(globals: &mut Vec<(&'static str, Value)>) {
     for (short, call) in [
         ("push", builtin_heap_push as BuiltinFnPub),
@@ -115,6 +135,199 @@ pub(crate) fn install_container_heap(globals: &mut Vec<(&'static str, Value)>) {
     ] {
         let q: &'static str = Box::leak(format!("heap::{short}").into_boxed_str());
         globals.push((q, crate::builtins::builtin_pub(q, call)));
+    }
+    for (name, call) in [
+        ("BinaryHeap::new", builtin_max_heap_new as BuiltinFnPub),
+        ("collections::BinaryHeap::new", builtin_max_heap_new),
+        ("BinaryHeap::from", builtin_max_heap_from),
+        ("collections::BinaryHeap::from", builtin_max_heap_from),
+        ("MaxHeap::new", builtin_max_heap_new),
+        ("collections::MaxHeap::new", builtin_max_heap_new),
+        ("MaxHeap::from", builtin_max_heap_from),
+        ("collections::MaxHeap::from", builtin_max_heap_from),
+        ("MaxHeap::push", builtin_binary_heap_push),
+        ("MaxHeap::pop", builtin_binary_heap_pop),
+        ("MaxHeap::peek", builtin_binary_heap_peek),
+        ("MaxHeap::len", builtin_binary_heap_len),
+        ("MaxHeap::is_empty", builtin_binary_heap_is_empty),
+        ("MaxHeap::clear", builtin_binary_heap_clear),
+        ("MinHeap::new", builtin_min_heap_new),
+        ("collections::MinHeap::new", builtin_min_heap_new),
+        ("MinHeap::from", builtin_min_heap_from),
+        ("collections::MinHeap::from", builtin_min_heap_from),
+        ("MinHeap::push", builtin_binary_heap_push),
+        ("MinHeap::pop", builtin_binary_heap_pop),
+        ("MinHeap::peek", builtin_binary_heap_peek),
+        ("MinHeap::len", builtin_binary_heap_len),
+        ("MinHeap::is_empty", builtin_binary_heap_is_empty),
+        ("MinHeap::clear", builtin_binary_heap_clear),
+        ("BinaryHeap::push", builtin_binary_heap_push),
+        ("BinaryHeap::pop", builtin_binary_heap_pop),
+        ("BinaryHeap::peek", builtin_binary_heap_peek),
+        ("BinaryHeap::len", builtin_binary_heap_len),
+        ("BinaryHeap::is_empty", builtin_binary_heap_is_empty),
+        ("BinaryHeap::clear", builtin_binary_heap_clear),
+    ] {
+        globals.push((name, crate::builtins::builtin_pub(name, call)));
+    }
+}
+
+fn next_binary_heap_handle() -> i64 {
+    NEXT_BINARY_HEAP_HANDLE.with(|c| {
+        let mut v = c.borrow_mut();
+        let id = *v;
+        *v += 1;
+        id
+    })
+}
+
+fn binary_heap_handle(owner: &'static str, id: i64) -> Value {
+    Value::struct_(owner, vec![("__heap", Value::Int(id))])
+}
+
+fn binary_heap_id_of(value: &Value) -> Option<i64> {
+    if let Value::Struct(inner) = value
+        && matches!(inner.name.as_str(), "BinaryHeap" | "MaxHeap" | "MinHeap")
+    {
+        for (name, field) in &inner.fields {
+            if *name == "__heap"
+                && let Value::Int(id) = field
+            {
+                return Some(*id);
+            }
+        }
+    }
+    None
+}
+
+pub(crate) fn binary_heap_snapshot(value: &Value) -> Option<Vec<Value>> {
+    let id = binary_heap_id_of(value)?;
+    BINARY_HEAP_REGISTRY.with(|r| r.borrow().get(&id).map(|state| state.values.clone()))
+}
+
+fn max_heap_sift_up(xs: &mut [i64], mut i: usize) {
+    while i > 0 {
+        let parent = (i - 1) / 2;
+        if xs[parent] < xs[i] {
+            xs.swap(parent, i);
+            i = parent;
+        } else {
+            break;
+        }
+    }
+}
+
+fn max_heap_sift_down(xs: &mut [i64], mut i: usize) {
+    loop {
+        let l = 2 * i + 1;
+        let r = 2 * i + 2;
+        let mut largest = i;
+        if l < xs.len() && xs[l] > xs[largest] {
+            largest = l;
+        }
+        if r < xs.len() && xs[r] > xs[largest] {
+            largest = r;
+        }
+        if largest == i {
+            break;
+        }
+        xs.swap(largest, i);
+        i = largest;
+    }
+}
+
+fn max_heap_push(xs: &mut Vec<i64>, value: i64) {
+    xs.push(value);
+    let start = xs.len() - 1;
+    max_heap_sift_up(xs, start);
+}
+
+fn max_heap_pop(xs: &mut Vec<i64>) -> Option<i64> {
+    if xs.is_empty() {
+        return None;
+    }
+    let root = xs[0];
+    let last = xs.pop().unwrap_or(root);
+    if !xs.is_empty() {
+        xs[0] = last;
+        max_heap_sift_down(xs, 0);
+    }
+    Some(root)
+}
+
+fn binary_heap_ordering(
+    a: &Value,
+    b: &Value,
+    order: HeapOrder,
+) -> RuntimeResult<std::cmp::Ordering> {
+    match order {
+        HeapOrder::Max => crate::vm::value_ordering(a, b),
+        HeapOrder::Min => crate::vm::value_ordering(b, a),
+    }
+}
+
+fn binary_heap_sift_up(xs: &mut [Value], mut i: usize, order: HeapOrder) -> RuntimeResult<()> {
+    while i > 0 {
+        let parent = (i - 1) / 2;
+        if binary_heap_ordering(&xs[parent], &xs[i], order)?.is_lt() {
+            xs.swap(parent, i);
+            i = parent;
+        } else {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn binary_heap_sift_down(xs: &mut [Value], mut i: usize, order: HeapOrder) -> RuntimeResult<()> {
+    loop {
+        let l = 2 * i + 1;
+        let r = 2 * i + 2;
+        let mut largest = i;
+        if l < xs.len() && binary_heap_ordering(&xs[largest], &xs[l], order)?.is_lt() {
+            largest = l;
+        }
+        if r < xs.len() && binary_heap_ordering(&xs[largest], &xs[r], order)?.is_lt() {
+            largest = r;
+        }
+        if largest == i {
+            break;
+        }
+        xs.swap(largest, i);
+        i = largest;
+    }
+    Ok(())
+}
+
+fn binary_heap_push_value(
+    xs: &mut Vec<Value>,
+    value: Value,
+    order: HeapOrder,
+) -> RuntimeResult<()> {
+    xs.push(value);
+    let start = xs.len() - 1;
+    binary_heap_sift_up(xs, start, order)
+}
+
+fn binary_heap_pop_value(xs: &mut Vec<Value>, order: HeapOrder) -> RuntimeResult<Option<Value>> {
+    if xs.is_empty() {
+        return Ok(None);
+    }
+    let root = xs[0].clone();
+    let last = xs.pop().unwrap_or_else(|| root.clone());
+    if !xs.is_empty() {
+        xs[0] = last;
+        binary_heap_sift_down(xs, 0, order)?;
+    }
+    Ok(Some(root))
+}
+
+fn heap_extract_values(v: &Value) -> Vec<Value> {
+    match v {
+        Value::Array(arr) => arr.as_ref().clone(),
+        Value::IntArray(arr) => arr.iter().map(|&n| Value::Int(n)).collect(),
+        Value::FloatVec(arr) => arr.iter().map(|&n| Value::Float(n)).collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -159,6 +372,131 @@ pub(crate) fn builtin_heap_peek(args: &[Value]) -> RuntimeResult<Value> {
 pub(crate) fn builtin_heap_len(args: &[Value]) -> RuntimeResult<Value> {
     let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
     Ok(Value::Int(gossamer_std::container_heap::len(&xs)))
+}
+
+fn binary_heap_new(owner: &'static str, order: HeapOrder) -> Value {
+    let id = next_binary_heap_handle();
+    BINARY_HEAP_REGISTRY.with(|r| {
+        r.borrow_mut().insert(
+            id,
+            HeapState {
+                owner,
+                order,
+                values: Vec::new(),
+            },
+        );
+    });
+    binary_heap_handle(owner, id)
+}
+
+fn binary_heap_from(args: &[Value], owner: &'static str, order: HeapOrder) -> RuntimeResult<Value> {
+    let id = next_binary_heap_handle();
+    let mut heap = Vec::new();
+    for value in heap_extract_values(args.first().unwrap_or(&Value::Unit)) {
+        binary_heap_push_value(&mut heap, value, order)?;
+    }
+    BINARY_HEAP_REGISTRY.with(|r| {
+        r.borrow_mut().insert(
+            id,
+            HeapState {
+                owner,
+                order,
+                values: heap,
+            },
+        );
+    });
+    Ok(binary_heap_handle(owner, id))
+}
+
+fn builtin_max_heap_new(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(binary_heap_new("MaxHeap", HeapOrder::Max))
+}
+
+fn builtin_min_heap_new(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(binary_heap_new("MinHeap", HeapOrder::Min))
+}
+
+fn builtin_max_heap_from(args: &[Value]) -> RuntimeResult<Value> {
+    binary_heap_from(args, "MaxHeap", HeapOrder::Max)
+}
+
+fn builtin_min_heap_from(args: &[Value]) -> RuntimeResult<Value> {
+    binary_heap_from(args, "MinHeap", HeapOrder::Min)
+}
+
+fn builtin_binary_heap_push(args: &[Value]) -> RuntimeResult<Value> {
+    let handle = args.first().cloned().unwrap_or(Value::Unit);
+    let Some(id) = binary_heap_id_of(&handle) else {
+        return Ok(Value::Unit);
+    };
+    let value = args.get(1).cloned().unwrap_or(Value::Unit);
+    BINARY_HEAP_REGISTRY.with(|r| {
+        if let Some(state) = r.borrow_mut().get_mut(&id) {
+            binary_heap_push_value(&mut state.values, value, state.order)
+        } else {
+            Ok(())
+        }
+    })?;
+    Ok(Value::Unit)
+}
+
+fn builtin_binary_heap_pop(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(binary_heap_id_of) else {
+        return Ok(none_variant());
+    };
+    let result = BINARY_HEAP_REGISTRY.with(|r| {
+        let mut registry = r.borrow_mut();
+        match registry.get_mut(&id) {
+            Some(state) => binary_heap_pop_value(&mut state.values, state.order),
+            None => Ok(None),
+        }
+    })?;
+    Ok(result.map_or_else(none_variant, some_variant))
+}
+
+fn builtin_binary_heap_peek(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(binary_heap_id_of) else {
+        return Ok(none_variant());
+    };
+    let result = BINARY_HEAP_REGISTRY.with(|r| {
+        r.borrow()
+            .get(&id)
+            .and_then(|state| state.values.first().cloned())
+    });
+    Ok(result.map_or_else(none_variant, some_variant))
+}
+
+fn builtin_binary_heap_len(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(binary_heap_id_of) else {
+        return Ok(Value::Int(0));
+    };
+    let len =
+        BINARY_HEAP_REGISTRY.with(|r| r.borrow().get(&id).map_or(0, |state| state.values.len()));
+    Ok(Value::Int(len as i64))
+}
+
+fn builtin_binary_heap_is_empty(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(binary_heap_id_of) else {
+        return Ok(Value::Bool(true));
+    };
+    let empty = BINARY_HEAP_REGISTRY.with(|r| {
+        r.borrow()
+            .get(&id)
+            .is_none_or(|state| state.values.is_empty())
+    });
+    Ok(Value::Bool(empty))
+}
+
+fn builtin_binary_heap_clear(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(binary_heap_id_of) else {
+        return Ok(Value::Unit);
+    };
+    BINARY_HEAP_REGISTRY.with(|r| {
+        if let Some(state) = r.borrow_mut().get_mut(&id) {
+            state.values.clear();
+        }
+    });
+    Ok(Value::Unit)
 }
 
 #[cfg(test)]

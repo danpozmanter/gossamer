@@ -184,7 +184,11 @@ pub(crate) fn walk_expr(expr: &Expr, visitor: &mut dyn FnMut(&Expr)) {
                 walk_expr(e, visitor);
             }
         }
-        ExprKind::Array(array) | ExprKind::FixedArray(array) => match array {
+        ExprKind::Array(array)
+        | ExprKind::FixedArray(array)
+        | ExprKind::QueueLiteral(array)
+        | ExprKind::MaxHeapLiteral(array)
+        | ExprKind::MinHeapLiteral(array) => match array {
             gossamer_ast::ArrayExpr::List(elems) => {
                 for e in elems {
                     walk_expr(e, visitor);

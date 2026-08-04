@@ -8,7 +8,9 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{
+    BTreeMap, BTreeSet, BinaryHeap as StdBinaryHeap, HashMap, HashSet, VecDeque,
+};
 
 /// Dense sequence used by Gossamer's `Vec<T>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,6 +98,140 @@ impl<'a, T> IntoIterator for &'a Vector<T> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Deque<T> {
     inner: VecDeque<T>,
+}
+
+/// Queue alias for Gossamer's `VecQueue<T>` spelling.
+pub type VecQueue<T> = Deque<T>;
+
+/// Max-heap wrapper.
+#[derive(Debug, Clone)]
+pub struct MaxHeap<T: Ord> {
+    inner: StdBinaryHeap<T>,
+}
+
+/// Compatibility spelling for a max heap.
+pub type BinaryHeap<T> = MaxHeap<T>;
+
+impl<T: Ord> MaxHeap<T> {
+    /// Empty max heap.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: StdBinaryHeap::new(),
+        }
+    }
+
+    /// Pushes a value.
+    pub fn push(&mut self, value: T) {
+        self.inner.push(value);
+    }
+
+    /// Removes and returns the largest value.
+    pub fn pop(&mut self) -> Option<T> {
+        self.inner.pop()
+    }
+
+    /// Borrows the largest value.
+    #[must_use]
+    pub fn peek(&self) -> Option<&T> {
+        self.inner.peek()
+    }
+
+    /// Current length.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Empty check.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Removes all values.
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
+}
+
+impl<T: Ord> Default for MaxHeap<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: Ord> From<Vec<T>> for MaxHeap<T> {
+    fn from(inner: Vec<T>) -> Self {
+        Self {
+            inner: StdBinaryHeap::from(inner),
+        }
+    }
+}
+
+/// Min-heap wrapper.
+#[derive(Debug, Clone)]
+pub struct MinHeap<T: Ord> {
+    inner: StdBinaryHeap<std::cmp::Reverse<T>>,
+}
+
+impl<T: Ord> MinHeap<T> {
+    /// Empty min heap.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: StdBinaryHeap::new(),
+        }
+    }
+
+    /// Pushes a value.
+    pub fn push(&mut self, value: T) {
+        self.inner.push(std::cmp::Reverse(value));
+    }
+
+    /// Removes and returns the smallest value.
+    pub fn pop(&mut self) -> Option<T> {
+        self.inner.pop().map(|value| value.0)
+    }
+
+    /// Borrows the smallest value.
+    #[must_use]
+    pub fn peek(&self) -> Option<&T> {
+        self.inner.peek().map(|value| &value.0)
+    }
+
+    /// Current length.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Empty check.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Removes all values.
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
+}
+
+impl<T: Ord> Default for MinHeap<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: Ord> From<Vec<T>> for MinHeap<T> {
+    fn from(inner: Vec<T>) -> Self {
+        let mut heap = Self::new();
+        for value in inner {
+            heap.push(value);
+        }
+        heap
+    }
 }
 
 impl<T> Deque<T> {

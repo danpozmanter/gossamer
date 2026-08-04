@@ -2763,6 +2763,12 @@ fn repr_value(value: &Value) -> String {
                 values.iter().map(repr_value).collect::<Vec<_>>().join(", ")
             )
         }
+        Value::Struct(inner) if inner.name.as_str() == "VecDeque" => repr_deque(value),
+        Value::Struct(inner)
+            if matches!(inner.name.as_str(), "BinaryHeap" | "MaxHeap" | "MinHeap") =>
+        {
+            repr_binary_heap(value, inner.name.as_str())
+        }
         Value::Struct(inner) => repr_struct(
             source_facing_nested_item_name(inner.name.as_str()),
             &inner.fields.to_vec(),
@@ -2801,6 +2807,23 @@ fn repr_value(value: &Value) -> String {
         Value::NativeEnum(owner) => repr_value(&native_enum_to_variant(owner)),
         _ => value.to_string(),
     }
+}
+
+fn repr_deque(value: &Value) -> String {
+    let values = crate::stdlib_builtins::deque::deque_snapshot(value).unwrap_or_default();
+    format!(
+        "VecDeque [{}]",
+        values.iter().map(repr_value).collect::<Vec<_>>().join(", ")
+    )
+}
+
+fn repr_binary_heap(value: &Value, owner: &str) -> String {
+    let values =
+        crate::stdlib_builtins::container_heap::binary_heap_snapshot(value).unwrap_or_default();
+    format!(
+        "{owner} [{}]",
+        values.iter().map(repr_value).collect::<Vec<_>>().join(", ")
+    )
 }
 
 fn repr_float(number: f64) -> String {

@@ -173,7 +173,32 @@ pub const COLLECTIONS: StdModule = StdModule {
         StdItem {
             name: "VecDeque",
             kind: StdItemKind::Type,
-            doc: "Double-ended queue backed by a ring buffer.",
+            doc: "Double-ended queue backed by a ring buffer. Phase 1 runtime support is `VecDeque<i64>`.",
+        },
+        StdItem {
+            name: "VecDequeue",
+            kind: StdItemKind::Type,
+            doc: "Alias for `VecDeque`.",
+        },
+        StdItem {
+            name: "VecQueue",
+            kind: StdItemKind::Type,
+            doc: "Alias for `VecDeque`; queue literals use `<[a, b]>`.",
+        },
+        StdItem {
+            name: "BinaryHeap",
+            kind: StdItemKind::Type,
+            doc: "Compatibility alias for `MaxHeap<i64>`.",
+        },
+        StdItem {
+            name: "MaxHeap",
+            kind: StdItemKind::Type,
+            doc: "Max heap. Phase 1 runtime support is `MaxHeap<i64>`; heap literals use `^[a, b]`.",
+        },
+        StdItem {
+            name: "MinHeap",
+            kind: StdItemKind::Type,
+            doc: "Min heap. Phase 1 runtime support is `MinHeap<i64>`; heap literals use `_[a, b]`.",
         },
         StdItem {
             name: "HashMap",
@@ -183,7 +208,7 @@ pub const COLLECTIONS: StdModule = StdModule {
         StdItem {
             name: "BTreeMap",
             kind: StdItemKind::Type,
-            doc: "Ordered map.",
+            doc: "Ordered map. Phase 1 runtime support is `BTreeMap<String, i64>`.",
         },
         StdItem {
             name: "HashSet",

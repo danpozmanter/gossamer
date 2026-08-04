@@ -12,7 +12,7 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_heap.rs) | `fn len(xs: Heap<i64>) -> i64` | Element count. |
-| [`peek`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_heap.rs) | `fn peek(xs: Heap<i64>) -> i64` | Smallest element of the heap, or 0 if empty. |
-| [`pop`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_heap.rs) | `fn pop(xs: Heap<i64>) -> Heap<i64>` | Drop the root from the heap; returns the new heap (use `peek` first to read the value). |
-| [`push`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_heap.rs) | `fn push(xs: Heap<i64>, value: i64) -> Heap<i64>` | Push an i64 onto the min-heap; returns the new heap. |
+| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_heap.rs) | `fn len(xs: Vec<i64>) -> i64` | Element count. |
+| [`peek`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_heap.rs) | `fn peek(xs: Vec<i64>) -> Option<i64>` | Smallest element of the heap, if present. |
+| [`pop`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_heap.rs) | `fn pop(xs: Vec<i64>) -> Vec<i64>` | Drop the root from the heap; returns the new heap (use `peek` first to read the value). |
+| [`push`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_heap.rs) | `fn push(xs: Vec<i64>, value: i64) -> Vec<i64>` | Push an i64 onto the min-heap; returns the new heap. |

@@ -745,13 +745,69 @@ fn repl_hashmap_literals_and_from_tuple_arrays_work() {
 
 #[test]
 fn repl_hashmap_from_rejects_map_literal_argument() {
-    let out = run_repl("let m: HashMap<String, i64> = HashMap::from({\"a\": 1})\n");
+    let out = run_repl(
+        "let m1 = {1: 2, 2: 3}\n\
+         let s1 = #{1, 2}\n\
+         let v4 = Vec::from(m1)\n\
+         let v5 = Vec::from(s1)\n\
+         let s4 = HashSet::from(m1)\n\
+         let s5 = HashSet::from(s1)\n\
+         let h: HashMap<String, i64> = HashMap::from({\"a\": 1})\n",
+    );
     assert!(out.success, "stderr: {}", out.stderr);
     assert!(
         out.stderr
             .contains("expected `fixed array of key-value tuples`, found `HashMap<String, i64>`"),
         "HashMap::from accepted a map literal argument: {}",
         out.stderr
+    );
+    assert!(
+        out.stderr
+            .matches("expected `array, slice, or Vec`, found `HashMap<i64, i64>`")
+            .count()
+            >= 2
+            && out
+                .stderr
+                .matches("expected `array, slice, or Vec`, found `HashSet<i64>`")
+                .count()
+                >= 2,
+        "collection ::from accepted incompatible source arguments: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn repl_btreemap_from_tuple_arrays_work() {
+    let out = run_repl(
+        "let mut m: BTreeMap<String, i64> = BTreeMap::from([(\"b\", 2), (\"a\", 1)])\n\
+         println(m.get(\"a\"))\n\
+         println(m.len())\n\
+         m.clear()\n\
+         println(m.is_empty())\n",
+    );
+    assert!(out.success, "stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Some(1)") && out.stdout.contains('2') && out.stdout.contains("true"),
+        "BTreeMap::from/method surface failed: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_vecdequeue_alias_and_vecdeque_clear_work() {
+    let out = run_repl(
+        "let mut d: VecDequeue<i64> = VecDequeue::new()\n\
+         d.push_front(2)\n\
+         d.push_back(3)\n\
+         println(d.pop_front())\n\
+         d.clear()\n\
+         println(d.is_empty())\n",
+    );
+    assert!(out.success, "stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Some(2)") && out.stdout.contains("true"),
+        "VecDequeue alias or VecDeque::clear failed: {}",
+        out.stdout
     );
 }
 
@@ -960,7 +1016,7 @@ fn repl_meta_info_does_not_render_keyword_documentation() {
 
 #[test]
 fn repl_info_lists_stdlib_namespaces_and_catalog_types() {
-    let out = run_repl("%i std -a\n%i std::archive\n%i database\n%i String -d\n");
+    let out = run_repl("%i std::bufio\n%i std::archive\n%i database\n%i String -d\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("std::bufio [module]")
@@ -1284,37 +1340,37 @@ fn repl_reference_rebind_rejects_temporaries_without_mutating_named_referents() 
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("a: [i64; 2] = [1, 2]"),
+        out.stdout.contains("a: [i64; 2] = #[1, 2]"),
         "immutable original binding changed or disappeared: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("b: [i64; 2] = [3, 4]"),
+        out.stdout.contains("b: [i64; 2] = #[3, 4]"),
         "immutable referent binding was overwritten by reference rebind: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("mut c: &[i64; 2] = &[3, 4]"),
+        out.stdout.contains("mut c: &[i64; 2] = &#[3, 4]"),
         "rejected temporary rebind did not preserve the named referent: {}",
         out.stdout
     );
     assert!(
-        !out.stdout.contains("b: [i64; 2] = [5, 6]"),
+        !out.stdout.contains("b: [i64; 2] = #[5, 6]"),
         "reference rebind leaked through and mutated immutable `b`: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("mut x: [i64; 2] = [10, 20]"),
+        out.stdout.contains("mut x: [i64; 2] = #[10, 20]"),
         "mutable reference rebind changed the old named referent: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("mut r: &mut [i64; 2] = &mut [30, 40]"),
+        out.stdout.contains("mut r: &mut [i64; 2] = &mut #[30, 40]"),
         "rejected mutable temporary rebind did not preserve the named referent: {}",
         out.stdout
     );
     assert!(
-        !out.stdout.contains("mut y: [i64; 2] = [50, 60]"),
+        !out.stdout.contains("mut y: [i64; 2] = #[50, 60]"),
         "mutable reference rebind leaked through and mutated old `y`: {}",
         out.stdout
     );
@@ -1345,12 +1401,12 @@ fn repl_cannot_mutate_immutable_value_through_mutable_reference_chain() {
         out.stderr
     );
     assert!(
-        out.stdout.contains("a: [i64; 2] = [1, 2]"),
+        out.stdout.contains("a: [i64; 2] = #[1, 2]"),
         "immutable source changed through the rejected alias chain: {}",
         out.stdout
     );
     assert!(
-        !out.stdout.contains("a: [i64; 2] = [0, 2]"),
+        !out.stdout.contains("a: [i64; 2] = #[0, 2]"),
         "immutable source was modified despite GT0031: {}",
         out.stdout
     );
@@ -1461,6 +1517,30 @@ fn repl_bindings_show_full_inferred_types() {
 }
 
 #[test]
+fn repl_bindings_render_collection_literal_spelling() {
+    let out = run_repl(
+        "let fixed = #[1, 3]\n\
+         let map = {\"a\": 1}\n\
+         let set = #{1, 2}\n\
+         let ordered: BTreeSet<i64> = #{2, 1}\n\
+         %bindings\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for expected in [
+        "fixed: [i64; 2] = #[1, 3]",
+        "map: HashMap<String, i64> = {\"a\": 1}",
+        "set: HashSet<i64> = #{1, 2}",
+        "ordered: BTreeSet<i64> = #{1, 2}",
+    ] {
+        assert!(
+            out.stdout.lines().any(|line| line == expected),
+            "%bindings omitted literal spelling `{expected}`: {}",
+            out.stdout
+        );
+    }
+}
+
+#[test]
 fn repl_bindings_preserve_reference_and_destructured_types() {
     let out = run_repl(
         "struct Pair { left: i64, right: String }\n\
@@ -1476,10 +1556,10 @@ fn repl_bindings_preserve_reference_and_destructured_types() {
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
-        "mut m: [i64; 4] = [1, 2, 3, 4]",
-        "shared: &[i64; 2] = &[5, 6]",
-        "mut n: [i64; 2] = [7, 8]",
-        "exclusive: &mut [i64; 2] = &mut [7, 8]",
+        "mut m: [i64; 4] = #[1, 2, 3, 4]",
+        "shared: &[i64; 2] = &#[5, 6]",
+        "mut n: [i64; 2] = #[7, 8]",
+        "exclusive: &mut [i64; 2] = &mut #[7, 8]",
         "a: i64 = 9",
         "b: String = \"ten\"",
         "left: i64 = 11",
@@ -1508,9 +1588,9 @@ fn repl_bindings_show_owner_after_mut_ref_and_deref_copy() {
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
-        "mut a: [i64; 3] = [1, 2, 3]",
-        "b: &mut [i64; 3] = &mut [1, 2, 3]",
-        "c: [i64; 3] = [1, 2, 3]",
+        "mut a: [i64; 3] = #[1, 2, 3]",
+        "b: &mut [i64; 3] = &mut #[1, 2, 3]",
+        "c: [i64; 3] = #[1, 2, 3]",
     ] {
         assert!(
             out.stdout.lines().any(|line| line == expected),
@@ -1657,7 +1737,7 @@ fn repl_rejects_push_on_fixed_array_binding() {
     assert!(
         out.stdout
             .lines()
-            .any(|line| line == "mut a: [i64; 3] = [1, 1, 1]"),
+            .any(|line| line == "mut a: [i64; 3] = #[1, 1, 1]"),
         "fixed array binding should remain fixed-size; stdout: {}",
         out.stdout
     );
@@ -1675,15 +1755,15 @@ fn repl_bindings_and_declarations_accept_regex_filters() {
          let beta_value = 22\n\
          fn AlphaFn(value: i64) -> i64 { value }\n\
          fn BetaFn(value: String) -> String { value }\n\
-         %bindings ^alpha.*i64.*11$\n\
-         %declarations Alpha.*i64\n",
+         %bindings ^alpha_value$\n\
+         %declarations ^AlphaFn$\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout
             .lines()
             .any(|line| line == "alpha_value: i64 = 11"),
-        "binding regex should match anywhere in rendered bindings: {}",
+        "binding regex should match binding names: {}",
         out.stdout
     );
     assert!(
@@ -1695,7 +1775,7 @@ fn repl_bindings_and_declarations_accept_regex_filters() {
         out.stdout
             .lines()
             .any(|line| line == "fn AlphaFn(value: i64) -> i64 { value }"),
-        "declaration regex should match anywhere in source text: {}",
+        "declaration regex should match declaration names: {}",
         out.stdout
     );
     assert!(
@@ -2585,57 +2665,32 @@ fn repl_meta_info_renders_matching_modules_once() {
 }
 
 #[test]
-fn repl_info_paginates_at_twenty_entries_without_a_final_page_prompt() {
-    let first = run_repl("%i String\n");
-    assert!(
-        first.success,
-        "repl should exit zero; stderr: {}",
-        first.stderr
-    );
-    assert!(
-        first.stdout.contains("(1-20 of "),
-        "first page should report its range: {}",
-        first.stdout
-    );
-    assert!(
-        first.stdout.contains("%i String -p 2"),
-        "first page should provide its next-page command: {}",
-        first.stdout
-    );
-
-    let all = run_repl("%i String -a\n");
-    assert!(all.success, "repl should exit zero; stderr: {}", all.stderr);
-    let total = all
+fn repl_info_lists_all_matches_without_pagination_prompt() {
+    let out = run_repl("%i String\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    let total = out
         .stdout
         .lines()
         .filter(|line| line.ends_with(']') && line.contains(" ["))
         .count();
+    assert!(total > 20, "String should list every match: {}", out.stdout);
     assert!(
-        total > 20,
-        "String should require multiple pages: {}",
-        all.stdout
-    );
-    let last_page = total.div_ceil(20);
-    let last = run_repl(&format!("%i String -p {last_page}\n"));
-    assert!(
-        last.success,
-        "repl should exit zero; stderr: {}",
-        last.stderr
-    );
-    assert!(
-        !last.stdout.contains("Use `%i String -p"),
-        "the final page must not offer another page: {}",
-        last.stdout
+        !out.stdout.contains("Use `%i String -p"),
+        "pagination prompt should be gone: {}",
+        out.stdout
     );
 }
 
 #[test]
-fn repl_listing_commands_accept_long_all_option() {
+fn repl_listing_commands_reject_removed_pagination_options() {
     let out = run_repl("let answer = 42\n%i iter --all\n%b --all\n%d --all\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        !out.stderr.contains("unknown option") && !out.stderr.contains("usage:"),
-        "--all should be accepted by listing commands: {}",
+        out.stderr
+            .matches("pagination options were removed; use a pattern to filter results")
+            .count()
+            >= 3,
+        "removed pagination options should be rejected: {}",
         out.stderr
     );
 }
@@ -2765,6 +2820,43 @@ fn repl_meta_help_covers_builtin_receiver_types() {
     assert!(
         out.stderr.is_empty(),
         "builtin receiver metadata lookups should not fail: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn repl_meta_info_covers_payload_and_sequence_method_gaps() {
+    let out = run_repl(
+        "%i unwrap -d\n\
+         %i Result::unwrap_or -d\n\
+         %i Option::ok_or -d\n\
+         %i Vec::take_while -d\n\
+         %i Vec::iter -d\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for expected in [
+        "Option::unwrap<T>(self: Option<T>) -> T [method]",
+        "Result::unwrap<T, E>(self: Result<T, E>) -> T [method]",
+        "Result::unwrap_or<T, E>(self: Result<T, E>, fallback: T) -> T [method]",
+        "Option::ok_or<T, E>(self: Option<T>, err: E) -> Result<T, E> [method]",
+        "Vec::take_while<T>(self: Vec<T>, f: fn(T) -> bool) -> Vec<T> [method]",
+        "Vec::iter<T>(self: Vec<T>) -> Iterator<T> [method]",
+    ] {
+        assert!(
+            out.stdout.contains(expected),
+            "missing `{expected}` from method metadata output: {}",
+            out.stdout
+        );
+    }
+    assert!(
+        !out.stdout.contains("Result::unwrap_or [method]")
+            && !out.stdout.contains("Vec::take_while [method]"),
+        "method metadata must not fall back to bare names: {}",
+        out.stdout
+    );
+    assert!(
+        out.stderr.is_empty(),
+        "method metadata lookups should not fail: {}",
         out.stderr
     );
 }
@@ -2954,6 +3046,23 @@ fn repl_meta_info_for_shared_method_name_does_not_append_an_owner_listing() {
         "%i should not append the arbitrary BTreeMap listing: {}",
         out.stdout
     );
+}
+
+#[test]
+fn repl_meta_info_exact_short_name_still_matches_full_paths() {
+    let out = run_repl("%i scan\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for expected in [
+        "Scanner::scan [method]",
+        "bufio::Scanner::scan [method]",
+        "std::iter::scan<",
+    ] {
+        assert!(
+            out.stdout.contains(expected),
+            "%i scan omitted `{expected}`: {}",
+            out.stdout
+        );
+    }
 }
 
 #[test]
@@ -3322,6 +3431,34 @@ fn repl_persists_map_set_and_deque_mutations() {
     assert!(
         !out.stdout.contains("HashSet {"),
         "set mutators leaked the internal handle: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_renders_queue_and_heap_literals_in_bindings() {
+    let out = run_repl(
+        "let q = <[1, 2, 3]>\nlet max = ^[1, 2, 3]\nlet min = _[1, 2, 3]\n%b\nmax.peek()\nmin.peek()\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("q: VecDeque<i64> = <[1, 2, 3]>"),
+        "queue literal did not render through %b: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("max: MaxHeap<i64> = ^["),
+        "max heap literal did not render through %b: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("min: MinHeap<i64> = _["),
+        "min heap literal did not render through %b: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("Some(3)") && out.stdout.contains("Some(1)"),
+        "max heap peek should return largest value: {}",
         out.stdout
     );
 }

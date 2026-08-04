@@ -381,12 +381,14 @@ impl<'a> Builder<'a> {
                 self.tcx.bool_ty()
             }
             "gos_rt_str_len"
+            | "gos_rt_str_byte_len"
             | "gos_rt_str_byte_at"
             | "gos_rt_arr_len"
             | "gos_rt_len"
             | "gos_rt_map_len"
             | "gos_rt_map_get_i64"
             | "gos_rt_map_get_str_i64"
+            | "gos_rt_map_get_typed_str_i64"
             | "gos_rt_json_as_i64"
             | "gos_rt_json_len"
             | "gos_rt_http_response_status"
@@ -398,8 +400,11 @@ impl<'a> Builder<'a> {
             // instead of treating it as a scalar.
             "gos_rt_map_get_or_i64"
             | "gos_rt_map_get_or_str_i64"
+            | "gos_rt_map_get_or_typed_str_i64"
             | "gos_rt_map_or_insert_i64_i64"
-            | "gos_rt_map_or_insert_str_i64" => {
+            | "gos_rt_map_or_insert_str_i64"
+            | "gos_rt_map_or_insert_typed_str_i64"
+            | "gos_rt_map_inc_typed_str_i64" => {
                 let value_ty = self.hash_map_kv_tys(receiver_ty).map(|(_, v)| v);
                 match value_ty.map(|v| self.tcx.kind_of(v).clone()) {
                     Some(TyKind::Vec(_) | TyKind::Slice(_)) => {
@@ -518,7 +523,8 @@ impl<'a> Builder<'a> {
             | "gos_rt_netip_is_private"
             | "gos_rt_mime_is_valid"
             | "gos_rt_toml_is_valid"
-            | "gos_rt_yaml_is_valid" => self.tcx.bool_ty(),
+            | "gos_rt_yaml_is_valid"
+            | "gos_rt_bheap_is_empty" => self.tcx.bool_ty(),
             "gos_rt_os_user_current_uid"
             | "gos_rt_os_user_current_gid"
             | "gos_rt_os_user_lookup_name"
@@ -550,8 +556,13 @@ impl<'a> Builder<'a> {
             | "gos_rt_vec_get_opt"
             | "gos_rt_vec_last"
             | "gos_rt_vec_pop_opt"
+            | "gos_rt_bheap_max_peek_i64"
+            | "gos_rt_bheap_max_pop_i64"
+            | "gos_rt_bheap_min_peek_i64"
+            | "gos_rt_bheap_min_pop_i64"
             | "gos_rt_map_pop_i64"
             | "gos_rt_map_pop_str"
+            | "gos_rt_map_pop_typed_str"
             | "gos_rt_deque_pop_front" => {
                 use gossamer_types::TyKind;
                 if matches!(self.tcx.kind_of(ty), TyKind::Adt { .. }) {
@@ -593,9 +604,11 @@ impl<'a> Builder<'a> {
             // `p.field` lowers as a Ref<Struct> field projection.
             "gos_rt_map_get_i64_opt"
             | "gos_rt_map_get_str_opt"
+            | "gos_rt_map_get_typed_str_opt"
             | "gos_rt_map_insert_i64_i64_opt"
             | "gos_rt_map_insert_i64_str_opt"
             | "gos_rt_map_insert_str_i64_opt"
+            | "gos_rt_map_insert_typed_str_i64_opt"
             | "gos_rt_map_insert_str_str_opt" => {
                 use gossamer_types::TyKind;
                 let ty_kind = self.tcx.kind_of(ty).clone();
@@ -620,6 +633,10 @@ impl<'a> Builder<'a> {
             }
             // `path::extension` returns `Option<String>`.
             "gos_rt_path_ext" => self.option_string_adt_ty(),
+            "gos_rt_path_components" | "gos_rt_path_prefixes" => {
+                let s = self.tcx.string_ty();
+                self.tcx.intern(TyKind::Vec(s))
+            }
             "gos_rt_vec_slice_result" | "gos_rt_intarr_slice_result" => {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let v = self.tcx.intern(gossamer_types::TyKind::Vec(i));
@@ -693,6 +710,13 @@ impl<'a> Builder<'a> {
             "gos_rt_vec_reversed"
             | "gos_rt_bheap_push_i64"
             | "gos_rt_bheap_pop_i64"
+            | "gos_rt_bheap_max_push_i64"
+            | "gos_rt_bheap_max_from_vec_i64"
+            | "gos_rt_bheap_max_new_i64"
+            | "gos_rt_bheap_min_push_i64"
+            | "gos_rt_bheap_min_from_vec_i64"
+            | "gos_rt_bheap_min_new_i64"
+            | "gos_rt_bheap_clear"
             | "gos_rt_vec_pop_front_i64"
             | "gos_rt_vec_pop_back_i64"
             | "gos_rt_vec_push_front_i64"
@@ -844,8 +868,10 @@ impl<'a> Builder<'a> {
             | "gos_rt_map_remove"
             | "gos_rt_map_remove_i64"
             | "gos_rt_map_remove_str"
+            | "gos_rt_map_remove_typed_str"
             | "gos_rt_map_contains_key_i64"
             | "gos_rt_map_contains_key_str"
+            | "gos_rt_map_contains_key_typed_str"
             | "gos_rt_json_is_null"
             | "gos_rt_json_as_bool"
             | "gos_rt_error_is"

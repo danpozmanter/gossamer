@@ -767,6 +767,87 @@ fn lifted_iter_map_closure_param_keeps_string_type() {
 }
 
 #[test]
+fn lifted_closure_destructures_tuple_parameter_before_body() {
+    let source = "fn main() {\n\
+                  let values = [1, 2, 3, 4]\n\
+                  let shifted = values.enumerate().map(|(i, value)| value + i)\n\
+                  let _ = shifted\n\
+                  }\n";
+    let (bodies, _) = build_with_lift(source);
+    let main = bodies.iter().find(|b| b.name == "main").expect("main");
+    let names = call_names(main);
+    assert!(
+        names.iter().any(|name| name == "gos_rt_iter_enumerate_i64"),
+        "method-form enumerate must lower through the typed runtime shim: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|name| name == "enumerate"),
+        "method-form enumerate must not lower to an unresolved callee: {names:?}"
+    );
+    let lifted = bodies
+        .iter()
+        .find(|b| b.name.starts_with("__closure_"))
+        .expect("lifted closure body");
+    assert_eq!(lifted.arity, 1, "destructured closure has one tuple param");
+    for expected in ["i", "value"] {
+        assert!(
+            lifted.locals.iter().any(|local| {
+                local
+                    .debug_name
+                    .as_ref()
+                    .is_some_and(|name| name.name == expected)
+            }),
+            "lifted closure must bind destructured local `{expected}`: {lifted:#?}"
+        );
+    }
+}
+
+#[test]
+fn native_lowers_chunks_and_tuple_get_method_forms() {
+    let source = "fn main() {\n\
+                  let input = \"0222112222120000\"\n\
+                  let layers = input.chars().chunks(4)\n\
+                  let min_layer_idx = layers\n\
+                  .map(|layer| layer.count_of('0'))\n\
+                  .enumerate()\n\
+                  .min_by_key(|t| t.1)\n\
+                  .unwrap()\n\
+                  .get(0)\n\
+                  .unwrap()\n\
+                  let pixels = (0..4).map(|idx| \"#\")\n\
+                  pixels.chunks(2).map(|chunk| chunk.join(\"\")).for_each(println)\n\
+                  let _ = min_layer_idx\n\
+                  }\n";
+    let (bodies, _) = build_with_lift(source);
+    let main = bodies.iter().find(|b| b.name == "main").expect("main");
+    let names = call_names(main);
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "gos_rt_iter_chunk_by_size_i64"),
+        "method-form chunks must lower through the typed runtime shim: {names:?}"
+    );
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "gos_rt_iter_min_by_key_ptr"),
+        "min_by_key over enumerate tuples must use the aggregate runtime shim: {names:?}"
+    );
+    assert!(
+        gos_fn_addr_targets(main)
+            .iter()
+            .any(|name| name == "gos_rt_println_fn_str_word"),
+        "println as a String callback must lower to a callable runtime shim: {names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|name| name == "chunks" || name == "get" || name == "println"),
+        "method forms and function values must not lower to unresolved callees: {names:?}"
+    );
+}
+
+#[test]
 fn result_map_err_free_call_lowers_to_runtime_shim() {
     // `result::map_err(f, r)` (the piped/free form) must lower to the
     // `gos_rt_result_map_err` shim instead of an undefined
@@ -1649,6 +1730,23 @@ fn std_fn_value_iter_map_resolves_to_runtime_symbol() {
     );
     assert!(
         !strings.iter().any(|s| s == "strings::to_uppercase"),
+        "source path must not leak into MIR: {strings:?}"
+    );
+}
+
+#[test]
+fn path_prefixes_free_function_lowers_to_runtime_symbol() {
+    let source = "use std::path\n\
+                  fn main() { let ps = path::prefixes(\"/a//b\")\nlet _ = ps }";
+    let (bodies, _) = build_with_lift(source);
+    let main = bodies.iter().find(|b| b.name == "main").expect("main");
+    let strings = call_names(main);
+    assert!(
+        strings.iter().any(|s| s == "gos_rt_path_prefixes"),
+        "expected the runtime symbol in MIR: {strings:?}"
+    );
+    assert!(
+        !strings.iter().any(|s| s == "path::prefixes"),
         "source path must not leak into MIR: {strings:?}"
     );
 }

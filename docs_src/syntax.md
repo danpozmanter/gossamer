@@ -251,9 +251,12 @@ Gossamer follows Rust's sequence model:
   `[a, b]` create Vec values by default.
 - `{key: value}` creates a `HashMap<K, V>`, and `#{a, b}` creates a
   `HashSet<T>` unless an expected `BTreeSet<T>` type shapes it.
+- `<[a, b]>` creates a `VecDeque<i64>` queue, `^[a, b]` creates a
+  `MaxHeap<i64>`, and `_[a, b]` creates a `MinHeap<i64>` in Phase 1.
 
 See [Collection literals](collection_literals.md) for examples of Vec,
-fixed-array, HashMap, HashSet, and BTreeSet construction.
+fixed-array, HashMap, HashSet, BTreeSet, VecDeque, MaxHeap, and MinHeap
+construction.
 
 `&[T; N]` and `&Vec<T>` coerce to `&[T]`; their mutable forms coerce to
 `&mut [T]`. Arrays and slices support queries and non-resizing operations.

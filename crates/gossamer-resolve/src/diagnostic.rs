@@ -50,10 +50,10 @@ pub enum ResolveError {
         /// Namespace where the name actually lives.
         found: &'static str,
     },
-    /// A `use std::...` path that names no stdlib module.
-    #[error("module `std::{path}` does not exist")]
+    /// A `use` path that names no stdlib module or registered external item.
+    #[error("module `{path}` does not exist")]
     UnknownModulePath {
-        /// The path as written (without the `std::` prefix).
+        /// The path as written.
         path: String,
     },
     /// Two items in the same module share a name.
@@ -141,7 +141,7 @@ impl ResolveDiagnostic {
                     "use a {expected} in this position; `{name}` resolves to a {found}"
                 )),
                 ResolveError::UnknownModulePath { path } => out.with_help(format!(
-                    "check `std::{path}` against the standard library module list or import the owning module"
+                    "check `{path}` against the standard library module list or registered external items"
                 )),
                 ResolveError::DuplicateItem { name } => out.with_help(format!(
                     "rename or remove one `{name}` declaration in this module"

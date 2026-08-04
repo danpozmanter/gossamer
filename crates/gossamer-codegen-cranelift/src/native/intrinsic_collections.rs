@@ -1291,13 +1291,14 @@ pub(super) fn lower_intrinsic_call_collections(
             );
             Ok(true)
         }
-        "gos_rt_map_insert_str_i64" => {
-            let ins_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_map_insert_str_i64",
-                &[ptr_ty, ptr_ty, types::I64],
-                &[],
-            )?;
+        "gos_rt_map_insert_str_i64" | "gos_rt_map_insert_typed_str_i64" => {
+            let symbol = if name == "gos_rt_map_insert_typed_str_i64" {
+                "gos_rt_map_insert_typed_str_i64"
+            } else {
+                "gos_rt_map_insert_str_i64"
+            };
+            let ins_fn =
+                intrinsics.extern_fn(module, symbol, &[ptr_ty, ptr_ty, types::I64], &[])?;
             let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
             let k_val = match args.get(1) {
                 Some(a) => lower_operand(
@@ -1329,13 +1330,13 @@ pub(super) fn lower_intrinsic_call_collections(
             );
             Ok(true)
         }
-        "gos_rt_map_get_str_i64" => {
-            let get_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_map_get_str_i64",
-                &[ptr_ty, ptr_ty],
-                &[types::I64],
-            )?;
+        "gos_rt_map_get_str_i64" | "gos_rt_map_get_typed_str_i64" => {
+            let symbol = if name == "gos_rt_map_get_typed_str_i64" {
+                "gos_rt_map_get_typed_str_i64"
+            } else {
+                "gos_rt_map_get_str_i64"
+            };
+            let get_fn = intrinsics.extern_fn(module, symbol, &[ptr_ty, ptr_ty], &[types::I64])?;
             let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
             let k_val = match args.get(1) {
                 Some(a) => lower_operand(
@@ -1441,13 +1442,13 @@ pub(super) fn lower_intrinsic_call_collections(
             );
             Ok(true)
         }
-        "gos_rt_map_contains_key_str" => {
-            let ck_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_map_contains_key_str",
-                &[ptr_ty, ptr_ty],
-                &[types::I8],
-            )?;
+        "gos_rt_map_contains_key_str" | "gos_rt_map_contains_key_typed_str" => {
+            let symbol = if name == "gos_rt_map_contains_key_typed_str" {
+                "gos_rt_map_contains_key_typed_str"
+            } else {
+                "gos_rt_map_contains_key_str"
+            };
+            let ck_fn = intrinsics.extern_fn(module, symbol, &[ptr_ty, ptr_ty], &[types::I8])?;
             let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
             let k_val = match args.get(1) {
                 Some(a) => lower_operand(
@@ -1474,13 +1475,13 @@ pub(super) fn lower_intrinsic_call_collections(
             );
             Ok(true)
         }
-        "gos_rt_map_remove_str" => {
-            let rm_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_map_remove_str",
-                &[ptr_ty, ptr_ty],
-                &[types::I8],
-            )?;
+        "gos_rt_map_remove_str" | "gos_rt_map_remove_typed_str" => {
+            let symbol = if name == "gos_rt_map_remove_typed_str" {
+                "gos_rt_map_remove_typed_str"
+            } else {
+                "gos_rt_map_remove_str"
+            };
+            let rm_fn = intrinsics.extern_fn(module, symbol, &[ptr_ty, ptr_ty], &[types::I8])?;
             let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
             let k_val = match args.get(1) {
                 Some(a) => lower_operand(

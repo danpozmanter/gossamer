@@ -895,6 +895,9 @@ impl<'a> Lowerer<'a> {
             "HashMap::new"
                 | "collections::HashMap::new"
                 | "std::collections::HashMap::new"
+                | "BTreeMap::new"
+                | "collections::BTreeMap::new"
+                | "std::collections::BTreeMap::new"
                 | "gos_rt_map_new"
         ) {
             declare_rt(&mut self.runtime_refs, "gos_rt_map_new");
@@ -963,7 +966,12 @@ impl<'a> Lowerer<'a> {
         }
         if matches!(
             name.as_str(),
-            "HashMap::from" | "collections::HashMap::from" | "std::collections::HashMap::from"
+            "HashMap::from"
+                | "collections::HashMap::from"
+                | "std::collections::HashMap::from"
+                | "BTreeMap::from"
+                | "collections::BTreeMap::from"
+                | "std::collections::BTreeMap::from"
         ) && args.len() == 1
         {
             self.lower_hashmap_from_array(&args[0], destination, target)?;

@@ -4,7 +4,7 @@
 // value inserts the default once and hands back the stored entry.
 // Named format captures walk field / tuple-index paths ({a.balance},
 // {t.0}, {o.inner.hits:>4}).
-use std::collections::{BTreeMap, HashMap}
+use std::collections::HashMap
 
 struct Account { balance: i64, txns: i64 }
 impl Account {
@@ -19,7 +19,7 @@ struct Outer { inner: Rec }
 
 fn main() {
     let txs = [("alice", 100), ("bob", 50), ("alice", -30), ("carol", 200), ("bob", -20), ("alice", 40)]
-    let mut accounts = BTreeMap::new()
+    let mut accounts = HashMap::new()
     for (name, amount) in txs {
         accounts.or_insert(name, Account { balance: 0, txns: 0 }).apply(amount)
     }

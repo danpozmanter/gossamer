@@ -770,7 +770,10 @@ impl Lowerer<'_> {
             }
             AstExprKind::Path(path) => self.lower_path_expr(expr.id, path),
             AstExprKind::Call { callee, args } => {
-                if let Some(lowered) = self.lower_tuple_struct_call(callee, args, expr.span) {
+                if let Some(lowered) = self.lower_reverse_call(callee, args, expr.span) {
+                    lowered
+                } else if let Some(lowered) = self.lower_tuple_struct_call(callee, args, expr.span)
+                {
                     lowered
                 } else {
                     HirExprKind::Call {
@@ -880,6 +883,18 @@ impl Lowerer<'_> {
             AstExprKind::SetLiteral(entries) => {
                 let set_ty = self.ty_of(expr.id);
                 self.lower_set_literal(entries, expr.span, set_ty)
+            }
+            AstExprKind::QueueLiteral(arr) => {
+                let queue_ty = self.ty_of(expr.id);
+                self.lower_collection_array_literal("VecDeque", arr, expr.span, queue_ty)
+            }
+            AstExprKind::MaxHeapLiteral(arr) => {
+                let heap_ty = self.ty_of(expr.id);
+                self.lower_collection_array_literal("MaxHeap", arr, expr.span, heap_ty)
+            }
+            AstExprKind::MinHeapLiteral(arr) => {
+                let heap_ty = self.ty_of(expr.id);
+                self.lower_collection_array_literal("MinHeap", arr, expr.span, heap_ty)
             }
             AstExprKind::Array(arr) | AstExprKind::FixedArray(arr) => {
                 HirExprKind::Array(self.lower_array(arr))
@@ -1791,6 +1806,49 @@ impl Lowerer<'_> {
         })
     }
 
+    fn lower_reverse_call(
+        &mut self,
+        callee: &AstExpr,
+        args: &[AstExpr],
+        span: Span,
+    ) -> Option<HirExprKind> {
+        let AstExprKind::Path(path) = &callee.kind else {
+            return None;
+        };
+        if path.segments.len() != 1 || path.segments[0].name.name != "Reverse" || args.len() != 1 {
+            return None;
+        }
+        let error_ty = self.error_ty();
+        let string_ty = self.error_ty();
+        let struct_args = vec![
+            HirExpr {
+                id: self.fresh(),
+                span,
+                ty: string_ty,
+                kind: HirExprKind::Literal(HirLiteral::String("Reverse".to_string())),
+            },
+            HirExpr {
+                id: self.fresh(),
+                span,
+                ty: string_ty,
+                kind: HirExprKind::Literal(HirLiteral::String("0".to_string())),
+            },
+            self.lower_expr(&args[0]),
+        ];
+        Some(HirExprKind::Call {
+            callee: Box::new(HirExpr {
+                id: self.fresh(),
+                span,
+                ty: error_ty,
+                kind: HirExprKind::Path {
+                    segments: vec![Ident::new("__struct")],
+                    def: None,
+                },
+            }),
+            args: struct_args,
+        })
+    }
+
     /// Lowers `Path { field: value, … }` into a call to the synthetic
     /// `__struct` builtin. The resulting argument list interleaves
     /// field-name strings with their lowered value expressions:
@@ -2066,6 +2124,64 @@ impl Lowerer<'_> {
         }
     }
 
+    fn lower_collection_array_literal(
+        &mut self,
+        owner: &str,
+        arr: &AstArrayExpr,
+        span: Span,
+        collection_ty: Ty,
+    ) -> HirExprKind {
+        use gossamer_types::{ArrayLen, TyKind};
+
+        let lowered_array = self.lower_array(arr);
+        let elem_ty = match (&lowered_array, self.tcx.kind(collection_ty)) {
+            (HirArrayExpr::List(elems), _) => elems.first().map_or_else(
+                || self.collection_literal_elem_ty(collection_ty, owner),
+                |entry| entry.ty,
+            ),
+            (HirArrayExpr::Repeat { value, .. }, _) => value.ty,
+        };
+        let array_ty = match &lowered_array {
+            HirArrayExpr::List(elems) => self.tcx.intern(TyKind::Array {
+                elem: elem_ty,
+                len: ArrayLen::Concrete(elems.len()),
+            }),
+            HirArrayExpr::Repeat { .. } => self.tcx.intern(TyKind::Vec(elem_ty)),
+        };
+        let array_arg = HirExpr {
+            id: self.fresh(),
+            span,
+            ty: array_ty,
+            kind: HirExprKind::Array(lowered_array),
+        };
+        let callee = HirExpr {
+            id: self.fresh(),
+            span,
+            ty: self.error_ty(),
+            kind: HirExprKind::Path {
+                segments: vec![Ident::new(owner), Ident::new("from")],
+                def: None,
+            },
+        };
+        HirExprKind::Call {
+            callee: Box::new(callee),
+            args: vec![array_arg],
+        }
+    }
+
+    fn collection_literal_elem_ty(&mut self, collection_ty: Ty, _owner: &str) -> Ty {
+        use gossamer_types::TyKind;
+
+        match self.tcx.kind(collection_ty) {
+            Some(TyKind::Adt { substs, .. }) => substs
+                .types()
+                .first()
+                .copied()
+                .unwrap_or_else(|| self.error_ty()),
+            _ => self.error_ty(),
+        }
+    }
+
     fn lower_closure_params(&mut self, params: &[AstClosureParam]) -> Vec<HirParam> {
         params
             .iter()
@@ -2091,7 +2207,8 @@ impl Lowerer<'_> {
     fn lower_path_expr(&mut self, node: NodeId, path: &gossamer_ast::PathExpr) -> HirExprKind {
         let mut segments: Vec<Ident> = path.segments.iter().map(|s| s.name.clone()).collect();
         // A single-segment name bound by `use` and targeting a
-        // `[rust-bindings]` item expands to its full qualified path.
+        // `[rust-bindings]` item or stdlib free function expands to its full
+        // qualified path.
         // Several binding modules can expose the same leaf (eight
         // tuigoose modules each define `with_block`); the bare-leaf
         // dispatch tables disambiguate by arity only, so an imported
@@ -2108,7 +2225,12 @@ impl Lowerer<'_> {
                 .map(|s| s.name.as_str())
                 .collect::<Vec<_>>()
                 .join("::");
-            if gossamer_resolve::lookup_external_item(&qualified).is_some() {
+            let std_qualified = qualified
+                .strip_prefix("std::")
+                .is_some_and(gossamer_resolve::is_stdlib_qualified);
+            if std_qualified {
+                segments = full.iter().skip(1).cloned().collect();
+            } else if gossamer_resolve::lookup_external_item(&qualified).is_some() {
                 segments = full.clone();
             }
         }

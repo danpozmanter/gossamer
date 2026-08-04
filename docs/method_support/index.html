@@ -18,7 +18,7 @@
         <link rel="prev" href="../prelude/">
 
 
-        <link rel="next" href="../stdlib_coverage/">
+        <link rel="next" href="../stdlib/collection_patterns/">
 
 
 
@@ -696,6 +696,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
 
 
@@ -1043,6 +1045,34 @@
 
 </nav>
 
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../stdlib/collection_patterns/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Collection patterns
+
+
+
+  </span>
+
+
+
+      </a>
     </li>
 
 
@@ -2690,6 +2720,11 @@ expected <code>BTreeSet&lt;T&gt;</code> type is present.</p>
 <td><code>Vec&lt;(K, V)&gt;</code></td>
 <td><code>keys()</code> / <code>values()</code> return <code>Vec&lt;K&gt;</code> / <code>Vec&lt;V&gt;</code>.</td>
 </tr>
+<tr>
+<td><code>m.is_empty()</code> / <code>m.clear()</code></td>
+<td><code>bool</code> / <code>()</code></td>
+<td>Empty test and in-place removal of all entries.</td>
+</tr>
 </tbody>
 </table>
 <h2 id="btreemap">BTreeMap<a class="headerlink" href="#btreemap" title="Permanent link">&para;</a></h2>
@@ -2706,6 +2741,11 @@ yields pairs in ascending key order.</p>
 </thead>
 <tbody>
 <tr>
+<td><code>BTreeMap::from&lt;K, V, const N: usize&gt;([(K, V); N])</code></td>
+<td><code>BTreeMap&lt;K, V&gt;</code></td>
+<td>Associated function; accepts array pairs.</td>
+</tr>
+<tr>
 <td><code>m.insert(k, v)</code></td>
 <td><code>Option&lt;V&gt;</code></td>
 <td>Inserts or overwrites and returns the previous value when present.</td>
@@ -2721,6 +2761,16 @@ yields pairs in ascending key order.</p>
 <td>Value for <code>k</code>, or <code>default</code> when absent.</td>
 </tr>
 <tr>
+<td><code>m.or_insert(k, default)</code></td>
+<td><code>V</code></td>
+<td>Value for <code>k</code>, inserting <code>default</code> first when absent.</td>
+</tr>
+<tr>
+<td><code>m.remove(k)</code> / <code>m.pop(k)</code></td>
+<td><code>Option&lt;V&gt;</code></td>
+<td>Deletes the key and returns its previous value when present.</td>
+</tr>
+<tr>
 <td><code>m.contains(k)</code> / <code>m.contains_key(k)</code></td>
 <td><code>bool</code></td>
 <td>Key-membership test.</td>
@@ -2731,9 +2781,19 @@ yields pairs in ascending key order.</p>
 <td></td>
 </tr>
 <tr>
+<td><code>m.is_empty()</code> / <code>m.clear()</code></td>
+<td><code>bool</code> / <code>()</code></td>
+<td>Empty test and in-place removal of all entries.</td>
+</tr>
+<tr>
 <td><code>m.iter()</code></td>
 <td><code>Vec&lt;(K, V)&gt;</code></td>
 <td>Yields pairs in ascending key order.</td>
+</tr>
+<tr>
+<td><code>m.keys()</code> / <code>m.values()</code></td>
+<td><code>Vec&lt;K&gt;</code> / <code>Vec&lt;V&gt;</code></td>
+<td>Snapshots keys or values in key order.</td>
 </tr>
 </tbody>
 </table>
@@ -2813,8 +2873,9 @@ yields pairs in ascending key order.</p>
 <p><code>BTreeSet&lt;T&gt;</code> has the same method surface as <code>HashSet&lt;T&gt;</code>, with ordered
 iteration and <code>to_vec</code> output.</p>
 <h2 id="vecdeque">VecDeque<a class="headerlink" href="#vecdeque" title="Permanent link">&para;</a></h2>
-<p><code>VecDeque&lt;i64&gt;</code> is a double-ended ring buffer; both ends are
-constant-time. The pop / peek methods return <code>Option</code>.</p>
+<p><code>VecDeque&lt;T&gt;</code> is a double-ended ring buffer; both ends are constant-time. The
+spelling <code>VecDequeue&lt;T&gt;</code> is accepted as an alias. The pop / peek methods return
+<code>Option</code>.</p>
 <table>
 <thead>
 <tr>
@@ -2863,6 +2924,11 @@ constant-time. The pop / peek methods return <code>Option</code>.</p>
 <td><code>d.is_empty()</code></td>
 <td><code>bool</code></td>
 <td></td>
+</tr>
+<tr>
+<td><code>d.clear()</code></td>
+<td><code>()</code></td>
+<td>Removes all values.</td>
 </tr>
 </tbody>
 </table>

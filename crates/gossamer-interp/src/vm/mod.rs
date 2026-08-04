@@ -2225,6 +2225,25 @@ pub(crate) fn value_ordering(a: &Value, b: &Value) -> RuntimeResult<std::cmp::Or
         (Value::Char(x), Value::Char(y)) => Ok(x.cmp(y)),
         (Value::String(x), Value::String(y)) => Ok(x.cmp(y)),
         (Value::Tuple(xa), Value::Tuple(xb)) => seq_ordering(xa, xb),
+        (Value::Struct(xa), Value::Struct(xb)) if xa.name == "Reverse" && xb.name == "Reverse" => {
+            let x = xa
+                .fields
+                .iter()
+                .find_map(|(name, value)| (*name == "0").then_some(value));
+            let y = xb
+                .fields
+                .iter()
+                .find_map(|(name, value)| (*name == "0").then_some(value));
+            match (x, y) {
+                (Some(x), Some(y)) => value_ordering(y, x),
+                _ => Ok(Ordering::Equal),
+            }
+        }
+        (Value::Struct(xa), Value::Struct(xb)) if xa.name == xb.name => {
+            let x_values: Vec<_> = xa.fields.iter().map(|(_, value)| value.clone()).collect();
+            let y_values: Vec<_> = xb.fields.iter().map(|(_, value)| value.clone()).collect();
+            seq_ordering(&x_values, &y_values)
+        }
         _ => match (seq_elements(a_ref), seq_elements(b_ref)) {
             (Some(xa), Some(xb)) => seq_ordering(&xa, &xb),
             _ => Err(RuntimeError::Type(

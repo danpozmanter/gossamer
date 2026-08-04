@@ -1333,13 +1333,30 @@ impl<'a> Builder<'a> {
             // body address at env[0].
             ("iter::for_each", 2) => {
                 let f64_ty = self.tcx.float_ty(gossamer_types::FloatTy::F64);
+                let elem_ty = self
+                    .iter_element_kind(args[1].ty)
+                    .map(|kind| self.tcx.intern(kind));
                 let elem_is_f64 =
-                    matches!(self.iter_element_kind(args[1].ty), Some(TyKind::Float(_)));
-                let in_ty = if elem_is_f64 { f64_ty } else { i64_ty };
-                let helper = if elem_is_f64 {
-                    "gos_rt_iter_for_each_f64"
+                    elem_ty.is_some_and(|elem| matches!(self.tcx.kind_of(elem), TyKind::Float(_)));
+                let elem_is_aggregate = elem_ty.is_some_and(|elem| {
+                    matches!(
+                        self.tcx.kind_of(elem),
+                        TyKind::Adt { .. } | TyKind::Tuple(_) | TyKind::Array { .. }
+                    )
+                });
+                let (in_ty, helper) = if elem_is_f64 {
+                    (f64_ty, "gos_rt_iter_for_each_f64")
+                } else if elem_is_aggregate {
+                    (
+                        elem_ty.expect("aggregate iterator has an element type"),
+                        "gos_rt_iter_for_each_ptr",
+                    )
+                } else if let Some(elem) = elem_ty
+                    && matches!(self.tcx.kind_of(elem), TyKind::String)
+                {
+                    (elem, "gos_rt_iter_for_each_i64")
                 } else {
-                    "gos_rt_iter_for_each_i64"
+                    (i64_ty, "gos_rt_iter_for_each_i64")
                 };
                 let closure_local = self.lower_iter_closure(&args[0], &[in_ty], i64_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
@@ -2443,8 +2460,23 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("iter::sort_by_key" | "iter::min_by_key" | "iter::max_by_key", 2) => {
-                let closure = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let vec_elem_ty = match self.tcx.kind_of(self.locals[vec_local.0 as usize].ty) {
+                    TyKind::Vec(elem) | TyKind::Slice(elem) => Some(*elem),
+                    _ => None,
+                };
+                let elem_is_aggregate = vec_elem_ty.is_some_and(|elem| {
+                    matches!(
+                        self.tcx.kind_of(elem),
+                        TyKind::Adt { .. } | TyKind::Tuple(_) | TyKind::Array { .. }
+                    )
+                });
+                let in_ty = if elem_is_aggregate {
+                    vec_elem_ty.expect("aggregate iterator has an element type")
+                } else {
+                    i64_ty
+                };
+                let closure = self.lower_iter_closure(&args[0], &[in_ty], i64_ty, span)?;
                 let (helper, dest_ty) = match joined {
                     "iter::sort_by_key" => {
                         let dest = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
@@ -2454,9 +2486,17 @@ impl<'a> Builder<'a> {
                         };
                         ("gos_rt_iter_sorted_by_key_i64", dest)
                     }
+                    "iter::min_by_key" if elem_is_aggregate => (
+                        "gos_rt_iter_min_by_key_ptr",
+                        self.option_payload_adt_ty(in_ty),
+                    ),
                     "iter::min_by_key" => (
                         "gos_rt_iter_min_by_key_i64",
                         self.option_payload_adt_ty(i64_ty),
+                    ),
+                    _ if elem_is_aggregate => (
+                        "gos_rt_iter_max_by_key_ptr",
+                        self.option_payload_adt_ty(in_ty),
                     ),
                     _ => (
                         "gos_rt_iter_max_by_key_i64",
@@ -2824,7 +2864,7 @@ impl<'a> Builder<'a> {
                 (Some(MapKeyKind::String), Some(MapValueKind::String)) => {
                     "gos_rt_map_get_or_str_str"
                 }
-                (Some(MapKeyKind::String), _) => "gos_rt_map_get_or_str_i64",
+                (Some(MapKeyKind::String), _) => "gos_rt_map_get_or_typed_str_i64",
                 (_, Some(MapValueKind::String)) => "gos_rt_map_get_or_i64_str",
                 _ => "gos_rt_map_get_or_i64",
             };
@@ -3221,7 +3261,7 @@ impl<'a> Builder<'a> {
         };
         let get_or_helper = match (key_kind, value_kind) {
             (Some(MapKeyKind::String), Some(MapValueKind::String)) => "gos_rt_map_get_or_str_str",
-            (Some(MapKeyKind::String), _) => "gos_rt_map_get_or_str_i64",
+            (Some(MapKeyKind::String), _) => "gos_rt_map_get_or_typed_str_i64",
             (_, Some(MapValueKind::String)) => "gos_rt_map_get_or_i64_str",
             _ => "gos_rt_map_get_or_i64",
         };

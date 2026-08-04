@@ -438,7 +438,11 @@ impl Scan<'_> {
                     self.expr(i);
                 }
             }
-            ExprKind::Array(arr) | ExprKind::FixedArray(arr) => self.array(arr),
+            ExprKind::Array(arr)
+            | ExprKind::FixedArray(arr)
+            | ExprKind::QueueLiteral(arr)
+            | ExprKind::MaxHeapLiteral(arr)
+            | ExprKind::MinHeapLiteral(arr) => self.array(arr),
             ExprKind::Struct { fields, base, .. } => {
                 for f in fields {
                     if let Some(v) = &f.value {
@@ -641,7 +645,11 @@ impl Finder<'_> {
             ExprKind::Tuple(items) | ExprKind::MapLiteral(items) | ExprKind::SetLiteral(items) => {
                 self.walk_exprs(items);
             }
-            ExprKind::Array(arr) | ExprKind::FixedArray(arr) => match arr {
+            ExprKind::Array(arr)
+            | ExprKind::FixedArray(arr)
+            | ExprKind::QueueLiteral(arr)
+            | ExprKind::MaxHeapLiteral(arr)
+            | ExprKind::MinHeapLiteral(arr) => match arr {
                 ArrayExpr::List(items) => self.walk_exprs(items),
                 ArrayExpr::Repeat { value, count } => {
                     self.walk_expr(value);
@@ -1013,7 +1021,11 @@ impl Analyzer<'_> {
                     self.expr(i);
                 }
             }
-            ExprKind::Array(arr) | ExprKind::FixedArray(arr) => match arr {
+            ExprKind::Array(arr)
+            | ExprKind::FixedArray(arr)
+            | ExprKind::QueueLiteral(arr)
+            | ExprKind::MaxHeapLiteral(arr)
+            | ExprKind::MinHeapLiteral(arr) => match arr {
                 ArrayExpr::List(items) => {
                     for i in items {
                         self.expr(i);
@@ -1150,7 +1162,11 @@ fn walk_paths(expr: &Expr, visit: &mut impl FnMut(&Expr)) {
                 walk_paths(i, visit);
             }
         }
-        ExprKind::Array(arr) | ExprKind::FixedArray(arr) => match arr {
+        ExprKind::Array(arr)
+        | ExprKind::FixedArray(arr)
+        | ExprKind::QueueLiteral(arr)
+        | ExprKind::MaxHeapLiteral(arr)
+        | ExprKind::MinHeapLiteral(arr) => match arr {
             ArrayExpr::List(items) => {
                 for i in items {
                     walk_paths(i, visit);

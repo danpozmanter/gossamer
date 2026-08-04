@@ -393,7 +393,11 @@ impl Walker {
                     self.visit_expr(base);
                 }
             }
-            ExprKind::Array(arr) | ExprKind::FixedArray(arr) => match arr {
+            ExprKind::Array(arr)
+            | ExprKind::FixedArray(arr)
+            | ExprKind::QueueLiteral(arr)
+            | ExprKind::MaxHeapLiteral(arr)
+            | ExprKind::MinHeapLiteral(arr) => match arr {
                 ArrayExpr::List(elems) => {
                     for elem in elems {
                         self.visit_expr(elem);
@@ -999,7 +1003,11 @@ impl DefinitionIndex {
                     self.collect_expr_locals(base);
                 }
             }
-            ExprKind::Array(arr) | ExprKind::FixedArray(arr) => match arr {
+            ExprKind::Array(arr)
+            | ExprKind::FixedArray(arr)
+            | ExprKind::QueueLiteral(arr)
+            | ExprKind::MaxHeapLiteral(arr)
+            | ExprKind::MinHeapLiteral(arr) => match arr {
                 ArrayExpr::List(elems) => {
                     for elem in elems {
                         self.collect_expr_locals(elem);

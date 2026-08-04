@@ -950,6 +950,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1066,6 +1068,34 @@
 
 
     Methods by type
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../stdlib/collection_patterns/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Collection patterns
 
 
 
@@ -2523,9 +2553,12 @@ the top.</p>
   <code>[a, b]</code> create Vec values by default.</li>
 <li><code>{key: value}</code> creates a <code>HashMap&lt;K, V&gt;</code>, and <code>#{a, b}</code> creates a
   <code>HashSet&lt;T&gt;</code> unless an expected <code>BTreeSet&lt;T&gt;</code> type shapes it.</li>
+<li><code>&lt;[a, b]&gt;</code> creates a <code>VecDeque&lt;T&gt;</code> queue, <code>^[a, b]</code> creates a
+  <code>MaxHeap&lt;T&gt;</code>, and <code>_[a, b]</code> creates a <code>MinHeap&lt;T&gt;</code>.</li>
 </ul>
 <p>See <a href="../collection_literals/">Collection literals</a> for examples of Vec,
-fixed-array, HashMap, HashSet, and BTreeSet construction.</p>
+fixed-array, HashMap, HashSet, BTreeSet, VecDeque, MaxHeap, and MinHeap
+construction.</p>
 <p><code>&amp;[T; N]</code> and <code>&amp;Vec&lt;T&gt;</code> coerce to <code>&amp;[T]</code>; their mutable forms coerce to
 <code>&amp;mut [T]</code>. Arrays and slices support queries and non-resizing operations.
 Mutable arrays and slices can reorder or replace existing elements with

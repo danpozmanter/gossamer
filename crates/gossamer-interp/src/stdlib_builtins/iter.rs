@@ -1176,6 +1176,8 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
     let vec_native_entries: &[(&str, NativeCall)] = &[
         ("map", native_vec_map_method),
         ("filter", native_vec_filter_method),
+        ("take_while", native_vec_take_while_method),
+        ("skip_while", native_vec_skip_while_method),
         ("for_each", native_vec_for_each_method),
         ("any", native_vec_any_method),
         ("all", native_vec_all_method),
@@ -1199,6 +1201,8 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("next", native_iterator_next_method as NativeCall),
         ("map", native_vec_map_method as NativeCall),
         ("filter", native_vec_filter_method as NativeCall),
+        ("take_while", native_vec_take_while_method as NativeCall),
+        ("skip_while", native_vec_skip_while_method as NativeCall),
         ("fold", native_vec_fold_method as NativeCall),
         ("for_each", native_vec_for_each_method as NativeCall),
         ("any", native_vec_any_method as NativeCall),
@@ -1291,6 +1295,8 @@ macro_rules! vec_method_form {
 
 vec_method_form!(native_vec_map_method, native_iter_map);
 vec_method_form!(native_vec_filter_method, native_iter_filter);
+vec_method_form!(native_vec_take_while_method, native_iter_take_while);
+vec_method_form!(native_vec_skip_while_method, native_iter_skip_while);
 vec_method_form!(native_vec_for_each_method, native_iter_for_each);
 vec_method_form!(native_vec_any_method, native_iter_any);
 vec_method_form!(native_vec_all_method, native_iter_all);

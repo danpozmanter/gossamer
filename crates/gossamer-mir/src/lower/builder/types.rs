@@ -91,6 +91,7 @@ impl<'a> Builder<'a> {
             local_closure: HashMap::new(),
             local_fn_name: HashMap::new(),
             local_runtime_kind: HashMap::new(),
+            local_binary_heap_min_i64: std::collections::HashSet::new(),
             local_define_layout: HashMap::new(),
             param_locals: std::collections::HashSet::new(),
             loop_stack: Vec::new(),

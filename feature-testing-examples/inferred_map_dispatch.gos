@@ -1,7 +1,8 @@
 // `HashMap::new()` / `BTreeMap::new()` / `HashSet::new()` without an
 // annotation ground to their real receiver types from first use, so
 // method dispatch picks the properly keyed runtime symbol on every
-// tier: String keys, struct values, sorted BTreeMap iteration.
+// tier: String keys, struct values, and Phase 1 String-to-i64 BTreeMap
+// iteration.
 use std::collections::{BTreeMap, HashMap, HashSet}
 
 struct Account { balance: i64, txns: i64 }
@@ -21,10 +22,10 @@ fn main() {
     println!("count={}", counts.get_or("w", 0))
 
     let mut sorted = BTreeMap::new()
-    sorted.insert("b", (1, 2))
-    sorted.insert("a", (3, 4))
-    for (k, v) in sorted.iter() { println!("{}: {} {}", k, v.0, v.1) }
-    if let Some(v) = sorted.get(&"a") { println!("a0={}", v.0) }
+    sorted.insert("b", 2)
+    sorted.insert("a", 1)
+    for (k, v) in sorted.iter() { println!("{}: {}", k, v) }
+    if let Some(v) = sorted.get(&"a") { println!("a={}", v) }
 
     let mut seen = HashSet::new()
     seen.insert(7)

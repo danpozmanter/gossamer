@@ -27,7 +27,7 @@ fn retained_resolver_oom_reproducer_terminates() {
 
 #[test]
 fn simple_hello_world_resolves_without_diagnostics() {
-    let source = "use fmt\n\nfn main() {\n    fmt::println(\"hello\")\n}\n";
+    let source = "use std::fmt\n\nfn main() {\n    fmt::println(\"hello\")\n}\n";
     let sf = parse(source);
     let (resolutions, diags) = resolve_source_file(&sf);
     assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
@@ -105,7 +105,7 @@ fn use_list_imports_each_name_into_scope() {
 
 #[test]
 fn imported_name_resolves_to_import_resolution() {
-    let source = "use fmt\n\nfn main() {\n    fmt::println(\"x\")\n}\n";
+    let source = "use std::fmt\n\nfn main() {\n    fmt::println(\"x\")\n}\n";
     let sf = parse(source);
     let (resolutions, _diags) = resolve_source_file(&sf);
     let has_import = resolutions
@@ -134,6 +134,29 @@ fn qualified_stdlib_module_resolves_after_import() {
     let sf = parse(source);
     let (_resolutions, diags) = resolve_source_file(&sf);
     assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+}
+
+#[test]
+fn full_stdlib_item_import_resolves_bound_tail_name() {
+    let source =
+        "use std::iter::skip_while\n\nfn main() {\n    skip_while(|x: i64| x < 3, [1, 2, 3])\n}\n";
+    let sf = parse(source);
+    let (_resolutions, diags) = resolve_source_file(&sf);
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+}
+
+#[test]
+fn bogus_multisegment_use_path_is_rejected() {
+    for source in ["use iter\n", "use stp::iter\n", "use whatever::iter\n"] {
+        let sf = parse(source);
+        let (_resolutions, diags) = resolve_source_file(&sf);
+        assert!(
+            diags
+                .iter()
+                .any(|diag| matches!(diag.error, ResolveError::UnknownModulePath { .. })),
+            "expected unknown module path diagnostic for {source:?}: {diags:?}"
+        );
+    }
 }
 
 #[test]

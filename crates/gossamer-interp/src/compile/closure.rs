@@ -112,7 +112,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // typed-storage fast-path tracking both carry over.
         for param in params {
             let reg = b.alloc_reg();
-            b.bind_param(&param.pattern, reg);
+            b.bind_param(&param.pattern, reg)?;
             if is_mut_ref_writeback(self.tcx, param.ty) {
                 b.mut_ref_params.push(reg);
             }

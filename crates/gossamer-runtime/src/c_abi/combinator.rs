@@ -20,6 +20,7 @@ use super::{
 };
 
 type MapFn = unsafe extern "C" fn(env: *const u8, x: i64) -> i64;
+type PtrMapFn = unsafe extern "C" fn(env: *const u8, x: *const u8) -> i64;
 type PredFn = unsafe extern "C" fn(env: *const u8, x: i64) -> bool;
 type EnumFn = unsafe extern "C" fn(env: *const u8, x: i64) -> i128;
 type ThunkEnumFn = unsafe extern "C" fn(env: *const u8) -> i128;
@@ -674,10 +675,22 @@ pub unsafe extern "C" fn gos_rt_iter_min_by_key_i64(env: *const u8, v: *const Go
     ffi_entry!(NONE, { min_max_by_key(env, v, false) })
 }
 
+/// `iter::min_by_key(key, xs) -> Option<T>` for aggregate elements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_min_by_key_ptr(env: *const u8, v: *const GosVec) -> i128 {
+    ffi_entry!(NONE, { min_max_by_key_ptr(env, v, false) })
+}
+
 /// `iter::max_by_key(key, xs) -> Option<T>`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_max_by_key_i64(env: *const u8, v: *const GosVec) -> i128 {
     ffi_entry!(NONE, { min_max_by_key(env, v, true) })
+}
+
+/// `iter::max_by_key(key, xs) -> Option<T>` for aggregate elements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_max_by_key_ptr(env: *const u8, v: *const GosVec) -> i128 {
+    ffi_entry!(NONE, { min_max_by_key_ptr(env, v, true) })
 }
 
 fn min_max_by_key(env: *const u8, v: *const GosVec, want_max: bool) -> i128 {
@@ -701,6 +714,38 @@ fn min_max_by_key(env: *const u8, v: *const GosVec, want_max: bool) -> i128 {
         }
     }
     some_of(best)
+}
+
+fn min_max_by_key_ptr(env: *const u8, v: *const GosVec, want_max: bool) -> i128 {
+    if v.is_null() {
+        return NONE;
+    }
+    let len = unsafe { gos_rt_vec_len(v) };
+    if len <= 0 {
+        return NONE;
+    }
+    let Some(addr) = env_fn_addr(env) else {
+        let first = unsafe { gos_rt_vec_get_ptr(v, 0) };
+        return some_of(first as usize as i64);
+    };
+    // SAFETY: addr is the callable stored by the closure lowering.
+    let f: PtrMapFn = unsafe { std::mem::transmute(addr) };
+    let mut best = unsafe { gos_rt_vec_get_ptr(v, 0) };
+    let mut best_key = unsafe { f(env, best) };
+    for i in 1..len {
+        let candidate = unsafe { gos_rt_vec_get_ptr(v, i) };
+        let key = unsafe { f(env, candidate) };
+        let better = if want_max {
+            key > best_key
+        } else {
+            key < best_key
+        };
+        if better {
+            best = candidate;
+            best_key = key;
+        }
+    }
+    some_of(best as usize as i64)
 }
 
 /// `iter::chunk_by(key, xs) -> HashMap<K, [T]>` - insertion order of

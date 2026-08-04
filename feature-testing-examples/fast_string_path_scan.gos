@@ -1,0 +1,15 @@
+use std::path::components
+use std::strings::{byte_at, byte_len, substring}
+
+let p = "/alpha//beta/./gamma"
+let parts = components(p)
+println!("components={} first={} last={}", parts.len(), parts[0], parts[parts.len() - 1])
+
+let text = "a/b/c"
+let n = byte_len(text)
+let slash = byte_at(text, 1)
+let tail = substring(text, 2, n)
+println!("bytes={} slash={} tail={}", n, slash, tail)
+
+let method_tail = text.substring(4, text.byte_len())
+println!("method_tail={}", method_tail)

@@ -416,8 +416,10 @@ impl<'a> Lowerer<'a> {
             name,
             "gos_rt_map_insert_i64_i64"
                 | "gos_rt_map_insert_str_i64"
+                | "gos_rt_map_insert_typed_str_i64"
                 | "gos_rt_map_insert_i64_i64_opt"
                 | "gos_rt_map_insert_str_i64_opt"
+                | "gos_rt_map_insert_typed_str_i64_opt"
         );
         // `gos_rt_enum_box_aggr(size, meta, src)`: the second argument names a
         // module-global `RC_KIND_STRUCT` meta blob (the box's child layout),

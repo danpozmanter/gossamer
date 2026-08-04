@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.42.0 - Collections, REPL listings, and native iterator fixes
+
+- Collection typing with the compiled runtime: `VecDeque`,
+  `BinaryHeap`, `MaxHeap`, and `MinHeap` are `i64` shapes, while `BTreeMap`
+  is `String -> i64`.
+- Add `BTreeMap::from`, BTreeMap discovery/docs parity with HashMap where the
+  shared runtime supports it, `VecDequeue` as a `VecDeque` alias, and
+  `VecDeque::clear`.
+- Tighten collection `::from` argument checking so incompatible map and set
+  sources are rejected instead of silently defaulting.
+- Remove pagination from REPL meta commands; `%bindings` now filters only
+  binding names, `%declarations` filters only declaration names, and `%bindings`
+  renders fixed-array and set literal spelling.
+- Add queue, dequeue, stack, min-heap, and max-heap pattern docs plus a runnable
+  collection-patterns example.
+- Add `<[...]>` queue literals, `VecQueue` as a `VecDeque` alias, `^[...]`
+  `MaxHeap<T>` literals, `_[...]` `MinHeap<T>` literals, and heap REPL help.
+- Fix `%info` filtering so exact short-name hits still match full
+  module-qualified declaration paths.
+- Fill `%info`/`%explain` metadata for payload helper methods and Vec iterator
+  receiver methods so documented signatures match callable methods.
+- Make the perf workflow less flaky by shortening noisy soak samples, reducing
+  process-run counts, keeping hard caps, and turning baseline ratio regressions
+  into warnings with uploaded logs.
+- Fix native iterator ownership and ABI lowering so recursive functions that
+  accept `Iterator<i64>` no longer crash when collecting a `Vec` iterator.
+- Restore fixed-array inference for constant repeat literals such as `[0; 6]`
+  when they flow into `[T; N]` storage.
+- Keep the JIT off bodies with oversized fixed aggregate locals while preserving
+  bytecode execution for those functions.
+- Require canonical `std::` roots for standard-library `use` paths, reject
+  typo prefixes, allow full item imports such as `use std::iter::skip_while`,
+  and add `take_while`/`skip_while` sequence methods.
+- Add byte-oriented `strings::byte_len`, `strings::byte_at`,
+  `strings::substring`, and Rust-like `path::components` and `path::prefixes`
+  for lower-allocation path processing.
+- Support destructuring patterns in closure parameters across interpreted and
+  native execution.
+- Fix native lowering for method-form `enumerate`, `chunks`, tuple `.get`,
+  aggregate `min_by_key`/`max_by_key`, and `println` callbacks used as function
+  values.
+- Speed up generated `HashMap<String, i64>` native/JIT paths by using typed
+  string-key helpers and typed string cleanup.
+
 ## 0.41.0 - Collection literals and native lowering fixes
 
 - Add collection literals: `[a, b]` for `Vec`, `#[a, b]` for fixed arrays,

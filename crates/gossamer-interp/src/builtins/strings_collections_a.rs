@@ -624,20 +624,26 @@ fn builtin_vec_slice(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// Clamping character-range substring shared by the `substring` builtin and the
+/// Clamping byte-range substring shared by the `substring` builtin and the
 /// VM's fused `Op::StrSubstring`. Out-of-range bounds clamp and inverted
 /// bounds yield "", mirroring the compiled tier's `gos_rt_str_substring`.
+/// Bounds inside a multibyte scalar advance to the next UTF-8 boundary.
 /// Builds the `SmolStr` directly from the validated slice: substrings within
 /// the inline capacity carry no heap allocation, so materialising an
 /// intermediate owned `String` first would add a redundant heap alloc + free
 /// per call - the dominant cost when slicing many short substrings.
 pub(crate) fn str_substring_inline(s: &SmolStr, start: i64, end: i64) -> SmolStr {
-    let char_len = s.len();
-    let lo = (start.max(0) as usize).min(char_len);
-    let hi = (end.max(0) as usize).min(char_len).max(lo);
-    let lo_byte = s.char_boundary(lo).unwrap_or(s.byte_len());
-    let hi_byte = s.char_boundary(hi).unwrap_or(s.byte_len());
-    SmolStr::from_str(&s.as_str()[lo_byte..hi_byte])
+    let byte_len = s.byte_len();
+    let lo = next_char_boundary(s.as_str(), (start.max(0) as usize).min(byte_len));
+    let hi = next_char_boundary(s.as_str(), (end.max(0) as usize).min(byte_len)).max(lo);
+    SmolStr::from_str(&s.as_str()[lo..hi])
+}
+
+fn next_char_boundary(s: &str, mut index: usize) -> usize {
+    while index < s.len() && !s.is_char_boundary(index) {
+        index += 1;
+    }
+    index
 }
 
 fn builtin_str_substring(args: &[Value]) -> RuntimeResult<Value> {
@@ -650,9 +656,16 @@ fn builtin_str_substring(args: &[Value]) -> RuntimeResult<Value> {
     };
     let end = match args.get(2) {
         Some(Value::Int(n)) => *n,
-        _ => s.len() as i64,
+        _ => s.byte_len() as i64,
     };
     Ok(Value::String(str_substring_inline(s, start, end)))
+}
+
+fn builtin_str_byte_len(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::String(s)) = args.first() else {
+        return Ok(Value::Int(0));
+    };
+    Ok(Value::Int(i64::try_from(s.byte_len()).unwrap_or(i64::MAX)))
 }
 
 /// `String::byte_at(s, i) -> i64` - the UTF-8 byte at index `i`, or 0

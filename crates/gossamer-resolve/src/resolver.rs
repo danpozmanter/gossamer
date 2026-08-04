@@ -154,7 +154,7 @@ impl Resolver {
     }
 
     fn register_use_simple(&mut self, use_decl: &UseDecl) {
-        self.reject_non_canonical_std_path(use_decl);
+        self.reject_invalid_use_path(use_decl);
         let name = use_decl.alias.as_ref().map_or_else(
             || tail_name(&use_decl.target),
             |alias| Some(alias.name.clone()),
@@ -177,18 +177,43 @@ impl Resolver {
         self.define_import(&name, use_decl.id, use_decl.span);
     }
 
-    /// Validates `use std::...` module paths against the canonical
-    /// module table: every module has exactly one path, and importing
-    /// a path that names no module (an alias spelling, a typo) is an
-    /// error here instead of a late member-lookup failure. A path
-    /// whose parent is a valid module is accepted without checking
-    /// the tail - item imports (`use std::sync::channel`) name items
-    /// the resolver's table does not enumerate.
-    fn reject_non_canonical_std_path(&mut self, use_decl: &UseDecl) {
+    /// Validates `use` module paths against the canonical module table. Stdlib
+    /// imports must be rooted at `std::`; `use iter` is not accepted as an
+    /// alias for `use std::iter`. Non-`std` multi-segment imports must name a
+    /// registered external item, otherwise a typo such as `use stp::iter`
+    /// would silently bind `iter`.
+    fn reject_invalid_use_path(&mut self, use_decl: &UseDecl) {
         let gossamer_ast::UseTarget::Module(p) = &use_decl.target else {
             return;
         };
-        if p.segments.len() < 2 || p.segments[0].name != "std" {
+        if p.segments.len() == 1 {
+            let name = p.segments[0].name.as_str();
+            if crate::stdlib_exports::is_stdlib_module_path_or_namespace(name) {
+                self.emit(
+                    ResolveError::UnknownModulePath {
+                        path: name.to_string(),
+                    },
+                    use_decl.span,
+                );
+            }
+            return;
+        }
+        if p.segments.len() < 2 {
+            return;
+        }
+        if p.segments[0].name != "std" {
+            let joined = p
+                .segments
+                .iter()
+                .map(|segment| segment.name.as_str())
+                .collect::<Vec<_>>()
+                .join("::");
+            if crate::external::lookup_external_item(&joined).is_none() {
+                self.emit(
+                    ResolveError::UnknownModulePath { path: joined },
+                    use_decl.span,
+                );
+            }
             return;
         }
         let rest: Vec<&str> = p.segments[1..].iter().map(|s| s.name.as_str()).collect();
@@ -203,18 +228,72 @@ impl Resolver {
             }
         }
         self.emit(
-            ResolveError::UnknownModulePath { path: joined },
+            ResolveError::UnknownModulePath {
+                path: format!("std::{joined}"),
+            },
             use_decl.span,
         );
     }
 
     fn register_use_list(&mut self, use_decl: &UseDecl, list: &[UseListEntry]) {
+        self.reject_invalid_use_list_path(use_decl, list);
         for entry in list {
             let imported = entry
                 .alias
                 .as_ref()
                 .map_or_else(|| entry.name.name.clone(), |alias| alias.name.clone());
             self.define_import(&imported, use_decl.id, use_decl.span);
+        }
+    }
+
+    fn reject_invalid_use_list_path(&mut self, use_decl: &UseDecl, list: &[UseListEntry]) {
+        let gossamer_ast::UseTarget::Module(path) = &use_decl.target else {
+            return;
+        };
+        let Some(head) = path.segments.first() else {
+            return;
+        };
+        if head.name != "std" {
+            return;
+        }
+        let base_rest: Vec<&str> = path.segments[1..]
+            .iter()
+            .map(|segment| segment.name.as_str())
+            .collect();
+        if !base_rest.is_empty() {
+            let base = base_rest.join("::");
+            let base_parent = base_rest
+                .get(..base_rest.len().saturating_sub(1))
+                .map(|items| items.join("::"));
+            if crate::stdlib_exports::is_stdlib_module_path_or_namespace(&base)
+                || base_parent
+                    .as_deref()
+                    .is_some_and(crate::stdlib_exports::is_stdlib_module_path_or_namespace)
+            {
+                return;
+            }
+        }
+        for entry in list {
+            let mut rest = base_rest.clone();
+            rest.extend(entry.prefix.iter().map(|segment| segment.name.as_str()));
+            rest.push(entry.name.name.as_str());
+            let joined = rest.join("::");
+            let parent = rest
+                .get(..rest.len().saturating_sub(1))
+                .map(|items| items.join("::"));
+            let valid = crate::stdlib_exports::is_stdlib_module_path_or_namespace(&joined)
+                || crate::stdlib_exports::is_stdlib_qualified(&joined)
+                || parent
+                    .as_deref()
+                    .is_some_and(crate::stdlib_exports::is_stdlib_module_path_or_namespace);
+            if !valid {
+                self.emit(
+                    ResolveError::UnknownModulePath {
+                        path: format!("std::{joined}"),
+                    },
+                    use_decl.span,
+                );
+            }
         }
     }
 
@@ -861,7 +940,11 @@ impl Resolver {
             } => {
                 self.resolve_struct_expr(path, fields, base.as_deref(), expr.id, expr.span);
             }
-            ExprKind::Array(arr) | ExprKind::FixedArray(arr) => self.resolve_array_expr(arr),
+            ExprKind::Array(arr)
+            | ExprKind::FixedArray(arr)
+            | ExprKind::QueueLiteral(arr)
+            | ExprKind::MaxHeapLiteral(arr)
+            | ExprKind::MinHeapLiteral(arr) => self.resolve_array_expr(arr),
             ExprKind::Range { start, end, .. } => {
                 self.resolve_optional_expr(start.as_deref());
                 self.resolve_optional_expr(end.as_deref());

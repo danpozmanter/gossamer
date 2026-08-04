@@ -98,6 +98,9 @@ pub(crate) struct Builder<'a> {
     /// this tag to pick the right runtime helper for `fs.string(...)`,
     /// `client.get(...)`, `req.send()`, etc.
     pub(crate) local_runtime_kind: HashMap<Local, &'static str>,
+    /// Erased heap handles that must dispatch to min-heap runtime helpers
+    /// even though the handle ABI is still a `GosVec<i64>`.
+    pub(crate) local_binary_heap_min_i64: std::collections::HashSet<Local>,
     /// Per-local field layout for synthesised aggregates produced by
     /// the declarative `flag::define(...)` lowering. Maps the result
     /// local to a `Vec<(long_name, cell_kind)>` indexed by field

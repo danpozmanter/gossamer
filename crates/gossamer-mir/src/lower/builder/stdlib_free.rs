@@ -356,12 +356,15 @@ impl<'a> Builder<'a> {
             self.local_runtime_kind.insert(set, "collections::BTreeSet");
             return Some(set);
         }
-        // `HashMap::from({})` is the typed empty-map constructor. Lower it to
-        // the same zero-argument intrinsic as `HashMap::new` so no unit value
-        // reaches the native call ABI.
+        // `HashMap::from({})` / `BTreeMap::from({})` is the typed empty-map
+        // constructor. Lower it to the same zero-argument intrinsic as `new`
+        // so no unit value reaches the native call ABI.
         if matches!(
             joined.as_str(),
-            "HashMap::from" | "collections::HashMap::from"
+            "HashMap::from"
+                | "collections::HashMap::from"
+                | "BTreeMap::from"
+                | "collections::BTreeMap::from"
         ) && matches!(args, [arg] if self.hashmap_from_arg_is_empty(arg))
         {
             let map_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
@@ -883,6 +886,16 @@ impl<'a> Builder<'a> {
                 let s = self.tcx.string_ty();
                 let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![s, s]));
                 ("gos_rt_path_split", tup)
+            }
+            "path::components" => {
+                let s = self.tcx.string_ty();
+                let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+                ("gos_rt_path_components", v)
+            }
+            "path::prefixes" => {
+                let s = self.tcx.string_ty();
+                let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+                ("gos_rt_path_prefixes", v)
             }
             "path::normalize" => ("gos_rt_path_clean", self.tcx.string_ty()),
             "path::is_absolute" => ("gos_rt_path_is_absolute", self.tcx.bool_ty()),
@@ -1814,6 +1827,15 @@ impl<'a> Builder<'a> {
             "strings::starts_with" => ("gos_rt_str_starts_with", self.tcx.bool_ty()),
             "strings::ends_with" => ("gos_rt_str_ends_with", self.tcx.bool_ty()),
             "strings::repeat" => ("gos_rt_str_repeat", self.tcx.string_ty()),
+            "strings::byte_len" => (
+                "gos_rt_str_byte_len",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "strings::byte_at" => (
+                "gos_rt_str_byte_at",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "strings::substring" => ("gos_rt_str_substring", self.tcx.string_ty()),
             "strings::bytes" => {
                 let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
                 let v = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
@@ -2956,8 +2978,24 @@ impl<'a> Builder<'a> {
                 "gos_rt_map_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            "VecDeque::new" | "collections::VecDeque::new" => (
+            "VecDeque::new"
+            | "collections::VecDeque::new"
+            | "VecDequeue::new"
+            | "collections::VecDequeue::new"
+            | "VecQueue::new"
+            | "collections::VecQueue::new" => (
                 "gos_rt_deque_new",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "BinaryHeap::new"
+            | "collections::BinaryHeap::new"
+            | "MaxHeap::new"
+            | "collections::MaxHeap::new" => (
+                "gos_rt_bheap_max_new_i64",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "MinHeap::new" | "collections::MinHeap::new" => (
+                "gos_rt_bheap_min_new_i64",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
             // 0.7.0 - `HashMap::pop(m, k) -> Option<V>` free-fn shape.
@@ -2969,7 +3007,7 @@ impl<'a> Builder<'a> {
             "HashMap::pop" | "collections::HashMap::pop" if !args.is_empty() => {
                 let key_kind = hashmap_key_kind(self.tcx, args[0].ty);
                 let sym = if key_kind == VecElemKind::Str {
-                    "gos_rt_map_pop_str"
+                    "gos_rt_map_pop_typed_str"
                 } else {
                     "gos_rt_map_pop_i64"
                 };
@@ -3000,7 +3038,7 @@ impl<'a> Builder<'a> {
             "HashMap::get" | "collections::HashMap::get" if !args.is_empty() => {
                 let key_kind = hashmap_key_kind(self.tcx, args[0].ty);
                 let sym = if key_kind == VecElemKind::Str {
-                    "gos_rt_map_get_str_opt"
+                    "gos_rt_map_get_typed_str_opt"
                 } else {
                     "gos_rt_map_get_i64_opt"
                 };
@@ -3826,6 +3864,12 @@ impl<'a> Builder<'a> {
             "gos_rt_btree_set_new" => Some("collections::BTreeSet"),
             "gos_rt_btmap_new" => Some("collections::BTreeMap"),
             "gos_rt_deque_new" => Some("collections::VecDeque"),
+            "gos_rt_bheap_max_new_i64" | "gos_rt_bheap_max_from_vec_i64" => {
+                Some("collections::MaxHeap")
+            }
+            "gos_rt_bheap_min_new_i64" | "gos_rt_bheap_min_from_vec_i64" => {
+                Some("collections::MinHeap")
+            }
             "gos_rt_sync_map_new" => Some("sync::Map"),
             "gos_rt_math_rng_new" => Some("math::rand::Rng"),
             "gos_rt_field_error_new" => Some("validate::FieldError"),

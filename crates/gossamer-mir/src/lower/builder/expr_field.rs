@@ -110,6 +110,17 @@ impl<'a> Builder<'a> {
         if variant_idx.is_none() && struct_name == "Response" && !user_defined_response {
             return self.lower_http_response_literal(pairs, span);
         }
+        if variant_idx.is_none()
+            && struct_name == "Reverse"
+            && self.is_reverse_i64_ty(ty)
+            && pairs.len() == 2
+            && matches!(
+                pairs[0].kind,
+                HirExprKind::Literal(HirLiteral::String(ref field)) if field == "0"
+            )
+        {
+            return self.lower_expr(&pairs[1]);
+        }
         let order = self
             .structs
             .get(struct_name)
@@ -777,6 +788,18 @@ impl<'a> Builder<'a> {
             .get(&receiver_local)
             .cloned()
             .or_else(|| self.struct_name_of(receiver.ty));
+        if name.name == "0"
+            && (self.is_reverse_i64_ty(receiver.ty)
+                || self.is_reverse_i64_ty(self.locals[receiver_local.0 as usize].ty))
+        {
+            let dest = self.fresh(ty);
+            self.emit_assign(
+                Place::local(dest),
+                Rvalue::Use(Operand::Copy(Place::local(receiver_local))),
+                span,
+            );
+            return Some(dest);
+        }
         let field_order = struct_name
             .as_ref()
             .and_then(|n| self.structs.get(n))

@@ -1590,10 +1590,10 @@ pub(super) fn lower_intrinsic_call_io_math(
             }
             // Bound the read by the string's byte length: any index outside
             // `[0, len)` yields 0 without dereferencing past the content.
-            // `gos_rt_str_len` is O(1) for header-carrying strings and is
+            // `gos_rt_str_byte_len` is O(1) for header-carrying strings and is
             // null-safe (returns 0 for a null pointer).
             let str_len_fn =
-                intrinsics.extern_fn(module, "gos_rt_str_len", &[ptr_ty], &[types::I64])?;
+                intrinsics.extern_fn(module, "gos_rt_str_byte_len", &[ptr_ty], &[types::I64])?;
             let str_len_ref = module.declare_func_in_func(str_len_fn, builder.func);
             let len_call = builder.ins().call(str_len_ref, &[ptr]);
             let len = builder.inst_results(len_call)[0];
@@ -1644,12 +1644,15 @@ pub(super) fn lower_intrinsic_call_io_math(
             );
             Ok(true)
         }
-        // Runtime strings carry their byte length in the header. Calling
-        // `strlen` here made `byte_at` loops quadratic because the bounds
-        // check above asks for the length on every iteration.
-        "gos_rt_str_len" => {
-            let str_len =
-                intrinsics.extern_fn(module, "gos_rt_str_len", &[ptr_ty], &[types::I64])?;
+        // Runtime strings carry scalar and byte lengths in the header.
+        // Calling `strlen` here made byte scans quadratic because hot loops
+        // ask for length on every iteration.
+        "gos_rt_str_len" | "gos_rt_str_byte_len" => {
+            let symbol = match name {
+                "gos_rt_str_byte_len" => "gos_rt_str_byte_len",
+                _ => "gos_rt_str_len",
+            };
+            let str_len = intrinsics.extern_fn(module, symbol, &[ptr_ty], &[types::I64])?;
             let str_len_ref = module.declare_func_in_func(str_len, builder.func);
             let ptr = match args.first() {
                 Some(arg) => {

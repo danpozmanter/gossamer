@@ -77,6 +77,7 @@ nav:
       - Overview: stdlib.md
       - Prelude (no imports): prelude.md
       - Methods by type: method_support.md
+      - Collection patterns: stdlib/collection_patterns.md
       - Coverage matrix: stdlib_coverage.md
   - Toolchain:
       - Overview: toolchain.md
@@ -114,6 +115,7 @@ nav:
 not_in_nav: |
   /stdlib/*.md
   !/stdlib/index.md
+  !/stdlib/collection_patterns.md
   /language/*.md
   !/language/index.md
   !/language/top_level_statements.md

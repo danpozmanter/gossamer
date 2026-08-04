@@ -325,6 +325,16 @@ pub const STRINGS: StdModule = StdModule {
             doc: "Counts non-overlapping occurrences of `needle`.",
         },
         StdItem {
+            name: "byte_len",
+            kind: StdItemKind::Function,
+            doc: "Returns the UTF-8 byte length.",
+        },
+        StdItem {
+            name: "byte_at",
+            kind: StdItemKind::Function,
+            doc: "Returns the UTF-8 byte at an index.",
+        },
+        StdItem {
             name: "bytes",
             kind: StdItemKind::Function,
             doc: "Returns the UTF-8 bytes of the string.",
@@ -343,6 +353,11 @@ pub const STRINGS: StdModule = StdModule {
             name: "slice",
             kind: StdItemKind::Function,
             doc: "Safe byte-range slice returning Result<String, errors::Error>.",
+        },
+        StdItem {
+            name: "substring",
+            kind: StdItemKind::Function,
+            doc: "Byte-offset substring returning a String.",
         },
         StdItem {
             name: "split_whitespace",

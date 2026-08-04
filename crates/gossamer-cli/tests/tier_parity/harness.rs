@@ -366,7 +366,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/param_destructure.gos"),
     // Tuple-struct serde: position-keyed JSON object round-trip.
     spec("feature-testing-examples/tuple_struct_serde.gos"),
-    // BTreeMap with i64 keys: typed IntMap backing, key-sorted iteration.
+    // Phase 1 BTreeMap: String keys, i64 values, key-sorted iteration.
     spec("feature-testing-examples/btreemap_i64_keys.gos"),
     // VecDeque both-ends ops: push/pop/peek front and back.
     spec("feature-testing-examples/vecdeque_full.gos"),

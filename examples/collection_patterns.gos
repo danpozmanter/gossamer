@@ -1,0 +1,29 @@
+use std::collections::VecDeque
+fn main() {
+    // Queue: push at the back, pop from the front.
+    let mut queue: VecQueue<i64> = <[10]>
+    queue.push_back(20)
+    println(queue.pop_front())
+
+    // Dequeue: both ends are active.
+    let mut deque: VecDequeue<i64> = <[2]>
+    deque.push_front(1)
+    println(deque.peek_front())
+    println(deque.pop_back())
+
+    // Stack: Vec end is the top.
+    let mut stack: Vec<i64> = []
+    stack.push(7)
+    stack.push(8)
+    println(stack.pop())
+
+    // Min heap: smallest value first.
+    let mut min_heap = _[5, 1, 3]
+    min_heap.push(0)
+    println(min_heap.pop())
+
+    // Max heap: largest value first.
+    let mut max_heap = ^[5, 1, 3]
+    max_heap.push(8)
+    println(max_heap.pop())
+}

@@ -497,8 +497,10 @@ impl<'a> Lowerer<'a> {
             symbol,
             "gos_rt_map_insert_i64_i64"
                 | "gos_rt_map_insert_str_i64"
+                | "gos_rt_map_insert_typed_str_i64"
                 | "gos_rt_map_insert_i64_i64_opt"
                 | "gos_rt_map_insert_str_i64_opt"
+                | "gos_rt_map_insert_typed_str_i64_opt"
         );
         let mut arg_text = String::new();
         let mut arg_tys_for_decl: Vec<String> = Vec::new();

@@ -74,6 +74,7 @@ pub fn typecheck_source_file_for_repl_inspection(
 
 impl TypeChecker<'_> {
     fn run(mut self, source: &SourceFile) -> (TypeTable, Vec<TypeDiagnostic>) {
+        self.collect_import_targets(&source.uses);
         self.collect_signatures(&source.items);
         for item in &source.items {
             self.check_item(item);
@@ -117,6 +118,9 @@ const VALIDATE_ERRORS_DEF_LOCAL: u32 = u32::MAX - 9;
 const VALIDATE_FIELD_ERROR_DEF_LOCAL: u32 = u32::MAX - 10;
 const BTREE_SET_DEF_LOCAL: u32 = u32::MAX - 18;
 const VEC_DEQUE_DEF_LOCAL: u32 = u32::MAX - 19;
+const BINARY_HEAP_DEF_LOCAL: u32 = u32::MAX - 28;
+const REVERSE_DEF_LOCAL: u32 = u32::MAX - 29;
+const MIN_HEAP_DEF_LOCAL: u32 = u32::MAX - 30;
 
 /// Expected type pushed down into an expression while it is checked -
 /// the "checking mode" of bidirectional typechecking. The expectation
@@ -450,6 +454,10 @@ struct TypeChecker<'a> {
     /// as a VALUE, which is only legal for the
     /// [`crate::std_fn_values`] tabled set (GT0015 otherwise).
     callee_path_nodes: std::collections::HashSet<NodeId>,
+    /// Bound import name by use declaration id to its full module path. Used
+    /// so `use std::iter::skip_while` lets a bare `skip_while(...)` type-check
+    /// as the qualified `iter::skip_while(...)` call.
+    import_targets: HashMap<(NodeId, String), Vec<String>>,
     /// Names of every user-declared struct and enum in this source file.
     /// Distinguishes a genuine user Adt receiver (eligible for the
     /// name-global method-dispatch soundness check) from the sentinel
@@ -547,6 +555,7 @@ impl<'a> TypeChecker<'a> {
             declared_trait_names: std::collections::HashSet::new(),
             write_arg_bindings: HashMap::new(),
             callee_path_nodes: std::collections::HashSet::new(),
+            import_targets: HashMap::new(),
             user_type_decls: std::collections::HashSet::new(),
             user_method_owners: HashMap::new(),
             trait_own_methods: HashMap::new(),
@@ -554,6 +563,53 @@ impl<'a> TypeChecker<'a> {
             pipe_stage_callees: std::collections::HashSet::new(),
             enum_variants: HashMap::new(),
         }
+    }
+
+    fn collect_import_targets(&mut self, uses: &[gossamer_ast::UseDecl]) {
+        for use_decl in uses {
+            let gossamer_ast::UseTarget::Module(path) = &use_decl.target else {
+                continue;
+            };
+            let base: Vec<String> = path.segments.iter().map(|seg| seg.name.clone()).collect();
+            if let Some(list) = &use_decl.list {
+                for entry in list {
+                    let bound = entry.alias.as_ref().unwrap_or(&entry.name).name.clone();
+                    let mut full = base.clone();
+                    full.extend(entry.prefix.iter().map(|ident| ident.name.clone()));
+                    full.push(entry.name.name.clone());
+                    self.import_targets.insert((use_decl.id, bound), full);
+                }
+            } else if let Some(bound) = use_decl
+                .alias
+                .as_ref()
+                .map_or_else(|| base.last().cloned(), |alias| Some(alias.name.clone()))
+            {
+                self.import_targets.insert((use_decl.id, bound), base);
+            }
+        }
+    }
+
+    fn resolved_value_path_names(
+        &self,
+        node: NodeId,
+        path: &gossamer_ast::PathExpr,
+    ) -> Vec<String> {
+        let segments: Vec<String> = path
+            .segments
+            .iter()
+            .map(|segment| segment.name.name.clone())
+            .collect();
+        if segments.len() != 1 {
+            return segments;
+        }
+        let name = &segments[0];
+        let Some(Resolution::Import { use_id }) = self.resolutions.get(node) else {
+            return segments;
+        };
+        self.import_targets
+            .get(&(use_id, name.clone()))
+            .cloned()
+            .unwrap_or(segments)
     }
 
     /// Returns `Err(())` once the recursion counter hits
@@ -2922,6 +2978,9 @@ impl<'a> TypeChecker<'a> {
             }
             ExprKind::MapLiteral(entries) => self.check_map_literal(entries, expected),
             ExprKind::SetLiteral(entries) => self.check_set_literal(entries, expected),
+            ExprKind::QueueLiteral(arr) => self.check_queue_literal(arr, expected),
+            ExprKind::MaxHeapLiteral(arr) => self.check_max_heap_literal(arr, expected),
+            ExprKind::MinHeapLiteral(arr) => self.check_min_heap_literal(arr, expected),
             ExprKind::Struct {
                 path,
                 fields,
@@ -3087,9 +3146,18 @@ impl<'a> TypeChecker<'a> {
                 struct_ty
             }
             ExprKind::Array(arr) => {
-                if self.expectation_target(expected).is_some_and(|target| {
+                let target = self.expectation_target(expected);
+                let wants_growable = target.is_some_and(|target| {
+                    matches!(
+                        self.tcx.kind(target),
+                        Some(TyKind::Vec(_) | TyKind::Slice(_))
+                    )
+                });
+                let wants_array = target.is_some_and(|target| {
                     matches!(self.tcx.kind(target), Some(TyKind::Array { .. }))
-                }) {
+                });
+                let constant_repeat = matches!(arr, ArrayExpr::Repeat { count, .. } if evaluate_const_int_from_expr(count).is_some());
+                if wants_array || (!wants_growable && constant_repeat) {
                     self.check_array(arr, expected)
                 } else {
                     self.check_vec_literal(arr, expected)
@@ -3432,6 +3500,14 @@ impl<'a> TypeChecker<'a> {
             return Some(vec![Expectation::Coerce(entries)]);
         }
         if n == 1 && n_args == 1 {
+            if last == "Reverse"
+                && let Some(target) = self.expectation_target(expected)
+                && let Some(TyKind::Adt { def, substs }) = self.tcx.kind(target)
+                && def.local == REVERSE_DEF_LOCAL
+                && let Some(payload) = substs.types().first().copied()
+            {
+                return Some(vec![expected.rewrap(payload)]);
+            }
             // `Some(x)` / `Ok(x)` / `Err(e)`: thread the expected
             // `Option<T>` / `Result<T, E>` payload slot into the
             // argument so `Some([1, 2])` against `Option<Vec<i64>>`
@@ -3454,7 +3530,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
         }
-        self.stdlib_signature_arg_expectations(path, n_args)
+        self.stdlib_signature_arg_expectations(callee.id, path, n_args)
     }
 
     /// Rejects `json::render` / `json::encode` of an enum value
@@ -3680,6 +3756,9 @@ impl<'a> TypeChecker<'a> {
             // Fall through to the existing stdlib / fresh handling so a
             // pipe-stage call keeps its current return typing.
         }
+        if let Some(ty) = self.check_reverse_ctor_call(callee, args, arg_tys) {
+            return ty;
+        }
         if let Some(ty) = self.check_tuple_struct_ctor_call(callee, args, arg_tys) {
             return ty;
         }
@@ -3696,7 +3775,8 @@ impl<'a> TypeChecker<'a> {
         // `Result<json::Value, String>` from a function declared
         // `Result<ComicResponse, String>`.
         if let ExprKind::Path(path) = &callee.kind {
-            let names: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
+            let names = self.resolved_value_path_names(callee.id, path);
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
             let (module, last) = names.split_at(names.len().saturating_sub(1));
             let Some(last) = last.first().copied() else {
                 return self.fresh();
@@ -4112,6 +4192,33 @@ impl<'a> TypeChecker<'a> {
             def,
             substs: crate::Substs::from_types(substs.iter().copied()),
         }))
+    }
+
+    fn check_reverse_ctor_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        arg_tys: &[Ty],
+    ) -> Option<Ty> {
+        let ExprKind::Path(path) = &callee.kind else {
+            return None;
+        };
+        if path.segments.len() != 1 || path.segments[0].name.name != "Reverse" {
+            return None;
+        }
+        if args.len() != 1 {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: "Reverse".to_string(),
+                    expected: 1,
+                    found: args.len(),
+                },
+                callee.span,
+            );
+            return Some(self.tcx.error_ty());
+        }
+        let elem = arg_tys.first().copied().unwrap_or_else(|| self.fresh());
+        Some(self.reverse_ty(elem))
     }
 
     /// Validates a user enum's tuple-variant constructor. Payload expectations
@@ -4578,18 +4685,24 @@ impl<'a> TypeChecker<'a> {
                 let elem = self.fresh();
                 Some(self.tcx.intern(TyKind::Vec(elem)))
             }
-            "VecDeque" => {
-                let elem = self.fresh();
-                let substs = crate::Substs::from_types([elem]);
-                let def = gossamer_resolve::DefId::local(VEC_DEQUE_DEF_LOCAL);
-                self.tcx.register_def_name(def, "VecDeque");
-                Some(self.tcx.intern(TyKind::Adt { def, substs }))
+            "VecDeque" | "VecDequeue" | "VecQueue" => {
+                let elem = self.tcx.int_ty(IntTy::I64);
+                Some(self.vecdeque_ty(elem))
             }
-            "HashMap" | "BTreeMap" => {
+            "BinaryHeap" | "MaxHeap" => {
+                let elem = self.tcx.int_ty(IntTy::I64);
+                Some(self.binary_heap_ty(elem))
+            }
+            "MinHeap" => {
+                let elem = self.tcx.int_ty(IntTy::I64);
+                Some(self.min_heap_ty(elem))
+            }
+            "HashMap" => {
                 let key = self.fresh();
                 let value = self.fresh();
                 Some(self.tcx.intern(TyKind::HashMap { key, value }))
             }
+            "BTreeMap" => Some(self.phase1_btreemap_ty()),
             "HashSet" | "BTreeSet" => {
                 let elem = self.fresh();
                 Some(self.set_ty(tail, elem))
@@ -4610,24 +4723,49 @@ impl<'a> TypeChecker<'a> {
             _ => return None,
         };
         let source = self.infer.resolve(self.tcx, source);
+        let array_source_elem = |checker: &mut Self| {
+            if let Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) =
+                checker.tcx.kind(source)
+            {
+                *elem
+            } else {
+                let found = checker.render_public_ty(source);
+                checker.emit(
+                    TypeError::TypeMismatch {
+                        expected: "array, slice, or Vec".to_string(),
+                        found,
+                    },
+                    span,
+                );
+                checker.fresh()
+            }
+        };
         match owner {
             "Vec" => {
-                let elem = match self.tcx.kind(source) {
-                    Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => {
-                        *elem
-                    }
-                    _ => return None,
-                };
+                let elem = array_source_elem(self);
                 Some(self.tcx.intern(TyKind::Vec(elem)))
             }
             "HashSet" | "BTreeSet" => {
-                let elem = match self.tcx.kind(source) {
-                    Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => {
-                        *elem
-                    }
-                    _ => return None,
-                };
+                let elem = array_source_elem(self);
                 Some(self.set_ty(owner, elem))
+            }
+            "VecDeque" | "VecDequeue" | "VecQueue" => {
+                let elem = array_source_elem(self);
+                self.require_phase1_i64_collection_elem(elem, owner, span);
+                let elem = self.tcx.int_ty(IntTy::I64);
+                Some(self.vecdeque_ty(elem))
+            }
+            "BinaryHeap" | "MaxHeap" => {
+                let elem = array_source_elem(self);
+                self.require_phase1_i64_collection_elem(elem, owner, span);
+                let elem = self.tcx.int_ty(IntTy::I64);
+                Some(self.binary_heap_ty(elem))
+            }
+            "MinHeap" => {
+                let elem = array_source_elem(self);
+                self.require_phase1_i64_collection_elem(elem, owner, span);
+                let elem = self.tcx.int_ty(IntTy::I64);
+                Some(self.min_heap_ty(elem))
             }
             "HashMap" | "BTreeMap" => {
                 let (key, value) = if let Some(
@@ -4656,7 +4794,12 @@ impl<'a> TypeChecker<'a> {
                     );
                     return Some(self.fresh());
                 };
-                Some(self.tcx.intern(TyKind::HashMap { key, value }))
+                if owner == "BTreeMap" {
+                    self.require_phase1_btreemap_shape(key, value, span);
+                    Some(self.phase1_btreemap_ty())
+                } else {
+                    Some(self.tcx.intern(TyKind::HashMap { key, value }))
+                }
             }
             _ => None,
         }
@@ -5185,10 +5328,12 @@ impl<'a> TypeChecker<'a> {
     /// inference-sensitive paths keep their current semantics.
     fn stdlib_signature_arg_expectations(
         &mut self,
+        callee_id: NodeId,
         path: &gossamer_ast::PathExpr,
         n_args: usize,
     ) -> Option<Vec<Expectation>> {
-        let names: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
+        let names = self.resolved_value_path_names(callee_id, path);
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
         let (module, last) = names.split_at(names.len().saturating_sub(1));
         let name = last.first().copied()?;
         // String functions have String|char pattern slots that the generic
@@ -5548,6 +5693,58 @@ impl<'a> TypeChecker<'a> {
         self.set_ty("BTreeSet", elem)
     }
 
+    fn vecdeque_ty(&mut self, elem: Ty) -> Ty {
+        let substs = crate::Substs::from_types([elem]);
+        let def = gossamer_resolve::DefId::local(VEC_DEQUE_DEF_LOCAL);
+        self.tcx.register_def_name(def, "VecDeque");
+        self.tcx.intern(TyKind::Adt { def, substs })
+    }
+
+    fn binary_heap_ty(&mut self, elem: Ty) -> Ty {
+        let substs = crate::Substs::from_types([elem]);
+        let def = gossamer_resolve::DefId::local(BINARY_HEAP_DEF_LOCAL);
+        self.tcx.register_def_name(def, "MaxHeap");
+        self.tcx.intern(TyKind::Adt { def, substs })
+    }
+
+    fn min_heap_ty(&mut self, elem: Ty) -> Ty {
+        let substs = crate::Substs::from_types([elem]);
+        let def = gossamer_resolve::DefId::local(MIN_HEAP_DEF_LOCAL);
+        self.tcx.register_def_name(def, "MinHeap");
+        self.tcx.intern(TyKind::Adt { def, substs })
+    }
+
+    fn phase1_btreemap_ty(&mut self) -> Ty {
+        let key = self.tcx.string_ty();
+        let value = self.tcx.int_ty(IntTy::I64);
+        self.tcx.intern(TyKind::HashMap { key, value })
+    }
+
+    fn require_phase1_i64_collection_elem(&mut self, elem: Ty, _owner: &str, span: Span) {
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        self.unify(i64_ty, elem, span);
+    }
+
+    fn require_phase1_btreemap_shape(&mut self, key: Ty, value: Ty, span: Span) {
+        let string = self.tcx.string_ty();
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        self.unify(string, key, span);
+        self.unify(i64_ty, value, span);
+    }
+
+    fn reverse_ty(&mut self, elem: Ty) -> Ty {
+        let substs = crate::Substs::from_types([elem]);
+        let def = gossamer_resolve::DefId::local(REVERSE_DEF_LOCAL);
+        self.tcx.register_def_name(def, "Reverse");
+        self.tcx.register_tuple_struct(def.local);
+        self.tcx.register_struct_fields(def, vec![elem]);
+        self.tcx
+            .register_struct_fields_inst(def, substs.clone(), vec![elem]);
+        self.struct_fields
+            .insert(def, vec![("0".to_string(), elem)]);
+        self.tcx.intern(TyKind::Adt { def, substs })
+    }
+
     fn set_ty(&mut self, owner: &str, elem: Ty) -> Ty {
         let substs = crate::Substs::from_types([elem]);
         let (local, name) = match owner {
@@ -5729,20 +5926,16 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    /// `q.push_back(v)` on a `VecDeque<?elem>` pins the element generic to
-    /// `v`'s type, so an unannotated deque infers `VecDeque<String>` from the
-    /// first push and `pop_front()` recovers `Option<String>`. Returns
-    /// `Some(unit)` when handled, `None` for any other receiver / method.
-    fn check_deque_push_back(
+    /// Phase 1 `VecDeque` support is backed by the native `i64` deque ABI.
+    /// Keep method typing aligned with that runtime until the handle is made
+    /// fully generic.
+    fn check_deque_method(
         &mut self,
         method: &str,
         receiver_ty: Ty,
         span: gossamer_lex::Span,
         args: &[Expr],
     ) -> Option<Ty> {
-        if method != "push_back" || args.len() != 1 {
-            return None;
-        }
         let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = self.infer.resolve(self.tcx, *inner);
@@ -5751,13 +5944,84 @@ impl<'a> TypeChecker<'a> {
             && def.local == VEC_DEQUE_DEF_LOCAL
         {
             let elem = substs.types().first().copied();
-            let v = self.check_expr(&args[0]);
+            let i64_ty = self.tcx.int_ty(IntTy::I64);
             if let Some(elem) = elem {
-                self.unify(elem, v, span);
+                self.unify(i64_ty, elem, span);
             }
-            return Some(self.tcx.unit());
+            return match method {
+                "push_back" | "push_front" if args.len() == 1 => {
+                    let v = self.check_expr_expecting(&args[0], Expectation::HasType(i64_ty));
+                    self.unify(i64_ty, v, args[0].span);
+                    Some(self.tcx.unit())
+                }
+                "pop_back" | "pop_front" | "peek_back" | "peek_front" if args.is_empty() => {
+                    Some(self.option_adt_ty(i64_ty))
+                }
+                "len" if args.is_empty() => Some(self.tcx.int_ty(IntTy::I64)),
+                "is_empty" if args.is_empty() => Some(self.tcx.bool_ty()),
+                "clear" if args.is_empty() => Some(self.tcx.unit()),
+                _ => None,
+            };
         }
         None
+    }
+
+    fn check_binary_heap_method(
+        &mut self,
+        method: &str,
+        receiver_ty: Ty,
+        args: &[Expr],
+        span: gossamer_lex::Span,
+    ) -> Option<Ty> {
+        let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
+            resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        let elem_ty = match self.tcx.kind(resolved) {
+            Some(TyKind::Adt { def, substs })
+                if matches!(def.local, BINARY_HEAP_DEF_LOCAL | MIN_HEAP_DEF_LOCAL) =>
+            {
+                substs
+                    .types()
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| self.tcx.int_ty(IntTy::I64))
+            }
+            _ => return None,
+        };
+        if !matches!(
+            self.tcx.kind(resolved),
+            Some(TyKind::Adt { def, .. }) if matches!(def.local, BINARY_HEAP_DEF_LOCAL | MIN_HEAP_DEF_LOCAL)
+        ) {
+            return None;
+        }
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        self.unify(i64_ty, elem_ty, span);
+        match method {
+            "push" if args.len() == 1 => {
+                let got = self.check_expr_expecting(&args[0], Expectation::HasType(i64_ty));
+                self.unify(i64_ty, got, args[0].span);
+                Some(self.tcx.unit())
+            }
+            "pop" | "peek" if args.is_empty() => Some(self.option_adt_ty(i64_ty)),
+            "len" if args.is_empty() => Some(self.tcx.int_ty(IntTy::I64)),
+            "is_empty" if args.is_empty() => Some(self.tcx.bool_ty()),
+            "clear" if args.is_empty() => Some(self.tcx.unit()),
+            "push" | "pop" | "peek" | "len" | "is_empty" | "clear" => {
+                let expected = usize::from(method == "push");
+                let owner = self.render_public_ty(resolved);
+                self.emit(
+                    TypeError::CallArityMismatch {
+                        callee: format!("{owner}::{method}"),
+                        expected,
+                        found: args.len(),
+                    },
+                    span,
+                );
+                Some(self.tcx.error_ty())
+            }
+            _ => None,
+        }
     }
 
     /// Expected closure parameter types for a `Vec`/slice/array
@@ -5828,7 +6092,10 @@ impl<'a> TypeChecker<'a> {
         if matches!(method, "into" | "try_into") && args.is_empty() {
             return self.fresh();
         }
-        if let Some(ty) = self.check_deque_push_back(method, receiver_ty, receiver.span, args) {
+        if let Some(ty) = self.check_deque_method(method, receiver_ty, receiver.span, args) {
+            return ty;
+        }
+        if let Some(ty) = self.check_binary_heap_method(method, receiver_ty, args, receiver.span) {
             return ty;
         }
         // Result/Option combinator methods (`r.map_err(f)`,
@@ -6104,6 +6371,15 @@ impl<'a> TypeChecker<'a> {
                 | "clear" => Some(0),
                 _ => None,
             },
+            Some(TyKind::Adt { def, .. })
+                if matches!(def.local, BINARY_HEAP_DEF_LOCAL | MIN_HEAP_DEF_LOCAL) =>
+            {
+                match method {
+                    "push" => Some(1),
+                    "pop" | "peek" | "len" | "is_empty" | "clear" => Some(0),
+                    _ => None,
+                }
+            }
             _ => None,
         };
         let Some(expected) = expected.filter(|expected| *expected != found) else {
@@ -6769,8 +7045,8 @@ impl<'a> TypeChecker<'a> {
             }
             (
                 m @ ("map" | "filter" | "for_each" | "any" | "all" | "find" | "position"
-                | "max_by_key" | "min_by_key" | "skip" | "chain" | "zip" | "windows"
-                | "chunks"),
+                | "max_by_key" | "min_by_key" | "take_while" | "skip_while" | "skip" | "chain"
+                | "zip" | "windows" | "chunks"),
                 1,
             )
             | (m @ ("enumerate" | "rev" | "dedup" | "flatten" | "pairwise"), 0)
@@ -6876,6 +7152,7 @@ impl<'a> TypeChecker<'a> {
             "get_or" | "or_insert" => Some(value),
             "contains" | "contains_key" | "is_empty" => Some(self.tcx.bool_ty()),
             "len" => Some(self.tcx.int_ty(IntTy::I64)),
+            "clear" => Some(self.tcx.unit()),
             _ => None,
         }
     }
@@ -7972,6 +8249,8 @@ impl<'a> TypeChecker<'a> {
                         | "zip"
                         | "map"
                         | "filter"
+                        | "take_while"
+                        | "skip_while"
                         | "rev"
                 );
                 let edition_lazy_result =
@@ -9928,6 +10207,60 @@ impl<'a> TypeChecker<'a> {
         self.hashset_ty(elem_ty)
     }
 
+    fn check_queue_literal(&mut self, arr: &ArrayExpr, _expected: Expectation) -> Ty {
+        let elem_ty = self.tcx.int_ty(IntTy::I64);
+        match arr {
+            ArrayExpr::List(elems) => {
+                for elem in elems {
+                    let got = self.check_expr_expecting(elem, Expectation::HasType(elem_ty));
+                    self.unify(elem_ty, got, elem.span);
+                }
+            }
+            ArrayExpr::Repeat { value, count } => {
+                let got = self.check_expr_expecting(value, Expectation::HasType(elem_ty));
+                self.unify(elem_ty, got, value.span);
+                self.check_expr(count);
+            }
+        }
+        self.vecdeque_ty(elem_ty)
+    }
+
+    fn check_max_heap_literal(&mut self, arr: &ArrayExpr, _expected: Expectation) -> Ty {
+        let elem_ty = self.tcx.int_ty(IntTy::I64);
+        match arr {
+            ArrayExpr::List(elems) => {
+                for elem in elems {
+                    let got = self.check_expr_expecting(elem, Expectation::HasType(elem_ty));
+                    self.unify(elem_ty, got, elem.span);
+                }
+            }
+            ArrayExpr::Repeat { value, count } => {
+                let got = self.check_expr_expecting(value, Expectation::HasType(elem_ty));
+                self.unify(elem_ty, got, value.span);
+                self.check_expr(count);
+            }
+        }
+        self.binary_heap_ty(elem_ty)
+    }
+
+    fn check_min_heap_literal(&mut self, arr: &ArrayExpr, _expected: Expectation) -> Ty {
+        let elem_ty = self.tcx.int_ty(IntTy::I64);
+        match arr {
+            ArrayExpr::List(elems) => {
+                for elem in elems {
+                    let got = self.check_expr_expecting(elem, Expectation::HasType(elem_ty));
+                    self.unify(elem_ty, got, elem.span);
+                }
+            }
+            ArrayExpr::Repeat { value, count } => {
+                let got = self.check_expr_expecting(value, Expectation::HasType(elem_ty));
+                self.unify(elem_ty, got, value.span);
+                self.check_expr(count);
+            }
+        }
+        self.min_heap_ty(elem_ty)
+    }
+
     fn check_vec_literal(&mut self, arr: &ArrayExpr, expected: Expectation) -> Ty {
         let expected_elem =
             self.expectation_target(expected)
@@ -10195,7 +10528,8 @@ impl<'a> TypeChecker<'a> {
         path: &gossamer_ast::PathExpr,
         span: Span,
     ) -> Ty {
-        let segments: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
+        let resolved_segments = self.resolved_value_path_names(node, path);
+        let segments: Vec<&str> = resolved_segments.iter().map(String::as_str).collect();
         let joined = segments.join("::");
         if let Some((int_ty, _value)) = int_assoc_const(&segments) {
             return self.tcx.int_ty(int_ty);
@@ -10620,7 +10954,7 @@ impl<'a> TypeChecker<'a> {
                 let value = tys.get(1).copied().unwrap_or_else(|| self.fresh());
                 return self.tcx.intern(TyKind::HashMap { key, value });
             }
-            // `HashSet<T>` / `BTreeSet<T>` / `BTreeMap<K, V>` are opaque i64 handles at
+            // `HashSet<T>` / `BTreeSet<T>` are opaque i64 handles at
             // runtime with no dedicated `TyKind`. Resolving the annotation to
             // a named sentinel Adt (rather than a fresh inference var) lets
             // method dispatch recover the receiver kind from its *type* when a
@@ -10641,28 +10975,66 @@ impl<'a> TypeChecker<'a> {
                 self.tcx.register_def_name(def, name);
                 return self.tcx.intern(TyKind::Adt { def, substs });
             }
-            // `BTreeMap<K, V>` shares the `HashMap` runtime on every tier
-            // (the VM already backs it with the same sorted map, and the
-            // map's `keys()` / `iter()` sort deterministically), so it
-            // resolves to the same `TyKind::HashMap` and reaches the full
-            // map method surface rather than a partial opaque-handle path.
+            // Phase 1 `BTreeMap` is the compiled runtime's sorted
+            // `String -> i64` map. It still resolves to `TyKind::HashMap`
+            // because the type model has no separate map kind.
             "BTreeMap" => {
                 let substs = self.substs_from_ast(path);
                 let tys = substs.types();
-                let key = tys.first().copied().unwrap_or_else(|| self.fresh());
-                let value = tys.get(1).copied().unwrap_or_else(|| self.fresh());
-                return self.tcx.intern(TyKind::HashMap { key, value });
+                let key = tys.first().copied().unwrap_or_else(|| self.tcx.string_ty());
+                let value = tys
+                    .get(1)
+                    .copied()
+                    .unwrap_or_else(|| self.tcx.int_ty(IntTy::I64));
+                self.require_phase1_btreemap_shape(key, value, span);
+                return self.phase1_btreemap_ty();
             }
-            // `VecDeque<T>` is an opaque ring-buffer handle at runtime with no
-            // dedicated `TyKind`. Resolving the annotation to a named sentinel
-            // Adt that carries `T` in its substs lets method dispatch recover
-            // the element type (so `pop_front()` binds `Option<T>` with the
-            // right payload) even when the deque is consumed inline.
-            "VecDeque" => {
+            // Phase 1 `VecDeque` is an opaque i64 ring-buffer handle. Resolve
+            // the annotation to the named sentinel Adt so method dispatch can
+            // recover the receiver kind after construction tags are gone.
+            "VecDeque" | "VecDequeue" | "VecQueue" => {
                 let substs = self.substs_from_ast(path);
+                let elem = substs
+                    .types()
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| self.tcx.int_ty(IntTy::I64));
+                self.require_phase1_i64_collection_elem(elem, head_name, span);
                 let def = gossamer_resolve::DefId::local(VEC_DEQUE_DEF_LOCAL);
                 self.tcx.register_def_name(def, "VecDeque");
+                let substs = crate::Substs::from_types([self.tcx.int_ty(IntTy::I64)]);
                 return self.tcx.intern(TyKind::Adt { def, substs });
+            }
+            "BinaryHeap" | "MaxHeap" => {
+                let substs = self.substs_from_ast(path);
+                let elem = substs
+                    .types()
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| self.tcx.int_ty(IntTy::I64));
+                self.require_phase1_i64_collection_elem(elem, head_name, span);
+                let elem = self.tcx.int_ty(IntTy::I64);
+                return self.binary_heap_ty(elem);
+            }
+            "MinHeap" => {
+                let substs = self.substs_from_ast(path);
+                let elem = substs
+                    .types()
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| self.tcx.int_ty(IntTy::I64));
+                self.require_phase1_i64_collection_elem(elem, head_name, span);
+                let elem = self.tcx.int_ty(IntTy::I64);
+                return self.min_heap_ty(elem);
+            }
+            "Reverse" => {
+                let substs = self.substs_from_ast(path);
+                let elem = substs
+                    .types()
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| self.fresh());
+                return self.reverse_ty(elem);
             }
             // `Box<T>` / `Arc<T>` / `Rc<T>` are transparent in a fully
             // GC'd language - every value is heap-shared already, so
@@ -11377,9 +11749,8 @@ fn strings_fn_str_params(name: &str) -> Option<&'static [(usize, StrArgShape)]> 
         "equal_fold" => &[(0, Str), (1, StrOrChar)],
         "center" | "pad_left" | "pad_right" => &[(0, Str)],
         "split_whitespace" | "trim" | "trim_start" | "trim_end" | "to_lowercase"
-        | "to_uppercase" | "to_title" | "lines" | "repeat" | "slice" | "substring" | "byte_at" => {
-            &[(0, Str)]
-        }
+        | "to_uppercase" | "to_title" | "lines" | "repeat" | "slice" | "substring" | "byte_at"
+        | "byte_len" => &[(0, Str)],
         _ => return None,
     })
 }
@@ -11441,6 +11812,51 @@ fn argument_value_display(arg: &Expr) -> String {
                 argument_value_display(count)
             )
         }
+        ExprKind::QueueLiteral(ArrayExpr::List(values)) => format!(
+            "<[{}]>",
+            values
+                .iter()
+                .map(argument_value_display)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ExprKind::QueueLiteral(ArrayExpr::Repeat { value, count }) => {
+            format!(
+                "<[{}; {}]>",
+                argument_value_display(value),
+                argument_value_display(count)
+            )
+        }
+        ExprKind::MaxHeapLiteral(ArrayExpr::List(values)) => format!(
+            "^[{}]",
+            values
+                .iter()
+                .map(argument_value_display)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ExprKind::MaxHeapLiteral(ArrayExpr::Repeat { value, count }) => {
+            format!(
+                "^[{}; {}]",
+                argument_value_display(value),
+                argument_value_display(count)
+            )
+        }
+        ExprKind::MinHeapLiteral(ArrayExpr::List(values)) => format!(
+            "_[{}]",
+            values
+                .iter()
+                .map(argument_value_display)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ExprKind::MinHeapLiteral(ArrayExpr::Repeat { value, count }) => {
+            format!(
+                "_[{}; {}]",
+                argument_value_display(value),
+                argument_value_display(count)
+            )
+        }
         ExprKind::Literal(Literal::Int(value) | Literal::Float(value)) => value.clone(),
         ExprKind::Literal(Literal::String(value)) => format!("{value:?}"),
         ExprKind::Literal(Literal::Char(value)) => format!("{value:?}"),
@@ -11463,6 +11879,9 @@ fn string_argument_found_type(arg: &Expr, tcx: &TyCtxt, ty: Ty) -> String {
     match &arg.kind {
         ExprKind::Array(_) => "Vec".to_string(),
         ExprKind::FixedArray(_) => "array".to_string(),
+        ExprKind::QueueLiteral(_) => "VecDeque".to_string(),
+        ExprKind::MaxHeapLiteral(_) => "MaxHeap".to_string(),
+        ExprKind::MinHeapLiteral(_) => "MinHeap".to_string(),
         ExprKind::MapLiteral(_) => "map literal".to_string(),
         ExprKind::SetLiteral(_) => "set literal".to_string(),
         ExprKind::Range { .. } => "range".to_string(),
@@ -11491,7 +11910,7 @@ fn strings_fn_arity(name: &str) -> Option<usize> {
         "replacen" => 4,
         "split_whitespace" | "trim" | "trim_start" | "trim_end" | "to_lowercase"
         | "to_uppercase" | "to_title" | "to_i64" | "to_f64" | "to_bool" | "lines" | "chars"
-        | "bytes" => 1,
+        | "bytes" | "byte_len" => 1,
         "repeat" | "byte_at" => 2,
         // `join(parts, sep)` is installed on `Vec` rather than `String`, but
         // it remains a `strings` free function and therefore belongs in the
@@ -12532,6 +12951,8 @@ pub fn is_iterator_method(name: &str) -> bool {
             | "zip"
             | "map"
             | "filter"
+            | "take_while"
+            | "skip_while"
             | "rev"
             | "dedup"
             | "flatten"

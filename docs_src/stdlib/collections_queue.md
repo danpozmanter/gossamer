@@ -12,7 +12,7 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn len(xs: Queue<i64>) -> i64` | Element count. |
-| [`peek`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn peek(xs: Queue<i64>) -> i64` | Front element, or 0 if empty. |
-| [`pop`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn pop(xs: Queue<i64>) -> Queue<i64>` | Drop the front element; returns the new queue. |
-| [`push`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn push(xs: Queue<i64>, value: i64) -> Queue<i64>` | Append an i64 to the back; returns the new queue. |
+| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn len(xs: Vec<i64>) -> i64` | Element count. |
+| [`peek`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn peek(xs: Vec<i64>) -> Option<i64>` | Front element, if present. |
+| [`pop`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn pop(xs: Vec<i64>) -> Vec<i64>` | Drop the front element; returns the new queue. |
+| [`push`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn push(xs: Vec<i64>, value: i64) -> Vec<i64>` | Append an i64 to the back; returns the new queue. |

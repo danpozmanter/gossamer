@@ -178,6 +178,16 @@ pub const PATH: StdModule = StdModule {
             doc: "Joins two path fragments.",
         },
         StdItem {
+            name: "components",
+            kind: StdItemKind::Function,
+            doc: "Returns Rust-like lexical path components.",
+        },
+        StdItem {
+            name: "prefixes",
+            kind: StdItemKind::Function,
+            doc: "Returns cumulative Rust-like lexical path prefixes.",
+        },
+        StdItem {
             name: "split",
             kind: StdItemKind::Function,
             doc: "Returns (dir, file) for the supplied path.",

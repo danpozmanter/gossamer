@@ -117,6 +117,9 @@ pub(crate) fn install_strings(globals: &mut Vec<(&'static str, Value)>) {
         ("split", builtin_strings_split),
         ("splitn", builtin_strings_splitn),
         ("split_whitespace", builtin_strings_split_ws),
+        ("byte_len", builtin_strings_byte_len),
+        ("byte_at", builtin_strings_byte_at),
+        ("substring", builtin_strings_substring),
         ("trim", builtin_strings_trim),
         ("trim_start", builtin_strings_trim_start),
         ("trim_end", builtin_strings_trim_end),
@@ -230,6 +233,37 @@ pub(crate) fn builtin_strings_splitn(args: &[Value]) -> RuntimeResult<Value> {
 pub(crate) fn builtin_strings_split_ws(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
     Ok(string_array(strings_std::split_whitespace(text)))
+}
+
+pub(crate) fn builtin_strings_byte_len(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    Ok(Value::Int(
+        i64::try_from(strings_std::byte_len(text)).unwrap_or(i64::MAX),
+    ))
+}
+
+pub(crate) fn builtin_strings_byte_at(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    let index = args.get(1).and_then(value_to_int).unwrap_or(-1);
+    let byte = if index < 0 {
+        0
+    } else {
+        strings_std::byte_at(text, index as usize)
+    };
+    Ok(Value::Int(i64::from(byte)))
+}
+
+pub(crate) fn builtin_strings_substring(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    let start = args.get(1).and_then(value_to_int).unwrap_or(0).max(0) as usize;
+    let end = args
+        .get(2)
+        .and_then(value_to_int)
+        .unwrap_or_else(|| i64::try_from(text.len()).unwrap_or(i64::MAX))
+        .max(0) as usize;
+    Ok(Value::String(
+        strings_std::substring(text, start, end).into(),
+    ))
 }
 
 pub(crate) fn builtin_strings_trim(args: &[Value]) -> RuntimeResult<Value> {

@@ -99,6 +99,18 @@ fn main() {
 }
 
 #[test]
+fn closure_tuple_parameter_destructuring_runs_through_hof() {
+    let src = r#"
+fn main() {
+    let values = [1, 2, 3, 4]
+    let shifted = values.enumerate().map(|(i, value)| value + i)
+    println!("{:?}", shifted)
+}
+"#;
+    assert_eq!(run_main(src), "[1, 3, 5, 7]\n");
+}
+
+#[test]
 fn bare_fn_passed_to_a_hof_resolves_through_vm_globals() {
     // A top-level fn used as a value reaches the HOF as a
     // `Value::String` surrogate; `VmDispatch::call_value` resolves it

@@ -127,6 +127,11 @@ fn managed_string_owner(s: *const c_char) -> Option<&'static StringOwner> {
     str_owner(s).filter(|owner| owner.destructor == STRING_DTOR_HEAP)
 }
 
+#[inline]
+unsafe fn typed_managed_string_owner(s: *const c_char) -> Option<&'static StringOwner> {
+    unsafe { typed_str_owner(s) }.filter(|owner| owner.destructor == STRING_DTOR_HEAP)
+}
+
 pub(crate) unsafe fn c_str_len(s: *const c_char) -> usize {
     if s.is_null() {
         return 0;
@@ -186,6 +191,14 @@ unsafe fn typed_str_bytes<'a>(s: *const c_char) -> &'a [u8] {
     unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) }
 }
 
+/// Borrows bytes from a compiler-typed Gossamer string without checking the
+/// heap-string registry. Runtime helpers that are only called from generated
+/// code use this to avoid a global lock on hot string-keyed loops.
+#[inline]
+pub(crate) unsafe fn gos_typed_str_key_bytes<'a>(s: *const c_char) -> &'a [u8] {
+    unsafe { typed_str_bytes(s) }
+}
+
 #[inline]
 unsafe fn typed_str_text<'a>(s: *const c_char) -> &'a str {
     std::str::from_utf8(unsafe { typed_str_bytes(s) }).unwrap_or("")
@@ -236,6 +249,18 @@ unsafe fn typed_str_char_boundary(s: *const c_char, index: usize) -> Option<usiz
         .nth(index)
         .map(|(offset, _)| offset)
         .or_else(|| (index == text.chars().count()).then_some(text.len()))
+}
+
+#[inline]
+unsafe fn typed_str_next_char_boundary(s: *const c_char, mut index: usize) -> Option<usize> {
+    let text = unsafe { typed_str_text(s) };
+    if index > text.len() {
+        return None;
+    }
+    while index < text.len() && !text.is_char_boundary(index) {
+        index += 1;
+    }
+    Some(index)
 }
 
 /// Tests the private builder tag on a compiler-typed string.
@@ -582,13 +607,17 @@ where
 /// region-backed strings are ignored without probing a private prefix. As with
 /// every raw-pointer ABI, a stale pointer whose address has been reused cannot
 /// be distinguished without a generation-bearing carrier type.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_str_free(s: *mut c_char) {
+unsafe fn str_free_impl(s: *mut c_char, typed: bool) {
     ffi_entry!((), {
         if s.is_null() {
             return;
         }
-        if !is_managed_string(s) {
+        let is_managed = if typed {
+            unsafe { typed_managed_string_owner(s) }.is_some()
+        } else {
+            is_managed_string(s)
+        };
+        if !is_managed {
             return;
         }
         crate::c_abi::ledger::benchmark_arc_release();
@@ -624,8 +653,26 @@ pub unsafe extern "C" fn gos_rt_str_free(s: *mut c_char) {
     });
 }
 
-pub(crate) unsafe fn consume_moved_string(s: *mut c_char) {
-    if s.is_null() || !is_managed_string(s) {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_free(s: *mut c_char) {
+    unsafe { str_free_impl(s, false) };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_free_typed(s: *mut c_char) {
+    unsafe { str_free_impl(s, true) };
+}
+
+unsafe fn consume_moved_string_impl(s: *mut c_char, typed: bool) {
+    if s.is_null() {
+        return;
+    }
+    let is_managed = if typed {
+        unsafe { typed_managed_string_owner(s) }.is_some()
+    } else {
+        is_managed_string(s)
+    };
+    if !is_managed {
         return;
     }
     let hdr = unsafe { s.cast::<u8>().sub(13) };
@@ -645,7 +692,15 @@ pub(crate) unsafe fn consume_moved_string(s: *mut c_char) {
         let next = rc.saturating_sub(2).max(1);
         unsafe { std::ptr::copy_nonoverlapping(next.to_le_bytes().as_ptr(), hdr, 4) };
     }
-    unsafe { gos_rt_str_free(s) };
+    unsafe { str_free_impl(s, typed) };
+}
+
+pub(crate) unsafe fn consume_moved_string(s: *mut c_char) {
+    unsafe { consume_moved_string_impl(s, false) };
+}
+
+pub(crate) unsafe fn consume_moved_string_typed(s: *mut c_char) {
+    unsafe { consume_moved_string_impl(s, true) };
 }
 
 /// True when `s` is a string value inside a compiler-typed Gossamer object.
@@ -660,9 +715,13 @@ pub unsafe fn is_gos_string(s: *const c_char) -> bool {
     unsafe { typed_str_owner(s).is_some() }
 }
 
-/// Increment a heap (`STR_BUILDER_TAG`) string's refcount; no-op otherwise.
-pub(crate) unsafe fn gos_rt_str_retain(s: *const c_char) {
-    if !is_managed_string(s) {
+unsafe fn str_retain_impl(s: *const c_char, typed: bool) {
+    let is_managed = if typed {
+        unsafe { typed_managed_string_owner(s) }.is_some()
+    } else {
+        is_managed_string(s)
+    };
+    if !is_managed {
         return;
     }
     crate::c_abi::ledger::benchmark_arc_retain();
@@ -683,6 +742,16 @@ pub(crate) unsafe fn gos_rt_str_retain(s: *const c_char) {
             4,
         );
     }
+}
+
+/// Increment a heap (`STR_BUILDER_TAG`) string's refcount; no-op otherwise.
+pub(crate) unsafe fn gos_rt_str_retain(s: *const c_char) {
+    unsafe { str_retain_impl(s, false) };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_retain_typed(s: *const c_char) {
+    unsafe { str_retain_impl(s, true) };
 }
 
 /// Marks a `STR_BUILDER` string as goroutine-shared so subsequent
@@ -752,6 +821,11 @@ fn alloc_ascii_upper_cstring(src: &[u8]) -> *mut c_char {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_len(s: *const c_char) -> i64 {
     ffi_entry!(-1, { unsafe { typed_str_char_len(s) as i64 } })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_byte_len(s: *const c_char) -> i64 {
+    ffi_entry!(-1, { unsafe { typed_str_len(s) as i64 } })
 }
 
 #[unsafe(no_mangle)]
@@ -1055,8 +1129,9 @@ pub unsafe extern "C" fn gos_rt_os_read_dir(path: *const c_char) -> *mut GosVec 
 }
 
 /// `s.substring(start, end)` - byte-range slice. Clamps `start`
-/// and `end` into `[0, len(s)]` and returns the indicated byte
-/// substring as a fresh `*mut c_char`. Mirrors the interp
+/// and `end` into `[0, byte_len(s)]` and returns the indicated byte
+/// substring as a fresh `*mut c_char`. Bounds inside a multibyte scalar
+/// advance to the next UTF-8 boundary. Mirrors the interp
 /// builtin so user code that calls `s.substring(a, b)` runs the
 /// same way under `gos` and `gos build` - without this
 /// helper the compiled tier saw `s.substring(...)` as an
@@ -1080,11 +1155,11 @@ pub unsafe extern "C" fn gos_rt_str_substring(
         // proportional to the slice length, not the source length, so a
         // sliding-window scan over one string stays linear.
         let byte_len = unsafe { typed_str_len(s) };
-        let len_i = unsafe { typed_str_char_len(s) } as i64;
+        let len_i = byte_len as i64;
         let lo = start.clamp(0, len_i) as usize;
         let hi = end.clamp(0, len_i).max(start.clamp(0, len_i)) as usize;
-        let lo_byte = unsafe { typed_str_char_boundary(s, lo) }.unwrap_or(byte_len);
-        let hi_byte = unsafe { typed_str_char_boundary(s, hi) }.unwrap_or(byte_len);
+        let lo_byte = unsafe { typed_str_next_char_boundary(s, lo) }.unwrap_or(byte_len);
+        let hi_byte = unsafe { typed_str_next_char_boundary(s, hi) }.unwrap_or(byte_len);
         let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), byte_len) };
         alloc_cstring_from_slices(&[&bytes[lo_byte..hi_byte]])
     })

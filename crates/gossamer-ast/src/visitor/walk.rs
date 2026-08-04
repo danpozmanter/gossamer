@@ -276,7 +276,11 @@ pub fn walk_expr<V: Visitor + ?Sized>(visitor: &mut V, expr: &Expr) {
         ExprKind::Try(inner) | ExprKind::Go(inner) => visitor.visit_expr(inner),
         ExprKind::Unary { operand, .. } => visitor.visit_expr(operand),
         ExprKind::MacroCall(call) => walk_macro_call(visitor, call),
-        ExprKind::Array(array_expr) | ExprKind::FixedArray(array_expr) => {
+        ExprKind::Array(array_expr)
+        | ExprKind::FixedArray(array_expr)
+        | ExprKind::QueueLiteral(array_expr)
+        | ExprKind::MaxHeapLiteral(array_expr)
+        | ExprKind::MinHeapLiteral(array_expr) => {
             walk_array_expr(visitor, array_expr);
         }
         ExprKind::Tuple(items) | ExprKind::MapLiteral(items) | ExprKind::SetLiteral(items) => {

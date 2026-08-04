@@ -21,6 +21,37 @@ pub fn split_whitespace(text: &str) -> Vec<String> {
     text.split_whitespace().map(str::to_string).collect()
 }
 
+/// Returns the UTF-8 byte length of `text`.
+#[must_use]
+pub fn byte_len(text: &str) -> usize {
+    text.len()
+}
+
+/// Returns the byte at `index`, or `0` when out of bounds.
+#[must_use]
+pub fn byte_at(text: &str, index: usize) -> u8 {
+    text.as_bytes().get(index).copied().unwrap_or(0)
+}
+
+/// Returns a UTF-8 substring using byte offsets.
+///
+/// Offsets are clamped into the source byte range. If either offset lands
+/// inside a multibyte scalar, it is advanced to the next valid boundary.
+#[must_use]
+pub fn substring(text: &str, start: usize, end: usize) -> String {
+    let len = text.len();
+    let lo = next_char_boundary(text, start.min(len));
+    let hi = next_char_boundary(text, end.min(len)).max(lo);
+    text[lo..hi].to_string()
+}
+
+fn next_char_boundary(text: &str, mut index: usize) -> usize {
+    while index < text.len() && !text.is_char_boundary(index) {
+        index += 1;
+    }
+    index
+}
+
 /// Trims leading and trailing whitespace (Unicode-aware).
 #[must_use]
 pub fn trim(text: &str) -> String {

@@ -191,6 +191,7 @@ const PURE_ARGMEM_READ: &[&str] = &[
     "gos_rt_arr_len",
     "gos_rt_str_len",
     "gos_rt_str_byte_at",
+    "gos_rt_str_byte_len",
     "gos_rt_str_eq",
     "gos_rt_heap_i64_get",
 ];

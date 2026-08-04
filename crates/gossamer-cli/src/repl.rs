@@ -18,16 +18,16 @@ REPL commands
 
   %help
     Show this list of REPL commands.
-  %info (%i) [pattern] [-d|--details] [-a|--all] [-p N|--page N]
+  %info (%i) [pattern] [-d|--details]
     List language and standard-library matches; use -d for documentation.
   %explain (%e) NAME [-d|--details]
     Inspect a persistent `let` binding or declaration; use -d for methods and capability.
-  %bindings (%b) [regex] [-a|--all] [-p N|--page N]
-    Show persistent `let` bindings.
+  %bindings (%b) [pattern]
+    Show persistent `let` bindings. Patterns filter binding names.
   %drop NAME
     End a persistent binding's lexical lifetime and remove it.
-  %declarations (%d) [regex] [-a|--all] [-p N|--page N]
-    Show persistent declarations.
+  %declarations (%d) [pattern]
+    Show persistent declarations. Patterns filter declaration names.
   %history (%h) [regex]
     Search inputs from this and previous sessions.
   %clear-history
@@ -39,9 +39,7 @@ REPL commands
 
 Expressions print their value. Declarations and `let` bindings persist.
 
-Listings show 20 entries at a time. Use `--page N` for another page or
-`-a`/`--all` for all results; either option may appear before or after a
-pattern.
+Searches accept either fuzzy substrings or /regex/.
 
 Up/down cycles history.";
 
@@ -580,8 +578,15 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "Vec",
         name: "fill",
         kind: "method",
-        signature: "fn fill<T>(self: &mut [T], value: T) -> ()",
+        signature: "fn fill<T>(self: &mut Vec<T>, value: T) -> ()",
         doc: "Clones a value into every existing element without resizing.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "iter",
+        kind: "method",
+        signature: "fn iter<T>(self: Vec<T>) -> Iterator<T>",
+        doc: "Returns an iterator over the vector values.",
     },
     CoreMethodHelp {
         owner: "Vec",
@@ -624,6 +629,20 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         kind: "method",
         signature: "fn skip<T>(self: Vec<T>, n: i64) -> Vec<T>",
         doc: "Drops the first n values.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "take_while",
+        kind: "method",
+        signature: "fn take_while<T>(self: Vec<T>, f: fn(T) -> bool) -> Vec<T>",
+        doc: "Returns the leading run of values accepted by a predicate.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "skip_while",
+        kind: "method",
+        signature: "fn skip_while<T>(self: Vec<T>, f: fn(T) -> bool) -> Vec<T>",
+        doc: "Drops the leading run of values accepted by a predicate.",
     },
     CoreMethodHelp {
         owner: "Vec",
@@ -906,11 +925,25 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         doc: "Returns key-value pairs.",
     },
     CoreMethodHelp {
+        owner: "HashMap",
+        name: "clear",
+        kind: "method",
+        signature: "fn clear<K, V>(self: &mut HashMap<K, V>) -> ()",
+        doc: "Removes all entries.",
+    },
+    CoreMethodHelp {
         owner: "BTreeMap",
         name: "new",
         kind: "assoc",
         signature: "fn new<K, V>() -> BTreeMap<K, V>",
         doc: "Creates an empty ordered map.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeMap",
+        name: "from",
+        kind: "assoc",
+        signature: "fn from<K, V, const N: usize>(entries: [(K, V); N]) -> BTreeMap<K, V>",
+        doc: "Creates an ordered map from a fixed array of key-value tuples.",
     },
     CoreMethodHelp {
         owner: "BTreeMap",
@@ -935,6 +968,27 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
     },
     CoreMethodHelp {
         owner: "BTreeMap",
+        name: "or_insert",
+        kind: "method",
+        signature: "fn or_insert<K, V>(self: &mut BTreeMap<K, V>, key: K, default: V) -> V",
+        doc: "Returns the existing value or inserts a default.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeMap",
+        name: "remove",
+        kind: "method",
+        signature: "fn remove<K, V>(self: &mut BTreeMap<K, V>, key: K) -> Option<V>",
+        doc: "Removes a key and returns its previous value when present.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeMap",
+        name: "pop",
+        kind: "method",
+        signature: "fn pop<K, V>(self: &mut BTreeMap<K, V>, key: K) -> Option<V>",
+        doc: "Removes and returns the value for a key when present.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeMap",
         name: "contains_key",
         kind: "method",
         signature: "fn contains_key<K, V>(self: BTreeMap<K, V>, key: K) -> bool",
@@ -956,10 +1010,38 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
     },
     CoreMethodHelp {
         owner: "BTreeMap",
+        name: "is_empty",
+        kind: "method",
+        signature: "fn is_empty<K, V>(self: BTreeMap<K, V>) -> bool",
+        doc: "Returns true when the ordered map has no entries.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeMap",
         name: "keys",
         kind: "method",
         signature: "fn keys<K, V>(self: BTreeMap<K, V>) -> Vec<K>",
         doc: "Returns ordered keys.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeMap",
+        name: "values",
+        kind: "method",
+        signature: "fn values<K, V>(self: BTreeMap<K, V>) -> Vec<V>",
+        doc: "Returns values in key order.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeMap",
+        name: "iter",
+        kind: "method",
+        signature: "fn iter<K, V>(self: BTreeMap<K, V>) -> Vec<(K, V)>",
+        doc: "Returns key-value pairs in key order.",
+    },
+    CoreMethodHelp {
+        owner: "BTreeMap",
+        name: "clear",
+        kind: "method",
+        signature: "fn clear<K, V>(self: &mut BTreeMap<K, V>) -> ()",
+        doc: "Removes all entries.",
     },
     CoreMethodHelp {
         owner: "HashSet",
@@ -1208,6 +1290,13 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
     },
     CoreMethodHelp {
         owner: "VecDeque",
+        name: "from",
+        kind: "assoc",
+        signature: "fn from<T, const N: usize>(values: [T; N]) -> VecDeque<T>",
+        doc: "Creates a deque from values in front-to-back order. The queue literal spelling is <[a, b]>.",
+    },
+    CoreMethodHelp {
+        owner: "VecDeque",
         name: "push_back",
         kind: "method",
         signature: "fn push_back<T>(self: &mut VecDeque<T>, value: T) -> ()",
@@ -1249,6 +1338,251 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         doc: "Returns the back value without removing it.",
     },
     CoreMethodHelp {
+        owner: "VecDeque",
+        name: "len",
+        kind: "method",
+        signature: "fn len<T>(self: VecDeque<T>) -> i64",
+        doc: "Returns the number of values.",
+    },
+    CoreMethodHelp {
+        owner: "VecDeque",
+        name: "is_empty",
+        kind: "method",
+        signature: "fn is_empty<T>(self: VecDeque<T>) -> bool",
+        doc: "Returns true when the deque has no values.",
+    },
+    CoreMethodHelp {
+        owner: "VecDeque",
+        name: "clear",
+        kind: "method",
+        signature: "fn clear<T>(self: &mut VecDeque<T>) -> ()",
+        doc: "Removes all values.",
+    },
+    CoreMethodHelp {
+        owner: "VecDequeue",
+        name: "new",
+        kind: "assoc",
+        signature: "fn new<T>() -> VecDequeue<T>",
+        doc: "Alias for VecDeque::new.",
+    },
+    CoreMethodHelp {
+        owner: "VecDequeue",
+        name: "from",
+        kind: "assoc",
+        signature: "fn from<T, const N: usize>(values: [T; N]) -> VecDequeue<T>",
+        doc: "Alias for VecDeque::from.",
+    },
+    CoreMethodHelp {
+        owner: "VecQueue",
+        name: "new",
+        kind: "assoc",
+        signature: "fn new<T>() -> VecQueue<T>",
+        doc: "Alias for VecDeque::new.",
+    },
+    CoreMethodHelp {
+        owner: "VecQueue",
+        name: "from",
+        kind: "assoc",
+        signature: "fn from<T, const N: usize>(values: [T; N]) -> VecQueue<T>",
+        doc: "Creates a queue from values in front-to-back order. The literal spelling is <[a, b]>.",
+    },
+    CoreMethodHelp {
+        owner: "BinaryHeap",
+        name: "new",
+        kind: "assoc",
+        signature: "fn new<T>() -> BinaryHeap<T>",
+        doc: "Compatibility alias for MaxHeap::new.",
+    },
+    CoreMethodHelp {
+        owner: "BinaryHeap",
+        name: "from",
+        kind: "assoc",
+        signature: "fn from<T, const N: usize>(values: [T; N]) -> BinaryHeap<T>",
+        doc: "Compatibility alias for MaxHeap::from.",
+    },
+    CoreMethodHelp {
+        owner: "BinaryHeap",
+        name: "push",
+        kind: "method",
+        signature: "fn push<T>(self: &mut BinaryHeap<T>, value: T) -> ()",
+        doc: "Pushes a value onto the max heap.",
+    },
+    CoreMethodHelp {
+        owner: "BinaryHeap",
+        name: "pop",
+        kind: "method",
+        signature: "fn pop<T>(self: &mut BinaryHeap<T>) -> Option<T>",
+        doc: "Removes and returns the largest value when present.",
+    },
+    CoreMethodHelp {
+        owner: "BinaryHeap",
+        name: "peek",
+        kind: "method",
+        signature: "fn peek<T>(self: BinaryHeap<T>) -> Option<T>",
+        doc: "Returns the largest value without removing it.",
+    },
+    CoreMethodHelp {
+        owner: "BinaryHeap",
+        name: "len",
+        kind: "method",
+        signature: "fn len<T>(self: BinaryHeap<T>) -> i64",
+        doc: "Returns the number of values.",
+    },
+    CoreMethodHelp {
+        owner: "BinaryHeap",
+        name: "is_empty",
+        kind: "method",
+        signature: "fn is_empty<T>(self: BinaryHeap<T>) -> bool",
+        doc: "Returns true when the heap has no values.",
+    },
+    CoreMethodHelp {
+        owner: "BinaryHeap",
+        name: "clear",
+        kind: "method",
+        signature: "fn clear<T>(self: &mut BinaryHeap<T>) -> ()",
+        doc: "Removes all values.",
+    },
+    CoreMethodHelp {
+        owner: "MaxHeap",
+        name: "new",
+        kind: "assoc",
+        signature: "fn new<T>() -> MaxHeap<T>",
+        doc: "Creates an empty max heap.",
+    },
+    CoreMethodHelp {
+        owner: "MaxHeap",
+        name: "from",
+        kind: "assoc",
+        signature: "fn from<T, const N: usize>(values: [T; N]) -> MaxHeap<T>",
+        doc: "Creates a max heap. The literal spelling is ^[a, b].",
+    },
+    CoreMethodHelp {
+        owner: "MaxHeap",
+        name: "push",
+        kind: "method",
+        signature: "fn push<T>(self: &mut MaxHeap<T>, value: T) -> ()",
+        doc: "Pushes a value onto the max heap.",
+    },
+    CoreMethodHelp {
+        owner: "MaxHeap",
+        name: "pop",
+        kind: "method",
+        signature: "fn pop<T>(self: &mut MaxHeap<T>) -> Option<T>",
+        doc: "Removes and returns the largest value when present.",
+    },
+    CoreMethodHelp {
+        owner: "MaxHeap",
+        name: "peek",
+        kind: "method",
+        signature: "fn peek<T>(self: MaxHeap<T>) -> Option<T>",
+        doc: "Returns the largest value without removing it.",
+    },
+    CoreMethodHelp {
+        owner: "MaxHeap",
+        name: "len",
+        kind: "method",
+        signature: "fn len<T>(self: MaxHeap<T>) -> i64",
+        doc: "Returns the number of values.",
+    },
+    CoreMethodHelp {
+        owner: "MaxHeap",
+        name: "is_empty",
+        kind: "method",
+        signature: "fn is_empty<T>(self: MaxHeap<T>) -> bool",
+        doc: "Returns true when the heap has no values.",
+    },
+    CoreMethodHelp {
+        owner: "MaxHeap",
+        name: "clear",
+        kind: "method",
+        signature: "fn clear<T>(self: &mut MaxHeap<T>) -> ()",
+        doc: "Removes all values.",
+    },
+    CoreMethodHelp {
+        owner: "MinHeap",
+        name: "new",
+        kind: "assoc",
+        signature: "fn new<T>() -> MinHeap<T>",
+        doc: "Creates an empty min heap.",
+    },
+    CoreMethodHelp {
+        owner: "MinHeap",
+        name: "from",
+        kind: "assoc",
+        signature: "fn from<T, const N: usize>(values: [T; N]) -> MinHeap<T>",
+        doc: "Creates a min heap. The literal spelling is _[a, b].",
+    },
+    CoreMethodHelp {
+        owner: "MinHeap",
+        name: "push",
+        kind: "method",
+        signature: "fn push<T>(self: &mut MinHeap<T>, value: T) -> ()",
+        doc: "Pushes a value onto the min heap.",
+    },
+    CoreMethodHelp {
+        owner: "MinHeap",
+        name: "pop",
+        kind: "method",
+        signature: "fn pop<T>(self: &mut MinHeap<T>) -> Option<T>",
+        doc: "Removes and returns the smallest value when present.",
+    },
+    CoreMethodHelp {
+        owner: "MinHeap",
+        name: "peek",
+        kind: "method",
+        signature: "fn peek<T>(self: MinHeap<T>) -> Option<T>",
+        doc: "Returns the smallest value without removing it.",
+    },
+    CoreMethodHelp {
+        owner: "MinHeap",
+        name: "len",
+        kind: "method",
+        signature: "fn len<T>(self: MinHeap<T>) -> i64",
+        doc: "Returns the number of values.",
+    },
+    CoreMethodHelp {
+        owner: "MinHeap",
+        name: "is_empty",
+        kind: "method",
+        signature: "fn is_empty<T>(self: MinHeap<T>) -> bool",
+        doc: "Returns true when the heap has no values.",
+    },
+    CoreMethodHelp {
+        owner: "MinHeap",
+        name: "clear",
+        kind: "method",
+        signature: "fn clear<T>(self: &mut MinHeap<T>) -> ()",
+        doc: "Removes all values.",
+    },
+    CoreMethodHelp {
+        owner: "Option",
+        name: "unwrap",
+        kind: "method",
+        signature: "fn unwrap<T>(self: Option<T>) -> T",
+        doc: "Returns the payload, panicking when the value is None.",
+    },
+    CoreMethodHelp {
+        owner: "Option",
+        name: "expect",
+        kind: "method",
+        signature: "fn expect<T>(self: Option<T>, message: String) -> T",
+        doc: "Returns the payload, panicking with the message when the value is None.",
+    },
+    CoreMethodHelp {
+        owner: "Option",
+        name: "ok_or",
+        kind: "method",
+        signature: "fn ok_or<T, E>(self: Option<T>, err: E) -> Result<T, E>",
+        doc: "Converts Some to Ok, or None to Err with the provided error.",
+    },
+    CoreMethodHelp {
+        owner: "Option",
+        name: "ok_or_else",
+        kind: "method",
+        signature: "fn ok_or_else<T, E>(self: Option<T>, err: fn() -> E) -> Result<T, E>",
+        doc: "Converts Some to Ok, or None to Err from a fallback closure.",
+    },
+    CoreMethodHelp {
         owner: "Result",
         name: "map",
         kind: "method",
@@ -1275,6 +1609,20 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         kind: "method",
         signature: "fn is_err<T, E>(self: Result<T, E>) -> bool",
         doc: "Returns true for Err.",
+    },
+    CoreMethodHelp {
+        owner: "Result",
+        name: "unwrap",
+        kind: "method",
+        signature: "fn unwrap<T, E>(self: Result<T, E>) -> T",
+        doc: "Returns the Ok payload, panicking when the value is Err.",
+    },
+    CoreMethodHelp {
+        owner: "Result",
+        name: "expect",
+        kind: "method",
+        signature: "fn expect<T, E>(self: Result<T, E>, message: String) -> T",
+        doc: "Returns the Ok payload, panicking with the message when the value is Err.",
     },
 ];
 
@@ -1437,10 +1785,12 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                                 }
                             }
                         };
-                        let lines = render_repl_bindings(&declarations, &lets, &bindings);
-                        let matches = lines
+                        let entries = render_repl_bindings(&declarations, &lets, &bindings);
+                        let matches = entries
                             .iter()
-                            .filter(|line| pattern.as_ref().is_none_or(|re| re.is_match(line)))
+                            .filter(|entry| {
+                                pattern.as_ref().is_none_or(|re| re.is_match(&entry.name))
+                            })
                             .collect::<Vec<_>>();
                         if matches.is_empty() {
                             println!(
@@ -1452,8 +1802,8 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                             );
                             continue;
                         }
-                        for line in paginate_listing(matches, &options, "%b") {
-                            println!("{}", crate::style::repl_meta_heading(&line));
+                        for entry in matches {
+                            println!("{}", crate::style::repl_meta_heading(&entry.line));
                         }
                     }
                     continue;
@@ -1526,7 +1876,13 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                         };
                         let matches = declarations
                             .iter()
-                            .filter(|line| pattern.as_ref().is_none_or(|re| re.is_match(line)))
+                            .filter(|declaration| {
+                                pattern.as_ref().is_none_or(|re| {
+                                    declaration_names(declaration)
+                                        .into_iter()
+                                        .any(|name| re.is_match(&name))
+                                })
+                            })
                             .collect::<Vec<_>>();
                         if matches.is_empty() {
                             println!(
@@ -1538,8 +1894,8 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                             );
                             continue;
                         }
-                        for line in paginate_listing(matches, &options, "%d") {
-                            println!("{}", crate::style::repl_meta_heading(&line));
+                        for line in matches {
+                            println!("{}", crate::style::repl_meta_heading(line));
                         }
                     }
                     continue;
@@ -1575,7 +1931,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     } else {
                         repl_info_listing(&options.pattern)
                     }
-                    .map(|text| paginate_info(&text, &options));
+                    .map(|text| render_info(text, &options));
                     match result {
                         Ok(text) => print_repl_output(&text),
                         Err(msg) => print_repl_error(&msg),
@@ -1794,6 +2150,29 @@ impl ReplValueType {
 
 fn render_repl_binding_value(value: &gossamer_interp::Value, ty: &ReplValueType) -> String {
     let mut rendered = render_repl_value(value);
+    if ty.fixed_array && rendered.starts_with('[') {
+        rendered = format!("#{rendered}");
+    } else if matches!(ty.method_owner.as_deref(), Some("HashSet" | "BTreeSet"))
+        && let Some((_, rest)) = rendered.split_once(' ')
+        && rest.starts_with('{')
+    {
+        rendered = format!("#{rest}");
+    } else if matches!(ty.method_owner.as_deref(), Some("VecDeque"))
+        && let Some((_, rest)) = rendered.split_once(' ')
+        && rest.starts_with('[')
+    {
+        rendered = format!("<{rest}>");
+    } else if matches!(ty.method_owner.as_deref(), Some("BinaryHeap" | "MaxHeap"))
+        && let Some((_, rest)) = rendered.split_once(' ')
+        && rest.starts_with('[')
+    {
+        rendered = format!("^{rest}");
+    } else if matches!(ty.method_owner.as_deref(), Some("MinHeap"))
+        && let Some((_, rest)) = rendered.split_once(' ')
+        && rest.starts_with('[')
+    {
+        rendered = format!("_{rest}");
+    }
     for mutability in ty.references.iter().rev() {
         rendered = format!("{}{rendered}", mutability.prefix());
     }
@@ -1978,11 +2357,16 @@ fn render_dropped_binding_names(names: &[String]) -> String {
     }
 }
 
+struct RenderedReplBinding {
+    name: String,
+    line: String,
+}
+
 fn render_repl_bindings(
     declarations: &[String],
     lets: &[String],
     bindings: &[ReplBinding],
-) -> Vec<String> {
+) -> Vec<RenderedReplBinding> {
     let let_body = render_repl_setup(lets);
     let mut lines = Vec::new();
     for binding in bindings {
@@ -2002,7 +2386,10 @@ fn render_repl_bindings(
                 ),
             };
             let prefix = if var.mutable { "mut " } else { "" };
-            lines.push(format!("{prefix}{}: {ty} = {value}", var.name));
+            lines.push(RenderedReplBinding {
+                name: var.name.clone(),
+                line: format!("{prefix}{}: {ty} = {value}", var.name),
+            });
         }
     }
     lines
@@ -2101,13 +2488,24 @@ fn repl_declaration_info(declarations: &[String], name: &str) -> Option<String> 
 }
 
 fn declaration_declares_name(declaration: &str, name: &str) -> bool {
+    declaration_names(declaration).contains(&name.to_string())
+}
+
+fn declaration_names(declaration: &str) -> Vec<String> {
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file(
         "irepl-declaration-explain".to_string(),
         declaration.to_string(),
     );
     let (sf, diags) = gossamer_parse::parse_source_file(declaration, file);
-    diags.is_empty() && collect_source_file_names(&sf).contains(&name)
+    if diags.is_empty() {
+        collect_source_file_names(&sf)
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    } else {
+        Vec::new()
+    }
 }
 
 fn binding_can_mutate(var: &ReplBindingVar, ty: &ReplValueType) -> bool {
@@ -2438,94 +2836,40 @@ fn compile_search_regex(command: &str, query: &str) -> std::result::Result<Regex
     Regex::new(query).map_err(|error| format!("invalid {command} regex `{query}`: {error}"))
 }
 
-const REPL_PAGE_SIZE: usize = 20;
-
 struct ListingOptions {
     pattern: String,
-    all: bool,
-    page: usize,
     details: bool,
 }
 
 fn parse_listing_options(command: &str, arg: &str) -> std::result::Result<ListingOptions, String> {
-    let mut all = false;
-    let mut page = 1usize;
     let mut details = false;
     let mut pattern = Vec::new();
-    let mut words = arg.split_whitespace();
-    while let Some(word) = words.next() {
+    for word in arg.split_whitespace() {
         match word {
-            "-a" | "--all" => all = true,
             "-d" | "--details" => details = true,
-            "--page" | "-p" => {
-                let Some(value) = words.next() else {
-                    return Err(format!("usage: %{command} [pattern] [-a|--all] [--page N]"));
-                };
-                page = value
-                    .parse()
-                    .ok()
-                    .filter(|page: &usize| *page > 0)
-                    .ok_or_else(|| format!("%{command}: page must be a positive integer"))?;
+            "-a" | "--all" | "-p" | "--page" => {
+                return Err(format!(
+                    "%{command}: pagination options were removed; use a pattern to filter results"
+                ));
             }
             _ => pattern.push(word),
         }
     }
-    if all && page != 1 {
-        return Err(format!("%{command}: use either -a or --page N"));
-    }
     Ok(ListingOptions {
         pattern: pattern.join(" "),
-        all,
-        page,
         details,
     })
 }
 
-fn paginate_listing<T: std::fmt::Display + ?Sized>(
-    entries: Vec<&T>,
-    options: &ListingOptions,
-    command: &str,
-) -> Vec<String> {
-    let total = entries.len();
-    if options.all || total <= REPL_PAGE_SIZE {
-        return entries.into_iter().map(ToString::to_string).collect();
-    }
-    let start = (options.page - 1).saturating_mul(REPL_PAGE_SIZE);
-    if start >= total {
-        return vec![format!(
-            "no results on page {} ({} total)",
-            options.page, total
-        )];
-    }
-    let end = (start + REPL_PAGE_SIZE).min(total);
-    let mut page: Vec<String> = entries[start..end]
-        .iter()
-        .map(ToString::to_string)
-        .collect();
-    let pattern = if options.pattern.is_empty() {
-        String::new()
+fn render_info(text: String, options: &ListingOptions) -> String {
+    if options.details {
+        text
     } else {
-        format!(" {}", options.pattern)
-    };
-    if end < total {
-        page.push(format!(
-            "({}-{} of {}) Use `{command}{pattern} -p {}` or `{command}{pattern} -a`.",
-            start + 1,
-            end,
-            total,
-            options.page + 1,
-        ));
+        text.split("\n\n")
+            .filter(|entry| !entry.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
-    page
-}
-
-fn paginate_info(text: &str, options: &ListingOptions) -> String {
-    let entries: Vec<&str> = text
-        .split("\n\n")
-        .filter(|entry| !entry.is_empty())
-        .collect();
-    let separator = if options.details { "\n\n" } else { "\n" };
-    paginate_listing(entries, options, "%i").join(separator)
 }
 
 fn regex_argument(arg: &str) -> std::result::Result<Option<Regex>, String> {
@@ -2755,6 +3099,9 @@ fn catalog_example(path: &str, kind: &str, signature: &str) -> String {
         "HashMap::from" => {
             return "let empty: HashMap<String, i64> = HashMap::from([]); let map = {\"one\": 1, \"two\": 2}; let also = HashMap::from([(\"one\", 1), (\"two\", 2)])".to_string();
         }
+        "BTreeMap::from" => {
+            return "let map = BTreeMap::from([(\"one\", 1), (\"two\", 2)])".to_string();
+        }
         "HashSet::from" => {
             return "let set: HashSet<i64> = HashSet::from([1, 2, 2, 3])".to_string();
         }
@@ -2763,6 +3110,15 @@ fn catalog_example(path: &str, kind: &str, signature: &str) -> String {
         }
         "Vec::from" => {
             return "let values = Vec::from(#[1, 2, 3])".to_string();
+        }
+        "VecDeque::from" | "VecDequeue::from" | "VecQueue::from" => {
+            return "let queue = <[1, 2, 3]>".to_string();
+        }
+        "BinaryHeap::from" | "MaxHeap::from" => {
+            return "let heap: MaxHeap<i64> = ^[1, 2, 3]".to_string();
+        }
+        "MinHeap::from" => {
+            return "let heap: MinHeap<i64> = _[1, 2, 3]".to_string();
         }
         _ => {}
     }
@@ -2789,7 +3145,8 @@ fn example_receiver(owner: &str) -> &'static str {
         "Vec" | "Slice" | "Array" => "values",
         "HashMap" | "BTreeMap" => "map",
         "HashSet" | "BTreeSet" => "set",
-        "VecDeque" => "queue",
+        "VecDeque" | "VecDequeue" | "VecQueue" => "queue",
+        "BinaryHeap" | "MaxHeap" | "MinHeap" => "heap",
         "Option" => "option",
         "Result" => "result",
         "Iterator" | "Range" => "iter",
@@ -2984,6 +3341,7 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
         );
     }
     add_data_last_std_methods(&mut entries, "Option", "std::option");
+    add_data_last_std_methods(&mut entries, "Result", "std::result");
     add_data_last_std_methods(&mut entries, "Iterator", "std::iter");
     for registered in gossamer_interp::registered_names() {
         if let Some((owner, name)) = registered_core_method_path(registered) {
@@ -3108,6 +3466,7 @@ fn data_last_method_signature(owner: &str, module_path: &str, name: &str) -> Opt
     let (receiver, leading) = shape.params.split_last()?;
     let receiver_matches = match owner {
         "Option" => receiver.ty.starts_with("Option<"),
+        "Result" => receiver.ty.starts_with("Result<"),
         "Iterator" => receiver.ty.starts_with("Vec<"),
         _ => false,
     };
@@ -3553,20 +3912,7 @@ fn core_lower_path(method: &CoreMethodEntry) -> String {
 
 fn info_search_query(arg: &str) -> String {
     let query = normalize_query(arg);
-    if catalog_has_exact_match(query) {
-        query.to_string()
-    } else {
-        format!("\0{query}")
-    }
-}
-
-fn catalog_has_exact_match(query: &str) -> bool {
-    !matching_builtin_macros(query).is_empty()
-        || !matching_prelude_builtins(query).is_empty()
-        || !matching_core_namespaces(query).is_empty()
-        || !matching_core_methods(query).is_empty()
-        || !matching_modules(query).is_empty()
-        || !matching_items(query).is_empty()
+    format!("\0{query}")
 }
 
 fn symbol_query_matches(candidate: &str, query: &str) -> bool {
@@ -3807,9 +4153,11 @@ fn repl_expr_contains_ref_mut(expr: &gossamer_ast::Expr) -> bool {
                 .any(|field| field.value.as_ref().is_some_and(repl_expr_contains_ref_mut))
                 || base.as_deref().is_some_and(repl_expr_contains_ref_mut)
         }
-        ExprKind::Array(array) | ExprKind::FixedArray(array) => {
-            repl_array_expr_contains_ref_mut(array)
-        }
+        ExprKind::Array(array)
+        | ExprKind::FixedArray(array)
+        | ExprKind::QueueLiteral(array)
+        | ExprKind::MaxHeapLiteral(array)
+        | ExprKind::MinHeapLiteral(array) => repl_array_expr_contains_ref_mut(array),
         ExprKind::Range { start, end, .. } => {
             start.as_deref().is_some_and(repl_expr_contains_ref_mut)
                 || end.as_deref().is_some_and(repl_expr_contains_ref_mut)
@@ -3916,7 +4264,11 @@ fn repl_expr_mutates_binding(
         ExprKind::Struct { fields, base, .. } => {
             repl_struct_expr_mutates_binding(fields, base.as_deref(), user_mutating_methods)
         }
-        ExprKind::Array(array) | ExprKind::FixedArray(array) => {
+        ExprKind::Array(array)
+        | ExprKind::FixedArray(array)
+        | ExprKind::QueueLiteral(array)
+        | ExprKind::MaxHeapLiteral(array)
+        | ExprKind::MinHeapLiteral(array) => {
             repl_array_expr_mutates_binding(array, user_mutating_methods)
         }
         ExprKind::Range { start, end, .. } => repl_optional_pair_mutates_binding(
@@ -4413,7 +4765,19 @@ mod tests {
     #[test]
     fn repl_metadata_does_not_leak_runtime_registration_text_for_core_types() {
         let checked = [
-            "String", "Vec", "HashMap", "BTreeMap", "HashSet", "BTreeSet", "VecDeque", "Option",
+            "String",
+            "Vec",
+            "HashMap",
+            "BTreeMap",
+            "HashSet",
+            "BTreeSet",
+            "VecDeque",
+            "VecDequeue",
+            "VecQueue",
+            "BinaryHeap",
+            "MaxHeap",
+            "MinHeap",
+            "Option",
             "Result",
         ];
         let mut leaked = Vec::new();
@@ -4441,9 +4805,15 @@ mod tests {
             "Vec::truncate",
             "HashMap::insert",
             "BTreeMap::insert",
+            "BTreeMap::from",
             "HashSet::union",
             "BTreeSet::union",
             "VecDeque::push_back",
+            "VecDeque::clear",
+            "VecQueue::from",
+            "MaxHeap::push",
+            "MinHeap::push",
+            "BinaryHeap::push",
             "Option::map",
             "Result::map_err",
         ] {

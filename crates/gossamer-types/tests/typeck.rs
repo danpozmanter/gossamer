@@ -2962,3 +2962,133 @@ fn map_binding_cannot_be_retyped_to_or_insert_result() {
         "map assignment should preserve the established map type: {diagnostics:?}"
     );
 }
+
+#[test]
+fn constant_repeat_literal_can_flow_into_vec_of_fixed_arrays() {
+    let checked = run("fn main() {\n\
+         let mut rows: Vec<[i64; 6]> = Vec::new()\n\
+         let mut row = [0; 6]\n\
+         row[3] = 9\n\
+         rows.push(row)\n\
+         let shaped: Vec<i64> = [0; 4]\n\
+         println!(\"{} {}\", rows[0][3], shaped.len())\n\
+         }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn std_iter_skip_while_full_import_and_methods_typecheck() {
+    let checked = run_with_lazy_iterators(
+        "use std::iter::skip_while\n\
+         fn main() {\n\
+         let xs = [1, 2, 3, 1]\n\
+         let a = skip_while(|x: i64| x < 3, xs)\n\
+         let b = xs.skip_while(|x: i64| x < 3)\n\
+         let c = (1..5).skip_while(|x: i64| x < 3).collect()\n\
+         println!(\"{} {} {}\", a.len(), b.len(), c.len())\n\
+         }\n",
+        true,
+    );
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn fast_string_and_path_std_apis_typecheck() {
+    let diagnostics = diagnostics_for(
+        "use std::strings::{byte_at, byte_len, substring}\n\
+         use std::path::components\n\
+         fn main() {\n\
+         let text = \"a/b//c\"\n\
+         let n: i64 = byte_len(text)\n\
+         let slash: i64 = byte_at(text, 1)\n\
+         let part: String = substring(text, 2, n)\n\
+         let parts: Vec<String> = components(text)\n\
+         println!(\"{} {} {} {}\", n, slash, part, parts.len())\n\
+         }\n",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn phase1_runtime_collection_shapes_accept_i64_paths() {
+    let diagnostics = diagnostics_for(
+        "use std::collections::{BTreeMap, MaxHeap, MinHeap, VecDeque}\n\
+         fn main() {\n\
+         let mut q: VecDeque<i64> = VecDeque::new()\n\
+         q.push_back(1)\n\
+         let front: Option<i64> = q.pop_front()\n\
+         let mut max: MaxHeap<i64> = MaxHeap::from([1, 2])\n\
+         max.push(3)\n\
+         let top: Option<i64> = max.peek()\n\
+         let mut min: MinHeap<i64> = _[3, 1]\n\
+         min.push(0)\n\
+         let low: Option<i64> = min.pop()\n\
+         let mut sorted: BTreeMap<String, i64> = BTreeMap::new()\n\
+         sorted.insert(\"a\", 1)\n\
+         println!(\"{} {} {} {}\", front, top, low, sorted.len())\n\
+         }\n",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn phase1_runtime_collection_shapes_reject_unsupported_generics() {
+    for (name, source, expected, found) in [
+        (
+            "vecdeque string annotation",
+            "use std::collections::VecDeque\n\
+             fn main() { let mut q: VecDeque<String> = VecDeque::new()\n\
+             q.push_back(\"a\") }\n",
+            "i64",
+            "String",
+        ),
+        (
+            "queue literal string",
+            "fn main() { let q = <[\"a\"]>\n println!(\"{}\", q.len()) }\n",
+            "i64",
+            "String",
+        ),
+        (
+            "max heap string annotation",
+            "use std::collections::MaxHeap\n\
+             fn main() { let mut h: MaxHeap<String> = MaxHeap::new()\n\
+             h.push(\"a\") }\n",
+            "i64",
+            "String",
+        ),
+        (
+            "min heap string from",
+            "use std::collections::MinHeap\n\
+             fn main() { let mut h = MinHeap::from([\"a\"])\n\
+             h.push(\"b\") }\n",
+            "i64",
+            "String",
+        ),
+        (
+            "btree map integer key",
+            "use std::collections::BTreeMap\n\
+             fn main() { let mut m: BTreeMap<i64, i64> = BTreeMap::new()\n\
+             m.insert(1, 2) }\n",
+            "String",
+            "i64",
+        ),
+        (
+            "btree map string value",
+            "use std::collections::BTreeMap\n\
+             fn main() { let mut m: BTreeMap<String, String> = BTreeMap::new()\n\
+             m.insert(\"a\", \"b\") }\n",
+            "i64",
+            "String",
+        ),
+    ] {
+        let diagnostics = diagnostics_for(source);
+        assert!(
+            diagnostics.iter().any(|diagnostic| matches!(
+                &diagnostic.error,
+                TypeError::TypeMismatch { expected: got_expected, found: got_found }
+                    if got_expected == expected && got_found == found
+            )),
+            "{name} should reject unsupported Phase 1 collection shape: {diagnostics:?}"
+        );
+    }
+}

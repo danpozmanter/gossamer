@@ -347,7 +347,7 @@ pub fn compile_fn(
             builder.bind_typed_param(&param.pattern, int_reg, RegKind::I64);
             builder.i64_params.push((reg, int_reg));
         } else {
-            builder.bind_param(&param.pattern, reg);
+            builder.bind_param(&param.pattern, reg)?;
         }
         if matches!(
             tcx.kind(builder.unwrap_ref(param.ty)),

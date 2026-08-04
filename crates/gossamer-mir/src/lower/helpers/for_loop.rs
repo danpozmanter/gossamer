@@ -94,8 +94,10 @@ pub(crate) fn returns_borrowed_pointer(name: &str) -> bool {
             // ctor-cleanup already frees), and for a present key it
             // aliases the value another binding owns.
             | "gos_rt_map_or_insert_str_i64"
+            | "gos_rt_map_or_insert_typed_str_i64"
             | "gos_rt_map_or_insert_i64_i64"
             | "gos_rt_map_get_or_str_i64"
+            | "gos_rt_map_get_or_typed_str_i64"
             | "gos_rt_map_get_or_i64"
             // A raw word read through a pointer (closure-env capture
             // unpacks, handle field loads). The pointee's owner keeps the

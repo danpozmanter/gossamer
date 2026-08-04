@@ -12,7 +12,7 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn len(xs: Stack<i64>) -> i64` | Element count. |
-| [`peek`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn peek(xs: Stack<i64>) -> i64` | Top element, or 0 if empty. |
-| [`pop`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn pop(xs: Stack<i64>) -> Stack<i64>` | Drop the top; returns the new stack. |
-| [`push`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn push(xs: Stack<i64>, value: i64) -> Stack<i64>` | Push an i64 onto the top; returns the new stack. |
+| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn len(xs: Vec<i64>) -> i64` | Element count. |
+| [`peek`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn peek(xs: Vec<i64>) -> Option<i64>` | Top element, if present. |
+| [`pop`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn pop(xs: Vec<i64>) -> Vec<i64>` | Drop the top; returns the new stack. |
+| [`push`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/container_seq.rs) | `fn push(xs: Vec<i64>, value: i64) -> Vec<i64>` | Push an i64 onto the top; returns the new stack. |

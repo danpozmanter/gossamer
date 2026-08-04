@@ -117,6 +117,8 @@ pub(crate) fn install_path(globals: &mut Vec<(&'static str, Value)>) {
             ("is_absolute", builtin_path_is_absolute),
             ("normalize", builtin_path_normalize),
             ("join", builtin_path_join_two),
+            ("components", builtin_path_components),
+            ("prefixes", builtin_path_prefixes),
             ("starts_with", builtin_path_starts_with),
         ],
         globals,
@@ -159,6 +161,16 @@ pub(crate) fn builtin_path_split(args: &[Value]) -> RuntimeResult<Value> {
         Value::String(dir.into()),
         Value::String(file.into()),
     ])))
+}
+
+pub(crate) fn builtin_path_components(args: &[Value]) -> RuntimeResult<Value> {
+    let path = args.first().and_then(as_str).unwrap_or("");
+    Ok(string_array(path_std::components(path)))
+}
+
+pub(crate) fn builtin_path_prefixes(args: &[Value]) -> RuntimeResult<Value> {
+    let path = args.first().and_then(as_str).unwrap_or("");
+    Ok(string_array(path_std::prefixes(path)))
 }
 
 pub(crate) fn builtin_path_starts_with(args: &[Value]) -> RuntimeResult<Value> {

@@ -313,10 +313,15 @@ pub(super) fn lower_intrinsic_call_handles(
             );
             Ok(true)
         }
-        "gos_rt_map_inc_str_i64" => {
+        "gos_rt_map_inc_str_i64" | "gos_rt_map_inc_typed_str_i64" => {
+            let symbol = if name == "gos_rt_map_inc_typed_str_i64" {
+                "gos_rt_map_inc_typed_str_i64"
+            } else {
+                "gos_rt_map_inc_str_i64"
+            };
             let inc_fn = intrinsics.extern_fn(
                 module,
-                "gos_rt_map_inc_str_i64",
+                symbol,
                 &[ptr_ty, ptr_ty, types::I64],
                 &[types::I64],
             )?;
@@ -409,10 +414,15 @@ pub(super) fn lower_intrinsic_call_handles(
         // String-keyed `get_or` for `HashMap<String, i64>`. The key
         // travels as a `*const c_char`, the default and the result
         // are both i64.
-        "gos_rt_map_get_or_str_i64" => {
+        "gos_rt_map_get_or_str_i64" | "gos_rt_map_get_or_typed_str_i64" => {
+            let symbol = if name == "gos_rt_map_get_or_typed_str_i64" {
+                "gos_rt_map_get_or_typed_str_i64"
+            } else {
+                "gos_rt_map_get_or_str_i64"
+            };
             let get_or_fn = intrinsics.extern_fn(
                 module,
-                "gos_rt_map_get_or_str_i64",
+                symbol,
                 &[ptr_ty, ptr_ty, types::I64],
                 &[types::I64],
             )?;

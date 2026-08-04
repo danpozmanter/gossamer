@@ -694,6 +694,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -810,6 +812,34 @@
 
 
     Methods by type
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../stdlib/collection_patterns/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Collection patterns
 
 
 
@@ -2381,10 +2411,11 @@ It starts with <code>gos &lt;version&gt; REPL [&lt;architecture&gt;-&lt;os&gt;]<
   catalog. <code>%explain NAME</code> (<code>%e</code>) inspects a persistent binding and filters
   methods by its type and mutability. Add <code>--details</code> for descriptions and
   examples.</li>
-<li><code>%bindings [regex]</code> (<code>%b</code>), <code>%declarations [regex]</code> (<code>%d</code>), and
+<li><code>%bindings [pattern]</code> (<code>%b</code>), <code>%declarations [pattern]</code> (<code>%d</code>), and
   <code>%history [regex]</code> (<code>%h</code>) show persistent bindings, declarations, and input
-  history. <code>%drop NAME</code> ends one persistent binding's lexical lifetime and
-  removes it, which releases any source protected by a reference binding.
+  history. <code>%bindings</code> filters binding names, and <code>%declarations</code> filters
+  declaration names. <code>%drop NAME</code> ends one persistent binding's lexical lifetime
+  and removes it, which releases any source protected by a reference binding.
   <code>%reset</code> (<code>%r</code>) clears bindings and declarations.</li>
 <li>Up/down cycles history. Enter continues until braces close. Ctrl-D or
   <code>%quit</code> (<code>%q</code>) exits.</li>

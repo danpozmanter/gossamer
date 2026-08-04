@@ -294,7 +294,8 @@ impl<'a> Builder<'a> {
                 for arg in &pad_args[1..] {
                     locals.push(self.lower_expr(arg)?);
                 }
-                let dest = self.fresh(ty);
+                let handle_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let dest = self.fresh(handle_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str("gos_rt_concat_pad_i64".to_string())),
@@ -332,6 +333,94 @@ impl<'a> Builder<'a> {
                     return Some(self.fixed_array_to_vec(source, elem, len, span));
                 }
                 return Some(source);
+            }
+            if matches!(
+                joined.as_str(),
+                "VecDeque::from"
+                    | "VecDequeue::from"
+                    | "VecQueue::from"
+                    | "collections::VecDeque::from"
+                    | "collections::VecDequeue::from"
+                    | "collections::VecQueue::from"
+                    | "std::collections::VecDeque::from"
+                    | "std::collections::VecDequeue::from"
+                    | "std::collections::VecQueue::from"
+            ) && args.len() == 1
+            {
+                let mut source = self.lower_expr(&args[0])?;
+                if let TyKind::Array { elem, len } =
+                    self.tcx.kind_of(self.locals[source.0 as usize].ty).clone()
+                {
+                    source = self.coerce_array_to_vec(source, elem, len, span);
+                }
+                let handle_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let dest = self.fresh(handle_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(
+                        "gos_rt_deque_from_vec_i64".to_string(),
+                    )),
+                    args: vec![Operand::Copy(Place::local(source))],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                self.local_runtime_kind
+                    .insert(dest, "collections::VecDeque");
+                return Some(dest);
+            }
+            if matches!(
+                joined.as_str(),
+                "BinaryHeap::from"
+                    | "collections::BinaryHeap::from"
+                    | "std::collections::BinaryHeap::from"
+                    | "MaxHeap::from"
+                    | "collections::MaxHeap::from"
+                    | "std::collections::MaxHeap::from"
+                    | "MinHeap::from"
+                    | "collections::MinHeap::from"
+                    | "std::collections::MinHeap::from"
+            ) && args.len() == 1
+            {
+                let mut source = self.lower_expr(&args[0])?;
+                if let TyKind::Array { elem, len } =
+                    self.tcx.kind_of(self.locals[source.0 as usize].ty).clone()
+                {
+                    source = self.coerce_array_to_vec(source, elem, len, span);
+                }
+                let is_min = matches!(
+                    joined.as_str(),
+                    "MinHeap::from"
+                        | "collections::MinHeap::from"
+                        | "std::collections::MinHeap::from"
+                ) || self.binary_heap_ty_is_min(ty)
+                    || self.binary_heap_elem_is_reverse_i64(ty);
+                let symbol = if is_min {
+                    "gos_rt_bheap_min_from_vec_i64"
+                } else {
+                    "gos_rt_bheap_max_from_vec_i64"
+                };
+                let dest = self.fresh(ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(symbol.to_string())),
+                    args: vec![Operand::Copy(Place::local(source))],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                self.local_runtime_kind.insert(
+                    dest,
+                    if is_min {
+                        "collections::MinHeap"
+                    } else {
+                        "collections::MaxHeap"
+                    },
+                );
+                if is_min && self.binary_heap_elem_is_reverse_i64(ty) {
+                    self.local_binary_heap_min_i64.insert(dest);
+                }
+                return Some(dest);
             }
             if joined == "String::from_utf8" && args.len() == 1 {
                 let mut bytes_local = self.lower_expr(&args[0])?;

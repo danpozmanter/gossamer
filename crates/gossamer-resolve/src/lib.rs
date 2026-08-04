@@ -9,8 +9,9 @@
 //! goes, and records a [`Resolution`] for every path occurrence.
 //! Imports brought in by `use` declarations are represented as
 //! [`Resolution::Import`] and the consumer (HIR lowering) is responsible
-//! for following the full module path externally. The resolver does not
-//! validate that the target of a `use` actually exists; see SPEC §6.
+//! for following the full module path externally. The resolver validates
+//! canonical stdlib paths and registered external item imports so typos do not
+//! silently introduce arbitrary tail aliases.
 
 #![forbid(unsafe_code)]
 
@@ -29,7 +30,9 @@ pub use def_id::{CrateId, DefId, DefIdGenerator, DefKind, ModId};
 pub use diagnostic::{ResolveDiagnostic, ResolveError};
 pub use resolutions::{FloatWidth, IntWidth, PrimitiveTy, Resolution, Resolutions};
 pub use resolver::{project_dep_module_name, resolve_source_file};
-pub use stdlib_exports::{STDLIB_MODULE_PATHS, STDLIB_MODULES, STDLIB_QUALIFIED};
+pub use stdlib_exports::{
+    STDLIB_MODULE_PATHS, STDLIB_MODULES, STDLIB_QUALIFIED, is_stdlib_qualified,
+};
 
 pub use external::{
     BindingType, BindingVariantArm, ExternalItem, ExternalModule, all_external_module_paths,

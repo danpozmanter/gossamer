@@ -84,10 +84,11 @@ It starts with `gos <version> REPL [<architecture>-<os>]`. The REPL supports:
   catalog. `%explain NAME` (`%e`) inspects a persistent binding and filters
   methods by its type and mutability. Add `--details` for descriptions and
   examples.
-- `%bindings [regex]` (`%b`), `%declarations [regex]` (`%d`), and
+- `%bindings [pattern]` (`%b`), `%declarations [pattern]` (`%d`), and
   `%history [regex]` (`%h`) show persistent bindings, declarations, and input
-  history. `%drop NAME` ends one persistent binding's lexical lifetime and
-  removes it, which releases any source protected by a reference binding.
+  history. `%bindings` filters binding names, and `%declarations` filters
+  declaration names. `%drop NAME` ends one persistent binding's lexical lifetime
+  and removes it, which releases any source protected by a reference binding.
   `%reset` (`%r`) clears bindings and declarations.
 - Up/down cycles history. Enter continues until braces close. Ctrl-D or
   `%quit` (`%q`) exits.

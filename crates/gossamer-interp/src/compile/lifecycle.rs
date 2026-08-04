@@ -72,16 +72,8 @@ impl<'tcx> FnBuilder<'tcx> {
         }
     }
 
-    pub(crate) fn bind_param(&mut self, pattern: &HirPat, reg: Reg) {
-        if let HirPatKind::Binding { name, .. } = &pattern.kind {
-            self.bind_local(
-                &name.name,
-                TypedReg {
-                    reg,
-                    kind: RegKind::Value,
-                },
-            );
-        }
+    pub(crate) fn bind_param(&mut self, pattern: &HirPat, reg: Reg) -> RuntimeResult<()> {
+        self.bind_pattern_locals(pattern, reg)
     }
 
     pub(crate) fn bind_typed_param(&mut self, pattern: &HirPat, reg: Reg, kind: RegKind) {

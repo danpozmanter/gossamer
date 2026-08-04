@@ -12,23 +12,28 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`BTreeMap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BTreeMap` | Ordered map. |
+| [`BTreeMap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BTreeMap` | Phase 1 ordered map shape is `BTreeMap<String, i64>`. |
 | [`BTreeSet`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BTreeSet` | Ordered set. |
+| [`BinaryHeap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BinaryHeap` | Compatibility alias for `MaxHeap<i64>`. |
+| [`MaxHeap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type MaxHeap` | Phase 1 max heap shape is `MaxHeap<i64>`. Use `^[1, 2, 3]` for literals. |
+| [`MinHeap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type MinHeap` | Phase 1 min heap shape is `MinHeap<i64>`. Use `_[1, 2, 3]` for literals. |
 | [`HashMap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type HashMap` | Hash map backed by the swiss-table layout. |
 | [`HashSet`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type HashSet` | Unordered set built on top of `HashMap`. |
 | [`Vec`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Vec` | Growable contiguous sequence. |
-| [`VecDeque`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type VecDeque` | Double-ended queue backed by a ring buffer. |
-| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn len(xs: Deque<i64>) -> i64` | Element count. |
-| [`peek_back`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek_back(xs: Deque<i64>) -> i64` | Back element, or 0 if empty. |
-| [`peek_front`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek_front(xs: Deque<i64>) -> i64` | Front element, or 0 if empty. |
-| [`pop_back`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn pop_back(xs: Deque<i64>) -> Deque<i64>` | Drop the back. |
-| [`pop_front`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn pop_front(xs: Deque<i64>) -> Deque<i64>` | Drop the front. |
-| [`push_back`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn push_back(xs: Deque<i64>, value: i64) -> Deque<i64>` | Append to the back. |
-| [`push_front`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn push_front(xs: Deque<i64>, value: i64) -> Deque<i64>` | Prepend to the front. |
-| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn len(xs: Heap<i64>) -> i64` | Element count. |
-| [`peek`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek(xs: Heap<i64>) -> i64` | Smallest element of the heap, or 0 if empty. |
-| [`pop`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn pop(xs: Heap<i64>) -> Heap<i64>` | Drop the root from the heap; returns the new heap (use `peek` first to read the value). |
-| [`push`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn push(xs: Heap<i64>, value: i64) -> Heap<i64>` | Push an i64 onto the min-heap; returns the new heap. |
+| [`VecDeque`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type VecDeque` | Phase 1 double-ended queue shape is `VecDeque<i64>`. |
+| [`VecDequeue`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type VecDequeue` | Alias for `VecDeque<i64>`. |
+| [`VecQueue`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type VecQueue` | Alias for `VecDeque<i64>`. Use `<[1, 2, 3]>` for queue literals. |
+| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn len(xs: Vec<i64>) -> i64` | Element count. |
+| [`peek_back`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek_back(xs: Vec<i64>) -> Option<i64>` | Back element, if present. |
+| [`peek_front`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek_front(xs: Vec<i64>) -> Option<i64>` | Front element, if present. |
+| [`pop_back`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn pop_back(xs: Vec<i64>) -> Vec<i64>` | Drop the back. |
+| [`pop_front`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn pop_front(xs: Vec<i64>) -> Vec<i64>` | Drop the front. |
+| [`push_back`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn push_back(xs: Vec<i64>, value: i64) -> Vec<i64>` | Append to the back. |
+| [`push_front`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn push_front(xs: Vec<i64>, value: i64) -> Vec<i64>` | Prepend to the front. |
+| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn len(xs: Vec<i64>) -> i64` | Element count. |
+| [`peek`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek(xs: Vec<i64>) -> Option<i64>` | Smallest element of the heap, if present. |
+| [`pop`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn pop(xs: Vec<i64>) -> Vec<i64>` | Drop the root from the heap; returns the new heap (use `peek` first to read the value). |
+| [`push`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn push(xs: Vec<i64>, value: i64) -> Vec<i64>` | Push an i64 onto the min-heap; returns the new heap. |
 | [`contains_key`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn contains_key(map: OrderedMap<String, i64>, key: String) -> bool` | Key-membership test. |
 | [`get`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn get(map: OrderedMap<String, i64>, key: String) -> Option<i64>` | Lookup; returns 0 if absent. |
 | [`insert`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn insert(map: OrderedMap<String, i64>, key: String, value: i64) -> OrderedMap<String, i64>` | Set key => value. |
@@ -45,14 +50,14 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 | [`peek_max`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek_max(xs: Vec<i64>) -> i64` | Largest element, or 0. |
 | [`peek_min`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek_min(xs: Vec<i64>) -> i64` | Smallest element, or 0. |
 | [`remove_at`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn remove_at(xs: Vec<i64>, index: i64) -> Vec<i64>` | Remove the element at index `i`. |
-| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn len(xs: Queue<i64>) -> i64` | Element count. |
-| [`peek`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek(xs: Queue<i64>) -> i64` | Front element, or 0 if empty. |
-| [`pop`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn pop(xs: Queue<i64>) -> Queue<i64>` | Drop the front element; returns the new queue. |
-| [`push`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn push(xs: Queue<i64>, value: i64) -> Queue<i64>` | Append an i64 to the back; returns the new queue. |
-| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn len(xs: Stack<i64>) -> i64` | Element count. |
-| [`peek`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek(xs: Stack<i64>) -> i64` | Top element, or 0 if empty. |
-| [`pop`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn pop(xs: Stack<i64>) -> Stack<i64>` | Drop the top; returns the new stack. |
-| [`push`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn push(xs: Stack<i64>, value: i64) -> Stack<i64>` | Push an i64 onto the top; returns the new stack. |
+| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn len(xs: Vec<i64>) -> i64` | Element count. |
+| [`peek`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek(xs: Vec<i64>) -> Option<i64>` | Front element, if present. |
+| [`pop`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn pop(xs: Vec<i64>) -> Vec<i64>` | Drop the front element; returns the new queue. |
+| [`push`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn push(xs: Vec<i64>, value: i64) -> Vec<i64>` | Append an i64 to the back; returns the new queue. |
+| [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn len(xs: Vec<i64>) -> i64` | Element count. |
+| [`peek`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek(xs: Vec<i64>) -> Option<i64>` | Top element, if present. |
+| [`pop`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn pop(xs: Vec<i64>) -> Vec<i64>` | Drop the top; returns the new stack. |
+| [`push`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn push(xs: Vec<i64>, value: i64) -> Vec<i64>` | Push an i64 onto the top; returns the new stack. |
 
 ## `HashSet<T>` methods
 
