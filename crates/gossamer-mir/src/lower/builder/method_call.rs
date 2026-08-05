@@ -835,7 +835,7 @@ impl<'a> Builder<'a> {
         MethodLowering::Pass
     }
 
-    /// `let entries = m.iter()` on a HashMap - materialise `Vec<(K, V)>`.
+    /// `let entries = m.iter()` on a map - materialise `Vec<(K, V)>`.
     fn lower_hashmap_iter_binding_method(
         &mut self,
         receiver: &HirExpr,
@@ -843,7 +843,7 @@ impl<'a> Builder<'a> {
         args: &[HirExpr],
         span: Span,
     ) -> MethodLowering {
-        // `let entries = m.iter()` on a HashMap - materialise a real
+        // `let entries = m.iter()` on a HashMap or BTreeMap - materialise a real
         // `Vec<(K, V)>` of entries. The `for (k, v) in m.iter()` form
         // is lowered earlier in `try_lower_for_hashmap_iter`; this
         // direct-binding form would otherwise fall through to the
@@ -864,10 +864,16 @@ impl<'a> Builder<'a> {
             while let TyKind::Ref { inner, .. } = self.tcx.kind_of(recv_ty_for_kind) {
                 recv_ty_for_kind = *inner;
             }
-            if matches!(self.tcx.kind_of(recv_ty_for_kind), TyKind::HashMap { .. }) {
+            let is_hashmap = matches!(self.tcx.kind_of(recv_ty_for_kind), TyKind::HashMap { .. });
+            let is_btmap = self
+                .receiver_local_from_path(receiver)
+                .and_then(|local| self.local_runtime_kind.get(&local).copied())
+                == Some("collections::BTreeMap");
+            if is_hashmap || is_btmap {
                 return MethodLowering::Handled(self.materialize_hashmap_entries(
                     receiver,
                     recv_ty_for_kind,
+                    is_btmap,
                     span,
                 ));
             }

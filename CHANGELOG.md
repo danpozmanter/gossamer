@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.42.2 - Native CI batching and memory fixes
+## 0.42.2 - Native CI batching, memory and enumerate() fixes
 
 - Build native CI test binaries once per shard, then run the compiled test
   executables directly with per-target logs and `--test-threads=1`.
@@ -9,8 +9,12 @@
   `HashMap<String, Vec<u8>>`, with ownership handling for both moved Result
   payloads and loop-carried `to_vec()` temporaries.
 - Elide deep clones of fresh Vec Result payloads in MIR so `payload.slice(...)`
-
   materializes one dynamic byte buffer instead of two before map insertion.
+- Fix native `enumerate()` of collected map-entry tuples so it preserves every
+  tuple slot instead of crashing or reading a truncated entry.
+- Fix bytecode `iter().enumerate()` over concrete collections so it snapshots
+  the iterator once instead of repeatedly yielding index zero.
+
 ## 0.42.1 - Playground, literal docs, and editor completion fixes
 
 - Add a browser Playground entry point to the docs site and wire it into the

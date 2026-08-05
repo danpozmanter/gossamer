@@ -494,6 +494,31 @@ fn main() {
 }
 
 #[test]
+fn release_btreemap_iter_collect_enumerate_is_finite_and_ordered() {
+    // `iter()` must materialize map entries before collection. Otherwise a
+    // BTreeMap handle is treated as a Vec header and `entries.iter()` can
+    // loop indefinitely in native code.
+    assert_release_stdout_eq(
+        "btmap_iter_collect_enumerate",
+        r#"
+use std::collections::BTreeMap
+
+fn main() {
+    let mut m: BTreeMap<String, i64> = BTreeMap::new()
+    m.insert("c", 3)
+    m.insert("a", 1)
+    m.insert("b", 2)
+    let entries = m.iter().collect()
+    for (i, entry) in entries.iter().enumerate() {
+        println!("{}:{}={}", i, entry.0, entry.1)
+    }
+}
+"#,
+        "0:a=1\n1:b=2\n2:c=3\n",
+    );
+}
+
+#[test]
 fn release_match_guard_and_range_patterns_classify() {
     // Match arm with guard (`x if x < 0`), exact literal (`0`),
     // inclusive range (`1..=9`), and wildcard. Ensures the

@@ -384,23 +384,44 @@ impl<'a> Builder<'a> {
             if let HirPatKind::Binding { name, mutable } = &val_pat.kind {
                 let bind_local = self.push_local(elem_ty, Some(name.clone()), *mutable);
                 self.bind_local(&name.name, bind_local);
-                let zero_off = self.fresh(i64_ty);
-                self.emit_assign(
-                    Place::local(zero_off),
-                    Rvalue::Use(Operand::Const(ConstValue::Int(0))),
-                    span,
+                let is_inline_aggregate = matches!(
+                    self.tcx.kind_of(elem_ty),
+                    TyKind::Tuple(_) | TyKind::Array { .. }
+                ) || matches!(
+                    self.tcx.kind_of(elem_ty),
+                    TyKind::Adt { def, .. }
+                        if def.local < u32::MAX - 16 && self.tcx.struct_field_tys(*def).is_some()
                 );
-                let after_load = self.new_block(span);
-                self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_load".to_string())),
-                    args: vec![
-                        Operand::Copy(Place::local(ptr_local)),
-                        Operand::Copy(Place::local(zero_off)),
-                    ],
-                    destination: Place::local(bind_local),
-                    target: Some(after_load),
-                });
-                self.set_current(after_load);
+                if is_inline_aggregate {
+                    // A tuple/struct Vec element occupies several inline slots.
+                    // `gos_load` only returns one word, so loading it as a
+                    // whole silently truncates the aggregate. Keep the slot
+                    // address instead, matching `lower_for_vec_over_local`;
+                    // later field projections read their own offsets.
+                    self.emit_assign(
+                        Place::local(bind_local),
+                        Rvalue::Use(Operand::Copy(Place::local(ptr_local))),
+                        span,
+                    );
+                } else {
+                    let zero_off = self.fresh(i64_ty);
+                    self.emit_assign(
+                        Place::local(zero_off),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                        span,
+                    );
+                    let after_load = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("gos_load".to_string())),
+                        args: vec![
+                            Operand::Copy(Place::local(ptr_local)),
+                            Operand::Copy(Place::local(zero_off)),
+                        ],
+                        destination: Place::local(bind_local),
+                        target: Some(after_load),
+                    });
+                    self.set_current(after_load);
+                }
             }
         }
 

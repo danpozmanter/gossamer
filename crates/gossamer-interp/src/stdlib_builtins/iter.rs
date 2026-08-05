@@ -1587,7 +1587,11 @@ fn builtin_iter_eager_zip(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_iter_enumerate(args: &[Value]) -> RuntimeResult<Value> {
-    if lazy_iterators_enabled() || matches!(args.first(), Some(Value::LazyIter(_))) {
+    // Concrete collections must remain restartable snapshots. Turning their
+    // `.enumerate()` into a lazy iterator makes the bytecode `for` protocol
+    // re-create the source on every pull, repeatedly yielding index zero.
+    // Preserve laziness only when the caller already supplied an iterator.
+    if matches!(args.first(), Some(Value::LazyIter(_))) {
         return Ok(new_lazy_iter(LazyIterState::Enumerate {
             upstream: lazy_source(args.first().unwrap_or(&Value::Unit)),
             index: 0,

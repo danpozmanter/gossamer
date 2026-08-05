@@ -3316,7 +3316,7 @@ impl<'a> Builder<'a> {
         Some(unit)
     }
 
-    /// Materialise a HashMap `m.iter()` bound directly to a
+    /// Materialise a map `m.iter()` bound directly to a
     /// `Vec<(K, V)>` into a real heap vector of `(K, V)` tuples.
     /// Mirrors the `for (k, v) in m.iter()` lowering: snapshot the
     /// keys via `gos_rt_map_keys_*`, then `get_or` each value and
@@ -3329,6 +3329,7 @@ impl<'a> Builder<'a> {
         &mut self,
         receiver: &HirExpr,
         recv_ty: Ty,
+        is_btmap: bool,
         span: Span,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
@@ -3336,42 +3337,60 @@ impl<'a> Builder<'a> {
         let str_ty = self.tcx.string_ty();
         let key_kind = self.hash_map_key_kind(recv_ty);
         let value_kind = self.hash_map_value_kind(recv_ty);
-        let key_ty = match key_kind {
-            Some(MapKeyKind::String) => str_ty,
-            _ => i64_ty,
-        };
-        let val_ty = match value_kind {
-            Some(MapValueKind::String) => str_ty,
-            // A struct value is stored as a boxed pointer; bind the
-            // tuple slot as a reference so field access derefs the box.
-            // A by-value struct binding makes the drop pass release the
-            // blob pointer's RC fields as if they were inline — a
-            // use-after-free. Mirrors the `for (k, v) in m.iter()` and
-            // `for v in m.values()` bindings.
-            Some(MapValueKind::Other) => {
-                let value_struct = self
-                    .hash_map_kv_tys(recv_ty)
-                    .map(|(_, v)| v)
-                    .filter(|v| self.struct_name_of(*v).is_some());
-                match value_struct {
-                    Some(v) => self.tcx.intern(TyKind::Ref {
-                        mutability: gossamer_types::Mutbl::Not,
-                        inner: v,
-                    }),
-                    None => self.hash_map_kv_tys(recv_ty).map_or(i64_ty, |(_, v)| v),
-                }
+        let key_ty = if is_btmap {
+            str_ty
+        } else {
+            match key_kind {
+                Some(MapKeyKind::String) => str_ty,
+                _ => i64_ty,
             }
-            _ => i64_ty,
         };
-        let keys_helper = match key_kind {
-            Some(MapKeyKind::String) => "gos_rt_map_keys_str",
-            _ => "gos_rt_map_keys_i64",
+        let val_ty = if is_btmap {
+            i64_ty
+        } else {
+            match value_kind {
+                Some(MapValueKind::String) => str_ty,
+                // A struct value is stored as a boxed pointer; bind the
+                // tuple slot as a reference so field access derefs the box.
+                // A by-value struct binding makes the drop pass release the
+                // blob pointer's RC fields as if they were inline — a
+                // use-after-free. Mirrors the `for (k, v) in m.iter()` and
+                // `for v in m.values()` bindings.
+                Some(MapValueKind::Other) => {
+                    let value_struct = self
+                        .hash_map_kv_tys(recv_ty)
+                        .map(|(_, v)| v)
+                        .filter(|v| self.struct_name_of(*v).is_some());
+                    match value_struct {
+                        Some(v) => self.tcx.intern(TyKind::Ref {
+                            mutability: gossamer_types::Mutbl::Not,
+                            inner: v,
+                        }),
+                        None => self.hash_map_kv_tys(recv_ty).map_or(i64_ty, |(_, v)| v),
+                    }
+                }
+                _ => i64_ty,
+            }
         };
-        let get_or_helper = match (key_kind, value_kind) {
-            (Some(MapKeyKind::String), Some(MapValueKind::String)) => "gos_rt_map_get_or_str_str",
-            (Some(MapKeyKind::String), _) => "gos_rt_map_get_or_typed_str_i64",
-            (_, Some(MapValueKind::String)) => "gos_rt_map_get_or_i64_str",
-            _ => "gos_rt_map_get_or_i64",
+        let keys_helper = if is_btmap {
+            "gos_rt_btmap_keys"
+        } else {
+            match key_kind {
+                Some(MapKeyKind::String) => "gos_rt_map_keys_str",
+                _ => "gos_rt_map_keys_i64",
+            }
+        };
+        let get_or_helper = if is_btmap {
+            "gos_rt_btmap_get_or"
+        } else {
+            match (key_kind, value_kind) {
+                (Some(MapKeyKind::String), Some(MapValueKind::String)) => {
+                    "gos_rt_map_get_or_str_str"
+                }
+                (Some(MapKeyKind::String), _) => "gos_rt_map_get_or_typed_str_i64",
+                (_, Some(MapValueKind::String)) => "gos_rt_map_get_or_i64_str",
+                _ => "gos_rt_map_get_or_i64",
+            }
         };
 
         let unit_ty = self.tcx.unit();

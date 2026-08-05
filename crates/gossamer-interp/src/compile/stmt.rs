@@ -66,6 +66,9 @@ impl<'tcx> FnBuilder<'tcx> {
                     }
                     _ => false,
                 },
+                HirExprKind::MethodCall { name, args, .. } => {
+                    args.is_empty() && matches!(name.name.as_str(), "collect" | "to_vec")
+                }
                 _ => false,
             };
         if is_vec_ctor {

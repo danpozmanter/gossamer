@@ -211,7 +211,7 @@ jobs:
           packages=()
           add_package_arg() {
             local crate="$1" seen=0 item
-            for item in "${packages[@]}"; do
+            for item in "${packages[@]:-}"; do
               [ "$item" = "$crate" ] && seen=1 && break
             done
             if [ "$seen" -eq 0 ]; then

@@ -2124,7 +2124,21 @@ impl<'tcx> FnBuilder<'tcx> {
             HirExprKind::MethodCall { name, args, .. }
                 if name.name == "iter" && args.is_empty()
         );
-        if self.receiver_is_lazy_iterator(next_recv) && !collection_iter_method {
+        let concrete_enumerate_method = matches!(
+            &next_recv.kind,
+            HirExprKind::MethodCall { receiver, name, args }
+                if name.name == "enumerate"
+                    && args.is_empty()
+                    && matches!(
+                        &receiver.kind,
+                        HirExprKind::MethodCall { name, args, .. }
+                            if name.name == "iter" && args.is_empty()
+                    )
+        );
+        if self.receiver_is_lazy_iterator(next_recv)
+            && !collection_iter_method
+            && !concrete_enumerate_method
+        {
             return Ok(None);
         }
         // Walk the iterator chain. Recognise:
@@ -2263,7 +2277,15 @@ impl<'tcx> FnBuilder<'tcx> {
         let source_expr: &HirExpr = if self.receiver_is_collection(vec_expr) {
             vec_expr
         } else if is_enumerate {
-            return Ok(None);
+            // Inferred `let entries = source.iter().collect()` bindings can
+            // retain a `Var` HIR type even though their runtime value is an
+            // indexable array. Materialise the whole enumerate expression
+            // once instead of falling into the generic `next()` desugar,
+            // which reconstructs the iterator every trip and repeats item 0.
+            if self.receiver_is_lazy_iterator(vec_expr) {
+                return Ok(None);
+            }
+            next_recv
         } else {
             next_recv
         };
