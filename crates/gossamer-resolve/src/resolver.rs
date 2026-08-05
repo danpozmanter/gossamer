@@ -221,6 +221,18 @@ impl Resolver {
         }
         let rest: Vec<&str> = p.segments[1..].iter().map(|s| s.name.as_str()).collect();
         let joined = rest.join("::");
+        if let Some(last) = rest.last()
+            && let Some(replacement) = crate::stdlib_exports::canonical_collection_name(last)
+        {
+            self.emit(
+                ResolveError::RemovedStdItem {
+                    path: format!("std::{joined}"),
+                    replacement: replacement.to_string(),
+                },
+                use_decl.span,
+            );
+            return;
+        }
         if crate::stdlib_exports::is_stdlib_module_path_or_namespace(&joined) {
             return;
         }
@@ -263,6 +275,22 @@ impl Resolver {
             .iter()
             .map(|segment| segment.name.as_str())
             .collect();
+        for entry in list {
+            if let Some(replacement) =
+                crate::stdlib_exports::canonical_collection_name(entry.name.name.as_str())
+            {
+                let mut rest = base_rest.clone();
+                rest.extend(entry.prefix.iter().map(|segment| segment.name.as_str()));
+                rest.push(entry.name.name.as_str());
+                self.emit(
+                    ResolveError::RemovedStdItem {
+                        path: format!("std::{}", rest.join("::")),
+                        replacement: replacement.to_string(),
+                    },
+                    use_decl.span,
+                );
+            }
+        }
         if !base_rest.is_empty() {
             let base = base_rest.join("::");
             let base_parent = base_rest
@@ -943,12 +971,7 @@ impl Resolver {
             } => {
                 self.resolve_struct_expr(path, fields, base.as_deref(), expr.id, expr.span);
             }
-            ExprKind::Array(arr)
-            | ExprKind::FixedArray(arr)
-            | ExprKind::QueueLiteral(arr)
-            | ExprKind::StackLiteral(arr)
-            | ExprKind::MaxHeapLiteral(arr)
-            | ExprKind::MinHeapLiteral(arr) => self.resolve_array_expr(arr),
+            ExprKind::Array(arr) | ExprKind::FixedArray(arr) => self.resolve_array_expr(arr),
             ExprKind::Range { start, end, .. } => {
                 self.resolve_optional_expr(start.as_deref());
                 self.resolve_optional_expr(end.as_deref());

@@ -90,10 +90,9 @@ let found = Lookup::Found {
 
 Gossamer collection literals cover the common F# collection shapes:
 `[a, b]` for `Vec<T>`, `#[a, b]` for a fixed array, `{key: value}` for
-`Map<K, V>`, `#{a, b}` for `Set<T>` or an expected `BTreeSet<T>`,
-`<[a, b]` for `Queue<i64>`, `[a, b]>` for `Stack<i64>`, `^[a, b]`
-for `MaxHeap<i64>`, and `_[a, b]` for `MinHeap<i64>`. Use `Deque<i64>`
-when both ends matter.
+`Map<K, V>`, and `#{a, b}` for `Set<T>` or an expected `BTreeSet<T>`.
+`Queue<i64>`, `Stack<i64>`, `Deque<i64>`, `MaxHeap<i64>`, and `MinHeap<i64>`
+are built through their type with `new()` or `from([...])`.
 
 ## Pipe Operator
 

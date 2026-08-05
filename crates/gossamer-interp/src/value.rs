@@ -2821,21 +2821,15 @@ fn repr_deque(value: &Value, owner: &str) -> String {
 }
 
 fn is_set_struct_name(name: &str) -> bool {
-    matches!(name, "Set" | "HashSet" | "BTreeSet")
+    matches!(name, "Set" | "BTreeSet")
 }
 
 fn is_deque_struct_name(name: &str) -> bool {
-    matches!(
-        name,
-        "Deque" | "VecDeque" | "Queue" | "VecQueue" | "Stack" | "VecStack"
-    )
+    matches!(name, "Deque" | "Queue" | "Stack")
 }
 
 fn is_heap_struct_name(name: &str) -> bool {
-    matches!(
-        name,
-        "BinaryHeap" | "MaxBinaryHeap" | "MaxHeap" | "MinBinaryHeap" | "MinHeap"
-    )
+    matches!(name, "MaxHeap" | "MinHeap")
 }
 
 fn repr_binary_heap(value: &Value, owner: &str) -> String {

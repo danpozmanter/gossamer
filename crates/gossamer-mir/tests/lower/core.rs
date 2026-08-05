@@ -235,11 +235,11 @@ fn main() {
 
 #[test]
 fn hashset_intersection_iter_snapshots_directly_to_a_vec() {
-    let source = r"use std::collections::HashSet
+    let source = r"use std::collections::Set
 
 fn main() {
-    let mut left: HashSet<i64> = HashSet::new()
-    let mut right: HashSet<i64> = HashSet::new()
+    let mut left: Set<i64> = Set::new()
+    let mut right: Set<i64> = Set::new()
     left.insert(1)
     right.insert(1)
     let mut total = 0
@@ -290,10 +290,10 @@ fn while_loop_produces_cfg_with_back_edge() {
 #[test]
 fn counted_hashmap_insert_loop_reserves_proven_upper_bound() {
     let source = r"
-use std::collections::HashMap
+use std::collections::Map
 
 fn fill(n: i64) -> i64 {
-    let mut m: HashMap<i64, i64> = HashMap::new()
+    let mut m: Map<i64, i64> = Map::new()
     let mut i = 0i64
     while i < n {
         m.insert(i, i)
@@ -402,10 +402,10 @@ fn probe(xs: Vec<i64>) -> i64 {
 #[test]
 fn counted_hashmap_reservation_rejects_a_skipped_insert_path() {
     let source = r"
-use std::collections::HashMap
+use std::collections::Map
 
 fn fill(n: i64) -> i64 {
-    let mut m: HashMap<i64, i64> = HashMap::new()
+    let mut m: Map<i64, i64> = Map::new()
     let mut i = 0i64
     while i < n {
         if i % 2i64 == 0i64 {
@@ -427,7 +427,7 @@ fn fill(n: i64) -> i64 {
             Terminator::Call {
                 callee: Operand::Const(ConstValue::Str(name)),
                 ..
-            } if name == "HashMap::new"
+            } if name == "Map::new"
         )
     }));
     assert!(!body.blocks.iter().any(|block| {
@@ -446,10 +446,10 @@ fn counted_string_hashmap_insert_loop_reserves_with_typed_capacity_backend() {
     // The MIR planner carries only the proven count. The native backend reads
     // this map's destination type and selects string-keyed capacity storage.
     let source = r#"
-use std::collections::HashMap
+use std::collections::Map
 
 fn fill(n: i64) -> i64 {
-    let mut m: HashMap<String, i64> = HashMap::new()
+    let mut m: Map<String, i64> = Map::new()
     let mut i = 0i64
     while i < n {
         m.insert(format!("key-{}", i), i)
@@ -483,10 +483,10 @@ fn container_insert_keeps_balanced_source_and_container_vec_ownership() {
     // leak each value. Keeping both operations also makes the map's overwrite
     // and teardown releases exactly balance the inserted share.
     let source = r"
-use std::collections::HashMap
+use std::collections::Map
 
 fn replace() -> i64 {
-    let mut m: HashMap<i64, Vec<i64>> = HashMap::new()
+    let mut m: Map<i64, Vec<i64>> = Map::new()
     let value: Vec<i64> = Vec::from([1i64, 2i64])
     m.insert(1, value)
     m.insert(1, Vec::from([3i64, 4i64]))
@@ -565,10 +565,10 @@ fn container_or_insert_retains_map_vec_share_and_returns_a_borrow() {
     // must still mint the map's Vec share before the call; its result is an
     // interior borrow and is intentionally not an owning call destination.
     let source = r#"
-use std::collections::HashMap
+use std::collections::Map
 
 fn insert_default() -> i64 {
-    let mut m: HashMap<String, Vec<i64>> = HashMap::new()
+    let mut m: Map<String, Vec<i64>> = Map::new()
     let stored = m.or_insert("key", Vec::from([1i64, 2i64]))
     stored.len()
 }
@@ -681,12 +681,12 @@ fn main() {
 #[test]
 fn map_insert_registers_structural_children_for_aggregate_values() {
     let source = r#"
-use std::collections::HashMap
+use std::collections::Map
 
 struct Item { name: String, tags: Vec<String>, n: i64 }
 
 fn insert_item() {
-    let mut m: HashMap<i64, Item> = HashMap::new()
+    let mut m: Map<i64, Item> = Map::new()
     m.insert(1i64, Item { name: "item", tags: Vec::new(), n: 1i64 })
 }
 "#;
@@ -702,7 +702,7 @@ fn insert_item() {
             gossamer_types::TyKind::HashMap { value, .. } => Some(*value),
             _ => None,
         })
-        .expect("HashMap value type");
+        .expect("Map value type");
     let symbol = format!("gos_rc_meta_boxaggr_{}", value_ty.as_u32());
     let meta = tcx
         .rc_meta(&symbol)

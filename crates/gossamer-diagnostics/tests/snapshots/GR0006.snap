@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GR0006]: A container spelling that a canonical name replaced. Each container has exactly one name - import and write that one. - here
+--- framed ---
+error[GR0006]: A container spelling that a canonical name replaced. Each container has exactly one name - import and write that one.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

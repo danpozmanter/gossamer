@@ -1,5 +1,5 @@
 // Tier-parity smoke for the 0.7.0 slice methods. Confirms that
-// String::slice / Vec::slice / [T; N].slice produce bit-identical
+// String::slice / Vec::slice / #[T; N].slice produce bit-identical
 // output on `gos`, the Cranelift JIT, and the LLVM-built
 // binary.
 

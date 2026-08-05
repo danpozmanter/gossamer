@@ -43,10 +43,13 @@ version. This page is auto-generated from the catalogue in
 | [`GP0029`](#gp0029) | Parser | match arm missing arrow |
 | [`GP0030`](#gp0030) | Parser | match arm missing body |
 | [`GP0031`](#gp0031) | Parser | match arm missing separator |
+| [`GP0032`](#gp0032) | Parser | removed collection literal |
+| [`GP0033`](#gp0033) | Parser | bare repeat literal |
 | [`GR0001`](#gr0001) | Resolve | unresolved name |
 | [`GR0002`](#gr0002) | Resolve | wrong namespace |
 | [`GR0003`](#gr0003) | Resolve | duplicate item |
 | [`GR0004`](#gr0004) | Resolve | duplicate import |
+| [`GR0006`](#gr0006) | Resolve | removed stdlib item |
 | [`GT0001`](#gt0001) | Types | type mismatch |
 | [`GT0002`](#gt0002) | Types | unresolved method |
 | [`GT0003`](#gt0003) | Types | unresolved operator |
@@ -242,6 +245,18 @@ Add the expression or block produced by the match arm.
 
 Separate same-line expression arms with a comma, or start the next arm on a new line.
 
+## `GP0032` <a id="gp0032"></a>
+
+**Parser** - removed collection literal
+
+A bracket spelling that used to build a container is no longer syntax. Construct the container through its type: `Type::new()` or `Type::from([a, b, c])`.
+
+## `GP0033` <a id="gp0033"></a>
+
+**Parser** - bare repeat literal
+
+A repeat literal is a fixed array, written `#[value; count]`. Bare brackets build a Vec from the elements listed inside them.
+
 ## `GR0001` <a id="gr0001"></a>
 
 **Resolve** - unresolved name
@@ -265,6 +280,12 @@ Two items in the same module share a name. Rename one of them or move it into a 
 **Resolve** - duplicate import
 
 The same path was imported twice in the same `use` list. Drop the duplicate.
+
+## `GR0006` <a id="gr0006"></a>
+
+**Resolve** - removed stdlib item
+
+A container spelling that a canonical name replaced. Each container has exactly one name - import and write that one.
 
 ## `GT0001` <a id="gt0001"></a>
 

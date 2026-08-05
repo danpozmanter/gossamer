@@ -73,10 +73,10 @@ fn arithmetic_program_prints_sum() {
 #[test]
 fn generic_hash_map_insert_preserves_values_and_replacement() {
     let source = r#"
-use std::collections::HashMap
+use std::collections::Map
 
 fn main() {
-    let mut map: HashMap<String, [u8]> = HashMap::with_capacity(2)
+    let mut map: Map<String, [u8]> = Map::with_capacity(2)
     map.insert("key", [1u8, 2u8])
     map.insert("key", [3u8, 4u8])
     let value = map.get("key").unwrap()
@@ -89,7 +89,7 @@ fn main() {
 #[test]
 fn hash_set_iteration_preserves_user_struct_values() {
     let source = r#"
-use std::collections::HashSet
+use std::collections::Set
 
 struct Point {
     x: i64,
@@ -97,7 +97,7 @@ struct Point {
 }
 
 fn main() {
-    let mut points: HashSet<Point> = HashSet::new()
+    let mut points: Set<Point> = Set::new()
     points.insert(Point { x: 1, y: 2 })
     points.insert(Point { x: 3, y: 4 })
     points.insert(Point { x: 1, y: 2 })

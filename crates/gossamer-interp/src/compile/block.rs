@@ -355,7 +355,7 @@ println!("{}", n)
     fn large_float_repeat_uses_runtime_repeat_not_register_expansion() {
         let source = r"
 fn f() -> f64 {
-    let xs: [f64; 40000] = [0.0; 40000]
+    let xs: [f64; 40000] = #[0.0; 40000]
     xs[39999]
 }
 ";

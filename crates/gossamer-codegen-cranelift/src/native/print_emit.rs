@@ -536,10 +536,10 @@ pub(super) fn emit_tuple_format_value(
     intrinsics: &mut IntrinsicContext,
 ) -> Result<ir::Value> {
     let ptr_ty = module.target_config().pointer_type();
-    let Some(tags) = tuple_tags(tcx, body, arg) else {
+    let Some((count, tags)) = tuple_tags(tcx, body, arg) else {
         bail!("native codegen: tuple element type is not formattable on the compiled tier");
     };
-    let n = tags.len() as i64;
+    let n = count as i64;
     let tags_data = intrinsics.intern_tuple_tags(module, &tags)?;
     let tags_global = module.declare_data_in_func(tags_data, builder.func);
     let tags_ptr = builder.ins().symbol_value(ptr_ty, tags_global);

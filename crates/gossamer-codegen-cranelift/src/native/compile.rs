@@ -679,6 +679,19 @@ pub(crate) fn lower_program_full(
         // can lift it into a data ref without touching the offline
         // module mid-parallel-phase.
         intrinsics.intern_string(module, &body.name)?;
+        // Tuple tag blobs are data objects the print lowering resolves
+        // at emit time, so every tuple shape a body can print - and
+        // every tuple nested inside one, which `t.0` can print on its
+        // own - is interned here.
+        let mut tuple_tys = Vec::new();
+        for local in &body.locals {
+            super::operand::nested_tuple_types(tcx, local.ty, &mut tuple_tys);
+        }
+        for ty in tuple_tys {
+            if let Some(tags) = super::operand::tuple_tags_for_ty(tcx, ty) {
+                intrinsics.intern_tuple_tags(module, &tags)?;
+            }
+        }
     }
 
     // Pre-declare every `gos_binding_*` external call target against the

@@ -5,7 +5,7 @@
 // elsewhere.
 
 fn main() {
-    let mut flags = [false; 16]
+    let mut flags = #[false; 16]
     let mut i = 0
     while i < 16 {
         flags[i] = (i % 3) == 0

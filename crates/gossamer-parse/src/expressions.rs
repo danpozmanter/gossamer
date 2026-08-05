@@ -360,23 +360,6 @@ impl Parser<'_> {
                 }
             }
         }
-        if let ExprKind::MinHeapLiteral(ArrayExpr::List(items)) = &mut rhs.kind
-            && items.len() == 1
-        {
-            let index = items
-                .pop()
-                .expect("one-element min-heap literal has an index expression");
-            let span = self.join(lhs.span, rhs.span);
-            let id = self.alloc_id();
-            return Expr::new(
-                id,
-                span,
-                ExprKind::Index {
-                    base: Box::new(lhs),
-                    index: Box::new(index),
-                },
-            );
-        }
         let lhs_span = lhs.span;
         let mut piped = Some(lhs);
         if substitute_pipe_placeholder(&mut rhs, &mut piped) {
@@ -581,6 +564,9 @@ impl Parser<'_> {
                 primary = Expr::new(id, span, ExprKind::Try(Box::new(primary)));
                 continue;
             }
+            // `[a, b]>` used to spell a stack literal. Report the
+            // removal against the whole spelling rather than letting the
+            // `>` surface as a stray comparison operator.
             if self.at_punct(Punct::Gt)
                 && !self.newline_before_peek()
                 && self.peek_span().start == primary.span.end
@@ -588,12 +574,17 @@ impl Parser<'_> {
             {
                 let end_span = self.peek_span();
                 self.bump();
-                if let ExprKind::Array(array) = primary.kind {
-                    let span = self.join(primary.span, end_span);
-                    let id = self.alloc_id();
-                    primary = Expr::new(id, span, ExprKind::StackLiteral(array));
-                    continue;
-                }
+                let span = self.join(primary.span, end_span);
+                self.record(
+                    ParseError::RemovedCollectionLiteral {
+                        spelling: "[..]>".to_string(),
+                        container: "Stack".to_string(),
+                    },
+                    span,
+                );
+                let id = self.alloc_id();
+                primary = Expr::new(id, span, ExprKind::Error);
+                continue;
             }
             break;
         }
@@ -623,6 +614,9 @@ impl Parser<'_> {
                     },
                 )
             }
+            // The lexer reads `t.0.1` as `t` `.` `0.1`, so a float literal in
+            // field position is a chained pair of tuple indices.
+            TokenKind::FloatLit => self.parse_chained_tuple_index(receiver, token.span),
             TokenKind::Ident => {
                 self.bump();
                 let name = Ident::new(self.slice(token.span));
@@ -644,6 +638,41 @@ impl Parser<'_> {
                 receiver
             }
         }
+    }
+
+    /// Splits a float literal in field position (`t.0.1`) into the two tuple
+    /// indices it spells.
+    fn parse_chained_tuple_index(&mut self, receiver: Expr, token_span: Span) -> Expr {
+        self.bump();
+        let text = self.slice(token_span);
+        let start_span = receiver.span;
+        let span = self.join(start_span, token_span);
+        let Some((outer, inner)) = text.split_once('.') else {
+            self.record(ParseError::InvalidTupleIndex, token_span);
+            return receiver;
+        };
+        let (Ok(outer), Ok(inner)) = (outer.parse::<u32>(), inner.parse::<u32>()) else {
+            self.record(ParseError::InvalidTupleIndex, token_span);
+            return receiver;
+        };
+        let outer_id = self.alloc_id();
+        let outer_access = Expr::new(
+            outer_id,
+            span,
+            ExprKind::FieldAccess {
+                receiver: Box::new(receiver),
+                field: FieldSelector::Index(outer),
+            },
+        );
+        let id = self.alloc_id();
+        Expr::new(
+            id,
+            span,
+            ExprKind::FieldAccess {
+                receiver: Box::new(outer_access),
+                field: FieldSelector::Index(inner),
+            },
+        )
     }
 
     fn parse_method_or_field(&mut self, receiver: Expr, name: Ident, name_span: Span) -> Expr {
@@ -763,8 +792,65 @@ impl Parser<'_> {
     }
 
     fn parse_index_suffix(&mut self, base: Expr) -> Expr {
+        // `_[a, b]` and `_[]` used to spell a min-heap literal. A single
+        // index keeps its meaning as the pipe placeholder's index form
+        // (`x |> _[i]`), so only the list shapes are rejected here.
+        if matches!(&base.kind, ExprKind::Path(path) if is_pipe_placeholder(path)) {
+            return self.reject_min_heap_literal(base);
+        }
         self.bump();
         let index = self.with_struct_literals_allowed(Self::parse_expr_no_assign);
+        self.expect_punct(Punct::RBracket, "to close index expression");
+        let end_span = self.last_span();
+        let span = self.join(base.span, end_span);
+        let id = self.alloc_id();
+        Expr::new(
+            id,
+            span,
+            ExprKind::Index {
+                base: Box::new(base),
+                index: Box::new(index),
+            },
+        )
+    }
+
+    /// Parses `_[...]`, which is the pipe placeholder's index form for a
+    /// single index and the removed min-heap literal for every other
+    /// shape.
+    fn reject_min_heap_literal(&mut self, base: Expr) -> Expr {
+        self.bump();
+        if self.at_punct(Punct::RBracket) {
+            let end_span = self.peek_span();
+            self.bump();
+            let span = self.join(base.span, end_span);
+            self.record(
+                ParseError::RemovedCollectionLiteral {
+                    spelling: "_[..]".to_string(),
+                    container: "MinHeap".to_string(),
+                },
+                span,
+            );
+            let id = self.alloc_id();
+            return Expr::new(id, span, ExprKind::Error);
+        }
+        let index = self.with_struct_literals_allowed(Self::parse_expr_no_assign);
+        if self.at_punct(Punct::Comma) || self.at_punct(Punct::Semi) {
+            while !self.at_punct(Punct::RBracket) && !self.at_eof() {
+                self.bump();
+            }
+            let end_span = self.peek_span();
+            self.bump();
+            let span = self.join(base.span, end_span);
+            self.record(
+                ParseError::RemovedCollectionLiteral {
+                    spelling: "_[..]".to_string(),
+                    container: "MinHeap".to_string(),
+                },
+                span,
+            );
+            let id = self.alloc_id();
+            return Expr::new(id, span, ExprKind::Error);
+        }
         self.expect_punct(Punct::RBracket, "to close index expression");
         let end_span = self.last_span();
         let span = self.join(base.span, end_span);
@@ -813,14 +899,12 @@ impl Parser<'_> {
         if self.eat_punct(Punct::LBracket) {
             return self.parse_array_expr();
         }
-        if self.eat_punct(Punct::Lt) {
-            return self.parse_queue_literal_expr();
+        if self.at_punct(Punct::Lt) && self.peek_nth(1).kind == TokenKind::Punct(Punct::LBracket) {
+            return self.reject_removed_collection_literal("<[..]", "Queue");
         }
-        if self.eat_punct(Punct::Caret) {
-            return self.parse_max_heap_literal_expr();
-        }
-        if self.eat_min_heap_literal_prefix() {
-            return self.parse_min_heap_literal_expr();
+        if self.at_punct(Punct::Caret) && self.peek_nth(1).kind == TokenKind::Punct(Punct::LBracket)
+        {
+            return self.reject_removed_collection_literal("^[..]", "MaxHeap");
         }
         if self.eat_punct(Punct::Hash) {
             return self.parse_hash_prefixed_literal();
@@ -1045,34 +1129,32 @@ impl Parser<'_> {
         self.with_struct_literals_allowed(Self::parse_set_literal_expr_inner)
     }
 
-    fn eat_min_heap_literal_prefix(&mut self) -> bool {
-        if self.at_ident_text("_") && self.peek_nth(1).kind == TokenKind::Punct(Punct::LBracket) {
+    /// Records [`ParseError::RemovedCollectionLiteral`] for a bracket
+    /// spelling that no longer names a container, then consumes the
+    /// bracketed group so the rest of the statement still parses and one
+    /// diagnostic stands for the whole literal.
+    fn reject_removed_collection_literal(&mut self, spelling: &str, container: &str) -> ExprKind {
+        let start = self.peek_span();
+        self.bump();
+        self.bump();
+        let mut depth = 1u32;
+        while depth > 0 && !self.at_eof() {
+            if self.at_punct(Punct::LBracket) {
+                depth += 1;
+            } else if self.at_punct(Punct::RBracket) {
+                depth -= 1;
+            }
             self.bump();
-            true
-        } else {
-            false
         }
-    }
-
-    fn parse_queue_literal_expr(&mut self) -> ExprKind {
-        if !self.expect_punct(Punct::LBracket, "to open queue literal after `<`") {
-            return ExprKind::Error;
-        }
-        self.with_struct_literals_allowed(Self::parse_queue_literal_expr_inner)
-    }
-
-    fn parse_max_heap_literal_expr(&mut self) -> ExprKind {
-        if !self.expect_punct(Punct::LBracket, "to open max heap literal after `^`") {
-            return ExprKind::Error;
-        }
-        self.with_struct_literals_allowed(Self::parse_max_heap_literal_expr_inner)
-    }
-
-    fn parse_min_heap_literal_expr(&mut self) -> ExprKind {
-        if !self.expect_punct(Punct::LBracket, "to open min heap literal after `_`") {
-            return ExprKind::Error;
-        }
-        self.with_struct_literals_allowed(Self::parse_min_heap_literal_expr_inner)
+        let span = self.join(start, self.last_span());
+        self.record(
+            ParseError::RemovedCollectionLiteral {
+                spelling: spelling.to_string(),
+                container: container.to_string(),
+            },
+            span,
+        );
+        ExprKind::Error
     }
 
     fn parse_array_expr_inner(&mut self) -> ExprKind {
@@ -1080,13 +1162,14 @@ impl Parser<'_> {
             return ExprKind::Array(ArrayExpr::List(Vec::new()));
         }
         let first = self.parse_expr_no_assign();
-        if self.eat_punct(Punct::Semi) {
-            let count = self.parse_expr_no_assign();
+        if self.at_punct(Punct::Semi) {
+            let semi_span = self.peek_span();
+            self.bump();
+            let _count = self.parse_expr_no_assign();
             self.expect_punct(Punct::RBracket, "to close array expression");
-            return ExprKind::Array(ArrayExpr::Repeat {
-                value: Box::new(first),
-                count: Box::new(count),
-            });
+            let span = self.join(first.span, semi_span);
+            self.record(ParseError::BareRepeatLiteral, span);
+            return ExprKind::Error;
         }
         let mut elements = vec![first];
         while self.eat_punct(Punct::Comma) {
@@ -1121,78 +1204,6 @@ impl Parser<'_> {
         }
         self.expect_punct(Punct::RBracket, "to close fixed array expression");
         ExprKind::FixedArray(ArrayExpr::List(elements))
-    }
-
-    fn parse_queue_literal_expr_inner(&mut self) -> ExprKind {
-        if self.eat_punct(Punct::RBracket) {
-            return ExprKind::QueueLiteral(ArrayExpr::List(Vec::new()));
-        }
-        let first = self.parse_expr_no_assign();
-        if self.eat_punct(Punct::Semi) {
-            let count = self.parse_expr_no_assign();
-            self.expect_punct(Punct::RBracket, "to close queue literal");
-            return ExprKind::QueueLiteral(ArrayExpr::Repeat {
-                value: Box::new(first),
-                count: Box::new(count),
-            });
-        }
-        let mut elements = vec![first];
-        while self.eat_punct(Punct::Comma) {
-            if self.at_punct(Punct::RBracket) {
-                break;
-            }
-            elements.push(self.parse_expr_no_assign());
-        }
-        self.expect_punct(Punct::RBracket, "to close queue literal");
-        ExprKind::QueueLiteral(ArrayExpr::List(elements))
-    }
-
-    fn parse_max_heap_literal_expr_inner(&mut self) -> ExprKind {
-        if self.eat_punct(Punct::RBracket) {
-            return ExprKind::MaxHeapLiteral(ArrayExpr::List(Vec::new()));
-        }
-        let first = self.parse_expr_no_assign();
-        if self.eat_punct(Punct::Semi) {
-            let count = self.parse_expr_no_assign();
-            self.expect_punct(Punct::RBracket, "to close max heap literal");
-            return ExprKind::MaxHeapLiteral(ArrayExpr::Repeat {
-                value: Box::new(first),
-                count: Box::new(count),
-            });
-        }
-        let mut elements = vec![first];
-        while self.eat_punct(Punct::Comma) {
-            if self.at_punct(Punct::RBracket) {
-                break;
-            }
-            elements.push(self.parse_expr_no_assign());
-        }
-        self.expect_punct(Punct::RBracket, "to close max heap literal");
-        ExprKind::MaxHeapLiteral(ArrayExpr::List(elements))
-    }
-
-    fn parse_min_heap_literal_expr_inner(&mut self) -> ExprKind {
-        if self.eat_punct(Punct::RBracket) {
-            return ExprKind::MinHeapLiteral(ArrayExpr::List(Vec::new()));
-        }
-        let first = self.parse_expr_no_assign();
-        if self.eat_punct(Punct::Semi) {
-            let count = self.parse_expr_no_assign();
-            self.expect_punct(Punct::RBracket, "to close min heap literal");
-            return ExprKind::MinHeapLiteral(ArrayExpr::Repeat {
-                value: Box::new(first),
-                count: Box::new(count),
-            });
-        }
-        let mut elements = vec![first];
-        while self.eat_punct(Punct::Comma) {
-            if self.at_punct(Punct::RBracket) {
-                break;
-            }
-            elements.push(self.parse_expr_no_assign());
-        }
-        self.expect_punct(Punct::RBracket, "to close min heap literal");
-        ExprKind::MinHeapLiteral(ArrayExpr::List(elements))
     }
 
     fn parse_set_literal_expr_inner(&mut self) -> ExprKind {
@@ -2932,20 +2943,11 @@ fn contains_pipe_placeholder(expr: &Expr) -> bool {
         ExprKind::Tuple(items) | ExprKind::MapLiteral(items) | ExprKind::SetLiteral(items) => {
             items.iter().any(contains_pipe_placeholder)
         }
-        ExprKind::Array(ArrayExpr::List(items))
-        | ExprKind::FixedArray(ArrayExpr::List(items))
-        | ExprKind::QueueLiteral(ArrayExpr::List(items))
-        | ExprKind::StackLiteral(ArrayExpr::List(items))
-        | ExprKind::MaxHeapLiteral(ArrayExpr::List(items))
-        | ExprKind::MinHeapLiteral(ArrayExpr::List(items)) => {
+        ExprKind::Array(ArrayExpr::List(items)) | ExprKind::FixedArray(ArrayExpr::List(items)) => {
             items.iter().any(contains_pipe_placeholder)
         }
         ExprKind::Array(ArrayExpr::Repeat { value, count })
-        | ExprKind::FixedArray(ArrayExpr::Repeat { value, count })
-        | ExprKind::QueueLiteral(ArrayExpr::Repeat { value, count })
-        | ExprKind::StackLiteral(ArrayExpr::Repeat { value, count })
-        | ExprKind::MaxHeapLiteral(ArrayExpr::Repeat { value, count })
-        | ExprKind::MinHeapLiteral(ArrayExpr::Repeat { value, count }) => {
+        | ExprKind::FixedArray(ArrayExpr::Repeat { value, count }) => {
             contains_pipe_placeholder(value) || contains_pipe_placeholder(count)
         }
         ExprKind::Range { start, end, .. } => {

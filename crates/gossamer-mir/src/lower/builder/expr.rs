@@ -1956,6 +1956,52 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Tags describing `ty` in a `gos_rt_tuple_cmp` / `gos_rt_tuple_format`
+    /// stream: one byte for a scalar, or the `8, count, <nested tags…>`
+    /// form for a nested tuple, whose slots are flattened into the
+    /// parent's buffer. `None` when any leaf is not slot-comparable.
+    pub(crate) fn tuple_stream_tags(&self, ty: Ty) -> Option<Vec<u8>> {
+        use gossamer_types::TyKind;
+        let mut peeled = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+            peeled = *inner;
+        }
+        if let TyKind::Tuple(elems) = self.tcx.kind_of(peeled) {
+            let elems: Vec<Ty> = elems.clone();
+            if elems.is_empty() || elems.len() > usize::from(u8::MAX) {
+                return None;
+            }
+            let mut out = vec![gossamer_abi::TUPLE_TAG_NESTED, elems.len() as u8];
+            for e in &elems {
+                out.extend(self.tuple_stream_tags(*e)?);
+            }
+            return Some(out);
+        }
+        self.scalar_cmp_tag(ty).map(|tag| vec![tag])
+    }
+
+    /// The top-level element count and tag stream for a tuple type, or
+    /// `None` when it is not a tuple of slot-comparable leaves.
+    pub(crate) fn tuple_element_stream(&self, ty: Ty) -> Option<(usize, Vec<u8>)> {
+        use gossamer_types::TyKind;
+        let mut peeled = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+            peeled = *inner;
+        }
+        let TyKind::Tuple(elems) = self.tcx.kind_of(peeled) else {
+            return None;
+        };
+        let elems: Vec<Ty> = elems.clone();
+        if elems.is_empty() {
+            return None;
+        }
+        let mut tags = Vec::with_capacity(elems.len());
+        for e in &elems {
+            tags.extend(self.tuple_stream_tags(*e)?);
+        }
+        Some((elems.len(), tags))
+    }
+
     /// Per-element tags for a flat-buffer aggregate of scalar/string elements:
     /// a tuple (`(A, B)`) or a fixed-size array (`[T; N]`, a flat `[N x i64]`
     /// buffer like a tuple). `None` for a non-flat or aggregate-element type.

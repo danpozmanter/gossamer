@@ -1,9 +1,9 @@
-use std::collections::HashMap
+use std::collections::Map
 
 pub struct Point { pub x: f64, pub y: f64 }
 
 fn main() {
-    let mut m: HashMap<u32, Point> = HashMap::new()
+    let mut m: Map<u32, Point> = Map::new()
     m.insert(0, Point { x: 1.5, y: 2.0 })
     m.insert(1, Point { x: 4.5, y: 5.0 })
 
@@ -21,7 +21,7 @@ fn main() {
         None => "none",
     }
 
-    let mut i64s: HashMap<u32, i64> = HashMap::new()
+    let mut i64s: Map<u32, i64> = Map::new()
     i64s.insert(0, 100)
     let present_val = match i64s.get(&0) {
         Some(v) => v,

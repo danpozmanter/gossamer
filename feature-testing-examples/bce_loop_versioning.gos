@@ -80,15 +80,15 @@ fn scale_sum(xs: &[f64], n: i64) -> f64 {
 
 fn main() {
     let n = 5
-    let mut a = [0; 25]
-    let mut b = [0; 25]
+    let mut a = #[0; 25]
+    let mut b = #[0; 25]
     for i in 0..25 {
         a[i] = i % 9
         b[i] = (i * 3) % 11
     }
     println!("matmul_trace={}", matmul_trace(&a, &b, n))
 
-    let mut m = [0; 12]
+    let mut m = #[0; 12]
     for i in 0..12 {
         m[i] = i + 1
     }
@@ -96,7 +96,7 @@ fn main() {
 
     println!("prefix={}", prefix_pass(3, 8))
 
-    let mut fs = [0.0; 6]
+    let mut fs = #[0.0; 6]
     for i in 0..6 {
         fs[i] = (i as f64) + 0.5
     }

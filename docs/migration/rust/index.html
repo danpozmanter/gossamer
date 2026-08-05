@@ -474,6 +474,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -590,6 +592,34 @@
 
 
     Comptime
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../language/tuples/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Tuples
 
 
 
@@ -2260,22 +2290,23 @@ types have distinct access forms:</p>
 </code></pre></div>
 <h2 id="collection-literals">Collection Literals<a class="headerlink" href="#collection-literals" title="Permanent link">&para;</a></h2>
 <p>Use <code>[a, b]</code> for <code>Vec&lt;T&gt;</code>, <code>#[a, b]</code> or <code>#[value; N]</code> for fixed arrays,
-<code>{key: value}</code> and <code>{}</code> for <code>Map&lt;K, V&gt;</code>, <code>#{a, b}</code> for <code>Set&lt;T&gt;</code>,
-<code>&lt;[a, b]</code> for <code>Queue&lt;i64&gt;</code>, <code>[a, b]&gt;</code> for <code>Stack&lt;i64&gt;</code>, <code>^[a, b]</code>
-for <code>MaxHeap&lt;i64&gt;</code> or <code>BinaryHeap&lt;i64&gt;</code>, and <code>_[a, b]</code> for <code>MinHeap&lt;i64&gt;</code>.
-An expected <code>BTreeSet&lt;T&gt;</code> type shapes the same set literal into an ordered
-set. Use <code>Deque&lt;i64&gt;</code> when both ends matter.</p>
+<code>{key: value}</code> and <code>{}</code> for <code>Map&lt;K, V&gt;</code>, and <code>#{a, b}</code> for <code>Set&lt;T&gt;</code>. An
+expected <code>BTreeSet&lt;T&gt;</code> type shapes the same set literal into an ordered set.
+Queues, stacks, deques, and heaps are built through their type with <code>new()</code> or
+<code>from([...])</code>. Rust's <code>HashMap</code>, <code>HashSet</code>, <code>VecDeque</code>, and <code>BinaryHeap</code>
+spellings are not accepted - each container has exactly one name.</p>
 <div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">values</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">]</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">fixed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[1, 2, 3]</span>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">map</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="s">&quot;ada&quot;</span>: <span class="mi">36</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;grace&quot;</span>: <span class="mi">37</span><span class="p">}</span>
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">empty</span>: <span class="nc">Map</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{}</span>
 <a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="kd">let</span><span class="w"> </span><span class="n">set</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>#<span class="p">{</span><span class="s">&quot;parse&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;lower&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;parse&quot;</span><span class="p">}</span>
 <a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="kd">let</span><span class="w"> </span><span class="n">ordered</span>: <span class="nc">BTreeSet</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>#<span class="p">{</span><span class="s">&quot;lower&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;parse&quot;</span><span class="p">}</span>
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="kd">let</span><span class="w"> </span><span class="n">queue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&lt;</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">]</span>
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="kd">let</span><span class="w"> </span><span class="n">stack</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">]</span><span class="o">&gt;</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="kd">let</span><span class="w"> </span><span class="n">queue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Queue</span>::<span class="n">from</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">])</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="kd">let</span><span class="w"> </span><span class="n">stack</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Stack</span>::<span class="n">from</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">])</span>
 <a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="kd">let</span><span class="w"> </span><span class="n">deque</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Deque</span>::<span class="n">from</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">])</span>
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="kd">let</span><span class="w"> </span><span class="n">max_heap</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">^</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">]</span>
-<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="kd">let</span><span class="w"> </span><span class="n">min_heap</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">_</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">]</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="kd">let</span><span class="w"> </span><span class="n">max_heap</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MaxHeap</span>::<span class="n">from</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">])</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="kd">let</span><span class="w"> </span><span class="n">min_heap</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MinHeap</span>::<span class="n">from</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">])</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="kd">let</span><span class="w"> </span><span class="n">pair</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;two&quot;</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="ownership-and-references">Ownership And References<a class="headerlink" href="#ownership-and-references" title="Permanent link">&para;</a></h2>
 <p>Gossamer does not expose Rust's ownership-by-move model or lifetime

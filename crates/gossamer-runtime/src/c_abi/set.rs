@@ -139,7 +139,7 @@ pub unsafe extern "C" fn gos_rt_set_len(s: *const GosSet) -> i64 {
 }
 
 fn set_format_prefix(ordered: i32) -> &'static str {
-    if ordered != 0 { "BTreeSet" } else { "HashSet" }
+    if ordered != 0 { "BTreeSet" } else { "Set" }
 }
 
 #[unsafe(no_mangle)]

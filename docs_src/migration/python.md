@@ -19,10 +19,10 @@ are returned as `Result<T, E>` instead of raised as exceptions.
 | list | `Vec<T>` with `[...]`; use `#[...]` for a fixed array and `&[T]` for a borrowed slice |
 | dict | `Map<K, V>` with `{key: value}` and `{}` literals |
 | set | `Set<T>` with `#{...}` literals, or typed `BTreeSet<T>` with `#{...}` |
-| `collections.deque` as queue | `Queue<i64>` with `<[a, b]`, `push`, and FIFO `pop` |
+| `collections.deque` as queue | `Queue<i64>` from `Queue::from([a, b])`, `push`, and FIFO `pop` |
 | `collections.deque` as deque | `Deque<i64>` with explicit front/back methods |
-| stack list | `Stack<i64>` with `[a, b]>`, `push`, and LIFO `pop` |
-| `heapq` min-heap | `MinHeap<i64>` with `_[...]`; use `MaxHeap<i64>` or `BinaryHeap<i64>` with `^[...]` for max-heap order |
+| stack list | `Stack<i64>` from `Stack::from([a, b])`, `push`, and LIFO `pop` |
+| `heapq` min-heap | `MinHeap::from([...])`; use `MaxHeap::from([...])` for max-heap order |
 | `asyncio.create_task` | `go fn() { ... }()` |
 | `if __name__ == "__main__"` | entry-file top-level statements |
 

@@ -1029,9 +1029,11 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_flag_cell_load_vec" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_arr_reverse" => (&[ptr_ty, types::I64, types::I64], None),
         "gos_rt_arr_sort_i64" | "gos_rt_arr_sort_str" => (&[ptr_ty, types::I64], None),
+        "gos_rt_arr_sort_tuple" => (&[ptr_ty, types::I64, types::I64, types::I64, ptr_ty], None),
         "gos_rt_vec_reverse" => (&[ptr_ty], None),
         "gos_rt_vec_sort_i64" => (&[ptr_ty], None),
         "gos_rt_vec_sort_str" => (&[ptr_ty], None),
+        "gos_rt_vec_sort_tuple" => (&[ptr_ty, types::I64, ptr_ty], None),
         "gos_rt_arr_sort_by_i64" => (&[ptr_ty, types::I64, ptr_ty], None),
         "gos_rt_vec_sort_by_i64" => (&[ptr_ty, ptr_ty], None),
         // Aggregate-stride variants. Vec form reads `elem_bytes`

@@ -474,6 +474,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -590,6 +592,34 @@
 
 
     Comptime
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../language/tuples/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Tuples
 
 
 
@@ -2499,11 +2529,11 @@ passes the value on the left into the last argument of the next call.</p>
 </tr>
 <tr>
 <td><code>ArrayDeque</code> as queue</td>
-<td><code>Queue&lt;i64&gt;</code> with <code>&lt;[a, b]</code>, <code>push</code>, and FIFO <code>pop</code></td>
+<td><code>Queue&lt;i64&gt;</code> from <code>Queue::from([a, b])</code>, <code>push</code>, and FIFO <code>pop</code></td>
 </tr>
 <tr>
 <td><code>ArrayDeque</code> as stack</td>
-<td><code>Stack&lt;i64&gt;</code> with <code>[a, b]&gt;</code>, <code>push</code>, and LIFO <code>pop</code></td>
+<td><code>Stack&lt;i64&gt;</code> from <code>Stack::from([a, b])</code>, <code>push</code>, and LIFO <code>pop</code></td>
 </tr>
 <tr>
 <td><code>ArrayDeque</code> as deque</td>
@@ -2511,7 +2541,7 @@ passes the value on the left into the last argument of the next call.</p>
 </tr>
 <tr>
 <td><code>PriorityQueue</code></td>
-<td><code>MinHeap&lt;i64&gt;</code> with <code>_[...]</code>, or <code>MaxHeap&lt;i64&gt;</code> with <code>^[...]</code></td>
+<td><code>MinHeap::from([...])</code>, or <code>MaxHeap::from([...])</code> for max-first order</td>
 </tr>
 <tr>
 <td><code>OkHttp</code> / <code>Ktor HttpClient</code></td>

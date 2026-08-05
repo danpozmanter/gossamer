@@ -403,7 +403,13 @@ and Vec is the only sequence type that owns growable storage.
 
 `[a, b, c]` creates a `Vec<T>` by default. Use `#[a, b, c]` and
 `#[value; N]` for fixed `[T; N]` arrays. `N` must be a compile-time constant.
-An expected fixed-array type can also shape `[a, b, c]` into `[T; N]`.
+An expected fixed-array type can also shape `[a, b, c]` into `[T; N]`. The
+repeat form belongs to fixed arrays alone: bare `[value; N]` is `GP0033`.
+
+`Queue`, `Stack`, `Deque`, `MaxHeap`, and `MinHeap` have no literal form and
+are constructed through their type, with `T::new()` for an empty container and
+`T::from([a, b, c])` from a Vec literal. The retired `<[a, b]`, `[a, b]>`,
+`^[a, b]`, and `_[a, b]` spellings are `GP0032`.
 
 ```gossamer
 let words = ["yes", "wow"]
@@ -2021,8 +2027,9 @@ transformation when the chain doesn't return from the enclosing fn.
 - `Vec<T>`, `Map<K, V>`, `BTreeMap<K, V>`, `Set<T>`, `Deque<T>`,
   `Queue<T>`, and `Stack<T>`. Sequence, heap, queue, stack, deque, and ordered-container
   modules remain Experimental unless promoted by the feature registry.
-  `HashMap`, `HashSet`, `VecDeque`, `VecQueue`, `VecStack`,
-  `MaxBinaryHeap`, and `MinBinaryHeap` remain accepted aliases.
+  Each container has exactly one name: `HashMap`, `HashSet`, `VecDeque`,
+  `VecQueue`, `VecStack`, `BinaryHeap`, `MaxBinaryHeap`, and `MinBinaryHeap`
+  are rejected with `GR0006`.
 
 ### 10.8 `std::sync`
 
@@ -2303,10 +2310,11 @@ includes the Rust macros a newcomer reaches for: there is no `vec!`,
 `map!`, `set!`, `write!`, `writeln!`, `assert!`, `assert_eq!`,
 `debug_assert!`, `include_str!`, `include_bytes!`, or `env!`.
 
-- Collection literals use `[a, b]` / `[v; N]` for `Vec` values by default.
-  Use `#[a, b]` / `#[v; N]` for fixed arrays, `{}` or `{k: v}` for
-  `Map`, and `#{a, b}` for set values; there is no `vec!`, `map!`, or
-  `set!`.
+- Collection literals use `[a, b]` for `Vec` values by default. Use
+  `#[a, b]` / `#[v; N]` for fixed arrays, `{}` or `{k: v}` for `Map`, and
+  `#{a, b}` for set values; there is no `vec!`, `map!`, or `set!`. A repeat
+  literal is always a fixed array, so bare `[v; N]` is a syntax error
+  (`GP0033`).
 - `assert(cond[, msg])` and `assert_eq(a, b[, msg])` are prelude
   *functions* called without a `!`; `std::testing` provides the
   non-panicking `check*` variants.

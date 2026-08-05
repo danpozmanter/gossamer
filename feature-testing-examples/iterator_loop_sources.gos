@@ -1,0 +1,76 @@
+// Iterator loop sources
+// A `for` loop pulls from its iterable once. A sequence with no home to
+// index - a literal, or an `iter()` / `enumerate()` chain over one - is
+// bound before the loop, and an `Iterator<T>` binding is walked by index
+// while its values are materialized. Every shape below must yield each
+// element exactly once, on the VM, the JIT, and the native build.
+
+fn main() {
+    for x in [1, 2, 3] {
+        println!("literal {x}")
+    }
+
+    for (index, label) in ["a", "b"].enumerate() {
+        println!("literal enumerate {index} {label}")
+    }
+
+    let words = ["c", "d"]
+    for (index, label) in words.enumerate() {
+        println!("binding enumerate {index} {label}")
+    }
+
+    for (index, label) in words.iter().enumerate() {
+        println!("iter enumerate {index} {label}")
+    }
+
+    let numbers = [7, 2, 9]
+    let cursor = numbers.iter()
+    for value in cursor {
+        println!("iter binding {value}")
+    }
+
+    // An earlier `iter()` in the same body must not disturb a later
+    // loop's own source.
+    let smallest = numbers.iter().min().unwrap_or(0)
+    println!("smallest {smallest}")
+    for (index, label) in words.enumerate() {
+        println!("after iter {index} {label}")
+    }
+}
+
+#[cfg(test)]
+mod iterator_loop_sources_tests {
+    use std::testing
+
+    #[test]
+    fn a_literal_enumerate_yields_each_element_once() {
+        let mut seen = 0
+        for (index, _label) in ["a", "b"].enumerate() {
+            seen += index + 1
+        }
+        let _ = testing::check_eq(&seen, &3, "0+1 then 1+1")
+    }
+
+    #[test]
+    fn an_iterator_binding_walks_to_the_end() {
+        let numbers = [7, 2, 9]
+        let cursor = numbers.iter()
+        let mut total = 0
+        for value in cursor {
+            total += value
+        }
+        let _ = testing::check_eq(&total, &18, "7+2+9")
+    }
+
+    #[test]
+    fn an_earlier_iter_does_not_restart_a_later_loop() {
+        let numbers = [7, 2, 9]
+        let _ = numbers.iter().min()
+        let words = ["c", "d"]
+        let mut seen = 0
+        for (index, _label) in words.enumerate() {
+            seen += index + 1
+        }
+        let _ = testing::check_eq(&seen, &3, "0+1 then 1+1")
+    }
+}

@@ -156,6 +156,18 @@ pub enum ParseError {
     /// every value must correspond to an explicit positional placeholder.
     #[error("piped format value needs an explicit positional placeholder")]
     PipedFormatArgumentNeedsPlaceholder,
+    /// A bracket literal spelling for a container that is now constructed
+    /// through its type: `<[..]`, `[..]>`, `^[..]`, `_[..]`.
+    #[error("`{spelling}` literals are not valid syntax - construct a `{container}` instead")]
+    RemovedCollectionLiteral {
+        /// The literal spelling that was written.
+        spelling: String,
+        /// The container the spelling used to build.
+        container: String,
+    },
+    /// A repeat literal written with bare brackets (`[value; count]`).
+    #[error("`[value; count]` is not valid syntax - a repeat literal is a fixed array")]
+    BareRepeatLiteral,
     /// A struct used in a `to_json` / `from_json` (or toml/yaml) call has a
     /// field whose type the serde synthesizer cannot handle. Without this the
     /// whole struct's serde was silently dropped and the call surfaced only as
@@ -304,6 +316,26 @@ impl ParseError {
                 Some("split the expression into smaller helpers".to_string()),
             ),
             ParseError::Lex { message } => ("GP0018", message.clone(), None),
+            ParseError::RemovedCollectionLiteral {
+                spelling,
+                container,
+            } => (
+                "GP0032",
+                format!("`{spelling}` literals are not valid syntax"),
+                Some(format!(
+                    "build the container through its type: `{container}::new()` for an empty one, \
+                     or `{container}::from([a, b, c])` from a Vec literal"
+                )),
+            ),
+            ParseError::BareRepeatLiteral => (
+                "GP0033",
+                "`[value; count]` is not valid syntax".to_string(),
+                Some(
+                    "a repeat literal is a fixed array: write `#[value; count]`. `[a, b]` is a \
+                     Vec of the listed elements"
+                        .to_string(),
+                ),
+            ),
             other => other.code_title_help_malformed(),
         }
     }
@@ -458,7 +490,7 @@ impl ParseError {
                 ),
                 Some(format!(
                     "give `{field}` a serializable type (scalar, String, Vec, Option, tuple, \
-                     HashMap<String, _>, json::Value, or a nested struct), or hand-write `{op}`"
+                     Map<String, _>, json::Value, or a nested struct), or hand-write `{op}`"
                 )),
             ),
             // Every other variant is handled by `code_title_help`; this split

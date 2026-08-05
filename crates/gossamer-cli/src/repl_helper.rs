@@ -429,9 +429,9 @@ mod repl_helper_tests {
     }
 
     #[test]
-    fn hash_set_binding_completes_methods_after_dot() {
+    fn set_binding_completes_methods_after_dot() {
         let mut helper = GosReplHelper::new();
-        helper.set_binding_method_owner("set", Some("HashSet"));
+        helper.set_binding_method_owner("set", Some("Set"));
 
         let (start, cands) = complete_at("set.ins", 7, &helper.binding_method_owners);
         assert_eq!(start, 4);
@@ -442,9 +442,9 @@ mod repl_helper_tests {
     }
 
     #[test]
-    fn vec_stack_binding_completes_methods_after_dot() {
+    fn stack_binding_completes_methods_after_dot() {
         let mut helper = GosReplHelper::new();
-        helper.set_binding_method_owner("x", Some("VecStack"));
+        helper.set_binding_method_owner("x", Some("Stack"));
 
         let (start, cands) = complete_at("x.l", 3, &helper.binding_method_owners);
         assert_eq!(start, 2);

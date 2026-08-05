@@ -251,14 +251,15 @@ Gossamer follows Rust's sequence model:
   `[a, b]` create Vec values by default.
 - `{key: value}` creates a `Map<K, V>`, and `#{a, b}` creates a
   `Set<T>` unless an expected `BTreeSet<T>` type shapes it.
-- `<[a, b]` creates a `Queue<i64>` FIFO queue, `[a, b]>` creates a
-  `Stack<i64>` LIFO stack, `^[a, b]` creates a `MaxHeap<i64>`, and
-  `_[a, b]` creates a `MinHeap<i64>` in Phase 1.
+- Queues, stacks, deques, and heaps have no literal form. Build them through
+  their type: `Queue::new()` / `Queue::from([a, b])`, and the same `new` /
+  `from` pair on `Stack`, `Deque`, `MaxHeap`, and `MinHeap`.
+- `(a, b, c)` creates a tuple, whose element types may differ.
 
 See [Collection literals](collection_literals.md) for examples of Vec,
 fixed-array, Map, Set, BTreeSet, Queue, Stack, Deque,
 MaxHeap, and MinHeap
-construction.
+construction, and [Tuples](language/tuples.md) for the tuple surface.
 
 `&[T; N]` and `&Vec<T>` coerce to `&[T]`; their mutable forms coerce to
 `&mut [T]`. Arrays and slices support queries and non-resizing operations.

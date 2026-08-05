@@ -6,11 +6,11 @@
 // the iteration, or a `break` disqualifies the loop) shapes, so the escape
 // analysis cannot silently regress in either direction: over-region an escaping
 // value -> UAF / wrong output; under-region -> still correct, just slower. The
-// bodies sum their results, so HashMap iteration order cannot affect the total.
+// bodies sum their results, so Map iteration order cannot affect the total.
 // Run with `GOS_ARENA_TRACE=1` to see the eligible loops report `auto-regioned`.
 // Output must stay bit-identical across VM / Cranelift / LLVM.
 
-use std::collections::HashMap
+use std::collections::Map
 
 enum Tree { Leaf, Node(Box<Tree>, Box<Tree>) }
 
@@ -30,9 +30,9 @@ fn count(t: &Tree) -> i64 {
 }
 
 fn main() {
-    // ELIGIBLE String-keyed HashMap iter: each entry builds a tree from its
+    // ELIGIBLE String-keyed Map iter: each entry builds a tree from its
     // Copy value and discards it. Only the i64 accumulator escapes -> regioned.
-    let mut depths: HashMap<String, i64> = HashMap::new()
+    let mut depths: Map<String, i64> = Map::new()
     depths.insert(format!("a"), 4)
     depths.insert(format!("b"), 5)
     depths.insert(format!("c"), 6)
@@ -43,7 +43,7 @@ fn main() {
 
     // ELIGIBLE struct/tuple-keyed map, values-driven iter: build + discard a
     // body-local tree per value. Only the i64 accumulator escapes -> regioned.
-    let mut bykey: HashMap<(i64, i64), i64> = HashMap::new()
+    let mut bykey: Map<(i64, i64), i64> = Map::new()
     bykey.insert((1, 1), 3)
     bykey.insert((2, 2), 5)
     let mut churn2: i64 = 0
@@ -55,7 +55,7 @@ fn main() {
     // NOT ELIGIBLE: the body pushes each built tree into an outer `Vec` (a
     // method call, and a survivor that outlives the iteration), so the map iter
     // must NOT be regioned - the trees have to survive to be counted afterward.
-    let mut sizes: HashMap<String, i64> = HashMap::new()
+    let mut sizes: Map<String, i64> = Map::new()
     sizes.insert(format!("x"), 2)
     sizes.insert(format!("y"), 3)
     let mut kept: Vec<Tree> = Vec::from([])

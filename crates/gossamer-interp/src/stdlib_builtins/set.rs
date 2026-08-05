@@ -147,28 +147,10 @@ pub(crate) fn install_set(globals: &mut Vec<(&'static str, Value)>) {
         ("collections::Set::is_subset", builtin_set_is_subset),
         ("collections::Set::is_superset", builtin_set_is_superset),
         ("collections::Set::is_disjoint", builtin_set_is_disjoint),
-        ("HashSet::new", builtin_set_new),
-        ("HashSet::from", builtin_set_from),
-        ("HashSet::insert", builtin_set_insert),
-        ("HashSet::remove", builtin_set_remove),
-        ("HashSet::contains", builtin_set_contains),
-        ("HashSet::len", builtin_set_len),
-        ("HashSet::is_empty", builtin_set_is_empty),
-        ("HashSet::clear", builtin_set_clear),
-        ("HashSet::to_vec", builtin_set_to_vec),
-        ("HashSet::iter", builtin_set_to_vec),
-        ("HashSet::union", builtin_set_union),
-        ("HashSet::intersection", builtin_set_intersection),
-        ("HashSet::difference", builtin_set_difference),
         (
             "HashSet::symmetric_difference",
             builtin_set_symmetric_difference,
         ),
-        ("HashSet::is_subset", builtin_set_is_subset),
-        ("HashSet::is_superset", builtin_set_is_superset),
-        ("HashSet::is_disjoint", builtin_set_is_disjoint),
-        ("collections::HashSet::new", builtin_set_new),
-        ("collections::HashSet::from", builtin_set_from),
         ("BTreeSet::new", builtin_btreeset_new),
         ("BTreeSet::from", builtin_btreeset_from),
         ("BTreeSet::insert", builtin_set_insert),
@@ -219,7 +201,7 @@ pub(crate) fn set_handle_named(name: &'static str, id: i64) -> Value {
 
 pub(crate) fn set_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
-        if matches!(inner.name.as_str(), "Set" | "HashSet" | "BTreeSet") {
+        if matches!(inner.name.as_str(), "Set" | "BTreeSet") {
             for (i, v) in &inner.fields {
                 if (*i) == "__set" {
                     if let Value::Int(n) = v {

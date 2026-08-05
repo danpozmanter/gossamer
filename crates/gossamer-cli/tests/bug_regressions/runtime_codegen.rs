@@ -161,7 +161,7 @@ fn main() {
 fn fixed_u8_array_to_vec_preserves_packed_positions_across_tiers() {
     let src = r"
 fn main() {
-    let mut bytes = [0u8; 10]
+    let mut bytes = #[0u8; 10]
     bytes[1] = 11u8
     bytes[7] = 77u8
     let values: Vec<u8> = bytes.to_vec()
@@ -600,7 +600,7 @@ fn main() {
 #[test]
 fn llvm_projected_destinations_accept_calls_aggregates_and_collection_literals() {
     let src = r#"
-use std::collections::{HashMap, HashSet, BTreeSet}
+use std::collections::{Map, Set, BTreeSet}
 
 struct Inner {
     xs: [i64; 2],
@@ -609,8 +609,8 @@ struct Inner {
 
 struct Boxy {
     inner: Inner,
-    map: HashMap<String, i64>,
-    set: HashSet<i64>,
+    map: Map<String, i64>,
+    set: Set<i64>,
     tree: BTreeSet<i64>,
 }
 
@@ -1044,7 +1044,7 @@ fn main() {
     let expected = "\
 (1, x, true)
 ({\"a\": 1, \"b\": 2}, [1, 2, 3])
-HashSet {1, 2, 3}
+Set {1, 2, 3}
 BTreeSet {1, 2, 3}
 Rec { name: \"r\", nums: [1, 2] }
 ";

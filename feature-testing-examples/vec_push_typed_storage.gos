@@ -1,6 +1,6 @@
 // Push-built scalar vectors ride the VM's flat typed storage (`IntArray` /
 // `FloatVec`, 8 bytes per element) instead of boxed values: the first
-// scalar push into an empty vec and a runtime-count `[v; n]` repeat both
+// scalar push into an empty vec and a runtime-count `#[v; n]` repeat both
 // promote, and every Vec surface must then behave identically to a boxed
 // array of the same scalars - bit-identical across VM, Cranelift, and LLVM.
 
@@ -46,7 +46,7 @@ fn main() {
 
     // Runtime-count repeat lands in flat storage too.
     let n = 1000
-    let mut counts: Vec<i64> = Vec::from([0; 1000])
+    let mut counts: Vec<i64> = Vec::from(#[0; 1000])
     for i in 0..n {
         counts[i % 256] += 1
     }
@@ -66,7 +66,7 @@ fn main() {
 
     // Float repeat with a runtime count.
     let m = 100
-    let mut fr: Vec<f64> = Vec::from([1.25; 100])
+    let mut fr: Vec<f64> = Vec::from(#[1.25; 100])
     fr[10] = 2.5
     let mut frsum = 0.0
     for x in fr {

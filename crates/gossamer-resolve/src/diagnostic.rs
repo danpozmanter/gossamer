@@ -68,6 +68,14 @@ pub enum ResolveError {
         /// Conflicting name.
         name: String,
     },
+    /// A `use` path naming a spelling that a canonical type replaced.
+    #[error("`{path}` does not exist - use `{replacement}` instead")]
+    RemovedStdItem {
+        /// The path as written.
+        path: String,
+        /// The canonical name to import instead.
+        replacement: String,
+    },
 }
 
 impl ResolveError {
@@ -80,6 +88,7 @@ impl ResolveError {
             Self::WrongNamespace { .. } => "wrong-namespace",
             Self::DuplicateItem { .. } => "duplicate-item",
             Self::DuplicateImport { .. } => "duplicate-import",
+            Self::RemovedStdItem { .. } => "removed-std-item",
         }
     }
 
@@ -92,6 +101,7 @@ impl ResolveError {
             Self::DuplicateItem { .. } => "GR0003",
             Self::DuplicateImport { .. } => "GR0004",
             Self::UnknownModulePath { .. } => "GR0005",
+            Self::RemovedStdItem { .. } => "GR0006",
         }
     }
 }
@@ -109,6 +119,12 @@ impl ResolveDiagnostic {
         let mut out =
             Diagnostic::error(Code(self.error.code()), title.clone()).with_primary(location, title);
         if let ResolveError::UnresolvedName { name } = &self.error {
+            if let Some(replacement) = crate::stdlib_exports::canonical_collection_name(name) {
+                return out.with_help(format!(
+                    "`{replacement}` is the one spelling for this type; write `{replacement}` \
+                     and import it with `use std::collections::{replacement}`"
+                ));
+            }
             let mut module_paths = crate::STDLIB_MODULE_PATHS.iter().filter(|path| {
                 **path == name.as_str()
                     || path
@@ -148,6 +164,10 @@ impl ResolveDiagnostic {
                 )),
                 ResolveError::DuplicateImport { name } => out.with_help(format!(
                     "remove one import of `{name}`, or alias one with `as`"
+                )),
+                ResolveError::RemovedStdItem { replacement, .. } => out.with_help(format!(
+                    "`{replacement}` is the one spelling for this type; import it as \
+                     `use std::collections::{replacement}`"
                 )),
                 ResolveError::UnresolvedName { .. } => out,
             };

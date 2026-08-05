@@ -1,11 +1,11 @@
-// Phase 1 `VecDeque` is backed by the compiled i64 deque ABI. This keeps
+// Phase 1 `Deque` is backed by the compiled i64 deque ABI. This keeps
 // annotated and inferred numeric queues on the same runtime shape.
 
-use std::collections::VecDeque
+use std::collections::Deque
 
 fn main() {
     // Annotated numeric element.
-    let mut q: VecDeque<i64> = VecDeque::new()
+    let mut q: Deque<i64> = Deque::new()
     q.push_back(1)
     q.push_back(2)
     while let Some(n) = q.pop_front() {
@@ -13,7 +13,7 @@ fn main() {
     }
 
     // Inferred numeric element.
-    let mut inferred = VecDeque::new()
+    let mut inferred = Deque::new()
     inferred.push_back(3)
     match inferred.pop_front() {
         Some(n) => println!("inferred {}", n),
@@ -21,7 +21,7 @@ fn main() {
     }
 
     // Numeric element is preserved.
-    let mut nums: VecDeque<i64> = VecDeque::new()
+    let mut nums: Deque<i64> = Deque::new()
     nums.push_back(10)
     nums.push_back(20)
     println!("len {}", nums.len())

@@ -1,16 +1,16 @@
-// A `for` loop over `HashMap::iter()` whose tuple-destructure uses a `_`
+// A `for` loop over `Map::iter()` whose tuple-destructure uses a `_`
 // wildcard in one or both slots. The key is always read (the value lookup
 // needs it), so a `_` key only suppresses its user binding; a struct value
 // must still bind as a box-pointer reference so `v.field` derefs the box
 // rather than reading the pointer bits inline. Each path must match the VM
 // bit-for-bit on every tier.
 
-use std::collections::HashMap
+use std::collections::Map
 
 struct Rec { label: String, weight: i64 }
 
 fn main() {
-    let mut m: HashMap<i64, Rec> = HashMap::new()
+    let mut m: Map<i64, Rec> = Map::new()
     m.insert(1, Rec { label: format!("a"), weight: 10 })
     m.insert(2, Rec { label: format!("b"), weight: 20 })
     m.insert(3, Rec { label: format!("c"), weight: 30 })
@@ -34,7 +34,7 @@ fn main() {
     }
 
     // String-keyed map, `(_, v)`.
-    let mut sm: HashMap<String, i64> = HashMap::new()
+    let mut sm: Map<String, i64> = Map::new()
     sm.insert(format!("x"), 5)
     sm.insert(format!("y"), 7)
     let mut str_value_sum = 0

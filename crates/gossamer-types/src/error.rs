@@ -800,17 +800,17 @@ impl TypeDiagnostic {
                 }
             }
             TypeError::UnresolvedMethod { ty, name } => {
-                out = if name == "set" && ty.starts_with("HashMap") {
+                out = if name == "set" && ty.starts_with("Map") {
                     out.with_help(format!("`{ty}` writes with `insert(key, value)`"))
                         .with_note(
                             "`set` is the `json::Value` field-update helper, not a map method",
                         )
-                } else if name == "keys for aggregate HashMap keys" && ty.starts_with("HashMap") {
+                } else if name == "keys for aggregate Map keys" && ty.starts_with("Map") {
                     out.with_help(
                         "iterate the map with `for (key, value) in map.iter()` instead",
                     )
                     .with_note(
-                        "`HashMap::keys()` is unavailable for struct, tuple, and array key types until aggregate key snapshots preserve their layout",
+                        "`Map::keys()` is unavailable for struct, tuple, and array key types until aggregate key snapshots preserve their layout",
                     )
                 } else {
                     out.with_help(format!("`{ty}` has no method named `{name}`"))

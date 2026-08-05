@@ -91,14 +91,14 @@ use ecosystem::database_query
 use ecosystem::attribute_count
 use ecosystem::parse_args
 use ecosystem::exchange_code
-use std::collections::HashMap
+use std::collections::Map
 
 fn main() {
     match database_query("select id") {
         Ok(rows) => { println!("rows={}", rows.len()) },
         Err(err) => { panic(err) },
     }
-    let mut attrs: HashMap<String, String> = HashMap::new()
+    let mut attrs: Map<String, String> = Map::new()
     attrs.insert("service", "fixture")
     attrs.insert("environment", "test")
     println!("attrs={}", attribute_count(attrs))

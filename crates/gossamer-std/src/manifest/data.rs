@@ -173,67 +173,32 @@ pub const COLLECTIONS: StdModule = StdModule {
         StdItem {
             name: "Deque",
             kind: StdItemKind::Type,
-            doc: "Double-ended queue (VecDeque) with explicit front/back methods; use `Deque::new()` or `Deque::from([a, b])`.",
-        },
-        StdItem {
-            name: "VecDeque",
-            kind: StdItemKind::Type,
-            doc: "Alias for `Deque<T>`; underlying storage is VecDeque.",
+            doc: "Double-ended queue with explicit front/back methods; use `Deque::new()` or `Deque::from([a, b])`.",
         },
         StdItem {
             name: "Queue",
             kind: StdItemKind::Type,
-            doc: "FIFO queue (VecQueue) backed by VecDeque; literals use `<[a, b]` and empty queue literals use `<[]`.",
-        },
-        StdItem {
-            name: "VecQueue",
-            kind: StdItemKind::Type,
-            doc: "Alias for `Queue<T>`; underlying storage is VecQueue backed by VecDeque.",
+            doc: "FIFO-only queue; use `Queue::new()` or `Queue::from([a, b])`.",
         },
         StdItem {
             name: "Stack",
             kind: StdItemKind::Type,
-            doc: "LIFO stack (VecStack) backed by VecDeque; literals use `[a, b]>` and empty stack literals use `[]>`.",
-        },
-        StdItem {
-            name: "VecStack",
-            kind: StdItemKind::Type,
-            doc: "Alias for `Stack<T>`; underlying storage is VecStack backed by VecDeque.",
-        },
-        StdItem {
-            name: "BinaryHeap",
-            kind: StdItemKind::Type,
-            doc: "Alias for `MaxHeap<T>`; underlying storage is BinaryHeap.",
+            doc: "LIFO-only stack; use `Stack::new()` or `Stack::from([a, b])`.",
         },
         StdItem {
             name: "MaxHeap",
             kind: StdItemKind::Type,
-            doc: "Max-priority heap (MaxBinaryHeap) backed by BinaryHeap; literals use `^[a, b]` and empty heap literals use `^[]`.",
-        },
-        StdItem {
-            name: "MaxBinaryHeap",
-            kind: StdItemKind::Type,
-            doc: "Alias for `MaxHeap<T>`; underlying storage is BinaryHeap.",
+            doc: "Max-priority heap; use `MaxHeap::new()` or `MaxHeap::from([a, b])`.",
         },
         StdItem {
             name: "MinHeap",
             kind: StdItemKind::Type,
-            doc: "Min-priority heap (MinBinaryHeap) backed by BinaryHeap; literals use `_[a, b]` and empty heap literals use `_[]`.",
-        },
-        StdItem {
-            name: "MinBinaryHeap",
-            kind: StdItemKind::Type,
-            doc: "Alias for `MinHeap<T>`; underlying storage is BinaryHeap with reversed ordering.",
+            doc: "Min-priority heap; use `MinHeap::new()` or `MinHeap::from([a, b])`.",
         },
         StdItem {
             name: "Map",
             kind: StdItemKind::Type,
-            doc: "Key-value map (HashMap) backed by the swiss-table layout; literals use `{key: value}` and empty map literals use `{}`.",
-        },
-        StdItem {
-            name: "HashMap",
-            kind: StdItemKind::Type,
-            doc: "Alias for `Map<K, V>`; underlying storage is HashMap.",
+            doc: "Key-value map backed by the swiss-table layout; literals use `{key: value}` and empty map literals use `{}`.",
         },
         StdItem {
             name: "BTreeMap",
@@ -243,12 +208,7 @@ pub const COLLECTIONS: StdModule = StdModule {
         StdItem {
             name: "Set",
             kind: StdItemKind::Type,
-            doc: "Unique-value set (HashSet) backed by a hash table; literals use `#{a, b}` and empty set literals use `#{}`.",
-        },
-        StdItem {
-            name: "HashSet",
-            kind: StdItemKind::Type,
-            doc: "Alias for `Set<T>`; underlying storage is HashSet.",
+            doc: "Unique-value set backed by a hash table; literals use `#{a, b}` and empty set literals use `#{}`.",
         },
         StdItem {
             name: "BTreeSet",

@@ -458,16 +458,16 @@ fn run_subcommand_executes_via_vm() {
 }
 
 #[test]
-fn vec_queue_and_vec_stack_push_pop_order() {
+fn queue_and_stack_push_pop_order() {
     let fixture = write_fixture(
         "vec-queue-stack",
-        "use std::collections::{VecQueue, VecStack}\n\
+        "use std::collections::{Queue, Stack}\n\
          fn main() {\n\
-             let mut q: VecQueue<i64> = <[1, 2, 3]\n\
+             let mut q: Queue<i64> = Queue::from([1, 2, 3])\n\
              q.push(4)\n\
              println!(\"{}\", q)\n\
              println!(\"queue {} {} {} {}\", q.len(), q.peek().unwrap_or(0), q.pop().unwrap_or(0), q.pop().unwrap_or(0))\n\
-             let mut s: VecStack<i64> = [1, 2, 3]>\n\
+             let mut s: Stack<i64> = Stack::from([1, 2, 3])\n\
              s.push(4)\n\
              println!(\"{}\", s)\n\
              println!(\"stack {} {} {}\", s.len(), s.peek().unwrap_or(0), s.pop().unwrap_or(0))\n\
@@ -485,7 +485,7 @@ fn vec_queue_and_vec_stack_push_pop_order() {
     );
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "VecQueue [1, 2, 3, 4]\nqueue 4 1 1 2\nVecStack [1, 2, 3, 4]\nstack 4 4 4\n"
+        "Queue [1, 2, 3, 4]\nqueue 4 1 1 2\nStack [1, 2, 3, 4]\nstack 4 4 4\n"
     );
     let _ = std::fs::remove_file(&fixture);
 }

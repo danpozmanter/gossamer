@@ -447,10 +447,10 @@ fn release_hashmap_inc_idiom_counts_words() {
     assert_release_stdout_eq(
         "hm_inc",
         r#"
-use std::collections::HashMap
+use std::collections::Map
 
 fn main() {
-    let mut tally: HashMap<String, i64> = HashMap::new()
+    let mut tally: Map<String, i64> = Map::new()
     let words = ["apple", "banana", "apple", "apple", "banana", "cherry"]
     for w in words {
         tally.inc(w)

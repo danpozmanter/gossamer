@@ -1,20 +1,28 @@
 # Collection literals
 
 Gossamer has dedicated literal forms for the everyday collection shapes:
-growable vectors, fixed arrays, hash maps, hash sets, ordered sets, queues,
-stacks, and heaps.
+growable vectors, fixed arrays, maps, and sets. The remaining containers -
+queues, stacks, deques, and heaps - are built through their type.
 
 ```gos
+use std::collections::{Queue, Stack, Deque, MaxHeap, MinHeap}
+
 let values = [1, 2, 3]
 let fixed = #[1, 2, 3]
 let names = {"ada": 36, "grace": 37}
 let tags = #{"compiler", "runtime", "docs"}
 let ordered: BTreeSet<String> = #{"compiler", "runtime", "docs"}
-let queue = <[1, 2, 3]
-let stack = [1, 2, 3]>
-let max_heap = ^[1, 2, 3]
-let min_heap = _[1, 2, 3]
+let queue = Queue::from([1, 2, 3])
+let stack = Stack::from([1, 2, 3])
+let deque = Deque::from([1, 2, 3])
+let max_heap = MaxHeap::from([1, 2, 3])
+let min_heap = MinHeap::from([1, 2, 3])
 ```
+
+Every container has exactly one name. `HashMap`, `HashSet`, `VecDeque`,
+`VecQueue`, `VecStack`, `BinaryHeap`, `MaxBinaryHeap`, and `MinBinaryHeap` are
+not accepted; write `Map`, `Set`, `Deque`, `Queue`, `Stack`, `MaxHeap`, and
+`MinHeap`.
 
 ## Vec
 
@@ -23,9 +31,9 @@ shapes it.
 
 ```gos
 let scores = [10, 20, 30]
-let mut queue = []
-queue.push(40)
-queue.push(50)
+let mut pending = []
+pending.push(40)
+pending.push(50)
 ```
 
 Use `Vec::with_capacity(n)` when capacity matters before pushing:
@@ -37,11 +45,14 @@ bytes.push(65)
 
 ## Fixed Arrays
 
-Use `#[...]` when the value must be an owned fixed-size array.
+Use `#[...]` when the value must be an owned fixed-size array. The repeat form
+`#[value; count]` is a fixed array too - bare brackets never spell a repeat, so
+`[0; 4]` is a syntax error.
 
 ```gos
 let point = #[3, 4]
 let zeros = #[0; 4]
+let zero_vec: Vec<i64> = Vec::from(#[0; 4])
 ```
 
 An expected `[T; N]` type can also shape a plain bracket literal:
@@ -75,8 +86,6 @@ println(typed.len())
 Annotate an empty map when later code does not give the checker enough key and
 value information.
 
-`HashMap` remains accepted as a longer alias for `Map`.
-
 ## Set And BTreeSet
 
 Use `#{...}` for a `Set<T>`.
@@ -89,8 +98,6 @@ println(seen.contains("ada"))
 
 The literal removes duplicates just like repeated `insert` calls.
 
-`HashSet` remains accepted as a longer alias for `Set`.
-
 An expected `BTreeSet<T>` type shapes the same literal into an ordered set:
 
 ```gos
@@ -100,44 +107,44 @@ println(ordered.to_vec())
 
 ## Queue
 
-Use `<[...]` for a FIFO queue literal. Phase 1 queue literals create
-`Queue<i64>` in front-to-back order. `push` appends to the back and
-`pop` removes from the front. Use `peek`, `len`, `is_empty`, and `clear` for
-the common queue observers and reset operation.
+A `Queue<i64>` is FIFO-only: `push` appends to the back and `pop` removes from
+the front. Use `Queue::new()` for an empty queue and `Queue::from([...])` to
+seed one in front-to-back order. `peek`, `len`, `is_empty`, and `clear` are the
+common observers and the reset operation.
 
 ```gos
-let mut q: Queue<i64> = <[10, 20]
+use std::collections::Queue
+
+let mut q: Queue<i64> = Queue::from([10, 20])
 q.push(30)
 println(q.len())
 println(q.peek())
 println(q.pop())
 ```
 
-`VecQueue` remains accepted as a longer alias for `Queue`.
-
 ## Stack
 
-Use `[a, b]>` for a LIFO stack literal. Phase 1 stack literals create
-`Stack<i64>` in bottom-to-top order. `push` appends to the top and
-`pop` removes from the top. Use `peek`, `len`, `is_empty`, and `clear` for
-the common stack observers and reset operation.
+A `Stack<i64>` is LIFO-only: `push` appends to the top and `pop` removes from
+the top. Use `Stack::new()` for an empty stack and `Stack::from([...])` to seed
+one in bottom-to-top order.
 
 ```gos
-let mut s: Stack<i64> = [10, 20]>
+use std::collections::Stack
+
+let mut s: Stack<i64> = Stack::from([10, 20])
 s.push(30)
 println(s.len())
 println(s.peek())
 println(s.pop())
 ```
 
-`VecStack` remains accepted as a longer alias for `Stack`.
-
 ## Deque
 
-Use `Deque<i64>` when both ends matter. It has explicit front/back methods
-and no dedicated literal.
+Use `Deque<i64>` when both ends matter. It has explicit front/back methods.
 
 ```gos
+use std::collections::Deque
+
 let mut d: Deque<i64> = Deque::from([10, 20])
 d.push_front(5)
 d.push_back(30)
@@ -145,26 +152,37 @@ println(d.pop_front())
 println(d.pop_back())
 ```
 
-`VecDeque` remains accepted as a longer alias for `Deque`.
-
 ## MaxHeap and MinHeap
 
-Use `^[...]` for a `MaxHeap<i64>` and `_[...]` for a `MinHeap<i64>`.
-`BinaryHeap<i64>` and `MaxBinaryHeap<i64>` are accepted as compatibility
-aliases for `MaxHeap<i64>`. `MinBinaryHeap<i64>` is accepted as a longer alias
-for `MinHeap<i64>`.
+`MaxHeap<i64>` pops the largest value and `MinHeap<i64>` the smallest, so
+neither needs a negated key or a wrapper type.
 
 ```gos
-let mut max_heap = ^[5, 1, 3]
+use std::collections::{MaxHeap, MinHeap}
+
+let mut max_heap = MaxHeap::from([5, 1, 3])
 println(max_heap.peek())  // Some(5)
 max_heap.push(8)
 println(max_heap.pop())   // Some(8)
 
-let mut min_heap = _[5, 1, 3]
+let mut min_heap = MinHeap::from([5, 1, 3])
 println(min_heap.peek())  // Some(1)
 min_heap.push(0)
 println(min_heap.pop())   // Some(0)
 ```
+
+## Tuples
+
+A tuple groups a fixed number of values whose types may differ. It is written
+with parentheses rather than brackets and needs no import.
+
+```gos
+let entry = (1, "two", 3.0)
+println(entry.1)
+let (id, name, weight) = entry
+```
+
+See [Tuples](language/tuples.md) for the full surface.
 
 ## Summary
 
@@ -176,7 +194,12 @@ println(min_heap.pop())   // Some(0)
 | `{}` | empty `Map<K, V>` |
 | `{key: value}` | `Map<K, V>` |
 | `#{a, b}` | `Set<T>`, or `BTreeSet<T>` with an expected type |
-| `<[a, b]` | `Queue<i64>` |
-| `[a, b]>` | `Stack<i64>` |
-| `^[a, b]` | `MaxHeap<i64>` |
-| `_[a, b]` | `MinHeap<i64>` |
+| `(a, b)` | tuple |
+
+| Constructor | Result |
+|---|---|
+| `Queue::new()` / `Queue::from([a, b])` | `Queue<i64>` |
+| `Stack::new()` / `Stack::from([a, b])` | `Stack<i64>` |
+| `Deque::new()` / `Deque::from([a, b])` | `Deque<i64>` |
+| `MaxHeap::new()` / `MaxHeap::from([a, b])` | `MaxHeap<i64>` |
+| `MinHeap::new()` / `MinHeap::from([a, b])` | `MinHeap<i64>` |

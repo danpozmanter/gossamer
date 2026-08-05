@@ -4,14 +4,14 @@
 // so a sliding-window substring scan stays linear; output must be byte-
 // identical across the VM, Cranelift, and LLVM tiers. Covers substring on a
 // rodata literal and on a runtime-built (headered) string, out-of-range and
-// inverted bounds (clamp / empty), and the k-mer + HashMap<String,i64>
+// inverted bounds (clamp / empty), and the k-mer + Map<String,i64>
 // counting pattern (substring keys, owned-map inc / iter / get_or) that
 // drives k-nucleotide.
 
-use std::collections::HashMap
+use std::collections::Map
 
-fn count_kmers(s: &String, k: i64) -> HashMap<String, i64> {
-    let mut m: HashMap<String, i64> = HashMap::new()
+fn count_kmers(s: &String, k: i64) -> Map<String, i64> {
+    let mut m: Map<String, i64> = Map::new()
     let n = s.len() as i64
     if n < k { return m }
     for i in 0..(n - k + 1) {
@@ -45,7 +45,7 @@ fn main() {
     let built = "ACGT".repeat(8)
     println!("built=[{}] len={}", built.substring(3, 11), built.len())
 
-    // Sliding-window k-mer counting over an owned HashMap (substring keys).
+    // Sliding-window k-mer counting over an owned Map (substring keys).
     freq_line(&s, 1)
     freq_line(&s, 2)
     let m4 = count_kmers(&s, 4)

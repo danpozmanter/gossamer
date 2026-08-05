@@ -3,7 +3,7 @@
 // identically to the VM. `{:?}` aliases Display in Gossamer, so both
 // specs produce the same text. Map entries are key-sorted so every
 // tier agrees byte-for-byte.
-use std::collections::HashMap
+use std::collections::Map
 
 fn main() {
     let scalar = (1, 2, 3)
@@ -18,7 +18,7 @@ fn main() {
     println!("{}", single)
     println!("{:?}", single)
 
-    let mut m: HashMap<String, i64> = HashMap::new()
+    let mut m: Map<String, i64> = Map::new()
     m.insert("zebra", 1)
     m.insert("apple", 2)
     m.insert("mango", 3)

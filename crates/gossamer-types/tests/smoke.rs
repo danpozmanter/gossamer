@@ -76,7 +76,7 @@ fn ref_types_and_collections_render_correctly() {
         key: string,
         value: i32_,
     });
-    assert_eq!(render_ty(&tcx, map), "HashMap<String, i32>");
+    assert_eq!(render_ty(&tcx, map), "Map<String, i32>");
 }
 
 #[test]

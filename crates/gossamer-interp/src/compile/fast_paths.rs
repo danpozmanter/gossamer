@@ -2135,7 +2135,13 @@ impl<'tcx> FnBuilder<'tcx> {
                             if name.name == "iter" && args.is_empty()
                     )
         );
+        // A local bound to a collection's `iter()` / `enumerate()` holds a
+        // materialized sequence, so the index walk below drives it. Pulling
+        // `next()` from such a value has no cursor to advance and yields
+        // element zero forever. A range or a real adapter keeps the
+        // `next()` protocol.
         if self.receiver_is_lazy_iterator(next_recv)
+            && !self.receiver_is_materialized_iterator(next_recv)
             && !collection_iter_method
             && !concrete_enumerate_method
         {
@@ -2164,18 +2170,25 @@ impl<'tcx> FnBuilder<'tcx> {
                 name: enum_name,
                 args: enum_args,
             } if enum_name.name == "enumerate" && enum_args.is_empty() => {
-                let HirExprKind::MethodCall {
-                    receiver: chain_recv,
-                    name: chain_name,
-                    args: chain_args,
-                } = &enum_recv.kind
-                else {
-                    return Ok(None);
-                };
-                if chain_name.name != "iter" || !chain_args.is_empty() {
-                    return Ok(None);
+                // `xs.iter().enumerate()` and the `.iter()`-less
+                // `xs.enumerate()` walk the same collection; both drive
+                // by index from `xs`. The generic loop would re-evaluate
+                // the receiver on each `next()` pull, and `enumerate`
+                // materialises a fresh sequence per call, so its walk
+                // would restart at index zero forever.
+                match &enum_recv.kind {
+                    HirExprKind::MethodCall {
+                        receiver: chain_recv,
+                        name: chain_name,
+                        args: chain_args,
+                    } if chain_name.name == "iter" && chain_args.is_empty() => {
+                        (chain_recv.as_ref(), true, false)
+                    }
+                    _ if self.receiver_is_collection(enum_recv) => {
+                        (enum_recv.as_ref(), true, false)
+                    }
+                    _ => return Ok(None),
                 }
-                (chain_recv.as_ref(), true, false)
             }
             HirExprKind::Unary {
                 op: HirUnaryOp::RefMut,
@@ -2282,7 +2295,9 @@ impl<'tcx> FnBuilder<'tcx> {
             // indexable array. Materialise the whole enumerate expression
             // once instead of falling into the generic `next()` desugar,
             // which reconstructs the iterator every trip and repeats item 0.
-            if self.receiver_is_lazy_iterator(vec_expr) {
+            if self.receiver_is_lazy_iterator(vec_expr)
+                && !self.receiver_is_materialized_iterator(vec_expr)
+            {
                 return Ok(None);
             }
             next_recv

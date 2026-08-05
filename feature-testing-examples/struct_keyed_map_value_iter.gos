@@ -4,14 +4,14 @@
 // the values snapshot rather than the (empty) key snapshot - matching the VM,
 // which walks the live entries directly.
 
-use std::collections::HashMap
+use std::collections::Map
 
 struct Key {
     a: i64,
 }
 
 fn main() {
-    let mut counts: HashMap<Key, i64> = HashMap::new()
+    let mut counts: Map<Key, i64> = Map::new()
     counts.insert(Key { a: 1 }, 100)
     counts.insert(Key { a: 2 }, 200)
     counts.insert(Key { a: 3 }, 300)
@@ -21,7 +21,7 @@ fn main() {
     }
     println!("{}", total)
 
-    let mut pairs: HashMap<(i64, i64), i64> = HashMap::new()
+    let mut pairs: Map<(i64, i64), i64> = Map::new()
     pairs.insert((1, 2), 10)
     pairs.insert((3, 4), 20)
     let mut sum = 0

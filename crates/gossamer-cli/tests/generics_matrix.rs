@@ -225,14 +225,14 @@ fn hashmap_with_two_distinct_value_types_in_one_program() {
     // memos describe the regression class where Rust-side
     // monomorphisation collides on the mangled symbol.
     let src = r#"
-use std::collections::HashMap
+use std::collections::Map
 
 fn main() {
-    let mut counts: HashMap<String, i64> = HashMap::new()
+    let mut counts: Map<String, i64> = Map::new()
     counts.insert("apple", 3)
     counts.insert("banana", 7)
 
-    let mut labels: HashMap<i64, String> = HashMap::new()
+    let mut labels: Map<i64, String> = Map::new()
     labels.insert(1, "first".to_string())
     labels.insert(2, "second".to_string())
 
@@ -255,10 +255,10 @@ fn hashmap_and_vec_of_same_value_type_dont_collide() {
     // collection's getter dispatching the other's storage -
     // a real bug class for the runtime accessor table.
     let src = r#"
-use std::collections::HashMap
+use std::collections::Map
 
 fn main() {
-    let mut counts: HashMap<String, i64> = HashMap::new()
+    let mut counts: Map<String, i64> = Map::new()
     counts.insert("a", 100)
     counts.insert("b", 200)
 

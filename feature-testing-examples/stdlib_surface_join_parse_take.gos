@@ -11,7 +11,7 @@ fn main() {
     println!("{}", [true, false].join("|"))
     println!("{}", [false, true, true].join(","))
     println!("{}", ["a", "b", "c"].join("-"))
-    let mut grown = [false; 2]
+    let mut grown = #[false; 2]
     grown[0] = true
     println!("{}", grown.join("|"))
 

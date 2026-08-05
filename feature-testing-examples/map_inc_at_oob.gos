@@ -1,4 +1,4 @@
-// Regression [P0]: `HashMap.inc_at(seq, start, len, by)` must bounds-check
+// Regression [P0]: `Map.inc_at(seq, start, len, by)` must bounds-check
 // the [start, start+len) window against the sequence's true byte length and
 // reject a window that runs past it, returning 0 (matching the interpreter),
 // instead of slicing adjacent heap - an out-of-bounds read / SIGSEGV on the
@@ -6,10 +6,10 @@
 // window counts normally; the two out-of-range windows return 0 and insert
 // nothing, so the map holds exactly one key. Identical on every tier.
 
-use std::collections::HashMap
+use std::collections::Map
 
 fn main() {
-    let mut m: HashMap<String, i64> = HashMap::new()
+    let mut m: Map<String, i64> = Map::new()
     let seq = "hello"
     let in_range = m.inc_at(&seq, 1, 3, 1)
     let past_end = m.inc_at(&seq, 3, 100, 1)

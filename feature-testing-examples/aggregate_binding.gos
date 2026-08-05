@@ -3,7 +3,7 @@
 // tiers, not just the bytecode VM.
 //
 // Covered live (tractable MIR-dispatch / coercion fixes):
-//   - HashMap<String, Vec<i64>> insert / get / or_insert. A
+//   - Map<String, Vec<i64>> insert / get / or_insert. A
 //     String-keyed, aggregate-valued map used to insert via the
 //     i64/i64 path (key pointer reinterpreted as i64) but read back
 //     via the str path, so `.get` returned None; `.or_insert` had no
@@ -13,7 +13,7 @@
 //     real `*mut GosVec`, so it read a string pointer as the length
 //     and walked off into unmapped memory (SIGSEGV). env::args() (a
 //     real GosVec) always worked.
-//   - HashMap<String, Vec<i64>>.or_insert with a *fresh* key whose
+//   - Map<String, Vec<i64>>.or_insert with a *fresh* key whose
 //     result is bound and used. `or_insert` returns a borrow of the
 //     map's stored value (like Rust's `&mut V`); for a fresh key the
 //     returned word aliases the inserted value temp, which the
@@ -23,11 +23,11 @@
 //
 // fs::metadata struct-field access lives in fs_metadata.gos.
 
-use std::collections::HashMap
+use std::collections::Map
 use std::flag
 
 fn main() {
-    let mut m: HashMap<String, Vec<i64>> = HashMap::new()
+    let mut m: Map<String, Vec<i64>> = Map::new()
     m.insert("a", Vec::from([1, 2, 3]))
     m.insert("b", Vec::from([4, 5]))
 

@@ -1,13 +1,13 @@
-use std::collections::HashMap
+use std::collections::Map
 use std::collections::BTreeMap
 
 fn main() {
-    let mut h: HashMap<String, i64> = HashMap::new()
+    let mut h: Map<String, i64> = Map::new()
     h.insert("a", 1)
     h.insert("b", 2)
     println!("h ca={} cz={}", h.contains("a"), h.contains("z"))
 
-    let mut hi: HashMap<i64, i64> = HashMap::new()
+    let mut hi: Map<i64, i64> = Map::new()
     hi.insert(7, 70)
     println!("hi c7={} c9={}", hi.contains(7), hi.contains(9))
 

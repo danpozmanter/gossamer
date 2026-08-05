@@ -97,9 +97,9 @@ fn for_loop_over_map_iter_pairs() {
     // Sum is order-independent, so it stays deterministic regardless of
     // HashMap iteration order.
     let src = r#"
-use std::collections::HashMap
+use std::collections::Map
 fn main() {
-    let mut m: HashMap<i64, i64> = HashMap::new()
+    let mut m: Map<i64, i64> = Map::new()
     m.insert(1, 10)
     m.insert(2, 20)
     m.insert(3, 30)
@@ -114,9 +114,9 @@ fn main() {
 #[test]
 fn for_loop_over_bare_map_pairs() {
     let src = r#"
-use std::collections::{BTreeMap, HashMap}
+use std::collections::{BTreeMap, Map}
 fn main() {
-    let mut hash: HashMap<String, i64> = HashMap::new()
+    let mut hash: Map<String, i64> = Map::new()
     hash.insert("a", 10)
     hash.insert("b", 20)
     let mut hash_sum = 0
@@ -140,9 +140,9 @@ fn main() {
 #[test]
 fn for_loop_over_map_keys_and_values() {
     let src = r#"
-use std::collections::HashMap
+use std::collections::Map
 fn main() {
-    let mut m: HashMap<i64, i64> = HashMap::new()
+    let mut m: Map<i64, i64> = Map::new()
     m.insert(1, 100)
     m.insert(2, 200)
     let mut ks = 0

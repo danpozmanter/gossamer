@@ -984,13 +984,13 @@ impl<'a> Builder<'a> {
         let bare = rendered.rsplit("::").next().unwrap_or(&rendered);
         let name = bare.split('<').next().unwrap_or(bare).trim();
         match name {
-            "Set" | "HashSet" => Some("collections::HashSet"),
+            "Set" => Some("collections::HashSet"),
             "BTreeSet" => Some("collections::BTreeSet"),
-            "Map" | "HashMap" => Some("collections::HashMap"),
+            "Map" => Some("collections::HashMap"),
             "BTreeMap" => Some("collections::BTreeMap"),
-            "Deque" | "VecDeque" => Some("collections::VecDeque"),
-            "Queue" | "VecQueue" => Some("collections::VecQueue"),
-            "Stack" | "VecStack" => Some("collections::VecStack"),
+            "Deque" => Some("collections::VecDeque"),
+            "Queue" => Some("collections::VecQueue"),
+            "Stack" => Some("collections::VecStack"),
             // A `sync::AtomicBool` reaching a method call by parameter
             // (no local construction to tag) still routes `load`/`store`
             // to the bool-typed shims.

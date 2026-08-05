@@ -47,7 +47,7 @@ enum FieldKind {
     Option(Box<FieldKind>),
     /// A tuple `(A, B, ...)` - a JSON array of heterogeneous elements.
     Tuple(Vec<FieldKind>),
-    /// `HashMap<String, V>` - a JSON object. Keys are sorted on encode so the
+    /// `Map<String, V>` - a JSON object. Keys are sorted on encode so the
     /// text is deterministic across tiers.
     Map(Box<FieldKind>),
     /// `json::Value` - a dynamic JSON document, passed through unchanged.
@@ -103,7 +103,7 @@ impl FieldKind {
                     "Option" if seg.generics.len() == 1 => {
                         Some(Self::Option(Box::new(arg_kind(&seg.generics[0], structs)?)))
                     }
-                    "HashMap" if seg.generics.len() == 2 => {
+                    "Map" if seg.generics.len() == 2 => {
                         // Only `String`-keyed maps map cleanly to a JSON object.
                         let GenericArg::Type(key) = &seg.generics[0] else {
                             return None;
@@ -152,7 +152,7 @@ impl FieldKind {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            Self::Map(_) => "HashMap::new()".to_string(),
+            Self::Map(_) => "Map::new()".to_string(),
             Self::Json => "json::Value::Null".to_string(),
         }
     }
@@ -177,7 +177,7 @@ impl FieldKind {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            Self::Map(inner) => format!("HashMap<String, {}>", inner.type_spelling()),
+            Self::Map(inner) => format!("Map<String, {}>", inner.type_spelling()),
             Self::Json => "json::Value".to_string(),
         }
     }
@@ -328,7 +328,7 @@ fn extract_map_strict(value_expr: &str, inner: &FieldKind, path: &str) -> String
     let vt = inner.type_spelling();
     let ve = inner.extract_strict("__mapval", &format!("{path}[key]"));
     format!(
-        "match json::keys({value_expr}) {{\n                Some(__mapkeys) => {{\n                    let mut __map: HashMap<String, {vt}> = HashMap::new()\n                    for __mapk in __mapkeys {{\n                        let __mapval = match json::get({value_expr}, &__mapk) {{ Some(__mc) => __mc, None => return Err(errors::new(\"{path}: missing key\")) }}\n                        let __mapentry = {ve}\n                        __map.insert(__mapk, __mapentry)\n                    }}\n                    __map\n                }}\n                None => return Err(errors::new(\"{path}: expected object\")),\n            }}"
+        "match json::keys({value_expr}) {{\n                Some(__mapkeys) => {{\n                    let mut __map: Map<String, {vt}> = Map::new()\n                    for __mapk in __mapkeys {{\n                        let __mapval = match json::get({value_expr}, &__mapk) {{ Some(__mc) => __mc, None => return Err(errors::new(\"{path}: missing key\")) }}\n                        let __mapentry = {ve}\n                        __map.insert(__mapk, __mapentry)\n                    }}\n                    __map\n                }}\n                None => return Err(errors::new(\"{path}: expected object\")),\n            }}"
     )
 }
 

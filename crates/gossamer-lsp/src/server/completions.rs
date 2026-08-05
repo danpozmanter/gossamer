@@ -280,19 +280,19 @@ fn classify_type_string(ty: &str) -> ReceiverDescriptor {
     if head.starts_with("Vec<") {
         return receiver_desc(BuiltinReceiver::Vec, None);
     }
-    if type_name_matches(head, &["Deque", "VecDeque"]) {
+    if type_name_matches(head, &["Deque"]) {
         return receiver_desc(BuiltinReceiver::VecDeque, Some("Deque"));
     }
-    if type_name_matches(head, &["Queue", "VecQueue"]) {
+    if type_name_matches(head, &["Queue"]) {
         return receiver_desc(BuiltinReceiver::VecQueue, Some("Queue"));
     }
-    if type_name_matches(head, &["Stack", "VecStack"]) {
+    if type_name_matches(head, &["Stack"]) {
         return receiver_desc(BuiltinReceiver::VecStack, Some("Stack"));
     }
-    if type_name_matches(head, &["BinaryHeap", "MaxBinaryHeap", "MaxHeap"]) {
+    if type_name_matches(head, &["MaxHeap"]) {
         return receiver_desc(BuiltinReceiver::MaxHeap, Some("MaxHeap"));
     }
-    if type_name_matches(head, &["MinBinaryHeap", "MinHeap"]) {
+    if type_name_matches(head, &["MinHeap"]) {
         return receiver_desc(BuiltinReceiver::MinHeap, Some("MinHeap"));
     }
     if head.starts_with('[') {

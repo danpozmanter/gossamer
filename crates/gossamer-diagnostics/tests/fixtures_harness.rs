@@ -172,7 +172,7 @@ fn did_you_mean_suggests_a_close_match() {
 
 #[test]
 fn did_you_mean_suggests_prelude_type_case_match() {
-    let source = "fn main() { let map = Hashmap::from({\"example\": 1}) }\n";
+    let source = "fn main() { let map = Btreemap::from({\"example\": 1}) }\n";
     let mut map = SourceMap::new();
     let file = map.add_file("prelude-typo.gos", source.to_string());
     let (sf, _) = parse_source_file(source, file);
@@ -186,8 +186,8 @@ fn did_you_mean_suggests_prelude_type_case_match() {
     assert!(
         rendered
             .iter()
-            .any(|d| d.helps.iter().any(|h| h.contains("HashMap"))),
-        "did-you-mean should suggest `HashMap`; got {:?}",
+            .any(|d| d.helps.iter().any(|h| h.contains("BTreeMap"))),
+        "did-you-mean should suggest `BTreeMap`; got {:?}",
         rendered.iter().map(|d| d.helps.clone()).collect::<Vec<_>>()
     );
 }

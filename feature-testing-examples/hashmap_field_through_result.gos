@@ -1,6 +1,6 @@
-use std::collections::HashMap
+use std::collections::Map
 
-// A `HashMap<String, _>` field reached directly through a `Result`
+// A `Map<String, _>` field reached directly through a `Result`
 // match-payload binding (`match mk() { Ok(m) => m.tags.get(&"a") ... }`)
 // keeps its declared key/value types: the accessor must dispatch to the
 // string-keyed helpers and format the keys as strings, identically on
@@ -8,11 +8,11 @@ use std::collections::HashMap
 // to recover the type - inline access degraded the key type to i64.
 
 struct Tags {
-    tags: HashMap<String, i64>,
+    tags: Map<String, i64>,
 }
 
 fn build() -> Result<Tags, i64> {
-    let mut m: HashMap<String, i64> = HashMap::new()
+    let mut m: Map<String, i64> = Map::new()
     m.insert(&"a", 1)
     m.insert(&"b", 2)
     Ok(Tags { tags: m })

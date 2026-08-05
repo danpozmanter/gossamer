@@ -1,0 +1,83 @@
+// Tuples
+// A tuple groups a fixed number of values whose types may differ. It
+// needs no declaration and no import: the type is the parenthesised list
+// of its element types, so `(1, "two", 3.0)` is `(i64, String, f64)`.
+
+// Returning several values without declaring a struct for them.
+fn split_name(full: String) -> (String, String) {
+    match full.split_once(" ") {
+        Some((first, rest)) => (first, rest),
+        None => (full, ""),
+    }
+}
+
+// A tuple parameter destructures in the parameter list.
+fn describe((rank, name): (i64, String)) -> String {
+    format!("#{rank} {name}")
+}
+
+fn main() {
+    let entry = (1, "widgets", 2.5)
+    println!("positional: {} {} {}", entry.0, entry.1, entry.2)
+    println!("whole tuple: {}", entry)
+
+    // Destructuring binds every element at once.
+    let (id, name, unit_price) = entry
+    println!("destructured: {id} {name} {unit_price}")
+
+    let (given, family) = split_name("ada lovelace")
+    println!("split: {given} / {family}")
+
+    println!("{}", describe((3, "loom")))
+
+    // Elements are read and written positionally, through nesting too.
+    let mut totals = ((0, 0), "orders")
+    totals.0.0 = 12
+    totals.0.1 = 34
+    println!("nested: {} {} {}", totals.0.0, totals.0.1, totals.1)
+
+    // Tuples compare element by element in declaration order, so a tuple
+    // is the usual sort key and needs no wrapper type.
+    let mut by_priority = [(2, "later"), (1, "sooner"), (2, "last")]
+    by_priority.sort()
+    for (priority, label) in by_priority {
+        println!("sorted: {priority} {label}")
+    }
+    println!("lexicographic: {}", (1, 2) < (1, 3))
+
+    // A one-element tuple keeps its comma; `()` is the empty tuple.
+    let single = (42,)
+    println!("single: {:?}", single)
+
+    // `enumerate` and map iteration both hand back tuples.
+    let words = ["alpha", "beta"]
+    for (index, word) in words.enumerate() {
+        println!("enumerated: {index} {word}")
+    }
+}
+
+#[cfg(test)]
+mod tuples_tests {
+    use std::testing
+
+    #[test]
+    fn a_tuple_return_binds_both_halves() {
+        let (given, family) = super::split_name("ada lovelace")
+        let _ = testing::check_eq(&given, &"ada", "first half")
+        let _ = testing::check_eq(&family, &"lovelace", "second half")
+    }
+
+    #[test]
+    fn positional_assignment_writes_through_nesting() {
+        let mut nested = ((1, 2), 3)
+        nested.0.1 = 20
+        let _ = testing::check_eq(&nested.0.1, &20, "nested element")
+        let _ = testing::check_eq(&nested.1, &3, "sibling untouched")
+    }
+
+    #[test]
+    fn tuples_order_lexicographically() {
+        let _ = testing::check(&((1, 2) < (1, 3)), "first difference decides")
+        let _ = testing::check(&((2, 0) > (1, 9)), "leading element wins")
+    }
+}

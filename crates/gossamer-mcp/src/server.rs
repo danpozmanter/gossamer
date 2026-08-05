@@ -188,20 +188,17 @@ mod tests {
 
     #[test]
     fn skill_card_teaches_collection_literal_spellings() {
-        for literal in [
-            "`[]`",
-            "`#[]`",
-            "`{}`",
-            "`#{}`",
-            "`^[]`",
-            "`_[]`",
-            "`<[]`",
-            "`[]>`",
-            "`Deque::from([1,2,3])`",
-        ] {
+        for literal in ["`[]`", "`#[]`", "`{}`", "`#{}`", "`T::from([1,2,3])`"] {
             assert!(
                 SKILL_CARD.contains(literal),
                 "skill card should document {literal}"
+            );
+        }
+        // The retired bracket spellings must not read as live syntax.
+        for retired in ["`^[]`", "`_[]`", "`<[]`", "`[]>`"] {
+            assert!(
+                !SKILL_CARD.contains(retired),
+                "skill card still presents the removed literal {retired}"
             );
         }
         assert!(SKILL_CARD.contains("Stack"));
@@ -209,5 +206,13 @@ mod tests {
         assert!(SKILL_CARD.contains("Queue"));
         assert!(SKILL_CARD.contains("FIFO-only behavior"));
         assert!(SKILL_CARD.contains("MinHeap` / `MaxHeap` for explicit priority order"));
+        assert!(
+            SKILL_CARD.contains("bare `[v; N]` is a syntax error"),
+            "skill card should teach that a repeat literal is a fixed array"
+        );
+        assert!(
+            SKILL_CARD.contains("`%i Tuple` documents"),
+            "skill card should document the Tuple type"
+        );
     }
 }

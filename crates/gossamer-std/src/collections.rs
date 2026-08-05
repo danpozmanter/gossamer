@@ -119,19 +119,6 @@ pub struct MaxHeap<T: Ord> {
     inner: StdBinaryHeap<T>,
 }
 
-/// Compatibility spelling for a max heap.
-pub type BinaryHeap<T> = MaxHeap<T>;
-/// Explicit compatibility spelling for a max heap backed by a binary heap.
-pub type MaxBinaryHeap<T> = MaxHeap<T>;
-/// Explicit compatibility spelling for a min heap backed by a binary heap.
-pub type MinBinaryHeap<T> = MinHeap<T>;
-/// Compatibility spelling for a double-ended queue.
-pub type VecDeque<T> = Deque<T>;
-/// Compatibility spelling for a FIFO queue.
-pub type VecQueue<T> = Queue<T>;
-/// Compatibility spelling for a LIFO stack.
-pub type VecStack<T> = Stack<T>;
-
 impl<T: Ord> MaxHeap<T> {
     /// Empty max heap.
     #[must_use]

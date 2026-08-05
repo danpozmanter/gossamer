@@ -1,13 +1,13 @@
-// Iterating a HashMap with `for (k, v) in m.iter()`, including `_`
+// Iterating a Map with `for (k, v) in m.iter()`, including `_`
 // wildcards in the tuple destructure, must lower identically on every
 // tier. A `_` in a slot used to under-infer the tuple element type,
 // which ICE'd the compiled-tier for-vec lowering; the map's `.iter()`
 // is now typed `Vec<(K, V)>` and is iterated over its runtime snapshot.
 
-use std::collections::HashMap
+use std::collections::Map
 
 fn main() {
-    let mut m: HashMap<String, i64> = HashMap::new()
+    let mut m: Map<String, i64> = Map::new()
     m.insert(format!("a"), 1)
     m.insert(format!("b"), 2)
     m.insert(format!("c"), 3)

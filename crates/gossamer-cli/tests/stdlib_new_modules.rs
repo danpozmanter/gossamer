@@ -526,7 +526,7 @@ fn encoding_binary_u64_roundtrip() {
 use std::encoding
 fn main() {
     let n = 72623859790382856
-    let buf = encoding::binary::put_u64_be(Vec::from([0; 8]), n)
+    let buf = encoding::binary::put_u64_be(Vec::from(#[0; 8]), n)
     match encoding::binary::get_u64_be(buf) {
         Ok(back) => println!("{}", back == n),
         Err(e) => println!("err: {}", e),

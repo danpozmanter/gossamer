@@ -119,21 +119,18 @@ Write clear, low-complexity, concise code.
   `env::args().first().unwrap_or("8").to_i64().unwrap_or(8)`.
 - **Collection literal spellings are distinct.** Fixed array and Vec
   construction differs from Rust. Use `[]` / `[1,2,3]` for `Vec`, `#[]` /
-  `#[1,2,3]` for fixed arrays, `{}` / `{"one": 1}` for `Map`, `#{}` /
-  `#{1,2,3}` for `Set`, `^[]` / `^[1,2,3]` for `MaxHeap`, `_[]` /
-  `_[1,2,3]` for `MinHeap`, `<[]` / `<[1,2,3]` for `Queue`, and `[]>` /
-  `[1,2,3]>` for `Stack`. Use `Deque::new()` or
-  `Deque::from([1,2,3])` when both ends matter. Repeat literals follow
-  the same prefixes: `[v; N]` is a Vec by default, while `#[v; N]` is a fixed
-  array.
+  `#[1,2,3]` for fixed arrays, `{}` / `{"one": 1}` for `Map`, and `#{}` /
+  `#{1,2,3}` for `Set`. `Queue`, `Stack`, `Deque`, `MaxHeap`, and `MinHeap`
+  have no literal: build them with `T::new()` or `T::from([1,2,3])`. A repeat
+  literal is a fixed array, `#[v; N]`; bare `[v; N]` is a syntax error.
 - **Prefer dedicated collection contracts for intent.** `Stack` is the
   idiomatic LIFO-only type even though `Vec` can push/pop at the end;
   `Queue` is the FIFO-only type even though a deque can model it; `MinHeap`
   and `MaxHeap` avoid negating keys or wrapping values in `Reverse`. Use the
   general structures only when you actually need their broader method surface.
-  Longer aliases remain accepted: `HashMap` for `Map`, `HashSet` for `Set`,
-  `VecDeque` for `Deque`, `VecQueue` for `Queue`, `VecStack` for `Stack`,
-  `MaxBinaryHeap` for `MaxHeap`, and `MinBinaryHeap` for `MinHeap`.
+  Each container has exactly one name: `HashMap`, `HashSet`, `VecDeque`,
+  `VecQueue`, `VecStack`, `BinaryHeap`, `MaxBinaryHeap`, and `MinBinaryHeap`
+  are rejected (GR0006).
 - **Collection constructors infer**: `let mut m = Map::new()`,
   `let empty: Map<String, i64> = Map::from([])`, and
   `let map = {"one": 1}`. `Map::from` accepts array pairs, while
@@ -342,9 +339,9 @@ are callable as methods/free functions and materialize results.
 
 - `[T; N]` is an owned fixed array, `[T]` is an unsized borrowed slice,
   and `Vec<T>` is the default owned growable sequence. Literal spellings are
-  `[]` for Vec, `#[]` for fixed arrays, `{}` for `Map`, `#{}` for
-  `Set` or expected `BTreeSet`, `^[]` for `MaxHeap`, `_[]` for
-  `MinHeap`, `<[]` for `Queue`, and `[]>` for `Stack`. Arrays, slices, and Vec share the
+  `[]` for Vec, `#[]` for fixed arrays, `{}` for `Map`, and `#{}` for
+  `Set` or expected `BTreeSet`; `Queue`, `Stack`, `Deque`, `MaxHeap`, and
+  `MinHeap` use `new()` / `from([..])`. Arrays, slices, and Vec share the
   implemented slice method surface. Eager collection combinators are Vec
   methods; arrays and slices use `iter()` first. Use `Stack` for a
   LIFO-only argument contract instead of a general `Vec`, `Queue` for
@@ -353,11 +350,17 @@ are callable as methods/free functions and materialize results.
   extension, reservation, capacity, and indexed mutation methods. Mutable arrays and slices
   support `sort`, `reverse`, `swap`, and `fill` without resizing. `%i`
   reports each type's real surface, while `%e` also removes methods that the
-  binding's mutability cannot call. Tuples use `.0`/`.1`;
-  tuple structs are fully usable. Method-call
+  binding's mutability cannot call. Method-call
   `xs.insert/remove/swap` mutate in place and return `Result`, with an
   `Err` for an out-of-bounds index. Qualified calls use the same contract:
   `Vec::insert(&mut xs, i, v)` / `Vec::remove(&mut xs, i)`.
+- **Tuple** `(A, B, ...)` groups a fixed number of values whose types may
+  differ. Read and assign positionally (`t.0`, chained `t.0.1`, `t.0 = v`
+  through a `mut` binding), destructure in `let` / `for` / `match` / params,
+  and compare structurally in declaration order (so `sort` orders a sequence
+  of tuples lexicographically). No import, no methods; `%i Tuple` documents
+  it and `%e <binding>` lists a tuple's elements. Tuple structs are the
+  named variant and are fully usable.
 - `std::collections`: `Vec`, `Map` (struct/tuple keys by value;
   aggregate-key maps use `iter()` rather than `keys()` until typed key
   snapshots are available;

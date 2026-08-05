@@ -1,11 +1,11 @@
-// HashMap Counter Race
-// Use HashMap.inc and or_insert patterns with repeated updates to
+// Map Counter Race
+// Use Map.inc and or_insert patterns with repeated updates to
 // confirm map mutation semantics and ordering assumptions.
 
-use std::collections::HashMap
+use std::collections::Map
 
 fn main() {
-    let mut tally: HashMap<String, i64> = HashMap::new()
+    let mut tally: Map<String, i64> = Map::new()
 
     // Counter idiom via inc
     tally.inc("apple")
@@ -24,7 +24,7 @@ fn main() {
 
     // Manual update loop
     let words = ["one", "two", "two", "three", "three", "three"]
-    let mut counts: HashMap<String, i64> = HashMap::new()
+    let mut counts: Map<String, i64> = Map::new()
     for w in words {
         counts.inc(w)
     }
@@ -34,7 +34,7 @@ fn main() {
     }
 
     // Repeated mutation stress
-    let mut stress: HashMap<i64, i64> = HashMap::new()
+    let mut stress: Map<i64, i64> = Map::new()
     for i in 0..1000 {
         stress.inc(i % 7)
     }
@@ -46,11 +46,11 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use std::testing
-    use std::collections::HashMap
+    use std::collections::Map
 
     #[test]
     fn inc_accumulates() {
-        let mut m: HashMap<String, i64> = HashMap::new()
+        let mut m: Map<String, i64> = Map::new()
         m.inc("x")
         m.inc("x")
         m.inc("x")
@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn or_insert_no_overwrite() {
-        let mut m: HashMap<String, i64> = HashMap::new()
+        let mut m: Map<String, i64> = Map::new()
         m.or_insert("k", 42)
         m.or_insert("k", 99)
         let _ = testing::check_eq(&m.get_or("k", 0), &42, "or_insert keeps first value")
@@ -67,14 +67,14 @@ mod tests {
 
     #[test]
     fn missing_key_returns_default() {
-        let m: HashMap<String, i64> = HashMap::new()
+        let m: Map<String, i64> = Map::new()
         let _ = testing::check_eq(&m.get_or("missing", -1), &-1, "missing key → default")
     }
 
     #[test]
     fn word_count_stress() {
         let words = ["a", "b", "a", "c", "a", "b"]
-        let mut counts: HashMap<String, i64> = HashMap::new()
+        let mut counts: Map<String, i64> = Map::new()
         for w in words {
             counts.inc(w)
         }

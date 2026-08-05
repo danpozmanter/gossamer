@@ -271,13 +271,8 @@ pub const STDLIB_QUALIFIED: &[&str] = &[
     "collections::BTreeMap::new",
     "collections::BTreeSet::from",
     "collections::BTreeSet::new",
-    "collections::BinaryHeap::from",
-    "collections::BinaryHeap::new",
     "collections::Deque::from",
     "collections::Deque::new",
-    "collections::HashMap::pop",
-    "collections::HashSet::from",
-    "collections::HashSet::new",
     "collections::Map::clear",
     "collections::Map::contains_key",
     "collections::Map::from",
@@ -297,12 +292,8 @@ pub const STDLIB_QUALIFIED: &[&str] = &[
     "collections::Map::remove",
     "collections::Map::values",
     "collections::Map::with_capacity",
-    "collections::MaxBinaryHeap::from",
-    "collections::MaxBinaryHeap::new",
     "collections::MaxHeap::from",
     "collections::MaxHeap::new",
-    "collections::MinBinaryHeap::from",
-    "collections::MinBinaryHeap::new",
     "collections::MinHeap::from",
     "collections::MinHeap::new",
     "collections::Queue::from",
@@ -331,12 +322,6 @@ pub const STDLIB_QUALIFIED: &[&str] = &[
     "collections::Vec::push",
     "collections::Vec::remove",
     "collections::Vec::with_capacity",
-    "collections::VecDeque::from",
-    "collections::VecDeque::new",
-    "collections::VecQueue::from",
-    "collections::VecQueue::new",
-    "collections::VecStack::from",
-    "collections::VecStack::new",
     "compress::bzip2::compress",
     "compress::bzip2::decompress",
     "compress::flate::compress",
@@ -1338,6 +1323,23 @@ pub(crate) fn is_stdlib_module_path_or_namespace(path: &str) -> bool {
             && candidate.starts_with(path)
             && candidate.as_bytes()[path.len()] == b':'
     })
+}
+
+/// The canonical container name for a spelling that used to alias one,
+/// or `None` when `name` is not a retired spelling. Each container has
+/// exactly one name; these are reported with a rename hint rather than a
+/// bare "not found".
+pub(crate) fn canonical_collection_name(name: &str) -> Option<&'static str> {
+    match name {
+        "HashMap" => Some("Map"),
+        "HashSet" => Some("Set"),
+        "VecDeque" => Some("Deque"),
+        "VecQueue" => Some("Queue"),
+        "VecStack" => Some("Stack"),
+        "BinaryHeap" | "MaxBinaryHeap" => Some("MaxHeap"),
+        "MinBinaryHeap" => Some("MinHeap"),
+        _ => None,
+    }
 }
 
 /// True when the runtime binds this qualified stdlib callable/member name.

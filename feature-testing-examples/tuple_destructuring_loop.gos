@@ -2,7 +2,7 @@
 // Iterate over tuples from maps or arrays with destructuring in for
 // and let bindings to verify destructure lowering correctness.
 
-use std::collections::HashMap
+use std::collections::Map
 
 fn main() {
     let pairs = [(1, "one"), (2, "two"), (3, "three")]
@@ -13,7 +13,7 @@ fn main() {
     }
 
     // Destructure from a map
-    let mut scores: HashMap<String, i64> = HashMap::new()
+    let mut scores: Map<String, i64> = Map::new()
     scores.insert("alice", 95)
     scores.insert("bob", 87)
     scores.insert("carol", 92)

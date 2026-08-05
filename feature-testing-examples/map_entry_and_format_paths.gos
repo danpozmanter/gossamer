@@ -4,7 +4,7 @@
 // value inserts the default once and hands back the stored entry.
 // Named format captures walk field / tuple-index paths ({a.balance},
 // {t.0}, {o.inner.hits:>4}).
-use std::collections::HashMap
+use std::collections::Map
 
 struct Account { balance: i64, txns: i64 }
 impl Account {
@@ -19,7 +19,7 @@ struct Outer { inner: Rec }
 
 fn main() {
     let txs = [("alice", 100), ("bob", 50), ("alice", -30), ("carol", 200), ("bob", -20), ("alice", 40)]
-    let mut accounts = HashMap::new()
+    let mut accounts = Map::new()
     for (name, amount) in txs {
         accounts.or_insert(name, Account { balance: 0, txns: 0 }).apply(amount)
     }
@@ -27,13 +27,13 @@ fn main() {
         println!("{name}: {a.balance} ({a.txns} transactions)")
     }
 
-    let mut m = HashMap::new()
+    let mut m = Map::new()
     let a = m.or_insert("x", Rec { hits: 1, label: "first" })
     println!("{a.hits} {a.label} len={}", m.len())
     let b = m.or_insert("x", Rec { hits: 99, label: "other" })
     println!("{b.hits} {b.label} len={}", m.len())
 
-    let mut counts = HashMap::new()
+    let mut counts = Map::new()
     counts.or_insert("w", 10)
     counts.inc("w", 5)
     println!("{}", counts.get_or("w", 0))

@@ -1,11 +1,11 @@
 // The pop-then-drop path: a struct value with a heap `String` child is
-// inserted into a HashMap, popped back out (the map hands ownership to the
+// inserted into a Map, popped back out (the map hands ownership to the
 // receiving binding), read, and then dropped. The popped binding's drop is
 // the single release of the child - the entry no longer holds it. Followed
 // by allocation churn to surface any premature free as a corrupted read.
 // Must print `popped=ada present_after=0 remaining=1` on every tier.
 
-use std::collections::HashMap
+use std::collections::Map
 
 struct Person { name: String, age: i64 }
 
@@ -21,11 +21,11 @@ fn churn() -> i64 {
 }
 
 fn main() {
-    let mut m: HashMap<i64, Person> = HashMap::new()
+    let mut m: Map<i64, Person> = Map::new()
     m.insert(1, Person { name: format!("ada"), age: 36 })
     m.insert(2, Person { name: format!("grace"), age: 45 })
 
-    let popped = match HashMap::pop(m, 1) {
+    let popped = match Map::pop(m, 1) {
         Some(p) => p.name,
         None => format!("none"),
     }

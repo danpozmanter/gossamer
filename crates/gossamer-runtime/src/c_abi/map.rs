@@ -18,6 +18,8 @@
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
+use gossamer_abi::TUPLE_TAG_NESTED;
+
 use super::*;
 
 // ---------------------------------------------------------------
@@ -1539,15 +1541,89 @@ pub unsafe extern "C" fn gos_rt_map_clear(m: *mut GosMap) {
     });
 }
 
+/// Renders `count` elements starting at tag index `tag_cursor` and slot
+/// index `slot_cursor`, advancing both past what it consumed.
+///
+/// A nested tuple's elements are flattened into the parent's slot
+/// buffer, so slot and tag positions advance independently.
+unsafe fn render_tuple_elements(
+    out: &mut String,
+    p: *const i64,
+    tags: *const u8,
+    count: usize,
+    slot_cursor: &mut usize,
+    tag_cursor: &mut usize,
+) {
+    out.push('(');
+    for i in 0..count {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        let tag = unsafe { *tags.add(*tag_cursor) };
+        *tag_cursor += 1;
+        if tag == TUPLE_TAG_NESTED {
+            let nested = unsafe { *tags.add(*tag_cursor) } as usize;
+            *tag_cursor += 1;
+            unsafe { render_tuple_elements(out, p, tags, nested, slot_cursor, tag_cursor) };
+            continue;
+        }
+        let word = unsafe { p.add(*slot_cursor).read_unaligned() };
+        *slot_cursor += 1;
+        match tag {
+            0 => out.push_str(&crate::builtins::format_int(word)),
+            2 => out.push_str(&crate::builtins::format_float(f64::from_bits(word as u64))),
+            3 => out.push_str(crate::builtins::format_bool(word & 1 != 0)),
+            4 => {
+                if let Some(c) = char::from_u32(word as u32) {
+                    out.push(c);
+                }
+            }
+            5 => {
+                let sp: *const c_char = std::ptr::with_exposed_provenance(word as usize);
+                if !sp.is_null() {
+                    out.push_str(&unsafe { CStr::from_ptr(sp) }.to_string_lossy());
+                }
+            }
+            6 => {
+                let vp = std::ptr::with_exposed_provenance(word as usize);
+                let rendered = unsafe { crate::c_abi::gos_rt_vec_format_i64(vp) };
+                if !rendered.is_null() {
+                    out.push_str(&unsafe { CStr::from_ptr(rendered) }.to_string_lossy());
+                }
+            }
+            7 => {
+                let mp = std::ptr::with_exposed_provenance(word as usize);
+                let rendered = unsafe { gos_rt_map_format(mp) };
+                if !rendered.is_null() {
+                    out.push_str(&unsafe { CStr::from_ptr(rendered) }.to_string_lossy());
+                }
+            }
+            _ => {}
+        }
+    }
+    if count == 1 {
+        out.push(',');
+    }
+    out.push(')');
+}
+
 /// Renders a tuple's flat slot buffer to `(a, b, …)` (a 1-tuple
 /// gets a trailing comma, `(a,)`), matching the VM's `Display`.
-/// `p` points at `n` contiguous 8-byte slots; `tags[i]` selects how
-/// slot `i` is interpreted: `0` = Int, `2` = Float (the slot's bits
-/// are an `f64`), `3` = Bool (low bit), `4` = Char (low 32 bits as a
-/// code point), `5` = Str (the slot is a c-string pointer), `6` =
-/// `Vec<i64>`, `7` = HashMap. Integers and floats route through
-/// `crate::builtins::format_int` /
-/// `format_float` so the rendering is byte-identical to the VM.
+/// `p` points at the tuple's contiguous 8-byte slots and `n` is its
+/// element count; the `tags` stream selects how each element is
+/// interpreted: `0` = Int, `2` = Float (the slot's bits are an `f64`),
+/// `3` = Bool (low bit), `4` = Char (low 32 bits as a code point),
+/// `5` = Str (the slot is a c-string pointer), `6` = `Vec<i64>`,
+/// `7` = HashMap, `8` = a nested tuple whose element count is the next
+/// tag byte and whose own tags follow it. A nested tuple's slots are
+/// flattened into the parent buffer, so the stream is walked with
+/// separate tag and slot cursors. Integers and floats route through
+/// `crate::builtins::format_int` / `format_float` so the rendering is
+/// byte-identical to the VM.
+///
+/// The tag stream is emitted by the compiler alongside `n` and is
+/// self-describing given `n`; a caller-supplied stream must match the
+/// tuple's shape.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_tuple_format(
     p: *const i64,
@@ -1558,50 +1634,19 @@ pub unsafe extern "C" fn gos_rt_tuple_format(
         if p.is_null() || tags.is_null() || n <= 0 {
             return alloc_cstring(b"()");
         }
-        let n = n as usize;
-        let mut out = String::from("(");
-        for i in 0..n {
-            if i > 0 {
-                out.push_str(", ");
-            }
-            let word = unsafe { p.add(i).read_unaligned() };
-            let tag = unsafe { *tags.add(i) };
-            match tag {
-                0 => out.push_str(&crate::builtins::format_int(word)),
-                2 => out.push_str(&crate::builtins::format_float(f64::from_bits(word as u64))),
-                3 => out.push_str(crate::builtins::format_bool(word & 1 != 0)),
-                4 => {
-                    if let Some(c) = char::from_u32(word as u32) {
-                        out.push(c);
-                    }
-                }
-                5 => {
-                    let sp: *const c_char = std::ptr::with_exposed_provenance(word as usize);
-                    if !sp.is_null() {
-                        out.push_str(&unsafe { CStr::from_ptr(sp) }.to_string_lossy());
-                    }
-                }
-                6 => {
-                    let vp = std::ptr::with_exposed_provenance(word as usize);
-                    let rendered = unsafe { crate::c_abi::gos_rt_vec_format_i64(vp) };
-                    if !rendered.is_null() {
-                        out.push_str(&unsafe { CStr::from_ptr(rendered) }.to_string_lossy());
-                    }
-                }
-                7 => {
-                    let mp = std::ptr::with_exposed_provenance(word as usize);
-                    let rendered = unsafe { gos_rt_map_format(mp) };
-                    if !rendered.is_null() {
-                        out.push_str(&unsafe { CStr::from_ptr(rendered) }.to_string_lossy());
-                    }
-                }
-                _ => {}
-            }
+        let mut out = String::new();
+        let mut slot_cursor = 0usize;
+        let mut tag_cursor = 0usize;
+        unsafe {
+            render_tuple_elements(
+                &mut out,
+                p,
+                tags,
+                n as usize,
+                &mut slot_cursor,
+                &mut tag_cursor,
+            );
         }
-        if n == 1 {
-            out.push(',');
-        }
-        out.push(')');
         alloc_cstring(out.as_bytes())
     })
 }
@@ -1620,35 +1665,141 @@ pub unsafe extern "C" fn gos_rt_tuple_cmp(
     tags: *const u8,
 ) -> i64 {
     ffi_entry!(0, {
-        use std::cmp::Ordering;
         if a.is_null() || b.is_null() || tags.is_null() || n <= 0 {
             return 0;
         }
-        let n = n as usize;
-        for i in 0..n {
-            let wa = unsafe { a.add(i).read_unaligned() };
-            let wb = unsafe { b.add(i).read_unaligned() };
-            let ord = match unsafe { *tags.add(i) } {
-                2 => f64::from_bits(wa as u64)
-                    .partial_cmp(&f64::from_bits(wb as u64))
-                    .unwrap_or(Ordering::Equal),
-                3 => (wa & 1).cmp(&(wb & 1)),
-                4 => (wa as u32).cmp(&(wb as u32)),
-                5 => {
-                    let sa: *const c_char = std::ptr::with_exposed_provenance(wa as usize);
-                    let sb: *const c_char = std::ptr::with_exposed_provenance(wb as usize);
-                    unsafe { gos_rt_str_compare(sa, sb) }.cmp(&0)
-                }
-                _ => wa.cmp(&wb),
-            };
-            match ord {
-                Ordering::Less => return -1,
-                Ordering::Greater => return 1,
-                Ordering::Equal => {}
-            }
-        }
-        0
+        let mut slot_cursor = 0usize;
+        let mut tag_cursor = 0usize;
+        unsafe { compare_tuple_elements(a, b, tags, n as usize, &mut slot_cursor, &mut tag_cursor) }
     })
+}
+
+/// Compares `count` elements starting at tag index `tag_cursor` and slot
+/// index `slot_cursor`, advancing both past what it consumed. Returns
+/// `-1` / `0` / `1`; the cursors are left past the compared elements
+/// either way so a caller can keep walking.
+unsafe fn compare_tuple_elements(
+    a: *const i64,
+    b: *const i64,
+    tags: *const u8,
+    count: usize,
+    slot_cursor: &mut usize,
+    tag_cursor: &mut usize,
+) -> i64 {
+    use std::cmp::Ordering;
+    let mut result = 0i64;
+    for _ in 0..count {
+        let tag = unsafe { *tags.add(*tag_cursor) };
+        *tag_cursor += 1;
+        if tag == TUPLE_TAG_NESTED {
+            let nested = unsafe { *tags.add(*tag_cursor) } as usize;
+            *tag_cursor += 1;
+            let ord =
+                unsafe { compare_tuple_elements(a, b, tags, nested, slot_cursor, tag_cursor) };
+            if result == 0 {
+                result = ord;
+            }
+            continue;
+        }
+        let wa = unsafe { a.add(*slot_cursor).read_unaligned() };
+        let wb = unsafe { b.add(*slot_cursor).read_unaligned() };
+        *slot_cursor += 1;
+        if result != 0 {
+            continue;
+        }
+        let ord = match tag {
+            2 => f64::from_bits(wa as u64)
+                .partial_cmp(&f64::from_bits(wb as u64))
+                .unwrap_or(Ordering::Equal),
+            3 => (wa & 1).cmp(&(wb & 1)),
+            4 => (wa as u32).cmp(&(wb as u32)),
+            5 => {
+                let sa: *const c_char = std::ptr::with_exposed_provenance(wa as usize);
+                let sb: *const c_char = std::ptr::with_exposed_provenance(wb as usize);
+                unsafe { gos_rt_str_compare(sa, sb) }.cmp(&0)
+            }
+            _ => wa.cmp(&wb),
+        };
+        result = match ord {
+            Ordering::Less => -1,
+            Ordering::Greater => 1,
+            Ordering::Equal => 0,
+        };
+    }
+    result
+}
+
+/// Sorts `len` tuple elements of `stride` bytes each, in place and
+/// ascending, comparing with [`gos_rt_tuple_cmp`] under the `n`-element
+/// `tags` stream.
+unsafe fn sort_tuple_buffer(base: *mut u8, len: usize, stride: usize, n: i64, tags: *const u8) {
+    if len <= 1 || stride == 0 {
+        return;
+    }
+    // Rank indices, then permute through a temp buffer: the same shape
+    // as `gos_rt_arr_sort_by_aggr`, and it keeps the comparator's
+    // operand pointers stable across swaps.
+    let mut indices: Vec<usize> = (0..len).collect();
+    indices.sort_by(|&ai, &bi| {
+        let pa = unsafe { base.add(ai * stride).cast::<i64>() };
+        let pb = unsafe { base.add(bi * stride).cast::<i64>() };
+        unsafe { gos_rt_tuple_cmp(pa, pb, n, tags) }.cmp(&0)
+    });
+    let total = len.saturating_mul(stride);
+    let mut tmp: Vec<u8> = vec![0u8; total];
+    for (new_idx, &old_idx) in indices.iter().enumerate() {
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                base.add(old_idx * stride),
+                tmp.as_mut_ptr().add(new_idx * stride),
+                stride,
+            );
+        }
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(tmp.as_ptr(), base, total);
+    }
+}
+
+/// Sorts a `Vec` of tuple elements in place, ascending, per the
+/// `n`-element `tags` stream. Element stride comes from the vec's
+/// `elem_bytes` header field. Routed to by `xs.sort()` when the element
+/// type is a tuple, where a plain slot-wise i64 sort would reorder the
+/// flattened slots rather than the tuples they belong to.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_sort_tuple(v: *mut GosVec, n: i64, tags: *const u8) {
+    ffi_entry!((), {
+        if v.is_null() || tags.is_null() || n <= 0 {
+            return;
+        }
+        let vec = unsafe { &mut *v };
+        if vec.len <= 1 || vec.ptr.is_null() {
+            return;
+        }
+        let len = vec.len.max(0) as usize;
+        let stride = i64::from(vec.elem_bytes).max(0) as usize;
+        unsafe { sort_tuple_buffer(vec.ptr.as_ptr(), len, stride, n, tags) };
+    });
+}
+
+/// Sorts a fixed-size array of tuple elements in place, ascending, per
+/// the `n`-element `tags` stream. The flat-buffer sibling of
+/// [`gos_rt_vec_sort_tuple`]: `p` points straight at the elements, so
+/// `len` and `elem_bytes` are passed rather than read from a header.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_sort_tuple(
+    p: *mut u8,
+    len: i64,
+    elem_bytes: i64,
+    n: i64,
+    tags: *const u8,
+) {
+    ffi_entry!((), {
+        if p.is_null() || tags.is_null() || n <= 0 || len <= 1 || elem_bytes <= 0 {
+            return;
+        }
+        unsafe { sort_tuple_buffer(p, len as usize, elem_bytes as usize, n, tags) };
+    });
 }
 
 /// Structural equality of two Vec/array values. `elem_tag` (same encoding

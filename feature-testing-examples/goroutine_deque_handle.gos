@@ -1,8 +1,8 @@
-// Cross-tier regression for a cross-goroutine VecDeque handle. The worker
-// goroutine builds a `VecDeque<i64>`, then parks on `gate.recv()` - a
+// Cross-tier regression for a cross-goroutine Deque handle. The worker
+// goroutine builds a `Deque<i64>`, then parks on `gate.recv()` - a
 // yield point the scheduler can resume on a DIFFERENT OS worker thread
 // than the one the deque was built on. The push/pop/len after the yield
-// must still hit the same deque. The VM previously kept its VecDeque
+// must still hit the same deque. The VM previously kept its Deque
 // registry in `thread_local!` storage, so after such a migration the
 // handle resolved to nothing on the new worker thread: the post-yield
 // push no-op'd and the drain collapsed to the empty-deque defaults. The
@@ -12,10 +12,10 @@
 // channel close is the deterministic completion signal - no sleeps.
 
 use std::sync::channel
-use std::collections::VecDeque
+use std::collections::Deque
 
 fn worker(gate: Receiver<i64>, tx: Sender<i64>) {
-    let mut q: VecDeque<i64> = VecDeque::new()
+    let mut q: Deque<i64> = Deque::new()
     q.push_back(10)
     q.push_back(20)
     let _ = gate.recv()

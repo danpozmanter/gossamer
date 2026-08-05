@@ -138,7 +138,11 @@ pub(crate) fn install_sync_extras(globals: &mut Vec<(&'static str, Value)>) {
     for (name, call) in entries {
         let qualified: &'static str = Box::leak(format!("sync::{name}").into_boxed_str());
         globals.push((qualified, crate::builtins::builtin_pub(qualified, *call)));
-        globals.push((*name, crate::builtins::builtin_pub(name, *call)));
+        // The bare `Map::*` spellings name the collections map, so the
+        // concurrent map is reachable only through `sync::Map::*`.
+        if !name.starts_with("Map::") {
+            globals.push((*name, crate::builtins::builtin_pub(name, *call)));
+        }
     }
 
     // `Once::call(o, || ...)` runs a closure, so it must be a `native`

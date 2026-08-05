@@ -528,16 +528,16 @@ fn repl_explain_owns_persistent_binding_inspection() {
         explained.stdout
     );
 
-    let stdlib = run_repl("%e HashMap\n%e Vec::from -d\n");
+    let stdlib = run_repl("%e Map\n%e Vec::from -d\n");
     assert!(stdlib.success, "stderr: {}", stdlib.stderr);
     assert!(
         stdlib
             .stderr
-            .contains("no persistent binding or declaration named `HashMap`")
+            .contains("no persistent binding or declaration named `Map`")
             && stdlib
                 .stderr
                 .contains("no persistent binding or declaration named `Vec::from`")
-            && !stdlib.stdout.contains("HashMap [type]")
+            && !stdlib.stdout.contains("Map [type]")
             && !stdlib.stdout.contains("Vec::from"),
         "%e must not fall through to language or stdlib catalog entries: stdout: {}; stderr: {}",
         stdlib.stdout,
@@ -697,18 +697,18 @@ fn repl_info_lists_matches_unless_details_are_requested() {
 
 #[test]
 fn repl_info_and_explain_details_always_follow_descriptions_with_examples() {
-    let info = run_repl("%i HashMap::from -d\n");
+    let info = run_repl("%i Map::from -d\n");
     assert!(info.success, "stderr: {}", info.stderr);
     let compact_info = info.stdout.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
         compact_info.contains(
-            "HashMap::from<K, V, const N: usize>(entries: [(K, V); N]) -> HashMap<K, V> [associated function]"
+            "Map::from<K, V, const N: usize>(entries: [(K, V); N]) -> Map<K, V> [associated function]"
         ) && info.stdout.contains("Creates a hash map from a fixed array of key-value tuples.")
             && info.stdout.contains("    Builtin")
-            && compact_info.contains("Example: let empty: HashMap<String, i64> = HashMap::from([]);")
+            && compact_info.contains("Example: let empty: Map<String, i64> = Map::from([]);")
             && compact_info.contains("let map = {\"one\": 1, \"two\": 2};")
-            && compact_info.contains("let also = HashMap::from([(\"one\", 1), (\"two\", 2)])"),
-        "HashMap::from help is incomplete: {}",
+            && compact_info.contains("let also = Map::from([(\"one\", 1), (\"two\", 2)])"),
+        "Map::from help is incomplete: {}",
         info.stdout
     );
 
@@ -727,7 +727,7 @@ fn repl_info_and_explain_details_always_follow_descriptions_with_examples() {
 fn repl_hashmap_literals_and_from_tuple_arrays_work() {
     let out = run_repl(
         "let m = {\"a\": 1, \"b\": 2}\n\
-         let n = HashMap::from([(\"a\", 1), (\"b\", 2)])\n\
+         let n = Map::from([(\"a\", 1), (\"b\", 2)])\n\
          m.len()\n\
          n.len()\n\
          m.get(\"a\")\n\
@@ -738,7 +738,7 @@ fn repl_hashmap_literals_and_from_tuple_arrays_work() {
     assert!(
         lines.iter().filter(|line| **line == "2").count() >= 2
             && lines.iter().filter(|line| **line == "Some(1)").count() >= 2,
-        "HashMap::from forms did not expose matching entries: {}",
+        "Map::from forms did not expose matching entries: {}",
         out.stdout
     );
 }
@@ -750,25 +750,25 @@ fn repl_hashmap_from_rejects_map_literal_argument() {
          let s1 = #{1, 2}\n\
          let v4 = Vec::from(m1)\n\
          let v5 = Vec::from(s1)\n\
-         let s4 = HashSet::from(m1)\n\
-         let s5 = HashSet::from(s1)\n\
-         let h: HashMap<String, i64> = HashMap::from({\"a\": 1})\n",
+         let s4 = Set::from(m1)\n\
+         let s5 = Set::from(s1)\n\
+         let h: Map<String, i64> = Map::from({\"a\": 1})\n",
     );
     assert!(out.success, "stderr: {}", out.stderr);
     assert!(
         out.stderr
-            .contains("expected `fixed array of key-value tuples`, found `HashMap<String, i64>`"),
-        "HashMap::from accepted a map literal argument: {}",
+            .contains("expected `fixed array of key-value tuples`, found `Map<String, i64>`"),
+        "Map::from accepted a map literal argument: {}",
         out.stderr
     );
     assert!(
         out.stderr
-            .matches("expected `array, slice, or Vec`, found `HashMap<i64, i64>`")
+            .matches("expected `array, slice, or Vec`, found `Map<i64, i64>`")
             .count()
             >= 2
             && out
                 .stderr
-                .matches("expected `array, slice, or Vec`, found `HashSet<i64>`")
+                .matches("expected `array, slice, or Vec`, found `Set<i64>`")
                 .count()
                 >= 2,
         "collection ::from accepted incompatible source arguments: {}",
@@ -796,7 +796,7 @@ fn repl_btreemap_from_tuple_arrays_work() {
 #[test]
 fn repl_vecdeque_canonical_methods_and_clear_work() {
     let out = run_repl(
-        "let mut d: VecDeque<i64> = VecDeque::new()\n\
+        "let mut d: Deque<i64> = Deque::new()\n\
          d.push_front(2)\n\
          d.push_back(3)\n\
          println(d.pop_front())\n\
@@ -809,7 +809,7 @@ fn repl_vecdeque_canonical_methods_and_clear_work() {
         out.stdout.contains("Some(2)")
             && out.stdout.contains("Some(3)")
             && out.stdout.contains("true"),
-        "VecDeque canonical methods or clear failed: {}",
+        "Deque canonical methods or clear failed: {}",
         out.stdout
     );
 }
@@ -891,12 +891,12 @@ fn repl_info_vec_from_has_the_array_conversion_contract() {
 
 #[test]
 fn repl_resolution_errors_suggest_prelude_type_case() {
-    let out = run_repl("let map = Hashmap::from({\"example\": 1})\n");
+    let out = run_repl("let map = Btreemap::from({\"example\": 1})\n");
     assert!(out.success, "stderr: {}", out.stderr);
     assert!(
-        out.stderr.contains("cannot find `Hashmap` in this scope")
-            && out.stderr.contains("did you mean `HashMap`?"),
-        "missing HashMap suggestion: {}",
+        out.stderr.contains("cannot find `Btreemap` in this scope")
+            && out.stderr.contains("did you mean `BTreeMap`?"),
+        "missing BTreeMap suggestion: {}",
         out.stderr
     );
 }
@@ -1058,7 +1058,7 @@ fn repl_bindings_hide_inference_ids_for_empty_vec() {
     let out = run_repl(
         "let v = Vec::new()\n\
          let reserved = Vec::with_capacity(4)\n\
-         let map = HashMap::with_capacity(4)\n\
+         let map = Map::with_capacity(4)\n\
          %b\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -1068,8 +1068,7 @@ fn repl_bindings_hide_inference_ids_for_empty_vec() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("reserved: Vec<_> = []")
-            && out.stdout.contains("map: HashMap<_, _> = {}"),
+        out.stdout.contains("reserved: Vec<_> = []") && out.stdout.contains("map: Map<_, _> = {}"),
         "capacity constructors should preserve container identity: {}",
         out.stdout
     );
@@ -1531,8 +1530,8 @@ fn repl_bindings_render_collection_literal_spelling() {
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
         "fixed: [i64; 2] = #[1, 3]",
-        "map: HashMap<String, i64> = {\"a\": 1}",
-        "set: HashSet<i64> = #{1, 2}",
+        "map: Map<String, i64> = {\"a\": 1}",
+        "set: Set<i64> = #{1, 2}",
         "ordered: BTreeSet<i64> = #{1, 2}",
     ] {
         assert!(
@@ -2115,7 +2114,7 @@ fn repl_accepts_impl_block_declaration() {
 fn repl_hash_set_bindings_show_and_iterate_stored_structs() {
     let out = run_repl(
         "#[derive(Debug, PartialEq, Eq)] struct Point { x: i64, y: i64 }\n\
-         let mut set = HashSet::new()\n\
+         let mut set = Set::new()\n\
          let p1 = Point { x: 1, y: 2 }\n\
          let p2 = Point { x: 3, y: 4 }\n\
          impl Point { fn total(self) -> i64 { self.x + self.y } }\n\
@@ -2145,13 +2144,13 @@ fn repl_hash_set_bindings_show_and_iterate_stored_structs() {
         );
     }
     assert!(
-        out.stdout.contains("mut set: HashSet<_> ="),
+        out.stdout.contains("mut set: Set<_> ="),
         "`%explain set` should render the binding as `%bindings` does: {}",
         out.stdout
     );
     assert!(
         out.stderr.contains("no method named `map`"),
-        "direct HashSet.map should be rejected: {}",
+        "direct Set.map should be rejected: {}",
         out.stderr
     );
 }
@@ -2513,7 +2512,7 @@ fn repl_rejects_negative_size_arguments_across_stdlib() {
          iter::repeat(1, -1)\n\
          let v: Vec<i64> = Vec::with_capacity(-1)\n\
          String::with_capacity(-1)\n\
-         let m: HashMap<String, i64> = HashMap::with_capacity(-1)\n\
+         let m: Map<String, i64> = Map::with_capacity(-1)\n\
          image::new(-1, 1)\n\
          time::sleep(-1)\n",
     );
@@ -2529,7 +2528,7 @@ fn repl_rejects_negative_size_arguments_across_stdlib() {
         "iter::repeat: count must be non-negative",
         "Vec::with_capacity: capacity must be non-negative",
         "String::with_capacity: capacity must be non-negative",
-        "HashMap::with_capacity: capacity must be non-negative",
+        "Map::with_capacity: capacity must be non-negative",
         "image::new: width must be non-negative",
         "time::sleep: duration_ms must be non-negative",
     ] {
@@ -3035,7 +3034,7 @@ fn repl_meta_info_for_shared_method_name_does_not_append_an_owner_listing() {
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
         "BTreeMap::contains_key<",
-        "HashMap::contains_key<",
+        "Map::contains_key<",
         "std::collections::ordered_map::contains_key(",
     ] {
         assert!(
@@ -3409,15 +3408,15 @@ fn repl_reports_collection_argument_mismatches_in_expected_found_order() {
 #[test]
 fn repl_persists_map_set_and_deque_mutations() {
     let out = run_repl(
-        "let mut m: HashMap<String, i64> = HashMap::new()\n\
+        "let mut m: Map<String, i64> = Map::new()\n\
          m.insert(\"a\", 1)\n\
          m.len()\n\
-         let mut set: HashSet<i64> = HashSet::new()\n\
+         let mut set: Set<i64> = Set::new()\n\
          set.insert(7)\n\
          set.insert(7)\n\
          set.remove(7)\n\
          set.contains(7)\n\
-         let mut deque: VecDeque<i64> = VecDeque::new()\n\
+         let mut deque: Deque<i64> = Deque::new()\n\
          deque.push_back(1)\n\
          deque.push_front(2)\n\
          deque.pop_back()\n\
@@ -3432,41 +3431,33 @@ fn repl_persists_map_set_and_deque_mutations() {
         );
     }
     assert!(
-        !out.stdout.contains("HashSet {"),
+        !out.stdout.contains("Set {"),
         "set mutators leaked the internal handle: {}",
         out.stdout
     );
 }
 
 #[test]
-fn repl_renders_queue_and_heap_literals_in_bindings() {
+fn repl_renders_queue_and_heap_bindings() {
     let out = run_repl(
-        "let q = <[1, 2, 3]\nlet s = [1, 2, 3]>\nlet max = ^[1, 2, 3]\nlet min = _[1, 2, 3]\n%b\nmax.peek()\nmin.peek()\n",
+        "let q = Queue::from([1, 2, 3])\nlet s = Stack::from([1, 2, 3])\nlet max = MaxHeap::from([1, 2, 3])\nlet min = MinHeap::from([1, 2, 3])\n%b\nmax.peek()\nmin.peek()\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    assert!(
-        out.stdout.contains("q: VecQueue<i64> = <[1, 2, 3]"),
-        "queue literal did not render through %b: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout.contains("s: VecStack<i64> = [1, 2, 3]>"),
-        "stack literal did not render through %b: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout.contains("max: MaxHeap<i64> = ^["),
-        "max heap literal did not render through %b: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout.contains("min: MinHeap<i64> = _["),
-        "min heap literal did not render through %b: {}",
-        out.stdout
-    );
+    for expected in [
+        "q: Queue<i64> = Queue [1, 2, 3]",
+        "s: Stack<i64> = Stack [1, 2, 3]",
+        "max: MaxHeap<i64> = MaxHeap [",
+        "min: MinHeap<i64> = MinHeap [",
+    ] {
+        assert!(
+            out.stdout.contains(expected),
+            "binding did not render through %b: {expected}: {}",
+            out.stdout
+        );
+    }
     assert!(
         out.stdout.contains("Some(3)") && out.stdout.contains("Some(1)"),
-        "max heap peek should return largest value: {}",
+        "heap peeks should surface the extremes: {}",
         out.stdout
     );
 }
@@ -3474,7 +3465,7 @@ fn repl_renders_queue_and_heap_literals_in_bindings() {
 #[test]
 fn repl_or_insert_persists_and_cannot_retype_the_map() {
     let out = run_repl(
-        "let mut h = HashMap::new()\n\
+        "let mut h = Map::new()\n\
          h.insert(\"a\", 1)\n\
          h.or_insert(\"c\", 0)\n\
          h.get_or(\"c\", 5)\n\
@@ -3489,7 +3480,7 @@ fn repl_or_insert_persists_and_cannot_retype_the_map() {
     );
     assert!(
         out.stderr
-            .contains("expected `HashMap<String, i64>`, found `i64`"),
+            .contains("expected `Map<String, i64>`, found `i64`"),
         "invalid map assignment was not rejected: {}",
         out.stderr
     );
@@ -3503,7 +3494,7 @@ fn repl_or_insert_persists_and_cannot_retype_the_map() {
 #[test]
 fn repl_bare_map_iteration_formats_keys_and_returns_unit() {
     let out = run_repl(
-        "let mut h = HashMap::new()\n\
+        "let mut h = Map::new()\n\
          h.insert(\"a\", 1)\n\
          h.insert(\"b\", 2)\n\
          %b\n\
@@ -3512,7 +3503,7 @@ fn repl_bare_map_iteration_formats_keys_and_returns_unit() {
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout
-            .contains(r#"h: HashMap<String, i64> = {"a": 1, "b": 2}"#),
+            .contains(r#"h: Map<String, i64> = {"a": 1, "b": 2}"#),
         "map binding did not quote string keys: {}",
         out.stdout
     );

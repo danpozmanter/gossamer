@@ -309,7 +309,7 @@ impl Amp {
 }
 
 fn main() {
-    let mut amps = Vec::from([Amp::new(); 3])
+    let mut amps = Vec::from(#[Amp::new(); 3])
     for i in 0..3 {
         Amp::run(&mut amps[i], i + 10)
     }
@@ -351,7 +351,7 @@ impl Amp {
 }
 
 fn main() {
-    let mut amps = Vec::from([Amp::new(); 3])
+    let mut amps = Vec::from(#[Amp::new(); 3])
     for i in 0..3 {
         Amp::run(&mut amps[i], i + 10)
     }

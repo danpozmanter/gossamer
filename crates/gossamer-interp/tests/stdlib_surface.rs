@@ -80,15 +80,15 @@ fn main() {
 fn hashset_supports_insert_remove_and_contains() {
     let src = r#"
 fn main() {
-    let s = HashSet::new()
-    HashSet::insert(s, 1)
-    HashSet::insert(s, 2)
-    HashSet::insert(s, 1)
-    println(HashSet::len(s))
-    println(HashSet::contains(s, 2))
-    HashSet::remove(s, 1)
-    println(HashSet::contains(s, 1))
-    println(HashSet::len(s))
+    let s = Set::new()
+    Set::insert(s, 1)
+    Set::insert(s, 2)
+    Set::insert(s, 1)
+    println(Set::len(s))
+    println(Set::contains(s, 2))
+    Set::remove(s, 1)
+    println(Set::contains(s, 1))
+    println(Set::len(s))
 }
 "#;
     assert_eq!(run(src), "2\ntrue\nfalse\n1\n");

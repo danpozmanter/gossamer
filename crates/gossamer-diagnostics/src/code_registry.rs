@@ -448,6 +448,14 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "Expression-bodied match arms on the same line require a comma boundary. Add a comma, or begin the next arm on a new line.",
     ),
     (
+        "GP0032",
+        "A bracket spelling that used to build a container is no longer syntax. Construct the container through its type instead: `Type::new()` for an empty one, or `Type::from([a, b, c])`.",
+    ),
+    (
+        "GP0033",
+        "A repeat literal is a fixed array, written `#[value; count]`. Bare brackets build a Vec from the elements listed inside them.",
+    ),
+    (
         "GR0001",
         "A name used in source could not be resolved to a declaration.\n\
                      Check the spelling, whether a `use` brings the name into scope,\n\
@@ -475,6 +483,10 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      Every module has exactly one canonical path (e.g. JSON lives\n\
                      at `std::encoding::json`); check `gos doc` or the stdlib\n\
                      reference for the module's path.",
+    ),
+    (
+        "GR0006",
+        "A container spelling that a canonical name replaced. Each container has exactly one name - import and write that one.",
     ),
     (
         "GT0001",

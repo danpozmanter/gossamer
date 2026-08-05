@@ -730,6 +730,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -846,6 +848,34 @@
 
 
     Comptime
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../language/tuples/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Tuples
 
 
 
@@ -2553,14 +2583,15 @@ the top.</p>
   <code>[a, b]</code> create Vec values by default.</li>
 <li><code>{key: value}</code> creates a <code>Map&lt;K, V&gt;</code>, and <code>#{a, b}</code> creates a
   <code>Set&lt;T&gt;</code> unless an expected <code>BTreeSet&lt;T&gt;</code> type shapes it.</li>
-<li><code>&lt;[a, b]</code> creates a <code>Queue&lt;i64&gt;</code> FIFO queue, <code>[a, b]&gt;</code> creates a
-  <code>Stack&lt;i64&gt;</code> LIFO stack, <code>^[a, b]</code> creates a <code>MaxHeap&lt;i64&gt;</code>, and
-  <code>_[a, b]</code> creates a <code>MinHeap&lt;i64&gt;</code> in Phase 1.</li>
+<li>Queues, stacks, deques, and heaps have no literal form. Build them through
+  their type: <code>Queue::new()</code> / <code>Queue::from([a, b])</code>, and the same <code>new</code> /
+  <code>from</code> pair on <code>Stack</code>, <code>Deque</code>, <code>MaxHeap</code>, and <code>MinHeap</code>.</li>
+<li><code>(a, b, c)</code> creates a tuple, whose element types may differ.</li>
 </ul>
 <p>See <a href="../collection_literals/">Collection literals</a> for examples of Vec,
 fixed-array, Map, Set, BTreeSet, Queue, Stack, Deque,
 MaxHeap, and MinHeap
-construction.</p>
+construction, and <a href="../language/tuples/">Tuples</a> for the tuple surface.</p>
 <p><code>&amp;[T; N]</code> and <code>&amp;Vec&lt;T&gt;</code> coerce to <code>&amp;[T]</code>; their mutable forms coerce to
 <code>&amp;mut [T]</code>. Arrays and slices support queries and non-resizing operations.
 Mutable arrays and slices can reorder or replace existing elements with

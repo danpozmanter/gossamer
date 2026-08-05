@@ -14,15 +14,14 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 |---|---|---|
 | [`BTreeMap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BTreeMap` | Ordered key-value map backed by BTreeMap. |
 | [`BTreeSet`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BTreeSet` | Ordered unique-value set backed by BTreeSet. |
-| [`BinaryHeap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BinaryHeap` | Alias for `MaxHeap<T>`; underlying storage is BinaryHeap. |
-| [`MaxHeap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type MaxHeap` | Max-priority heap (MaxBinaryHeap) backed by BinaryHeap; use `^[1, 2, 3]` for literals. |
-| [`MinHeap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type MinHeap` | Min-priority heap (MinBinaryHeap) backed by BinaryHeap; use `_[1, 2, 3]` for literals. |
-| [`Map`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Map` | Key-value map (HashMap) backed by the swiss-table layout. |
-| [`Set`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Set` | Unique-value set (HashSet) backed by a hash table. |
+| [`MaxHeap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type MaxHeap` | Max-priority heap; use `MaxHeap::new()` or `MaxHeap::from([1, 2, 3])`. |
+| [`MinHeap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type MinHeap` | Min-priority heap; use `MinHeap::new()` or `MinHeap::from([1, 2, 3])`. |
+| [`Map`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Map` | Key-value map backed by the swiss-table layout; literals use `{key: value}`. |
+| [`Set`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Set` | Unique-value set backed by a hash table; literals use `#{a, b}`. |
 | [`Vec`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Vec` | Growable contiguous sequence. |
-| [`Deque`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Deque` | Double-ended queue (VecDeque) with explicit front/back methods such as `push_back` and `pop_front`. |
-| [`Queue`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Queue` | FIFO queue (VecQueue) backed by VecDeque; use `<[1, 2, 3]` for literals and `push`, `pop`, `peek`, `len`, `is_empty`, and `clear`. |
-| [`Stack`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Stack` | LIFO stack (VecStack) backed by VecDeque; use `[1, 2, 3]>` for literals and `push`, `pop`, `peek`, `len`, `is_empty`, and `clear`. |
+| [`Deque`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Deque` | Double-ended queue with explicit front/back methods such as `push_back` and `pop_front`; use `Deque::new()` or `Deque::from([1, 2, 3])`. |
+| [`Queue`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Queue` | FIFO-only queue; use `Queue::new()` or `Queue::from([1, 2, 3])`, then `push`, `pop`, `peek`, `len`, `is_empty`, and `clear`. |
+| [`Stack`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Stack` | LIFO-only stack; use `Stack::new()` or `Stack::from([1, 2, 3])`, then `push`, `pop`, `peek`, `len`, `is_empty`, and `clear`. |
 | [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn len(xs: Vec<i64>) -> i64` | Element count. |
 | [`peek_back`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek_back(xs: Vec<i64>) -> Option<i64>` | Back element, if present. |
 | [`peek_front`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek_front(xs: Vec<i64>) -> Option<i64>` | Front element, if present. |

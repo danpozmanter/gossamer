@@ -73,6 +73,51 @@ pub(crate) struct DocumentAnalysis {
     pub(crate) user_len: u32,
 }
 
+/// Assembles the project compilation unit for a `file://` document,
+/// using the editor's buffer for the open file and the on-disk text for
+/// everything else. Returns `source` unchanged for a document with no
+/// filesystem path or one that is not inside a project.
+#[cfg(not(target_arch = "wasm32"))]
+fn bundle_project_unit(uri: &str, source: &str) -> String {
+    let Some(path) = uri_to_path(uri) else {
+        return source.to_string();
+    };
+    gossamer_pkg::bundle::bundle_entry_source(&path, source.to_string())
+}
+
+/// The wasm build has no filesystem to read sibling modules from, so a
+/// document is its own compilation unit there.
+#[cfg(target_arch = "wasm32")]
+fn bundle_project_unit(_uri: &str, source: &str) -> String {
+    source.to_string()
+}
+
+/// Decodes a `file://` URI into a filesystem path, undoing the percent
+/// escapes an editor applies to spaces and other reserved characters.
+#[cfg(not(target_arch = "wasm32"))]
+fn uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
+    let rest = uri.strip_prefix("file://")?;
+    // `file:///path` (empty authority) is the only form editors send for
+    // a local file; anything with a host is not a path we can read.
+    let rest = rest.strip_prefix('/').map(|r| format!("/{r}"))?;
+    let bytes = rest.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok()?;
+            if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    Some(std::path::PathBuf::from(String::from_utf8(out).ok()?))
+}
+
 /// Runs the full pipeline over `source` and returns the resulting
 /// [`DocumentAnalysis`].
 pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
@@ -83,7 +128,14 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
     // unchanged; without this step the LSP reports `from_json` (and
     // every other synthesized name) as unresolved while `gos check`
     // accepts the file.
-    let augmented = gossamer_parse::autoderive::augment_source(source);
+    // Mirror the driver's project bundling too: an entry file's sibling
+    // and subdirectory modules, plus its path dependencies, form one
+    // compilation unit. Without this a cross-module reference that
+    // `gos check` / `gos run` resolve reads as an unresolved name in the
+    // editor. The bundle appends, so every span in the open buffer is
+    // unchanged.
+    let bundled = bundle_project_unit(uri, source);
+    let augmented = gossamer_parse::autoderive::augment_source(&bundled);
     let user_len = u32::try_from(source.len()).unwrap_or(u32::MAX);
     let mut map = SourceMap::new();
     let file = map.add_file(uri.to_string(), augmented.clone());

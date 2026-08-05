@@ -125,6 +125,15 @@ struct CoreMethodHelp {
     doc: &'static str,
 }
 
+/// A built-in type whose surface is syntax rather than methods, so it
+/// has no entry in [`CORE_METHODS`] to be discovered through.
+struct CoreTypeHelp {
+    name: &'static str,
+    signature: &'static str,
+    doc: &'static str,
+    example: &'static str,
+}
+
 #[derive(Clone, Debug)]
 struct CoreMethodEntry {
     owner: String,
@@ -157,6 +166,22 @@ const PRELUDE_BUILTINS: &[PreludeBuiltinHelp] = &[
         doc: "Panics when left and right are not equal.",
     },
 ];
+
+// Types the language provides through syntax alone. They own no methods,
+// so `%info` would otherwise have nothing to report for them.
+const CORE_TYPES: &[CoreTypeHelp] = &[CoreTypeHelp {
+    name: "Tuple",
+    // Rendered like the other `[type]` entries, whose one-line form is the
+    // bare name; the spelling `(A, B, ...)` leads the doc instead.
+    signature: "",
+    doc: "`(A, B, ...)` - a fixed-length group of values whose element types may differ. \
+          Written `(a, b, c)`, with `()` for the empty tuple and a trailing \
+          comma for the one-element form `(a,)`. Elements are read and \
+          assigned positionally (`t.0`, `t.1`, chained as `t.0.1`), bound by \
+          destructuring (`let (a, b) = pair`), and compared field by field in \
+          declaration order.",
+    example: "let t = (1, \"two\", 3.0); println!(\"{} {}\", t.0, t.1); let (n, s, f) = t",
+}];
 
 // Core receiver and associated methods are runtime builtins, not stdlib module
 // exports. Keep them visible to REPL discovery so working calls such as
@@ -1472,62 +1497,6 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         doc: "Removes all values.",
     },
     CoreMethodHelp {
-        owner: "BinaryHeap",
-        name: "new",
-        kind: "assoc",
-        signature: "fn new<T>() -> BinaryHeap<T>",
-        doc: "Compatibility alias for MaxHeap::new.",
-    },
-    CoreMethodHelp {
-        owner: "BinaryHeap",
-        name: "from",
-        kind: "assoc",
-        signature: "fn from<T, const N: usize>(values: [T; N]) -> BinaryHeap<T>",
-        doc: "Compatibility alias for MaxHeap::from.",
-    },
-    CoreMethodHelp {
-        owner: "BinaryHeap",
-        name: "push",
-        kind: "method",
-        signature: "fn push<T>(self: &mut BinaryHeap<T>, value: T) -> ()",
-        doc: "Pushes a value onto the max heap.",
-    },
-    CoreMethodHelp {
-        owner: "BinaryHeap",
-        name: "pop",
-        kind: "method",
-        signature: "fn pop<T>(self: &mut BinaryHeap<T>) -> Option<T>",
-        doc: "Removes and returns the largest value when present.",
-    },
-    CoreMethodHelp {
-        owner: "BinaryHeap",
-        name: "peek",
-        kind: "method",
-        signature: "fn peek<T>(self: BinaryHeap<T>) -> Option<T>",
-        doc: "Returns the largest value without removing it.",
-    },
-    CoreMethodHelp {
-        owner: "BinaryHeap",
-        name: "len",
-        kind: "method",
-        signature: "fn len<T>(self: BinaryHeap<T>) -> i64",
-        doc: "Returns the number of values.",
-    },
-    CoreMethodHelp {
-        owner: "BinaryHeap",
-        name: "is_empty",
-        kind: "method",
-        signature: "fn is_empty<T>(self: BinaryHeap<T>) -> bool",
-        doc: "Returns true when the heap has no values.",
-    },
-    CoreMethodHelp {
-        owner: "BinaryHeap",
-        name: "clear",
-        kind: "method",
-        signature: "fn clear<T>(self: &mut BinaryHeap<T>) -> ()",
-        doc: "Removes all values.",
-    },
-    CoreMethodHelp {
         owner: "MaxHeap",
         name: "new",
         kind: "assoc",
@@ -2198,6 +2167,10 @@ struct ReplValueType {
     references: Vec<gossamer_types::Mutbl>,
     method_owner: Option<String>,
     fixed_array: bool,
+    /// Rendered element types when the binding is a tuple. A tuple owns
+    /// no methods, so its positional elements are the surface `%explain`
+    /// and `%info` have to report.
+    tuple_elements: Vec<String>,
 }
 
 impl ReplValueType {
@@ -2226,11 +2199,20 @@ impl ReplValueType {
             }
             _ => (None, false),
         };
+        let tuple_elements = match tcx.kind(current) {
+            Some(gossamer_types::TyKind::Tuple(elems)) => elems
+                .clone()
+                .iter()
+                .map(|elem| gossamer_types::render_public_ty(tcx, *elem))
+                .collect(),
+            _ => Vec::new(),
+        };
         Self {
             rendered,
             references,
             method_owner,
             fixed_array,
+            tuple_elements,
         }
     }
 
@@ -2240,6 +2222,7 @@ impl ReplValueType {
             references: Vec::new(),
             method_owner: None,
             fixed_array: false,
+            tuple_elements: Vec::new(),
         }
     }
 }
@@ -2248,37 +2231,11 @@ fn render_repl_binding_value(value: &gossamer_interp::Value, ty: &ReplValueType)
     let mut rendered = render_repl_value(value);
     if ty.fixed_array && rendered.starts_with('[') {
         rendered = format!("#{rendered}");
-    } else if matches!(
-        ty.method_owner.as_deref(),
-        Some("Set" | "HashSet" | "BTreeSet")
-    ) && let Some((_, rest)) = rendered.split_once(' ')
+    } else if matches!(ty.method_owner.as_deref(), Some("Set" | "BTreeSet"))
+        && let Some((_, rest)) = rendered.split_once(' ')
         && rest.starts_with('{')
     {
         rendered = format!("#{rest}");
-    } else if matches!(ty.method_owner.as_deref(), Some("Queue" | "VecQueue"))
-        && let Some((_, rest)) = rendered.split_once(' ')
-        && rest.starts_with('[')
-    {
-        rendered = format!("<{rest}");
-    } else if matches!(ty.method_owner.as_deref(), Some("Stack" | "VecStack"))
-        && let Some((_, rest)) = rendered.split_once(' ')
-        && rest.starts_with('[')
-    {
-        rendered = format!("{rest}>");
-    } else if matches!(
-        ty.method_owner.as_deref(),
-        Some("BinaryHeap" | "MaxBinaryHeap" | "MaxHeap")
-    ) && let Some((_, rest)) = rendered.split_once(' ')
-        && rest.starts_with('[')
-    {
-        rendered = format!("^{rest}");
-    } else if matches!(
-        ty.method_owner.as_deref(),
-        Some("MinBinaryHeap" | "MinHeap")
-    ) && let Some((_, rest)) = rendered.split_once(' ')
-        && rest.starts_with('[')
-    {
-        rendered = format!("_{rest}");
     }
     for mutability in ty.references.iter().rev() {
         rendered = format!("{}{rendered}", mutability.prefix());
@@ -2521,6 +2478,26 @@ fn repl_binding_info(
             (_, _, false) => "shared referent",
         };
         let mut out = format!("{} [binding]\n  type: {}\n  capability: {capability}\n", var.name, ty.rendered);
+        if !ty.tuple_elements.is_empty() {
+            out.push_str("  method surface: tuple (positional elements; no methods)\n");
+            for (index, elem) in ty.tuple_elements.iter().enumerate() {
+                out.push_str(&format!("  {}.{index}: {elem} [element]\n", var.name));
+            }
+            let mutability = if can_mutate {
+                format!("; assign with {}.0 = ...", var.name)
+            } else {
+                String::new()
+            };
+            out.push_str(&format!(
+                "  Example: let ({}) = {}{mutability}\n",
+                (0..ty.tuple_elements.len())
+                    .map(|i| format!("e{i}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                var.name
+            ));
+            return out;
+        }
         let Some(ref owner) = ty.method_owner else {
             out.push_str(&format!(
                 "\nNo cataloged methods for this binding's type.\nExample: let copy = {}",
@@ -2573,6 +2550,9 @@ fn repl_binding_listing(
         resolve_repl_binding(declarations, lets, name).map(|(_value, ty)| {
             let prefix = if var.mutable { "mut " } else { "" };
             let mut out = format!("{prefix}{name}: {} [binding]\n", ty.rendered);
+            for (index, elem) in ty.tuple_elements.iter().enumerate() {
+                out.push_str(&format!("{name}.{index}: {elem} [element]\n"));
+            }
             let Some(ref owner) = ty.method_owner else {
                 return out.trim_end().to_string();
             };
@@ -3112,6 +3092,19 @@ fn render_catalog_query_matches(query: &str, details: bool) -> String {
         );
         entries.push(entry);
     }
+    for core_type in matching_core_types(query) {
+        let mut entry = String::new();
+        push_catalog_match(
+            &mut entry,
+            core_type.name,
+            "type",
+            core_type.signature,
+            core_type.doc,
+            Some("Builtin"),
+            details,
+        );
+        entries.push(entry);
+    }
     for owner in matching_core_namespaces(query) {
         let mut entry = String::new();
         push_catalog_match(
@@ -3217,6 +3210,9 @@ fn catalog_kind_label(kind: &str) -> &str {
 }
 
 fn catalog_example(path: &str, kind: &str, signature: &str) -> String {
+    if let Some(core_type) = CORE_TYPES.iter().find(|entry| entry.name == path) {
+        return core_type.example.to_string();
+    }
     match path {
         "Map::from" | "HashMap::from" => {
             return "let empty: Map<String, i64> = Map::from([]); let map = {\"one\": 1, \"two\": 2}; let also = Map::from([(\"one\", 1), (\"two\", 2)])".to_string();
@@ -3271,12 +3267,12 @@ fn example_receiver(owner: &str) -> &'static str {
     match owner.rsplit("::").next().unwrap_or(owner) {
         "String" | "str" => "\"text\"",
         "Vec" | "Slice" | "Array" => "values",
-        "Map" | "HashMap" | "BTreeMap" => "map",
-        "Set" | "HashSet" | "BTreeSet" => "set",
-        "Deque" | "VecDeque" => "deque",
-        "Queue" | "VecQueue" => "queue",
-        "Stack" | "VecStack" => "stack",
-        "BinaryHeap" | "MaxBinaryHeap" | "MaxHeap" | "MinBinaryHeap" | "MinHeap" => "heap",
+        "Map" | "BTreeMap" => "map",
+        "Set" | "BTreeSet" => "set",
+        "Deque" => "deque",
+        "Queue" => "queue",
+        "Stack" => "stack",
+        "MaxHeap" | "MinHeap" => "heap",
         "Option" => "option",
         "Result" => "result",
         "Iterator" | "Range" => "iter",
@@ -3292,16 +3288,15 @@ fn core_namespace_description(owner: &str) -> &'static str {
         "Array" => "Fixed-size contiguous sequence.",
         "Slice" => "Borrowed contiguous sequence.",
         "Vec" => "Growable contiguous sequence.",
-        "Map" => "Key-value map (HashMap).",
-        "Set" => "Unique-value set (HashSet).",
+        "Map" => "Key-value map.",
+        "Set" => "Unique-value set.",
         "BTreeMap" => "Ordered key-value map (BTreeMap).",
         "BTreeSet" => "Ordered unique-value set (BTreeSet).",
-        "Deque" => "Double-ended queue (VecDeque).",
-        "Queue" => "FIFO queue (VecQueue).",
-        "Stack" => "LIFO stack (VecStack).",
-        "BinaryHeap" => "Alias for MaxHeap backed by BinaryHeap.",
-        "MaxHeap" => "Max-priority heap (MaxBinaryHeap).",
-        "MinHeap" => "Min-priority heap (MinBinaryHeap).",
+        "Deque" => "Double-ended queue.",
+        "Queue" => "FIFO-only queue.",
+        "Stack" => "LIFO-only stack.",
+        "MaxHeap" => "Max-priority heap.",
+        "MinHeap" => "Min-priority heap.",
         "Iterator" => "Lazy sequence iterator.",
         "Option" => "Optional value.",
         "Result" => "Success or error value.",
@@ -3939,13 +3934,6 @@ fn canonical_runtime_owner(owner: &str) -> Option<String> {
         "result" => "Result",
         "bytes::Buffer" => "Buffer",
         "bytes::Builder" => "Builder",
-        "HashMap" => "Map",
-        "HashSet" => "Set",
-        "VecDeque" => "Deque",
-        "VecQueue" => "Queue",
-        "VecStack" => "Stack",
-        "MaxBinaryHeap" => "MaxHeap",
-        "MinBinaryHeap" => "MinHeap",
         other => other,
     };
     if matches!(
@@ -4040,6 +4028,13 @@ fn matching_builtin_macros(query: &str) -> Vec<&'static BuiltinMacro> {
         .collect()
 }
 
+fn matching_core_types(query: &str) -> Vec<&'static CoreTypeHelp> {
+    CORE_TYPES
+        .iter()
+        .filter(|core_type| symbol_query_matches(core_type.name, query))
+        .collect()
+}
+
 fn matching_prelude_builtins(query: &str) -> Vec<&'static PreludeBuiltinHelp> {
     PRELUDE_BUILTINS
         .iter()
@@ -4095,16 +4090,7 @@ fn core_lower_path(method: &CoreMethodEntry) -> String {
 }
 
 fn canonical_collection_owner(owner: &str) -> &str {
-    match owner.strip_prefix("collections::").unwrap_or(owner) {
-        "HashMap" => "Map",
-        "HashSet" => "Set",
-        "VecDeque" => "Deque",
-        "VecQueue" => "Queue",
-        "VecStack" => "Stack",
-        "MaxBinaryHeap" => "MaxHeap",
-        "MinBinaryHeap" => "MinHeap",
-        other => other,
-    }
+    owner.strip_prefix("collections::").unwrap_or(owner)
 }
 
 fn info_search_query(arg: &str) -> String {
@@ -4350,12 +4336,9 @@ fn repl_expr_contains_ref_mut(expr: &gossamer_ast::Expr) -> bool {
                 .any(|field| field.value.as_ref().is_some_and(repl_expr_contains_ref_mut))
                 || base.as_deref().is_some_and(repl_expr_contains_ref_mut)
         }
-        ExprKind::Array(array)
-        | ExprKind::FixedArray(array)
-        | ExprKind::QueueLiteral(array)
-        | ExprKind::StackLiteral(array)
-        | ExprKind::MaxHeapLiteral(array)
-        | ExprKind::MinHeapLiteral(array) => repl_array_expr_contains_ref_mut(array),
+        ExprKind::Array(array) | ExprKind::FixedArray(array) => {
+            repl_array_expr_contains_ref_mut(array)
+        }
         ExprKind::Range { start, end, .. } => {
             start.as_deref().is_some_and(repl_expr_contains_ref_mut)
                 || end.as_deref().is_some_and(repl_expr_contains_ref_mut)
@@ -4462,12 +4445,7 @@ fn repl_expr_mutates_binding(
         ExprKind::Struct { fields, base, .. } => {
             repl_struct_expr_mutates_binding(fields, base.as_deref(), user_mutating_methods)
         }
-        ExprKind::Array(array)
-        | ExprKind::FixedArray(array)
-        | ExprKind::QueueLiteral(array)
-        | ExprKind::StackLiteral(array)
-        | ExprKind::MaxHeapLiteral(array)
-        | ExprKind::MinHeapLiteral(array) => {
+        ExprKind::Array(array) | ExprKind::FixedArray(array) => {
             repl_array_expr_mutates_binding(array, user_mutating_methods)
         }
         ExprKind::Range { start, end, .. } => repl_optional_pair_mutates_binding(
@@ -4966,8 +4944,8 @@ mod tests {
     #[test]
     fn repl_binding_type_inference_tracks_queue_and_stack_owners() {
         let lets = vec![
-            "let mut queue = <[1, 2, 3]".to_string(),
-            "let mut stack = [1, 2, 3]>".to_string(),
+            "let mut queue = Queue::from([1, 2, 3])".to_string(),
+            "let mut stack = Stack::from([1, 2, 3])".to_string(),
         ];
 
         let queue = infer_repl_binding_type(&[], &lets, "queue").expect("infer queue type");
@@ -5010,20 +4988,8 @@ mod tests {
     #[test]
     fn repl_metadata_does_not_leak_runtime_registration_text_for_core_types() {
         let checked = [
-            "String",
-            "Vec",
-            "Map",
-            "BTreeMap",
-            "Set",
-            "BTreeSet",
-            "Deque",
-            "Queue",
-            "Stack",
-            "BinaryHeap",
-            "MaxHeap",
-            "MinHeap",
-            "Option",
-            "Result",
+            "String", "Vec", "Map", "BTreeMap", "Set", "BTreeSet", "Deque", "Queue", "Stack",
+            "MaxHeap", "MinHeap", "Option", "Result",
         ];
         let mut leaked = Vec::new();
         for entry in core_method_entries() {
@@ -5049,26 +5015,18 @@ mod tests {
             "Vec::reserve",
             "Vec::truncate",
             "Map::insert",
-            "HashMap::insert",
             "BTreeMap::insert",
             "BTreeMap::from",
             "Set::union",
-            "HashSet::union",
             "BTreeSet::union",
             "Deque::push_back",
-            "VecDeque::push_back",
             "Deque::clear",
             "Queue::push",
-            "VecQueue::push",
             "Queue::len",
             "Stack::pop",
-            "VecStack::pop",
             "Stack::peek",
             "MaxHeap::push",
-            "MaxBinaryHeap::push",
             "MinHeap::push",
-            "MinBinaryHeap::push",
-            "BinaryHeap::push",
             "Option::map",
             "Result::map_err",
         ] {

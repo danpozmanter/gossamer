@@ -24,7 +24,7 @@ Receiver methods on built-in types such as `String`, `Vec`, `Map`, `Option`, and
 | [`std::archive::zip`](#stdarchivezip) | 3 | ZIP archive reader and writer. |
 | [`std::bufio`](#stdbufio) | 7 | Buffered readers, writers, and line scanners. |
 | [`std::bytes`](#stdbytes) | 5 | Byte buffers, builders, and slice helpers. |
-| [`std::collections`](#stdcollections) | 18 | Built-in container types. |
+| [`std::collections`](#stdcollections) | 10 | Built-in container types. |
 | [`std::collections::deque`](#stdcollectionsdeque) | 7 | Double-ended queue over Vec<i64>. Re-bind shape on every mutator. |
 | [`std::collections::heap`](#stdcollectionsheap) | 4 | Binary min-heap (priority queue) over Vec<i64>. Re-bind shape: `let h = heap::push(h, v)`. |
 | [`std::collections::ordered_map`](#stdcollectionsordered_map) | 5 | Sorted key/value map (i64 -> i64) backed by a flat pair Vec. Re-bind on every mutator. |
@@ -187,22 +187,14 @@ Built-in container types.
 |------|------|-----|
 | `BTreeMap` | type | Ordered key-value map backed by BTreeMap. |
 | `BTreeSet` | type | Ordered unique-value set backed by BTreeSet. |
-| `BinaryHeap` | type | Alias for `MaxHeap<T>`; underlying storage is BinaryHeap. |
-| `Deque` | type | Double-ended queue (VecDeque) with explicit front/back methods; use `Deque::new()` or `Deque::from([a, b])`. |
-| `HashMap` | type | Alias for `Map<K, V>`; underlying storage is HashMap. |
-| `HashSet` | type | Alias for `Set<T>`; underlying storage is HashSet. |
-| `Map` | type | Key-value map (HashMap) backed by the swiss-table layout; literals use `{key: value}` and empty map literals use `{}`. |
-| `MaxBinaryHeap` | type | Alias for `MaxHeap<T>`; underlying storage is BinaryHeap. |
-| `MaxHeap` | type | Max-priority heap (MaxBinaryHeap) backed by BinaryHeap; literals use `^[a, b]` and empty heap literals use `^[]`. |
-| `MinBinaryHeap` | type | Alias for `MinHeap<T>`; underlying storage is BinaryHeap with reversed ordering. |
-| `MinHeap` | type | Min-priority heap (MinBinaryHeap) backed by BinaryHeap; literals use `_[a, b]` and empty heap literals use `_[]`. |
-| `Queue` | type | FIFO queue (VecQueue) backed by VecDeque; literals use `<[a, b]` and empty queue literals use `<[]`. |
-| `Set` | type | Unique-value set (HashSet) backed by a hash table; literals use `#{a, b}` and empty set literals use `#{}`. |
-| `Stack` | type | LIFO stack (VecStack) backed by VecDeque; literals use `[a, b]>` and empty stack literals use `[]>`. |
+| `Deque` | type | Double-ended queue with explicit front/back methods; use `Deque::new()` or `Deque::from([a, b])`. |
+| `Map` | type | Key-value map backed by the swiss-table layout; literals use `{key: value}` and empty map literals use `{}`. |
+| `MaxHeap` | type | Max-priority heap; use `MaxHeap::new()` or `MaxHeap::from([a, b])`. |
+| `MinHeap` | type | Min-priority heap; use `MinHeap::new()` or `MinHeap::from([a, b])`. |
+| `Queue` | type | FIFO-only queue; use `Queue::new()` or `Queue::from([a, b])`. |
+| `Set` | type | Unique-value set backed by a hash table; literals use `#{a, b}` and empty set literals use `#{}`. |
+| `Stack` | type | LIFO-only stack; use `Stack::new()` or `Stack::from([a, b])`. |
 | `Vec` | type | Growable contiguous sequence. Vec literals use `[a, b]` and empty Vec literals use `[]`. |
-| `VecDeque` | type | Alias for `Deque<T>`; underlying storage is VecDeque. |
-| `VecQueue` | type | Alias for `Queue<T>`; underlying storage is VecQueue backed by VecDeque. |
-| `VecStack` | type | Alias for `Stack<T>`; underlying storage is VecStack backed by VecDeque. |
 
 ## `std::collections::deque`
 

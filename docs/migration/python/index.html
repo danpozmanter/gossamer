@@ -474,6 +474,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -590,6 +592,34 @@
 
 
     Comptime
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../language/tuples/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Tuples
 
 
 
@@ -2189,7 +2219,7 @@ are returned as <code>Result&lt;T, E&gt;</code> instead of raised as exceptions.
 </tr>
 <tr>
 <td><code>collections.deque</code> as queue</td>
-<td><code>Queue&lt;i64&gt;</code> with <code>&lt;[a, b]</code>, <code>push</code>, and FIFO <code>pop</code></td>
+<td><code>Queue&lt;i64&gt;</code> from <code>Queue::from([a, b])</code>, <code>push</code>, and FIFO <code>pop</code></td>
 </tr>
 <tr>
 <td><code>collections.deque</code> as deque</td>
@@ -2197,11 +2227,11 @@ are returned as <code>Result&lt;T, E&gt;</code> instead of raised as exceptions.
 </tr>
 <tr>
 <td>stack list</td>
-<td><code>Stack&lt;i64&gt;</code> with <code>[a, b]&gt;</code>, <code>push</code>, and LIFO <code>pop</code></td>
+<td><code>Stack&lt;i64&gt;</code> from <code>Stack::from([a, b])</code>, <code>push</code>, and LIFO <code>pop</code></td>
 </tr>
 <tr>
 <td><code>heapq</code> min-heap</td>
-<td><code>MinHeap&lt;i64&gt;</code> with <code>_[...]</code>; use <code>MaxHeap&lt;i64&gt;</code> or <code>BinaryHeap&lt;i64&gt;</code> with <code>^[...]</code> for max-heap order</td>
+<td><code>MinHeap::from([...])</code>; use <code>MaxHeap::from([...])</code> for max-heap order</td>
 </tr>
 <tr>
 <td><code>asyncio.create_task</code></td>

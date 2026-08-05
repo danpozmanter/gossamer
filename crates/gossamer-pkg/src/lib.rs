@@ -23,6 +23,12 @@ pub mod sha256;
 
 pub use edition::Edition;
 
+/// Project source bundling: assembling an entry file plus its sibling
+/// modules and path dependencies into one compilation unit. Reads the
+/// project layout from disk, so it is native-only.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod bundle;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cache;
 #[cfg(not(target_arch = "wasm32"))]

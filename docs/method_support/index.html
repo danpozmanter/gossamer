@@ -474,6 +474,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -590,6 +592,34 @@
 
 
     Comptime
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../language/tuples/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Tuples
 
 
 
@@ -2538,9 +2568,13 @@ cannot change their length or capacity. Iterator combinators are used through
 <p>Map literals such as <code>{"one": 1}</code> construct <code>Map</code> values. Set literals
 such as <code>#{1, 2, 2}</code> construct <code>Set</code> values, or <code>BTreeSet</code> values when an
 expected <code>BTreeSet&lt;T&gt;</code> type is present.</p>
-<p>Longer aliases remain accepted: <code>HashMap</code> for <code>Map</code>, <code>HashSet</code> for <code>Set</code>,
-<code>VecDeque</code> for <code>Deque</code>, <code>VecQueue</code> for <code>Queue</code>, <code>VecStack</code> for <code>Stack</code>,
-<code>MaxBinaryHeap</code> for <code>MaxHeap</code>, and <code>MinBinaryHeap</code> for <code>MinHeap</code>.</p>
+<p>Every container has exactly one name. <code>HashMap</code>, <code>HashSet</code>, <code>VecDeque</code>,
+<code>VecQueue</code>, <code>VecStack</code>, <code>BinaryHeap</code>, <code>MaxBinaryHeap</code>, and <code>MinBinaryHeap</code> are
+not accepted; write <code>Map</code>, <code>Set</code>, <code>Deque</code>, <code>Queue</code>, <code>Stack</code>, <code>MaxHeap</code>, and
+<code>MinHeap</code>.</p>
+<p>A tuple has no methods: its surface is positional access (<code>t.0</code>), assignment
+through a <code>mut</code> binding, destructuring, and structural comparison. See
+<a href="../language/tuples/">Tuples</a>.</p>
 <table>
 <thead>
 <tr>
@@ -2921,7 +2955,7 @@ iteration and <code>to_vec</code> output.</p>
 <h2 id="deque">Deque<a class="headerlink" href="#deque" title="Permanent link">&para;</a></h2>
 <p>Phase 1 <code>Deque</code> support is <code>Deque&lt;i64&gt;</code>. It is a double-ended ring
 buffer; both ends are constant-time. The pop / peek methods return
-<code>Option&lt;i64&gt;</code>. Like Rust's <code>VecDeque</code>, use explicit front/back method names.</p>
+<code>Option&lt;i64&gt;</code>. Like Rust's <code>VecDeque</code>, <code>Deque</code> uses explicit front/back method names.</p>
 <table>
 <thead>
 <tr>
@@ -2981,7 +3015,7 @@ buffer; both ends are constant-time. The pop / peek methods return
 <h2 id="queue">Queue<a class="headerlink" href="#queue" title="Permanent link">&para;</a></h2>
 <p>Phase 1 <code>Queue</code> support is <code>Queue&lt;i64&gt;</code>. It is a restricted FIFO queue:
 <code>push</code> appends to the back, <code>pop</code> removes from the front, and <code>peek</code> observes
-the front without removing it. Use <code>&lt;[a, b]</code> for literals.</p>
+the front without removing it. Build one with <code>Queue::new()</code> or <code>Queue::from([a, b])</code>.</p>
 <table>
 <thead>
 <tr>
@@ -3026,7 +3060,7 @@ the front without removing it. Use <code>&lt;[a, b]</code> for literals.</p>
 <h2 id="stack">Stack<a class="headerlink" href="#stack" title="Permanent link">&para;</a></h2>
 <p>Phase 1 <code>Stack</code> support is <code>Stack&lt;i64&gt;</code>. It is a restricted LIFO stack:
 <code>push</code> appends to the top, <code>pop</code> removes from the top, and <code>peek</code> observes
-the top without removing it. Use <code>[a, b]&gt;</code> for literals.</p>
+the top without removing it. Build one with <code>Stack::new()</code> or <code>Stack::from([a, b])</code>.</p>
 <table>
 <thead>
 <tr>

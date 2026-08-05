@@ -386,7 +386,7 @@ fn build_string_map_capacity_main() -> (Body, TyCtxt) {
                 stmts: vec![const_int_assign(2, 16)],
                 terminator: Terminator::Call {
                     callee: Operand::Const(ConstValue::Str(
-                        "std::collections::HashMap::with_capacity".to_string(),
+                        "std::collections::Map::with_capacity".to_string(),
                     )),
                     args: vec![Operand::Copy(place(2))],
                     destination: place(1),

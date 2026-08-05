@@ -238,7 +238,7 @@ for s in shapes {
         </div>
 
         <div class="tabpanel" role="tabpanel" id="panel-collections" aria-labelledby="tab-collections" hidden>
-<pre><code class="language-gossamer">use std::collections::{BTreeSet, Map, Set, Deque}
+<pre><code class="language-gossamer">use std::collections::{BTreeSet, Map, Set, Deque, Queue, Stack, MaxHeap, MinHeap}
 
 let mut nums = []
 nums.push(10)
@@ -263,46 +263,45 @@ let removed_seen = seen.remove(3)
 println!("#{} Set: len={} removed={} has5={}",
     "{}", seen.len(), removed_seen, seen.contains(5))
 
-let mut ordered = #{}
+let mut ordered: BTreeSet&lt;i64&gt; = #{}
 ordered.insert(4)
 ordered.insert(1)
 let removed_ordered = ordered.remove(4)
 println!("#{} BTreeSet: len={} removed={} values={}",
     "{}", ordered.len(), removed_ordered, ordered.to_vec().join(","))
 
-let mut max_heap = ^[]
+let mut max_heap = MaxHeap::new()
 max_heap.push(5)
 max_heap.push(9)
 let largest = max_heap.pop().unwrap_or(0)
-println!("^[] MaxHeap: len={} removed={}", max_heap.len(), largest)
+println!("MaxHeap: len={} removed={}", max_heap.len(), largest)
 
-let mut min_heap = _[]
+let mut min_heap = MinHeap::new()
 min_heap.push(5)
 min_heap.push(2)
 let smallest = min_heap.pop().unwrap_or(0)
-println!("_[] MinHeap: len={} removed={}", min_heap.len(), smallest)
+println!("MinHeap: len={} removed={}", min_heap.len(), smallest)
 
-let mut deque = &lt;[]&gt;
+let mut deque = Deque::new()
 deque.push_front(2)
 deque.push_back(3)
 let front = deque.pop_front().unwrap_or(0)
 let back = deque.pop_back().unwrap_or(0)
-println!("&lt;[]&gt; as deque: front={} back={} len={}", front, back, deque.len())
+println!("Deque: front={} back={} len={}", front, back, deque.len())
 
-let mut queue = &lt;[];
-queue.push(7)
-queue.push(8)
+let mut queue = Queue::from([7, 8])
 queue.push(9)
-let next = queue.pop.unwrap_or(0)
-println!("&lt;[] as queue: next={} len={}", next, queue.len())
+let next = queue.pop().unwrap_or(0)
+println!("Queue: next={} len={}", next, queue.len())
 
-let mut stack = []&gt;;
-queue.push(7)
-queue.push(8)
-queue.push(9)
-let next = queue.pop.unwrap_or(0)
-println!("[]&gt; as stack: next={} len={}", next, queue.len())
-</code></pre>
+let mut stack = Stack::from([7, 8])
+stack.push(9)
+let top = stack.pop().unwrap_or(0)
+println!("Stack: top={} len={}", top, stack.len())
+
+let entry = (1, "widgets", 2.5)
+let (id, name, unit_price) = entry
+println!("Tuple: {} {} {:.2} (first={})", id, name, unit_price, entry.0)</code></pre>
         </div>
       </div>
     </section>

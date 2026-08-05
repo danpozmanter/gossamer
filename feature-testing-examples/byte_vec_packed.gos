@@ -3,8 +3,8 @@
 // zero-extend the byte (u8 is unsigned), so values above 127 come back whole.
 
 fn main() {
-    // Array index set/get, then byte-packed slice of a [u8; N] array.
-    let mut a = [0u8; 8]
+    // Array index set/get, then byte-packed slice of a #[u8; N] array.
+    let mut a = #[0u8; 8]
     let mut i = 0
     while i < 8 {
         a[i] = (i * 30 + 5) as u8
@@ -24,7 +24,7 @@ fn main() {
     println!(" len {}", s.len())
 
     // High-bit values must zero-extend, not sign-extend.
-    let mut hi = [0u8; 3]
+    let mut hi = #[0u8; 3]
     hi[0] = 200 as u8
     hi[1] = 255 as u8
     hi[2] = 128 as u8

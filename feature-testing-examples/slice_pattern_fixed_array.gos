@@ -1,4 +1,4 @@
-// Slice patterns over fixed-size array literals (`[T; N]`) bind prefix and
+// Slice patterns over fixed-size array literals (`#[T; N]`) bind prefix and
 // suffix elements and materialize the `..rest` sub-slice with the correct
 // element size, for both `[i64]` and `[String]` element types. The same
 // lowering runs on the bytecode VM, the Cranelift JIT, and the LLVM AOT

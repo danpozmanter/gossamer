@@ -1,10 +1,10 @@
-// A HashMap value that owns heap children (a String and a Vec) must keep
+// A Map value that owns heap children (a String and a Vec) must keep
 // those children alive after the inserting binding drops: the stored entry
 // aliases the value's single owning reference, so the source's drop must
 // not release them. Allocation churn between insert and read would expose a
 // premature free as corrupted reads. Must print `ok=50` on every tier.
 
-use std::collections::HashMap
+use std::collections::Map
 
 struct Item { name: String, tags: Vec<String>, n: i64 }
 
@@ -26,7 +26,7 @@ fn churn() -> i64 {
 }
 
 fn main() {
-    let mut m: HashMap<i64, Item> = HashMap::new()
+    let mut m: Map<i64, Item> = Map::new()
     let mut k = 0
     while k < 50 {
         m.insert(k, make(k))

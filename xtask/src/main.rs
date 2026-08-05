@@ -961,6 +961,18 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "Separate same-line expression arms with a comma, or start the next arm on a new line.",
     ),
     (
+        "GP0032",
+        "Parser",
+        "removed collection literal",
+        "A bracket spelling that used to build a container is no longer syntax. Construct the container through its type: `Type::new()` or `Type::from([a, b, c])`.",
+    ),
+    (
+        "GP0033",
+        "Parser",
+        "bare repeat literal",
+        "A repeat literal is a fixed array, written `#[value; count]`. Bare brackets build a Vec from the elements listed inside them.",
+    ),
+    (
         "GR0001",
         "Resolve",
         "unresolved name",
@@ -983,6 +995,12 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "Resolve",
         "duplicate import",
         "The same path was imported twice in the same `use` list. Drop the duplicate.",
+    ),
+    (
+        "GR0006",
+        "Resolve",
+        "removed stdlib item",
+        "A container spelling that a canonical name replaced. Each container has exactly one name - import and write that one.",
     ),
     (
         "GT0001",

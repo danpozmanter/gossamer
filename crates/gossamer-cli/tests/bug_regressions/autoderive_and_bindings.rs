@@ -165,7 +165,7 @@ fn sync_map_round_trips_set_get_delete_across_tiers() {
 use std::sync
 
 fn main() {
-    let m = sync::Map::new()
+    let mut m = sync::Map::new()
     sync::Map::insert(m, "alpha", "1")
     sync::Map::insert(m, "beta", "2")
     println!("len={}", sync::Map::len(m))
@@ -305,12 +305,12 @@ fn main() {
 fn multi_dim_fixed_array_index_walks_inner_strides() {
     // Bug fixed in 0.10.0: `lower_place_address` did not advance
     // `current_ty` after a `Projection::Index`, so `arr[i][j]` over
-    // `[[T; A]; B]` used the OUTER array's bounds for the inner
+    // `[#[T; A]; B]` used the OUTER array's bounds for the inner
     // index. Iron Knight's 3D zobrist write hit this.
     let src = r#"
 struct Z { pieces: [[[i64; 64]; 6]; 2] }
 fn main() {
-    let mut z = Z { pieces: [[[0; 64]; 6], [[0; 64]; 6]] }
+    let mut z = Z { pieces: #[#[#[0; 64]; 6], #[#[0; 64]; 6]] }
     let mut s: i64 = 0
     while s < 2 {
         let mut p: i64 = 0
@@ -408,17 +408,17 @@ fn main() {
 #[test]
 fn hashmap_keys_router_does_not_get_shadowed_by_json() {
     // Bug fixed in 0.10.0: `install_module("json", …)` unconditionally
-    // pushed `("keys", builtin_json_keys)` AFTER the HashMap surface
+    // pushed `("keys", builtin_json_keys)` AFTER the Map surface
     // registered `("keys", builtin_map_keys)`. The later json push
     // overrode the bare-name registry, so every `m.keys()` on a
-    // HashMap silently dispatched to the JSON helper which returns
+    // Map silently dispatched to the JSON helper which returns
     // `None` for non-Struct receivers - surfacing as `ks.len() == 0`
     // even with multiple inserts. Receiver-routing wrapper now
     // dispatches by Value shape.
     let src = r#"
-use std::collections::HashMap
+use std::collections::Map
 fn main() {
-    let mut m: HashMap<i64, i64> = HashMap::new()
+    let mut m: Map<i64, i64> = Map::new()
     m.insert(1, 10)
     m.insert(2, 20)
     m.insert(3, 30)
@@ -481,7 +481,7 @@ fn main() {
 #[test]
 fn typed_int_array_parameter_uses_generic_index_path() {
     // Function arguments use the general Value ABI. In particular, a
-    // `[i64; N]` parameter may be boxed as `Value::Array`, so parameters must
+    // `#[i64; N]` parameter may be boxed as `Value::Array`, so parameters must
     // stay on the generic indexing path rather than being incorrectly marked
     // as `Value::IntArray` fast-path storage.
     let src = r#"
@@ -599,7 +599,7 @@ fn mut_fixed_struct_array_not_promoted_keeps_layout_across_calls() {
     // data) and produced NaN. The promotion now fires only when the
     // binding actually receives a growth method (push / pop / sort /
     // …); a fixed array that is merely indexed, field-mutated, or
-    // passed to a `[T; N]` parameter keeps its inline layout.
+    // passed to a `#[T; N]` parameter keeps its inline layout.
     let src = r#"
 struct Body { x: f64, vx: f64, mass: f64 }
 fn total_momentum(b: &[Body; 2]) -> f64 {
@@ -847,12 +847,13 @@ fn main() {
 
 #[test]
 fn hashmap_set_is_an_error_not_a_silent_drop() {
-    // `set` is json's field-update helper; a `HashMap` receiver has
+    // `set` is json's field-update helper; a `Map` receiver has
     // `insert`. Routing a Map receiver into the json helper returned
     // the receiver unchanged, so the write vanished without a sound.
     let src = r#"
+use std::collections::Map
 fn main() {
-    let mut m = HashMap::new()
+    let mut m = Map::new()
     m.insert("a", 1)
     m.set("a", 7)
     println!("{:?}", m.get("a"))
@@ -1009,13 +1010,13 @@ fn main() {
 fn hashmap_insert_option_matches_across_tiers() {
     let src = r#"
 fn main() {
-	    let mut values: HashMap<i64, i64> = HashMap::new()
+	    let mut values: Map<i64, i64> = Map::new()
     println!("{}", values.insert(4, 10).is_none())
     println!("{}", values.insert(4, 12).unwrap_or(-1))
     println!("{}", values.get(4).unwrap_or(-1))
     println!("{}", values.remove(4).unwrap_or(-1))
     println!("{}", values.remove(4).is_none())
-    let mut words: HashMap<String, String> = HashMap::new()
+    let mut words: Map<String, String> = Map::new()
     println!("{}", words.insert("key", "first").is_none())
     println!("{}", words.insert("key", "second").unwrap_or("missing"))
     println!("{}", words.get("key").unwrap_or("missing"))

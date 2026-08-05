@@ -311,7 +311,7 @@ fn is_scalar_fmt_name(name: &str) -> bool {
 
 /// Whether a field type renders inside a synthesized `fmt` on the compiled
 /// tiers: a scalar, or a struct / enum that itself ends up with a `fmt`
-/// (tracked in `formattable`). Containers (`Vec`, `Option`, tuple, `HashMap`),
+/// (tracked in `formattable`). Containers (`Vec`, `Option`, tuple, `Map`),
 /// references-to-containers, channels, and function types are excluded -
 /// `{}` on them does not lower through the implicit `fmt` path, so a type
 /// carrying one keeps the runtime's default render and gets no implicit `fmt`.

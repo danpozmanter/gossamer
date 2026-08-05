@@ -20,7 +20,7 @@ fn main() {
     println!("{:?}", (2..10).filter(|k| k % 3 == 0) |> iter::collect)
     println!("{}", (1..5).map(|i| i * i).sum())
     println!("{}", xs.filter(|x| x > 2).map(|x| x * 10).join(","))
-    let sieve = [true; 10]
+    let sieve = #[true; 10]
     println!("{:?}", (2..10).filter(|k| sieve[k]).take(3) |> iter::collect)
 
     let s = "hello"

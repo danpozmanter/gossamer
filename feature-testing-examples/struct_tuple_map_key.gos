@@ -1,40 +1,40 @@
-// A HashMap keyed by a struct or tuple content-hashes the key, so two
+// A Map keyed by a struct or tuple content-hashes the key, so two
 // equal-but-distinct key values address the same slot. Insert, get,
 // contains, and pop must all agree on that hashing - both the method form
 // (`m.insert(k, v)`) and the qualified free-function form
-// (`HashMap::get(m, k)`). The qualified forms previously fell back to the
+// (`Map::get(m, k)`). The qualified forms previously fell back to the
 // pointer/i64-keyed runtime helper, so a `get`/`pop` for a key that was
 // present returned `None` on the compiled tier. Output is bit-identical on
 // every tier.
 
-use std::collections::HashMap
+use std::collections::Map
 
 struct Key { a: i64, b: i64 }
 
 fn main() {
     // struct key: method insert, qualified get / contains / pop
-    let mut m: HashMap<Key, i64> = HashMap::new()
+    let mut m: Map<Key, i64> = Map::new()
     m.insert(Key { a: 1, b: 2 }, 10)
     m.insert(Key { a: 3, b: 4 }, 20)
     m.insert(Key { a: 1, b: 2 }, 11) // overwrites the first slot
 
-    let g = match HashMap::get(m, Key { a: 1, b: 2 }) {
+    let g = match Map::get(m, Key { a: 1, b: 2 }) {
         Some(v) => v,
         None => -1,
     }
-    let has = HashMap::contains_key(m, Key { a: 3, b: 4 })
-    let missing = HashMap::contains_key(m, Key { a: 9, b: 9 })
-    let popped = match HashMap::pop(m, Key { a: 3, b: 4 }) {
+    let has = Map::contains_key(m, Key { a: 3, b: 4 })
+    let missing = Map::contains_key(m, Key { a: 9, b: 9 })
+    let popped = match Map::pop(m, Key { a: 3, b: 4 }) {
         Some(v) => v,
         None => -1,
     }
     let len_after_pop = m.len()
 
     // tuple key: qualified insert + get
-    let mut t: HashMap<(i64, i64), i64> = HashMap::new()
-    HashMap::insert(t, (5, 6), 100)
-    HashMap::insert(t, (7, 8), 200)
-    let tg = match HashMap::get(t, (5, 6)) {
+    let mut t: Map<(i64, i64), i64> = Map::new()
+    Map::insert(t, (5, 6), 100)
+    Map::insert(t, (7, 8), 200)
+    let tg = match Map::get(t, (5, 6)) {
         Some(v) => v,
         None => -1,
     }

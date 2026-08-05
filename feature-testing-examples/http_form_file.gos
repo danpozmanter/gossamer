@@ -72,7 +72,7 @@ fn main() {
     + "\r\n"
     + "ABCDE\r\n"
     + "--ZZBOUND--\r\n"
-    let hdr: Vec<(String, String)> = Vec::from([("Content-Type", "multipart/form-data; boundary=ZZBOUND")])
+    let hdr: Vec<(String, String)> = Vec::from(#[("Content-Type", "multipart/form-data; boundary=ZZBOUND")])
     match http::request("POST", "http://127.0.0.1:23922/x", body, hdr) {
         Ok(r) => println!("status={} body={}", r.status, r.body),
         Err(e) => println!("error: {}", e),

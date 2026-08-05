@@ -98,11 +98,11 @@ let found = Lookup::Found {
 ## Collection Literals
 
 Use `[a, b]` for `Vec<T>`, `#[a, b]` or `#[value; N]` for fixed arrays,
-`{key: value}` and `{}` for `Map<K, V>`, `#{a, b}` for `Set<T>`,
-`<[a, b]` for `Queue<i64>`, `[a, b]>` for `Stack<i64>`, `^[a, b]`
-for `MaxHeap<i64>` or `BinaryHeap<i64>`, and `_[a, b]` for `MinHeap<i64>`.
-An expected `BTreeSet<T>` type shapes the same set literal into an ordered
-set. Use `Deque<i64>` when both ends matter.
+`{key: value}` and `{}` for `Map<K, V>`, and `#{a, b}` for `Set<T>`. An
+expected `BTreeSet<T>` type shapes the same set literal into an ordered set.
+Queues, stacks, deques, and heaps are built through their type with `new()` or
+`from([...])`. Rust's `HashMap`, `HashSet`, `VecDeque`, and `BinaryHeap`
+spellings are not accepted - each container has exactly one name.
 
 ```gos
 let values = [1, 2, 3]
@@ -111,11 +111,12 @@ let map = {"ada": 36, "grace": 37}
 let empty: Map<String, i64> = {}
 let set = #{"parse", "lower", "parse"}
 let ordered: BTreeSet<String> = #{"lower", "parse"}
-let queue = <[1, 2, 3]
-let stack = [1, 2, 3]>
+let queue = Queue::from([1, 2, 3])
+let stack = Stack::from([1, 2, 3])
 let deque = Deque::from([1, 2, 3])
-let max_heap = ^[1, 2, 3]
-let min_heap = _[1, 2, 3]
+let max_heap = MaxHeap::from([1, 2, 3])
+let min_heap = MinHeap::from([1, 2, 3])
+let pair = (1, "two")
 ```
 
 ## Ownership And References

@@ -185,6 +185,71 @@ impl<'a> Builder<'a> {
         Some(self.lower_unit(span))
     }
 
+    /// `xs.sort()` where the element type is a tuple. A tuple element
+    /// spans several slots, so the scalar slot-wise sort would reorder
+    /// slots rather than the tuples they belong to; this routes to the
+    /// structural comparator instead, matching the VM.
+    pub(crate) fn try_lower_tuple_sort(&mut self, receiver: &HirExpr, span: Span) -> Option<Local> {
+        use gossamer_types::{IntTy, TyKind};
+
+        let recv_place = self.lower_place_expr(receiver)?;
+        let recv_ty = self.locals[recv_place.local.0 as usize].ty;
+        let mut peeled = recv_ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+            peeled = *inner;
+        }
+        // A fixed array is a flat element buffer with no header, so it
+        // takes its length and stride as arguments; a Vec / slice is a
+        // `GosVec` whose header carries both.
+        let (elem, fixed_len) = match self.tcx.kind_of(peeled) {
+            TyKind::Vec(elem) | TyKind::Slice(elem) => (*elem, None),
+            TyKind::Array { elem, len } => (*elem, Some(len.to_usize())),
+            _ => return None,
+        };
+        let (count, tags) = self.tuple_element_stream(elem)?;
+        // Tag bytes are all below 0x80, so the stream round-trips through
+        // the `ConstValue::Str` rodata pool one byte per tag.
+        let tag_text: String = tags.iter().map(|&b| b as char).collect();
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        let int_arg = |builder: &mut Self, value: i128| {
+            let local = builder.fresh(i64_ty);
+            builder.emit_assign(
+                Place::local(local),
+                Rvalue::Use(Operand::Const(ConstValue::Int(value))),
+                span,
+            );
+            Operand::Copy(Place::local(local))
+        };
+        let mut args = vec![Operand::Copy(Place::local(recv_place.local))];
+        let helper = if let Some(len) = fixed_len {
+            args.push(int_arg(self, i128::try_from(len).unwrap_or(0)));
+            args.push(int_arg(self, i128::from(self.type_slot_bytes(elem).max(1))));
+            "gos_rt_arr_sort_tuple"
+        } else {
+            "gos_rt_vec_sort_tuple"
+        };
+        args.push(int_arg(self, i128::try_from(count).unwrap_or(0)));
+        let string_ty = self.tcx.string_ty();
+        let tags_local = self.fresh(string_ty);
+        self.emit_assign(
+            Place::local(tags_local),
+            Rvalue::Use(Operand::Const(ConstValue::Str(tag_text))),
+            span,
+        );
+        args.push(Operand::Copy(Place::local(tags_local)));
+        let unit_ty = self.tcx.unit();
+        let dest = self.fresh(unit_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(helper.to_string())),
+            args,
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(self.lower_unit(span))
+    }
+
     pub(crate) fn try_lower_fixed_array_ordering(
         &mut self,
         receiver: &HirExpr,

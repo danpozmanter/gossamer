@@ -81,7 +81,7 @@ fn main() {
     println!("normalized: '{}'", normalized)
 
     // Split
-    let sep_pat = match regex::compile("[,;]+") {
+    let sep_pat = match regex::compile("#[,;]+") {
         Ok(p) => p,
         Err(e) => {
             println!("compile error: {}", e)

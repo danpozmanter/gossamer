@@ -992,6 +992,12 @@ impl<'a> Builder<'a> {
                 return MethodLowering::Handled(Some(swap_local));
             }
         }
+        if method.name.as_str() == "sort"
+            && args.is_empty()
+            && let Some(local) = self.try_lower_tuple_sort(receiver, span)
+        {
+            return MethodLowering::Handled(Some(local));
+        }
         if matches!(method.name.as_str(), "sort" | "reverse")
             && args.is_empty()
             && let Some(local) =

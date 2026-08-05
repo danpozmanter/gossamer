@@ -1,7 +1,7 @@
 // Cross-tier regression for early-`break` consumption of
 // string-bearing materializer vecs: regex::find_all (24-byte tuple
 // slots), regex::split (Vec<String>), regex::captures_all (rows of
-// Option<String>), strings::split, and HashMap keys() snapshots.
+// Option<String>), strings::split, and Map keys() snapshots.
 // On the compiled tiers these vecs now carry the AGGR_OWNED /
 // STRING element kinds so `gos_rt_vec_free` deep-frees the slots a
 // loop never reached - this fixture locks that the new free path
@@ -10,7 +10,7 @@
 
 use std::regex
 use std::strings
-use std::collections::HashMap
+use std::collections::Map
 
 fn first_hit() -> String {
     let re = match regex::compile("ab+") {
@@ -72,7 +72,7 @@ fn first_split_field() -> String {
 }
 
 fn key_count_after_break() -> i64 {
-    let mut m: HashMap<String, i64> = HashMap::new()
+    let mut m: Map<String, i64> = Map::new()
     m.insert("one", 1)
     m.insert("two", 2)
     m.insert("three", 3)

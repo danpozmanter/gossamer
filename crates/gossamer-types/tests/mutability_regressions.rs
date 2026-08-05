@@ -499,23 +499,23 @@ fn immutable_bindings_cannot_reach_mutation_through_calls() {
             ExpectedError::SharedReference,
         ),
         (
-            "qualified HashMap mutation on immutable binding",
-            "fn main() { let map: HashMap<i64, i64> = HashMap::new()\n HashMap::insert(map, 1, 2) }",
+            "qualified Map mutation on immutable binding",
+            "fn main() { let map: Map<i64, i64> = Map::new()\n Map::insert(map, 1, 2) }",
             ExpectedError::ImmutableBinding,
         ),
         (
-            "qualified HashMap mutation through shared reference",
-            "fn main() { let mut map: HashMap<i64, i64> = HashMap::new()\n let shared = &map\n HashMap::remove(shared, 1) }",
+            "qualified Map mutation through shared reference",
+            "fn main() { let mut map: Map<i64, i64> = Map::new()\n let shared = &map\n Map::remove(shared, 1) }",
             ExpectedError::SharedReference,
         ),
         (
-            "HashMap inc on immutable binding",
-            "fn main() { let map: HashMap<i64, i64> = HashMap::new()\n map.inc(1, 2) }",
+            "Map inc on immutable binding",
+            "fn main() { let map: Map<i64, i64> = Map::new()\n map.inc(1, 2) }",
             ExpectedError::ImmutableBinding,
         ),
         (
-            "qualified HashSet mutation on immutable binding",
-            "fn main() { let set: HashSet<i64> = HashSet::new()\n HashSet::insert(set, 1) }",
+            "qualified Set mutation on immutable binding",
+            "fn main() { let set: Set<i64> = Set::new()\n Set::insert(set, 1) }",
             ExpectedError::ImmutableBinding,
         ),
         (
@@ -734,7 +734,7 @@ fn mutable_places_and_reference_capabilities_remain_usable() {
         ),
         (
             "qualified map and set mutations on mutable values",
-            "fn main() { let mut map: HashMap<i64, i64> = HashMap::new()\n HashMap::insert(map, 1, 2)\n let mut set: HashSet<i64> = HashSet::new()\n HashSet::insert(set, 1) }",
+            "fn main() { let mut map: Map<i64, i64> = Map::new()\n Map::insert(map, 1, 2)\n let mut set: Set<i64> = Set::new()\n Set::insert(set, 1) }",
         ),
         (
             "mutable method through mutable-reference parameter",

@@ -695,8 +695,8 @@ impl<'a> Lowerer<'a> {
         let elems: Vec<Ty> = elems.clone();
         let mut tags: Vec<u8> = Vec::with_capacity(elems.len());
         for e in &elems {
-            match self.tuple_elem_tag(*e) {
-                Some(t) => tags.push(t),
+            match self.tuple_elem_tags(*e) {
+                Some(t) => tags.extend(t),
                 None => {
                     return Err(BuildError::InternalLoweringBug(
                         "tuple element type is not formattable on the compiled tier",

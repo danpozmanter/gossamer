@@ -990,6 +990,12 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, receiver)?;
             }
+            Op::TupleSet {
+                receiver, value, ..
+            } => {
+                check_v(op_idx, receiver)?;
+                check_v(op_idx, value)?;
+            }
             Op::IndexedFieldSet {
                 base,
                 index,
@@ -2065,6 +2071,9 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
             effect.i_reads.push(value_i);
         }
         Op::FieldSet {
+            receiver, value, ..
+        }
+        | Op::TupleSet {
             receiver, value, ..
         }
         | Op::VecPush { receiver, value }

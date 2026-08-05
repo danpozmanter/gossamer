@@ -186,12 +186,7 @@ pub fn walk_expr_mut<V: VisitorMut + ?Sized>(visitor: &mut V, expr: &mut Expr) {
         ExprKind::Tuple(items) | ExprKind::MapLiteral(items) | ExprKind::SetLiteral(items) => {
             walk_exprs_mut(visitor, items);
         }
-        ExprKind::Array(array_expr)
-        | ExprKind::FixedArray(array_expr)
-        | ExprKind::QueueLiteral(array_expr)
-        | ExprKind::StackLiteral(array_expr)
-        | ExprKind::MaxHeapLiteral(array_expr)
-        | ExprKind::MinHeapLiteral(array_expr) => {
+        ExprKind::Array(array_expr) | ExprKind::FixedArray(array_expr) => {
             walk_array_expr_mut(visitor, array_expr);
         }
         ExprKind::Select(arms) => {

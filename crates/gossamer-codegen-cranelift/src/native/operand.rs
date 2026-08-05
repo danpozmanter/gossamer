@@ -255,10 +255,70 @@ fn debug_payload_kind(tcx: &TyCtxt, ty: Ty) -> Option<u8> {
     }
 }
 
-/// The per-element tag array for a tuple operand, or `None` when any
-/// element type isn't formattable from a flat slot. Drives both the
-/// `PrintKind::Tuple` gate and the emit-time tag blob.
-pub(super) fn tuple_tags(tcx: &TyCtxt, body: &Body, operand: &Operand) -> Option<Vec<u8>> {
+/// Tags describing `ty` in a `gos_rt_tuple_format` stream: one byte for
+/// a scalar, or the `8, count, <nested tags…>` form for a nested tuple
+/// whose slots are flattened into the parent's buffer.
+fn tuple_elem_tags(tcx: &TyCtxt, ty: Ty) -> Option<Vec<u8>> {
+    let mut peeled = ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(peeled) {
+        peeled = *inner;
+    }
+    if let TyKind::Tuple(nested) = tcx.kind_of(peeled) {
+        let nested: Vec<Ty> = nested.clone();
+        if nested.is_empty() || nested.len() > usize::from(u8::MAX) {
+            return None;
+        }
+        let mut out = vec![gossamer_abi::TUPLE_TAG_NESTED, nested.len() as u8];
+        for e in &nested {
+            out.extend(tuple_elem_tags(tcx, *e)?);
+        }
+        return Some(out);
+    }
+    tuple_elem_tag(tcx, ty).map(|tag| vec![tag])
+}
+
+/// The tag stream for `ty` when it is a printable tuple, or `None`.
+/// Drives the pre-intern pass, which must place every stream the
+/// parallel phase can ask for into the intrinsic cache first.
+pub(super) fn tuple_tags_for_ty(tcx: &TyCtxt, ty: Ty) -> Option<Vec<u8>> {
+    let mut peeled = ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(peeled) {
+        peeled = *inner;
+    }
+    let TyKind::Tuple(elems) = tcx.kind_of(peeled) else {
+        return None;
+    };
+    if elems.is_empty() {
+        return None;
+    }
+    let mut tags = Vec::with_capacity(elems.len());
+    for e in elems.clone() {
+        tags.extend(tuple_elem_tags(tcx, e)?);
+    }
+    Some(tags)
+}
+
+/// Every tuple type reachable from `ty`, outermost first. A nested
+/// tuple can be printed on its own (`t.0`), so its stream needs
+/// interning too.
+pub(super) fn nested_tuple_types(tcx: &TyCtxt, ty: Ty, out: &mut Vec<Ty>) {
+    let mut peeled = ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(peeled) {
+        peeled = *inner;
+    }
+    let TyKind::Tuple(elems) = tcx.kind_of(peeled) else {
+        return;
+    };
+    out.push(peeled);
+    for e in elems.clone() {
+        nested_tuple_types(tcx, e, out);
+    }
+}
+
+/// The top-level element count and tag stream for a tuple operand, or
+/// `None` when any element type isn't formattable from a flat slot.
+/// Drives both the `PrintKind::Tuple` gate and the emit-time tag blob.
+pub(super) fn tuple_tags(tcx: &TyCtxt, body: &Body, operand: &Operand) -> Option<(usize, Vec<u8>)> {
     let Operand::Copy(place) = operand else {
         return None;
     };
@@ -272,7 +332,12 @@ pub(super) fn tuple_tags(tcx: &TyCtxt, body: &Body, operand: &Operand) -> Option
     if elems.is_empty() {
         return None;
     }
-    elems.iter().map(|e| tuple_elem_tag(tcx, *e)).collect()
+    let count = elems.len();
+    let mut tags = Vec::with_capacity(count);
+    for e in elems.clone() {
+        tags.extend(tuple_elem_tags(tcx, e)?);
+    }
+    Some((count, tags))
 }
 
 /// True when a `HashMap` key/value type is one `gos_rt_map_format`

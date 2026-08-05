@@ -1,5 +1,5 @@
 // Bracket literals build Vec values by default. Use `#[...]` when an
-// explicit fixed array is required, or let a `[T; N]` expected type shape
+// explicit fixed array is required, or let a `#[T; N]` expected type shape
 // a plain bracket literal.
 
 struct Basket { fruits: Vec<String> }
@@ -25,9 +25,9 @@ fn count(items: &[String]) -> i64 {
 }
 
 fn main() {
-    // List form and the `[value; count]` repeat form.
+    // List form and the `#[value; count]` repeat form.
     let names = ["ada", "grace", "edsger"]
-    let zeros = [0; 5]
+    let zeros = #[0; 5]
 
     println!("first name: {}", names[0])
     println!("zeros: {} entries, last = {}", zeros.len(), zeros[4])

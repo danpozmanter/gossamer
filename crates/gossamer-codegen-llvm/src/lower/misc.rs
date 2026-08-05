@@ -625,7 +625,7 @@ impl<'a> Lowerer<'a> {
                     // aren't a full i64) require richer display planning.
                     Some(TyKind::Tuple(elems)) => {
                         if !elems.is_empty()
-                            && elems.iter().all(|e| self.tuple_elem_tag(*e).is_some())
+                            && elems.iter().all(|e| self.tuple_elem_tags(*e).is_some())
                         {
                             ConcatKind::Tuple
                         } else {
@@ -796,6 +796,24 @@ impl<'a> Lowerer<'a> {
     /// slot, so reading the slot back as an i64 / f64 bit pattern
     /// would pick up adjacent bytes. `bool` (low bit) and `char` (low
     /// 32 bits) are read with a mask, so both are safe.
+    /// Tags describing `elem` in a `gos_rt_tuple_format` stream: one byte
+    /// for a scalar, or the `8, count, <nested tags…>` form for a nested
+    /// tuple whose slots are flattened into the parent's buffer.
+    pub(crate) fn tuple_elem_tags(&self, elem: Ty) -> Option<Vec<u8>> {
+        if let Some(TyKind::Tuple(nested)) = self.tcx.kind(self.unwrap_ref(elem)) {
+            let nested: Vec<Ty> = nested.clone();
+            if nested.is_empty() || nested.len() > usize::from(u8::MAX) {
+                return None;
+            }
+            let mut out = vec![gossamer_abi::TUPLE_TAG_NESTED, nested.len() as u8];
+            for e in &nested {
+                out.extend(self.tuple_elem_tags(*e)?);
+            }
+            return Some(out);
+        }
+        self.tuple_elem_tag(elem).map(|tag| vec![tag])
+    }
+
     pub(crate) fn tuple_elem_tag(&self, elem: Ty) -> Option<u8> {
         match self.tcx.kind(self.unwrap_ref(elem)) {
             Some(TyKind::Int(i)) if int_width(*i) == 64 => Some(0),

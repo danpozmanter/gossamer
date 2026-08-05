@@ -1,9 +1,9 @@
 // Auto-derived `to_json`/`from_json` over the extended field kinds:
 // Option<T> (Some + None), tuples, Vec, nested struct, and a
-// HashMap<String, i64> (object with keys sorted for determinism).
+// Map<String, i64> (object with keys sorted for determinism).
 // Round-trips to a deterministic string, bit-identical on every tier.
 use std::encoding::json
-use std::collections::HashMap
+use std::collections::Map
 
 struct Inner { n: i64 }
 struct Rec {
@@ -13,11 +13,11 @@ struct Rec {
     pair: (i64, String),
     tags: Vec<String>,
     inner: Inner,
-    caps: HashMap<String, i64>,
+    caps: Map<String, i64>,
 }
 
 fn main() {
-    let mut caps: HashMap<String, i64> = HashMap::new()
+    let mut caps: Map<String, i64> = Map::new()
     caps.insert(&"a", 1)
     caps.insert(&"b", 2)
     let r = Rec { id: 7, nick: Some("neo"), absent: None, pair: (3, "x"), tags: Vec::from(["a", "b"]), inner: Inner { n: 5 }, caps: caps }

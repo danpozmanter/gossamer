@@ -306,10 +306,10 @@ const DEFAULT_PORT: i64 = 5432
 | `arrayOf(...)` | `#[...]` |
 | `mapOf(k to v)` | `{key: value}` or `{}` for an empty `Map` |
 | `setOf(...)` | `#{...}` for `Set`, or typed `BTreeSet` |
-| `ArrayDeque` as queue | `Queue<i64>` with `<[a, b]`, `push`, and FIFO `pop` |
-| `ArrayDeque` as stack | `Stack<i64>` with `[a, b]>`, `push`, and LIFO `pop` |
+| `ArrayDeque` as queue | `Queue<i64>` from `Queue::from([a, b])`, `push`, and FIFO `pop` |
+| `ArrayDeque` as stack | `Stack<i64>` from `Stack::from([a, b])`, `push`, and LIFO `pop` |
 | `ArrayDeque` as deque | `Deque<i64>` with explicit front/back methods |
-| `PriorityQueue` | `MinHeap<i64>` with `_[...]`, or `MaxHeap<i64>` with `^[...]` |
+| `PriorityQueue` | `MinHeap::from([...])`, or `MaxHeap::from([...])` for max-first order |
 | `OkHttp` / `Ktor HttpClient` | `http::Client::new()` or `http::get(url, [])` |
 | `ktor server { ... }` | `http::serve(addr, handler)` |
 | `kotlinx.serialization` | `encoding::json` |

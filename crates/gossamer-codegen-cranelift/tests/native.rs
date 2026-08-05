@@ -336,7 +336,7 @@ fn gos_build_handles_tuples_and_arrays() {
     );
     assert_exit(
         "repeat_array",
-        "fn main() -> i64 {\n    let xs = [9i64; 4i64]\n    xs[2i64] + xs[3i64]\n}\n",
+        "fn main() -> i64 {\n    let xs = #[9i64; 4i64]\n    xs[2i64] + xs[3i64]\n}\n",
         18,
     );
     assert_exit(

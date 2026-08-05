@@ -26,9 +26,9 @@ more explicit types and errors.
 | `make(map[string]int)` | `Map::<String, i64>::new()` | Import from `std::collections`. |
 | `map[string]int{"k": 1}` | `{"k": 1}` | Map literal. |
 | set via `map[T]struct{}` | `#{...}` | Set literal, or typed `BTreeSet<T>` for ordered sets. |
-| FIFO queue slice | `Queue<i64>` with `<[1, 2]` | `push` appends, `pop` removes from the front. |
-| stack slice | `Stack<i64>` with `[1, 2]>` | `push` appends, `pop` removes from the top. |
-| `container/heap` | `MinHeap<i64>` with `_[...]`, or `MaxHeap<i64>` with `^[...]` | Heap operations are `push`, `pop`, and `peek`. |
+| FIFO queue slice | `Queue::from([1, 2])` | `push` appends, `pop` removes from the front. |
+| stack slice | `Stack::from([1, 2])` | `push` appends, `pop` removes from the top. |
+| `container/heap` | `MinHeap::from([...])`, or `MaxHeap::from([...])` | Heap operations are `push`, `pop`, and `peek`. |
 | `container/list` or ring-buffer deque | `Deque<i64>` | Use explicit front/back methods. |
 
 Entry files may use top-level statements. Items are hoisted, and bare

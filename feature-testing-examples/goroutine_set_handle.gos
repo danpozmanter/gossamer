@@ -1,8 +1,8 @@
-// Cross-tier regression for a cross-goroutine HashSet handle. The worker
-// goroutine builds a `HashSet<i64>`, then parks on `gate.recv()` - a
+// Cross-tier regression for a cross-goroutine Set handle. The worker
+// goroutine builds a `Set<i64>`, then parks on `gate.recv()` - a
 // yield point the scheduler can resume on a DIFFERENT OS worker thread
 // than the one the set was built on. The inserts and reads after the
-// yield must still hit the same set. The VM previously kept its HashSet
+// yield must still hit the same set. The VM previously kept its Set
 // registry in `thread_local!` storage, so after such a migration the
 // handle resolved to nothing on the new worker thread: the post-yield
 // inserts no-op'd and the reads collapsed to the empty-set defaults
@@ -13,10 +13,10 @@
 // the deterministic completion signal - no sleeps.
 
 use std::sync::channel
-use std::collections::HashSet
+use std::collections::Set
 
 fn worker(gate: Receiver<i64>, tx: Sender<i64>) {
-    let mut s: HashSet<i64> = HashSet::new()
+    let mut s: Set<i64> = Set::new()
     s.insert(10)
     s.insert(20)
     let _ = gate.recv()

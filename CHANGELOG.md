@@ -1,24 +1,48 @@
 # Changelog
 
-## 0.43.0 - VecDeque methods, VecStack, VecQueue, REPL discovery, and Iterator prelude
+## 0.43.0 - Tuples, one name per container, and constructor-only containers
 
 - Bump workspace crates and lockfile package versions to 0.43.0.
+- Document `Tuple` as a first-class type with a language reference page, a
+  worked example, `%info Tuple`, and `%explain` element listings for tuple
+  bindings.
+- Parse chained tuple indices so `t.0.1` reads through a nested tuple.
+- Assign tuple elements positionally on the bytecode VM, matching the compiled
+  tiers: `t.0 = v` and `t.0.1 = v` now work everywhere.
+- Render nested tuples in `{}` / `{:?}` on the compiled tiers through a
+  self-describing tuple tag stream instead of failing to lower.
+- Sort sequences of tuples structurally on the compiled tiers; the slot-wise
+  integer sort reordered flattened slots rather than whole elements.
+- Give every container exactly one name. `HashMap`, `HashSet`, `VecDeque`,
+  `VecQueue`, `VecStack`, `BinaryHeap`, `MaxBinaryHeap`, and `MinBinaryHeap`
+  are rejected with `GR0006` and a rename hint to `Map`, `Set`, `Deque`,
+  `Queue`, `Stack`, `MaxHeap`, and `MinHeap`.
+- Free the bare `Map` name for `std::collections::Map`; the concurrent map is
+  reachable only as `sync::Map`, which fixes a native-tier crash on
+  `Map::new()`.
+- Remove the `<[...]`, `[...]>`, `^[...]`, and `_[...]` literal forms. Build a
+  `Queue`, `Stack`, `MaxHeap`, or `MinHeap` with `new()` or `from([...])`;
+  the retired spellings report `GP0032` with the constructor to use.
+- Reject the bare repeat literal `[value; count]` with `GP0033`. A repeat
+  literal is a fixed array, `#[value; count]`.
+- Bind a `for` loop's iterable once. A literal, an `iter()` / `enumerate()`
+  chain over one, and an `Iterator<T>` binding each restarted at element zero
+  or crashed the compiled tiers instead of walking the sequence.
+- Assemble the same project compilation unit in the language server as in
+  `gos check` / `gos run` / `gos build`, so a sibling module's items resolve in
+  an editor instead of reading as unresolved names.
+- Report a type diagnostic once per source position. A signature's types are
+  converted in two checker passes, so editors stacked the same message on one
+  span.
 - Match Rust's `VecDeque` method surface by rejecting `push` and `pop` while
   keeping explicit front/back methods.
-- Remove the typo `VecDequeue` from builtins, prelude, docs, completions, and
-  lowering paths.
-- Add restricted `VecQueue<i64>` and `VecStack<i64>` collection types with
-  FIFO `<[...]` and LIFO `[...]>` literal syntax plus narrow queue/stack
-  method surfaces: `push`, `pop`, `peek`, `len`, `is_empty`, and `clear`.
-- Rename the preferred collection surface to `Map`, `Set`, `Deque`, `Queue`,
-  and `Stack`, while keeping `HashMap`, `HashSet`, `VecDeque`, `VecQueue`,
-  and `VecStack` as aliases. Add `MaxBinaryHeap` and `MinBinaryHeap` aliases.
-- Clarify `%info` / `%explain`, MCP skill, and website collection docs with
-  one-line type descriptions that name the underlying structures.
+- Add restricted `Queue<i64>` and `Stack<i64>` collection types with narrow
+  FIFO and LIFO method surfaces: `push`, `pop`, `peek`, `len`, `is_empty`,
+  and `clear`.
 - Add `Iterator<T>` to the prelude and tighten `%info` / `%explain` metadata
   for the phase 1 collection method surfaces.
 - Fix REPL member completion for typed persistent bindings so collection values
-  such as `VecStack` and `VecQueue` complete their methods after `x.`.
+  such as `Stack` and `Queue` complete their methods after `x.`.
 - Make native CI's full LLVM dumps and preserved build directories opt-in so
   large general shards do not exhaust hosted runner storage before artifacts
   can upload.

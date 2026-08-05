@@ -37,6 +37,7 @@ impl<'tcx> FnBuilder<'tcx> {
             escaped_reference_reg_floor: 0,
             collection_locals: std::collections::HashSet::new(),
             lazy_iterator_locals: std::collections::HashSet::new(),
+            materialized_iter_locals: std::collections::HashSet::new(),
             flag_set_locals: std::collections::HashSet::new(),
             duration_cell_locals: std::collections::HashSet::new(),
             instrs: Vec::new(),

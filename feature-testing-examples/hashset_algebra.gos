@@ -1,15 +1,15 @@
-// HashSet algebra: union / intersection / difference / symmetric_difference
+// Set algebra: union / intersection / difference / symmetric_difference
 // (returning a fresh set) and the is_subset / is_superset / is_disjoint
 // predicates. Sets flow across function boundaries (built in a helper,
 // consumed in `main`), so this also exercises type-based receiver dispatch
-// for the opaque `HashSet` handle. Bit-identical on the VM, Cranelift, and
+// for the opaque `Set` handle. Bit-identical on the VM, Cranelift, and
 // LLVM tiers (results inspected via `len()` / `contains()` for stable,
 // order-independent output).
 
-use std::collections::HashSet
+use std::collections::Set
 
-fn set_of(a: String, b: String, c: String) -> HashSet<String> {
-    let mut s = HashSet::new()
+fn set_of(a: String, b: String, c: String) -> Set<String> {
+    let mut s = Set::new()
     s.insert(a)
     s.insert(b)
     s.insert(c)
@@ -42,14 +42,14 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use std::testing
-    use std::collections::HashSet
+    use std::collections::Set
 
-    fn pair() -> (HashSet<String>, HashSet<String>) {
-        let mut a = HashSet::new()
+    fn pair() -> (Set<String>, Set<String>) {
+        let mut a = Set::new()
         a.insert("a")
         a.insert("b")
         a.insert("c")
-        let mut b = HashSet::new()
+        let mut b = Set::new()
         b.insert("b")
         b.insert("c")
         b.insert("d")
@@ -74,7 +74,7 @@ mod tests {
         let _ = testing::check(d.len() == 1 && d.contains("a"), "difference is {a}")
         let (a2, b2) = pair()
         let _ = testing::check(!a2.is_disjoint(b2), "sharing b,c is not disjoint")
-        let mut sub = HashSet::new()
+        let mut sub = Set::new()
         sub.insert("b")
         let _ = testing::check(sub.is_subset(a2) && a2.is_superset(sub), "{b} subset of a")
     }

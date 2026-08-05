@@ -350,6 +350,14 @@ const SPECS: &[Spec] = &[
     // Tuple structs: construction, positional `.N` access, and destructuring
     // (let / match / fn params), modelled as named fields "0".."N-1".
     spec("feature-testing-examples/tuple_structs.gos"),
+    // Every `for` loop source shape: literal, `enumerate` over a literal or
+    // a binding, `iter().enumerate()`, and an `Iterator<T>` binding. Each
+    // must yield its elements once rather than restarting at index zero.
+    spec("feature-testing-examples/iterator_loop_sources.gos"),
+    // Tuple surface: heterogeneous elements, chained `.N.M` reads through a
+    // nested tuple, positional assignment, structural compare/sort, and
+    // `{}` / `{:?}` of a nested tuple.
+    spec("feature-testing-examples/tuple_surface.gos"),
     // Named struct construction: keyed, positional, and mixed brace literals
     // all lower to declaration-order fields on every tier.
     spec("feature-testing-examples/named_struct_brace_construction.gos"),

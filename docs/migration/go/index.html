@@ -474,6 +474,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -590,6 +592,34 @@
 
 
     Comptime
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../language/tuples/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Tuples
 
 
 
@@ -2232,17 +2262,17 @@ more explicit types and errors.</p>
 </tr>
 <tr>
 <td>FIFO queue slice</td>
-<td><code>Queue&lt;i64&gt;</code> with <code>&lt;[1, 2]</code></td>
+<td><code>Queue::from([1, 2])</code></td>
 <td><code>push</code> appends, <code>pop</code> removes from the front.</td>
 </tr>
 <tr>
 <td>stack slice</td>
-<td><code>Stack&lt;i64&gt;</code> with <code>[1, 2]&gt;</code></td>
+<td><code>Stack::from([1, 2])</code></td>
 <td><code>push</code> appends, <code>pop</code> removes from the top.</td>
 </tr>
 <tr>
 <td><code>container/heap</code></td>
-<td><code>MinHeap&lt;i64&gt;</code> with <code>_[...]</code>, or <code>MaxHeap&lt;i64&gt;</code> with <code>^[...]</code></td>
+<td><code>MinHeap::from([...])</code>, or <code>MaxHeap::from([...])</code></td>
 <td>Heap operations are <code>push</code>, <code>pop</code>, and <code>peek</code>.</td>
 </tr>
 <tr>

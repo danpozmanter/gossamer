@@ -657,9 +657,9 @@ fn aot_hashmap_contains() {
     assert_release_stdout_eq(
         "hashmap_contains",
         r#"
-use std::collections::HashMap
+use std::collections::Map
 fn main() {
-    let mut m: HashMap<String, i64> = HashMap::new()
+    let mut m: Map<String, i64> = Map::new()
     m.insert("a", 1)
     println!("b={}", m.contains("a"))
 }

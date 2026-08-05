@@ -2693,21 +2693,19 @@ impl<'a> Builder<'a> {
         _args: &[HirExpr],
     ) -> Option<(&'static str, gossamer_types::Ty)> {
         Some(match joined {
-            "sync::Map::new" | "Map::new" => (
+            "sync::Map::new" => (
                 "gos_rt_sync_map_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            "sync::Map::insert" | "Map::insert" => ("gos_rt_sync_map_set", self.tcx.unit()),
-            "sync::Map::remove" | "Map::remove" => ("gos_rt_sync_map_delete", self.tcx.unit()),
-            "sync::Map::get" | "Map::get" => ("gos_rt_sync_map_get", self.option_string_adt_ty()),
-            "sync::Map::len" | "Map::len" => (
+            "sync::Map::insert" => ("gos_rt_sync_map_set", self.tcx.unit()),
+            "sync::Map::remove" => ("gos_rt_sync_map_delete", self.tcx.unit()),
+            "sync::Map::get" => ("gos_rt_sync_map_get", self.option_string_adt_ty()),
+            "sync::Map::len" => (
                 "gos_rt_sync_map_len",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            "sync::Map::contains_key" | "Map::contains_key" => {
-                ("gos_rt_sync_map_contains", self.tcx.bool_ty())
-            }
-            "sync::Map::keys" | "Map::keys" => {
+            "sync::Map::contains_key" => ("gos_rt_sync_map_contains", self.tcx.bool_ty()),
+            "sync::Map::keys" => {
                 let str_ty = self.tcx.string_ty();
                 (
                     "gos_rt_sync_map_keys",

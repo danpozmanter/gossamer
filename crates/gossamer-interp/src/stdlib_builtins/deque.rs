@@ -31,52 +31,28 @@ pub(crate) fn install_deque(globals: &mut Vec<(&'static str, Value)>) {
     let entries: &[(&str, BuiltinFnPub)] = &[
         ("Deque::new", builtin_deque_new),
         ("collections::Deque::new", builtin_deque_new),
-        ("VecDeque::new", builtin_deque_new),
-        ("collections::VecDeque::new", builtin_deque_new),
         ("Deque::from", builtin_deque_from),
         ("collections::Deque::from", builtin_deque_from),
-        ("VecDeque::from", builtin_deque_from),
-        ("collections::VecDeque::from", builtin_deque_from),
         ("Queue::new", builtin_queue_new),
         ("collections::Queue::new", builtin_queue_new),
-        ("VecQueue::new", builtin_queue_new),
-        ("collections::VecQueue::new", builtin_queue_new),
         ("Queue::from", builtin_queue_from),
         ("collections::Queue::from", builtin_queue_from),
-        ("VecQueue::from", builtin_queue_from),
-        ("collections::VecQueue::from", builtin_queue_from),
         ("Queue::push", builtin_deque_push_back),
         ("Queue::pop", builtin_deque_pop_front),
         ("Queue::peek", builtin_deque_peek_front),
         ("Queue::len", builtin_deque_len),
         ("Queue::is_empty", builtin_deque_is_empty),
         ("Queue::clear", builtin_deque_clear),
-        ("VecQueue::push", builtin_deque_push_back),
-        ("VecQueue::pop", builtin_deque_pop_front),
-        ("VecQueue::peek", builtin_deque_peek_front),
-        ("VecQueue::len", builtin_deque_len),
-        ("VecQueue::is_empty", builtin_deque_is_empty),
-        ("VecQueue::clear", builtin_deque_clear),
         ("Stack::new", builtin_stack_new),
         ("collections::Stack::new", builtin_stack_new),
-        ("VecStack::new", builtin_stack_new),
-        ("collections::VecStack::new", builtin_stack_new),
         ("Stack::from", builtin_stack_from),
         ("collections::Stack::from", builtin_stack_from),
-        ("VecStack::from", builtin_stack_from),
-        ("collections::VecStack::from", builtin_stack_from),
         ("Stack::push", builtin_deque_push_back),
         ("Stack::pop", builtin_deque_pop_back),
         ("Stack::peek", builtin_deque_peek_back),
         ("Stack::len", builtin_deque_len),
         ("Stack::is_empty", builtin_deque_is_empty),
         ("Stack::clear", builtin_deque_clear),
-        ("VecStack::push", builtin_deque_push_back),
-        ("VecStack::pop", builtin_deque_pop_back),
-        ("VecStack::peek", builtin_deque_peek_back),
-        ("VecStack::len", builtin_deque_len),
-        ("VecStack::is_empty", builtin_deque_is_empty),
-        ("VecStack::clear", builtin_deque_clear),
         ("Deque::push_back", builtin_deque_push_back),
         ("Deque::push_front", builtin_deque_push_front),
         ("Deque::pop_front", builtin_deque_pop_front),
@@ -86,15 +62,6 @@ pub(crate) fn install_deque(globals: &mut Vec<(&'static str, Value)>) {
         ("Deque::len", builtin_deque_len),
         ("Deque::is_empty", builtin_deque_is_empty),
         ("Deque::clear", builtin_deque_clear),
-        ("VecDeque::push_back", builtin_deque_push_back),
-        ("VecDeque::push_front", builtin_deque_push_front),
-        ("VecDeque::pop_front", builtin_deque_pop_front),
-        ("VecDeque::pop_back", builtin_deque_pop_back),
-        ("VecDeque::peek_front", builtin_deque_peek_front),
-        ("VecDeque::peek_back", builtin_deque_peek_back),
-        ("VecDeque::len", builtin_deque_len),
-        ("VecDeque::is_empty", builtin_deque_is_empty),
-        ("VecDeque::clear", builtin_deque_clear),
     ];
     for (name, call) in entries {
         globals.push((*name, builtin_pub(name, *call)));
@@ -116,8 +83,8 @@ fn deque_handle(id: i64) -> Value {
 
 fn deque_handle_named(id: i64, name: &'static str) -> Value {
     let field = match name {
-        "Queue" | "VecQueue" => "__queue",
-        "Stack" | "VecStack" => "__stack",
+        "Queue" => "__queue",
+        "Stack" => "__stack",
         _ => "__deque",
     };
     Value::struct_(
@@ -133,10 +100,7 @@ pub(crate) fn deque_snapshot(value: &Value) -> Option<Vec<Value>> {
 
 fn deque_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
-        if matches!(
-            inner.name.as_str(),
-            "Deque" | "VecDeque" | "Queue" | "VecQueue" | "Stack" | "VecStack"
-        ) {
+        if matches!(inner.name.as_str(), "Deque" | "Queue" | "Stack") {
             for (i, v) in &inner.fields {
                 if matches!(*i, "__deque" | "__queue" | "__stack") {
                     if let Value::Int(n) = v {

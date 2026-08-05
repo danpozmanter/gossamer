@@ -144,12 +144,7 @@ impl Checker<'_> {
                 self.walk_exprs(elems);
             }
             ExprKind::Struct { fields, base, .. } => self.walk_struct(fields, base.as_deref()),
-            ExprKind::Array(arr)
-            | ExprKind::FixedArray(arr)
-            | ExprKind::QueueLiteral(arr)
-            | ExprKind::StackLiteral(arr)
-            | ExprKind::MaxHeapLiteral(arr)
-            | ExprKind::MinHeapLiteral(arr) => self.walk_array(arr),
+            ExprKind::Array(arr) | ExprKind::FixedArray(arr) => self.walk_array(arr),
             ExprKind::Range { start, end, .. } => {
                 self.walk_optional(start.as_deref());
                 self.walk_optional(end.as_deref());

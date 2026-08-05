@@ -73,9 +73,14 @@ Map literals such as `{"one": 1}` construct `Map` values. Set literals
 such as `#{1, 2, 2}` construct `Set` values, or `BTreeSet` values when an
 expected `BTreeSet<T>` type is present.
 
-Longer aliases remain accepted: `HashMap` for `Map`, `HashSet` for `Set`,
-`VecDeque` for `Deque`, `VecQueue` for `Queue`, `VecStack` for `Stack`,
-`MaxBinaryHeap` for `MaxHeap`, and `MinBinaryHeap` for `MinHeap`.
+Every container has exactly one name. `HashMap`, `HashSet`, `VecDeque`,
+`VecQueue`, `VecStack`, `BinaryHeap`, `MaxBinaryHeap`, and `MinBinaryHeap` are
+not accepted; write `Map`, `Set`, `Deque`, `Queue`, `Stack`, `MaxHeap`, and
+`MinHeap`.
+
+A tuple has no methods: its surface is positional access (`t.0`), assignment
+through a `mut` binding, destructuring, and structural comparison. See
+[Tuples](language/tuples.md).
 
 | Method | Returns | Notes |
 |---|---|---|
@@ -172,7 +177,7 @@ iteration and `to_vec` output.
 
 Phase 1 `Deque` support is `Deque<i64>`. It is a double-ended ring
 buffer; both ends are constant-time. The pop / peek methods return
-`Option<i64>`. Like Rust's `VecDeque`, use explicit front/back method names.
+`Option<i64>`. Like Rust's `VecDeque`, `Deque` uses explicit front/back method names.
 
 | Method | Returns | Notes |
 |---|---|---|
@@ -190,7 +195,7 @@ buffer; both ends are constant-time. The pop / peek methods return
 
 Phase 1 `Queue` support is `Queue<i64>`. It is a restricted FIFO queue:
 `push` appends to the back, `pop` removes from the front, and `peek` observes
-the front without removing it. Use `<[a, b]` for literals.
+the front without removing it. Build one with `Queue::new()` or `Queue::from([a, b])`.
 
 | Method | Returns | Notes |
 |---|---|---|
@@ -205,7 +210,7 @@ the front without removing it. Use `<[a, b]` for literals.
 
 Phase 1 `Stack` support is `Stack<i64>`. It is a restricted LIFO stack:
 `push` appends to the top, `pop` removes from the top, and `peek` observes
-the top without removing it. Use `[a, b]>` for literals.
+the top without removing it. Build one with `Stack::new()` or `Stack::from([a, b])`.
 
 | Method | Returns | Notes |
 |---|---|---|

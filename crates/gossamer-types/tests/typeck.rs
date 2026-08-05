@@ -734,7 +734,7 @@ fn vec_constructors_have_public_container_types() {
              let empty = Vec::new()\n\
              let reserved = Vec::with_capacity(4)\n\
              let values = Vec::from([1, 2])\n\
-             let map = HashMap::with_capacity(4)\n\
+             let map = Map::with_capacity(4)\n\
          }\n");
     assert!(checked.diagnostics.is_empty(), "{:#?}", checked.diagnostics);
 
@@ -756,7 +756,7 @@ fn vec_constructors_have_public_container_types() {
         })
         .map(|ty| gossamer_types::render_public_ty(&checked.tcx, ty))
         .collect::<Vec<_>>();
-    assert_eq!(types, ["Vec<_>", "Vec<_>", "Vec<i64>", "HashMap<_, _>"]);
+    assert_eq!(types, ["Vec<_>", "Vec<_>", "Vec<i64>", "Map<_, _>"]);
 }
 
 #[test]
@@ -1062,8 +1062,44 @@ fn owned_slice_annotation_is_rejected_as_unsized() {
 }
 
 #[test]
+fn a_signature_diagnostic_is_reported_once_per_source_position() {
+    // A signature's types are converted while collecting signatures and
+    // again while checking the item, so an editor showed the same message
+    // stacked on one span.
+    let checked =
+        run("fn parse(path: String) -> [i64] { [1] }\nfn main() { let _ = parse(\"x\") }\n");
+    let unsized_at: Vec<_> = checked
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| matches!(diagnostic.error, TypeError::UnsizedSliceValue { .. }))
+        .collect();
+    assert_eq!(
+        unsized_at.len(),
+        1,
+        "one span must yield one diagnostic; got {unsized_at:?}"
+    );
+}
+
+#[test]
+fn distinct_spans_each_keep_their_own_diagnostic() {
+    let checked = run(
+        "fn f(x: [i64]) -> i64 { 0 }\nfn g(y: [f64]) -> i64 { 0 }\nfn main() { let _ = f([1]) + g([1.0]) }\n",
+    );
+    let unsized_count = checked
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| matches!(diagnostic.error, TypeError::UnsizedSliceValue { .. }))
+        .count();
+    assert_eq!(
+        unsized_count, 2,
+        "deduplication must not collapse separate positions; got {:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
 fn vec_from_repeat_array_is_explicit_and_accepted() {
-    let checked = run("fn main() { let xs: Vec<i64> = Vec::from([0; 4]) }\n");
+    let checked = run("fn main() { let xs: Vec<i64> = Vec::from(#[0; 4]) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
@@ -1163,7 +1199,7 @@ fn later_narrow_assignments_do_not_retype_an_inferred_source_binding() {
 
 #[test]
 fn later_use_sites_cannot_narrow_established_numeric_bindings() {
-    let checked = run("use std::collections::HashMap
+    let checked = run("use std::collections::Map
         fn takes_i8(value: i8) {}
         fn bad_return() -> i8 {
             let value = 256
@@ -1174,7 +1210,7 @@ fn later_use_sites_cannot_narrow_established_numeric_bindings() {
             let values = [256, 257]
             let optional = Some(256)
             let mut bytes: Vec<i8> = Vec::from([])
-            let mut map: HashMap<String, i8> = HashMap::new()
+            let mut map: Map<String, i8> = Map::new()
             takes_i8(value)
             bytes.push(value)
             map.insert(\"key\", value)
@@ -1841,27 +1877,28 @@ fn index_on_vec_and_string_is_accepted() {
 
 #[test]
 fn reasonable_fixed_array_is_accepted() {
-    let d = diagnostics_for("fn main() { let a: [i64; 16] = [0; 16]\n println!(\"{}\", a[0]) }\n");
+    let d = diagnostics_for("fn main() { let a: [i64; 16] = #[0; 16]\n println!(\"{}\", a[0]) }\n");
     assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]
 fn benchmark_sized_fixed_array_is_accepted() {
     let d = diagnostics_for(
-        "fn main() { let a: [f64; 40000] = [0.0; 40000]\n println!(\"{}\", a[0]) }\n",
+        "fn main() { let a: [f64; 40000] = #[0.0; 40000]\n println!(\"{}\", a[0]) }\n",
     );
     assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]
 fn very_large_fixed_array_is_accepted() {
-    let d = diagnostics_for("fn main() { let a: [i64; 100000000] = [0; 100000000]\n let _ = a }\n");
+    let d =
+        diagnostics_for("fn main() { let a: [i64; 100000000] = #[0; 100000000]\n let _ = a }\n");
     assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]
 fn owned_slice_repeat_is_rejected_as_unsized() {
-    let d = diagnostics_for("fn main() { let v: [i64] = [0; 100000000]\n let _ = v.len() }\n");
+    let d = diagnostics_for("fn main() { let v: [i64] = #[0; 100000000]\n let _ = v.len() }\n");
     assert!(
         d.iter()
             .any(|diagnostic| { matches!(diagnostic.error, TypeError::UnsizedSliceValue { .. }) }),
@@ -2077,24 +2114,24 @@ fn hashmap_keys_with_aggregate_key_is_rejected_before_lowering() {
     // `Vec<K>` snapshot. This used to pass checking and return Unit-shaped
     // values in the compiled runtime.
     let d = diagnostics_for(
-        "use std::collections::HashMap\nstruct Point { x: i64, y: i64 }\nfn main() { let m: HashMap<Point, i64> = HashMap::new()\n let _ = m.keys()\n }\n",
+        "use std::collections::Map\nstruct Point { x: i64, y: i64 }\nfn main() { let m: Map<Point, i64> = Map::new()\n let _ = m.keys()\n }\n",
     );
     assert!(
         d.iter().any(|diagnostic| matches!(
             &diagnostic.error,
             TypeError::UnresolvedMethod { name, .. }
-                if name == "keys for aggregate HashMap keys"
+                if name == "keys for aggregate Map keys"
         )),
-        "expected aggregate HashMap keys rejection, got {d:?}"
+        "expected aggregate Map keys rejection, got {d:?}"
     );
 }
 
 #[test]
 fn hashmap_keys_with_scalar_key_remains_available() {
     let d = diagnostics_for(
-        "use std::collections::HashMap\nfn main() { let m: HashMap<i64, i64> = HashMap::new()\n let _ = m.keys()\n }\n",
+        "use std::collections::Map\nfn main() { let m: Map<i64, i64> = Map::new()\n let _ = m.keys()\n }\n",
     );
-    assert!(d.is_empty(), "scalar HashMap keys should typecheck: {d:?}");
+    assert!(d.is_empty(), "scalar Map keys should typecheck: {d:?}");
 }
 
 #[test]
@@ -2946,7 +2983,7 @@ fn validate_handles_keep_methods_across_function_return() {
 fn map_binding_cannot_be_retyped_to_or_insert_result() {
     let diagnostics = diagnostics_for(
         "fn main() {\n\
-         let mut h = HashMap::new()\n\
+         let mut h = Map::new()\n\
          h.insert(\"a\", 1)\n\
          h = h.or_insert(\"c\", 0)\n\
          }\n",
@@ -2956,7 +2993,7 @@ fn map_binding_cannot_be_retyped_to_or_insert_result() {
             matches!(
                 &diagnostic.error,
                 TypeError::TypeMismatch { expected, found }
-                    if expected == "HashMap<String, i64>" && found == "i64"
+                    if expected == "Map<String, i64>" && found == "i64"
             )
         }),
         "map assignment should preserve the established map type: {diagnostics:?}"
@@ -2967,10 +3004,10 @@ fn map_binding_cannot_be_retyped_to_or_insert_result() {
 fn constant_repeat_literal_can_flow_into_vec_of_fixed_arrays() {
     let checked = run("fn main() {\n\
          let mut rows: Vec<[i64; 6]> = Vec::new()\n\
-         let mut row = [0; 6]\n\
+         let mut row = #[0; 6]\n\
          row[3] = 9\n\
          rows.push(row)\n\
-         let shaped: Vec<i64> = [0; 4]\n\
+         let shaped: Vec<i64> = Vec::from(#[0; 4])\n\
          println!(\"{} {}\", rows[0][3], shaped.len())\n\
          }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
@@ -3012,15 +3049,15 @@ fn fast_string_and_path_std_apis_typecheck() {
 #[test]
 fn phase1_runtime_collection_shapes_accept_i64_paths() {
     let diagnostics = diagnostics_for(
-        "use std::collections::{BTreeMap, MaxHeap, MinHeap, VecDeque}\n\
+        "use std::collections::{BTreeMap, MaxHeap, MinHeap, Deque}\n\
          fn main() {\n\
-         let mut q: VecDeque<i64> = VecDeque::new()\n\
+         let mut q: Deque<i64> = Deque::new()\n\
          q.push_back(1)\n\
          let front: Option<i64> = q.pop_front()\n\
          let mut max: MaxHeap<i64> = MaxHeap::from([1, 2])\n\
          max.push(3)\n\
          let top: Option<i64> = max.peek()\n\
-         let mut min: MinHeap<i64> = _[3, 1]\n\
+         let mut min: MinHeap<i64> = MinHeap::from([3, 1])\n\
          min.push(0)\n\
          let low: Option<i64> = min.pop()\n\
          let mut sorted: BTreeMap<String, i64> = BTreeMap::new()\n\
@@ -3042,15 +3079,17 @@ fn phase1_runtime_collection_shapes_reject_unsupported_generics() {
     for (name, source, expected, found) in [
         (
             "vecdeque string annotation",
-            "use std::collections::VecDeque\n\
-             fn main() { let mut q: VecDeque<String> = VecDeque::new()\n\
+            "use std::collections::Deque\n\
+             fn main() { let mut q: Deque<String> = Deque::new()\n\
              q.push_back(\"a\") }\n",
             "i64",
             "String",
         ),
         (
-            "queue literal string",
-            "fn main() { let mut q = <[\"a\"]\n println!(\"{}\", q.pop().unwrap_or(0)) }\n",
+            "queue string from",
+            "use std::collections::Queue\n\
+             fn main() { let mut q = Queue::from([\"a\"])\n\
+             println!(\"{}\", q.pop().unwrap_or(0)) }\n",
             "i64",
             "String",
         ),

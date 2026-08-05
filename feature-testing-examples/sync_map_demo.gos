@@ -8,7 +8,7 @@
 use std::sync
 
 fn main() {
-    let m = sync::Map::new()
+    let mut m = sync::Map::new()
     sync::Map::insert(m, "alpha", "1")
     sync::Map::insert(m, "beta", "2")
     sync::Map::insert(m, "gamma", "3")

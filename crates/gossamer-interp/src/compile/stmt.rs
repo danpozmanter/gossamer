@@ -177,6 +177,9 @@ impl<'tcx> FnBuilder<'tcx> {
                             Some(TyKind::Iterator(_))
                         ) {
                             self.lazy_iterator_locals.insert(typed.reg);
+                            if self.init_is_materialized_iterator(init) {
+                                self.materialized_iter_locals.insert(typed.reg);
+                            }
                         }
                         self.record_uint_display_init(init, typed.reg);
                         self.bind_local(&name.name, typed);
@@ -730,7 +733,9 @@ impl<'tcx> FnBuilder<'tcx> {
             HirExprKind::Path { segments, .. } => segments
                 .first()
                 .is_some_and(|s| self.lookup_local(&s.name).is_some()),
-            HirExprKind::Field { receiver, .. } => self.place_root_is_local(receiver),
+            HirExprKind::Field { receiver, .. } | HirExprKind::TupleIndex { receiver, .. } => {
+                self.place_root_is_local(receiver)
+            }
             HirExprKind::Index { base, .. } => self.place_root_is_local(base),
             HirExprKind::Unary {
                 op: HirUnaryOp::Deref,
@@ -746,7 +751,9 @@ impl<'tcx> FnBuilder<'tcx> {
     fn place_root_is_mut_static(&self, place: &HirExpr) -> bool {
         match &place.kind {
             HirExprKind::Path { segments, .. } => self.mut_static_global_name(segments).is_some(),
-            HirExprKind::Field { receiver, .. } => self.place_root_is_mut_static(receiver),
+            HirExprKind::Field { receiver, .. } | HirExprKind::TupleIndex { receiver, .. } => {
+                self.place_root_is_mut_static(receiver)
+            }
             HirExprKind::Index { base, .. } => self.place_root_is_mut_static(base),
             HirExprKind::Unary {
                 op: HirUnaryOp::Deref,
@@ -831,6 +838,15 @@ impl<'tcx> FnBuilder<'tcx> {
                 self.emit(Op::FieldSet {
                     receiver: recv_reg,
                     name_idx,
+                    value: value_reg,
+                });
+                self.compile_place_store(receiver, recv_reg)
+            }
+            HirExprKind::TupleIndex { receiver, index } => {
+                let recv_reg = self.compile_expr(receiver)?;
+                self.emit(Op::TupleSet {
+                    receiver: recv_reg,
+                    index: *index,
                     value: value_reg,
                 });
                 self.compile_place_store(receiver, recv_reg)

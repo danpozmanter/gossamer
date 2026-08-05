@@ -154,7 +154,7 @@ fn main() -> i64 {
 
 const HASH_LOOP_SRC: &str = r"
 fn main() -> i64 {
-    let mut m: HashMap<i64, i64> = HashMap::new()
+    let mut m: Map<i64, i64> = Map::new()
     let mut i: i64 = 0
     while i < 100_000 {
         m.insert(i % 256, i)

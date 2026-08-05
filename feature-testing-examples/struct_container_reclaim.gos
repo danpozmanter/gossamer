@@ -1,4 +1,4 @@
-use std::collections::HashMap
+use std::collections::Map
 
 struct Node { val: i64, next: Option<Box<Node>> }
 
@@ -23,7 +23,7 @@ fn map_case() -> i64 {
     let mut total = 0
     let mut i = 0
     while i < 500 {
-        let mut m: HashMap<i64, Node> = HashMap::new()
+        let mut m: Map<i64, Node> = Map::new()
         let inner = Node { val: i + 5, next: None }
         m.insert(1, Node { val: i, next: Some(inner) })
         m.insert(1, Node { val: i, next: None })

@@ -137,56 +137,26 @@ pub(crate) fn install_container_heap(globals: &mut Vec<(&'static str, Value)>) {
         globals.push((q, crate::builtins::builtin_pub(q, call)));
     }
     for (name, call) in [
-        ("BinaryHeap::new", builtin_max_heap_new as BuiltinFnPub),
-        ("collections::BinaryHeap::new", builtin_max_heap_new),
-        ("BinaryHeap::from", builtin_max_heap_from),
-        ("collections::BinaryHeap::from", builtin_max_heap_from),
-        ("MaxHeap::new", builtin_max_heap_new),
+        ("MaxHeap::new", builtin_max_heap_new as BuiltinFnPub),
         ("collections::MaxHeap::new", builtin_max_heap_new),
         ("MaxHeap::from", builtin_max_heap_from),
         ("collections::MaxHeap::from", builtin_max_heap_from),
-        ("MaxBinaryHeap::new", builtin_max_heap_new),
-        ("collections::MaxBinaryHeap::new", builtin_max_heap_new),
-        ("MaxBinaryHeap::from", builtin_max_heap_from),
-        ("collections::MaxBinaryHeap::from", builtin_max_heap_from),
         ("MaxHeap::push", builtin_binary_heap_push),
         ("MaxHeap::pop", builtin_binary_heap_pop),
         ("MaxHeap::peek", builtin_binary_heap_peek),
         ("MaxHeap::len", builtin_binary_heap_len),
         ("MaxHeap::is_empty", builtin_binary_heap_is_empty),
         ("MaxHeap::clear", builtin_binary_heap_clear),
-        ("MaxBinaryHeap::push", builtin_binary_heap_push),
-        ("MaxBinaryHeap::pop", builtin_binary_heap_pop),
-        ("MaxBinaryHeap::peek", builtin_binary_heap_peek),
-        ("MaxBinaryHeap::len", builtin_binary_heap_len),
-        ("MaxBinaryHeap::is_empty", builtin_binary_heap_is_empty),
-        ("MaxBinaryHeap::clear", builtin_binary_heap_clear),
         ("MinHeap::new", builtin_min_heap_new),
         ("collections::MinHeap::new", builtin_min_heap_new),
         ("MinHeap::from", builtin_min_heap_from),
         ("collections::MinHeap::from", builtin_min_heap_from),
-        ("MinBinaryHeap::new", builtin_min_heap_new),
-        ("collections::MinBinaryHeap::new", builtin_min_heap_new),
-        ("MinBinaryHeap::from", builtin_min_heap_from),
-        ("collections::MinBinaryHeap::from", builtin_min_heap_from),
         ("MinHeap::push", builtin_binary_heap_push),
         ("MinHeap::pop", builtin_binary_heap_pop),
         ("MinHeap::peek", builtin_binary_heap_peek),
         ("MinHeap::len", builtin_binary_heap_len),
         ("MinHeap::is_empty", builtin_binary_heap_is_empty),
         ("MinHeap::clear", builtin_binary_heap_clear),
-        ("MinBinaryHeap::push", builtin_binary_heap_push),
-        ("MinBinaryHeap::pop", builtin_binary_heap_pop),
-        ("MinBinaryHeap::peek", builtin_binary_heap_peek),
-        ("MinBinaryHeap::len", builtin_binary_heap_len),
-        ("MinBinaryHeap::is_empty", builtin_binary_heap_is_empty),
-        ("MinBinaryHeap::clear", builtin_binary_heap_clear),
-        ("BinaryHeap::push", builtin_binary_heap_push),
-        ("BinaryHeap::pop", builtin_binary_heap_pop),
-        ("BinaryHeap::peek", builtin_binary_heap_peek),
-        ("BinaryHeap::len", builtin_binary_heap_len),
-        ("BinaryHeap::is_empty", builtin_binary_heap_is_empty),
-        ("BinaryHeap::clear", builtin_binary_heap_clear),
     ] {
         globals.push((name, crate::builtins::builtin_pub(name, call)));
     }
@@ -207,10 +177,7 @@ fn binary_heap_handle(owner: &'static str, id: i64) -> Value {
 
 fn binary_heap_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value
-        && matches!(
-            inner.name.as_str(),
-            "BinaryHeap" | "MaxHeap" | "MaxBinaryHeap" | "MinHeap" | "MinBinaryHeap"
-        )
+        && matches!(inner.name.as_str(), "MaxHeap" | "MinHeap")
     {
         for (name, field) in &inner.fields {
             if *name == "__heap"

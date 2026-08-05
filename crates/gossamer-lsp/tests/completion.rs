@@ -404,13 +404,13 @@ fn collection_literal_receiver_completion_covers_current_literals() {
 fn collection_type_receiver_completion_covers_canonical_names() {
     for (uri, ty, expected) in [
         ("file:///btree-set.gos", "BTreeSet<i64>", "union"),
-        ("file:///vec-deque-pop.gos", "VecDeque<i64>", "pop_front"),
-        ("file:///vec-deque-push.gos", "VecDeque<i64>", "push_back"),
-        ("file:///binary-heap.gos", "BinaryHeap<i64>", "peek"),
+        ("file:///deque-pop.gos", "Deque<i64>", "pop_front"),
+        ("file:///deque-push.gos", "Deque<i64>", "push_back"),
         ("file:///max-heap.gos", "MaxHeap<i64>", "pop"),
+        ("file:///max-heap-peek.gos", "MaxHeap<i64>", "peek"),
         ("file:///min-heap.gos", "MinHeap<i64>", "pop"),
-        ("file:///vec-queue.gos", "VecQueue<i64>", "peek"),
-        ("file:///vec-stack.gos", "VecStack<i64>", "peek"),
+        ("file:///queue.gos", "Queue<i64>", "peek"),
+        ("file:///stack.gos", "Stack<i64>", "peek"),
     ] {
         let source =
             format!("fn main() {{\n    let mut values: {ty} = {ty}::new()\n    values.\n}}\n");

@@ -2456,6 +2456,34 @@ impl Vm {
                         }
                     };
                 }
+                Op::TupleSet {
+                    receiver,
+                    index,
+                    value,
+                } => {
+                    let new_value = registers[value as usize].clone();
+                    let idx = index as usize;
+                    let oob = || RuntimeError::Arithmetic("tuple index out of bounds".to_string());
+                    match &mut registers[receiver as usize] {
+                        Value::Tuple(items) | Value::Array(items) => {
+                            let items = Arc::make_mut(items);
+                            *items.get_mut(idx).ok_or_else(oob)? = new_value;
+                        }
+                        // A tuple struct stores its positional fields as named
+                        // "0".."N-1"; `.N` writes field N, matching the
+                        // compiled tiers' offset store.
+                        Value::Struct(inner) => {
+                            let inner = Arc::make_mut(inner);
+                            *inner.fields.get_mut(idx).ok_or_else(oob)?.1 = new_value;
+                        }
+                        other => {
+                            let kind = other.type_name();
+                            return Err(RuntimeError::Type(format!(
+                                "value of kind `{kind}` has no tuple fields"
+                            )));
+                        }
+                    }
+                }
                 Op::TupleTailIndex {
                     dst,
                     receiver,

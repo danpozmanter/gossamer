@@ -4,7 +4,7 @@
 // element / payload type from the lowered value - otherwise the compiled
 // tiers render a `[String]` element's pointer bits instead of the string.
 
-use std::collections::HashMap
+use std::collections::Map
 
 fn main() {
     let words: Vec<String> = Vec::from(["alpha", "beta", "gamma"])
@@ -56,9 +56,9 @@ fn main() {
     ints.sort()
     println!("{}", ints.first().unwrap())
 
-    // HashMap pop mutates in place and returns Option<V>; the map's
+    // Map pop mutates in place and returns Option<V>; the map's
     // other entries survive.
-    let mut table: HashMap<String, i64> = HashMap::new()
+    let mut table: Map<String, i64> = Map::new()
     table.insert("x", 1)
     table.insert("y", 2)
     match table.pop("x") {

@@ -40,8 +40,8 @@ fn main() {
     let slice: Vec<String> = Vec::from(["p", "q", "r"])
     let chars: Vec<char> = Vec::from(['a', 'b'])
     // let-annotated Repeat form.
-    let zeros: Vec<i64> = Vec::from([0; 4])
-    let sevens: Vec<i64> = Vec::from([7; 3])
+    let zeros: Vec<i64> = Vec::from(#[0; 4])
+    let sevens: Vec<i64> = Vec::from(#[7; 3])
 
     println!("{} {} {}", words[0], words[1], words.len())
     println!("{} {}", slice[2], slice.len())

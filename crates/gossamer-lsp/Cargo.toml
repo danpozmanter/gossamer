@@ -17,6 +17,7 @@ gossamer-diagnostics = { workspace = true }
 gossamer-lex = { workspace = true }
 gossamer-lint = { workspace = true }
 gossamer-parse = { workspace = true }
+gossamer-pkg = { workspace = true }
 gossamer-resolve = { workspace = true }
 gossamer-std = { workspace = true }
 gossamer-types = { workspace = true }

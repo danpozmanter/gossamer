@@ -1,0 +1,77 @@
+// Tuple surface
+// A tuple groups a fixed number of values of different types. This
+// covers positional reads, chained positional reads through a nested
+// tuple, positional assignment through a `mut` binding, destructuring,
+// structural comparison, and `{}` / `{:?}` rendering - each of which
+// must produce identical text on the VM, the JIT, and the native build.
+
+fn swapped(pair: (i64, String)) -> (String, i64) {
+    let (n, s) = pair
+    (s, n)
+}
+
+fn main() {
+    let mixed = (1, "two", 3.0)
+    println!("{} {} {}", mixed.0, mixed.1, mixed.2)
+    println!("{}", mixed)
+    println!("{:?}", mixed)
+
+    let nested = ((1, 2), "outer")
+    println!("{}", nested.0.1)
+    println!("{:?}", nested)
+
+    let deep = (((1, 2), 3), 4)
+    println!("{}", deep.0.0.1)
+
+    let mut counter = (0, "hits")
+    counter.0 = 7
+    println!("{} {}", counter.0, counter.1)
+
+    let mut grid = ((1, 2), 3)
+    grid.0.1 = 42
+    grid.1 = 9
+    println!("{:?}", grid)
+
+    let (name, count) = swapped((5, "widgets"))
+    println!("{name} {count}")
+
+    println!("{}", (1, 2) < (1, 3))
+    println!("{}", (1, "a") == (1, "a"))
+
+    let single = (99,)
+    println!("{:?}", single)
+
+    let mut pairs = [(3, "c"), (1, "a"), (2, "b")]
+    pairs.sort()
+    for (rank, label) in pairs {
+        println!("{rank}{label}")
+    }
+}
+
+#[cfg(test)]
+mod tuple_surface_tests {
+    use std::testing
+
+    #[test]
+    fn positional_reads_and_writes() {
+        let mut t = (1, "two", 3.0)
+        let _ = testing::check_eq(&t.0, &1, "first element")
+        let _ = testing::check_eq(&t.1, &"two", "second element")
+        t.0 = 10
+        let _ = testing::check_eq(&t.0, &10, "assigned first element")
+    }
+
+    #[test]
+    fn nested_positional_access() {
+        let mut nested = ((1, 2), 3)
+        let _ = testing::check_eq(&nested.0.1, &2, "chained index")
+        nested.0.0 = 8
+        let _ = testing::check_eq(&nested.0.0, &8, "chained assignment")
+    }
+
+    #[test]
+    fn tuples_compare_structurally() {
+        let _ = testing::check(&((1, 2) < (1, 3)), "lexicographic ordering")
+        let _ = testing::check(&((1, "a") == (1, "a")), "structural equality")
+    }
+}

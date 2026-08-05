@@ -474,6 +474,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -590,6 +592,34 @@
 
 
     Comptime
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../language/tuples/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Tuples
 
 
 
@@ -1446,6 +1476,28 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#gp0032" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0032
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gp0033" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0033
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#gr0001" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -1483,6 +1535,17 @@
     <span class="md-ellipsis">
 
         GR0004
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gr0006" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GR0006
 
     </span>
   </a>
@@ -2730,6 +2793,28 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#gp0032" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0032
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gp0033" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0033
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#gr0001" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -2767,6 +2852,17 @@
     <span class="md-ellipsis">
 
         GR0004
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gr0006" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GR0006
 
     </span>
   </a>
@@ -3053,6 +3149,16 @@ version. This page is auto-generated from the catalogue in
 <td>match arm missing separator</td>
 </tr>
 <tr>
+<td><a href="#gp0032"><code>GP0032</code></a></td>
+<td>Parser</td>
+<td>removed collection literal</td>
+</tr>
+<tr>
+<td><a href="#gp0033"><code>GP0033</code></a></td>
+<td>Parser</td>
+<td>bare repeat literal</td>
+</tr>
+<tr>
 <td><a href="#gr0001"><code>GR0001</code></a></td>
 <td>Resolve</td>
 <td>unresolved name</td>
@@ -3071,6 +3177,11 @@ version. This page is auto-generated from the catalogue in
 <td><a href="#gr0004"><code>GR0004</code></a></td>
 <td>Resolve</td>
 <td>duplicate import</td>
+</tr>
+<tr>
+<td><a href="#gr0006"><code>GR0006</code></a></td>
+<td>Resolve</td>
+<td>removed stdlib item</td>
 </tr>
 <tr>
 <td><a href="#gt0001"><code>GT0001</code></a></td>
@@ -3207,6 +3318,12 @@ version. This page is auto-generated from the catalogue in
 <h2 id="gp0031"><code>GP0031</code> <a id="gp0031"></a><a class="headerlink" href="#gp0031" title="Permanent link">&para;</a></h2>
 <p><strong>Parser</strong> - match arm missing separator</p>
 <p>Separate same-line expression arms with a comma, or start the next arm on a new line.</p>
+<h2 id="gp0032"><code>GP0032</code> <a id="gp0032"></a><a class="headerlink" href="#gp0032" title="Permanent link">&para;</a></h2>
+<p><strong>Parser</strong> - removed collection literal</p>
+<p>A bracket spelling that used to build a container is no longer syntax. Construct the container through its type: <code>Type::new()</code> or <code>Type::from([a, b, c])</code>.</p>
+<h2 id="gp0033"><code>GP0033</code> <a id="gp0033"></a><a class="headerlink" href="#gp0033" title="Permanent link">&para;</a></h2>
+<p><strong>Parser</strong> - bare repeat literal</p>
+<p>A repeat literal is a fixed array, written <code>#[value; count]</code>. Bare brackets build a Vec from the elements listed inside them.</p>
 <h2 id="gr0001"><code>GR0001</code> <a id="gr0001"></a><a class="headerlink" href="#gr0001" title="Permanent link">&para;</a></h2>
 <p><strong>Resolve</strong> - unresolved name</p>
 <p>A name used in source could not be resolved to a declaration. Check the spelling, whether a <code>use</code> brings the name into scope, and whether the item is visible at this location.</p>
@@ -3219,6 +3336,9 @@ version. This page is auto-generated from the catalogue in
 <h2 id="gr0004"><code>GR0004</code> <a id="gr0004"></a><a class="headerlink" href="#gr0004" title="Permanent link">&para;</a></h2>
 <p><strong>Resolve</strong> - duplicate import</p>
 <p>The same path was imported twice in the same <code>use</code> list. Drop the duplicate.</p>
+<h2 id="gr0006"><code>GR0006</code> <a id="gr0006"></a><a class="headerlink" href="#gr0006" title="Permanent link">&para;</a></h2>
+<p><strong>Resolve</strong> - removed stdlib item</p>
+<p>A container spelling that a canonical name replaced. Each container has exactly one name - import and write that one.</p>
 <h2 id="gt0001"><code>GT0001</code> <a id="gt0001"></a><a class="headerlink" href="#gt0001" title="Permanent link">&para;</a></h2>
 <p><strong>Types</strong> - type mismatch</p>
 <p>The type checker could not reconcile two types it expected to match. The primary label shows the location of the mismatch; the <code>note:</code> line names the conflicting types.</p>

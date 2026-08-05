@@ -92,6 +92,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_arr_sort_str as *const u8,
         ),
         (
+            "gos_rt_arr_sort_tuple",
+            crate::c_abi::gos_rt_arr_sort_tuple as *const u8,
+        ),
+        (
             "gos_rt_atomic_bool_load",
             crate::c_abi::gos_rt_atomic_bool_load as *const u8,
         ),
@@ -5701,6 +5705,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_vec_sort_str",
             crate::c_abi::gos_rt_vec_sort_str as *const u8,
+        ),
+        (
+            "gos_rt_vec_sort_tuple",
+            crate::c_abi::gos_rt_vec_sort_tuple as *const u8,
         ),
         (
             "gos_rt_vec_step_by",

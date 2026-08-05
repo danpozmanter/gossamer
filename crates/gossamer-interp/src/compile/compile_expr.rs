@@ -3541,15 +3541,13 @@ impl<'tcx> FnBuilder<'tcx> {
                 let is_map_new = args.is_empty()
                     && matches!(
                         segs.as_slice(),
-                        ["Map" | "HashMap" | "BTreeMap", "new"]
-                            | ["collections", "Map" | "HashMap" | "BTreeMap", "new"]
+                        ["Map" | "BTreeMap", "new"] | ["collections", "Map" | "BTreeMap", "new"]
                     );
                 let is_empty_map_from = args.len() == 1
                     && matches!(self.tcx.kind(args[0].ty), Some(TyKind::Unit))
                     && matches!(
                         segs.as_slice(),
-                        ["Map" | "HashMap" | "BTreeMap", "from"]
-                            | ["collections", "Map" | "HashMap" | "BTreeMap", "from"]
+                        ["Map" | "BTreeMap", "from"] | ["collections", "Map" | "BTreeMap", "from"]
                     );
                 if (is_map_new || is_empty_map_from) && self.is_int_map_ty(result_ty) {
                     let dst = self.alloc_reg();

@@ -931,6 +931,17 @@ pub enum Op {
         /// Zero-based index.
         index: u32,
     },
+    /// `receiver.N = value` - native tuple / positional-field
+    /// write. Mutates the element vector in place (`Arc::make_mut`
+    /// semantics).
+    TupleSet {
+        /// Register holding the tuple.
+        receiver: Reg,
+        /// Zero-based index.
+        index: u32,
+        /// Register holding the value to store.
+        value: Reg,
+    },
     /// `dst = tuple[len - offset_from_end - 1]` - tail-anchored
     /// element access for rest patterns like `(first, .., last)`.
     TupleTailIndex {

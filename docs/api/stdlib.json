@@ -382,68 +382,11 @@
       "reference_status": "catalog_only"
     },
     {
-      "id": "std-collections-BinaryHeap",
-      "name": "std::collections::BinaryHeap",
-      "kind": "type",
-      "signature": null,
-      "description": "Alias for `MaxHeap<T>`; underlying storage is BinaryHeap.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollections",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
       "id": "std-collections-Deque",
       "name": "std::collections::Deque",
       "kind": "type",
       "signature": null,
-      "description": "Double-ended queue (VecDeque) with explicit front/back methods; use `Deque::new()` or `Deque::from([a, b])`.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollections",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-HashMap",
-      "name": "std::collections::HashMap",
-      "kind": "type",
-      "signature": null,
-      "description": "Alias for `Map<K, V>`; underlying storage is HashMap.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollections",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-HashSet",
-      "name": "std::collections::HashSet",
-      "kind": "type",
-      "signature": null,
-      "description": "Alias for `Set<T>`; underlying storage is HashSet.",
+      "description": "Double-ended queue with explicit front/back methods; use `Deque::new()` or `Deque::from([a, b])`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -462,26 +405,7 @@
       "name": "std::collections::Map",
       "kind": "type",
       "signature": null,
-      "description": "Key-value map (HashMap) backed by the swiss-table layout; literals use `{key: value}` and empty map literals use `{}`.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollections",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-MaxBinaryHeap",
-      "name": "std::collections::MaxBinaryHeap",
-      "kind": "type",
-      "signature": null,
-      "description": "Alias for `MaxHeap<T>`; underlying storage is BinaryHeap.",
+      "description": "Key-value map backed by the swiss-table layout; literals use `{key: value}` and empty map literals use `{}`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -500,26 +424,7 @@
       "name": "std::collections::MaxHeap",
       "kind": "type",
       "signature": null,
-      "description": "Max-priority heap (MaxBinaryHeap) backed by BinaryHeap; literals use `^[a, b]` and empty heap literals use `^[]`.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollections",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-MinBinaryHeap",
-      "name": "std::collections::MinBinaryHeap",
-      "kind": "type",
-      "signature": null,
-      "description": "Alias for `MinHeap<T>`; underlying storage is BinaryHeap with reversed ordering.",
+      "description": "Max-priority heap; use `MaxHeap::new()` or `MaxHeap::from([a, b])`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -538,7 +443,7 @@
       "name": "std::collections::MinHeap",
       "kind": "type",
       "signature": null,
-      "description": "Min-priority heap (MinBinaryHeap) backed by BinaryHeap; literals use `_[a, b]` and empty heap literals use `_[]`.",
+      "description": "Min-priority heap; use `MinHeap::new()` or `MinHeap::from([a, b])`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -557,7 +462,7 @@
       "name": "std::collections::Queue",
       "kind": "type",
       "signature": null,
-      "description": "FIFO queue (VecQueue) backed by VecDeque; literals use `<[a, b]` and empty queue literals use `<[]`.",
+      "description": "FIFO-only queue; use `Queue::new()` or `Queue::from([a, b])`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -576,7 +481,7 @@
       "name": "std::collections::Set",
       "kind": "type",
       "signature": null,
-      "description": "Unique-value set (HashSet) backed by a hash table; literals use `#{a, b}` and empty set literals use `#{}`.",
+      "description": "Unique-value set backed by a hash table; literals use `#{a, b}` and empty set literals use `#{}`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -595,7 +500,7 @@
       "name": "std::collections::Stack",
       "kind": "type",
       "signature": null,
-      "description": "LIFO stack (VecStack) backed by VecDeque; literals use `[a, b]>` and empty stack literals use `[]>`.",
+      "description": "LIFO-only stack; use `Stack::new()` or `Stack::from([a, b])`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -615,63 +520,6 @@
       "kind": "type",
       "signature": null,
       "description": "Growable contiguous sequence. Vec literals use `[a, b]` and empty Vec literals use `[]`.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollections",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-VecDeque",
-      "name": "std::collections::VecDeque",
-      "kind": "type",
-      "signature": null,
-      "description": "Alias for `Deque<T>`; underlying storage is VecDeque.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollections",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-VecQueue",
-      "name": "std::collections::VecQueue",
-      "kind": "type",
-      "signature": null,
-      "description": "Alias for `Queue<T>`; underlying storage is VecQueue backed by VecDeque.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollections",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-VecStack",
-      "name": "std::collections::VecStack",
-      "kind": "type",
-      "signature": null,
-      "description": "Alias for `Stack<T>`; underlying storage is VecStack backed by VecDeque.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

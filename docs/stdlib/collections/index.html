@@ -470,6 +470,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -586,6 +588,34 @@
 
 
     Comptime
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../language/tuples/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Tuples
 
 
 
@@ -1939,29 +1969,24 @@
 <td>Ordered unique-value set backed by BTreeSet.</td>
 </tr>
 <tr>
-<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>BinaryHeap</code></a></td>
-<td><code>type BinaryHeap</code></td>
-<td>Alias for <code>MaxHeap&lt;T&gt;</code>; underlying storage is BinaryHeap.</td>
-</tr>
-<tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>MaxHeap</code></a></td>
 <td><code>type MaxHeap</code></td>
-<td>Max-priority heap (MaxBinaryHeap) backed by BinaryHeap; use <code>^[1, 2, 3]</code> for literals.</td>
+<td>Max-priority heap; use <code>MaxHeap::new()</code> or <code>MaxHeap::from([1, 2, 3])</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>MinHeap</code></a></td>
 <td><code>type MinHeap</code></td>
-<td>Min-priority heap (MinBinaryHeap) backed by BinaryHeap; use <code>_[1, 2, 3]</code> for literals.</td>
+<td>Min-priority heap; use <code>MinHeap::new()</code> or <code>MinHeap::from([1, 2, 3])</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>Map</code></a></td>
 <td><code>type Map</code></td>
-<td>Key-value map (HashMap) backed by the swiss-table layout.</td>
+<td>Key-value map backed by the swiss-table layout; literals use <code>{key: value}</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>Set</code></a></td>
 <td><code>type Set</code></td>
-<td>Unique-value set (HashSet) backed by a hash table.</td>
+<td>Unique-value set backed by a hash table; literals use <code>#{a, b}</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>Vec</code></a></td>
@@ -1971,17 +1996,17 @@
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>Deque</code></a></td>
 <td><code>type Deque</code></td>
-<td>Double-ended queue (VecDeque) with explicit front/back methods such as <code>push_back</code> and <code>pop_front</code>.</td>
+<td>Double-ended queue with explicit front/back methods such as <code>push_back</code> and <code>pop_front</code>; use <code>Deque::new()</code> or <code>Deque::from([1, 2, 3])</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>Queue</code></a></td>
 <td><code>type Queue</code></td>
-<td>FIFO queue (VecQueue) backed by VecDeque; use <code>&lt;[1, 2, 3]</code> for literals and <code>push</code>, <code>pop</code>, <code>peek</code>, <code>len</code>, <code>is_empty</code>, and <code>clear</code>.</td>
+<td>FIFO-only queue; use <code>Queue::new()</code> or <code>Queue::from([1, 2, 3])</code>, then <code>push</code>, <code>pop</code>, <code>peek</code>, <code>len</code>, <code>is_empty</code>, and <code>clear</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>Stack</code></a></td>
 <td><code>type Stack</code></td>
-<td>LIFO stack (VecStack) backed by VecDeque; use <code>[1, 2, 3]&gt;</code> for literals and <code>push</code>, <code>pop</code>, <code>peek</code>, <code>len</code>, <code>is_empty</code>, and <code>clear</code>.</td>
+<td>LIFO-only stack; use <code>Stack::new()</code> or <code>Stack::from([1, 2, 3])</code>, then <code>push</code>, <code>pop</code>, <code>peek</code>, <code>len</code>, <code>is_empty</code>, and <code>clear</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>len</code></a></td>

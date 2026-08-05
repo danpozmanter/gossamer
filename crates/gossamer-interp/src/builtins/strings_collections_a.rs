@@ -433,7 +433,7 @@ fn builtin_vec_remove_safe(args: &[Value]) -> RuntimeResult<Value> {
     Ok(ok_variant(items.remove(idx as usize)))
 }
 
-/// `HashMap::pop(m, k) -> Option<V>` - remove and return the previous
+/// `Map::pop(m, k) -> Option<V>` - remove and return the previous
 /// value Python-style.
 fn builtin_map_pop(args: &[Value]) -> RuntimeResult<Value> {
     let Some(key_val) = args.get(1) else {

@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0032]: A bracket spelling that used to build a container is no longer syntax. Construct the container through its type instead: `Type::new()` for an empty one, or `Type::from([a, b, c])`. - here
+--- framed ---
+error[GP0032]: A bracket spelling that used to build a container is no longer syntax. Construct the container through its type instead: `Type::new()` for an empty one, or `Type::from([a, b, c])`.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

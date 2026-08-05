@@ -1,4 +1,4 @@
-// Win B collections sweep: std::collections::HashSet surface across
+// Win B collections sweep: std::collections::Set surface across
 // tiers. insert/remove/contains/len/is_empty and the algebra
 // (union/intersection/difference/symmetric_difference/is_subset/
 // is_superset/is_disjoint), with duplicate inserts, empty sets, and
@@ -8,20 +8,20 @@
 //
 // Element type is String / struct here, NOT i64: the compiled tier
 // passes a raw `i64` key straight to `gos_rt_set_insert(*c_char)`
-// (no stringify), so `HashSet<i64>` segfaults on insert. Likewise
+// (no stringify), so `Set<i64>` segfaults on insert. Likewise
 // `.to_vec()` / `.iter()` / `.clear()` have no working compiled-tier
 // dispatch (no matching arm in the MIR method table; the runtime
-// stores `HashSet<String>` only). All reported as forbidden-file
+// stores `Set<String>` only). All reported as forbidden-file
 // fixes; this fixture stays on the working surface.
 
-use std::collections::HashSet
+use std::collections::Set
 
 #[derive(PartialEq, Eq, Debug)]
 struct Tag { id: i64 }
 
 fn main() {
     // insert + duplicate + len + contains.
-    let mut s: HashSet<String> = HashSet::new()
+    let mut s: Set<String> = Set::new()
     s.insert("a")
     s.insert("b")
     s.insert("b")
@@ -35,14 +35,14 @@ fn main() {
     println!("is_empty {}", s.is_empty())
 
     // String elements.
-    let mut ss: HashSet<String> = HashSet::new()
+    let mut ss: Set<String> = Set::new()
     ss.insert("foo")
     ss.insert("bar")
     ss.insert("foo")
     println!("str len {} has_foo {} has_baz {}", ss.len(), ss.contains("foo"), ss.contains("baz"))
 
     // Struct elements: equal-by-value collide, lookup hits.
-    let mut tags: HashSet<Tag> = HashSet::new()
+    let mut tags: Set<Tag> = Set::new()
     tags.insert(Tag { id: 1 })
     tags.insert(Tag { id: 1 })
     tags.insert(Tag { id: 2 })
@@ -50,11 +50,11 @@ fn main() {
         tags.contains(&Tag { id: 1 }), tags.contains(&Tag { id: 3 }))
 
     // Algebra over String sets (cardinality + membership only).
-    let mut a: HashSet<String> = HashSet::new()
+    let mut a: Set<String> = Set::new()
     a.insert("x")
     a.insert("y")
     a.insert("z")
-    let mut b: HashSet<String> = HashSet::new()
+    let mut b: Set<String> = Set::new()
     b.insert("y")
     b.insert("z")
     b.insert("w")
@@ -69,11 +69,11 @@ fn main() {
         sd.len(), sd.contains("x"), sd.contains("w"), sd.contains("y"))
 
     // Predicates: subset / superset / disjoint, incl empty-set edges.
-    let mut sub: HashSet<String> = HashSet::new()
+    let mut sub: Set<String> = Set::new()
     sub.insert("x")
     sub.insert("y")
-    let empty: HashSet<String> = HashSet::new()
-    let mut far: HashSet<String> = HashSet::new()
+    let empty: Set<String> = Set::new()
+    let mut far: Set<String> = Set::new()
     far.insert("p")
     far.insert("q")
     println!("subset {} superset {} disjoint {}",

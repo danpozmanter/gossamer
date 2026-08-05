@@ -1,11 +1,11 @@
-// Struct / tuple values as HashMap and HashSet keys. The VM keys aggregates by
+// Struct / tuple values as Map and Set keys. The VM keys aggregates by
 // value (recursively); the compiled tiers key by the aggregate's content (via a
 // per-slot layout descriptor that dereferences `String` fields), so two equal
 // values at distinct allocations share a slot on every tier - flat structs,
 // `String`-field structs, nested structs, and tuples alike.
 
-use std::collections::HashMap
-use std::collections::HashSet
+use std::collections::Map
+use std::collections::Set
 
 #[derive(PartialEq, Eq, Debug)]
 struct Point { x: i64, y: i64 }
@@ -16,7 +16,7 @@ struct User { name: String, id: i64 }
 #[derive(PartialEq, Eq, Debug)]
 struct Cell { at: Point, label: String }
 
-fn get_or(m: &HashMap<Point, i64>, k: &Point) -> i64 {
+fn get_or(m: &Map<Point, i64>, k: &Point) -> i64 {
     match m.get(k) {
         Some(v) => v,
         None => -1,
@@ -26,7 +26,7 @@ fn get_or(m: &HashMap<Point, i64>, k: &Point) -> i64 {
 // Length after inserting two equal-valued keys (one slot) - for the tests,
 // which can't name `super::Point` inside a generic argument.
 fn equal_keys_len() -> i64 {
-    let mut m: HashMap<Point, i64> = HashMap::new()
+    let mut m: Map<Point, i64> = Map::new()
     m.insert(Point { x: 1, y: 2 }, 1)
     m.insert(Point { x: 1, y: 2 }, 2)
     m.len()
@@ -34,7 +34,7 @@ fn equal_keys_len() -> i64 {
 
 // Length after inserting two distinct keys (two slots).
 fn distinct_keys_len() -> i64 {
-    let mut m: HashMap<Point, i64> = HashMap::new()
+    let mut m: Map<Point, i64> = Map::new()
     m.insert(Point { x: 1, y: 2 }, 1)
     m.insert(Point { x: 2, y: 1 }, 2)
     m.len()
@@ -43,7 +43,7 @@ fn distinct_keys_len() -> i64 {
 fn main() {
     // Flat struct keys: distinct allocations of an equal value collide; a
     // re-inserted key overwrites; a distinct key is a distinct slot.
-    let mut m: HashMap<Point, i64> = HashMap::new()
+    let mut m: Map<Point, i64> = Map::new()
     m.insert(Point { x: 1, y: 2 }, 10)
     m.insert(Point { x: 3, y: 4 }, 20)
     m.insert(Point { x: 1, y: 2 }, 99)
@@ -52,7 +52,7 @@ fn main() {
     println!("len {}", m.len())
 
     // String-field struct key.
-    let mut um: HashMap<User, i64> = HashMap::new()
+    let mut um: Map<User, i64> = Map::new()
     um.insert(User { name: "ada", id: 1 }, 100)
     um.insert(User { name: "bob", id: 2 }, 200)
     let ada = User { name: "ada", id: 1 }
@@ -60,19 +60,19 @@ fn main() {
     println!("ulen {}", um.len())
 
     // Nested-struct + String key.
-    let mut cm: HashMap<Cell, i64> = HashMap::new()
+    let mut cm: Map<Cell, i64> = Map::new()
     cm.insert(Cell { at: Point { x: 5, y: 6 }, label: "home" }, 7)
     let c = Cell { at: Point { x: 5, y: 6 }, label: "home" }
     println!("{}", match cm.get(&c) { Some(v) => v, None => -1 })
 
     // Tuple key.
-    let mut tm: HashMap<(i64, i64), String> = HashMap::new()
+    let mut tm: Map<(i64, i64), String> = Map::new()
     tm.insert((1, 2), "pair")
     let tk = (1, 2)
     println!("{}", match tm.get(&tk) { Some(v) => v, None => "none" })
 
-    // HashSet of structs.
-    let mut seen: HashSet<Point> = HashSet::new()
+    // Set of structs.
+    let mut seen: Set<Point> = Set::new()
     seen.insert(Point { x: 0, y: 0 })
     seen.insert(Point { x: 0, y: 0 })
     println!("has {}", seen.contains(&Point { x: 0, y: 0 }))

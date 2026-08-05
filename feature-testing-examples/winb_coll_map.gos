@@ -1,11 +1,11 @@
-// Win B collections sweep: std::collections::HashMap surface across
+// Win B collections sweep: std::collections::Map surface across
 // tiers. insert/get/get_or/inc/or_insert/contains_key/remove/pop/len/
 // keys/values/iter, with iteration order, missing keys, duplicate
 // inserts, struct + tuple keys, and struct values. Iteration columns
 // (keys/values/iter) must agree across tiers AND be deterministic
 // (key-sorted). Bit-identical VM vs compiled.
 
-use std::collections::HashMap
+use std::collections::Map
 
 #[derive(PartialEq, Eq, Debug)]
 struct Pos { x: i64, y: i64 }
@@ -22,7 +22,7 @@ fn show_opt_i64(label: String, o: Option<i64>) {
 
 fn main() {
     // String-keyed i64 map: insert, overwrite, get, get_or, len.
-    let mut m: HashMap<String, i64> = HashMap::new()
+    let mut m: Map<String, i64> = Map::new()
     m.insert("zebra", 1)
     m.insert("apple", 2)
     m.insert("mango", 3)
@@ -45,7 +45,7 @@ fn main() {
     println!("")
 
     // inc / inc-by counters.
-    let mut counts: HashMap<String, i64> = HashMap::new()
+    let mut counts: Map<String, i64> = Map::new()
     counts.inc("a")
     counts.inc("a")
     counts.inc("b", 5)
@@ -53,28 +53,28 @@ fn main() {
     println!("inc a {} b {}", counts.get_or("a", 0), counts.get_or("b", 0))
 
     // or_insert: fill-if-absent then leave alone.
-    let mut oi: HashMap<String, i64> = HashMap::new()
+    let mut oi: Map<String, i64> = Map::new()
     oi.or_insert("k", 1)
     oi.or_insert("k", 99)
     println!("or_insert {}", oi.get_or("k", 0))
 
     // remove + pop.
-    let mut rm: HashMap<String, i64> = HashMap::new()
+    let mut rm: Map<String, i64> = Map::new()
     rm.insert("x", 10)
     rm.insert("y", 20)
     rm.remove("x")
     println!("after remove len {} has_x {}", rm.len(), rm.contains_key("x"))
-    match HashMap::pop(rm, "y") {
+    match Map::pop(rm, "y") {
         Some(v) => println!("pop y {}", v),
         None => println!("pop y none"),
     }
-    match HashMap::pop(rm, "y") {
+    match Map::pop(rm, "y") {
         Some(v) => println!("pop y again {}", v),
         None => println!("pop y again none"),
     }
 
     // i64-keyed map: deterministic numeric-sorted iteration.
-    let mut nm: HashMap<i64, i64> = HashMap::new()
+    let mut nm: Map<i64, i64> = Map::new()
     nm.insert(30, 300)
     nm.insert(10, 100)
     nm.insert(20, 200)
@@ -86,7 +86,7 @@ fn main() {
     println!("")
 
     // Struct keys: equal-by-value keys collide; lookup hits.
-    let mut pm: HashMap<Pos, i64> = HashMap::new()
+    let mut pm: Map<Pos, i64> = Map::new()
     pm.insert(Pos { x: 1, y: 2 }, 10)
     pm.insert(Pos { x: 3, y: 4 }, 20)
     pm.insert(Pos { x: 1, y: 2 }, 88)
@@ -95,13 +95,13 @@ fn main() {
     show_opt_i64("struct-key miss", pm.get(&Pos { x: 9, y: 9 }))
 
     // Tuple keys.
-    let mut tm: HashMap<(i64, i64), i64> = HashMap::new()
+    let mut tm: Map<(i64, i64), i64> = Map::new()
     tm.insert((1, 2), 100)
     tm.insert((3, 4), 200)
     show_opt_i64("tuple-key get", tm.get(&(3, 4)))
 
     // Struct values: get returns the struct, fields readable.
-    let mut sm: HashMap<String, Score> = HashMap::new()
+    let mut sm: Map<String, Score> = Map::new()
     sm.insert("ada", Score { wins: 7, name: "ada" })
     sm.insert("bob", Score { wins: 3, name: "bob" })
     match sm.get("ada") {
@@ -111,7 +111,7 @@ fn main() {
     println!("sm len {}", sm.len())
 
     // Empty-map iteration: no output, len 0.
-    let em: HashMap<String, i64> = HashMap::new()
+    let em: Map<String, i64> = Map::new()
     let mut ek = 0
     for _k in em.keys() { ek += 1 }
     println!("empty keys count {} len {}", ek, em.len())

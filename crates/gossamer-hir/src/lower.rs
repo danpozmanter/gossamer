@@ -884,22 +884,6 @@ impl Lowerer<'_> {
                 let set_ty = self.ty_of(expr.id);
                 self.lower_set_literal(entries, expr.span, set_ty)
             }
-            AstExprKind::QueueLiteral(arr) => {
-                let queue_ty = self.ty_of(expr.id);
-                self.lower_collection_array_literal("VecQueue", arr, expr.span, queue_ty)
-            }
-            AstExprKind::StackLiteral(arr) => {
-                let stack_ty = self.ty_of(expr.id);
-                self.lower_collection_array_literal("VecStack", arr, expr.span, stack_ty)
-            }
-            AstExprKind::MaxHeapLiteral(arr) => {
-                let heap_ty = self.ty_of(expr.id);
-                self.lower_collection_array_literal("MaxHeap", arr, expr.span, heap_ty)
-            }
-            AstExprKind::MinHeapLiteral(arr) => {
-                let heap_ty = self.ty_of(expr.id);
-                self.lower_collection_array_literal("MinHeap", arr, expr.span, heap_ty)
-            }
             AstExprKind::Array(arr) | AstExprKind::FixedArray(arr) => {
                 HirExprKind::Array(self.lower_array(arr))
             }
@@ -1098,12 +1082,33 @@ impl Lowerer<'_> {
         // walk the receiver expression directly, so we keep the
         // inline shape that those detectors recognise.
         let needs_state_binding = self.iter_needs_state_binding(iter_ty)
-            || (matches!(self.tcx.kind(iter_ty), Some(gossamer_types::TyKind::Vec(_)))
-                && matches!(&iter_expr.kind, HirExprKind::Array(_)));
+            || Self::iter_expr_is_temporary_sequence(&iter_expr);
         if needs_state_binding {
             return self.lower_for_user_iter(pattern, iter_expr, body, label, span);
         }
         self.lower_for_inline(pattern, iter_expr, body, label, span)
+    }
+
+    /// `true` when the loop's iterable is a freshly built sequence with
+    /// no home to index - a literal, or an `iter()` / `enumerate()`
+    /// chain over one. Such a value must be bound before the loop; the
+    /// inline shape leaves the compiled tiers indexing a temporary that
+    /// no longer exists.
+    fn iter_expr_is_temporary_sequence(iter_expr: &HirExpr) -> bool {
+        let mut cur = iter_expr;
+        loop {
+            match &cur.kind {
+                HirExprKind::Array(_) => return true,
+                HirExprKind::MethodCall {
+                    receiver,
+                    name,
+                    args,
+                } if args.is_empty() && (name.name == "iter" || name.name == "enumerate") => {
+                    cur = receiver;
+                }
+                _ => return false,
+            }
+        }
     }
 
     /// Desugars `for x in iter` to the canonical `loop { match
@@ -2072,7 +2077,7 @@ impl Lowerer<'_> {
             span,
             ty: self.error_ty(),
             kind: HirExprKind::Path {
-                segments: vec![Ident::new("HashMap"), Ident::new("from")],
+                segments: vec![Ident::new("Map"), Ident::new("from")],
                 def: None,
             },
         };
@@ -2088,7 +2093,7 @@ impl Lowerer<'_> {
         let lowered_entries: Vec<HirExpr> = entries.iter().map(|e| self.lower_expr(e)).collect();
         let owner = match self.tcx.kind(set_ty) {
             Some(TyKind::Adt { def, .. }) if def.local == BTREE_SET_DEF_LOCAL => "BTreeSet",
-            _ => "HashSet",
+            _ => "Set",
         };
         let elem_ty = lowered_entries
             .first()
@@ -2125,64 +2130,6 @@ impl Lowerer<'_> {
         HirExprKind::Call {
             callee: Box::new(callee),
             args: vec![array_arg],
-        }
-    }
-
-    fn lower_collection_array_literal(
-        &mut self,
-        owner: &str,
-        arr: &AstArrayExpr,
-        span: Span,
-        collection_ty: Ty,
-    ) -> HirExprKind {
-        use gossamer_types::{ArrayLen, TyKind};
-
-        let lowered_array = self.lower_array(arr);
-        let elem_ty = match (&lowered_array, self.tcx.kind(collection_ty)) {
-            (HirArrayExpr::List(elems), _) => elems.first().map_or_else(
-                || self.collection_literal_elem_ty(collection_ty, owner),
-                |entry| entry.ty,
-            ),
-            (HirArrayExpr::Repeat { value, .. }, _) => value.ty,
-        };
-        let array_ty = match &lowered_array {
-            HirArrayExpr::List(elems) => self.tcx.intern(TyKind::Array {
-                elem: elem_ty,
-                len: ArrayLen::Concrete(elems.len()),
-            }),
-            HirArrayExpr::Repeat { .. } => self.tcx.intern(TyKind::Vec(elem_ty)),
-        };
-        let array_arg = HirExpr {
-            id: self.fresh(),
-            span,
-            ty: array_ty,
-            kind: HirExprKind::Array(lowered_array),
-        };
-        let callee = HirExpr {
-            id: self.fresh(),
-            span,
-            ty: self.error_ty(),
-            kind: HirExprKind::Path {
-                segments: vec![Ident::new(owner), Ident::new("from")],
-                def: None,
-            },
-        };
-        HirExprKind::Call {
-            callee: Box::new(callee),
-            args: vec![array_arg],
-        }
-    }
-
-    fn collection_literal_elem_ty(&mut self, collection_ty: Ty, _owner: &str) -> Ty {
-        use gossamer_types::TyKind;
-
-        match self.tcx.kind(collection_ty) {
-            Some(TyKind::Adt { substs, .. }) => substs
-                .types()
-                .first()
-                .copied()
-                .unwrap_or_else(|| self.error_ty()),
-            _ => self.error_ty(),
         }
     }
 

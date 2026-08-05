@@ -5,7 +5,7 @@
 //   x |> _.trim          => x.trim()      (bare ident => nullary method)
 //   x |> _.replace(a, b) => x.replace(a, b)
 //   x |> _.0             => x.0           (tuple index)
-//   x |> _[i]            => x[i]
+//   x |> _[i]                => x[i]
 //   x |> _               => x
 //
 // `_.method` composes with the data-last `iter::*` free-function pipe steps.

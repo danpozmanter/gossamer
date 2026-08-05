@@ -146,6 +146,11 @@ pub(super) struct IntrinsicContext {
     /// symbol (`gos_rc_meta_<id>`). Deduped so a variant constructed at
     /// many sites shares one data object.
     pub(super) rc_metas: HashMap<String, DataId>,
+    /// Cached `DataId` for each tuple tag blob, keyed by its bytes.
+    /// Deduped so every print of the same tuple shape shares one data
+    /// object, and pre-populated before the parallel phase so no
+    /// emit-time call reaches `OfflineModule::declare_data`.
+    pub(super) tuple_tags: HashMap<Vec<u8>, DataId>,
     /// Cached `DataId` for each scalar `static mut`'s backing writable data
     /// object, keyed by the static's mangled symbol. A read in `main` and a
     /// write in a helper both resolve to this one cell so mutations persist
@@ -239,6 +244,7 @@ impl IntrinsicContext {
             strings: HashMap::new(),
             externs: HashMap::new(),
             rc_metas: HashMap::new(),
+            tuple_tags: HashMap::new(),
             statics: HashMap::new(),
             next_str_id: 0,
             functions: HashMap::new(),
@@ -419,15 +425,18 @@ impl IntrinsicContext {
         Ok(id)
     }
 
-    /// Defines a read-only data object holding a tuple's per-element
-    /// tag bytes (one byte per element) and returns its `DataId`. The
-    /// `gos_rt_tuple_format` shim reads exactly `n` bytes, so no NUL
-    /// terminator or header is needed.
+    /// Defines a read-only data object holding a tuple's tag stream and
+    /// returns its `DataId`. The `gos_rt_tuple_format` shim walks the
+    /// stream from the element count it is handed, so no NUL terminator
+    /// or header is needed. Identical streams share one data object.
     pub(super) fn intern_tuple_tags(
         &mut self,
         module: &mut dyn Module,
         tags: &[u8],
     ) -> Result<DataId> {
+        if let Some(id) = self.tuple_tags.get(tags).copied() {
+            return Ok(id);
+        }
         let symbol = format!(".Ltags{}", self.next_str_id);
         self.next_str_id += 1;
         let id = module
@@ -442,6 +451,7 @@ impl IntrinsicContext {
         module
             .define_data(id, &description)
             .map_err(|e| anyhow!("define {symbol}: {e}"))?;
+        self.tuple_tags.insert(tags.to_vec(), id);
         Ok(id)
     }
 

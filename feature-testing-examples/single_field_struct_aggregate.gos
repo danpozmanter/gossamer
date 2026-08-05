@@ -1,12 +1,12 @@
 // A single-field struct occupies one 8-byte slot but is still an
-// address-is-value aggregate: copying it out of a Vec / HashMap by value
+// address-is-value aggregate: copying it out of a Vec / Map by value
 // must bind the slot pointer (so a later `.field` dereferences the box),
 // not read the slot as a scalar. Reading it as a scalar handed back the
 // boxed pointer's bits, and the field access then dereferenced a wrong
 // address - a segfault on the compiled tier. Every access path must match
 // the VM bit-for-bit.
 
-use std::collections::HashMap
+use std::collections::Map
 
 struct One { v: i64 }
 struct Named { s: String }
@@ -38,11 +38,11 @@ fn main() {
         loop_sum += one.v
     }
 
-    // single-field struct as a HashMap value, read via get and values()
-    let mut m: HashMap<i64, One> = HashMap::new()
+    // single-field struct as a Map value, read via get and values()
+    let mut m: Map<i64, One> = Map::new()
     m.insert(1, One { v: 100 })
     m.insert(2, One { v: 200 })
-    let got = match HashMap::get(m, 2) {
+    let got = match Map::get(m, 2) {
         Some(c) => c.v,
         None => -1,
     }

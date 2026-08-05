@@ -1,9 +1,9 @@
 // Phase 7C: `seq.substring(i, i+k)` + `m.inc(kmer)` fuses to the borrowed
 // map probe on the compiled tiers; counts must match the VM's alloc path.
-use std::collections::HashMap
+use std::collections::Map
 
-fn count_kmers(seq: &String, k: i64) -> HashMap<String, i64> {
-    let mut m: HashMap<String, i64> = HashMap::new()
+fn count_kmers(seq: &String, k: i64) -> Map<String, i64> {
+    let mut m: Map<String, i64> = Map::new()
     let n = seq.len() as i64
     if n < k { return m }
     for i in 0..(n - k + 1) {

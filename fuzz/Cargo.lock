@@ -1324,6 +1324,7 @@ name = "gossamer-pkg"
 version = "0.43.0"
 dependencies = [
  "ed25519-dalek",
+ "gossamer-resolve",
  "parking_lot",
  "rand_core 0.6.4",
  "rustls",

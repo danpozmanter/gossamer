@@ -218,13 +218,13 @@ fn vec_valued_map_overwrite_and_remove_balance_ownership() {
     assert_vm_matches_native(
         "map-vec",
         r#"
-use std::collections::HashMap
+use std::collections::Map
 
 fn main() {
     let mut total = 0i64
     let mut round = 0i64
     while round < 100i64 {
-        let mut m: HashMap<i64, Vec<i64>> = HashMap::new()
+        let mut m: Map<i64, Vec<i64>> = Map::new()
         let first: Vec<i64> = Vec::from([round, round + 1i64])
         m.insert(1i64, first)
         m.insert(1i64, Vec::from([round + 2i64, round + 3i64]))
@@ -248,7 +248,7 @@ fn container_pop_and_error_exit_release_every_owner_once() {
     assert_vm_matches_native(
         "pop-error",
         r#"
-use std::{collections::{HashMap, HashSet}, errors}
+use std::{collections::{Map, Set}, errors}
 
 fn one_round(round: i64) -> Result<i64, errors::Error> {
     let mut rows: Vec<Vec<i64>> = Vec::from([])
@@ -258,12 +258,12 @@ fn one_round(round: i64) -> Result<i64, errors::Error> {
     rows.push(tail)
     let popped_row = rows.pop().unwrap()
 
-    let mut m: HashMap<i64, Vec<i64>> = HashMap::new()
+    let mut m: Map<i64, Vec<i64>> = Map::new()
     m.insert(1i64, popped_row)
     let retained: Vec<i64> = Vec::from([round + 4i64])
     m.insert(2i64, retained)
-    let popped_map = HashMap::pop(m, 1i64).unwrap()
-    let mut tags: HashSet<String> = HashSet::new()
+    let popped_map = Map::pop(m, 1i64).unwrap()
+    let mut tags: Set<String> = Set::new()
     tags.insert(format!("round-{}", round))
     tags.insert(format!("next-{}", round + 1i64))
     if round % 2i64 == 0i64 {

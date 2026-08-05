@@ -147,7 +147,7 @@ fn generic_string_array_and_repeat() {
     let src = r#"
 fn main() {
     let xs = ["a", "b", "c"]
-    let rep = [7; 3]
+    let rep = #[7; 3]
     println!("{:?} {:?}", xs, rep)
 }
 "#;

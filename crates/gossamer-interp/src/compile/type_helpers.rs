@@ -324,6 +324,36 @@ impl<'tcx> FnBuilder<'tcx> {
         false
     }
 
+    /// `true` when `expr` names a local holding a materialized
+    /// `Iterator<T>` - one built by a collection's `iter()` /
+    /// `enumerate()`, whose runtime value is an indexable sequence.
+    pub(crate) fn receiver_is_materialized_iterator(&self, expr: &HirExpr) -> bool {
+        if let HirExprKind::Path { segments, .. } = &expr.kind
+            && let [segment] = segments.as_slice()
+            && let Some(tr) = self.lookup_local(&segment.name)
+        {
+            return self.materialized_iter_locals.contains(&tr.reg);
+        }
+        false
+    }
+
+    /// `true` when `init` builds an `Iterator<T>` by walking a collection,
+    /// so its value is a materialized sequence rather than a live cursor.
+    pub(crate) fn init_is_materialized_iterator(&self, init: &HirExpr) -> bool {
+        let HirExprKind::MethodCall {
+            receiver,
+            name,
+            args,
+        } = &init.kind
+        else {
+            return false;
+        };
+        if !args.is_empty() || !matches!(name.name.as_str(), "iter" | "enumerate") {
+            return false;
+        }
+        self.receiver_is_collection(receiver) || self.receiver_is_materialized_iterator(receiver)
+    }
+
     /// Returns the element type of an array / vec / slice / tuple,
     /// peeling reference layers first.
     pub(crate) fn array_elem_ty(&self, ty: gossamer_types::Ty) -> Option<gossamer_types::Ty> {

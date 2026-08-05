@@ -185,14 +185,6 @@ pub enum ExprKind {
     MapLiteral(Vec<Expr>),
     /// Hash set literal `#{a, b, c}`.
     SetLiteral(Vec<Expr>),
-    /// FIFO queue literal `<[a, b, c]` or `<[value; count]`.
-    QueueLiteral(ArrayExpr),
-    /// LIFO stack literal `[a, b, c]>` or `[value; count]>`.
-    StackLiteral(ArrayExpr),
-    /// Max-heap literal `^[a, b, c]` or `^[value; count]`.
-    MaxHeapLiteral(ArrayExpr),
-    /// Min-heap literal `_[a, b, c]` or `_[value; count]`.
-    MinHeapLiteral(ArrayExpr),
     /// Struct construction represented with named fields internally.
     Struct {
         /// Path naming the struct.

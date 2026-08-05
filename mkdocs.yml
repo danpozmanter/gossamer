@@ -70,6 +70,7 @@ nav:
       - Top-level statements: language/top_level_statements.md
       - Arena blocks: language/arena.md
       - Comptime: language/comptime.md
+      - Tuples: language/tuples.md
   - Memory model: memory.md
   - Writing libraries: libraries.md
   - Standard library:
@@ -121,6 +122,7 @@ not_in_nav: |
   !/language/top_level_statements.md
   !/language/arena.md
   !/language/comptime.md
+  !/language/tuples.md
 
 markdown_extensions:
   - admonition

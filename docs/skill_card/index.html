@@ -474,6 +474,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -590,6 +592,34 @@
 
 
     Comptime
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../language/tuples/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Tuples
 
 
 
@@ -2396,21 +2426,18 @@ card:</p>
   <code>env::args().first().unwrap_or("8").to_i64().unwrap_or(8)</code>.</li>
 <li><strong>Collection literal spellings are distinct.</strong> Fixed array and Vec
   construction differs from Rust. Use <code>[]</code> / <code>[1,2,3]</code> for <code>Vec</code>, <code>#[]</code> /
-  <code>#[1,2,3]</code> for fixed arrays, <code>{}</code> / <code>{"one": 1}</code> for <code>Map</code>, <code>#{}</code> /
-  <code>#{1,2,3}</code> for <code>Set</code>, <code>^[]</code> / <code>^[1,2,3]</code> for <code>MaxHeap</code>, <code>_[]</code> /
-  <code>_[1,2,3]</code> for <code>MinHeap</code>, <code>&lt;[]</code> / <code>&lt;[1,2,3]</code> for <code>Queue</code>, and <code>[]&gt;</code> /
-  <code>[1,2,3]&gt;</code> for <code>Stack</code>. Use <code>Deque::new()</code> or
-  <code>Deque::from([1,2,3])</code> when both ends matter. Repeat literals follow
-  the same prefixes: <code>[v; N]</code> is a Vec by default, while <code>#[v; N]</code> is a fixed
-  array.</li>
+  <code>#[1,2,3]</code> for fixed arrays, <code>{}</code> / <code>{"one": 1}</code> for <code>Map</code>, and <code>#{}</code> /
+  <code>#{1,2,3}</code> for <code>Set</code>. <code>Queue</code>, <code>Stack</code>, <code>Deque</code>, <code>MaxHeap</code>, and <code>MinHeap</code>
+  have no literal: build them with <code>T::new()</code> or <code>T::from([1,2,3])</code>. A repeat
+  literal is a fixed array, <code>#[v; N]</code>; bare <code>[v; N]</code> is a syntax error.</li>
 <li><strong>Prefer dedicated collection contracts for intent.</strong> <code>Stack</code> is the
   idiomatic LIFO-only type even though <code>Vec</code> can push/pop at the end;
   <code>Queue</code> is the FIFO-only type even though a deque can model it; <code>MinHeap</code>
   and <code>MaxHeap</code> avoid negating keys or wrapping values in <code>Reverse</code>. Use the
   general structures only when you actually need their broader method surface.
-  Longer aliases remain accepted: <code>HashMap</code> for <code>Map</code>, <code>HashSet</code> for <code>Set</code>,
-  <code>VecDeque</code> for <code>Deque</code>, <code>VecQueue</code> for <code>Queue</code>, <code>VecStack</code> for <code>Stack</code>,
-  <code>MaxBinaryHeap</code> for <code>MaxHeap</code>, and <code>MinBinaryHeap</code> for <code>MinHeap</code>.</li>
+  Each container has exactly one name: <code>HashMap</code>, <code>HashSet</code>, <code>VecDeque</code>,
+  <code>VecQueue</code>, <code>VecStack</code>, <code>BinaryHeap</code>, <code>MaxBinaryHeap</code>, and <code>MinBinaryHeap</code>
+  are rejected (GR0006).</li>
 <li><strong>Collection constructors infer</strong>: <code>let mut m = Map::new()</code>,
   <code>let empty: Map&lt;String, i64&gt; = Map::from([])</code>, and
   <code>let map = {"one": 1}</code>. <code>Map::from</code> accepts array pairs, while
@@ -2601,9 +2628,9 @@ are callable as methods/free functions and materialize results.</p>
 <ul>
 <li><code>[T; N]</code> is an owned fixed array, <code>[T]</code> is an unsized borrowed slice,
   and <code>Vec&lt;T&gt;</code> is the default owned growable sequence. Literal spellings are
-  <code>[]</code> for Vec, <code>#[]</code> for fixed arrays, <code>{}</code> for <code>Map</code>, <code>#{}</code> for
-  <code>Set</code> or expected <code>BTreeSet</code>, <code>^[]</code> for <code>MaxHeap</code>, <code>_[]</code> for
-  <code>MinHeap</code>, <code>&lt;[]</code> for <code>Queue</code>, and <code>[]&gt;</code> for <code>Stack</code>. Arrays, slices, and Vec share the
+  <code>[]</code> for Vec, <code>#[]</code> for fixed arrays, <code>{}</code> for <code>Map</code>, and <code>#{}</code> for
+  <code>Set</code> or expected <code>BTreeSet</code>; <code>Queue</code>, <code>Stack</code>, <code>Deque</code>, <code>MaxHeap</code>, and
+  <code>MinHeap</code> use <code>new()</code> / <code>from([..])</code>. Arrays, slices, and Vec share the
   implemented slice method surface. Eager collection combinators are Vec
   methods; arrays and slices use <code>iter()</code> first. Use <code>Stack</code> for a
   LIFO-only argument contract instead of a general <code>Vec</code>, <code>Queue</code> for
@@ -2612,11 +2639,17 @@ are callable as methods/free functions and materialize results.</p>
   extension, reservation, capacity, and indexed mutation methods. Mutable arrays and slices
   support <code>sort</code>, <code>reverse</code>, <code>swap</code>, and <code>fill</code> without resizing. <code>%i</code>
   reports each type's real surface, while <code>%e</code> also removes methods that the
-  binding's mutability cannot call. Tuples use <code>.0</code>/<code>.1</code>;
-  tuple structs are fully usable. Method-call
+  binding's mutability cannot call. Method-call
   <code>xs.insert/remove/swap</code> mutate in place and return <code>Result</code>, with an
   <code>Err</code> for an out-of-bounds index. Qualified calls use the same contract:
   <code>Vec::insert(&amp;mut xs, i, v)</code> / <code>Vec::remove(&amp;mut xs, i)</code>.</li>
+<li><strong>Tuple</strong> <code>(A, B, ...)</code> groups a fixed number of values whose types may
+  differ. Read and assign positionally (<code>t.0</code>, chained <code>t.0.1</code>, <code>t.0 = v</code>
+  through a <code>mut</code> binding), destructure in <code>let</code> / <code>for</code> / <code>match</code> / params,
+  and compare structurally in declaration order (so <code>sort</code> orders a sequence
+  of tuples lexicographically). No import, no methods; <code>%i Tuple</code> documents
+  it and <code>%e &lt;binding&gt;</code> lists a tuple's elements. Tuple structs are the
+  named variant and are fully usable.</li>
 <li><code>std::collections</code>: <code>Vec</code>, <code>Map</code> (struct/tuple keys by value;
   aggregate-key maps use <code>iter()</code> rather than <code>keys()</code> until typed key
   snapshots are available;

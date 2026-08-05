@@ -1,11 +1,11 @@
-// A HashMap whose values are structs with heap (String) fields, read back
-// through every access path: qualified `HashMap::get` / `HashMap::pop`,
+// A Map whose values are structs with heap (String) fields, read back
+// through every access path: qualified `Map::get` / `Map::pop`,
 // `m.iter()`, `m.values()`, and `m.keys()`. Each path must deref the stored
 // box pointer rather than read the pointer bits inline. Allocation churn
 // between writes and reads surfaces any premature free. Deterministic
 // output on every tier.
 
-use std::collections::HashMap
+use std::collections::Map
 
 struct Rec { label: String, weight: i64 }
 
@@ -21,7 +21,7 @@ fn churn() -> i64 {
 }
 
 fn main() {
-    let mut m: HashMap<i64, Rec> = HashMap::new()
+    let mut m: Map<i64, Rec> = Map::new()
     let mut k = 1
     while k <= 5 {
         m.insert(k, Rec { label: format!("rec-{}", k), weight: k * 10 })
@@ -47,14 +47,14 @@ fn main() {
         keys_sum += key
     }
 
-    // qualified HashMap::get
-    let got = match HashMap::get(m, 3) {
+    // qualified Map::get
+    let got = match Map::get(m, 3) {
         Some(r) => r.label,
         None => format!("missing"),
     }
 
-    // qualified HashMap::pop
-    let popped = match HashMap::pop(m, 5) {
+    // qualified Map::pop
+    let popped = match Map::pop(m, 5) {
         Some(r) => r.weight,
         None => -1,
     }

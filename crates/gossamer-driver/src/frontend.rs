@@ -72,9 +72,10 @@ impl FrontendOutcome {
 /// single fatal-error policy:
 ///
 /// - **Parse**: every parse diagnostic is fatal.
-/// - **Resolve**: `UnresolvedName`, `DuplicateItem`, and
-///   `UnknownModulePath` (GR0005, the canonical-`std`-path check) are
-///   fatal; lower-severity resolve diagnostics are not.
+/// - **Resolve**: `UnresolvedName`, `DuplicateItem`,
+///   `UnknownModulePath` (GR0005, the canonical-`std`-path check), and
+///   `RemovedStdItem` (GR0006) are fatal; lower-severity resolve
+///   diagnostics are not.
 /// - **Type**: every type diagnostic is fatal.
 /// - **Exhaustiveness**: a non-exhaustive `match` (GM0001) is fatal.
 /// - **Arena escape**: a value allocated in an `arena { }` block that is
@@ -134,6 +135,7 @@ pub fn check_frontend_with_edition(
             ResolveError::UnresolvedName { .. }
                 | ResolveError::DuplicateItem { .. }
                 | ResolveError::UnknownModulePath { .. }
+                | ResolveError::RemovedStdItem { .. }
         ) {
             diagnostics.push(diag.to_diagnostic(&in_scope));
         }

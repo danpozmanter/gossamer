@@ -355,7 +355,7 @@ fn indexing_iteration_and_non_resizing_mutation_execute() {
 
 #[test]
 fn map_literal_constructs_hashmap_and_from_accepts_pairs() {
-    let source = "use std::collections::HashMap; let map = {\"one\": 1, \"two\": 2}; println(map.get(\"one\")); println(map.len()); let also: HashMap<String, i64> = HashMap::from([(\"three\", 3)]); println(also.get(\"three\"))";
+    let source = "use std::collections::Map; let map = {\"one\": 1, \"two\": 2}; println(map.get(\"one\")); println(map.len()); let also: Map<String, i64> = Map::from([(\"three\", 3)]); println(also.get(\"three\"))";
     let output = Command::new(gos_bin())
         .args(["-e", source])
         .output()

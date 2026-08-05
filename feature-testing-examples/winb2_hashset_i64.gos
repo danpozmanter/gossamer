@@ -1,7 +1,7 @@
-use std::collections::HashSet
+use std::collections::Set
 
 fn main() {
-    let mut s: HashSet<i64> = HashSet::new()
+    let mut s: Set<i64> = Set::new()
     s.insert(1)
     s.insert(2)
     s.insert(1)
@@ -9,7 +9,7 @@ fn main() {
     s.remove(1)
     println!("after_remove c1={} len={}", s.contains(1), s.len())
 
-    let mut t: HashSet<String> = HashSet::new()
+    let mut t: Set<String> = Set::new()
     t.insert("a")
     t.insert("b")
     t.insert("a")

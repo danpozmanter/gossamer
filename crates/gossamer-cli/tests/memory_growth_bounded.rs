@@ -328,7 +328,7 @@ fn make_vec(n: i64) -> Vec<i64> {
 }
 
 fn repeat_sum(n: i64) -> i64 {
-    let d: Vec<i64> = Vec::from([7; 64])
+    let d: Vec<i64> = Vec::from(#[7; 64])
     d[0] + d[n - 1]
 }
 

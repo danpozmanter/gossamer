@@ -13,6 +13,13 @@ pub mod registry;
 /// Core ABI types: [`AbiType`], [`AbiSig`], [`RuntimeEntry`].
 pub mod types;
 
+/// Tag byte introducing a nested tuple in a `gos_rt_tuple_format` /
+/// `gos_rt_tuple_cmp` tag stream. The next byte is the nested tuple's
+/// element count, followed by that many tags, recursively. A nested
+/// tuple's slots are flattened into the parent's buffer, so the stream
+/// is walked with separate tag and slot cursors.
+pub const TUPLE_TAG_NESTED: u8 = 8;
+
 pub use registry::{REGISTRY, all_llvm_declarations, lookup};
 pub use types::{AbiSig, AbiType, RuntimeEntry, Tier};
 

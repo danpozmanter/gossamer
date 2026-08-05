@@ -19,6 +19,7 @@ default = []
 synthetic-source = []
 
 [dependencies]
+gossamer-resolve = { workspace = true }
 thiserror = { workspace = true }
 
 # Registry transport + signing crypto. None of these are used by the

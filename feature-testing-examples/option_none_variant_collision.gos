@@ -37,7 +37,7 @@ fn main() {
     let form = http::form::parse(&"a=1&b=2")
     println!("form_count={}", http::form::count(&form))
 
-    let dispositions: Vec<String> = Vec::from([
+    let dispositions: Vec<String> = Vec::from(#[
         "form-data; name=\"alpha\"",
         "form-data; name=\"file\"; filename=\"data.bin\"",
     ])

@@ -1,22 +1,22 @@
-// Struct HashSet values use value equality, not their allocation address.
+// Struct Set values use value equality, not their allocation address.
 // Mirrors the Point intersections used by AoC 2019 day 3.
-use std::collections::HashSet
-use std::collections::HashMap
+use std::collections::Set
+use std::collections::Map
 
 struct Point { x: i32, y: i32 }
 
 fn main() {
-    let mut left: HashSet<Point> = HashSet::new()
+    let mut left: Set<Point> = Set::new()
     left.insert(Point { x: 1, y: 2 })
     left.insert(Point { x: 3, y: 4 })
-    let mut right: HashSet<Point> = HashSet::new()
+    let mut right: Set<Point> = Set::new()
     right.insert(Point { x: 3, y: 4 })
     right.insert(Point { x: 5, y: 6 })
     let shared = left.intersection(right)
     let point = shared.iter()[0]
     println!("len={} x={} y={}", shared.len(), point.x, point.y)
 
-    let mut steps: HashMap<Point, i64> = HashMap::new()
+    let mut steps: Map<Point, i64> = Map::new()
     steps.insert(Point { x: 3, y: 4 }, 7)
     println!("steps={}", steps.get(Point { x: 3, y: 4 }).unwrap())
 }
