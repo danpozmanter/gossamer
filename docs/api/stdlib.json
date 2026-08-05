@@ -367,7 +367,7 @@
       "name": "std::collections::BTreeSet",
       "kind": "type",
       "signature": null,
-      "description": "Ordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods.",
+      "description": "Ordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods. Set literals use `#{a, b}` and empty set literals use `#{}` when an expected `BTreeSet<T>` type is present.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -386,7 +386,7 @@
       "name": "std::collections::BinaryHeap",
       "kind": "type",
       "signature": null,
-      "description": "Compatibility alias for `MaxHeap<i64>`.",
+      "description": "Compatibility alias for `MaxHeap<i64>`; heap literals use `^[a, b]` and empty heap literals use `^[]`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -405,7 +405,7 @@
       "name": "std::collections::HashMap",
       "kind": "type",
       "signature": null,
-      "description": "Hash map backed by the swiss-table layout.",
+      "description": "Hash map backed by the swiss-table layout. Map literals use `{key: value}` and empty map literals use `{}`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -424,7 +424,7 @@
       "name": "std::collections::HashSet",
       "kind": "type",
       "signature": null,
-      "description": "Unordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods. Like Rust's `HashSet`, mapping is an iterator operation: use `set.iter().map(f)`, not `set.map(f)`.",
+      "description": "Unordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods. Set literals use `#{a, b}` and empty set literals use `#{}`. Like Rust's `HashSet`, mapping is an iterator operation: use `set.iter().map(f)`, not `set.map(f)`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -443,7 +443,7 @@
       "name": "std::collections::MaxHeap",
       "kind": "type",
       "signature": null,
-      "description": "Max heap. Phase 1 runtime support is `MaxHeap<i64>`; heap literals use `^[a, b]`.",
+      "description": "Max heap. Phase 1 runtime support is `MaxHeap<i64>`; heap literals use `^[a, b]` and empty heap literals use `^[]`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -462,7 +462,7 @@
       "name": "std::collections::MinHeap",
       "kind": "type",
       "signature": null,
-      "description": "Min heap. Phase 1 runtime support is `MinHeap<i64>`; heap literals use `_[a, b]`.",
+      "description": "Min heap. Phase 1 runtime support is `MinHeap<i64>`; heap literals use `_[a, b]` and empty heap literals use `_[]`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -481,7 +481,7 @@
       "name": "std::collections::Vec",
       "kind": "type",
       "signature": null,
-      "description": "Growable contiguous sequence.",
+      "description": "Growable contiguous sequence. Vec literals use `[a, b]` and empty Vec literals use `[]`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -500,7 +500,7 @@
       "name": "std::collections::VecDeque",
       "kind": "type",
       "signature": null,
-      "description": "Double-ended queue backed by a ring buffer. Phase 1 runtime support is `VecDeque<i64>`.",
+      "description": "Double-ended queue backed by a ring buffer. Phase 1 runtime support is `VecDeque<i64>`; queue literals use `<[a, b]>` and empty queue literals use `<[]>`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -519,7 +519,7 @@
       "name": "std::collections::VecDequeue",
       "kind": "type",
       "signature": null,
-      "description": "Alias for `VecDeque`.",
+      "description": "Alias for `VecDeque`; queue literals use `<[a, b]>` and empty queue literals use `<[]>`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -538,7 +538,7 @@
       "name": "std::collections::VecQueue",
       "kind": "type",
       "signature": null,
-      "description": "Alias for `VecDeque`; queue literals use `<[a, b]>`.",
+      "description": "Alias for `VecDeque`; queue literals use `<[a, b]>` and empty queue literals use `<[]>`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

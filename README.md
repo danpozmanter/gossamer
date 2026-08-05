@@ -102,6 +102,20 @@ use commas for single line, and newlines for multi-line.
 This gives a consistent and cleaner look.
 (Optional - `gos fmt` will clean this up).
 
+**Consistent & Expanded Collection Literals**
+
+Note: Fixed array & Vec construction differs from Rust.
+
+| Collection | Empty | With Data |
+|---|---|---|
+| Vec | [] | [1,2,3] |
+| Fixed Array | #[] | #[1,2,3] |
+| HashMap | {} | {"one": 1, "two": 2, "three": 3} |
+| HashSet | #{} | {1,2,3} |
+| MaxHeap | ^[] | ^[1,2,3] |
+| MinHeap | _[] | _[1,2,3] |
+| VecDeque | <[]> | <[1,2,3]> |
+
 ## Details
 
 - Language spec: [`SPEC.md`](SPEC.md)

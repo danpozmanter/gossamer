@@ -10,6 +10,7 @@
 //! other path returns `404 not found` - the behaviour parity source
 //! is `gossamer_std::metrics::serve_metrics`.
 
+#![cfg(not(target_arch = "wasm32"))]
 #![allow(missing_docs)]
 
 use std::ffi::CString;

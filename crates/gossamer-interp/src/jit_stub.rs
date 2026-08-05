@@ -196,7 +196,7 @@ pub fn jit_eager_loop_bodies(
 
 /// wasm yields an empty artifact - the VM installs no native overrides
 /// and runs everything on the bytecode interpreter.
-#[allow(clippy::missing_errors_doc)]
+#[allow(clippy::missing_errors_doc, clippy::unnecessary_wraps)]
 pub fn compile_to_jit(
     _bodies: &[gossamer_mir::Body],
     _tcx: &gossamer_types::TyCtxt,
@@ -207,7 +207,7 @@ pub fn compile_to_jit(
 }
 
 /// wasm applies no promotion policy because it cannot compile native code.
-#[allow(clippy::missing_errors_doc)]
+#[allow(clippy::missing_errors_doc, clippy::unnecessary_wraps)]
 pub fn compile_to_jit_for_promotion(
     _bodies: &[gossamer_mir::Body],
     _tcx: &gossamer_types::TyCtxt,
@@ -218,7 +218,7 @@ pub fn compile_to_jit_for_promotion(
 }
 
 /// Ownership-taking wasm stub matching the native backend API.
-#[allow(clippy::missing_errors_doc)]
+#[allow(clippy::missing_errors_doc, clippy::unnecessary_wraps)]
 pub fn compile_to_jit_for_promotion_owned(
     _bodies: Vec<gossamer_mir::Body>,
     _tcx: &gossamer_types::TyCtxt,

@@ -69,7 +69,7 @@ echo
 echo "Gossamer site  ->  http://localhost:$PORT/"
 echo "  home      http://localhost:$PORT/index.html"
 echo "  tour      http://localhost:$PORT/tour/"
-echo "  demo      http://localhost:$PORT/playground/"
+echo "  playground http://localhost:$PORT/playground/"
 echo "  runtime   $RUNTIME"
 [ "$BUILD_DOCS" = 1 ] || echo "  (docs/ links 404 unless you pass --docs)"
 echo "  Ctrl-C to stop."

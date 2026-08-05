@@ -117,8 +117,12 @@ Write clear, low-complexity, concise code.
 - **`s.to_i64()` / `to_f64()` / `to_bool()`** - strict full-string
   parses returning `Option<T>`:
   `env::args().first().unwrap_or("8").to_i64().unwrap_or(8)`.
-- **`[v; N]` creates a Vec by default**. Use `#[v; N]` or an expected
-  `[T; N]` type for fixed arrays; the count is compile-time constant.
+- **Collection literal spellings are distinct**: `[]` creates `Vec`,
+  `#[]` creates fixed arrays, `{}` creates `HashMap`, `#{}` creates
+  `HashSet` or `BTreeSet` with an expected set type, `^[]` creates
+  `MaxHeap`, `_[]` creates `MinHeap`, and `<[]>` creates `VecDeque`.
+  Repeat literals follow the same prefixes: `[v; N]` is a Vec by default,
+  while `#[v; N]` is a fixed array.
 - **Collection constructors infer**: `let mut m = HashMap::new()`,
   `let empty: HashMap<String, i64> = HashMap::from([])`, and
   `let map = {"one": 1}`. `HashMap::from` accepts array pairs, while
@@ -326,11 +330,13 @@ are callable as methods/free functions and materialize results.
 ## 10. Data structures
 
 - `[T; N]` is an owned fixed array, `[T]` is an unsized borrowed slice,
-  and `Vec<T>` is the only owned growable sequence. Bracket literals create
-  Vec values by default; use `#[a, b]` or an expected `[T; N]` type for
-  fixed arrays. Arrays, slices, and Vec share the implemented slice method
-  surface. Eager collection combinators are Vec methods; arrays and slices
-  use `iter()` first. Only Vec has push/pop/insert/remove/clear, truncation,
+  and `Vec<T>` is the default owned growable sequence. Literal spellings are
+  `[]` for Vec, `#[]` for fixed arrays, `{}` for `HashMap`, `#{}` for
+  `HashSet` or expected `BTreeSet`, `^[]` for `MaxHeap`, `_[]` for
+  `MinHeap`, and `<[]>` for `VecDeque`. Arrays, slices, and Vec share the
+  implemented slice method surface. Eager collection combinators are Vec
+  methods; arrays and slices use `iter()` first. Only Vec has
+  push/pop/insert/remove/clear, truncation,
   extension, reservation, and capacity methods. Mutable arrays and slices
   support `sort`, `reverse`, `swap`, and `fill` without resizing. `%i`
   reports each type's real surface, while `%e` also removes methods that the

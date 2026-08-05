@@ -168,42 +168,42 @@ pub const COLLECTIONS: StdModule = StdModule {
         StdItem {
             name: "Vec",
             kind: StdItemKind::Type,
-            doc: "Growable contiguous sequence.",
+            doc: "Growable contiguous sequence. Vec literals use `[a, b]` and empty Vec literals use `[]`.",
         },
         StdItem {
             name: "VecDeque",
             kind: StdItemKind::Type,
-            doc: "Double-ended queue backed by a ring buffer. Phase 1 runtime support is `VecDeque<i64>`.",
+            doc: "Double-ended queue backed by a ring buffer. Phase 1 runtime support is `VecDeque<i64>`; queue literals use `<[a, b]>` and empty queue literals use `<[]>`.",
         },
         StdItem {
             name: "VecDequeue",
             kind: StdItemKind::Type,
-            doc: "Alias for `VecDeque`.",
+            doc: "Alias for `VecDeque`; queue literals use `<[a, b]>` and empty queue literals use `<[]>`.",
         },
         StdItem {
             name: "VecQueue",
             kind: StdItemKind::Type,
-            doc: "Alias for `VecDeque`; queue literals use `<[a, b]>`.",
+            doc: "Alias for `VecDeque`; queue literals use `<[a, b]>` and empty queue literals use `<[]>`.",
         },
         StdItem {
             name: "BinaryHeap",
             kind: StdItemKind::Type,
-            doc: "Compatibility alias for `MaxHeap<i64>`.",
+            doc: "Compatibility alias for `MaxHeap<i64>`; heap literals use `^[a, b]` and empty heap literals use `^[]`.",
         },
         StdItem {
             name: "MaxHeap",
             kind: StdItemKind::Type,
-            doc: "Max heap. Phase 1 runtime support is `MaxHeap<i64>`; heap literals use `^[a, b]`.",
+            doc: "Max heap. Phase 1 runtime support is `MaxHeap<i64>`; heap literals use `^[a, b]` and empty heap literals use `^[]`.",
         },
         StdItem {
             name: "MinHeap",
             kind: StdItemKind::Type,
-            doc: "Min heap. Phase 1 runtime support is `MinHeap<i64>`; heap literals use `_[a, b]`.",
+            doc: "Min heap. Phase 1 runtime support is `MinHeap<i64>`; heap literals use `_[a, b]` and empty heap literals use `_[]`.",
         },
         StdItem {
             name: "HashMap",
             kind: StdItemKind::Type,
-            doc: "Hash map backed by the swiss-table layout.",
+            doc: "Hash map backed by the swiss-table layout. Map literals use `{key: value}` and empty map literals use `{}`.",
         },
         StdItem {
             name: "BTreeMap",
@@ -213,12 +213,12 @@ pub const COLLECTIONS: StdModule = StdModule {
         StdItem {
             name: "HashSet",
             kind: StdItemKind::Type,
-            doc: "Unordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods. Like Rust's `HashSet`, mapping is an iterator operation: use `set.iter().map(f)`, not `set.map(f)`.",
+            doc: "Unordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods. Set literals use `#{a, b}` and empty set literals use `#{}`. Like Rust's `HashSet`, mapping is an iterator operation: use `set.iter().map(f)`, not `set.map(f)`.",
         },
         StdItem {
             name: "BTreeSet",
             kind: StdItemKind::Type,
-            doc: "Ordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods.",
+            doc: "Ordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods. Set literals use `#{a, b}` and empty set literals use `#{}` when an expected `BTreeSet<T>` type is present.",
         },
     ],
 };

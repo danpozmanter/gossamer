@@ -182,4 +182,14 @@ mod tests {
         assert!(SKILL_CARD.contains("fs::is_symlink(&entry.path)"));
         assert!(SKILL_CARD.contains("Calls never create `&mut` implicitly"));
     }
+
+    #[test]
+    fn skill_card_teaches_collection_literal_spellings() {
+        for literal in ["`[]`", "`#[]`", "`{}`", "`#{}`", "`^[]`", "`_[]`", "`<[]>`"] {
+            assert!(
+                SKILL_CARD.contains(literal),
+                "skill card should document {literal}"
+            );
+        }
+    }
 }

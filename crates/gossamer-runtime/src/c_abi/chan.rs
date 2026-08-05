@@ -639,10 +639,18 @@ fn select_shuffle_indices(n: usize) -> Vec<usize> {
     if n <= 1 {
         return order;
     }
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0_u64, |d| d.as_nanos() as u64);
-    let mut x = nanos ^ 0xA076_1D64_78BD_642F;
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut x = {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0_u64, |d| d.as_nanos() as u64);
+        nanos ^ 0xA076_1D64_78BD_642F
+    };
+    #[cfg(target_arch = "wasm32")]
+    let mut x = {
+        static SELECT_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        SELECT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) ^ 0xA076_1D64_78BD_642F
+    };
     for i in (1..n).rev() {
         x ^= x << 13;
         x ^= x >> 7;

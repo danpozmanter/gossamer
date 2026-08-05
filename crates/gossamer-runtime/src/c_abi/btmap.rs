@@ -580,6 +580,7 @@ pub unsafe extern "C" fn gos_rt_os_unset_env(name: *const c_char) {
 /// GosError`. The Result aggregate matches the `Result<i64,
 /// errors::Error>` shape MIR pins via the sentinel-DefId Adt.
 #[unsafe(no_mangle)]
+#[cfg_attr(target_arch = "wasm32", allow(clippy::forget_non_drop))]
 pub unsafe extern "C" fn gos_rt_exec_spawn(prog: *const c_char, args: *mut GosVec) -> i128 {
     ffi_entry!(0i128, {
         let prog_str = if prog.is_null() {

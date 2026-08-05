@@ -1,5 +1,7 @@
 //! TCP timeout runtime helper smoke tests.
 
+#![cfg(not(target_arch = "wasm32"))]
+
 use gossamer_runtime::c_abi::{
     gos_rt_result_disc, gos_rt_tcp_stream_clear_read_timeout,
     gos_rt_tcp_stream_clear_write_timeout, gos_rt_tcp_stream_set_read_timeout_ms,

@@ -190,6 +190,6 @@ bundler):
 - `@lezer/highlight` - `tags`
 
 The Gossamer grammar in `gossamer-lang.js` is a pragmatic stream tokenizer
-(comments, keywords, types, strings, numbers, the `|>` pipe, the `_`
-placeholder, format macros, and `#[...]` attributes), not a full parser - enough
-for faithful highlighting in the editor.
+(comments, `#!` comments, keywords, types, strings, numbers, the `|>` pipe,
+the `_` placeholder, and format macros), not a full parser - enough for
+faithful highlighting in the editor.

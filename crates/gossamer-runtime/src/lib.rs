@@ -202,7 +202,7 @@ pub use value::{
     from_singleton, tag_of, to_f64, to_heap_handle, to_i64, to_singleton,
 };
 
-#[cfg(all(test, not(any(tsan, miri, fuzzing))))]
+#[cfg(all(test, not(any(tsan, miri, fuzzing, target_arch = "wasm32"))))]
 mod allocator_tests {
     /// Guards the `mi_option_purge_delay` (15) and `mi_option_allow_thp`
     /// (43) enum indices that [`super::init_process_allocator`] pins by

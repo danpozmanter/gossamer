@@ -18,6 +18,73 @@ mod tests {
         Value::Object(params)
     }
 
+    fn document_params_value(uri: &str) -> Value {
+        let mut text_doc = BTreeMap::new();
+        text_doc.insert("uri".to_string(), Value::String(uri.to_string()));
+        let mut params = BTreeMap::new();
+        params.insert("textDocument".to_string(), Value::Object(text_doc));
+        Value::Object(params)
+    }
+
+    fn apply_substr_change(
+        state: &mut ServerState,
+        uri: &str,
+        current: &mut String,
+        needle: &str,
+        replacement: &str,
+    ) {
+        let start = current
+            .find(needle)
+            .unwrap_or_else(|| panic!("missing edit needle `{needle}` in:\n{current}"));
+        apply_offset_change(state, uri, current, start, start + needle.len(), replacement);
+    }
+
+    fn apply_last_substr_change(
+        state: &mut ServerState,
+        uri: &str,
+        current: &mut String,
+        needle: &str,
+        replacement: &str,
+    ) {
+        let start = current
+            .rfind(needle)
+            .unwrap_or_else(|| panic!("missing edit needle `{needle}` in:\n{current}"));
+        apply_offset_change(state, uri, current, start, start + needle.len(), replacement);
+    }
+
+    fn apply_offset_change(
+        state: &mut ServerState,
+        uri: &str,
+        current: &mut String,
+        start: usize,
+        end: usize,
+        replacement: &str,
+    ) {
+        let range = range_from_offsets(current, start, end);
+        let mut change = BTreeMap::new();
+        change.insert("range".to_string(), range);
+        change.insert("text".to_string(), Value::String(replacement.to_string()));
+        state.apply_did_change(uri, &Value::Array(vec![Value::Object(change)]));
+        current.replace_range(start..end, replacement);
+    }
+
+    fn range_from_offsets(source: &str, start: usize, end: usize) -> Value {
+        let (start_line, start_char) = position_from_offset(source, start);
+        let (end_line, end_char) = position_from_offset(source, end);
+        let mut range = BTreeMap::new();
+        range.insert("start".to_string(), position(start_line, start_char));
+        range.insert("end".to_string(), position(end_line, end_char));
+        Value::Object(range)
+    }
+
+    fn position_from_offset(source: &str, offset: usize) -> (u32, u32) {
+        let prefix = &source[..offset];
+        let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u32;
+        let line_start = prefix.rfind('\n').map_or(0, |index| index + 1);
+        let character = prefix[line_start..].encode_utf16().count() as u32;
+        (line, character)
+    }
+
     fn extract_labels(response: &Value) -> Vec<String> {
         let Value::Array(items) = response else {
             return Vec::new();
@@ -477,6 +544,62 @@ mod tests {
                 end_line <= user_lines,
                 "edit end line {end_line} reaches past the {user_lines}-line editor buffer"
             );
+        }
+    }
+
+    #[test]
+    fn ranged_did_change_preserves_top_level_for_after_main_wrapper_removal() {
+        const PREVIOUS: &str = r#"enum Expr { Lit(i64), Add(Expr, Expr), Sub(Expr, Expr), Mul(Expr, Expr), Div(Expr, Expr) }
+
+struct Cur { s: Vec<char>, i: i64 }
+
+fn run(src: &String) -> i64 {
+    0
+}
+
+fn main() {
+    for src in ["2 + 3 * 4", "(2 + 3) * 4", "10 - 2 - 3", "2 * 3 + 4 * 5", "100 / 5 / 2"] {
+        println!("{} = {}", src, run(&src))
+    }
+}
+"#;
+        const EXPECTED: &str = r#"enum Expr { Lit(i64), Add(Expr, Expr), Sub(Expr, Expr), Mul(Expr, Expr), Div(Expr, Expr) }
+
+struct Cur { s: Vec<char>, i: i64 }
+
+fn run(src: &String) -> i64 {
+    0
+}
+
+for src in ["2 + 3 * 4", "(2 + 3) * 4", "10 - 2 - 3", "2 * 3 + 4 * 5", "100 / 5 / 2"] {
+    println!("{} = {}", src, run(&src))
+}
+"#;
+
+        let uri = "file:///top-level-for.gos";
+        let mut state = ServerState::new();
+        state.update(uri, PREVIOUS);
+        let mut current = PREVIOUS.to_string();
+        apply_substr_change(&mut state, uri, &mut current, "fn main() {\n", "");
+        apply_substr_change(&mut state, uri, &mut current, "    for src in ", "for src in ");
+        apply_substr_change(&mut state, uri, &mut current, "        println!", "    println!");
+        apply_last_substr_change(&mut state, uri, &mut current, "    }\n}\n", "}\n");
+
+        let stored = state.documents.get(uri).expect("document").user_source();
+        assert_eq!(stored, EXPECTED);
+
+        let response = state.formatting(&document_params_value(uri));
+        if let Value::Array(edits) = response {
+            for edit in edits {
+                if let Some(new_text) = field_str(&edit, "newText") {
+                    assert!(
+                        !new_text.ends_with("}\n}\n"),
+                        "formatter edit reintroduced an extra closing brace:\n{new_text}"
+                    );
+                }
+            }
+        } else {
+            panic!("formatting must return an edit array");
         }
     }
 

@@ -521,6 +521,7 @@ fn builtin_exec_spawn(args: &[Value]) -> RuntimeResult<Value> {
         Ok(Ok(child)) => {
             let pid = i64::from(child.id());
             // Detach: forget the Child so its Drop doesn't wait.
+            #[cfg_attr(target_arch = "wasm32", allow(clippy::forget_non_drop))]
             std::mem::forget(child);
             Ok(ok_variant(Value::Int(pid)))
         }

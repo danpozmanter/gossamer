@@ -345,6 +345,77 @@ fn mutable_slice_completion_includes_non_resizing_mutation() {
 }
 
 #[test]
+fn collection_literal_receiver_completion_covers_current_literals() {
+    for (uri, source, column, expected) in [
+        ("file:///vec-lit.gos", "fn main() {\n    [].\n}\n", 7, "len"),
+        (
+            "file:///array-lit.gos",
+            "fn main() {\n    #[].\n}\n",
+            8,
+            "len",
+        ),
+        (
+            "file:///map-lit.gos",
+            "fn main() {\n    {}.\n}\n",
+            7,
+            "contains_key",
+        ),
+        (
+            "file:///set-lit.gos",
+            "fn main() {\n    #{}.\n}\n",
+            8,
+            "contains",
+        ),
+        (
+            "file:///max-heap-lit.gos",
+            "fn main() {\n    ^[].\n}\n",
+            8,
+            "peek",
+        ),
+        (
+            "file:///min-heap-lit.gos",
+            "fn main() {\n    _[].\n}\n",
+            8,
+            "peek",
+        ),
+        (
+            "file:///queue-lit.gos",
+            "fn main() {\n    <[]>.\n}\n",
+            9,
+            "peek_front",
+        ),
+    ] {
+        let server = server_with(uri, source);
+        let labels = completion_labels(&server.completion(&position_params(uri, 1, column)));
+        assert!(
+            labels.iter().any(|label| label == expected),
+            "{uri}: expected {expected}, got {labels:?}"
+        );
+    }
+}
+
+#[test]
+fn collection_type_receiver_completion_covers_aliases() {
+    for (uri, ty, expected) in [
+        ("file:///btree-set.gos", "BTreeSet<i64>", "union"),
+        ("file:///vec-dequeue.gos", "VecDequeue<i64>", "pop_back"),
+        ("file:///vec-queue.gos", "VecQueue<i64>", "push_back"),
+        ("file:///binary-heap.gos", "BinaryHeap<i64>", "peek"),
+        ("file:///max-heap.gos", "MaxHeap<i64>", "pop"),
+        ("file:///min-heap.gos", "MinHeap<i64>", "pop"),
+    ] {
+        let source =
+            format!("fn main() {{\n    let mut values: {ty} = {ty}::new()\n    values.\n}}\n");
+        let server = server_with(uri, &source);
+        let labels = completion_labels(&server.completion(&position_params(uri, 2, 11)));
+        assert!(
+            labels.iter().any(|label| label == expected),
+            "{uri}: expected {expected}, got {labels:?}"
+        );
+    }
+}
+
+#[test]
 fn dotted_method_to_string() {
     let server = server_with(
         "file:///t.gos",

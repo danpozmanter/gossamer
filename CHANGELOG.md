@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.42.1 - Playground, literal docs, and editor completion fixes
+
+- Add a browser Playground entry point to the docs site and wire it into the
+  homepage calls to action and tour navigation.
+- Fix the browser runtime path that made homepage and tour examples fail with
+  `runtime error: unreachable executed`.
+- Document every current collection literal spelling in the skill card served
+  by MCP and `gos skill-prompt`: `[]`, `#[]`, `{}`, `#{}`, `^[]`, `_[]`, and
+  `<[]>`.
+- Teach LSP method completion about current collection literal receivers,
+  `BTreeSet`, `VecDeque` aliases, and heap aliases so editor suggestions match
+  the parser and checker surface.
+- Apply ranged LSP `didChange` edits against the current document instead of
+  treating each edit fragment as a full file, fixing save-time formatting after
+  deleting an explicit `fn main` wrapper around top-level entry code.
+
 ## 0.42.0 - Collections, REPL listings, and native iterator fixes
 
 - Collection typing with the compiled runtime: `VecDeque`,

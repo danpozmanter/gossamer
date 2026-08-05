@@ -133,6 +133,22 @@ function renderOutput(out, result) {
   }
 }
 
+/// Convert a JavaScript exception from the wasm module into an actionable
+/// playground message. Rust panics on wasm often surface as a raw
+/// `RuntimeError: unreachable`, which is technically accurate but not useful
+/// to someone editing a program.
+function runtimeThrowMessage(err) {
+  const raw = err?.message ?? String(err);
+  if (/unreachable(?: executed)?/i.test(raw)) {
+    return [
+      "runtime error: the playground runtime trapped while executing this program.",
+      "This usually means the browser build hit an unsupported runtime path or an internal bug.",
+      "If the same source works with `gos run`, please report it with the program text.",
+    ].join("\n");
+  }
+  return "runtime error: " + raw;
+}
+
 /// Render check() diagnostics below the output; hides when empty.
 function renderDiagnostics(list, diagnostics) {
   list.replaceChildren();
@@ -296,7 +312,7 @@ export function mountPlayground(el, opts = {}) {
         result = {
           stdout: "",
           stderr: "",
-          error: "runtime error: " + (err?.message ?? String(err)),
+          error: runtimeThrowMessage(err),
           fuel_used: 0,
         };
       }

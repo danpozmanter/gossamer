@@ -73,23 +73,25 @@ pub fn decode_path(path: &str) -> PathBuf {
     }
     #[cfg(not(any(unix, windows)))]
     {
-        return PathBuf::from(path);
+        PathBuf::from(path)
     }
     #[cfg(any(unix, windows))]
-    let Some(hex) = path.strip_prefix(ENCODED_PATH_PREFIX) else {
-        return PathBuf::from(path);
-    };
-    #[cfg(unix)]
     {
-        use std::os::unix::ffi::OsStringExt;
-        let bytes = decode_hex(hex, 2).unwrap_or_else(|| path.as_bytes().to_vec());
-        PathBuf::from(std::ffi::OsString::from_vec(bytes))
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStringExt;
-        let units = decode_hex_units(hex).unwrap_or_else(|| path.encode_utf16().collect());
-        PathBuf::from(std::ffi::OsString::from_wide(&units))
+        let Some(hex) = path.strip_prefix(ENCODED_PATH_PREFIX) else {
+            return PathBuf::from(path);
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let bytes = decode_hex(hex, 2).unwrap_or_else(|| path.as_bytes().to_vec());
+            PathBuf::from(std::ffi::OsString::from_vec(bytes))
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            let units = decode_hex_units(hex).unwrap_or_else(|| path.encode_utf16().collect());
+            PathBuf::from(std::ffi::OsString::from_wide(&units))
+        }
     }
 }
 
@@ -1390,6 +1392,7 @@ pub fn write_atomic(path: impl AsRef<Path>, bytes: &[u8]) -> io::Result<()> {
             .open(&tmp)?;
         file.write_all(bytes)?;
         file.sync_all()?;
+        #[cfg_attr(target_arch = "wasm32", allow(clippy::drop_non_drop))]
         drop(file);
         stdfs::rename(&tmp, path)?;
         sync_parent_dir(parent)
@@ -1407,6 +1410,7 @@ fn sync_parent_dir(parent: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn sync_parent_dir(_parent: &Path) -> io::Result<()> {
     // Windows directory handles need platform-specific sharing flags. Rename
     // is still atomic here; this helper keeps the API portable until that

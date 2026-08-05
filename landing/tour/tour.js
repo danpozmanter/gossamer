@@ -406,7 +406,7 @@ fn produce(tx: sync::Sender<i64>) {
 }
 
 fn main() {
-    let (tx, rx) = sync::channel(0)
+    let (tx, rx) = sync::channel(5)
     go produce(tx)
 
     // \`recv\` yields \`Some\` until the channel is closed and drained.
@@ -435,8 +435,8 @@ fn produce(tx: sync::Sender<i64>, xs: Vec<i64>) {
 }
 
 fn main() {
-    let (tx_hi, rx_hi) = sync::channel(0)
-    let (tx_lo, rx_lo) = sync::channel(0)
+    let (tx_hi, rx_hi) = sync::channel(3)
+    let (tx_lo, rx_lo) = sync::channel(2)
 
     go produce(tx_hi, [1, 2, 3])
     go produce(tx_lo, [10, 20])

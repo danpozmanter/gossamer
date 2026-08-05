@@ -2,7 +2,7 @@
 // Pragmatic regex/state tokenizer (not a full parser): it covers the
 // surface tokens the playground needs - comments, keywords, types,
 // strings, numbers, the |> pipe, _ placeholder, format-macros, and
-// #[...] attributes.
+// #! comments.
 
 import {
   StreamLanguage,
@@ -69,22 +69,18 @@ const gossamerStreamParser = {
       return "comment";
     }
 
+    // Hash-bang comment. A bare # is collection syntax, and #[...]
+    // should stay punctuation-coloured like ordinary brackets.
+    if (stream.match("#!")) {
+      stream.skipToEnd();
+      return "comment";
+    }
+
     // Block comment (non-nesting).
     if (stream.match("/*")) {
       state.inBlockComment = true;
       consumeBlockComment(stream, state);
       return "comment";
-    }
-
-    // Attribute: #[ ... ] or #![ ... ] (best-effort, bracket-balanced).
-    if (stream.match(/^#!?\[/)) {
-      let depth = 1;
-      while (!stream.eol() && depth > 0) {
-        const ch = stream.next();
-        if (ch === "[") depth++;
-        else if (ch === "]") depth--;
-      }
-      return "meta";
     }
 
     const ch = stream.peek();

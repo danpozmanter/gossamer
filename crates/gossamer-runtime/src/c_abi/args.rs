@@ -18,6 +18,7 @@
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
 
 use super::*;
@@ -58,6 +59,7 @@ static PROGRAM_NAME_PTR: AtomicUsize = AtomicUsize::new(0);
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char) {
     ffi_entry!((), {
+        #[cfg(not(target_arch = "wasm32"))]
         let startup_started = Instant::now();
         // Configure the allocator before copying argv into Gossamer-owned
         // strings. Linux also has an earlier constructor for THP policy, but
@@ -65,6 +67,7 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
         // native targets the same allocation policy before runtime-owned
         // allocations begin. `runtime_init` is process-idempotent.
         runtime_init();
+        #[cfg(not(target_arch = "wasm32"))]
         startup_trace("runtime_init", startup_started.elapsed());
         // Capture argv[0] as the program name whenever argv has any
         // entries - previously this only happened when argc > 1, so
@@ -135,6 +138,7 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
             let vec = unsafe { gos_rt_vec_new_typed(8, vec_elem_kind::STRING) };
             ARGS_VEC.store(vec as usize, Ordering::SeqCst);
         }
+        #[cfg(not(target_arch = "wasm32"))]
         startup_trace("arguments", startup_started.elapsed());
         // Initialise the Rust runtime's per-process state. The
         // Cranelift-emitted `main` shim is a plain
@@ -171,6 +175,7 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
 /// Emits opt-in startup phase timings for native binaries. This makes
 /// cross-platform startup regressions diagnosable without affecting normal
 /// program output or depending on a platform-specific profiler.
+#[cfg(not(target_arch = "wasm32"))]
 fn startup_trace(phase: &str, elapsed: Duration) {
     if std::env::var_os("GOS_STARTUP_TRACE").is_some() {
         eprintln!(
@@ -454,41 +459,43 @@ pub(super) fn decode_os_path(path: &str) -> std::path::PathBuf {
     }
     #[cfg(not(any(unix, windows)))]
     {
-        return std::path::PathBuf::from(path);
+        std::path::PathBuf::from(path)
     }
     #[cfg(any(unix, windows))]
-    let Some(hex) = path.strip_prefix(ENCODED_PATH_PREFIX) else {
-        return std::path::PathBuf::from(path);
-    };
-    #[cfg(unix)]
     {
-        use std::os::unix::ffi::OsStringExt;
-        if !hex.len().is_multiple_of(2) {
-            return std::path::PathBuf::from(path);
-        }
-        let Some(bytes) = (0..hex.len())
-            .step_by(2)
-            .map(|start| u8::from_str_radix(&hex[start..start + 2], 16).ok())
-            .collect::<Option<Vec<_>>>()
-        else {
+        let Some(hex) = path.strip_prefix(ENCODED_PATH_PREFIX) else {
             return std::path::PathBuf::from(path);
         };
-        std::path::PathBuf::from(std::ffi::OsString::from_vec(bytes))
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStringExt;
-        if !hex.len().is_multiple_of(4) {
-            return std::path::PathBuf::from(path);
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            if !hex.len().is_multiple_of(2) {
+                return std::path::PathBuf::from(path);
+            }
+            let Some(bytes) = (0..hex.len())
+                .step_by(2)
+                .map(|start| u8::from_str_radix(&hex[start..start + 2], 16).ok())
+                .collect::<Option<Vec<_>>>()
+            else {
+                return std::path::PathBuf::from(path);
+            };
+            std::path::PathBuf::from(std::ffi::OsString::from_vec(bytes))
         }
-        let Some(units) = (0..hex.len())
-            .step_by(4)
-            .map(|start| u16::from_str_radix(&hex[start..start + 4], 16).ok())
-            .collect::<Option<Vec<_>>>()
-        else {
-            return std::path::PathBuf::from(path);
-        };
-        std::path::PathBuf::from(std::ffi::OsString::from_wide(&units))
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            if !hex.len().is_multiple_of(4) {
+                return std::path::PathBuf::from(path);
+            }
+            let Some(units) = (0..hex.len())
+                .step_by(4)
+                .map(|start| u16::from_str_radix(&hex[start..start + 4], 16).ok())
+                .collect::<Option<Vec<_>>>()
+            else {
+                return std::path::PathBuf::from(path);
+            };
+            std::path::PathBuf::from(std::ffi::OsString::from_wide(&units))
+        }
     }
 }
 

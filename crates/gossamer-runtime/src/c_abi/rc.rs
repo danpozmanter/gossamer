@@ -3357,6 +3357,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_pointer_width = "64")]
     #[cfg_attr(miri, ignore)] // arena uses mmap with non-RW protections; Miri can't model it
     fn region_arena_matches_only_the_reserved_window() {
         let base = 0x7000_0000_0000usize;

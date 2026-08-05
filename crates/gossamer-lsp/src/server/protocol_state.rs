@@ -70,9 +70,9 @@ fn run<R: Read, W: Write>(reader: R, writer: W) -> std::io::Result<()> {
                 }
             }
             "textDocument/didChange" => {
-                if let Some((uri, text)) = extract_did_change(&params) {
-                    state.update(&uri, &text);
-                    for notif in state.publish_diagnostics(&uri) {
+                if let Some(uri) = field_str(field(&params, "textDocument"), "uri") {
+                    state.apply_did_change(uri, field(&params, "contentChanges"));
+                    for notif in state.publish_diagnostics(uri) {
                         transport.write_message(&notif)?;
                     }
                 }
@@ -295,18 +295,47 @@ fn extract_did_open(params: &Value) -> Option<(String, String)> {
     Some((uri, text))
 }
 
-fn extract_did_change(params: &Value) -> Option<(String, String)> {
-    let uri = field_str(field(params, "textDocument"), "uri")?.to_string();
-    let changes = field(params, "contentChanges");
-    let Value::Array(items) = changes else {
-        return None;
-    };
-    // LSP sync kind "Full" always delivers the whole document as
-    // the last change. Respect that without bothering with range-
-    // based incremental updates for the first slice.
-    let last = items.last()?;
-    let text = field_str(last, "text")?.to_string();
-    Some((uri, text))
+fn text_range_to_offsets(source: &str, range: &Value) -> Option<(usize, usize)> {
+    let start = field(range, "start");
+    let end = field(range, "end");
+    let start = text_position_to_offset(
+        source,
+        field_u32(start, "line")?,
+        field_u32(start, "character").unwrap_or(0),
+    )?;
+    let end = text_position_to_offset(
+        source,
+        field_u32(end, "line")?,
+        field_u32(end, "character").unwrap_or(0),
+    )?;
+    (start <= end).then_some((start, end))
+}
+
+fn text_position_to_offset(source: &str, line: u32, column: u32) -> Option<usize> {
+    let mut line_start = 0usize;
+    for _ in 0..line {
+        let newline = source[line_start..].find('\n')?;
+        line_start += newline + 1;
+    }
+    let remainder = &source[line_start..];
+    let mut line_text = remainder
+        .split_once('\n')
+        .map_or(remainder, |(text, _)| text);
+    if let Some(without_cr) = line_text.strip_suffix('\r') {
+        line_text = without_cr;
+    }
+
+    let mut utf16_column = 0u32;
+    for (byte, ch) in line_text.char_indices() {
+        if utf16_column == column {
+            return Some(line_start + byte);
+        }
+        utf16_column += ch.len_utf16() as u32;
+        if utf16_column > column {
+            return None;
+        }
+    }
+    (utf16_column == column).then_some(line_start + line_text.len())
 }
 
 struct ServerState {
@@ -328,6 +357,36 @@ impl ServerState {
         let analysis = analyse(uri, text);
         self.workspace.update(uri, &analysis);
         self.documents.insert(uri.to_string(), analysis);
+    }
+
+    fn apply_did_change(&mut self, uri: &str, changes: &Value) {
+        let Value::Array(items) = changes else {
+            return;
+        };
+        if items.is_empty() {
+            return;
+        }
+
+        let mut text = self
+            .documents
+            .get(uri)
+            .map_or_else(String::new, |doc| doc.user_source().to_string());
+        for change in items {
+            let Some(change_text) = field_str(change, "text") else {
+                continue;
+            };
+            let range = field(change, "range");
+            if matches!(range, Value::Object(_)) {
+                let Some((start, end)) = text_range_to_offsets(&text, range) else {
+                    continue;
+                };
+                text.replace_range(start..end, change_text);
+            } else {
+                text.clear();
+                text.push_str(change_text);
+            }
+        }
+        self.update(uri, &text);
     }
 
     fn close(&mut self, uri: &str) {

@@ -113,6 +113,10 @@ enum BuiltinReceiver {
     String,
     HashMap,
     HashSet,
+    BTreeSet,
+    VecDeque,
+    MaxHeap,
+    MinHeap,
     Iterator,
     Option,
     Result,
@@ -171,9 +175,51 @@ fn classify_receiver(doc: &DocumentAnalysis, expr: &str) -> ReceiverDescriptor {
             writable: false,
         };
     }
+    if head.starts_with("#[") {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::Array,
+            type_name: None,
+            writable: false,
+        };
+    }
+    if head.starts_with("#{") {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::HashSet,
+            type_name: None,
+            writable: false,
+        };
+    }
+    if head.starts_with("^[") {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::MaxHeap,
+            type_name: Some("MaxHeap".to_string()),
+            writable: false,
+        };
+    }
+    if head.starts_with("_[") {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::MinHeap,
+            type_name: Some("MinHeap".to_string()),
+            writable: false,
+        };
+    }
+    if head.starts_with("<[") {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::VecDeque,
+            type_name: Some("VecDeque".to_string()),
+            writable: false,
+        };
+    }
     if head.starts_with("vec![") {
         return ReceiverDescriptor {
             builtin: BuiltinReceiver::Vec,
+            type_name: None,
+            writable: false,
+        };
+    }
+    if head.starts_with('{') {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::HashMap,
             type_name: None,
             writable: false,
         };
@@ -223,11 +269,16 @@ fn classify_type_string(ty: &str) -> ReceiverDescriptor {
         .trim_end_matches([',', ';', ' ']);
     let head = head.strip_prefix("mut ").unwrap_or(head);
     if head.starts_with("Vec<") {
-        return ReceiverDescriptor {
-            builtin: BuiltinReceiver::Vec,
-            type_name: None,
-            writable: false,
-        };
+        return receiver_desc(BuiltinReceiver::Vec, None);
+    }
+    if type_name_matches(head, &["VecDeque", "VecDequeue", "VecQueue"]) {
+        return receiver_desc(BuiltinReceiver::VecDeque, Some("VecDeque"));
+    }
+    if type_name_matches(head, &["BinaryHeap", "MaxHeap"]) {
+        return receiver_desc(BuiltinReceiver::MaxHeap, Some("MaxHeap"));
+    }
+    if type_name_matches(head, &["MinHeap"]) {
+        return receiver_desc(BuiltinReceiver::MinHeap, Some("MinHeap"));
     }
     if head.starts_with('[') {
         return ReceiverDescriptor {
@@ -241,71 +292,52 @@ fn classify_type_string(ty: &str) -> ReceiverDescriptor {
         };
     }
     if head.starts_with("HashMap<") {
-        return ReceiverDescriptor {
-            builtin: BuiltinReceiver::HashMap,
-            type_name: None,
-            writable: false,
-        };
+        return receiver_desc(BuiltinReceiver::HashMap, None);
     }
     if head.starts_with("HashSet<") {
-        return ReceiverDescriptor {
-            builtin: BuiltinReceiver::HashSet,
-            type_name: None,
-            writable: false,
-        };
+        return receiver_desc(BuiltinReceiver::HashSet, None);
+    }
+    if type_name_matches(head, &["BTreeSet"]) {
+        return receiver_desc(BuiltinReceiver::BTreeSet, Some("BTreeSet"));
     }
     if head == "String" || head == "&str" || head == "str" {
-        return ReceiverDescriptor {
-            builtin: BuiltinReceiver::String,
-            type_name: Some("String".to_string()),
-            writable: false,
-        };
+        return receiver_desc(BuiltinReceiver::String, Some("String"));
     }
     if matches!(
         head,
         "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
     ) {
-        return ReceiverDescriptor {
-            builtin: BuiltinReceiver::Integer,
-            type_name: Some(head.to_string()),
-            writable: false,
-        };
+        return receiver_desc(BuiltinReceiver::Integer, Some(head));
     }
     if head.starts_with("Option<") || head == "Option" {
-        return ReceiverDescriptor {
-            builtin: BuiltinReceiver::Option,
-            type_name: Some("Option".to_string()),
-            writable: false,
-        };
+        return receiver_desc(BuiltinReceiver::Option, Some("Option"));
     }
     if head.starts_with("Iterator<") || head == "Iterator" {
-        return ReceiverDescriptor {
-            builtin: BuiltinReceiver::Iterator,
-            type_name: Some("Iterator".to_string()),
-            writable: false,
-        };
+        return receiver_desc(BuiltinReceiver::Iterator, Some("Iterator"));
     }
     if head.starts_with("Result<") || head == "Result" {
-        return ReceiverDescriptor {
-            builtin: BuiltinReceiver::Result,
-            type_name: Some("Result".to_string()),
-            writable: false,
-        };
+        return receiver_desc(BuiltinReceiver::Result, Some("Result"));
     }
     let bare = head.split(['<', '[', '(', ' ']).next().unwrap_or(head);
     if bare.is_empty() {
-        ReceiverDescriptor {
-            builtin: BuiltinReceiver::Unknown,
-            type_name: None,
-            writable: false,
-        }
+        receiver_desc(BuiltinReceiver::Unknown, None)
     } else {
-        ReceiverDescriptor {
-            builtin: BuiltinReceiver::Unknown,
-            type_name: Some(bare.to_string()),
-            writable: false,
-        }
+        receiver_desc(BuiltinReceiver::Unknown, Some(bare))
     }
+}
+
+fn receiver_desc(builtin: BuiltinReceiver, type_name: Option<&str>) -> ReceiverDescriptor {
+    ReceiverDescriptor {
+        builtin,
+        type_name: type_name.map(str::to_string),
+        writable: false,
+    }
+}
+
+fn type_name_matches(head: &str, names: &[&str]) -> bool {
+    names
+        .iter()
+        .any(|name| head == *name || head.strip_prefix(name).is_some_and(|rest| rest.starts_with('<')))
 }
 
 fn identifier_token(text: &str) -> Option<&str> {
@@ -864,6 +896,102 @@ const HASHSET_METHODS: &[BuiltinMethod] = &[
     },
 ];
 
+const VECDEQUE_METHODS: &[BuiltinMethod] = &[
+    BuiltinMethod {
+        name: "push_back",
+        signature: "fn push_back(&mut self, value: T)",
+        doc: "Appends a value to the back.",
+        snippet: "push_back($0)",
+    },
+    BuiltinMethod {
+        name: "push_front",
+        signature: "fn push_front(&mut self, value: T)",
+        doc: "Appends a value to the front.",
+        snippet: "push_front($0)",
+    },
+    BuiltinMethod {
+        name: "pop_front",
+        signature: "fn pop_front(&mut self) -> Option<T>",
+        doc: "Removes and returns the front value when present.",
+        snippet: "pop_front()$0",
+    },
+    BuiltinMethod {
+        name: "pop_back",
+        signature: "fn pop_back(&mut self) -> Option<T>",
+        doc: "Removes and returns the back value when present.",
+        snippet: "pop_back()$0",
+    },
+    BuiltinMethod {
+        name: "peek_front",
+        signature: "fn peek_front(&self) -> Option<T>",
+        doc: "Returns the front value without removing it.",
+        snippet: "peek_front()$0",
+    },
+    BuiltinMethod {
+        name: "peek_back",
+        signature: "fn peek_back(&self) -> Option<T>",
+        doc: "Returns the back value without removing it.",
+        snippet: "peek_back()$0",
+    },
+    BuiltinMethod {
+        name: "len",
+        signature: "fn len(&self) -> i64",
+        doc: "Returns the number of values.",
+        snippet: "len()$0",
+    },
+    BuiltinMethod {
+        name: "is_empty",
+        signature: "fn is_empty(&self) -> bool",
+        doc: "Returns true when the deque has no values.",
+        snippet: "is_empty()$0",
+    },
+    BuiltinMethod {
+        name: "clear",
+        signature: "fn clear(&mut self)",
+        doc: "Removes all values.",
+        snippet: "clear()$0",
+    },
+];
+
+const HEAP_METHODS: &[BuiltinMethod] = &[
+    BuiltinMethod {
+        name: "push",
+        signature: "fn push(&mut self, value: T)",
+        doc: "Pushes a value onto the heap.",
+        snippet: "push($0)",
+    },
+    BuiltinMethod {
+        name: "pop",
+        signature: "fn pop(&mut self) -> Option<T>",
+        doc: "Removes and returns the root value when present.",
+        snippet: "pop()$0",
+    },
+    BuiltinMethod {
+        name: "peek",
+        signature: "fn peek(&self) -> Option<T>",
+        doc: "Returns the root value without removing it.",
+        snippet: "peek()$0",
+    },
+    BuiltinMethod {
+        name: "len",
+        signature: "fn len(&self) -> i64",
+        doc: "Returns the number of values.",
+        snippet: "len()$0",
+    },
+    BuiltinMethod {
+        name: "is_empty",
+        signature: "fn is_empty(&self) -> bool",
+        doc: "Returns true when the heap has no values.",
+        snippet: "is_empty()$0",
+    },
+    BuiltinMethod {
+        name: "clear",
+        signature: "fn clear(&mut self)",
+        doc: "Removes all values.",
+        snippet: "clear()$0",
+    },
+];
+
 const OPTION_METHODS: &[BuiltinMethod] = &[
     BuiltinMethod {
         name: "and_then",
@@ -1067,6 +1195,9 @@ fn builtin_methods_for(receiver: &ReceiverDescriptor) -> Vec<&'static BuiltinMet
         BuiltinReceiver::String => STRING_METHODS.iter().collect(),
         BuiltinReceiver::HashMap => HASHMAP_METHODS.iter().collect(),
         BuiltinReceiver::HashSet => HASHSET_METHODS.iter().collect(),
+        BuiltinReceiver::BTreeSet => HASHSET_METHODS.iter().collect(),
+        BuiltinReceiver::VecDeque => VECDEQUE_METHODS.iter().collect(),
+        BuiltinReceiver::MaxHeap | BuiltinReceiver::MinHeap => HEAP_METHODS.iter().collect(),
         BuiltinReceiver::Iterator => ITERATOR_METHODS.iter().collect(),
         BuiltinReceiver::Option => OPTION_METHODS.iter().collect(),
         BuiltinReceiver::Result => RESULT_METHODS.iter().collect(),
