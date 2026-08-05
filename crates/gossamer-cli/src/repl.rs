@@ -4501,6 +4501,7 @@ fn build_and_call_with_type_inner(
     let result =
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| vm.call(entry, Vec::new())))
             .map_err(repl_panic_message)?;
+    gossamer_interp::flush_runtime_stdout();
     result
         .map(|value| (value, tail_ty))
         .map_err(|e| format!("{e}"))
