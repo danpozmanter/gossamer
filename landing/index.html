@@ -164,6 +164,7 @@
           <button role="tab" id="tab-web" aria-controls="panel-web">Web routing</button>
           <button role="tab" id="tab-go" aria-controls="panel-go">Goroutines</button>
           <button role="tab" id="tab-adt" aria-controls="panel-adt">ADTs and Matching</button>
+          <button role="tab" id="tab-collections" aria-controls="panel-collections">Collections</button>
         </div>
 
         <div class="tabpanel" role="tabpanel" id="panel-pipes" aria-labelledby="tab-pipes">
@@ -234,6 +235,65 @@ let shapes = [Shape::Circle(3.0), Shape::Rect { w: 4.0, h: 5.0 }, Shape::Triangl
 for s in shapes {
     println!("area = {:.2}", area(&amp;s))
 }</code></pre>
+        </div>
+
+        <div class="tabpanel" role="tabpanel" id="panel-collections" aria-labelledby="tab-collections" hidden>
+<pre><code class="language-gossamer">use std::collections::{BTreeSet, HashMap, HashSet, VecDeque}
+
+let mut nums = []
+nums.push(10)
+nums.push(20)
+let dropped = nums.remove(0).unwrap_or(-1)
+println!("[] Vec: len={} removed={} first={}", nums.len(), dropped, nums[0])
+
+let fixed = #[1, 2, 3]
+println!("#[] fixed array: len={}", fixed.len())
+
+let mut scores: HashMap&lt;String, i64&gt; = {}
+scores.insert("ada", 100)
+scores.insert("grace", 95)
+let old_score = scores.remove("ada").unwrap_or(0)
+println!("{} HashMap: len={} removed={} has_grace={}",
+    "{}", scores.len(), old_score, scores.contains_key("grace"))
+
+let mut seen = #{}
+seen.insert(3)
+seen.insert(5)
+let removed_seen = seen.remove(3)
+println!("#{} HashSet: len={} removed={} has5={}",
+    "{}", seen.len(), removed_seen, seen.contains(5))
+
+let mut ordered = #{}
+ordered.insert(4)
+ordered.insert(1)
+let removed_ordered = ordered.remove(4)
+println!("#{} BTreeSet: len={} removed={} values={}",
+    "{}", ordered.len(), removed_ordered, ordered.to_vec().join(","))
+
+let mut max_heap = ^[]
+max_heap.push(5)
+max_heap.push(9)
+let largest = max_heap.pop().unwrap_or(0)
+println!("^[] MaxHeap: len={} removed={}", max_heap.len(), largest)
+
+let mut min_heap = _[]
+min_heap.push(5)
+min_heap.push(2)
+let smallest = min_heap.pop().unwrap_or(0)
+println!("_[] MinHeap: len={} removed={}", min_heap.len(), smallest)
+
+let mut deque = &lt;[]&gt;
+deque.push_front(2)
+deque.push_back(3)
+let front = deque.pop_front().unwrap_or(0)
+let back = deque.pop_back().unwrap_or(0)
+println!("&lt;[]&gt; as deque: front={} back={} len={}", front, back, deque.len())
+
+let mut queue = &lt;[]&gt;
+queue.push_back(7)
+queue.push_back(8)
+let next = queue.pop_front().unwrap_or(0)
+println!("&lt;[]&gt; as queue: next={} len={}", next, queue.len())</code></pre>
         </div>
       </div>
     </section>
