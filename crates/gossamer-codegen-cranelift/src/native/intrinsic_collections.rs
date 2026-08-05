@@ -917,16 +917,52 @@ pub(super) fn lower_intrinsic_call_collections(
         | "collections::HashMap::new"
         | "std::collections::HashMap::new"
         | "gos_rt_map_new" => {
-            let new_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_map_new",
-                &[types::I32, types::I32],
-                &[ptr_ty],
-            )?;
-            let fref = module.declare_func_in_func(new_fn, builder.func);
-            let k = builder.ins().iconst(types::I32, 8);
-            let v = builder.ins().iconst(types::I32, 8);
-            let call = builder.ins().call(fref, &[k, v]);
+            let typed_kinds = body
+                .locals
+                .get(destination.local.0 as usize)
+                .and_then(|decl| match tcx.kind_of(decl.ty) {
+                    TyKind::HashMap { key, value } => {
+                        let kind = |ty| match tcx.kind_of(ty) {
+                            TyKind::Int(_) => Some(0),
+                            TyKind::String => Some(1),
+                            TyKind::Vec(elem) | TyKind::Slice(elem)
+                                if matches!(
+                                    tcx.kind_of(*elem),
+                                    TyKind::Int(gossamer_types::IntTy::U8)
+                                ) =>
+                            {
+                                Some(2)
+                            }
+                            _ => None,
+                        };
+                        Some((kind(*key)?, kind(*value)?))
+                    }
+                    _ => None,
+                });
+            let call = if let Some((key_kind, val_kind)) = typed_kinds {
+                let new_fn = intrinsics.extern_fn(
+                    module,
+                    "gos_rt_map_new_with_capacity_typed",
+                    &[types::I32, types::I32, types::I64],
+                    &[ptr_ty],
+                )?;
+                let fref = module.declare_func_in_func(new_fn, builder.func);
+                let k = builder.ins().iconst(types::I32, key_kind);
+                let v = builder.ins().iconst(types::I32, val_kind);
+                let cap = builder.ins().iconst(types::I64, 0);
+                builder.ins().call(fref, &[k, v, cap])
+            } else {
+                let new_fn = intrinsics.extern_fn(
+                    module,
+                    "gos_rt_map_new",
+                    &[types::I32, types::I32],
+                    &[ptr_ty],
+                )?;
+                let fref = module.declare_func_in_func(new_fn, builder.func);
+                let k = builder.ins().iconst(types::I32, 8);
+                let v = builder.ins().iconst(types::I32, 8);
+                builder.ins().call(fref, &[k, v])
+            };
             let ptr = builder.inst_results(call)[0];
             define_var_to(
                 builder,

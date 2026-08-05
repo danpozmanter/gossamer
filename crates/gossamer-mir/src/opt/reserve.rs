@@ -622,6 +622,72 @@ fn fresh_vec_temporary_sources(body: &Body) -> HashSet<Local> {
             out.insert(local);
         }
     }
+    let mut result_vec_sources = HashSet::new();
+    for block in &body.blocks {
+        let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            destination,
+            ..
+        } = &block.terminator
+        else {
+            continue;
+        };
+        if !matches!(
+            name.as_str(),
+            "gos_rt_vec_slice_result"
+                | "gos_rt_intarr_slice_result"
+                | "gos_rt_floatarr_slice_result"
+                | "gos_rt_bytearr_slice_result"
+                | "gos_rt_packed_bytearr_slice_result"
+        ) || !destination.projection.is_empty()
+        {
+            continue;
+        }
+        result_vec_sources.insert(destination.local);
+    }
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            if !place.projection.is_empty() {
+                continue;
+            }
+            if let Rvalue::CallIntrinsic { name, args } = rvalue
+                && *name == "gos_rt_result_payload"
+                && matches!(
+                    args.as_slice(),
+                    [Operand::Copy(source)]
+                        if source.projection.is_empty()
+                            && result_vec_sources.contains(&source.local)
+                )
+            {
+                out.insert(place.local);
+            }
+        }
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                let StatementKind::Assign {
+                    place,
+                    rvalue: Rvalue::Use(Operand::Copy(source)),
+                } = &stmt.kind
+                else {
+                    continue;
+                };
+                if place.projection.is_empty()
+                    && source.projection.is_empty()
+                    && out.contains(&source.local)
+                    && out.insert(place.local)
+                {
+                    changed = true;
+                }
+            }
+        }
+    }
     out
 }
 

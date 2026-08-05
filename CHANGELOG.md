@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.42.2 - Native CI batching and memory fixes
+
+- Build native CI test binaries once per shard, then run the compiled test
+  executables directly with per-target logs and `--test-threads=1`.
+- Bump workspace crates and lockfile package versions to 0.42.2.
+- Compact typed byte-vector map storage for `HashMap<i64, Vec<u8>>` and
+  `HashMap<String, Vec<u8>>`, with ownership handling for both moved Result
+  payloads and loop-carried `to_vec()` temporaries.
+- Elide deep clones of fresh Vec Result payloads in MIR so `payload.slice(...)`
+
+  materializes one dynamic byte buffer instead of two before map insertion.
 ## 0.42.1 - Playground, literal docs, and editor completion fixes
 
 - Add a browser Playground entry point to the docs site and wire it into the

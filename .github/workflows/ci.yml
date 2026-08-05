@@ -143,11 +143,10 @@ jobs:
           # violation that can drop the whole runner). A single combined
           # `cargo test` runs the binaries concurrently, so their output
           # interleaves and a crash reports only "N targets failed" - the
-          # culprit is lost. One invocation per binary keeps every failure
-          # attributed to a named target, and the per-binary log survives in the
-          # uploaded artifacts even if the crash takes the runner down. Slower
-          # than one combined run; that cost buys a failure log that always
-          # names the test.
+          # culprit is lost. Build the selected binaries in one Cargo pass,
+          # then invoke those executables directly one by one. That keeps every
+          # failure attributed to a named target and avoids repeatedly asking
+          # Cargo to re-walk the graph and re-run build scripts for each test.
           # The passing output streams inside a collapsed `::group::` so the
           # log stays tidy. On failure the group is NOT enough - GitHub does
           # not auto-expand it, so the previous design forced you to open
@@ -157,14 +156,44 @@ jobs:
           # assertion lines FLAT, outside the group, so the failure is
           # visible at a glance. The full streamed log stays in the group and
           # in the uploaded artifacts.
-          run_target() {
-            local crate="$1" label="$2"; shift 2
+          package_dir() {
+            case "$1" in
+              gossamer-cli) echo "crates/gossamer-cli" ;;
+              gossamer-codegen-cranelift) echo "crates/gossamer-codegen-cranelift" ;;
+              *) echo "::error::unknown native-test crate: $1" >&2; return 1 ;;
+            esac
+          }
+          normalize_executable() {
+            local exe="$1"
+            if command -v cygpath >/dev/null 2>&1 && [[ "$exe" =~ ^[A-Za-z]:\\ ]]; then
+              cygpath -u "$exe"
+            else
+              printf '%s\n' "$exe"
+            fi
+          }
+          native_pwd() {
+            if pwd -W >/dev/null 2>&1; then
+              pwd -W
+            else
+              pwd
+            fi
+          }
+          run_executable() {
+            local crate="$1" label="$2" exe="$3"; shift 3
             local log="$logdir/${crate}-${label}.log"
             local ok=1
+            local dir
+            dir="$(package_dir "$crate")" || return 1
+            exe="$(normalize_executable "$exe")"
             echo "::group::test ${crate} :: ${label}"
-            "$CARGO_BIN" test -p "$crate" "$@" --no-fail-fast \
-              -- --test-threads=1 --nocapture 2>&1 \
-              | tee "$log" || ok=0
+            (
+              cd "$dir"
+              export CARGO_MANIFEST_DIR="$(native_pwd)"
+              if [ -n "${gos_exe:-}" ]; then
+                export CARGO_BIN_EXE_gos="$gos_exe"
+              fi
+              "$exe" "$@" --test-threads=1 --nocapture
+            ) 2>&1 | tee "$log" || ok=0
             echo "::endgroup::"
             if [ "$ok" -ne 1 ]; then
               rc=1
@@ -174,6 +203,79 @@ jobs:
                 "$log" | head -n 80 || true
               echo "============ end ${crate} :: ${label} (full log above is collapsed) ============"
             fi
+          }
+          build_args=(test --no-run --message-format=json)
+          selected_targets="$logdir/selected-targets.tsv"
+          executable_artifacts="$logdir/executable-artifacts.tsv"
+          : > "$selected_targets"
+          packages=()
+          add_package_arg() {
+            local crate="$1" seen=0 item
+            for item in "${packages[@]}"; do
+              [ "$item" = "$crate" ] && seen=1 && break
+            done
+            if [ "$seen" -eq 0 ]; then
+              packages+=("$crate")
+              build_args+=(-p "$crate")
+            fi
+          }
+          select_target() {
+            local crate="$1" label="$2" kind="$3" target="$4"
+            add_package_arg "$crate"
+            case "$kind" in
+              lib) build_args+=(--lib) ;;
+              test) build_args+=(--test "$target") ;;
+              *) echo "::error::unknown native-test target kind: $kind" >&2; rc=1; return 1 ;;
+            esac
+            printf '%s\t%s\t%s\t%s\n' "$crate" "$label" "$kind" "$target" >> "$selected_targets"
+          }
+          build_selected_targets() {
+            local json_log="$logdir/00-build.jsonl"
+            local human_log="$logdir/00-build.log"
+            echo "::group::build selected native targets"
+            if "$CARGO_BIN" "${build_args[@]}" > "$json_log" 2> >(tee "$human_log" >&2); then
+              :
+            else
+              rc=1
+              echo "::error::selected native target build failed - see build log"
+            fi
+            echo "::endgroup::"
+            jq -r '
+              select(.reason == "compiler-artifact"
+                and .executable != null)
+              | [.package_id, (.target.kind | join(",")), .target.name, .executable]
+              | @tsv
+            ' "$json_log" > "$executable_artifacts" || {
+              rc=1
+              echo "::error::failed to parse Cargo JSON build output"
+            }
+            gos_exe="$(
+              awk -F '\t' '$2 ~ /bin/ && $3 == "gos" { print $4; found = 1; exit }
+                END { if (!found) exit 0 }' "$executable_artifacts"
+            )"
+          }
+          executable_for_target() {
+            local crate="$1" kind="$2" target="$3"
+            awk -F '\t' -v crate="$crate" -v kind="$kind" -v target="$target" '
+              $1 ~ "/crates/" crate "#" && $2 ~ kind && $3 == target {
+                print $4
+                found = 1
+                exit
+              }
+              END { if (!found) exit 1 }
+            ' "$executable_artifacts"
+          }
+          run_selected_targets() {
+            local crate label kind target exe
+            while IFS=$'\t' read -r crate label kind target; do
+              [ -n "$crate" ] || continue
+              exe="$(executable_for_target "$crate" "$kind" "$target")" || {
+                rc=1
+                echo "::error::missing built executable for ${crate} :: ${label}"
+                continue
+              }
+              run_executable "$crate" "$label" "$exe"
+            done < "$selected_targets"
           }
           # The macOS and Windows runners exist to catch failures that appear
           # ONLY off Linux - platform ABI / calling convention, object format,
@@ -242,19 +344,9 @@ jobs:
               general_index=$((general_index + 1))
               [ "$assigned" = "$general_shard" ]
             }
-            # Pre-build only selected native binaries. The prior package-wide
-            # `--no-run` also compiled every non-native integration binary.
-            build_target() {
-              local crate="$1" label="$2"; shift 2
-              local log="$logdir/${crate}-${label}-build.log"
-              echo "::group::build ${crate} :: ${label}"
-              "$CARGO_BIN" test -p "$crate" --no-run "$@" 2>&1 | tee "$log" || rc=1
-              echo "::endgroup::"
-            }
             for crate in gossamer-cli gossamer-codegen-cranelift; do
               if [ "$crate" != gossamer-cli ] && target_in_general_shard "$crate" lib; then
-                build_target "$crate" lib --lib
-                run_target "$crate" lib --lib
+                select_target "$crate" lib lib gossamer_codegen_cranelift
               fi
               for f in crates/"$crate"/tests/*.rs; do
                 [ -e "$f" ] || continue
@@ -281,27 +373,33 @@ jobs:
                   echo "::notice::skip ${crate}::${name}; assigned to the other general shard"
                   continue
                 fi
-                build_target "$crate" "$name" --test "$name"
-                run_target "$crate" "$name" --test "$name"
+                select_target "$crate" "$name" test "$name"
               done
             done
+            build_selected_targets
+            run_selected_targets
           else
-            "$CARGO_BIN" test --no-run -p gossamer-cli --test tier_parity \
-              2>&1 | tee "$logdir/00-build.log" || rc=1
+            select_target gossamer-cli tier_parity test tier_parity
+            build_selected_targets
+            tier_parity_exe="$(executable_for_target gossamer-cli test tier_parity)" || {
+              rc=1
+              echo "::error::missing built executable for gossamer-cli :: tier_parity"
+              exit "$rc"
+            }
             groups="${suite#parity-}"
             first="${groups%-*}"
             last="${groups#*-}"
             if [ "$first" = 0 ]; then
-              run_target gossamer-cli tier_parity_vm --test tier_parity \
+              run_executable gossamer-cli tier_parity_vm "$tier_parity_exe" \
                 vm_runs_every_example_without_crashing
             fi
             for group in $(seq "$first" "$last"); do
-              run_target gossamer-cli "tier_parity_cranelift_${group}" \
-                --test tier_parity "cranelift_parity_group_${group}"
-              run_target gossamer-cli "tier_parity_llvm_${group}" \
-                --test tier_parity "llvm_parity_group_${group}"
-              run_target gossamer-cli "tier_parity_strict_${group}" \
-                --test tier_parity "llvm_strict_lower_group_${group}"
+              run_executable gossamer-cli "tier_parity_cranelift_${group}" \
+                "$tier_parity_exe" "cranelift_parity_group_${group}"
+              run_executable gossamer-cli "tier_parity_llvm_${group}" \
+                "$tier_parity_exe" "llvm_parity_group_${group}"
+              run_executable gossamer-cli "tier_parity_strict_${group}" \
+                "$tier_parity_exe" "llvm_strict_lower_group_${group}"
             done
           fi
           exit "$rc"

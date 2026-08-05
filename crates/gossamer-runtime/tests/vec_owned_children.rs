@@ -17,7 +17,8 @@ use gossamer_runtime::c_abi::encoding::gos_rt_pem_decode_all_raw;
 use gossamer_runtime::c_abi::ledger::{STR_LIVE, VEC_LIVE};
 use gossamer_runtime::c_abi::map::{
     gos_rt_map_free, gos_rt_map_insert_i64_i64, gos_rt_map_insert_str_i64, gos_rt_map_keys_str,
-    gos_rt_map_new, gos_rt_map_or_insert_str_i64, gos_rt_map_pop_i64, gos_rt_map_remove_i64,
+    gos_rt_map_len, gos_rt_map_new, gos_rt_map_new_with_capacity_typed,
+    gos_rt_map_or_insert_str_i64, gos_rt_map_pop_i64, gos_rt_map_remove_i64,
     gos_rt_map_set_vec_values, gos_rt_vec_free,
 };
 use gossamer_runtime::c_abi::rc::{
@@ -127,6 +128,77 @@ fn vec_valued_map_releases_replaced_and_removed_entries() {
         gos_rt_map_free(map);
     }
     assert_eq!(vec_live(), base, "map teardown must not leak Vec entries");
+}
+
+#[test]
+fn compact_i64_byte_vec_map_consumes_only_the_map_share() {
+    let _guard = LEDGER_LOCK.lock();
+    let base = vec_live();
+    unsafe {
+        let map = gos_rt_map_new_with_capacity_typed(0, 2, 4);
+        gos_rt_map_set_vec_values(map);
+
+        for key in 0..1000 {
+            let payload = gos_rt_vec_with_capacity(1, 32);
+            for byte in 0u8..32 {
+                gos_rt_vec_push(payload, (&raw const byte).cast());
+            }
+            gos_rt_vec_retain(payload);
+            gos_rt_vec_retain(payload);
+            gos_rt_map_insert_i64_i64(map, key, payload as i64);
+        }
+
+        assert_eq!(
+            vec_live(),
+            base,
+            "compact byte map must consume every moved Vec header"
+        );
+        assert_eq!(gos_rt_map_len(map), 1000);
+        gos_rt_map_free(map);
+    }
+    assert_eq!(
+        vec_live(),
+        base,
+        "compact byte map teardown must be balanced"
+    );
+}
+
+#[test]
+fn compact_str_byte_vec_map_preserves_loop_carried_source_share() {
+    let _guard = LEDGER_LOCK.lock();
+    let base = vec_live();
+    unsafe {
+        let map = gos_rt_map_new_with_capacity_typed(1, 2, 4);
+        gos_rt_map_set_vec_values(map);
+
+        let payload = gos_rt_vec_with_capacity(1, 64);
+        for byte in 0u8..64 {
+            gos_rt_vec_push(payload, (&raw const byte).cast());
+        }
+        gos_rt_vec_retain(payload);
+        gos_rt_vec_retain(payload);
+        let key = alloc_cstring(b"key-00000000");
+        gos_rt_map_insert_str_i64(map, key, payload as i64);
+
+        assert_eq!(
+            vec_live(),
+            base + 1,
+            "compact str-byte map insert must leave the source cleanup share"
+        );
+        gos_rt_vec_free(payload);
+        assert_eq!(
+            vec_live(),
+            base,
+            "source cleanup must release the final Vec share"
+        );
+        assert_eq!(gos_rt_map_len(map), 1);
+        gos_rt_map_free(map);
+    }
+    assert_eq!(
+        vec_live(),
+        base,
+        "compact str-byte map teardown must be balanced"
+    );
 }
 
 #[test]

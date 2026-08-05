@@ -454,64 +454,51 @@ pub(crate) fn vec_has_compact_header(v: &GosVec) -> bool {
     v.region_flag & VEC_COMPACT_HEADER_FLAG != 0
 }
 
-pub(crate) struct OwnedByteBuffer {
-    ptr: SyncRawPtr<u8>,
-    len: u32,
-    cap: u32,
-}
-
-impl OwnedByteBuffer {
-    pub(crate) fn as_slice(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
-    }
-}
-
-impl Drop for OwnedByteBuffer {
-    fn drop(&mut self) {
-        if self.cap != 0 {
-            unsafe { free_vec_buffer(self.ptr.as_ptr(), self.cap as usize) };
-        }
-    }
-}
-
-pub(crate) unsafe fn take_owned_byte_buffer(v: *mut GosVec) -> OwnedByteBuffer {
+pub(crate) unsafe fn consume_byte_vec<R>(v: *mut GosVec, f: impl FnOnce(&[u8]) -> R) -> R {
     let vec = unsafe { &mut *v };
-    if vec.elem_bytes == 1
-        && vec.elem_kind == vec_elem_kind::PRIMITIVE
-        && vec_is_split(vec)
-        && !vec_is_region(vec)
-        && vec_rc(vec) <= 3
-        && let (Ok(len), Ok(cap)) = (u32::try_from(vec.len), u32::try_from(vec.cap))
-    {
-        let owned = OwnedByteBuffer {
-            ptr: vec.ptr,
-            len,
-            cap,
-        };
-        vec.ptr = SyncRawPtr::NULL;
-        vec.len = 0;
-        vec.cap = 0;
-        vec.region_flag &= !VEC_SPLIT_FLAG;
-        vec_set_rc(vec, 1);
-        unsafe { crate::c_abi::map::gos_rt_vec_free(v) };
-        return owned;
-    }
-
     let bytes = if vec.elem_bytes == 1 && vec.len > 0 && !vec.ptr.is_null() {
         unsafe { std::slice::from_raw_parts(vec.ptr.as_ptr(), vec.len as usize) }
     } else {
         &[]
     };
-    let len = u32::try_from(bytes.len()).unwrap_or_else(|_| {
+    let result = f(bytes);
+    let _ = u32::try_from(bytes.len()).unwrap_or_else(|_| {
         unsafe { gos_rt_panic(c"byte vector is too large to store".as_ptr()) };
         0
     });
-    let ptr = SyncRawPtr::new(alloc_vec_buffer(bytes.len()));
-    if !bytes.is_empty() {
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.as_ptr(), bytes.len()) };
+    // A moved map value can arrive with three shares: the slice-result payload,
+    // the user local cloned from it, and the explicit retain that represents
+    // the map's ownership. MIR cleanup treats the insert as consuming, so the
+    // first two shares have no later releases.
+    if vec_rc(vec) <= 3 {
+        vec_set_rc(vec, 1);
     }
     unsafe { crate::c_abi::map::gos_rt_vec_free(v) };
-    OwnedByteBuffer { ptr, len, cap: len }
+    result
+}
+
+pub(crate) unsafe fn consume_byte_vec_preserving_source<R>(
+    v: *mut GosVec,
+    f: impl FnOnce(&[u8]) -> R,
+) -> R {
+    let vec = unsafe { &mut *v };
+    let bytes = if vec.elem_bytes == 1 && vec.len > 0 && !vec.ptr.is_null() {
+        unsafe { std::slice::from_raw_parts(vec.ptr.as_ptr(), vec.len as usize) }
+    } else {
+        &[]
+    };
+    let result = f(bytes);
+    let _ = u32::try_from(bytes.len()).unwrap_or_else(|_| {
+        unsafe { gos_rt_panic(c"byte vector is too large to store".as_ptr()) };
+        0
+    });
+    match vec_rc(vec) {
+        0 | 1 => {}
+        2 | 3 => vec_set_rc(vec, 2),
+        _ => {}
+    }
+    unsafe { crate::c_abi::map::gos_rt_vec_free(v) };
+    result
 }
 
 /// Replaces a large uniform `Vec<Vec<i64>>` with contiguous fixed-width row

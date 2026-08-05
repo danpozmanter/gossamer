@@ -4,8 +4,8 @@ mod elision_tests {
     use gossamer_types::TyCtxt;
 
     use super::{
-        bounds_check_elim, elide_redundant_rc_pairs, fuse_slice_parse_ranges,
-        local_branch_bounds_check_elim, loop_body_has_exactly_one_vec_push,
+        bounds_check_elim, elide_redundant_rc_pairs, elide_vec_clone_of_fresh_temporary,
+        fuse_slice_parse_ranges, local_branch_bounds_check_elim, loop_body_has_exactly_one_vec_push,
         reserve_bound_available_at_entry, reserve_vecs_for_counted_push_loops,
         scalar_replace_short_lived_aggregates,
     };
@@ -54,6 +54,102 @@ mod elision_tests {
 
     fn is_nop(s: &Statement) -> bool {
         matches!(s.kind, StatementKind::Nop)
+    }
+
+    #[test]
+    fn elides_clone_of_fresh_vec_result_payload() {
+        use gossamer_types::IntTy;
+        let mut tcx = TyCtxt::new();
+        let unit = tcx.unit();
+        let u8t = tcx.int_ty(IntTy::U8);
+        let i64t = tcx.int_ty(IntTy::I64);
+        let vec_u8 = tcx.intern(gossamer_types::TyKind::Vec(u8t));
+        let sp = span();
+        let mut body = Body {
+            name: "fresh_vec_result_payload".into(),
+            def: None,
+            arity: 0,
+            locals: vec![
+                decl(unit),   // return
+                decl(i64t),   // array pointer placeholder
+                decl(i64t),   // result from byte array slice
+                decl(vec_u8), // payload extracted from result
+                decl(vec_u8), // binding copied from payload
+                decl(vec_u8), // cloned binding
+                decl(unit),   // retain unit
+            ],
+            blocks: vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![],
+                    terminator: Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_bytearr_slice_result".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(Local(1))),
+                            Operand::Const(ConstValue::Int(32)),
+                            Operand::Const(ConstValue::Int(0)),
+                            Operand::Const(ConstValue::Int(32)),
+                        ],
+                        destination: Place::local(Local(2)),
+                        target: Some(BlockId(1)),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    stmts: vec![
+                        assign(
+                            Place::local(Local(3)),
+                            Rvalue::CallIntrinsic {
+                                name: "gos_rt_result_payload",
+                                args: vec![Operand::Copy(Place::local(Local(2)))],
+                            },
+                        ),
+                        copy(4, 3),
+                    ],
+                    terminator: Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("gos_rt_vec_clone".to_string())),
+                        args: vec![Operand::Copy(Place::local(Local(4)))],
+                        destination: Place::local(Local(5)),
+                        target: Some(BlockId(2)),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(2),
+                    stmts: vec![],
+                    terminator: Terminator::Return,
+                    span: sp,
+                },
+            ],
+            span: sp,
+        };
+
+        elide_vec_clone_of_fresh_temporary(&mut body, &tcx);
+
+        assert!(matches!(
+            body.blocks[1].terminator,
+            Terminator::Goto {
+                target: BlockId(2)
+            }
+        ));
+        assert!(matches!(
+            &body.blocks[1].stmts[2].kind,
+            StatementKind::Assign {
+                rvalue: Rvalue::CallIntrinsic { name, args },
+                ..
+            } if *name == "gos_rt_vec_retain"
+                && args == &[Operand::Copy(Place::local(Local(4)))]
+        ));
+        assert!(matches!(
+            &body.blocks[1].stmts[3].kind,
+            StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Use(Operand::Copy(source)),
+            } if *place == Place::local(Local(5)) && *source == Place::local(Local(4))
+        ));
     }
 
     #[test]

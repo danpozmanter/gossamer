@@ -900,9 +900,26 @@ impl<'a> Lowerer<'a> {
                 | "std::collections::BTreeMap::new"
                 | "gos_rt_map_new"
         ) {
-            declare_rt(&mut self.runtime_refs, "gos_rt_map_new");
             let tmp = self.fresh();
-            writeln!(self.out, "  {tmp} = call ptr @gos_rt_map_new(i32 8, i32 8)").unwrap();
+            if let Some((key_kind, val_kind)) = self
+                .body
+                .locals
+                .get(destination.local.0 as usize)
+                .and_then(|decl| match self.tcx.kind_of(decl.ty) {
+                    TyKind::HashMap { key, value } => self.hashmap_storage_kinds(*key, *value),
+                    _ => None,
+                })
+            {
+                declare_rt(&mut self.runtime_refs, "gos_rt_map_new_with_capacity_typed");
+                writeln!(
+                    self.out,
+                    "  {tmp} = call ptr @gos_rt_map_new_with_capacity_typed(i32 {key_kind}, i32 {val_kind}, i64 0)"
+                )
+                .unwrap();
+            } else {
+                declare_rt(&mut self.runtime_refs, "gos_rt_map_new");
+                writeln!(self.out, "  {tmp} = call ptr @gos_rt_map_new(i32 8, i32 8)").unwrap();
+            }
             self.store_value_to_place(destination, "ptr", &tmp);
             if let Some(tgt) = target {
                 writeln!(self.out, "  br label %bb{}", tgt.as_u32()).unwrap();
@@ -1135,6 +1152,14 @@ impl<'a> Lowerer<'a> {
         match self.tcx.kind(self.unwrap_ref(ty)) {
             Some(TyKind::Int(i)) if int_width(*i) == 64 => Some(0),
             Some(TyKind::String) => Some(1),
+            Some(TyKind::Vec(elem) | TyKind::Slice(elem))
+                if matches!(
+                    self.tcx.kind(*elem),
+                    Some(TyKind::Int(gossamer_types::IntTy::U8))
+                ) =>
+            {
+                Some(2)
+            }
             _ => None,
         }
     }
