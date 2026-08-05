@@ -1911,6 +1911,11 @@
 <td>Immutable UTF-8 lexical path with value-returning operations.</td>
 </tr>
 <tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/path.rs"><code>components</code></a></td>
+<td><code>fn components(path: String) -&gt; Vec&lt;String&gt;</code></td>
+<td>Rust-like lexical path components.</td>
+</tr>
+<tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/path.rs"><code>extension</code></a></td>
 <td><code>fn extension(path: String) -&gt; Option&lt;String&gt;</code></td>
 <td>Dotted extension as an Option.</td>
@@ -1946,6 +1951,11 @@
 <td>Parent directory, or None at the root.</td>
 </tr>
 <tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/path.rs"><code>prefixes</code></a></td>
+<td><code>fn prefixes(path: String) -&gt; Vec&lt;String&gt;</code></td>
+<td>Cumulative Rust-like lexical path prefixes.</td>
+</tr>
+<tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/path.rs"><code>split</code></a></td>
 <td><code>fn split(path: String) -&gt; (String, String)</code></td>
 <td>Returns (dir, file) for the supplied path.</td>
@@ -1954,6 +1964,11 @@
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/path.rs"><code>starts_with</code></a></td>
 <td><code>fn starts_with(path: String, prefix: String) -&gt; bool</code></td>
 <td>Reports whether the path begins with a prefix component-wise.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/path.rs"><code>unique_prefixes</code></a></td>
+<td><code>fn unique_prefixes(text: String) -&gt; Vec&lt;String&gt;</code></td>
+<td>Sorted unique prefixes for newline-delimited paths.</td>
 </tr>
 </tbody>
 </table>

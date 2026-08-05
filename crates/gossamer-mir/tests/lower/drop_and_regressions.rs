@@ -158,11 +158,11 @@ fn ct(url: &String) -> i64 {
             .count()
     };
     assert!(
-        alias_rc_calls("gos_rt_rc_release") > 0,
+        alias_rc_calls("gos_rt_rc_release") + alias_rc_calls("gos_rt_str_free_typed") > 0,
         "minted content_type string must be released (aliases: {aliases:?})"
     );
     assert_eq!(
-        alias_rc_calls("gos_rt_rc_retain"),
+        alias_rc_calls("gos_rt_rc_retain") + alias_rc_calls("gos_rt_str_retain_typed"),
         0,
         "the minted reference must move into the binding, not be retained - \
          a retain here means the call temp was treated as a borrow and the \
@@ -336,11 +336,15 @@ fn use_it() -> i64 {
     let dest = field0_extract_dest(body).expect("field-0 tuple extract");
 
     assert!(
-        rc_calls_on(body, "gos_rt_rc_retain", dest) > 0,
+        rc_calls_on(body, "gos_rt_rc_retain", dest)
+            + rc_calls_on(body, "gos_rt_str_retain_typed", dest)
+            > 0,
         "extracted tuple String must be retained at the field copy"
     );
     assert!(
-        rc_calls_on(body, "gos_rt_rc_release", dest) > 0,
+        rc_calls_on(body, "gos_rt_rc_release", dest)
+            + rc_calls_on(body, "gos_rt_str_free_typed", dest)
+            > 0,
         "extracted tuple String must be released at end of life"
     );
 }
@@ -1737,7 +1741,12 @@ fn std_fn_value_iter_map_resolves_to_runtime_symbol() {
 #[test]
 fn path_prefixes_free_function_lowers_to_runtime_symbol() {
     let source = "use std::path\n\
-                  fn main() { let ps = path::prefixes(\"/a//b\")\nlet _ = ps }";
+                  fn main() {\n\
+                  let ps = path::prefixes(\"/a//b\")\n\
+                  let ups = path::unique_prefixes(\"a/b\\na/c\\n\")\n\
+                  let _ = ps\n\
+                  let _ = ups\n\
+                  }";
     let (bodies, _) = build_with_lift(source);
     let main = bodies.iter().find(|b| b.name == "main").expect("main");
     let strings = call_names(main);
@@ -1746,7 +1755,15 @@ fn path_prefixes_free_function_lowers_to_runtime_symbol() {
         "expected the runtime symbol in MIR: {strings:?}"
     );
     assert!(
-        !strings.iter().any(|s| s == "path::prefixes"),
+        strings
+            .iter()
+            .any(|s| s == "gos_rt_path_unique_prefixes"),
+        "expected the bulk runtime symbol in MIR: {strings:?}"
+    );
+    assert!(
+        !strings
+            .iter()
+            .any(|s| s == "path::prefixes" || s == "path::unique_prefixes"),
         "source path must not leak into MIR: {strings:?}"
     );
 }

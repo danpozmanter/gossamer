@@ -834,6 +834,16 @@ pub const OPTION: StdModule = StdModule {
             doc: "Chains a fallible step: Some(v) -> f(v), None stays None.",
         },
         StdItem {
+            name: "unwrap",
+            kind: StdItemKind::Function,
+            doc: "Returns the payload, panicking when the value is None.",
+        },
+        StdItem {
+            name: "expect",
+            kind: StdItemKind::Function,
+            doc: "Returns the payload, panicking with the message when the value is None.",
+        },
+        StdItem {
             name: "unwrap_or",
             kind: StdItemKind::Function,
             doc: "Unwraps with a fallback value for None.",
@@ -862,6 +872,16 @@ pub const OPTION: StdModule = StdModule {
             name: "is_some",
             kind: StdItemKind::Function,
             doc: "True for Some.",
+        },
+        StdItem {
+            name: "ok_or",
+            kind: StdItemKind::Function,
+            doc: "Converts Some to Ok, or None to Err with the provided error.",
+        },
+        StdItem {
+            name: "ok_or_else",
+            kind: StdItemKind::Function,
+            doc: "Converts Some to Ok, or None to Err from a fallback closure.",
         },
         StdItem {
             name: "iter",

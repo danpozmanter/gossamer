@@ -160,6 +160,20 @@ fn bogus_multisegment_use_path_is_rejected() {
 }
 
 #[test]
+fn relative_use_paths_are_not_stdlib_typo_checked() {
+    let source = "fn helper(a: i64, b: i64) -> i64 { a + b }\n\
+#[cfg(test)]\n\
+mod tests {\n\
+    use super::helper as add\n\
+    #[test]\n\
+    fn adds() { let _ = add(1, 2) }\n\
+}\n";
+    let sf = parse(source);
+    let (_resolutions, diags) = resolve_source_file(&sf);
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+}
+
+#[test]
 fn example_programs_resolve_without_diagnostics() {
     for name in ["hello_world.gos", "line_count.gos", "web_server.gos"] {
         let path = format!("{}/../../examples/{name}", env!("CARGO_MANIFEST_DIR"));

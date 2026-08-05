@@ -3154,6 +3154,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_path_prefixes as *const u8,
         ),
         (
+            "gos_rt_path_unique_prefixes",
+            crate::c_abi::gos_rt_path_unique_prefixes as *const u8,
+        ),
+        (
             "gos_rt_path_dir",
             crate::c_abi::gos_rt_path_dir as *const u8,
         ),

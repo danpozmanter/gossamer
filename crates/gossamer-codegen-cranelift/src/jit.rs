@@ -2034,6 +2034,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_path_base"           => rt::gos_rt_path_base,
         "gos_rt_path_components"     => rt::gos_rt_path_components,
         "gos_rt_path_prefixes"       => rt::gos_rt_path_prefixes,
+        "gos_rt_path_unique_prefixes" => rt::gos_rt_path_unique_prefixes,
         "gos_rt_path_dir"            => rt::gos_rt_path_dir,
         "gos_rt_path_ext"            => rt::gos_rt_path_ext,
         "gos_rt_path_file_name"      => rt::gos_rt_path_file_name,

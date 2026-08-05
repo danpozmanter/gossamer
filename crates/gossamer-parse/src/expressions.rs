@@ -360,6 +360,23 @@ impl Parser<'_> {
                 }
             }
         }
+        if let ExprKind::MinHeapLiteral(ArrayExpr::List(items)) = &mut rhs.kind
+            && items.len() == 1
+        {
+            let index = items
+                .pop()
+                .expect("one-element min-heap literal has an index expression");
+            let span = self.join(lhs.span, rhs.span);
+            let id = self.alloc_id();
+            return Expr::new(
+                id,
+                span,
+                ExprKind::Index {
+                    base: Box::new(lhs),
+                    index: Box::new(index),
+                },
+            );
+        }
         let lhs_span = lhs.span;
         let mut piped = Some(lhs);
         if substitute_pipe_placeholder(&mut rhs, &mut piped) {

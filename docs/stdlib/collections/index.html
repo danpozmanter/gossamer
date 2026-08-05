@@ -1931,7 +1931,7 @@
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>BTreeMap</code></a></td>
 <td><code>type BTreeMap</code></td>
-<td>Ordered map.</td>
+<td>Ordered map surface routed through the typed map runtime.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>BTreeSet</code></a></td>
@@ -1941,17 +1941,17 @@
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>BinaryHeap</code></a></td>
 <td><code>type BinaryHeap</code></td>
-<td>Compatibility alias for <code>MaxHeap</code>.</td>
+<td>Compatibility alias for <code>MaxHeap&lt;i64&gt;</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>MaxHeap</code></a></td>
 <td><code>type MaxHeap</code></td>
-<td>Max heap. Use <code>^[1, 2, 3]</code> for literals.</td>
+<td>Phase 1 max heap shape is <code>MaxHeap&lt;i64&gt;</code>. Use <code>^[1, 2, 3]</code> for literals.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>MinHeap</code></a></td>
 <td><code>type MinHeap</code></td>
-<td>Min heap. Use <code>_[1, 2, 3]</code> for literals.</td>
+<td>Phase 1 min heap shape is <code>MinHeap&lt;i64&gt;</code>. Use <code>_[1, 2, 3]</code> for literals.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>HashMap</code></a></td>
@@ -1971,17 +1971,17 @@
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>VecDeque</code></a></td>
 <td><code>type VecDeque</code></td>
-<td>Double-ended queue backed by a ring buffer.</td>
+<td>Phase 1 double-ended queue shape is <code>VecDeque&lt;i64&gt;</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>VecDequeue</code></a></td>
 <td><code>type VecDequeue</code></td>
-<td>Alias for <code>VecDeque</code>.</td>
+<td>Alias for <code>VecDeque&lt;i64&gt;</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>VecQueue</code></a></td>
 <td><code>type VecQueue</code></td>
-<td>Alias for <code>VecDeque</code>. Use <code>&lt;[1, 2, 3]&gt;</code> for queue literals.</td>
+<td>Alias for <code>VecDeque&lt;i64&gt;</code>. Use <code>&lt;[1, 2, 3]&gt;</code> for queue literals.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>len</code></a></td>

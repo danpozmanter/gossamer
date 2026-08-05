@@ -897,6 +897,11 @@ impl<'a> Builder<'a> {
                 let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
                 ("gos_rt_path_prefixes", v)
             }
+            "path::unique_prefixes" => {
+                let s = self.tcx.string_ty();
+                let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+                ("gos_rt_path_unique_prefixes", v)
+            }
             "path::normalize" => ("gos_rt_path_clean", self.tcx.string_ty()),
             "path::is_absolute" => ("gos_rt_path_is_absolute", self.tcx.bool_ty()),
             "path::starts_with" => ("gos_rt_path_has_prefix", self.tcx.bool_ty()),

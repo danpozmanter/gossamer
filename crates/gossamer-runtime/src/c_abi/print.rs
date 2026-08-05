@@ -324,9 +324,8 @@ pub fn flush_stdout_buffer() {
     }
 }
 
-/// Flushes the process-global stdout buffer. Called on every
-/// `println`-family intrinsic and on process exit via
-/// `gos_rt_flush_stdout`.
+/// Flushes the process-global stdout buffer. Called by explicit stream flushes,
+/// stderr writers that must preserve output order, and process exit.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_flush_stdout() {
     ffi_entry!((), {

@@ -2039,9 +2039,9 @@ backend - for:</p>
 <li><code>&amp;T</code> and <code>&amp;mut T</code> references - pointers, 64 bits on every shipped
   platform - for any <code>T</code>.</li>
 <li>Heap-managed aggregate handles: <code>String</code>, <code>Vec&lt;T&gt;</code>,
-  <code>HashMap&lt;K, V&gt;</code>, <code>BTreeMap&lt;K, V&gt;</code>, channel halves, <code>Mutex&lt;T&gt;</code>,
-  <code>WaitGroup</code>, atomics. Each is a 64-bit handle to runtime-managed
-  storage.</li>
+  <code>HashMap&lt;K, V&gt;</code>, map-backed <code>BTreeMap&lt;K, V&gt;</code>, channel halves,
+  <code>Mutex&lt;T&gt;</code>, <code>WaitGroup</code>, atomics. Each is a 64-bit handle to
+  runtime-managed storage.</li>
 <li><strong>User structs, tuples, enums, and strings passed by value.</strong> A
   generic function over a by-value struct compiles and runs:</li>
 </ul>

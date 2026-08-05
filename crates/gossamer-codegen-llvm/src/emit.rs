@@ -255,29 +255,32 @@ fn fnv1a_64(data: &[u8]) -> u64 {
     h
 }
 
-/// Fingerprint of the running compiler - the package version plus the
-/// executable's own size and mtime. Mixed into every cache key so a
-/// rebuilt or upgraded `gos` (whose codegen may emit different IR for
-/// the *same* MIR, e.g. after a runtime-symbol change) never reuses
-/// object files produced by an older compiler. Computed once.
-///
-/// Without this, identical MIR hashes to the same key across compiler
-/// versions, so a stale `.o` referencing a removed runtime symbol (or
-/// carrying retired per-call instrumentation) survives a codegen change
-/// - surfacing as link failures or "fixed-but-still-slow" regressions.
+/// Fingerprint of implementation inputs that can change emitted LLVM IR.
+/// This intentionally avoids the `gos` executable mtime: local reinstalls
+/// rebuild that wrapper often, and using its timestamp made unchanged
+/// programs miss the object cache and rerun release LLVM codegen.
 fn compiler_fingerprint() -> u64 {
     static FP: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *FP.get_or_init(|| {
-        let mut s = format!("gossamer-llvm-{}", env!("CARGO_PKG_VERSION"));
-        if let Ok(exe) = std::env::current_exe()
-            && let Ok(meta) = std::fs::metadata(&exe)
-        {
-            s.push_str(&format!("|len={}", meta.len()));
-            if let Ok(mtime) = meta.modified()
-                && let Ok(dur) = mtime.duration_since(std::time::UNIX_EPOCH)
-            {
-                s.push_str(&format!("|mtime={}", dur.as_nanos()));
+        let mut s = format!(
+            "gossamer-llvm-{}|codegen={}",
+            env!("CARGO_PKG_VERSION"),
+            env!("GOSSAMER_LLVM_CODEGEN_CACHE_STAMP")
+        );
+        for entry in gossamer_abi::REGISTRY {
+            s.push('|');
+            s.push_str(entry.name);
+            s.push(':');
+            s.push_str(&format!("{:?}", entry.sig.ret));
+            s.push('(');
+            for param in entry.sig.params {
+                s.push_str(&format!("{param:?},"));
             }
+            s.push(')');
+            s.push_str(&format!(
+                ":tier={:?}:noreturn={}:unwinds={}",
+                entry.tier, entry.noreturn, entry.unwinds
+            ));
         }
         fnv1a_64(s.as_bytes())
     })

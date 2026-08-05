@@ -184,6 +184,53 @@ pub fn prefixes(path: &str) -> Vec<String> {
     out
 }
 
+/// Returns sorted unique cumulative prefixes for newline-delimited paths.
+///
+/// Each non-empty line is interpreted with the same lexical rules as
+/// [`prefixes`]. The result is sorted and deduplicated, making it useful for
+/// tree and index builders that need one canonical prefix list for many paths.
+#[must_use]
+pub fn unique_prefixes(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in text.lines().filter(|line| !line.is_empty()) {
+        extend_prefixes(line, &mut out);
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn extend_prefixes(path: &str, out: &mut Vec<String>) {
+    let absolute = path.starts_with('/');
+    let mut prefix = String::with_capacity(path.len());
+    if absolute {
+        prefix.push('/');
+        out.push(prefix.clone());
+    }
+    let mut saw_normal = absolute;
+    for segment in path.split('/') {
+        match segment {
+            "" => {}
+            "." if !saw_normal && !absolute => {
+                prefix.push('.');
+                out.push(prefix.clone());
+                saw_normal = true;
+            }
+            "." => {}
+            other => {
+                if prefix.is_empty() || prefix == "/" {
+                    prefix.push_str(other);
+                } else {
+                    prefix.push('/');
+                    prefix.push_str(other);
+                }
+                out.push(prefix.clone());
+                saw_normal = true;
+            }
+        }
+    }
+}
+
 /// Returns the final component of `path` (the file name).
 #[must_use]
 pub fn base(path: &str) -> String {
@@ -429,6 +476,21 @@ mod tests {
         assert_eq!(prefixes("a/./b//"), vec!["a", "a/b"]);
         assert_eq!(prefixes("./a/../b"), vec![".", "./a", "./a/..", "./a/../b"]);
         assert_eq!(prefixes("../a"), vec!["..", "../a"]);
+    }
+
+    #[test]
+    fn unique_prefixes_sorts_and_dedups_many_paths() {
+        assert_eq!(
+            unique_prefixes("a/b\na/c\n/a//b/.\n\n"),
+            vec![
+                "/".to_string(),
+                "/a".to_string(),
+                "/a/b".to_string(),
+                "a".to_string(),
+                "a/b".to_string(),
+                "a/c".to_string(),
+            ]
+        );
     }
 
     #[test]

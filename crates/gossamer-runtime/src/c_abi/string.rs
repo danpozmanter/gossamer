@@ -1965,35 +1965,39 @@ pub unsafe extern "C" fn gos_rt_str_center(
     })
 }
 
-/// `s.slice(start, end) -> Result<String, errors::Error>`. Character offsets
-/// are used, so a successful result is always valid UTF-8. Result
+/// `s.slice(start, end) -> Result<String, errors::Error>`. Byte offsets are
+/// used, and mid-scalar bounds advance to the next UTF-8 boundary so a
+/// successful result is always valid UTF-8. Result
 /// payload pointers: `disc=0` → owned `*mut c_char`, `disc=1` →
 /// `*mut GosError`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_slice(s: *const c_char, start: i64, end: i64) -> i128 {
     ffi_entry!(0i128, {
-        // O(1) length when the string carries a header; `strlen` fallback for
-        // foreign pointers. This is what makes a parser that slices a large
-        // input at growing offsets O(n) instead of O(n^2).
-        let len = if s.is_null() {
-            0i64
+        let byte_len = if s.is_null() {
+            0usize
         } else {
-            unsafe { typed_str_char_len(s) as i64 }
+            unsafe { typed_str_len(s) }
         };
-        if start < 0 || end < 0 || start > end || end > len {
-            let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
+        let len_bytes = byte_len as i64;
+        if start < 0 || end < 0 || start > end || end > len_bytes {
+            let display_len = if s.is_null() {
+                0i64
+            } else {
+                unsafe { typed_str_char_len(s) as i64 }
+            };
+            let msg =
+                format!("slice: range [{start}, {end}) out of bounds for length {display_len}");
             let cs = std::ffi::CString::new(msg).unwrap_or_default();
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let byte_len = unsafe { typed_str_len(s) };
         let bytes: &[u8] = if s.is_null() {
             &[]
         } else {
             unsafe { std::slice::from_raw_parts(s.cast::<u8>(), byte_len) }
         };
-        let lo = unsafe { typed_str_char_boundary(s, start as usize) }.unwrap_or(byte_len);
-        let hi = unsafe { typed_str_char_boundary(s, end as usize) }.unwrap_or(byte_len);
+        let lo = unsafe { typed_str_next_char_boundary(s, start as usize) }.unwrap_or(byte_len);
+        let hi = unsafe { typed_str_next_char_boundary(s, end as usize) }.unwrap_or(byte_len);
         unsafe { gos_rt_result_new(0, alloc_cstring(&bytes[lo..hi]) as i64) }
     })
 }

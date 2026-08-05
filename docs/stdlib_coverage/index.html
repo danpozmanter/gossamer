@@ -2140,7 +2140,7 @@ evidence visible.</p>
 <td>module-only</td>
 <td>module-only</td>
 <td>module-only</td>
-<td>Vec, HashMap, HashSet, BTreeSet, VecDeque (both ends), BTreeMap (String/i64 keys).</td>
+<td>Vec, HashMap, HashSet, BTreeSet, VecDeque<i64> (both ends), BTreeMap.</td>
 </tr>
 <tr>
 <td><code>std::net</code></td>
@@ -2217,11 +2217,11 @@ evidence visible.</p>
 <tr>
 <td><code>std::path</code></td>
 <td>shipped</td>
-<td style="text-align: right;">9</td>
+<td style="text-align: right;">12</td>
 <td>module-only</td>
 <td>module-only</td>
 <td>module-only</td>
-<td>join, split, base, dir, ext, clean.</td>
+<td>join, split, components, prefixes, unique_prefixes, parent, file_name.</td>
 </tr>
 <tr>
 <td><code>std::fs</code></td>
@@ -6902,6 +6902,12 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::path::components</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::path::file_name</code></td>
 <td>Function</td>
 <td>experimental</td>
@@ -6938,6 +6944,12 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::path::prefixes</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::path::split</code></td>
 <td>Function</td>
 <td>experimental</td>
@@ -6945,6 +6957,12 @@ the canonical item path.</p>
 </tr>
 <tr>
 <td><code>std::path::starts_with</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::path::unique_prefixes</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td>not item-audited</td>

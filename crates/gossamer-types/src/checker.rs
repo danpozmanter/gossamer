@@ -4702,7 +4702,11 @@ impl<'a> TypeChecker<'a> {
                 let value = self.fresh();
                 Some(self.tcx.intern(TyKind::HashMap { key, value }))
             }
-            "BTreeMap" => Some(self.phase1_btreemap_ty()),
+            "BTreeMap" => {
+                let key = self.fresh();
+                let value = self.fresh();
+                Some(self.tcx.intern(TyKind::HashMap { key, value }))
+            }
             "HashSet" | "BTreeSet" => {
                 let elem = self.fresh();
                 Some(self.set_ty(tail, elem))
@@ -4794,12 +4798,7 @@ impl<'a> TypeChecker<'a> {
                     );
                     return Some(self.fresh());
                 };
-                if owner == "BTreeMap" {
-                    self.require_phase1_btreemap_shape(key, value, span);
-                    Some(self.phase1_btreemap_ty())
-                } else {
-                    Some(self.tcx.intern(TyKind::HashMap { key, value }))
-                }
+                Some(self.tcx.intern(TyKind::HashMap { key, value }))
             }
             _ => None,
         }
@@ -5371,10 +5370,13 @@ impl<'a> TypeChecker<'a> {
         if matches!(module, ["slog"] | ["std", "slog"]) {
             return;
         }
+        let found = supplied + pipe_extra;
+        if is_channel_constructor_path(module, name) && matches!(found, 0 | 1) {
+            return;
+        }
         let Some(shape) = crate::stdlib_signatures::function_shape_for_path(module, name) else {
             return;
         };
-        let found = supplied + pipe_extra;
         let expected = shape.params.len();
         if found != expected {
             self.emit(
@@ -5714,22 +5716,9 @@ impl<'a> TypeChecker<'a> {
         self.tcx.intern(TyKind::Adt { def, substs })
     }
 
-    fn phase1_btreemap_ty(&mut self) -> Ty {
-        let key = self.tcx.string_ty();
-        let value = self.tcx.int_ty(IntTy::I64);
-        self.tcx.intern(TyKind::HashMap { key, value })
-    }
-
     fn require_phase1_i64_collection_elem(&mut self, elem: Ty, _owner: &str, span: Span) {
         let i64_ty = self.tcx.int_ty(IntTy::I64);
         self.unify(i64_ty, elem, span);
-    }
-
-    fn require_phase1_btreemap_shape(&mut self, key: Ty, value: Ty, span: Span) {
-        let string = self.tcx.string_ty();
-        let i64_ty = self.tcx.int_ty(IntTy::I64);
-        self.unify(string, key, span);
-        self.unify(i64_ty, value, span);
     }
 
     fn reverse_ty(&mut self, elem: Ty) -> Ty {
@@ -10975,19 +10964,12 @@ impl<'a> TypeChecker<'a> {
                 self.tcx.register_def_name(def, name);
                 return self.tcx.intern(TyKind::Adt { def, substs });
             }
-            // Phase 1 `BTreeMap` is the compiled runtime's sorted
-            // `String -> i64` map. It still resolves to `TyKind::HashMap`
-            // because the type model has no separate map kind.
             "BTreeMap" => {
                 let substs = self.substs_from_ast(path);
                 let tys = substs.types();
-                let key = tys.first().copied().unwrap_or_else(|| self.tcx.string_ty());
-                let value = tys
-                    .get(1)
-                    .copied()
-                    .unwrap_or_else(|| self.tcx.int_ty(IntTy::I64));
-                self.require_phase1_btreemap_shape(key, value, span);
-                return self.phase1_btreemap_ty();
+                let key = tys.first().copied().unwrap_or_else(|| self.fresh());
+                let value = tys.get(1).copied().unwrap_or_else(|| self.fresh());
+                return self.tcx.intern(TyKind::HashMap { key, value });
             }
             // Phase 1 `VecDeque` is an opaque i64 ring-buffer handle. Resolve
             // the annotation to the named sentinel Adt so method dispatch can

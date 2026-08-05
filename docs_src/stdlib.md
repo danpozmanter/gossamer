@@ -24,7 +24,7 @@ Receiver methods on built-in types such as `String`, `Vec`, `HashMap`, `Option`,
 | [`std::archive::zip`](#stdarchivezip) | 3 | ZIP archive reader and writer. |
 | [`std::bufio`](#stdbufio) | 7 | Buffered readers, writers, and line scanners. |
 | [`std::bytes`](#stdbytes) | 5 | Byte buffers, builders, and slice helpers. |
-| [`std::collections`](#stdcollections) | 5 | Built-in container types. |
+| [`std::collections`](#stdcollections) | 11 | Built-in container types. |
 | [`std::collections::deque`](#stdcollectionsdeque) | 7 | Double-ended queue over Vec<i64>. Re-bind shape on every mutator. |
 | [`std::collections::heap`](#stdcollectionsheap) | 4 | Binary min-heap (priority queue) over Vec<i64>. Re-bind shape: `let h = heap::push(h, v)`. |
 | [`std::collections::ordered_map`](#stdcollectionsordered_map) | 5 | Sorted key/value map (i64 -> i64) backed by a flat pair Vec. Re-bind on every mutator. |
@@ -107,20 +107,20 @@ Receiver methods on built-in types such as `String`, `Vec`, `HashMap`, `Option`,
 | [`std::net::ip`](#stdnetip) | 10 | String-level IPv4 / IPv6 parsing and classification helpers. |
 | [`std::net::netip`](#stdnetnetip) | 11 | Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape). |
 | [`std::net::url`](#stdneturl) | 5 | Network URL parsing and component escaping; never use filesystem-path rules. |
-| [`std::option`](#stdoption) | 12 | Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc. |
+| [`std::option`](#stdoption) | 16 | Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc. |
 | [`std::os`](#stdos) | 2 | Operating-system identity. |
 | [`std::os::exec`](#stdosexec) | 12 | Deprecated compatibility facade for child processes; new code uses std::process. |
 | [`std::os::signal`](#stdossignal) | 5 | POSIX-style signal subscription (Go's os/signal shape). |
 | [`std::os::user`](#stdosuser) | 6 | POSIX user / group lookup. Unix-backed by `nix`; Windows falls back to env vars. |
 | [`std::panic`](#stdpanic) | 1 | Panic / `catch_unwind` integration. |
-| [`std::path`](#stdpath) | 9 | Lexical filesystem-path operations; platform path grammar, no URL parsing or I/O. |
+| [`std::path`](#stdpath) | 12 | Lexical filesystem-path operations; platform path grammar, no URL parsing or I/O. |
 | [`std::process`](#stdprocess) | 12 | Canonical process control and child-process API; std::os::exec is compatibility-only. |
 | [`std::regex`](#stdregex) | 10 | Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around). |
 | [`std::result`](#stdresult) | 10 | Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc. |
 | [`std::runtime`](#stdruntime) | 6 | Goroutine / scheduler introspection and tuning. |
 | [`std::slog`](#stdslog) | 8 | Structured, levelled logging. |
 | [`std::strconv`](#stdstrconv) | 10 | Conversions between strings and primitive numeric types. |
-| [`std::strings`](#stdstrings) | 41 | String operations. |
+| [`std::strings`](#stdstrings) | 44 | String operations. |
 | [`std::sync`](#stdsync) | 13 | Synchronisation primitives beyond channels. |
 | [`std::testing`](#stdtesting) | 5 | Assertions and sub-test harness helpers. |
 | [`std::thread`](#stdthread) | 2 | OS-thread scheduling hints and CPU introspection; user concurrency uses goroutines, not thread spawning. |
@@ -185,17 +185,17 @@ Built-in container types.
 
 | Item | Kind | Doc |
 |------|------|-----|
-| `BTreeMap` | type | Phase 1 ordered map shape is `BTreeMap<String, i64>`. |
+| `BTreeMap` | type | Ordered map. Phase 1 runtime support is `BTreeMap<String, i64>`. |
 | `BTreeSet` | type | Ordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods. |
+| `BinaryHeap` | type | Compatibility alias for `MaxHeap<i64>`. |
 | `HashMap` | type | Hash map backed by the swiss-table layout. |
 | `HashSet` | type | Unordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods. Like Rust's `HashSet`, mapping is an iterator operation: use `set.iter().map(f)`, not `set.map(f)`. |
+| `MaxHeap` | type | Max heap. Phase 1 runtime support is `MaxHeap<i64>`; heap literals use `^[a, b]`. |
+| `MinHeap` | type | Min heap. Phase 1 runtime support is `MinHeap<i64>`; heap literals use `_[a, b]`. |
 | `Vec` | type | Growable contiguous sequence. |
-| `BinaryHeap` | type | Compatibility alias for `MaxHeap<i64>`. |
-| `MaxHeap` | type | Phase 1 max heap shape is `MaxHeap<i64>`. |
-| `MinHeap` | type | Phase 1 min heap shape is `MinHeap<i64>`. |
-| `VecDeque` | type | Phase 1 double-ended queue shape is `VecDeque<i64>`. |
-| `VecDequeue` | type | Alias for `VecDeque<i64>`. |
-| `VecQueue` | type | Alias for `VecDeque<i64>`. |
+| `VecDeque` | type | Double-ended queue backed by a ring buffer. Phase 1 runtime support is `VecDeque<i64>`. |
+| `VecDequeue` | type | Alias for `VecDeque`. |
+| `VecQueue` | type | Alias for `VecDeque`; queue literals use `<[a, b]>`. |
 
 ## `std::collections::deque`
 
@@ -1354,14 +1354,18 @@ Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_
 | Item | Kind | Doc |
 |------|------|-----|
 | `and_then` | fn | Chains a fallible step: Some(v) -> f(v), None stays None. |
+| `expect` | fn | Returns the payload, panicking with the message when the value is None. |
 | `filter` | fn | Keeps Some(v) only when the predicate holds. |
 | `flatten` | fn | Collapses Option<Option<T>> one level. |
 | `is_none` | fn | True for None. |
 | `is_some` | fn | True for Some. |
 | `iter` | fn | Zero-or-one element sequence view. |
 | `map` | fn | Transforms the Some payload, None stays None. |
+| `ok_or` | fn | Converts Some to Ok, or None to Err with the provided error. |
+| `ok_or_else` | fn | Converts Some to Ok, or None to Err from a fallback closure. |
 | `or` | fn | First Some of self and the alternative. |
 | `or_else` | fn | First Some of self and a lazily built alternative. |
+| `unwrap` | fn | Returns the payload, panicking when the value is None. |
 | `unwrap_or` | fn | Unwraps with a fallback value for None. |
 | `unwrap_or_else` | fn | Unwraps with a lazily computed fallback for None. |
 | `zip` | fn | Pairs two Somes into Some((a, b)). |
@@ -1433,6 +1437,7 @@ Lexical filesystem-path operations; platform path grammar, no URL parsing or I/O
 
 | Item | Kind | Doc |
 |------|------|-----|
+| `components` | fn | Returns Rust-like lexical path components. |
 | `extension` | fn | Dotted extension as an Option. |
 | `file_name` | fn | Final path component, or None. |
 | `file_stem` | fn | File name without its extension. |
@@ -1440,8 +1445,10 @@ Lexical filesystem-path operations; platform path grammar, no URL parsing or I/O
 | `join` | fn | Joins two path fragments. |
 | `normalize` | fn | Lexically normalizes the path. |
 | `parent` | fn | Parent directory, or None at the root. |
+| `prefixes` | fn | Returns cumulative Rust-like lexical path prefixes. |
 | `split` | fn | Returns (dir, file) for the supplied path. |
 | `starts_with` | fn | Reports whether the path begins with a prefix component-wise. |
+| `unique_prefixes` | fn | Returns sorted unique prefixes for newline-delimited paths. |
 
 ## `std::process`
 
@@ -1547,6 +1554,8 @@ String operations.
 
 | Item | Kind | Doc |
 |------|------|-----|
+| `byte_at` | fn | Returns the UTF-8 byte at an index. |
+| `byte_len` | fn | Returns the UTF-8 byte length. |
 | `bytes` | fn | Returns the UTF-8 bytes of the string. |
 | `center` | fn | Symmetric pad to `width` using the given pad character. |
 | `chars` | fn | Returns the Unicode scalar values of the string. |
@@ -1576,6 +1585,7 @@ String operations.
 | `starts_with` | fn | Returns whether the string starts with the given prefix. |
 | `strip_prefix` | fn | Removes a leading prefix if present. |
 | `strip_suffix` | fn | Removes a trailing suffix if present. |
+| `substring` | fn | Byte-offset substring returning a String. |
 | `to_bool` | fn | Parses exactly `true` / `false` to Option<bool>. |
 | `to_f64` | fn | Strict full-string parse to Option<f64>. |
 | `to_i64` | fn | Strict full-string parse to Option<i64>. |

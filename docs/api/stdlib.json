@@ -348,7 +348,7 @@
       "name": "std::collections::BTreeMap",
       "kind": "type",
       "signature": null,
-      "description": "Ordered map.",
+      "description": "Ordered map. Phase 1 runtime support is `BTreeMap<String, i64>`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -368,6 +368,25 @@
       "kind": "type",
       "signature": null,
       "description": "Ordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdcollections",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-collections-BinaryHeap",
+      "name": "std::collections::BinaryHeap",
+      "kind": "type",
+      "signature": null,
+      "description": "Compatibility alias for `MaxHeap<i64>`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -420,6 +439,44 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-collections-MaxHeap",
+      "name": "std::collections::MaxHeap",
+      "kind": "type",
+      "signature": null,
+      "description": "Max heap. Phase 1 runtime support is `MaxHeap<i64>`; heap literals use `^[a, b]`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdcollections",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-collections-MinHeap",
+      "name": "std::collections::MinHeap",
+      "kind": "type",
+      "signature": null,
+      "description": "Min heap. Phase 1 runtime support is `MinHeap<i64>`; heap literals use `_[a, b]`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdcollections",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-collections-Vec",
       "name": "std::collections::Vec",
       "kind": "type",
@@ -443,7 +500,45 @@
       "name": "std::collections::VecDeque",
       "kind": "type",
       "signature": null,
-      "description": "Double-ended queue backed by a ring buffer.",
+      "description": "Double-ended queue backed by a ring buffer. Phase 1 runtime support is `VecDeque<i64>`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdcollections",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-collections-VecDequeue",
+      "name": "std::collections::VecDequeue",
+      "kind": "type",
+      "signature": null,
+      "description": "Alias for `VecDeque`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdcollections",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-collections-VecQueue",
+      "name": "std::collections::VecQueue",
+      "kind": "type",
+      "signature": null,
+      "description": "Alias for `VecDeque`; queue literals use `<[a, b]>`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -11421,6 +11516,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-option-expect",
+      "name": "std::option::expect",
+      "kind": "function",
+      "signature": "fn expect<T>(message: String, value: Option<T>) -> T",
+      "description": "Returns the payload, panicking with the message when the value is None.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdoption",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-option-filter",
       "name": "std::option::filter",
       "kind": "function",
@@ -11535,6 +11649,44 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-option-ok-or",
+      "name": "std::option::ok_or",
+      "kind": "function",
+      "signature": "fn ok_or<T, E>(err: E, value: Option<T>) -> Result<T, E>",
+      "description": "Converts Some to Ok, or None to Err with the provided error.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdoption",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-option-ok-or-else",
+      "name": "std::option::ok_or_else",
+      "kind": "function",
+      "signature": "fn ok_or_else<T, E>(err: Fn() -> E, value: Option<T>) -> Result<T, E>",
+      "description": "Converts Some to Ok, or None to Err from a fallback closure.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdoption",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-option-or",
       "name": "std::option::or",
       "kind": "function",
@@ -11559,6 +11711,25 @@
       "kind": "function",
       "signature": "fn or_else<T>(fallback: Fn() -> Option<T>, value: Option<T>) -> Option<T>",
       "description": "First Some of self and a lazily built alternative.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdoption",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-option-unwrap",
+      "name": "std::option::unwrap",
+      "kind": "function",
+      "signature": "fn unwrap<T>(value: Option<T>) -> T",
+      "description": "Returns the payload, panicking when the value is None.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -12124,6 +12295,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-path-components",
+      "name": "std::path::components",
+      "kind": "function",
+      "signature": "fn components(path: String) -> Vec<String>",
+      "description": "Returns Rust-like lexical path components.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdpath",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-path-extension",
       "name": "std::path::extension",
       "kind": "function",
@@ -12257,6 +12447,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-path-prefixes",
+      "name": "std::path::prefixes",
+      "kind": "function",
+      "signature": "fn prefixes(path: String) -> Vec<String>",
+      "description": "Returns cumulative Rust-like lexical path prefixes.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdpath",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-path-split",
       "name": "std::path::split",
       "kind": "function",
@@ -12281,6 +12490,25 @@
       "kind": "function",
       "signature": "fn starts_with(path: String, prefix: String) -> bool",
       "description": "Reports whether the path begins with a prefix component-wise.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdpath",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-path-unique-prefixes",
+      "name": "std::path::unique_prefixes",
+      "kind": "function",
+      "signature": "fn unique_prefixes(text: String) -> Vec<String>",
+      "description": "Returns sorted unique prefixes for newline-delimited paths.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -13359,6 +13587,44 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-strings-byte-at",
+      "name": "std::strings::byte_at",
+      "kind": "function",
+      "signature": "fn byte_at(text: String, index: i64) -> i64",
+      "description": "Returns the UTF-8 byte at an index.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdstrings",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-strings-byte-len",
+      "name": "std::strings::byte_len",
+      "kind": "function",
+      "signature": "fn byte_len(text: String) -> i64",
+      "description": "Returns the UTF-8 byte length.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdstrings",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-strings-bytes",
       "name": "std::strings::bytes",
       "kind": "function",
@@ -13896,6 +14162,25 @@
       "kind": "function",
       "signature": "fn strip_suffix(text: String, suffix: String | char) -> Option<String>",
       "description": "Removes a trailing suffix if present.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdstrings",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-strings-substring",
+      "name": "std::strings::substring",
+      "kind": "function",
+      "signature": "fn substring(text: String, start: i64, end: i64) -> String",
+      "description": "Byte-offset substring returning a String.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

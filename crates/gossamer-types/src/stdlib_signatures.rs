@@ -2300,6 +2300,11 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::option",
+        name: "expect",
+        signature: "fn expect<T>(message: String, value: Option<T>) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::option",
         name: "filter",
         signature: "fn filter<T>(predicate: Fn(T) -> bool, value: Option<T>) -> Option<T>",
     },
@@ -2317,6 +2322,16 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         module_path: "std::option",
         name: "is_some",
         signature: "fn is_some<T>(value: Option<T>) -> bool",
+    },
+    StdFunctionSignature {
+        module_path: "std::option",
+        name: "ok_or",
+        signature: "fn ok_or<T, E>(err: E, value: Option<T>) -> Result<T, E>",
+    },
+    StdFunctionSignature {
+        module_path: "std::option",
+        name: "ok_or_else",
+        signature: "fn ok_or_else<T, E>(err: Fn() -> E, value: Option<T>) -> Result<T, E>",
     },
     StdFunctionSignature {
         module_path: "std::option",
@@ -2347,6 +2362,11 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         module_path: "std::option",
         name: "unwrap_or_else",
         signature: "fn unwrap_or_else<T>(fallback: Fn() -> T, value: Option<T>) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::option",
+        name: "unwrap",
+        signature: "fn unwrap<T>(value: Option<T>) -> T",
     },
     StdFunctionSignature {
         module_path: "std::option",
@@ -2482,6 +2502,11 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         module_path: "std::path",
         name: "prefixes",
         signature: "fn prefixes(path: String) -> Vec<String>",
+    },
+    StdFunctionSignature {
+        module_path: "std::path",
+        name: "unique_prefixes",
+        signature: "fn unique_prefixes(text: String) -> Vec<String>",
     },
     StdFunctionSignature {
         module_path: "std::path",

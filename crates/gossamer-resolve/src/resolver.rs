@@ -201,6 +201,9 @@ impl Resolver {
         if p.segments.len() < 2 {
             return;
         }
+        if matches!(p.segments[0].name.as_str(), "self" | "super" | "crate") {
+            return;
+        }
         if p.segments[0].name != "std" {
             let joined = p
                 .segments

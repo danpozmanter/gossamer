@@ -119,6 +119,7 @@ pub(crate) fn install_path(globals: &mut Vec<(&'static str, Value)>) {
             ("join", builtin_path_join_two),
             ("components", builtin_path_components),
             ("prefixes", builtin_path_prefixes),
+            ("unique_prefixes", builtin_path_unique_prefixes),
             ("starts_with", builtin_path_starts_with),
         ],
         globals,
@@ -171,6 +172,11 @@ pub(crate) fn builtin_path_components(args: &[Value]) -> RuntimeResult<Value> {
 pub(crate) fn builtin_path_prefixes(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
     Ok(string_array(path_std::prefixes(path)))
+}
+
+pub(crate) fn builtin_path_unique_prefixes(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    Ok(string_array(path_std::unique_prefixes(text)))
 }
 
 pub(crate) fn builtin_path_starts_with(args: &[Value]) -> RuntimeResult<Value> {

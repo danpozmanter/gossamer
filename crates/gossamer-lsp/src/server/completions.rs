@@ -872,6 +872,12 @@ const OPTION_METHODS: &[BuiltinMethod] = &[
         snippet: "and_then(|value| $0)",
     },
     BuiltinMethod {
+        name: "expect",
+        signature: "fn expect(self, message: String) -> T",
+        doc: "Returns the contained value or panics with the supplied message.",
+        snippet: "expect($0)",
+    },
+    BuiltinMethod {
         name: "filter",
         signature: "fn filter(self, predicate: fn(T) -> bool) -> Option<T>",
         doc: "Keeps the value only when the predicate accepts it.",
@@ -914,6 +920,18 @@ const OPTION_METHODS: &[BuiltinMethod] = &[
         snippet: "map(|x| $0)",
     },
     BuiltinMethod {
+        name: "ok_or",
+        signature: "fn ok_or<E>(self, err: E) -> Result<T, E>",
+        doc: "Converts `Some` to `Ok` and `None` to the supplied error.",
+        snippet: "ok_or($0)",
+    },
+    BuiltinMethod {
+        name: "ok_or_else",
+        signature: "fn ok_or_else<E>(self, err: fn() -> E) -> Result<T, E>",
+        doc: "Converts `Some` to `Ok` and computes an error only for `None`.",
+        snippet: "ok_or_else(|| $0)",
+    },
+    BuiltinMethod {
         name: "or",
         signature: "fn or(self, fallback: Option<T>) -> Option<T>",
         doc: "Returns this option when present, otherwise the fallback.",
@@ -924,6 +942,12 @@ const OPTION_METHODS: &[BuiltinMethod] = &[
         signature: "fn or_else(self, fallback: fn() -> Option<T>) -> Option<T>",
         doc: "Computes a fallback only when this option is None.",
         snippet: "or_else(|| $0)",
+    },
+    BuiltinMethod {
+        name: "unwrap",
+        signature: "fn unwrap(self) -> T",
+        doc: "Returns the contained value or panics if the option is None.",
+        snippet: "unwrap()$0",
     },
     BuiltinMethod {
         name: "unwrap_or_else",

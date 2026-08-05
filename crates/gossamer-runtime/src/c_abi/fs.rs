@@ -931,6 +931,20 @@ pub unsafe extern "C" fn gos_rt_path_prefixes(p: *const c_char) -> *mut GosVec {
     })
 }
 
+/// `path::unique_prefixes(text) -> Vec<String>` - sorted unique cumulative
+/// prefixes for newline-delimited paths.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_path_unique_prefixes(p: *const c_char) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let s = if p.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+        };
+        alloc_plain_str_vec(&path_unique_prefixes(s))
+    })
+}
+
 /// `path::extension(p) -> Option<String>` - extension with the leading
 /// dot wrapped in `Some`, or `None` if absent / the dot is at the
 /// very start of the file name. Mirrors the interp / stdlib
@@ -1285,8 +1299,23 @@ fn path_components(path: &str) -> Vec<String> {
 }
 
 fn path_prefixes(path: &str) -> Vec<String> {
-    let absolute = path.starts_with('/');
     let mut out = Vec::new();
+    extend_path_prefixes(path, &mut out);
+    out
+}
+
+fn path_unique_prefixes(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in text.lines().filter(|line| !line.is_empty()) {
+        extend_path_prefixes(line, &mut out);
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn extend_path_prefixes(path: &str, out: &mut Vec<String>) {
+    let absolute = path.starts_with('/');
     let mut prefix = String::with_capacity(path.len());
     if absolute {
         prefix.push('/');
@@ -1314,7 +1343,6 @@ fn path_prefixes(path: &str) -> Vec<String> {
             }
         }
     }
-    out
 }
 
 /// Lexical path normalization shared by `gos_rt_path_clean` /

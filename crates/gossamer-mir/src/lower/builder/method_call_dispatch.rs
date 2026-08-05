@@ -563,7 +563,8 @@ impl<'a> Builder<'a> {
             | "gos_rt_map_pop_i64"
             | "gos_rt_map_pop_str"
             | "gos_rt_map_pop_typed_str"
-            | "gos_rt_deque_pop_front" => {
+            | "gos_rt_deque_pop_front"
+            | "gos_rt_lazy_iter_next_i64" => {
                 use gossamer_types::TyKind;
                 if matches!(self.tcx.kind_of(ty), TyKind::Adt { .. }) {
                     ty

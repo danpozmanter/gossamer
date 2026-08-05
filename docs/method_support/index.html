@@ -2728,9 +2728,8 @@ expected <code>BTreeSet&lt;T&gt;</code> type is present.</p>
 </tbody>
 </table>
 <h2 id="btreemap">BTreeMap<a class="headerlink" href="#btreemap" title="Permanent link">&para;</a></h2>
-<p><code>BTreeMap&lt;i64, i64&gt;</code> and <code>BTreeMap&lt;i64, String&gt;</code> are backed by the
-key-sorted <code>IntMap</code> machinery (same as <code>HashMap&lt;i64, _&gt;</code>), so <code>iter()</code>
-yields pairs in ascending key order.</p>
+<p>BTreeMap uses the same typed map runtime as HashMap, with key-sorted user-facing
+iteration.</p>
 <table>
 <thead>
 <tr>
@@ -2787,12 +2786,12 @@ yields pairs in ascending key order.</p>
 </tr>
 <tr>
 <td><code>m.iter()</code></td>
-<td><code>Vec&lt;(K, V)&gt;</code></td>
+<td><code>Vec&lt;(String, i64)&gt;</code></td>
 <td>Yields pairs in ascending key order.</td>
 </tr>
 <tr>
 <td><code>m.keys()</code> / <code>m.values()</code></td>
-<td><code>Vec&lt;K&gt;</code> / <code>Vec&lt;V&gt;</code></td>
+<td><code>Vec&lt;String&gt;</code> / <code>Vec&lt;i64&gt;</code></td>
 <td>Snapshots keys or values in key order.</td>
 </tr>
 </tbody>
@@ -2873,9 +2872,9 @@ yields pairs in ascending key order.</p>
 <p><code>BTreeSet&lt;T&gt;</code> has the same method surface as <code>HashSet&lt;T&gt;</code>, with ordered
 iteration and <code>to_vec</code> output.</p>
 <h2 id="vecdeque">VecDeque<a class="headerlink" href="#vecdeque" title="Permanent link">&para;</a></h2>
-<p><code>VecDeque&lt;T&gt;</code> is a double-ended ring buffer; both ends are constant-time. The
-spelling <code>VecDequeue&lt;T&gt;</code> is accepted as an alias. The pop / peek methods return
-<code>Option</code>.</p>
+<p>Phase 1 <code>VecDeque</code> support is <code>VecDeque&lt;i64&gt;</code>. It is a double-ended ring
+buffer; both ends are constant-time. The spelling <code>VecDequeue&lt;i64&gt;</code> is accepted
+as an alias. The pop / peek methods return <code>Option&lt;i64&gt;</code>.</p>
 <table>
 <thead>
 <tr>
@@ -2897,22 +2896,22 @@ spelling <code>VecDequeue&lt;T&gt;</code> is accepted as an alias. The pop / pee
 </tr>
 <tr>
 <td><code>d.pop_back()</code></td>
-<td><code>Option&lt;T&gt;</code></td>
+<td><code>Option&lt;i64&gt;</code></td>
 <td>Remove and return the back element.</td>
 </tr>
 <tr>
 <td><code>d.pop_front()</code></td>
-<td><code>Option&lt;T&gt;</code></td>
+<td><code>Option&lt;i64&gt;</code></td>
 <td>Remove and return the front element.</td>
 </tr>
 <tr>
 <td><code>d.peek_back()</code></td>
-<td><code>Option&lt;T&gt;</code></td>
+<td><code>Option&lt;i64&gt;</code></td>
 <td>Back element without removing it.</td>
 </tr>
 <tr>
 <td><code>d.peek_front()</code></td>
-<td><code>Option&lt;T&gt;</code></td>
+<td><code>Option&lt;i64&gt;</code></td>
 <td>Front element without removing it.</td>
 </tr>
 <tr>

@@ -228,6 +228,13 @@ mod top_level_stmt_tests {
     }
 
     #[test]
+    fn pipe_placeholder_indexing_parses_as_rhs_index() {
+        let (_sf, diags) =
+            parse("fn main() { let xs = [7, 8, 9]\n println!(\"{}\", xs |> _[1]) }\n");
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+    }
+
+    #[test]
     fn retained_parse_oom_reproducer_terminates_with_diagnostics() {
         let source = std::str::from_utf8(RETAINED_OOM_REPRO).unwrap();
         let mut map = SourceMap::new();

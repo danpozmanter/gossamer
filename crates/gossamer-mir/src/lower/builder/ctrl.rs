@@ -2657,6 +2657,13 @@ impl<'a> Builder<'a> {
                 span,
             );
         }
+        // `for (k, v) in m` over a `HashMap` / typed `BTreeMap` should match
+        // `for (k, v) in m.iter()`. Recognise it before the user-ADT escape
+        // hatch below, because some stdlib collection spellings enter HIR as
+        // named ADTs while their MIR/runtime representation is map-shaped.
+        if let Some(local) = self.try_lower_for_bare_hashmap_iter(probe_expr, for_loop, span) {
+            return Some(local);
+        }
         // If the iter expression is a user-defined struct (Adt),
         // the fast-paths below would all misfire and the default
         // fallback would treat it as a runtime Vec (reading `len`

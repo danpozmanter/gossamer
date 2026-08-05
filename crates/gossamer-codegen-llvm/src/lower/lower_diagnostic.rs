@@ -142,7 +142,8 @@ impl<'a> Lowerer<'a> {
     /// Mirrors the per-arg shape of `lower_concat_call` so that
     /// bare `println(5i64)` and interpolated `println!("{n}")`
     /// share one code path. `*ln` variants append a trailing
-    /// `gos_rt_println()` for the newline + flush.
+    /// `gos_rt_println()` for the newline; stdout is flushed by
+    /// explicit flushes, stderr ordering, and process exit.
     pub(crate) fn lower_print_call(
         &mut self,
         name: &str,

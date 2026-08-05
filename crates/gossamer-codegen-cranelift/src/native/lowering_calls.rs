@@ -411,7 +411,9 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_uuid_normalize" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_uuid_simple" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_path_base" => (&[ptr_ty], Some(ptr_ty)),
-        "gos_rt_path_components" | "gos_rt_path_prefixes" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_path_components" | "gos_rt_path_prefixes" | "gos_rt_path_unique_prefixes" => {
+            (&[ptr_ty], Some(ptr_ty))
+        }
         "gos_rt_path_dir" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_path_ext" | "gos_rt_path_file_name" | "gos_rt_path_parent" | "gos_rt_path_stem" => {
             (&[ptr_ty], Some(types::I128))

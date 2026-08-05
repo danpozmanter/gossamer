@@ -21,9 +21,9 @@ evidence visible.
 | `std::env` | experimental | 9 | none | none | none | No module-level evidence record. |
 | `std::process` | shipped | 12 | none | none | none | No module-level evidence record. |
 | `std::thread` | shipped | 2 | none | none | none | No module-level evidence record. |
-| `std::strings` | experimental | 41 | module-only | module-only | module-only | split, trim, contains, find, replace, to_lower, to_upper, starts_with, ends_with. |
+| `std::strings` | experimental | 44 | module-only | module-only | module-only | split, trim, contains, find, replace, to_lower, to_upper, starts_with, ends_with. |
 | `std::strconv` | experimental | 10 | module-only | module-only | module-only | parse_i64, parse_u64, parse_f64, parse_bool, format_i64, format_f64. |
-| `std::collections` | experimental | 6 | module-only | module-only | module-only | Vec, HashMap, HashSet, BTreeSet, VecDeque<i64> (both ends), BTreeMap<String, i64>. |
+| `std::collections` | experimental | 11 | module-only | module-only | module-only | Vec, HashMap, HashSet, VecDeque (both ends), BTreeMap (String/i64 keys). |
 | `std::net` | experimental | 6 | module-only | module-only | module-only | TcpListener, TcpStream. UdpSocket partial. |
 | `std::http` | experimental | 29 | module-only | module-only | module-only | HTTP/1.1 + HTTP/2 server + client (push + trailers); HTTP/3 via std::http_h3. |
 | `std::encoding::json` | experimental | 21 | module-only | module-only | module-only | encode + decode + Value. |
@@ -32,7 +32,7 @@ evidence visible.
 | `std::panic` | experimental | 1 | module-only | module-only | module-only | panic + catch_unwind. |
 | `std::errors` | experimental | 6 | module-only | module-only | module-only | new, newf, wrap, is, join. |
 | `std::flag` | experimental | 8 | module-only | module-only | module-only | Set with string/int/uint/float/bool/duration/string_list, --help, equals form. Subcommands deferred to v1.x. |
-| `std::path` | shipped | 9 | module-only | module-only | module-only | join, split, base, dir, ext, clean. |
+| `std::path` | shipped | 12 | module-only | module-only | module-only | join, split, base, dir, ext, clean. |
 | `std::fs` | experimental | 25 | module-only | module-only | module-only | read_dir, walk_dir, mkdir_all, remove_all, copy, rename. |
 | `std::bytes` | experimental | 5 | module-only | module-only | module-only | Buffer, Builder, index_of, split, replace. |
 | `std::bufio` | experimental | 7 | module-only | module-only | module-only | Reader, Writer, Scanner with split_lines / split_words. |
@@ -73,7 +73,7 @@ evidence visible.
 | `std::encoding::pem` | experimental | 4 | none | none | none | No module-level evidence record. |
 | `std::utf16` | experimental | 5 | none | none | none | No module-level evidence record. |
 | `std::iter` | experimental | 50 | none | none | none | No module-level evidence record. |
-| `std::option` | experimental | 12 | none | none | none | No module-level evidence record. |
+| `std::option` | experimental | 16 | none | none | none | No module-level evidence record. |
 | `std::result` | experimental | 10 | none | none | none | No module-level evidence record. |
 | `std::http::router` | experimental | 6 | none | none | none | No module-level evidence record. |
 | `std::http::middleware` | experimental | 7 | none | none | none | No module-level evidence record. |
@@ -154,10 +154,15 @@ the canonical item path.
 | `std::bytes::split` | Function | experimental | not item-audited |
 | `std::collections::BTreeMap` | Type | experimental | not item-audited |
 | `std::collections::BTreeSet` | Type | experimental | not item-audited |
+| `std::collections::BinaryHeap` | Type | experimental | not item-audited |
 | `std::collections::HashMap` | Type | experimental | not item-audited |
 | `std::collections::HashSet` | Type | experimental | not item-audited |
+| `std::collections::MaxHeap` | Type | experimental | not item-audited |
+| `std::collections::MinHeap` | Type | experimental | not item-audited |
 | `std::collections::Vec` | Type | experimental | not item-audited |
 | `std::collections::VecDeque` | Type | experimental | not item-audited |
+| `std::collections::VecDequeue` | Type | experimental | not item-audited |
+| `std::collections::VecQueue` | Type | experimental | not item-audited |
 | `std::collections::deque::len` | Function | experimental | not item-audited |
 | `std::collections::deque::peek_back` | Function | experimental | not item-audited |
 | `std::collections::deque::peek_front` | Function | experimental | not item-audited |
@@ -735,14 +740,18 @@ the canonical item path.
 | `std::net::url::query_escape` | Function | experimental | not item-audited |
 | `std::net::url::query_unescape` | Function | experimental | not item-audited |
 | `std::option::and_then` | Function | experimental | not item-audited |
+| `std::option::expect` | Function | experimental | not item-audited |
 | `std::option::filter` | Function | experimental | not item-audited |
 | `std::option::flatten` | Function | experimental | not item-audited |
 | `std::option::is_none` | Function | experimental | not item-audited |
 | `std::option::is_some` | Function | experimental | not item-audited |
 | `std::option::iter` | Function | experimental | not item-audited |
 | `std::option::map` | Function | experimental | not item-audited |
+| `std::option::ok_or` | Function | experimental | not item-audited |
+| `std::option::ok_or_else` | Function | experimental | not item-audited |
 | `std::option::or` | Function | experimental | not item-audited |
 | `std::option::or_else` | Function | experimental | not item-audited |
+| `std::option::unwrap` | Function | experimental | not item-audited |
 | `std::option::unwrap_or` | Function | experimental | not item-audited |
 | `std::option::unwrap_or_else` | Function | experimental | not item-audited |
 | `std::option::zip` | Function | experimental | not item-audited |
@@ -772,6 +781,7 @@ the canonical item path.
 | `std::os::user::lookup_name` | Function | experimental | not item-audited |
 | `std::os::user::lookup_uid` | Function | experimental | not item-audited |
 | `std::panic::panic` | Macro | experimental | not item-audited |
+| `std::path::components` | Function | experimental | not item-audited |
 | `std::path::extension` | Function | experimental | not item-audited |
 | `std::path::file_name` | Function | experimental | not item-audited |
 | `std::path::file_stem` | Function | experimental | not item-audited |
@@ -779,8 +789,10 @@ the canonical item path.
 | `std::path::join` | Function | experimental | not item-audited |
 | `std::path::normalize` | Function | experimental | not item-audited |
 | `std::path::parent` | Function | experimental | not item-audited |
+| `std::path::prefixes` | Function | experimental | not item-audited |
 | `std::path::split` | Function | experimental | not item-audited |
 | `std::path::starts_with` | Function | experimental | not item-audited |
+| `std::path::unique_prefixes` | Function | experimental | not item-audited |
 | `std::process::Child` | Type | experimental | not item-audited |
 | `std::process::abort` | Function | experimental | not item-audited |
 | `std::process::exit` | Function | experimental | not item-audited |
@@ -837,6 +849,8 @@ the canonical item path.
 | `std::strconv::parse_u64` | Function | experimental | not item-audited |
 | `std::strconv::quote` | Function | experimental | not item-audited |
 | `std::strconv::unquote` | Function | experimental | not item-audited |
+| `std::strings::byte_at` | Function | experimental | not item-audited |
+| `std::strings::byte_len` | Function | experimental | not item-audited |
 | `std::strings::bytes` | Function | experimental | not item-audited |
 | `std::strings::center` | Function | experimental | not item-audited |
 | `std::strings::chars` | Function | experimental | not item-audited |
@@ -866,6 +880,7 @@ the canonical item path.
 | `std::strings::starts_with` | Function | experimental | not item-audited |
 | `std::strings::strip_prefix` | Function | experimental | not item-audited |
 | `std::strings::strip_suffix` | Function | experimental | not item-audited |
+| `std::strings::substring` | Function | experimental | not item-audited |
 | `std::strings::to_bool` | Function | experimental | not item-audited |
 | `std::strings::to_f64` | Function | experimental | not item-audited |
 | `std::strings::to_i64` | Function | experimental | not item-audited |

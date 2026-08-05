@@ -3025,7 +3025,13 @@ fn phase1_runtime_collection_shapes_accept_i64_paths() {
          let low: Option<i64> = min.pop()\n\
          let mut sorted: BTreeMap<String, i64> = BTreeMap::new()\n\
          sorted.insert(\"a\", 1)\n\
-         println!(\"{} {} {} {}\", front, top, low, sorted.len())\n\
+         let mut int_sorted: BTreeMap<i64, i64> = BTreeMap::from([(2, 20), (1, 10)])\n\
+         int_sorted.insert(3, 30)\n\
+         let mut mixed_sorted: BTreeMap<i64, String> = BTreeMap::new()\n\
+         mixed_sorted.insert(1, \"one\")\n\
+         let mut string_sorted: BTreeMap<String, String> = BTreeMap::new()\n\
+         string_sorted.insert(\"a\", \"b\")\n\
+         println!(\"{} {} {} {} {} {} {}\", front, top, low, sorted.len(), int_sorted.len(), mixed_sorted.len(), string_sorted.len())\n\
          }\n",
     );
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
@@ -3061,22 +3067,6 @@ fn phase1_runtime_collection_shapes_reject_unsupported_generics() {
             "use std::collections::MinHeap\n\
              fn main() { let mut h = MinHeap::from([\"a\"])\n\
              h.push(\"b\") }\n",
-            "i64",
-            "String",
-        ),
-        (
-            "btree map integer key",
-            "use std::collections::BTreeMap\n\
-             fn main() { let mut m: BTreeMap<i64, i64> = BTreeMap::new()\n\
-             m.insert(1, 2) }\n",
-            "String",
-            "i64",
-        ),
-        (
-            "btree map string value",
-            "use std::collections::BTreeMap\n\
-             fn main() { let mut m: BTreeMap<String, String> = BTreeMap::new()\n\
-             m.insert(\"a\", \"b\") }\n",
             "i64",
             "String",
         ),

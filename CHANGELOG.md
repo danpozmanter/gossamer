@@ -4,7 +4,7 @@
 
 - Collection typing with the compiled runtime: `VecDeque`,
   `BinaryHeap`, `MaxHeap`, and `MinHeap` are `i64` shapes, while `BTreeMap`
-  is `String -> i64`.
+  follows the typed map runtime.
 - Add `BTreeMap::from`, BTreeMap discovery/docs parity with HashMap where the
   shared runtime supports it, `VecDequeue` as a `VecDeque` alias, and
   `VecDeque::clear`.
@@ -35,7 +35,7 @@
   and add `take_while`/`skip_while` sequence methods.
 - Add byte-oriented `strings::byte_len`, `strings::byte_at`,
   `strings::substring`, and Rust-like `path::components` and `path::prefixes`
-  for lower-allocation path processing.
+  plus `path::unique_prefixes` for lower-allocation path processing.
 - Support destructuring patterns in closure parameters across interpreted and
   native execution.
 - Fix native lowering for method-form `enumerate`, `chunks`, tuple `.get`,
@@ -43,6 +43,15 @@
   values.
 - Speed up generated `HashMap<String, i64>` native/JIT paths by using typed
   string-key helpers and typed string cleanup.
+- Fix CI parity gaps for zero-argument channels, bare map-pair iteration,
+  Cranelift string cleanup intrinsics, pipe placeholder indexing, and native
+  `Iterator<i64>::next`.
+- Keep relative `self`/`super`/`crate` imports out of standard-library typo
+  checks, restore Option LSP completions, and align native string-slice errors.
+- Keep release-build object cache keys stable across CLI reinstalls while still
+  invalidating on LLVM codegen and runtime ABI changes.
+- Buffer native `println!` output across lines so line-heavy compiled CLIs do
+  not perform one terminal write per row.
 
 ## 0.41.0 - Collection literals and native lowering fixes
 

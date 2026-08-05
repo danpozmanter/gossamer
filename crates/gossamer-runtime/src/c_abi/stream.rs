@@ -412,10 +412,5 @@ pub unsafe extern "C" fn gos_rt_stream_read_to_string(stream: *const GosStream) 
 pub unsafe extern "C" fn gos_rt_println() {
     ffi_entry!((), {
         unsafe { write_stdout(b"\n") };
-        // Flush on every newline - matches Rust's LineWriter<StdoutRaw> contract
-        // so that `println!` output appears immediately, as it does in Go and
-        // on the JVM. Programs that need high-throughput output should use
-        // stream write methods directly rather than `println!`.
-        unsafe { gos_rt_flush_stdout() };
     });
 }

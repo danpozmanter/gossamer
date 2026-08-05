@@ -188,6 +188,11 @@ pub const PATH: StdModule = StdModule {
             doc: "Returns cumulative Rust-like lexical path prefixes.",
         },
         StdItem {
+            name: "unique_prefixes",
+            kind: StdItemKind::Function,
+            doc: "Returns sorted unique prefixes for newline-delimited paths.",
+        },
+        StdItem {
             name: "split",
             kind: StdItemKind::Function,
             doc: "Returns (dir, file) for the supplied path.",

@@ -98,8 +98,7 @@ use gossamer_std::iter as iter_std;
 use gossamer_std::utf16 as utf16_std;
 
 use crate::builtins::{
-    BuiltinFnPub, as_str, err_variant, install_module_pub, none_variant, ok_variant, some_variant,
-    value_to_int,
+    BuiltinFnPub, as_str, install_module_pub, none_variant, ok_variant, some_variant, value_to_int,
 };
 use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
 
@@ -110,7 +109,10 @@ pub(crate) fn install_option(globals: &mut Vec<(&'static str, Value)>) {
     let static_entries: &[(&str, BuiltinFnPub)] = &[
         ("is_some", builtin_option_is_some),
         ("is_none", builtin_option_is_none),
+        ("unwrap", builtin_option_unwrap),
+        ("expect", builtin_option_expect),
         ("unwrap_or", builtin_option_default),
+        ("ok_or", builtin_option_ok_or),
         ("or", builtin_option_or),
         ("flatten", builtin_option_flatten),
         ("zip", builtin_option_zip),
@@ -125,6 +127,7 @@ pub(crate) fn install_option(globals: &mut Vec<(&'static str, Value)>) {
         ("and_then", native_option_and_then),
         ("filter", native_option_filter),
         ("unwrap_or_else", native_option_unwrap_or_else),
+        ("ok_or_else", native_option_ok_or_else),
         ("or_else", native_option_or_else),
         ("iter", native_option_iter),
     ];
@@ -174,6 +177,30 @@ pub(crate) fn builtin_option_default(args: &[Value]) -> RuntimeResult<Value> {
     let fallback = args.first().cloned().unwrap_or(Value::Unit);
     let opt = args.get(1).unwrap_or(&Value::Unit);
     Ok(some_payload(opt).unwrap_or(fallback))
+}
+
+pub(crate) fn builtin_option_unwrap(args: &[Value]) -> RuntimeResult<Value> {
+    let opt = args.first().unwrap_or(&Value::Unit);
+    some_payload(opt)
+        .ok_or_else(|| crate::value::RuntimeError::Panic("called unwrap on None".to_string()))
+}
+
+pub(crate) fn builtin_option_expect(args: &[Value]) -> RuntimeResult<Value> {
+    let message = args
+        .first()
+        .and_then(|value| as_str(value).map(str::to_string))
+        .unwrap_or_else(|| "called expect on None".to_string());
+    let opt = args.get(1).unwrap_or(&Value::Unit);
+    some_payload(opt).ok_or(crate::value::RuntimeError::Panic(message))
+}
+
+pub(crate) fn builtin_option_ok_or(args: &[Value]) -> RuntimeResult<Value> {
+    let err = args.first().cloned().unwrap_or(Value::Unit);
+    let opt = args.get(1).unwrap_or(&Value::Unit);
+    Ok(match some_payload(opt) {
+        Some(payload) => ok_variant(payload),
+        None => Value::variant("Err", vec![err]),
+    })
 }
 
 pub(crate) fn builtin_option_or(args: &[Value]) -> RuntimeResult<Value> {
@@ -253,6 +280,21 @@ pub(crate) fn native_option_unwrap_or_else(
         return Ok(x);
     }
     dispatch.call_value(&f, Vec::new())
+}
+
+pub(crate) fn native_option_ok_or_else(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let opt = args.get(1).unwrap_or(&Value::Unit);
+    if let Some(payload) = some_payload(opt) {
+        return Ok(ok_variant(payload));
+    }
+    Ok(Value::variant(
+        "Err",
+        vec![dispatch.call_value(&f, Vec::new())?],
+    ))
 }
 
 pub(crate) fn native_option_or_else(

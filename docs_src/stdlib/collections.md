@@ -12,7 +12,7 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`BTreeMap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BTreeMap` | Phase 1 ordered map shape is `BTreeMap<String, i64>`. |
+| [`BTreeMap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BTreeMap` | Ordered map surface routed through the typed map runtime. |
 | [`BTreeSet`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BTreeSet` | Ordered set. |
 | [`BinaryHeap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BinaryHeap` | Compatibility alias for `MaxHeap<i64>`. |
 | [`MaxHeap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type MaxHeap` | Phase 1 max heap shape is `MaxHeap<i64>`. Use `^[1, 2, 3]` for literals. |

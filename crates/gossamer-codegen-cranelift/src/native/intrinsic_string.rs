@@ -154,6 +154,25 @@ pub(super) fn lower_intrinsic_call_string(
     let ptr_ty = module.target_config().pointer_type();
     let _ = ptr_ty; // suppress unused if all arms inline
     match name {
+        "gos_rt_str_free_typed" | "gos_rt_str_retain_typed" => {
+            let symbol = match name {
+                "gos_rt_str_free_typed" => "gos_rt_str_free_typed",
+                _ => "gos_rt_str_retain_typed",
+            };
+            let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let f = intrinsics.extern_fn_by_name(module, symbol)?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            let _ = builder.ins().call(fref, &[arg]);
+            let unit = builder.ins().iconst(types::I64, 0);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
+            Ok(true)
+        }
         "gos_rt_heap_i64_set" => {
             let v = match args.first() {
                 Some(a) => lower_operand(

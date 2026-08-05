@@ -44,6 +44,11 @@ fn option_family() {
     let lazy = none |> option::or_else(|| Some(6)) |> option::unwrap_or(0)
     let fallback = none |> option::unwrap_or_else(|| 9)
     println!("option map {mapped} and_then {chained} filter {kept} or {ored} or_else {lazy} unwrap_or_else {fallback}")
+    let direct = a |> option::unwrap
+    let expected = a |> option::expect("present")
+    let err_default = none |> option::ok_or(12) |> result::unwrap_or(99)
+    let lazy_err_default = none |> option::ok_or_else(|| 14) |> result::unwrap_or(99)
+    println!("option unwrap {direct} expect {expected} ok_or {err_default} ok_or_else {lazy_err_default}")
     let pair = a |> option::zip(Some(4))
     let nested: Option<Option<i64>> = Some(Some(8))
     let flat = nested |> option::flatten |> option::unwrap_or(0)

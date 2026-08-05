@@ -1431,7 +1431,7 @@ pub unsafe extern "C" fn gos_rt_map_clear(m: *mut GosMap) {
 /// slot `i` is interpreted: `0` = Int, `2` = Float (the slot's bits
 /// are an `f64`), `3` = Bool (low bit), `4` = Char (low 32 bits as a
 /// code point), `5` = Str (the slot is a c-string pointer), `6` =
-/// Vec<i64>, `7` = HashMap. Integers and floats route through
+/// `Vec<i64>`, `7` = HashMap. Integers and floats route through
 /// `crate::builtins::format_int` /
 /// `format_float` so the rendering is byte-identical to the VM.
 #[unsafe(no_mangle)]

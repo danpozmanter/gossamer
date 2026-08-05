@@ -931,6 +931,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_path_prefixes", (Ptr) -> Ptr, Cranelift, "Return cumulative Rust-like lexical path prefixes as Vec<String>."),
     rt!("gos_rt_path_split", (Ptr) -> Ptr, Cranelift, "path::split(p) -> (String, String); splits a path into (directory, file)."),
     rt!("gos_rt_path_stem", (Ptr) -> I128, Cranelift, "Return Option<String> of the basename minus extension."),
+    rt!("gos_rt_path_unique_prefixes", (Ptr) -> Ptr, Cranelift, "Return sorted unique cumulative prefixes for newline-delimited paths as Vec<String>."),
     rt!("gos_rt_pem_decode_all_raw", (Ptr) -> I128, Cranelift, "pem decode_all leaf -> Result<[(String,[u8])], Error>."),
     rt!("gos_rt_pem_decode_raw", (Ptr) -> I128, Cranelift, "pem decode leaf -> Result<(String,[u8]), Error>."),
     rt!("gos_rt_pem_encode_raw", (Ptr, Ptr) -> Ptr, Cranelift, "pem encode leaf(block_type, bytes) -> String."),

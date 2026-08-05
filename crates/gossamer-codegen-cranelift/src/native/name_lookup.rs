@@ -203,6 +203,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_path_base" => Some("gos_rt_path_base"),
         "gos_rt_path_components" => Some("gos_rt_path_components"),
         "gos_rt_path_prefixes" => Some("gos_rt_path_prefixes"),
+        "gos_rt_path_unique_prefixes" => Some("gos_rt_path_unique_prefixes"),
         "gos_rt_path_dir" => Some("gos_rt_path_dir"),
         "gos_rt_path_ext" => Some("gos_rt_path_ext"),
         "gos_rt_path_file_name" => Some("gos_rt_path_file_name"),

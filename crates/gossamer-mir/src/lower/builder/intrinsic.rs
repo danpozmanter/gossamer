@@ -1774,6 +1774,35 @@ impl<'a> Builder<'a> {
             ("option::is_none", 1) => {
                 self.lower_combinator_pred_call("gos_rt_option_is_none", args, span)
             }
+            ("option::unwrap", 1) => {
+                let opt = self.lower_expr(&args[0])?;
+                let dest_ty = self.unwrap_default_dest_ty(ty, args[0].ty, opt);
+                let dest = self.fresh(dest_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_result_unwrap".to_string())),
+                    args: vec![Operand::Copy(Place::local(opt))],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("option::expect", 2) => {
+                let _message = self.lower_expr(&args[0])?;
+                let opt = self.lower_expr(&args[1])?;
+                let dest_ty = self.unwrap_default_dest_ty(ty, args[1].ty, opt);
+                let dest = self.fresh(dest_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_result_unwrap".to_string())),
+                    args: vec![Operand::Copy(Place::local(opt))],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
             ("option::unwrap_or", 2) => {
                 let fallback = self.lower_expr(&args[0])?;
                 let opt = self.lower_expr(&args[1])?;
@@ -1791,6 +1820,23 @@ impl<'a> Builder<'a> {
                     args: vec![
                         Operand::Copy(Place::local(fallback)),
                         Operand::Copy(Place::local(opt)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("option::ok_or", 2) => {
+                let err = self.lower_expr(&args[0])?;
+                let opt = self.lower_expr(&args[1])?;
+                let dest = self.fresh(ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_result_ok_or".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(opt)),
+                        Operand::Copy(Place::local(err)),
                     ],
                     destination: Place::local(dest),
                     target: Some(next),
@@ -2133,6 +2179,32 @@ impl<'a> Builder<'a> {
                     vec![
                         Operand::Copy(Place::local(alt)),
                         Operand::Copy(Place::local(opt)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("option::ok_or_else", 2) => {
+                let closure = self.lower_iter_closure(&args[0], &[], i64_ty, span)?;
+                let opt = self.lower_expr(&args[1])?;
+                let dest_ty = if matches!(
+                    self.tcx.kind_of(ty),
+                    TyKind::Var(_) | TyKind::Error | TyKind::Never
+                ) {
+                    let payload = self.enum_payload_ty(args[1].ty, 0).unwrap_or(i64_ty);
+                    let substs = gossamer_types::Substs::from_types([payload, i64_ty]);
+                    self.tcx.intern(TyKind::Adt {
+                        def: gossamer_resolve::DefId::local(u32::MAX),
+                        substs,
+                    })
+                } else {
+                    ty
+                };
+                Some(self.emit_combinator_call(
+                    "gos_rt_result_ok_or_else",
+                    vec![
+                        Operand::Copy(Place::local(opt)),
+                        Operand::Copy(Place::local(closure)),
                     ],
                     dest_ty,
                     span,
@@ -2777,6 +2849,42 @@ impl<'a> Builder<'a> {
         if !is_hashmap && !is_btmap {
             return None;
         }
+        self.lower_for_hashmap_pairs(receiver, recv_ty, is_btmap, for_loop, span)
+    }
+
+    pub(crate) fn try_lower_for_bare_hashmap_iter(
+        &mut self,
+        receiver: &HirExpr,
+        for_loop: &ForLoopShape<'_>,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let mut recv_ty = self
+            .receiver_local_from_path(receiver)
+            .map_or(receiver.ty, |l| self.locals[l.0 as usize].ty);
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(recv_ty) {
+            recv_ty = *inner;
+        }
+        let recv_runtime_kind = self
+            .receiver_local_from_path(receiver)
+            .and_then(|l| self.local_runtime_kind.get(&l).copied());
+        let is_hashmap = matches!(self.tcx.kind_of(recv_ty), TyKind::HashMap { .. });
+        let is_btmap = recv_runtime_kind == Some("collections::BTreeMap");
+        if !is_hashmap && !is_btmap {
+            return None;
+        }
+        self.lower_for_hashmap_pairs(receiver, recv_ty, is_btmap, for_loop, span)
+    }
+
+    fn lower_for_hashmap_pairs(
+        &mut self,
+        receiver: &HirExpr,
+        recv_ty: Ty,
+        is_btmap: bool,
+        for_loop: &ForLoopShape<'_>,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::TyKind;
         let HirPatKind::Tuple(elems) = &for_loop.loop_pat.kind else {
             return None;
         };

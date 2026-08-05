@@ -21,7 +21,7 @@ backend - for:
 - `&T` and `&mut T` references - pointers, 64 bits on every shipped
   platform - for any `T`.
 - Heap-managed aggregate handles: `String`, `Vec<T>`,
-  `HashMap<K, V>`, Phase 1 `BTreeMap<String, i64>`, channel halves,
+  `HashMap<K, V>`, map-backed `BTreeMap<K, V>`, channel halves,
   `Mutex<T>`, `WaitGroup`, atomics. Each is a 64-bit handle to
   runtime-managed storage.
 - **User structs, tuples, enums, and strings passed by value.** A

@@ -1736,6 +1736,17 @@ impl<'a> Builder<'a> {
                     Some("")
                 }
             }
+            "next" if args.is_empty() => match &receiver_kind_flat {
+                TyKind::Iterator(elem)
+                    if matches!(
+                        self.tcx.kind_of(*elem),
+                        TyKind::Int(gossamer_types::IntTy::I64)
+                    ) =>
+                {
+                    Some("gos_rt_lazy_iter_next_i64")
+                }
+                _ => None,
+            },
             // `option.ok_or(new_err)` converts None into Err and
             // passes Some through.
             "ok_or" => {
@@ -3167,6 +3178,7 @@ impl<'a> Builder<'a> {
                     self.option_adt_ty()
                 }
             }
+            "gos_rt_lazy_iter_next_i64" => self.option_i64_adt_ty(),
             "gos_rt_sync_map_get" => self.option_string_adt_ty(),
             "gos_rt_sync_map_keys" | "gos_rt_btmap_keys" => {
                 let s = self.tcx.string_ty();
@@ -3926,6 +3938,17 @@ impl<'a> Builder<'a> {
                 "err" => runtime_symbol = Some("gos_rt_result_err"),
                 _ => {}
             }
+        }
+        if runtime_symbol.is_none()
+            && method.name.as_str() == "next"
+            && args.is_empty()
+            && matches!(
+                self.tcx.kind_of(lowered_recv_ty),
+                TyKind::Iterator(elem)
+                    if matches!(self.tcx.kind_of(*elem), TyKind::Int(gossamer_types::IntTy::I64))
+            )
+        {
+            runtime_symbol = Some("gos_rt_lazy_iter_next_i64");
         }
         // `.clone()` / `.collect()` on a Vec/Slice receiver: dispatch to
         // `gos_rt_vec_clone` so the result is a fresh independent

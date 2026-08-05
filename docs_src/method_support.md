@@ -125,17 +125,17 @@ expected `BTreeSet<T>` type is present.
 
 ## BTreeMap
 
-Phase 1 `BTreeMap` support is `BTreeMap<String, i64>`, matching the compiled
-runtime ABI. Phase 2 will broaden this to generic ordered maps.
+BTreeMap uses the same typed map runtime as HashMap, with key-sorted user-facing
+iteration.
 
 | Method | Returns | Notes |
 |---|---|---|
-| `BTreeMap::from<const N: usize>([(String, i64); N])` | `BTreeMap<String, i64>` | Associated function; accepts array pairs. |
-| `m.insert(k, v)` | `Option<i64>` | Inserts or overwrites and returns the previous value when present. |
-| `m.get(k)` | `Option<i64>` | `None` when the key is absent. |
-| `m.get_or(k, default)` | `i64` | Value for `k`, or `default` when absent. |
-| `m.or_insert(k, default)` | `i64` | Value for `k`, inserting `default` first when absent. |
-| `m.remove(k)` / `m.pop(k)` | `Option<i64>` | Deletes the key and returns its previous value when present. |
+| `BTreeMap::from<K, V, const N: usize>([(K, V); N])` | `BTreeMap<K, V>` | Associated function; accepts array pairs. |
+| `m.insert(k, v)` | `Option<V>` | Inserts or overwrites and returns the previous value when present. |
+| `m.get(k)` | `Option<V>` | `None` when the key is absent. |
+| `m.get_or(k, default)` | `V` | Value for `k`, or `default` when absent. |
+| `m.or_insert(k, default)` | `V` | Value for `k`, inserting `default` first when absent. |
+| `m.remove(k)` / `m.pop(k)` | `Option<V>` | Deletes the key and returns its previous value when present. |
 | `m.contains(k)` / `m.contains_key(k)` | `bool` | Key-membership test. |
 | `m.len()` | `i64` | |
 | `m.is_empty()` / `m.clear()` | `bool` / `()` | Empty test and in-place removal of all entries. |

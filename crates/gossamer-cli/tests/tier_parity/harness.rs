@@ -793,6 +793,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/string_concatenation_stress.gos"),
     spec("feature-testing-examples/string_method_surface.gos"),
     spec("feature-testing-examples/string_unicode_boundaries.gos"),
+    spec("feature-testing-examples/fast_string_path_scan.gos"),
     // Byte-range `substring` reads its source length from the O(1) string
     // header (not an O(len) strlen), so a sliding-window k-mer scan stays
     // linear; covers literal + built sources, clamping, and HashMap<String>
