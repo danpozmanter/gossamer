@@ -47,7 +47,7 @@ pub(crate) fn run_lint(id: &str, sf: &SourceFile, src: &str) -> Vec<Finding> {
         "float_eq_zero" => lint_float_eq_zero(sf),
         "empty_else" => lint_empty_else(sf),
         "match_bool" => lint_match_bool(sf),
-        "needless_parens" => lint_needless_parens(sf),
+        "needless_parens" => lint_needless_parens(sf, src),
         "manual_not_equal" => lint_manual_not_equal(sf),
         "nested_ternary_if" => lint_nested_ternary_if(sf),
         "absurd_range" => lint_absurd_range(sf),
@@ -187,6 +187,7 @@ pub(crate) fn walk_expr(expr: &Expr, visitor: &mut dyn FnMut(&Expr)) {
         ExprKind::Array(array)
         | ExprKind::FixedArray(array)
         | ExprKind::QueueLiteral(array)
+        | ExprKind::StackLiteral(array)
         | ExprKind::MaxHeapLiteral(array)
         | ExprKind::MinHeapLiteral(array) => match array {
             gossamer_ast::ArrayExpr::List(elems) => {
@@ -1322,27 +1323,56 @@ fn lint_match_bool(sf: &SourceFile) -> Vec<Finding> {
     out
 }
 
-fn lint_needless_parens(sf: &SourceFile) -> Vec<Finding> {
+fn lint_needless_parens(sf: &SourceFile, src: &str) -> Vec<Finding> {
     let mut out = Vec::new();
+    for stmt in &sf.top_level_stmts {
+        walk_stmt_exprs(stmt, &mut |expr| {
+            check_needless_parens_expr(expr, src, &mut out);
+        });
+    }
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
-            let ExprKind::Tuple(elems) = &expr.kind else {
-                return;
-            };
-            if elems.len() == 1 {
-                out.push((
-                    expr.span,
-                    "`(x,)` is a one-tuple; `(x)` without the comma is a needless pair of parens"
-                        .to_string(),
-                    Some(
-                        "drop the parens or add a trailing comma if you meant a one-tuple"
-                            .to_string(),
-                    ),
-                ));
-            }
+            check_needless_parens_expr(expr, src, &mut out);
         });
     });
     out
+}
+
+fn check_needless_parens_expr(expr: &Expr, src: &str, out: &mut Vec<Finding>) {
+    if let ExprKind::Tuple(elems) = &expr.kind
+        && elems.len() == 1
+    {
+        out.push((
+            expr.span,
+            "`(x,)` is a one-tuple; `(x)` without the comma is a needless pair of parens"
+                .to_string(),
+            Some("drop the parens or add a trailing comma if you meant a one-tuple".to_string()),
+        ));
+    }
+    if let ExprKind::Closure { params, .. } = &expr.kind {
+        for param in params {
+            let pattern = &param.pattern;
+            if closure_param_has_needless_parens(pattern, src) {
+                out.push((
+                    pattern.span,
+                    "unnecessary parentheses around closure parameter".to_string(),
+                    Some("remove the parentheses around this parameter".to_string()),
+                ));
+            }
+        }
+    }
+}
+
+fn closure_param_has_needless_parens(pattern: &Pattern, src: &str) -> bool {
+    matches!(
+        pattern.kind,
+        PatternKind::Ident { .. } | PatternKind::Wildcard | PatternKind::Ref { .. }
+    ) && src
+        .get(pattern.span.start as usize..pattern.span.end as usize)
+        .is_some_and(|text| {
+            let text = text.trim();
+            text.starts_with('(') && text.ends_with(')')
+        })
 }
 
 fn lint_manual_not_equal(sf: &SourceFile) -> Vec<Finding> {

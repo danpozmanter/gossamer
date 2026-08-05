@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.43.0 - VecDeque methods, VecStack, VecQueue, REPL discovery, and Iterator prelude
+
+- Bump workspace crates and lockfile package versions to 0.43.0.
+- Match Rust's `VecDeque` method surface by rejecting `push` and `pop` while
+  keeping explicit front/back methods.
+- Remove the typo `VecDequeue` from builtins, prelude, docs, completions, and
+  lowering paths.
+- Add restricted `VecQueue<i64>` and `VecStack<i64>` collection types with
+  FIFO `<[...]` and LIFO `[...]>` literal syntax plus narrow queue/stack
+  method surfaces: `push`, `pop`, `peek`, `len`, `is_empty`, and `clear`.
+- Rename the preferred collection surface to `Map`, `Set`, `Deque`, `Queue`,
+  and `Stack`, while keeping `HashMap`, `HashSet`, `VecDeque`, `VecQueue`,
+  and `VecStack` as aliases. Add `MaxBinaryHeap` and `MinBinaryHeap` aliases.
+- Clarify `%info` / `%explain`, MCP skill, and website collection docs with
+  one-line type descriptions that name the underlying structures.
+- Add `Iterator<T>` to the prelude and tighten `%info` / `%explain` metadata
+  for the phase 1 collection method surfaces.
+- Fix REPL member completion for typed persistent bindings so collection values
+  such as `VecStack` and `VecQueue` complete their methods after `x.`.
+- Make native CI's full LLVM dumps and preserved build directories opt-in so
+  large general shards do not exhaust hosted runner storage before artifacts
+  can upload.
+
 ## 0.42.2 - Native CI batching, memory and enumerate() fixes
 
 - Build native CI test binaries once per shard, then run the compiled test
@@ -37,14 +60,14 @@
   `BinaryHeap`, `MaxHeap`, and `MinHeap` are `i64` shapes, while `BTreeMap`
   follows the typed map runtime.
 - Add `BTreeMap::from`, BTreeMap discovery/docs parity with HashMap where the
-  shared runtime supports it, `VecDequeue` as a `VecDeque` alias, and
+  shared runtime supports it, a short-lived misspelled `VecDeque` alias, and
   `VecDeque::clear`.
 - Tighten collection `::from` argument checking so incompatible map and set
   sources are rejected instead of silently defaulting.
 - Remove pagination from REPL meta commands; `%bindings` now filters only
   binding names, `%declarations` filters only declaration names, and `%bindings`
   renders fixed-array and set literal spelling.
-- Add queue, dequeue, stack, min-heap, and max-heap pattern docs plus a runnable
+- Add queue, deque, stack, min-heap, and max-heap pattern docs plus a runnable
   collection-patterns example.
 - Add `<[...]>` queue literals, `VecQueue` as a `VecDeque` alias, `^[...]`
   `MaxHeap<T>` literals, `_[...]` `MinHeap<T>` literals, and heap REPL help.

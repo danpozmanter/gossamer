@@ -892,7 +892,10 @@ impl<'a> Lowerer<'a> {
         // are ABI placeholders only: typed insertion selects storage lazily.
         if matches!(
             name.as_str(),
-            "HashMap::new"
+            "Map::new"
+                | "collections::Map::new"
+                | "std::collections::Map::new"
+                | "HashMap::new"
                 | "collections::HashMap::new"
                 | "std::collections::HashMap::new"
                 | "BTreeMap::new"
@@ -928,7 +931,10 @@ impl<'a> Lowerer<'a> {
         }
         if matches!(
             name.as_str(),
-            "HashMap::with_capacity"
+            "Map::with_capacity"
+                | "collections::Map::with_capacity"
+                | "std::collections::Map::with_capacity"
+                | "HashMap::with_capacity"
                 | "collections::HashMap::with_capacity"
                 | "std::collections::HashMap::with_capacity"
                 | "gos_rt_map_new_with_capacity"
@@ -983,7 +989,10 @@ impl<'a> Lowerer<'a> {
         }
         if matches!(
             name.as_str(),
-            "HashMap::from"
+            "Map::from"
+                | "collections::Map::from"
+                | "std::collections::Map::from"
+                | "HashMap::from"
                 | "collections::HashMap::from"
                 | "std::collections::HashMap::from"
                 | "BTreeMap::from"

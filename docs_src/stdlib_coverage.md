@@ -23,7 +23,7 @@ evidence visible.
 | `std::thread` | shipped | 2 | none | none | none | No module-level evidence record. |
 | `std::strings` | experimental | 44 | module-only | module-only | module-only | split, trim, contains, find, replace, to_lower, to_upper, starts_with, ends_with. |
 | `std::strconv` | experimental | 10 | module-only | module-only | module-only | parse_i64, parse_u64, parse_f64, parse_bool, format_i64, format_f64. |
-| `std::collections` | experimental | 11 | module-only | module-only | module-only | Vec, HashMap, HashSet, VecDeque (both ends), BTreeMap (String/i64 keys). |
+| `std::collections` | experimental | 18 | module-only | module-only | module-only | Vec, Map, Set, Deque, Queue, Stack, heaps, and ordered maps/sets. |
 | `std::net` | experimental | 6 | module-only | module-only | module-only | TcpListener, TcpStream. UdpSocket partial. |
 | `std::http` | experimental | 29 | module-only | module-only | module-only | HTTP/1.1 + HTTP/2 server + client (push + trailers); HTTP/3 via std::http_h3. |
 | `std::encoding::json` | experimental | 21 | module-only | module-only | module-only | encode + decode + Value. |
@@ -155,14 +155,21 @@ the canonical item path.
 | `std::collections::BTreeMap` | Type | experimental | not item-audited |
 | `std::collections::BTreeSet` | Type | experimental | not item-audited |
 | `std::collections::BinaryHeap` | Type | experimental | not item-audited |
+| `std::collections::Deque` | Type | experimental | not item-audited |
 | `std::collections::HashMap` | Type | experimental | not item-audited |
 | `std::collections::HashSet` | Type | experimental | not item-audited |
+| `std::collections::Map` | Type | experimental | not item-audited |
+| `std::collections::MaxBinaryHeap` | Type | experimental | not item-audited |
 | `std::collections::MaxHeap` | Type | experimental | not item-audited |
+| `std::collections::MinBinaryHeap` | Type | experimental | not item-audited |
 | `std::collections::MinHeap` | Type | experimental | not item-audited |
+| `std::collections::Queue` | Type | experimental | not item-audited |
+| `std::collections::Set` | Type | experimental | not item-audited |
+| `std::collections::Stack` | Type | experimental | not item-audited |
 | `std::collections::Vec` | Type | experimental | not item-audited |
 | `std::collections::VecDeque` | Type | experimental | not item-audited |
-| `std::collections::VecDequeue` | Type | experimental | not item-audited |
 | `std::collections::VecQueue` | Type | experimental | not item-audited |
+| `std::collections::VecStack` | Type | experimental | not item-audited |
 | `std::collections::deque::len` | Function | experimental | not item-audited |
 | `std::collections::deque::peek_back` | Function | experimental | not item-audited |
 | `std::collections::deque::peek_front` | Function | experimental | not item-audited |

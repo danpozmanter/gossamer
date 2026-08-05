@@ -2181,11 +2181,27 @@ are returned as <code>Result&lt;T, E&gt;</code> instead of raised as exceptions.
 </tr>
 <tr>
 <td>dict</td>
-<td><code>HashMap&lt;K, V&gt;</code> with <code>{key: value}</code> and <code>{}</code> literals</td>
+<td><code>Map&lt;K, V&gt;</code> with <code>{key: value}</code> and <code>{}</code> literals</td>
 </tr>
 <tr>
 <td>set</td>
-<td><code>HashSet&lt;T&gt;</code> with <code>#{...}</code> literals, or typed <code>BTreeSet&lt;T&gt;</code> with <code>#{...}</code></td>
+<td><code>Set&lt;T&gt;</code> with <code>#{...}</code> literals, or typed <code>BTreeSet&lt;T&gt;</code> with <code>#{...}</code></td>
+</tr>
+<tr>
+<td><code>collections.deque</code> as queue</td>
+<td><code>Queue&lt;i64&gt;</code> with <code>&lt;[a, b]</code>, <code>push</code>, and FIFO <code>pop</code></td>
+</tr>
+<tr>
+<td><code>collections.deque</code> as deque</td>
+<td><code>Deque&lt;i64&gt;</code> with explicit front/back methods</td>
+</tr>
+<tr>
+<td>stack list</td>
+<td><code>Stack&lt;i64&gt;</code> with <code>[a, b]&gt;</code>, <code>push</code>, and LIFO <code>pop</code></td>
+</tr>
+<tr>
+<td><code>heapq</code> min-heap</td>
+<td><code>MinHeap&lt;i64&gt;</code> with <code>_[...]</code>; use <code>MaxHeap&lt;i64&gt;</code> or <code>BinaryHeap&lt;i64&gt;</code> with <code>^[...]</code> for max-heap order</td>
 </tr>
 <tr>
 <td><code>asyncio.create_task</code></td>
@@ -2247,9 +2263,9 @@ number, and use <code>get</code> when absence is expected:</p>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">initial</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">first</span><span class="p">.</span><span class="n">name</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w">       </span><span class="c1">// UTF-8 byte as i64, not a Python character</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">pair</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">first</span><span class="p">.</span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">first</span><span class="p">.</span><span class="n">active</span><span class="p">)</span>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="kd">let</span><span class="w"> </span><span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">pair</span><span class="p">.</span><span class="mi">1</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">by_name</span>: <span class="nc">HashMap</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">User</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">HashMap</span>::<span class="n">new</span><span class="p">()</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">by_name</span>: <span class="nc">Map</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">User</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Map</span>::<span class="n">new</span><span class="p">()</span>
 <a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">by_name</span><span class="p">.</span><span class="n">insert</span><span class="p">(</span><span class="n">first</span><span class="p">.</span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">first</span><span class="p">)</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="kd">let</span><span class="w"> </span><span class="n">cached</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">by_name</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;Ada&quot;</span><span class="p">)</span><span class="w">   </span><span class="c1">// HashMap lookup returns Option&lt;V&gt;</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="kd">let</span><span class="w"> </span><span class="n">cached</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">by_name</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;Ada&quot;</span><span class="p">)</span><span class="w">   </span><span class="c1">// Map lookup returns Option&lt;V&gt;</span>
 <a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="kd">let</span><span class="w"> </span><span class="n">found</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Lookup</span>::<span class="n">Found</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="n">index</span>: <span class="mi">0</span>
 <a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">    </span><span class="n">user</span>: <span class="nc">cached</span><span class="p">.</span><span class="n">unwrap</span><span class="p">()</span>
@@ -2327,7 +2343,7 @@ braces:</p>
 <a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">iter</span>::<span class="n">sum_by</span><span class="p">(</span><span class="o">|</span><span class="n">n</span>: <span class="kt">i64</span><span class="o">|</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">n</span><span class="p">)</span>
 </code></pre></div>
 <p>For stateful code, ordinary loops are still idiomatic:</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">counts</span>: <span class="nc">HashMap</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">HashMap</span>::<span class="n">new</span><span class="p">()</span>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">counts</span>: <span class="nc">Map</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Map</span>::<span class="n">new</span><span class="p">()</span>
 <a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="k">for</span><span class="w"> </span><span class="n">word</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="n">words</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="n">counts</span><span class="p">.</span><span class="n">inc</span><span class="p">(</span><span class="n">word</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span>
 <a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="p">}</span>

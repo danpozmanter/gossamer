@@ -279,6 +279,7 @@ pub fn walk_expr<V: Visitor + ?Sized>(visitor: &mut V, expr: &Expr) {
         ExprKind::Array(array_expr)
         | ExprKind::FixedArray(array_expr)
         | ExprKind::QueueLiteral(array_expr)
+        | ExprKind::StackLiteral(array_expr)
         | ExprKind::MaxHeapLiteral(array_expr)
         | ExprKind::MinHeapLiteral(array_expr) => {
             walk_array_expr(visitor, array_expr);

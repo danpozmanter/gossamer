@@ -1,20 +1,24 @@
-use std::collections::VecDeque
+use std::collections::{Deque, Queue, Stack}
 fn main() {
-    // Queue: push at the back, pop from the front.
-    let mut queue: VecQueue<i64> = <[10]>
-    queue.push_back(20)
-    println(queue.pop_front())
+    // FIFO queue: push at the back, pop from the front.
+    let mut queue: Queue<i64> = <[10]
+    queue.push(20)
+    println(queue.len())
+    println(queue.peek())
+    println(queue.pop())
 
-    // Dequeue: both ends are active.
-    let mut deque: VecDequeue<i64> = <[2]>
+    // Deque: both ends are active.
+    let mut deque: Deque<i64> = Deque::from([2])
     deque.push_front(1)
     println(deque.peek_front())
     println(deque.pop_back())
 
-    // Stack: Vec end is the top.
-    let mut stack: Vec<i64> = []
+    // LIFO stack: push and pop at the top.
+    let mut stack: Stack<i64> = [7]>
     stack.push(7)
     stack.push(8)
+    println(stack.len())
+    println(stack.peek())
     println(stack.pop())
 
     // Min heap: smallest value first.

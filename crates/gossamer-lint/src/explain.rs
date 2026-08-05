@@ -121,7 +121,8 @@ pub fn lint_explanation(id: &str) -> Option<&'static str> {
         "needless_parens" => {
             "`(x)` without a trailing comma is a needless pair of parens -\n\
             `x` reads the same. `(x,)` is a one-tuple and means something\n\
-            different."
+            different. Closure parameters follow the same rule: write `|t|`,\n\
+            not `|(t)|`."
         }
         "manual_not_equal" => "`!(a == b)` is just `a != b`. Prefer the direct operator.",
         "nested_ternary_if" => {

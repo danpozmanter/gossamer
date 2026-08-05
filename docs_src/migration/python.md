@@ -17,8 +17,12 @@ are returned as `Result<T, E>` instead of raised as exceptions.
 | `try` / `except` | `Result<T, E>` with `?` or `match` |
 | `isinstance` dispatch | `enum` plus `match`, or traits |
 | list | `Vec<T>` with `[...]`; use `#[...]` for a fixed array and `&[T]` for a borrowed slice |
-| dict | `HashMap<K, V>` with `{key: value}` and `{}` literals |
-| set | `HashSet<T>` with `#{...}` literals, or typed `BTreeSet<T>` with `#{...}` |
+| dict | `Map<K, V>` with `{key: value}` and `{}` literals |
+| set | `Set<T>` with `#{...}` literals, or typed `BTreeSet<T>` with `#{...}` |
+| `collections.deque` as queue | `Queue<i64>` with `<[a, b]`, `push`, and FIFO `pop` |
+| `collections.deque` as deque | `Deque<i64>` with explicit front/back methods |
+| stack list | `Stack<i64>` with `[a, b]>`, `push`, and LIFO `pop` |
+| `heapq` min-heap | `MinHeap<i64>` with `_[...]`; use `MaxHeap<i64>` or `BinaryHeap<i64>` with `^[...]` for max-heap order |
 | `asyncio.create_task` | `go fn() { ... }()` |
 | `if __name__ == "__main__"` | entry-file top-level statements |
 
@@ -82,9 +86,9 @@ let first = users[0]              // Vec/array index; traps if out of bounds
 let initial = first.name[0]       // UTF-8 byte as i64, not a Python character
 let pair = (first.name, first.active)
 let enabled = pair.1
-let mut by_name: HashMap<String, User> = HashMap::new()
+let mut by_name: Map<String, User> = Map::new()
 by_name.insert(first.name, first)
-let cached = by_name.get("Ada")   // HashMap lookup returns Option<V>
+let cached = by_name.get("Ada")   // Map lookup returns Option<V>
 let found = Lookup::Found {
     index: 0
     user: cached.unwrap()
@@ -190,7 +194,7 @@ let total = iter::range_inclusive(1, 10)
 For stateful code, ordinary loops are still idiomatic:
 
 ```gos
-let mut counts: HashMap<String, i64> = HashMap::new()
+let mut counts: Map<String, i64> = Map::new()
 for word in words {
     counts.inc(word, 1)
 }

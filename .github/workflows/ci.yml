@@ -107,17 +107,14 @@ jobs:
       # and the previous design parked the live re-run behind `if: failure()`,
       # which never executes when the crash takes the runner down with it.
       # `--test-threads=1 --nocapture` makes the culprit test the last
-      # streamed line even in that case, and the dumped IR + preserved
-      # artifacts let an unreproducible platform crash be inspected offline.
-      # This is slower than a captured parallel run; that cost buys a failure
-      # log that always carries the detail, with no unreachable second step.
+      # streamed line even in that case. Full LLVM IR dumps and preserved
+      # build temps are opt-in via GOSSAMER_NATIVE_CI_DIAGNOSTICS=1 because
+      # keeping them for every passing native build can exhaust hosted runner
+      # storage before failure artifacts can upload.
       - name: Test native build/run crates (one process per test binary)
         shell: bash
         env:
           RUST_BACKTRACE: "full"
-          GOS_LLVM_DUMP: "1"
-          GOS_LINK_VERBOSE: "1"
-          GOS_KEEP_BUILD_ARTIFACTS: "1"
         run: |
           set -uo pipefail
           # Create the artifact dir, THEN redirect the harness scratch dirs
@@ -134,6 +131,13 @@ jobs:
           export TMP="${{ github.workspace }}/native-build-artifacts"
           logdir="$TMPDIR/test-logs"
           mkdir -p "$logdir"
+          if [ "${GOSSAMER_NATIVE_CI_DIAGNOSTICS:-}" = "1" ]; then
+            export GOS_LLVM_DUMP=1
+            export GOS_LINK_VERBOSE=1
+            export GOS_KEEP_BUILD_ARTIFACTS=1
+            echo "::notice::native CI diagnostics enabled; preserving LLVM IR and build temps"
+          fi
+          df -h "$TMPDIR" || true
           rc=0
           suite="${{ matrix.suite }}"
           # Run each test binary in its OWN process, serially, streamed live AND

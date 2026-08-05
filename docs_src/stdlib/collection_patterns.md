@@ -4,18 +4,21 @@ Use these shapes when you need common queue, deque, stack, or heap behavior.
 
 ## Queue
 
-Use `VecDeque<i64>` when you need repeated FIFO operations. `VecQueue<i64>` is an alias for this queue shape, and `<[a, b, c]>` builds a queue literal in front-to-back order.
+Use `Queue<i64>` when you need repeated FIFO operations. `<[a, b, c]` builds a queue literal in front-to-back order.
+`VecQueue` remains accepted as a longer alias.
 
 ```gossamer
-use std::collections::VecDeque
+use std::collections::Queue
 
-let mut q: VecDeque<i64> = VecDeque::new()
-q.push_back(10)
-q.push_back(20)
-let first = q.pop_front()
+let mut q: Queue<i64> = Queue::new()
+q.push(10)
+q.push(20)
+let queued = q.len()
+let next = q.peek()
+let first = q.pop()
 
-let mut literal_q = <[10, 20]>
-let literal_first = literal_q.pop_front()
+let mut literal_q = <[10, 20]
+let literal_first = literal_q.pop()
 ```
 
 For small `i64` examples, `std::collections::queue` also offers a re-bind helper API over `Vec<i64>`:
@@ -30,21 +33,22 @@ let first = queue::peek(&q)
 let q = queue::pop(q)
 ```
 
-## Dequeue
+## Deque
 
-Use `VecDeque<i64>` when both ends matter. `VecDequeue<i64>` and `VecQueue<i64>` are accepted aliases, but docs and discovery use the canonical `VecDeque<i64>` name.
+Use `Deque<i64>` when both ends matter.
+`VecDeque` remains accepted as a longer alias.
 
 ```gossamer
-use std::collections::VecDeque
+use std::collections::Deque
 
-let mut d: VecDeque<i64> = VecDeque::new()
+let mut d: Deque<i64> = Deque::new()
 d.push_front(1)
 d.push_back(2)
 let front = d.pop_front()
 let back = d.pop_back()
 
-let mut literal_d = <[1, 2]>
-literal_d.push_front(0)
+let mut from_values = Deque::from([1, 2])
+from_values.push_front(0)
 ```
 
 For value-style `i64` code, the `std::collections::deque` module returns the updated vector from each mutator:
@@ -60,12 +64,18 @@ let front = deque::peek_front(&d)
 
 ## Stack
 
-A stack is naturally a `Vec<T>`: push to the end and pop from the end.
+Use `Stack<i64>` when you need repeated LIFO operations. `[a, b, c]>`
+builds a stack literal in bottom-to-top order.
+`VecStack` remains accepted as a longer alias.
 
 ```gossamer
-let mut stack: Vec<i64> = []
+use std::collections::Stack
+
+let mut stack: Stack<i64> = [1]>
 stack.push(1)
 stack.push(2)
+let depth = stack.len()
+let next = stack.peek()
 let top = stack.pop()
 ```
 
@@ -84,6 +94,7 @@ let s = stack::pop(s)
 ## Min Heap
 
 Use `MinHeap<i64>` or the `_[...]` literal when the smallest value should come first.
+`MinBinaryHeap` remains accepted as a longer alias.
 
 ```gossamer
 let mut h = _[5, 1, 3]
@@ -94,7 +105,7 @@ let popped = h.pop()
 
 ## Max Heap
 
-Use `MaxHeap<i64>` or the `^[...]` literal when the largest value should come first. `BinaryHeap<i64>` is accepted as a compatibility alias for `MaxHeap<i64>`.
+Use `MaxHeap<i64>` or the `^[...]` literal when the largest value should come first. `BinaryHeap<i64>` and `MaxBinaryHeap<i64>` are accepted as compatibility aliases for `MaxHeap<i64>`.
 
 ```gossamer
 let mut h = ^[5, 1, 3]

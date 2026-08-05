@@ -90,7 +90,10 @@ fn initialize_result(params: &Value) -> Value {
                gossamer://skill-card resource (or the skill-card prompt) to learn \
                idiomatic Gossamer before writing .gos code. Prefer receiver methods \
                and metadata fields already returned by standard library records over \
-               redundant module calls.",
+               redundant module calls. Prefer dedicated collection contracts: \
+               Stack for LIFO-only values, Queue for FIFO-only values, \
+               MinHeap or MaxHeap for priority queues, and Deque only when \
+               both ends matter.",
             ),
         ),
     ])
@@ -185,11 +188,26 @@ mod tests {
 
     #[test]
     fn skill_card_teaches_collection_literal_spellings() {
-        for literal in ["`[]`", "`#[]`", "`{}`", "`#{}`", "`^[]`", "`_[]`", "`<[]>`"] {
+        for literal in [
+            "`[]`",
+            "`#[]`",
+            "`{}`",
+            "`#{}`",
+            "`^[]`",
+            "`_[]`",
+            "`<[]`",
+            "`[]>`",
+            "`Deque::from([1,2,3])`",
+        ] {
             assert!(
                 SKILL_CARD.contains(literal),
                 "skill card should document {literal}"
             );
         }
+        assert!(SKILL_CARD.contains("Stack"));
+        assert!(SKILL_CARD.contains("LIFO-only argument contract"));
+        assert!(SKILL_CARD.contains("Queue"));
+        assert!(SKILL_CARD.contains("FIFO-only behavior"));
+        assert!(SKILL_CARD.contains("MinHeap` / `MaxHeap` for explicit priority order"));
     }
 }

@@ -392,6 +392,22 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::deque::gos_rt_deque_from_vec_i64 as *const u8,
         ),
         (
+            "gos_rt_queue_new",
+            crate::c_abi::deque::gos_rt_queue_new as *const u8,
+        ),
+        (
+            "gos_rt_queue_from_vec_i64",
+            crate::c_abi::deque::gos_rt_queue_from_vec_i64 as *const u8,
+        ),
+        (
+            "gos_rt_stack_new",
+            crate::c_abi::deque::gos_rt_stack_new as *const u8,
+        ),
+        (
+            "gos_rt_stack_from_vec_i64",
+            crate::c_abi::deque::gos_rt_stack_from_vec_i64 as *const u8,
+        ),
+        (
             "gos_rt_deque_pop_front",
             crate::c_abi::deque::gos_rt_deque_pop_front as *const u8,
         ),

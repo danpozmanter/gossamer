@@ -407,6 +407,24 @@ fn lint_subcommand_reports_unused_variable() {
 }
 
 #[test]
+fn lint_warns_on_parenthesized_closure_parameter() {
+    let fixture = write_fixture("lintclosureparen", "fn main() { let f = |(t)| t }\n");
+    let out = Command::new(gos_bin())
+        .arg("lint")
+        .arg(&fixture)
+        .output()
+        .expect("spawn lint");
+    assert!(out.status.success(), "lint should succeed with warnings");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("GL0028"), "missing lint code: {stderr}");
+    assert!(
+        stderr.contains("unnecessary parentheses around closure parameter"),
+        "missing closure parameter warning: {stderr}"
+    );
+    let _ = std::fs::remove_file(&fixture);
+}
+
+#[test]
 fn doc_html_emits_search_bar_intra_links_and_per_item_anchors() {
     let source = "\
 // Greets a person.

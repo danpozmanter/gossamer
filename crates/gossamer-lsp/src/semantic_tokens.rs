@@ -512,6 +512,7 @@ fn visit_expr(expr: &Expr, out: &mut Vec<RawToken>) {
         ExprKind::Array(arr)
         | ExprKind::FixedArray(arr)
         | ExprKind::QueueLiteral(arr)
+        | ExprKind::StackLiteral(arr)
         | ExprKind::MaxHeapLiteral(arr)
         | ExprKind::MinHeapLiteral(arr) => match arr {
             ArrayExpr::List(elems) => {

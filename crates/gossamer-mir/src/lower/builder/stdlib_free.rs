@@ -361,18 +361,20 @@ impl<'a> Builder<'a> {
         // so no unit value reaches the native call ABI.
         if matches!(
             joined.as_str(),
-            "HashMap::from"
+            "Map::from"
+                | "collections::Map::from"
+                | "HashMap::from"
                 | "collections::HashMap::from"
                 | "BTreeMap::from"
                 | "collections::BTreeMap::from"
         ) && matches!(args, [arg] if self.hashmap_from_arg_is_empty(arg))
         {
             let map_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-            return self.emit_stdlib_free_call("HashMap::new", map_ty, &[], span);
+            return self.emit_stdlib_free_call("Map::new", map_ty, &[], span);
         }
         if matches!(
             joined.as_str(),
-            "HashSet::from" | "collections::HashSet::from"
+            "Set::from" | "collections::Set::from" | "HashSet::from" | "collections::HashSet::from"
         ) && let [arg] = args
             && let Some(set) = self.lower_set_from_array(arg, span, "collections::HashSet")
         {
@@ -516,13 +518,26 @@ impl<'a> Builder<'a> {
         // scalar / string keys, leaving the normal qualified path to run.
         if !callee_def_some && args.len() >= 2 {
             let map_op = match joined {
-                "HashMap::get" | "collections::HashMap::get" => Some("get"),
-                "HashMap::pop" | "collections::HashMap::pop" => Some("pop"),
-                "HashMap::contains_key" | "collections::HashMap::contains_key" => {
-                    Some("contains_key")
-                }
-                "HashMap::contains" | "collections::HashMap::contains" => Some("contains"),
-                "HashMap::insert" | "collections::HashMap::insert" => Some("insert"),
+                "Map::get"
+                | "collections::Map::get"
+                | "HashMap::get"
+                | "collections::HashMap::get" => Some("get"),
+                "Map::pop"
+                | "collections::Map::pop"
+                | "HashMap::pop"
+                | "collections::HashMap::pop" => Some("pop"),
+                "Map::contains_key"
+                | "collections::Map::contains_key"
+                | "HashMap::contains_key"
+                | "collections::HashMap::contains_key" => Some("contains_key"),
+                "Map::contains"
+                | "collections::Map::contains"
+                | "HashMap::contains"
+                | "collections::HashMap::contains" => Some("contains"),
+                "Map::insert"
+                | "collections::Map::insert"
+                | "HashMap::insert"
+                | "collections::HashMap::insert" => Some("insert"),
                 _ => None,
             };
             if let Some(op) = map_op
@@ -2967,10 +2982,12 @@ impl<'a> Builder<'a> {
             // call through these symbol names so the destination
             // local can be tagged with a runtime kind for method
             // dispatch.
-            "HashSet::new" | "collections::HashSet::new" => (
-                "gos_rt_set_new",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
+            "Set::new" | "collections::Set::new" | "HashSet::new" | "collections::HashSet::new" => {
+                (
+                    "gos_rt_set_new",
+                    self.tcx.int_ty(gossamer_types::IntTy::I64),
+                )
+            }
             "BTreeSet::new" | "collections::BTreeSet::new" => (
                 "gos_rt_btree_set_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
@@ -2983,23 +3000,40 @@ impl<'a> Builder<'a> {
                 "gos_rt_map_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            "VecDeque::new"
-            | "collections::VecDeque::new"
-            | "VecDequeue::new"
-            | "collections::VecDequeue::new"
+            "Deque::new"
+            | "collections::Deque::new"
+            | "VecDeque::new"
+            | "collections::VecDeque::new" => (
+                "gos_rt_deque_new",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "Queue::new"
+            | "collections::Queue::new"
             | "VecQueue::new"
             | "collections::VecQueue::new" => (
-                "gos_rt_deque_new",
+                "gos_rt_queue_new",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "Stack::new"
+            | "collections::Stack::new"
+            | "VecStack::new"
+            | "collections::VecStack::new" => (
+                "gos_rt_stack_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
             "BinaryHeap::new"
             | "collections::BinaryHeap::new"
+            | "MaxBinaryHeap::new"
+            | "collections::MaxBinaryHeap::new"
             | "MaxHeap::new"
             | "collections::MaxHeap::new" => (
                 "gos_rt_bheap_max_new_i64",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            "MinHeap::new" | "collections::MinHeap::new" => (
+            "MinBinaryHeap::new"
+            | "collections::MinBinaryHeap::new"
+            | "MinHeap::new"
+            | "collections::MinHeap::new" => (
                 "gos_rt_bheap_min_new_i64",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
@@ -3009,7 +3043,9 @@ impl<'a> Builder<'a> {
             // payload is the previous value (i64 directly for
             // `HashMap<_, i64>`, c-string-cast-to-i64 for
             // `HashMap<_, String>`).
-            "HashMap::pop" | "collections::HashMap::pop" if !args.is_empty() => {
+            "Map::pop" | "collections::Map::pop" | "HashMap::pop" | "collections::HashMap::pop"
+                if !args.is_empty() =>
+            {
                 let key_kind = hashmap_key_kind(self.tcx, args[0].ty);
                 let sym = if key_kind == VecElemKind::Str {
                     "gos_rt_map_pop_typed_str"
@@ -3040,7 +3076,9 @@ impl<'a> Builder<'a> {
             // `HashMap::get(m, k) -> Option<V>` free-fn form, mirroring the
             // `m.get(k)` method. Without this arm the LLVM lowerer emits a
             // call to an undefined `@HashMap::get` symbol.
-            "HashMap::get" | "collections::HashMap::get" if !args.is_empty() => {
+            "Map::get" | "collections::Map::get" | "HashMap::get" | "collections::HashMap::get"
+                if !args.is_empty() =>
+            {
                 let key_kind = hashmap_key_kind(self.tcx, args[0].ty);
                 let sym = if key_kind == VecElemKind::Str {
                     "gos_rt_map_get_typed_str_opt"
@@ -3868,7 +3906,9 @@ impl<'a> Builder<'a> {
             "gos_rt_set_new" => Some("collections::HashSet"),
             "gos_rt_btree_set_new" => Some("collections::BTreeSet"),
             "gos_rt_btmap_new" => Some("collections::BTreeMap"),
-            "gos_rt_deque_new" => Some("collections::VecDeque"),
+            "gos_rt_deque_new" | "gos_rt_deque_from_vec_i64" => Some("collections::VecDeque"),
+            "gos_rt_queue_new" | "gos_rt_queue_from_vec_i64" => Some("collections::VecQueue"),
+            "gos_rt_stack_new" | "gos_rt_stack_from_vec_i64" => Some("collections::VecStack"),
             "gos_rt_bheap_max_new_i64" | "gos_rt_bheap_max_from_vec_i64" => {
                 Some("collections::MaxHeap")
             }

@@ -203,7 +203,8 @@ Rewrite as `if b { ... } else { ... }`.
 
 `(x)` without a trailing comma is a needless pair of parens -
 `x` reads the same. `(x,)` is a one-tuple and means something
-different.
+different. Closure parameters follow the same rule: write `|t|`,
+not `|(t)|`.
 
 ## `manual_not_equal`
 

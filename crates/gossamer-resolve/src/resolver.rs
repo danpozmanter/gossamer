@@ -946,6 +946,7 @@ impl Resolver {
             ExprKind::Array(arr)
             | ExprKind::FixedArray(arr)
             | ExprKind::QueueLiteral(arr)
+            | ExprKind::StackLiteral(arr)
             | ExprKind::MaxHeapLiteral(arr)
             | ExprKind::MinHeapLiteral(arr) => self.resolve_array_expr(arr),
             ExprKind::Range { start, end, .. } => {

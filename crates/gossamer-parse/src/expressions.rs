@@ -581,6 +581,20 @@ impl Parser<'_> {
                 primary = Expr::new(id, span, ExprKind::Try(Box::new(primary)));
                 continue;
             }
+            if self.at_punct(Punct::Gt)
+                && !self.newline_before_peek()
+                && self.peek_span().start == primary.span.end
+                && matches!(primary.kind, ExprKind::Array(_))
+            {
+                let end_span = self.peek_span();
+                self.bump();
+                if let ExprKind::Array(array) = primary.kind {
+                    let span = self.join(primary.span, end_span);
+                    let id = self.alloc_id();
+                    primary = Expr::new(id, span, ExprKind::StackLiteral(array));
+                    continue;
+                }
+            }
             break;
         }
         primary
@@ -1044,9 +1058,7 @@ impl Parser<'_> {
         if !self.expect_punct(Punct::LBracket, "to open queue literal after `<`") {
             return ExprKind::Error;
         }
-        let kind = self.with_struct_literals_allowed(Self::parse_queue_literal_expr_inner);
-        self.expect_punct(Punct::Gt, "to close queue literal");
-        kind
+        self.with_struct_literals_allowed(Self::parse_queue_literal_expr_inner)
     }
 
     fn parse_max_heap_literal_expr(&mut self) -> ExprKind {
@@ -2923,6 +2935,7 @@ fn contains_pipe_placeholder(expr: &Expr) -> bool {
         ExprKind::Array(ArrayExpr::List(items))
         | ExprKind::FixedArray(ArrayExpr::List(items))
         | ExprKind::QueueLiteral(ArrayExpr::List(items))
+        | ExprKind::StackLiteral(ArrayExpr::List(items))
         | ExprKind::MaxHeapLiteral(ArrayExpr::List(items))
         | ExprKind::MinHeapLiteral(ArrayExpr::List(items)) => {
             items.iter().any(contains_pipe_placeholder)
@@ -2930,6 +2943,7 @@ fn contains_pipe_placeholder(expr: &Expr) -> bool {
         ExprKind::Array(ArrayExpr::Repeat { value, count })
         | ExprKind::FixedArray(ArrayExpr::Repeat { value, count })
         | ExprKind::QueueLiteral(ArrayExpr::Repeat { value, count })
+        | ExprKind::StackLiteral(ArrayExpr::Repeat { value, count })
         | ExprKind::MaxHeapLiteral(ArrayExpr::Repeat { value, count })
         | ExprKind::MinHeapLiteral(ArrayExpr::Repeat { value, count }) => {
             contains_pipe_placeholder(value) || contains_pipe_placeholder(count)

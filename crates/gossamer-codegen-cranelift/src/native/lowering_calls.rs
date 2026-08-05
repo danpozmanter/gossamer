@@ -613,8 +613,10 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_bytes_builder_write_char" => (&[ptr_ty, types::I32], None),
         "gos_rt_str_push_char" => (&[ptr_ty, types::I32], Some(ptr_ty)),
         "gos_rt_str_push_byte" => (&[ptr_ty, types::I32], Some(ptr_ty)),
-        "gos_rt_deque_new" => (&[], Some(ptr_ty)),
-        "gos_rt_deque_from_vec_i64" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_deque_new" | "gos_rt_queue_new" | "gos_rt_stack_new" => (&[], Some(ptr_ty)),
+        "gos_rt_deque_from_vec_i64" | "gos_rt_queue_from_vec_i64" | "gos_rt_stack_from_vec_i64" => {
+            (&[ptr_ty], Some(ptr_ty))
+        }
         "gos_rt_deque_push_back" | "gos_rt_deque_push_front" => (&[ptr_ty, types::I64], None),
         "gos_rt_deque_pop_front"
         | "gos_rt_deque_pop_back"

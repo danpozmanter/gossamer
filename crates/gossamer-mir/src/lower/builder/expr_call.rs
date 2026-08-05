@@ -336,17 +336,45 @@ impl<'a> Builder<'a> {
             }
             if matches!(
                 joined.as_str(),
-                "VecDeque::from"
-                    | "VecDequeue::from"
-                    | "VecQueue::from"
+                "Deque::from"
+                    | "VecDeque::from"
+                    | "collections::Deque::from"
                     | "collections::VecDeque::from"
-                    | "collections::VecDequeue::from"
-                    | "collections::VecQueue::from"
+                    | "std::collections::Deque::from"
                     | "std::collections::VecDeque::from"
-                    | "std::collections::VecDequeue::from"
+                    | "Queue::from"
+                    | "VecQueue::from"
+                    | "collections::Queue::from"
+                    | "collections::VecQueue::from"
+                    | "std::collections::Queue::from"
                     | "std::collections::VecQueue::from"
+                    | "Stack::from"
+                    | "VecStack::from"
+                    | "collections::Stack::from"
+                    | "collections::VecStack::from"
+                    | "std::collections::Stack::from"
+                    | "std::collections::VecStack::from"
             ) && args.len() == 1
             {
+                let (callee, runtime_kind) = match joined.as_str() {
+                    "Queue::from"
+                    | "VecQueue::from"
+                    | "collections::Queue::from"
+                    | "collections::VecQueue::from"
+                    | "std::collections::Queue::from"
+                    | "std::collections::VecQueue::from" => {
+                        ("gos_rt_queue_from_vec_i64", "collections::VecQueue")
+                    }
+                    "Stack::from"
+                    | "VecStack::from"
+                    | "collections::Stack::from"
+                    | "collections::VecStack::from"
+                    | "std::collections::Stack::from"
+                    | "std::collections::VecStack::from" => {
+                        ("gos_rt_stack_from_vec_i64", "collections::VecStack")
+                    }
+                    _ => ("gos_rt_deque_from_vec_i64", "collections::VecDeque"),
+                };
                 let mut source = self.lower_expr(&args[0])?;
                 if let TyKind::Array { elem, len } =
                     self.tcx.kind_of(self.locals[source.0 as usize].ty).clone()
@@ -357,16 +385,13 @@ impl<'a> Builder<'a> {
                 let dest = self.fresh(handle_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str(
-                        "gos_rt_deque_from_vec_i64".to_string(),
-                    )),
+                    callee: Operand::Const(ConstValue::Str(callee.to_string())),
                     args: vec![Operand::Copy(Place::local(source))],
                     destination: Place::local(dest),
                     target: Some(next),
                 });
                 self.set_current(next);
-                self.local_runtime_kind
-                    .insert(dest, "collections::VecDeque");
+                self.local_runtime_kind.insert(dest, runtime_kind);
                 return Some(dest);
             }
             if matches!(
@@ -374,9 +399,15 @@ impl<'a> Builder<'a> {
                 "BinaryHeap::from"
                     | "collections::BinaryHeap::from"
                     | "std::collections::BinaryHeap::from"
+                    | "MaxBinaryHeap::from"
+                    | "collections::MaxBinaryHeap::from"
+                    | "std::collections::MaxBinaryHeap::from"
                     | "MaxHeap::from"
                     | "collections::MaxHeap::from"
                     | "std::collections::MaxHeap::from"
+                    | "MinBinaryHeap::from"
+                    | "collections::MinBinaryHeap::from"
+                    | "std::collections::MinBinaryHeap::from"
                     | "MinHeap::from"
                     | "collections::MinHeap::from"
                     | "std::collections::MinHeap::from"
@@ -390,7 +421,10 @@ impl<'a> Builder<'a> {
                 }
                 let is_min = matches!(
                     joined.as_str(),
-                    "MinHeap::from"
+                    "MinBinaryHeap::from"
+                        | "collections::MinBinaryHeap::from"
+                        | "std::collections::MinBinaryHeap::from"
+                        | "MinHeap::from"
                         | "collections::MinHeap::from"
                         | "std::collections::MinHeap::from"
                 ) || self.binary_heap_ty_is_min(ty)

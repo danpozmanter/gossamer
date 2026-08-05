@@ -441,6 +441,7 @@ impl Scan<'_> {
             ExprKind::Array(arr)
             | ExprKind::FixedArray(arr)
             | ExprKind::QueueLiteral(arr)
+            | ExprKind::StackLiteral(arr)
             | ExprKind::MaxHeapLiteral(arr)
             | ExprKind::MinHeapLiteral(arr) => self.array(arr),
             ExprKind::Struct { fields, base, .. } => {
@@ -648,6 +649,7 @@ impl Finder<'_> {
             ExprKind::Array(arr)
             | ExprKind::FixedArray(arr)
             | ExprKind::QueueLiteral(arr)
+            | ExprKind::StackLiteral(arr)
             | ExprKind::MaxHeapLiteral(arr)
             | ExprKind::MinHeapLiteral(arr) => match arr {
                 ArrayExpr::List(items) => self.walk_exprs(items),
@@ -1024,6 +1026,7 @@ impl Analyzer<'_> {
             ExprKind::Array(arr)
             | ExprKind::FixedArray(arr)
             | ExprKind::QueueLiteral(arr)
+            | ExprKind::StackLiteral(arr)
             | ExprKind::MaxHeapLiteral(arr)
             | ExprKind::MinHeapLiteral(arr) => match arr {
                 ArrayExpr::List(items) => {
@@ -1165,6 +1168,7 @@ fn walk_paths(expr: &Expr, visit: &mut impl FnMut(&Expr)) {
         ExprKind::Array(arr)
         | ExprKind::FixedArray(arr)
         | ExprKind::QueueLiteral(arr)
+        | ExprKind::StackLiteral(arr)
         | ExprKind::MaxHeapLiteral(arr)
         | ExprKind::MinHeapLiteral(arr) => match arr {
             ArrayExpr::List(items) => {

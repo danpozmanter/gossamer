@@ -82,9 +82,9 @@ let first = users[0]              // List/Vec index; traps if out of bounds
 let initial = first.name[0]       // String index is a UTF-8 byte as i64
 let pair = (first.name, first.active)
 let enabled = pair.1
-let mut by_name: HashMap<String, User> = HashMap::new()
+let mut by_name: Map<String, User> = Map::new()
 by_name.insert(first.name, first)
-let cached = by_name.get("Ada")   // HashMap lookup returns Option<V>
+let cached = by_name.get("Ada")   // Map lookup returns Option<V>
 let found = Lookup::Found {
     index: 0
     user: cached.unwrap()
@@ -304,8 +304,12 @@ const DEFAULT_PORT: i64 = 5432
 | `listOf(...)` | `[...]` |
 | `mutableListOf(...)` | `let mut xs = [...]` |
 | `arrayOf(...)` | `#[...]` |
-| `mapOf(k to v)` | `{key: value}` or `{}` for an empty `HashMap` |
-| `setOf(...)` | `#{...}` for `HashSet`, or typed `BTreeSet` |
+| `mapOf(k to v)` | `{key: value}` or `{}` for an empty `Map` |
+| `setOf(...)` | `#{...}` for `Set`, or typed `BTreeSet` |
+| `ArrayDeque` as queue | `Queue<i64>` with `<[a, b]`, `push`, and FIFO `pop` |
+| `ArrayDeque` as stack | `Stack<i64>` with `[a, b]>`, `push`, and LIFO `pop` |
+| `ArrayDeque` as deque | `Deque<i64>` with explicit front/back methods |
+| `PriorityQueue` | `MinHeap<i64>` with `_[...]`, or `MaxHeap<i64>` with `^[...]` |
 | `OkHttp` / `Ktor HttpClient` | `http::Client::new()` or `http::get(url, [])` |
 | `ktor server { ... }` | `http::serve(addr, handler)` |
 | `kotlinx.serialization` | `encoding::json` |

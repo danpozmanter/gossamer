@@ -86,9 +86,9 @@ let first = users[0]              // Vec/array index; traps if out of bounds
 let initial = first.name[0]       // String index is a UTF-8 byte as i64
 let pair = (first.name, first.active)
 let enabled = pair.1              // tuple field
-let mut by_name: HashMap<String, User> = HashMap::new()
+let mut by_name: Map<String, User> = Map::new()
 by_name.insert(first.name, first)
-let cached = by_name.get("Ada")   // HashMap lookup returns Option<V>
+let cached = by_name.get("Ada")   // Map lookup returns Option<V>
 let found = Lookup::Found {
     index: 0
     user: cached.unwrap()
@@ -98,17 +98,24 @@ let found = Lookup::Found {
 ## Collection Literals
 
 Use `[a, b]` for `Vec<T>`, `#[a, b]` or `#[value; N]` for fixed arrays,
-`{key: value}` and `{}` for `HashMap<K, V>`, and `#{a, b}` for `HashSet<T>`.
+`{key: value}` and `{}` for `Map<K, V>`, `#{a, b}` for `Set<T>`,
+`<[a, b]` for `Queue<i64>`, `[a, b]>` for `Stack<i64>`, `^[a, b]`
+for `MaxHeap<i64>` or `BinaryHeap<i64>`, and `_[a, b]` for `MinHeap<i64>`.
 An expected `BTreeSet<T>` type shapes the same set literal into an ordered
-set.
+set. Use `Deque<i64>` when both ends matter.
 
 ```gos
 let values = [1, 2, 3]
 let fixed = #[1, 2, 3]
 let map = {"ada": 36, "grace": 37}
-let empty: HashMap<String, i64> = {}
+let empty: Map<String, i64> = {}
 let set = #{"parse", "lower", "parse"}
 let ordered: BTreeSet<String> = #{"lower", "parse"}
+let queue = <[1, 2, 3]
+let stack = [1, 2, 3]>
+let deque = Deque::from([1, 2, 3])
+let max_heap = ^[1, 2, 3]
+let min_heap = _[1, 2, 3]
 ```
 
 ## Ownership And References
@@ -179,7 +186,7 @@ Gossamer source. For JSON, use `std::encoding::json` APIs and the shapes
 that module supports.
 
 Aggregate values can be used directly in vectors and ordinary structs.
-HashMap and HashSet support is strongest for scalar and string keys;
+Map and Set support is strongest for scalar and string keys;
 aggregate map keys have tier-specific limits, so prefer stable scalar
 keys when code must run across all tiers.
 

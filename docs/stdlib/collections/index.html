@@ -1874,10 +1874,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#hashsett-methods" class="md-nav__link">
+  <a href="#sett-methods" class="md-nav__link">
     <span class="md-ellipsis">
 
-        HashSet&lt;T&gt; methods
+        Set&lt;T&gt; methods
 
     </span>
   </a>
@@ -1931,37 +1931,37 @@
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>BTreeMap</code></a></td>
 <td><code>type BTreeMap</code></td>
-<td>Ordered map surface routed through the typed map runtime.</td>
+<td>Ordered key-value map backed by BTreeMap.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>BTreeSet</code></a></td>
 <td><code>type BTreeSet</code></td>
-<td>Ordered set.</td>
+<td>Ordered unique-value set backed by BTreeSet.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>BinaryHeap</code></a></td>
 <td><code>type BinaryHeap</code></td>
-<td>Compatibility alias for <code>MaxHeap&lt;i64&gt;</code>.</td>
+<td>Alias for <code>MaxHeap&lt;T&gt;</code>; underlying storage is BinaryHeap.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>MaxHeap</code></a></td>
 <td><code>type MaxHeap</code></td>
-<td>Phase 1 max heap shape is <code>MaxHeap&lt;i64&gt;</code>. Use <code>^[1, 2, 3]</code> for literals.</td>
+<td>Max-priority heap (MaxBinaryHeap) backed by BinaryHeap; use <code>^[1, 2, 3]</code> for literals.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>MinHeap</code></a></td>
 <td><code>type MinHeap</code></td>
-<td>Phase 1 min heap shape is <code>MinHeap&lt;i64&gt;</code>. Use <code>_[1, 2, 3]</code> for literals.</td>
+<td>Min-priority heap (MinBinaryHeap) backed by BinaryHeap; use <code>_[1, 2, 3]</code> for literals.</td>
 </tr>
 <tr>
-<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>HashMap</code></a></td>
-<td><code>type HashMap</code></td>
-<td>Hash map backed by the swiss-table layout.</td>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>Map</code></a></td>
+<td><code>type Map</code></td>
+<td>Key-value map (HashMap) backed by the swiss-table layout.</td>
 </tr>
 <tr>
-<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>HashSet</code></a></td>
-<td><code>type HashSet</code></td>
-<td>Unordered set built on top of <code>HashMap</code>.</td>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>Set</code></a></td>
+<td><code>type Set</code></td>
+<td>Unique-value set (HashSet) backed by a hash table.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>Vec</code></a></td>
@@ -1969,19 +1969,19 @@
 <td>Growable contiguous sequence.</td>
 </tr>
 <tr>
-<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>VecDeque</code></a></td>
-<td><code>type VecDeque</code></td>
-<td>Phase 1 double-ended queue shape is <code>VecDeque&lt;i64&gt;</code>.</td>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>Deque</code></a></td>
+<td><code>type Deque</code></td>
+<td>Double-ended queue (VecDeque) with explicit front/back methods such as <code>push_back</code> and <code>pop_front</code>.</td>
 </tr>
 <tr>
-<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>VecDequeue</code></a></td>
-<td><code>type VecDequeue</code></td>
-<td>Alias for <code>VecDeque&lt;i64&gt;</code>.</td>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>Queue</code></a></td>
+<td><code>type Queue</code></td>
+<td>FIFO queue (VecQueue) backed by VecDeque; use <code>&lt;[1, 2, 3]</code> for literals and <code>push</code>, <code>pop</code>, <code>peek</code>, <code>len</code>, <code>is_empty</code>, and <code>clear</code>.</td>
 </tr>
 <tr>
-<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>VecQueue</code></a></td>
-<td><code>type VecQueue</code></td>
-<td>Alias for <code>VecDeque&lt;i64&gt;</code>. Use <code>&lt;[1, 2, 3]&gt;</code> for queue literals.</td>
+<td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>Stack</code></a></td>
+<td><code>type Stack</code></td>
+<td>LIFO stack (VecStack) backed by VecDeque; use <code>[1, 2, 3]&gt;</code> for literals and <code>push</code>, <code>pop</code>, <code>peek</code>, <code>len</code>, <code>is_empty</code>, and <code>clear</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs"><code>len</code></a></td>
@@ -2160,15 +2160,15 @@
 </tr>
 </tbody>
 </table>
-<h2 id="hashsett-methods"><code>HashSet&lt;T&gt;</code> methods<a class="headerlink" href="#hashsett-methods" title="Permanent link">&para;</a></h2>
-<p><code>HashSet</code> provides <code>new</code>, <code>insert</code>, <code>remove</code>, <code>contains</code>, <code>len</code>, <code>is_empty</code>,
+<h2 id="sett-methods"><code>Set&lt;T&gt;</code> methods<a class="headerlink" href="#sett-methods" title="Permanent link">&para;</a></h2>
+<p><code>Set</code> provides <code>new</code>, <code>insert</code>, <code>remove</code>, <code>contains</code>, <code>len</code>, <code>is_empty</code>,
 <code>clear</code>, <code>iter</code>, <code>to_vec</code>, <code>union</code>, <code>intersection</code>, <code>difference</code>,
 <code>symmetric_difference</code>, <code>is_subset</code>, <code>is_superset</code>, and <code>is_disjoint</code>.
-Use <code>#{a, b, c}</code> for a <code>HashSet</code> literal.</p>
-<p>As in Rust, <code>map</code> is an iterator method rather than a <code>HashSet</code> method. Use
+Use <code>#{a, b, c}</code> for a <code>Set</code> literal.</p>
+<p>As in Rust, <code>map</code> is an iterator method rather than a <code>Set</code> method. Use
 <code>set.iter().map(f)</code>. Calling <code>set.map(f)</code> is a type error.</p>
 <h2 id="btreesett-methods"><code>BTreeSet&lt;T&gt;</code> methods<a class="headerlink" href="#btreesett-methods" title="Permanent link">&para;</a></h2>
-<p><code>BTreeSet</code> provides the same set method surface as <code>HashSet</code>, but iteration
+<p><code>BTreeSet</code> provides the same set method surface as <code>Set</code>, but iteration
 and <code>to_vec</code> return values in sorted order. Use an expected type to shape a
 set literal:</p>
 <div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">ordered</span>: <span class="nc">BTreeSet</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>#<span class="p">{</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">}</span>

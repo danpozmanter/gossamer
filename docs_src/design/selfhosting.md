@@ -2,8 +2,8 @@
 
 > This is the original Phase 30 feasibility write-up, kept for its gap
 > analysis. Most prerequisites it lists below have
-> since shipped on all three tiers - growable `Vec`, `HashMap` /
-> `HashSet` / `BTreeMap`, generic functions and types with full
+> since shipped on all three tiers - growable `Vec`, `Map` /
+> `Set` / `BTreeMap`, generic functions and types with full
 > monomorphisation, traits with static dispatch, byte literals, and
 > the `matches!` / `format!` desugar macros - and the `examples/selfhost/`
 > ports it references are no longer in the tree. Read it as a record of
@@ -53,7 +53,7 @@ and are not yet first-class in Gossamer source:
    but the language surface needs a stable story for `push`, `pop`,
    `extend`, `with_capacity`.
 2. **Hash maps.** Every non-trivial compiler phase has a symbol
-   table. `std::collections::HashMap`-equivalent needs a public
+   table. `std::collections::Map`-equivalent needs a public
    surface (`BTreeMap` would do; neither is wired).
 3. **String / byte indexing.** The lexer port calls `byte_at(i)` and
    `slice(start, end)`. These are convenient shorthands over

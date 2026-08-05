@@ -3440,7 +3440,8 @@ Rewrite as <code>if b { ... } else { ... }</code>.</p>
 <h2 id="needless_parens"><code>needless_parens</code><a class="headerlink" href="#needless_parens" title="Permanent link">&para;</a></h2>
 <p><code>(x)</code> without a trailing comma is a needless pair of parens -
 <code>x</code> reads the same. <code>(x,)</code> is a one-tuple and means something
-different.</p>
+different. Closure parameters follow the same rule: write <code>|t|</code>,
+not <code>|(t)|</code>.</p>
 <h2 id="manual_not_equal"><code>manual_not_equal</code><a class="headerlink" href="#manual_not_equal" title="Permanent link">&para;</a></h2>
 <p><code>!(a == b)</code> is just <code>a != b</code>. Prefer the direct operator.</p>
 <h2 id="nested_ternary_if"><code>nested_ternary_if</code><a class="headerlink" href="#nested_ternary_if" title="Permanent link">&para;</a></h2>

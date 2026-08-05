@@ -65,7 +65,7 @@ fn write_kind(tcx: &TyCtxt, kind: &TyKind, out: &mut String) {
         TyKind::Slice(elem) => write_slice(tcx, *elem, out),
         TyKind::Vec(elem) => write_named(tcx, "Vec", &[*elem], out),
         TyKind::Iterator(elem) => write_named(tcx, "Iterator", &[*elem], out),
-        TyKind::HashMap { key, value } => write_named(tcx, "HashMap", &[*key, *value], out),
+        TyKind::HashMap { key, value } => write_named(tcx, "Map", &[*key, *value], out),
         TyKind::Sender(elem) => write_named(tcx, "Sender", &[*elem], out),
         TyKind::Receiver(elem) => write_named(tcx, "Receiver", &[*elem], out),
         TyKind::JoinHandle(elem) => write_named(tcx, "JoinHandle", &[*elem], out),

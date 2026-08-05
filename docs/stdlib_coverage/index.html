@@ -2118,7 +2118,7 @@ evidence visible.</p>
 <tr>
 <td><code>std::strings</code></td>
 <td>experimental</td>
-<td style="text-align: right;">41</td>
+<td style="text-align: right;">44</td>
 <td>module-only</td>
 <td>module-only</td>
 <td>module-only</td>
@@ -2136,11 +2136,11 @@ evidence visible.</p>
 <tr>
 <td><code>std::collections</code></td>
 <td>experimental</td>
-<td style="text-align: right;">6</td>
+<td style="text-align: right;">18</td>
 <td>module-only</td>
 <td>module-only</td>
 <td>module-only</td>
-<td>Vec, HashMap, HashSet, BTreeSet, VecDeque<i64> (both ends), BTreeMap.</td>
+<td>Vec, Map, Set, Deque, Queue, Stack, heaps, and ordered maps/sets.</td>
 </tr>
 <tr>
 <td><code>std::net</code></td>
@@ -2221,7 +2221,7 @@ evidence visible.</p>
 <td>module-only</td>
 <td>module-only</td>
 <td>module-only</td>
-<td>join, split, components, prefixes, unique_prefixes, parent, file_name.</td>
+<td>join, split, base, dir, ext, clean.</td>
 </tr>
 <tr>
 <td><code>std::fs</code></td>
@@ -2586,7 +2586,7 @@ evidence visible.</p>
 <tr>
 <td><code>std::option</code></td>
 <td>experimental</td>
-<td style="text-align: right;">12</td>
+<td style="text-align: right;">16</td>
 <td>none</td>
 <td>none</td>
 <td>none</td>
@@ -3188,6 +3188,18 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::collections::BinaryHeap</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::collections::Deque</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::collections::HashMap</code></td>
 <td>Type</td>
 <td>experimental</td>
@@ -3200,6 +3212,54 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::collections::Map</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::collections::MaxBinaryHeap</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::collections::MaxHeap</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::collections::MinBinaryHeap</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::collections::MinHeap</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::collections::Queue</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::collections::Set</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::collections::Stack</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::collections::Vec</code></td>
 <td>Type</td>
 <td>experimental</td>
@@ -3207,6 +3267,18 @@ the canonical item path.</p>
 </tr>
 <tr>
 <td><code>std::collections::VecDeque</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::collections::VecQueue</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::collections::VecStack</code></td>
 <td>Type</td>
 <td>experimental</td>
 <td>not item-audited</td>
@@ -6674,6 +6746,12 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::option::expect</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::option::filter</code></td>
 <td>Function</td>
 <td>experimental</td>
@@ -6710,6 +6788,18 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::option::ok_or</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::option::ok_or_else</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::option::or</code></td>
 <td>Function</td>
 <td>experimental</td>
@@ -6717,6 +6807,12 @@ the canonical item path.</p>
 </tr>
 <tr>
 <td><code>std::option::or_else</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::option::unwrap</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td>not item-audited</td>
@@ -6896,13 +6992,13 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
-<td><code>std::path::extension</code></td>
+<td><code>std::path::components</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td>not item-audited</td>
 </tr>
 <tr>
-<td><code>std::path::components</code></td>
+<td><code>std::path::extension</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td>not item-audited</td>
@@ -7304,6 +7400,18 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::strings::byte_at</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::strings::byte_len</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::strings::bytes</code></td>
 <td>Function</td>
 <td>experimental</td>
@@ -7473,6 +7581,12 @@ the canonical item path.</p>
 </tr>
 <tr>
 <td><code>std::strings::strip_suffix</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::strings::substring</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td>not item-audited</td>

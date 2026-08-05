@@ -238,7 +238,7 @@ for s in shapes {
         </div>
 
         <div class="tabpanel" role="tabpanel" id="panel-collections" aria-labelledby="tab-collections" hidden>
-<pre><code class="language-gossamer">use std::collections::{BTreeSet, HashMap, HashSet, VecDeque}
+<pre><code class="language-gossamer">use std::collections::{BTreeSet, Map, Set, Deque}
 
 let mut nums = []
 nums.push(10)
@@ -249,18 +249,18 @@ println!("[] Vec: len={} removed={} first={}", nums.len(), dropped, nums[0])
 let fixed = #[1, 2, 3]
 println!("#[] fixed array: len={}", fixed.len())
 
-let mut scores: HashMap&lt;String, i64&gt; = {}
+let mut scores: Map&lt;String, i64&gt; = {}
 scores.insert("ada", 100)
 scores.insert("grace", 95)
 let old_score = scores.remove("ada").unwrap_or(0)
-println!("{} HashMap: len={} removed={} has_grace={}",
+println!("{} Map: len={} removed={} has_grace={}",
     "{}", scores.len(), old_score, scores.contains_key("grace"))
 
 let mut seen = #{}
 seen.insert(3)
 seen.insert(5)
 let removed_seen = seen.remove(3)
-println!("#{} HashSet: len={} removed={} has5={}",
+println!("#{} Set: len={} removed={} has5={}",
     "{}", seen.len(), removed_seen, seen.contains(5))
 
 let mut ordered = #{}
@@ -289,11 +289,20 @@ let front = deque.pop_front().unwrap_or(0)
 let back = deque.pop_back().unwrap_or(0)
 println!("&lt;[]&gt; as deque: front={} back={} len={}", front, back, deque.len())
 
-let mut queue = &lt;[]&gt;
-queue.push_back(7)
-queue.push_back(8)
-let next = queue.pop_front().unwrap_or(0)
-println!("&lt;[]&gt; as queue: next={} len={}", next, queue.len())</code></pre>
+let mut queue = &lt;[];
+queue.push(7)
+queue.push(8)
+queue.push(9)
+let next = queue.pop.unwrap_or(0)
+println!("&lt;[] as queue: next={} len={}", next, queue.len())
+
+let mut stack = []&gt;;
+queue.push(7)
+queue.push(8)
+queue.push(9)
+let next = queue.pop.unwrap_or(0)
+println!("[]&gt; as stack: next={} len={}", next, queue.len())
+</code></pre>
         </div>
       </div>
     </section>

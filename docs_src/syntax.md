@@ -249,13 +249,15 @@ Gossamer follows Rust's sequence model:
 - `[T]` is unsized and is ordinarily used as `&[T]` or `&mut [T]`.
 - `Vec<T>` is the only owned growable sequence. Bracket literals such as
   `[a, b]` create Vec values by default.
-- `{key: value}` creates a `HashMap<K, V>`, and `#{a, b}` creates a
-  `HashSet<T>` unless an expected `BTreeSet<T>` type shapes it.
-- `<[a, b]>` creates a `VecDeque<i64>` queue, `^[a, b]` creates a
-  `MaxHeap<i64>`, and `_[a, b]` creates a `MinHeap<i64>` in Phase 1.
+- `{key: value}` creates a `Map<K, V>`, and `#{a, b}` creates a
+  `Set<T>` unless an expected `BTreeSet<T>` type shapes it.
+- `<[a, b]` creates a `Queue<i64>` FIFO queue, `[a, b]>` creates a
+  `Stack<i64>` LIFO stack, `^[a, b]` creates a `MaxHeap<i64>`, and
+  `_[a, b]` creates a `MinHeap<i64>` in Phase 1.
 
 See [Collection literals](collection_literals.md) for examples of Vec,
-fixed-array, HashMap, HashSet, BTreeSet, VecDeque, MaxHeap, and MinHeap
+fixed-array, Map, Set, BTreeSet, Queue, Stack, Deque,
+MaxHeap, and MinHeap
 construction.
 
 `&[T; N]` and `&Vec<T>` coerce to `&[T]`; their mutable forms coerce to

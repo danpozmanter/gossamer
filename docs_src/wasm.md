@@ -15,7 +15,7 @@ The whole language plus the pure standard library work unchanged:
 
 - **Language** - types, pattern matching, generics, traits, closures,
   `Result` / `?`, the `|>` pipe, `arena { }`, deterministic reference counting.
-- **Collections** - `Vec`, `HashMap`, `HashSet`, `BTreeSet`, `BTreeMap`.
+- **Collections** - `Vec`, `Map`, `Set`, `BTreeSet`, `BTreeMap`.
 - **Pure stdlib** - `math`, `encoding` (json / yaml / toml / base64 / hex /
   binary / csv / pem / xml / base32), hashing (`crc32` / `adler32` / `fnv`),
   `regex`, iterators, `format!` / `println!`, `strings`, `unicode` / `utf8`,

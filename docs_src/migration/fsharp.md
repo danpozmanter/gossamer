@@ -79,14 +79,21 @@ let first = users[0]              // Vec/array index; traps if out of bounds
 let initial = first.name[0]       // String index is a UTF-8 byte as i64
 let pair = (first.name, first.active)
 let enabled = pair.1
-let mut by_name: HashMap<String, User> = HashMap::new()
+let mut by_name: Map<String, User> = Map::new()
 by_name.insert(first.name, first)
-let cached = by_name.get("Ada")   // HashMap lookup returns Option<V>
+let cached = by_name.get("Ada")   // Map lookup returns Option<V>
 let found = Lookup::Found {
     index: 0
     user: cached.unwrap()
 }
 ```
+
+Gossamer collection literals cover the common F# collection shapes:
+`[a, b]` for `Vec<T>`, `#[a, b]` for a fixed array, `{key: value}` for
+`Map<K, V>`, `#{a, b}` for `Set<T>` or an expected `BTreeSet<T>`,
+`<[a, b]` for `Queue<i64>`, `[a, b]>` for `Stack<i64>`, `^[a, b]`
+for `MaxHeap<i64>`, and `_[a, b]` for `MinHeap<i64>`. Use `Deque<i64>`
+when both ends matter.
 
 ## Pipe Operator
 

@@ -3050,7 +3050,7 @@ fn phase1_runtime_collection_shapes_reject_unsupported_generics() {
         ),
         (
             "queue literal string",
-            "fn main() { let q = <[\"a\"]>\n println!(\"{}\", q.len()) }\n",
+            "fn main() { let mut q = <[\"a\"]\n println!(\"{}\", q.pop().unwrap_or(0)) }\n",
             "i64",
             "String",
         ),

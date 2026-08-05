@@ -153,7 +153,8 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "GL0028",
         "`(x)` without a trailing comma is a needless pair of parens -\n\
             `x` reads the same. `(x,)` is a one-tuple and means something\n\
-            different.",
+            different. Closure parameters follow the same rule: write `|t|`,\n\
+            not `|(t)|`.",
     ),
     (
         "GL0029",

@@ -147,6 +147,7 @@ impl Checker<'_> {
             ExprKind::Array(arr)
             | ExprKind::FixedArray(arr)
             | ExprKind::QueueLiteral(arr)
+            | ExprKind::StackLiteral(arr)
             | ExprKind::MaxHeapLiteral(arr)
             | ExprKind::MinHeapLiteral(arr) => self.walk_array(arr),
             ExprKind::Range { start, end, .. } => {

@@ -1,7 +1,7 @@
 # Methods by type
 
 This page is the source-facing reference for inherent methods on core
-types such as `String`, `Vec`, `HashMap`, `HashSet`, `BTreeSet`, `Option`, and
+types such as `String`, `Vec`, `Map`, `Set`, `BTreeSet`, `Option`, and
 `Result`.
 
 Items listed here resolve in `gos` (interpreter), forced-JIT execution,
@@ -69,9 +69,13 @@ cannot change their length or capacity. Iterator combinators are used through
 | `&mut [T; N]`, `&mut [T]` | Shared methods plus in-place `sort`, `sort_by`, `sort_by_key`, `reverse`, `swap`, and `fill` |
 | `Vec<T>`, `&Vec<T>`, `&mut Vec<T>` | Shared methods plus eager combinators, resizing, and capacity operations |
 
-Map literals such as `{"one": 1}` construct `HashMap` values. Set literals
-such as `#{1, 2, 2}` construct `HashSet` values, or `BTreeSet` values when an
+Map literals such as `{"one": 1}` construct `Map` values. Set literals
+such as `#{1, 2, 2}` construct `Set` values, or `BTreeSet` values when an
 expected `BTreeSet<T>` type is present.
+
+Longer aliases remain accepted: `HashMap` for `Map`, `HashSet` for `Set`,
+`VecDeque` for `Deque`, `VecQueue` for `Queue`, `VecStack` for `Stack`,
+`MaxBinaryHeap` for `MaxHeap`, and `MinBinaryHeap` for `MinHeap`.
 
 | Method | Returns | Notes |
 |---|---|---|
@@ -107,11 +111,11 @@ expected `BTreeSet<T>` type is present.
 | `v.swap(i, j)` | `Result<(), errors::Error>` | Exchanges two existing elements or returns a bounds error. |
 | `v.fill(value)` | `()` | Clones `value` into every existing element without changing length or capacity; also available on mutable arrays and slices. |
 
-## HashMap
+## Map
 
 | Method | Returns | Notes |
 |---|---|---|
-| `HashMap::from<K, V, const N: usize>([(K, V); N])` | `HashMap<K, V>` | Associated function; accepts array pairs. Map literals such as `{"one": 1}` construct `HashMap` values directly. |
+| `Map::from<K, V, const N: usize>([(K, V); N])` | `Map<K, V>` | Associated function; accepts array pairs. Map literals such as `{"one": 1}` construct `Map` values directly. |
 | `m.insert(k, v)` | `Option<V>` | Inserts or overwrites in place and returns the previous value when present. |
 | `m.get(k)` | `Option<V>` | `None` when the key is absent. |
 | `m.get_or(k, default)` | `V` | Value for `k`, or `default` when absent. |
@@ -125,7 +129,7 @@ expected `BTreeSet<T>` type is present.
 
 ## BTreeMap
 
-BTreeMap uses the same typed map runtime as HashMap, with key-sorted user-facing
+BTreeMap uses the same typed map runtime as Map, with key-sorted user-facing
 iteration.
 
 | Method | Returns | Notes |
@@ -142,7 +146,7 @@ iteration.
 | `m.iter()` | `Vec<(String, i64)>` | Yields pairs in ascending key order. |
 | `m.keys()` / `m.values()` | `Vec<String>` / `Vec<i64>` | Snapshots keys or values in key order. |
 
-## HashSet
+## Set
 
 | Method | Returns | Notes |
 |---|---|---|
@@ -152,23 +156,23 @@ iteration.
 | `s.len()` | `i64` | |
 | `s.clear()` | `()` | Removes all values. |
 | `s.to_vec()` | `Vec<T>` | Materialises the set values. |
-| `s.union(other)` | `HashSet<T>` | Set union. |
-| `s.intersection(other)` | `HashSet<T>` | Shared values. |
-| `s.difference(other)` | `HashSet<T>` | Values present only in `s`. |
-| `s.symmetric_difference(other)` | `HashSet<T>` | Values present in exactly one set. |
+| `s.union(other)` | `Set<T>` | Set union. |
+| `s.intersection(other)` | `Set<T>` | Shared values. |
+| `s.difference(other)` | `Set<T>` | Values present only in `s`. |
+| `s.symmetric_difference(other)` | `Set<T>` | Values present in exactly one set. |
 | `s.is_subset(other)` / `s.is_superset(other)` | `bool` | Inclusion checks. |
 | `s.is_disjoint(other)` | `bool` | True when the sets share no values. |
 
 ## BTreeSet
 
-`BTreeSet<T>` has the same method surface as `HashSet<T>`, with ordered
+`BTreeSet<T>` has the same method surface as `Set<T>`, with ordered
 iteration and `to_vec` output.
 
-## VecDeque
+## Deque
 
-Phase 1 `VecDeque` support is `VecDeque<i64>`. It is a double-ended ring
-buffer; both ends are constant-time. The spelling `VecDequeue<i64>` is accepted
-as an alias. The pop / peek methods return `Option<i64>`.
+Phase 1 `Deque` support is `Deque<i64>`. It is a double-ended ring
+buffer; both ends are constant-time. The pop / peek methods return
+`Option<i64>`. Like Rust's `VecDeque`, use explicit front/back method names.
 
 | Method | Returns | Notes |
 |---|---|---|
@@ -181,6 +185,36 @@ as an alias. The pop / peek methods return `Option<i64>`.
 | `d.len()` | `i64` | |
 | `d.is_empty()` | `bool` | |
 | `d.clear()` | `()` | Removes all values. |
+
+## Queue
+
+Phase 1 `Queue` support is `Queue<i64>`. It is a restricted FIFO queue:
+`push` appends to the back, `pop` removes from the front, and `peek` observes
+the front without removing it. Use `<[a, b]` for literals.
+
+| Method | Returns | Notes |
+|---|---|---|
+| `q.push(v)` | `()` | Append to the back. |
+| `q.pop()` | `Option<i64>` | Remove and return the front element. |
+| `q.peek()` | `Option<i64>` | Return the front element without removing it. |
+| `q.len()` | `i64` | |
+| `q.is_empty()` | `bool` | |
+| `q.clear()` | `()` | Removes all values. |
+
+## Stack
+
+Phase 1 `Stack` support is `Stack<i64>`. It is a restricted LIFO stack:
+`push` appends to the top, `pop` removes from the top, and `peek` observes
+the top without removing it. Use `[a, b]>` for literals.
+
+| Method | Returns | Notes |
+|---|---|---|
+| `s.push(v)` | `()` | Push onto the top. |
+| `s.pop()` | `Option<i64>` | Remove and return the top element. |
+| `s.peek()` | `Option<i64>` | Return the top element without removing it. |
+| `s.len()` | `i64` | |
+| `s.is_empty()` | `bool` | |
+| `s.clear()` | `()` | Removes all values. |
 
 ## Option
 

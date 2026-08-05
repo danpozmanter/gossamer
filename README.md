@@ -110,11 +110,37 @@ Note: Fixed array & Vec construction differs from Rust.
 |---|---|---|
 | Vec | [] | [1,2,3] |
 | Fixed Array | #[] | #[1,2,3] |
-| HashMap | {} | {"one": 1, "two": 2, "three": 3} |
-| HashSet | #{} | {1,2,3} |
+| Map | {} | {"one": 1, "two": 2, "three": 3} |
+| Set | #{} | #{1,2,3} |
 | MaxHeap | ^[] | ^[1,2,3] |
 | MinHeap | _[] | _[1,2,3] |
-| VecDeque | <[]> | <[1,2,3]> |
+| Queue | <[] | <[1,2,3] |
+| Stack | []> | [1,2,3]> |
+| Deque | Deque::new() | Deque::from([1,2,3]) |
+
+**Distinct Types for Queue, Stack, MinHeap, MaxHeap**
+
+Gossamer implements distinct types here instead of reusing existing structures.
+
+Typically:
+
+* MinHeap: MaxHeap with Reverse (or similar)
+* Stack: Vec with specific method usage
+* Queue: Deque with specific method usage
+
+This enables having a stronger type contract as well as making it more convenient to write.
+
+If I want to know an argument to a function only allows LIFO behavior - I'd use Stack over Vec.
+
+If I want a MinHeap - I can create it and use push/pop without worrying about making
+the number a negative, or using "Reverse" to wrap it.
+
+Of course you can still use the other structures - but the recommended course of action
+is to use the dedicated ones.
+
+Longer aliases remain accepted: `HashMap` for `Map`, `HashSet` for `Set`,
+`VecDeque` for `Deque`, `VecQueue` for `Queue`, `VecStack` for `Stack`,
+`MaxBinaryHeap` for `MaxHeap`, and `MinBinaryHeap` for `MinHeap`.
 
 ## Details
 
@@ -285,8 +311,8 @@ Sequence types follow Rust's model. `[T; N]` is an owned fixed-size array,
 owned growable sequence. A bracket literal such as `[1, 2, 3]` creates a
 `Vec` by default. Use `#[1, 2, 3]` when a fixed array is required explicitly,
 or let an expected fixed type such as `[i64; 3]` shape a plain bracket literal.
-Map literals use `{key: value}` and construct `HashMap` values. Set literals
-use `#{value, ...}` and construct `HashSet` values, or `BTreeSet` values when
+Map literals use `{key: value}` and construct `Map` values. Set literals
+use `#{value, ...}` and construct `Set` values, or `BTreeSet` values when
 an expected `BTreeSet<T>` type is present.
 References to arrays and Vec values coerce to slice references in the same
 four shared and mutable forms as Rust. Arrays and slices expose the implemented

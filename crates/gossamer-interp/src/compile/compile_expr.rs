@@ -6,6 +6,8 @@ const BTREE_SET_DEF_LOCAL: u32 = u32::MAX - 18;
 const VEC_DEQUE_DEF_LOCAL: u32 = u32::MAX - 19;
 const BINARY_HEAP_DEF_LOCAL: u32 = u32::MAX - 28;
 const MIN_HEAP_DEF_LOCAL: u32 = u32::MAX - 30;
+const VEC_QUEUE_DEF_LOCAL: u32 = u32::MAX - 31;
+const VEC_STACK_DEF_LOCAL: u32 = u32::MAX - 32;
 
 /// Peels any `&expr` / `&mut expr` borrow wrappers off an expression,
 /// returning the underlying place. The for-loop desugar emits
@@ -3072,7 +3074,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 let owner = if def.local == BTREE_SET_DEF_LOCAL {
                     "BTreeSet"
                 } else {
-                    "HashSet"
+                    "Set"
                 };
                 Some(format!("{owner}::{}", name.name))
             }
@@ -3091,7 +3093,21 @@ impl<'tcx> FnBuilder<'tcx> {
                             | "clear"
                     ) =>
             {
-                Some(format!("VecDeque::{}", name.name))
+                Some(format!("Deque::{}", name.name))
+            }
+            Some(TyKind::Adt { def, .. })
+                if matches!(def.local, VEC_QUEUE_DEF_LOCAL | VEC_STACK_DEF_LOCAL)
+                    && matches!(
+                        name.name.as_str(),
+                        "push" | "pop" | "peek" | "len" | "is_empty" | "clear"
+                    ) =>
+            {
+                let owner = if def.local == VEC_STACK_DEF_LOCAL {
+                    "Stack"
+                } else {
+                    "Queue"
+                };
+                Some(format!("{owner}::{}", name.name))
             }
             Some(TyKind::Adt { def, .. })
                 if matches!(def.local, BINARY_HEAP_DEF_LOCAL | MIN_HEAP_DEF_LOCAL)
@@ -3110,7 +3126,7 @@ impl<'tcx> FnBuilder<'tcx> {
             _ => None,
         };
         let dispatch_name = if is_map_pop {
-            "HashMap::pop"
+            "Map::pop"
         } else if matches!(name.name.as_str(), "wrapping_add" | "wrapping_mul") {
             match self.tcx.kind(resolved_receiver_ty) {
                 Some(TyKind::Int(int_ty)) => match int_ty {
@@ -3277,6 +3293,11 @@ impl<'tcx> FnBuilder<'tcx> {
             Some(TyKind::HashMap { .. }) => name.name == "clear",
             Some(TyKind::Adt { def, .. }) if def.local == VEC_DEQUE_DEF_LOCAL => {
                 matches!(name.name.as_str(), "push_back" | "push_front")
+            }
+            Some(TyKind::Adt { def, .. })
+                if matches!(def.local, VEC_QUEUE_DEF_LOCAL | VEC_STACK_DEF_LOCAL) =>
+            {
+                matches!(name.name.as_str(), "push" | "clear")
             }
             Some(TyKind::Adt { def, .. })
                 if matches!(def.local, BINARY_HEAP_DEF_LOCAL | MIN_HEAP_DEF_LOCAL) =>
@@ -3520,15 +3541,15 @@ impl<'tcx> FnBuilder<'tcx> {
                 let is_map_new = args.is_empty()
                     && matches!(
                         segs.as_slice(),
-                        ["HashMap" | "BTreeMap", "new"]
-                            | ["collections", "HashMap" | "BTreeMap", "new"]
+                        ["Map" | "HashMap" | "BTreeMap", "new"]
+                            | ["collections", "Map" | "HashMap" | "BTreeMap", "new"]
                     );
                 let is_empty_map_from = args.len() == 1
                     && matches!(self.tcx.kind(args[0].ty), Some(TyKind::Unit))
                     && matches!(
                         segs.as_slice(),
-                        ["HashMap" | "BTreeMap", "from"]
-                            | ["collections", "HashMap" | "BTreeMap", "from"]
+                        ["Map" | "HashMap" | "BTreeMap", "from"]
+                            | ["collections", "Map" | "HashMap" | "BTreeMap", "from"]
                     );
                 if (is_map_new || is_empty_map_from) && self.is_int_map_ty(result_ty) {
                     let dst = self.alloc_reg();

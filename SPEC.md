@@ -385,10 +385,14 @@ through `.as_bytes()` which returns an owned `Vec<u8>`.
 | `Vec<T>` | Owned growable sequence. |
 | `[T; N]` | Owned fixed-size array. The length is part of its type. |
 | `[T]` | Unsized slice. Ordinarily used as `&[T]` or `&mut [T]`. |
-| `HashMap<K, V>` | Hash map. Analogue of Go's `map[K]V`. |
+| `Map<K, V>` | Hash map. Analogue of Go's `map[K]V`. |
 | `BTreeMap<K, V>` | Ordered map. |
-| `HashSet<T>` | Unordered set. |
+| `Set<T>` | Unordered set. |
 | `BTreeSet<T>` | Ordered set. |
+| `Deque<T>` | Double-ended queue. |
+| `Queue<T>` | FIFO queue. |
+| `Stack<T>` | LIFO stack. |
+| `MaxHeap<T>`, `MinHeap<T>` | Priority heaps. |
 | `Sender<T>`, `Receiver<T>` | Channel endpoints. Always come as a pair from `channel<T>()`. |
 
 Arrays and Vec use value semantics. A writable Vec copy has independent
@@ -776,7 +780,7 @@ struct-payload (`Rect { w, h }`) variants may be mixed freely:
 `Default` (which selects the `#[default]` unit variant) all derive and
 run identically on every tier.
 
-A struct / tuple used as a `HashMap` / `HashSet` key is hashed and compared by
+A struct / tuple used as a `Map` / `Set` key is hashed and compared by
 value on every tier - so two equal-valued keys at distinct allocations resolve
 to the same entry - with no `#[derive(Hash)]`; hashing is automatic, and
 `#[derive(Hash)]` is rejected (`GT0025`).
@@ -1586,7 +1590,7 @@ Every type has a zero value:
 - `bool`: `false`.
 - `char`: `'\0'`.
 - `String`: empty string.
-- `Vec<T>`, `HashMap<K, V>`, channel endpoints: `Empty`/`None`-like
+- `Vec<T>`, `Map<K, V>`, channel endpoints: `Empty`/`None`-like
   empty containers, not `None`.
 - `Option<T>`: `None`.
 - Enums: the first-declared variant, if it has no payload; otherwise
@@ -1889,7 +1893,7 @@ This is an outline; full API docs ship with the first implementation.
 
 **One obvious way.** Transformations (`map`, `filter`, `fold`,
 `reduce`, `partition`, …) live as **free functions in `std::iter`
-only**. `Vec<T>`, `HashMap<K, V>`, `HashSet<T>`, `BTreeMap<K, V>`,
+only**. `Vec<T>`, `Map<K, V>`, `Set<T>`, `BTreeMap<K, V>`,
 `Receiver<T>`, and friends do **not** carry `.map(…)` / `.filter(…)`
 / `.fold(…)` methods. F#'s `Seq`/`List`/`Array` module convention
 applies: data flows through `|>` into free functions; the surface
@@ -1936,7 +1940,7 @@ The HIR desugars to
 
 - binding the iter once outside the loop so each `.next()`
 call advances the same state. `IntoIterator` is implicit:
-`Vec<T>`, `HashMap<K,V>`, ranges, `Receiver<T>`, and any
+`Vec<T>`, `Map<K,V>`, ranges, `Receiver<T>`, and any
 user struct with `fn next(&mut self) -> Option<T>` are all
 iterable directly. A range stored in a binding retains its iterator state:
 `let a = 0..3` followed by `for i in a { body }` visits `0`, `1`, and `2`.
@@ -2014,9 +2018,11 @@ transformation when the chain doesn't return from the enclosing fn.
 
 ### 10.7 `std::collections`
 
-- `Vec<T>`, `HashMap<K, V>`, `BTreeMap<K, V>`, `HashSet<T>`, and
-  `VecDeque<T>`. Sequence, heap, queue, stack, deque, and ordered-container
+- `Vec<T>`, `Map<K, V>`, `BTreeMap<K, V>`, `Set<T>`, `Deque<T>`,
+  `Queue<T>`, and `Stack<T>`. Sequence, heap, queue, stack, deque, and ordered-container
   modules remain Experimental unless promoted by the feature registry.
+  `HashMap`, `HashSet`, `VecDeque`, `VecQueue`, `VecStack`,
+  `MaxBinaryHeap`, and `MinBinaryHeap` remain accepted aliases.
 
 ### 10.8 `std::sync`
 
@@ -2071,7 +2077,7 @@ create a compatibility promise without improving fidelity.
   `from_json` is the canonical one-line, serde-style deserializer:
   it validates each field against the declared field type
   recursively (nested structs by source name, `Vec<T>` / `[T; N]` /
-  tuples / `Option<T>` / `HashMap<String, V>` walk
+  tuples / `Option<T>` / `Map<String, V>` walk
   through, `json::Value` fields pass through). Missing required
   fields and type mismatches surface as
   `Result::Err(errors::Error)` with a path-qualified message.
@@ -2299,7 +2305,7 @@ includes the Rust macros a newcomer reaches for: there is no `vec!`,
 
 - Collection literals use `[a, b]` / `[v; N]` for `Vec` values by default.
   Use `#[a, b]` / `#[v; N]` for fixed arrays, `{}` or `{k: v}` for
-  `HashMap`, and `#{a, b}` for set values; there is no `vec!`, `map!`, or
+  `Map`, and `#{a, b}` for set values; there is no `vec!`, `map!`, or
   `set!`.
 - `assert(cond[, msg])` and `assert_eq(a, b[, msg])` are prelude
   *functions* called without a `!`; `std::testing` provides the
@@ -2591,7 +2597,7 @@ that needs to materialize a 2027 iterator uses `iter::collect`.
     `std::iter`, `std::option`, and `std::result` ship F#-style
     free-function chaining APIs (see §10.4-§10.4b) with data-last
     argument order so they thread cleanly through `|>`. Unlike
-    Rust, collections (`Vec<T>`, `HashMap<K, V>`, `HashSet<T>`,
+    Rust, collections (`Vec<T>`, `Map<K, V>`, `Set<T>`,
     `BTreeMap<K, V>`) do **not** carry `.map`/`.filter`/`.fold`/
     `.reduce`/`.partition`/etc. methods - `iter::*` free functions
     are the one obvious way to chain transformations. `Option<T>`

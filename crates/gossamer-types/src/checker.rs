@@ -121,6 +121,8 @@ const VEC_DEQUE_DEF_LOCAL: u32 = u32::MAX - 19;
 const BINARY_HEAP_DEF_LOCAL: u32 = u32::MAX - 28;
 const REVERSE_DEF_LOCAL: u32 = u32::MAX - 29;
 const MIN_HEAP_DEF_LOCAL: u32 = u32::MAX - 30;
+const VEC_QUEUE_DEF_LOCAL: u32 = u32::MAX - 31;
+const VEC_STACK_DEF_LOCAL: u32 = u32::MAX - 32;
 
 /// Expected type pushed down into an expression while it is checked -
 /// the "checking mode" of bidirectional typechecking. The expectation
@@ -2979,6 +2981,7 @@ impl<'a> TypeChecker<'a> {
             ExprKind::MapLiteral(entries) => self.check_map_literal(entries, expected),
             ExprKind::SetLiteral(entries) => self.check_set_literal(entries, expected),
             ExprKind::QueueLiteral(arr) => self.check_queue_literal(arr, expected),
+            ExprKind::StackLiteral(arr) => self.check_stack_literal(arr, expected),
             ExprKind::MaxHeapLiteral(arr) => self.check_max_heap_literal(arr, expected),
             ExprKind::MinHeapLiteral(arr) => self.check_min_heap_literal(arr, expected),
             ExprKind::Struct {
@@ -4313,7 +4316,9 @@ impl<'a> TypeChecker<'a> {
     ) -> Option<Ty> {
         if !matches!(
             module,
-            ["HashMap"] | ["collections", "HashMap"] | ["std", "collections", "HashMap"]
+            ["Map" | "HashMap"]
+                | ["collections", "Map" | "HashMap"]
+                | ["std", "collections", "Map" | "HashMap"]
         ) || !matches!(last, "pop" | "get" | "insert" | "remove")
         {
             return None;
@@ -4685,19 +4690,27 @@ impl<'a> TypeChecker<'a> {
                 let elem = self.fresh();
                 Some(self.tcx.intern(TyKind::Vec(elem)))
             }
-            "VecDeque" | "VecDequeue" | "VecQueue" => {
+            "Deque" | "VecDeque" => {
                 let elem = self.tcx.int_ty(IntTy::I64);
                 Some(self.vecdeque_ty(elem))
             }
-            "BinaryHeap" | "MaxHeap" => {
+            "Queue" | "VecQueue" => {
+                let elem = self.tcx.int_ty(IntTy::I64);
+                Some(self.vecqueue_ty(elem))
+            }
+            "Stack" | "VecStack" => {
+                let elem = self.tcx.int_ty(IntTy::I64);
+                Some(self.vecstack_ty(elem))
+            }
+            "BinaryHeap" | "MaxBinaryHeap" | "MaxHeap" => {
                 let elem = self.tcx.int_ty(IntTy::I64);
                 Some(self.binary_heap_ty(elem))
             }
-            "MinHeap" => {
+            "MinBinaryHeap" | "MinHeap" => {
                 let elem = self.tcx.int_ty(IntTy::I64);
                 Some(self.min_heap_ty(elem))
             }
-            "HashMap" => {
+            "Map" | "HashMap" => {
                 let key = self.fresh();
                 let value = self.fresh();
                 Some(self.tcx.intern(TyKind::HashMap { key, value }))
@@ -4707,7 +4720,7 @@ impl<'a> TypeChecker<'a> {
                 let value = self.fresh();
                 Some(self.tcx.intern(TyKind::HashMap { key, value }))
             }
-            "HashSet" | "BTreeSet" => {
+            "Set" | "HashSet" | "BTreeSet" => {
                 let elem = self.fresh();
                 Some(self.set_ty(tail, elem))
             }
@@ -4749,29 +4762,41 @@ impl<'a> TypeChecker<'a> {
                 let elem = array_source_elem(self);
                 Some(self.tcx.intern(TyKind::Vec(elem)))
             }
-            "HashSet" | "BTreeSet" => {
+            "Set" | "HashSet" | "BTreeSet" => {
                 let elem = array_source_elem(self);
                 Some(self.set_ty(owner, elem))
             }
-            "VecDeque" | "VecDequeue" | "VecQueue" => {
+            "Deque" | "VecDeque" => {
                 let elem = array_source_elem(self);
                 self.require_phase1_i64_collection_elem(elem, owner, span);
                 let elem = self.tcx.int_ty(IntTy::I64);
                 Some(self.vecdeque_ty(elem))
             }
-            "BinaryHeap" | "MaxHeap" => {
+            "Queue" | "VecQueue" => {
+                let elem = array_source_elem(self);
+                self.require_phase1_i64_collection_elem(elem, owner, span);
+                let elem = self.tcx.int_ty(IntTy::I64);
+                Some(self.vecqueue_ty(elem))
+            }
+            "Stack" | "VecStack" => {
+                let elem = array_source_elem(self);
+                self.require_phase1_i64_collection_elem(elem, owner, span);
+                let elem = self.tcx.int_ty(IntTy::I64);
+                Some(self.vecstack_ty(elem))
+            }
+            "BinaryHeap" | "MaxBinaryHeap" | "MaxHeap" => {
                 let elem = array_source_elem(self);
                 self.require_phase1_i64_collection_elem(elem, owner, span);
                 let elem = self.tcx.int_ty(IntTy::I64);
                 Some(self.binary_heap_ty(elem))
             }
-            "MinHeap" => {
+            "MinBinaryHeap" | "MinHeap" => {
                 let elem = array_source_elem(self);
                 self.require_phase1_i64_collection_elem(elem, owner, span);
                 let elem = self.tcx.int_ty(IntTy::I64);
                 Some(self.min_heap_ty(elem))
             }
-            "HashMap" | "BTreeMap" => {
+            "Map" | "HashMap" | "BTreeMap" => {
                 let (key, value) = if let Some(
                     TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem),
                 ) = self.tcx.kind(source)
@@ -5688,7 +5713,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn hashset_ty(&mut self, elem: Ty) -> Ty {
-        self.set_ty("HashSet", elem)
+        self.set_ty("Set", elem)
     }
 
     fn btreeset_ty(&mut self, elem: Ty) -> Ty {
@@ -5698,7 +5723,21 @@ impl<'a> TypeChecker<'a> {
     fn vecdeque_ty(&mut self, elem: Ty) -> Ty {
         let substs = crate::Substs::from_types([elem]);
         let def = gossamer_resolve::DefId::local(VEC_DEQUE_DEF_LOCAL);
-        self.tcx.register_def_name(def, "VecDeque");
+        self.tcx.register_def_name(def, "Deque");
+        self.tcx.intern(TyKind::Adt { def, substs })
+    }
+
+    fn vecqueue_ty(&mut self, elem: Ty) -> Ty {
+        let substs = crate::Substs::from_types([elem]);
+        let def = gossamer_resolve::DefId::local(VEC_QUEUE_DEF_LOCAL);
+        self.tcx.register_def_name(def, "Queue");
+        self.tcx.intern(TyKind::Adt { def, substs })
+    }
+
+    fn vecstack_ty(&mut self, elem: Ty) -> Ty {
+        let substs = crate::Substs::from_types([elem]);
+        let def = gossamer_resolve::DefId::local(VEC_STACK_DEF_LOCAL);
+        self.tcx.register_def_name(def, "Stack");
         self.tcx.intern(TyKind::Adt { def, substs })
     }
 
@@ -5738,7 +5777,7 @@ impl<'a> TypeChecker<'a> {
         let substs = crate::Substs::from_types([elem]);
         let (local, name) = match owner {
             "BTreeSet" => (BTREE_SET_DEF_LOCAL, "BTreeSet"),
-            _ => (HASH_SET_DEF_LOCAL, "HashSet"),
+            _ => (HASH_SET_DEF_LOCAL, "Set"),
         };
         let def = gossamer_resolve::DefId::local(local);
         self.tcx.register_def_name(def, name);
@@ -5753,7 +5792,7 @@ impl<'a> TypeChecker<'a> {
                 let owner = if def.local == BTREE_SET_DEF_LOCAL {
                     "BTreeSet"
                 } else {
-                    "HashSet"
+                    "Set"
                 };
                 substs
                     .types()
@@ -5955,6 +5994,41 @@ impl<'a> TypeChecker<'a> {
         None
     }
 
+    fn check_queue_or_stack_method(
+        &mut self,
+        method: &str,
+        receiver_ty: Ty,
+        span: gossamer_lex::Span,
+        args: &[Expr],
+    ) -> Option<Ty> {
+        let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
+            resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        if let Some(TyKind::Adt { def, substs }) = self.tcx.kind(resolved)
+            && matches!(def.local, VEC_QUEUE_DEF_LOCAL | VEC_STACK_DEF_LOCAL)
+        {
+            let elem = substs.types().first().copied();
+            let i64_ty = self.tcx.int_ty(IntTy::I64);
+            if let Some(elem) = elem {
+                self.unify(i64_ty, elem, span);
+            }
+            return match method {
+                "push" if args.len() == 1 => {
+                    let v = self.check_expr_expecting(&args[0], Expectation::HasType(i64_ty));
+                    self.unify(i64_ty, v, args[0].span);
+                    Some(self.tcx.unit())
+                }
+                "pop" | "peek" if args.is_empty() => Some(self.option_adt_ty(i64_ty)),
+                "len" if args.is_empty() => Some(self.tcx.int_ty(IntTy::I64)),
+                "is_empty" if args.is_empty() => Some(self.tcx.bool_ty()),
+                "clear" if args.is_empty() => Some(self.tcx.unit()),
+                _ => None,
+            };
+        }
+        None
+    }
+
     fn check_binary_heap_method(
         &mut self,
         method: &str,
@@ -6084,6 +6158,10 @@ impl<'a> TypeChecker<'a> {
         if let Some(ty) = self.check_deque_method(method, receiver_ty, receiver.span, args) {
             return ty;
         }
+        if let Some(ty) = self.check_queue_or_stack_method(method, receiver_ty, receiver.span, args)
+        {
+            return ty;
+        }
         if let Some(ty) = self.check_binary_heap_method(method, receiver_ty, args, receiver.span) {
             return ty;
         }
@@ -6130,6 +6208,9 @@ impl<'a> TypeChecker<'a> {
             return resolved;
         }
         if self.reject_collection_method_arity(resolved, method, args.len(), receiver.span) {
+            return self.tcx.error_ty();
+        }
+        if self.reject_unknown_deque_method(resolved, method, receiver.span) {
             return self.tcx.error_ty();
         }
         if let Some(ty) =
@@ -6324,6 +6405,29 @@ impl<'a> TypeChecker<'a> {
         true
     }
 
+    fn reject_unknown_deque_method(&mut self, resolved: Ty, method: &str, span: Span) -> bool {
+        let is_vec_deque = matches!(
+            self.tcx.kind(resolved),
+            Some(TyKind::Adt { def, .. })
+                if matches!(
+                    def.local,
+                    VEC_DEQUE_DEF_LOCAL | VEC_QUEUE_DEF_LOCAL | VEC_STACK_DEF_LOCAL
+                )
+        );
+        if !is_vec_deque || method == "clone" {
+            return false;
+        }
+        let ty = self.render_public_ty(resolved);
+        self.emit(
+            TypeError::UnresolvedMethod {
+                ty,
+                name: method.to_string(),
+            },
+            span,
+        );
+        true
+    }
+
     fn reject_collection_method_arity(
         &mut self,
         resolved: Ty,
@@ -6360,6 +6464,15 @@ impl<'a> TypeChecker<'a> {
                 | "clear" => Some(0),
                 _ => None,
             },
+            Some(TyKind::Adt { def, .. })
+                if matches!(def.local, VEC_QUEUE_DEF_LOCAL | VEC_STACK_DEF_LOCAL) =>
+            {
+                match method {
+                    "push" => Some(1),
+                    "pop" | "peek" | "len" | "is_empty" | "clear" => Some(0),
+                    _ => None,
+                }
+            }
             Some(TyKind::Adt { def, .. })
                 if matches!(def.local, BINARY_HEAP_DEF_LOCAL | MIN_HEAP_DEF_LOCAL) =>
             {
@@ -6613,7 +6726,7 @@ impl<'a> TypeChecker<'a> {
             }
             Some(TyKind::HashMap { key, value }) => {
                 format!(
-                    "HashMap<{}, {}>",
+                    "Map<{}, {}>",
                     self.render_public_ty(key),
                     self.render_public_ty(value)
                 )
@@ -6740,7 +6853,7 @@ impl<'a> TypeChecker<'a> {
             {
                 return false;
             }
-            matches!(owner, "HashMap" | "HashSet" | "BTreeSet")
+            matches!(owner, "Map" | "HashMap" | "Set" | "HashSet" | "BTreeSet")
                 && crate::is_mutating_method_name(method)
         });
         if requires_mut && let Some(receiver) = args.first() {
@@ -6843,7 +6956,7 @@ impl<'a> TypeChecker<'a> {
             // Counter-like `inc` methods use interior mutability. The
             // write-back variants are specific to HashMap receivers.
             if matches!(method, "inc" | "inc_at" | "inc_batch") {
-                return owner == "HashMap";
+                return matches!(owner.as_str(), "Map" | "HashMap");
             }
             if let Some(requires_mut) = self
                 .inherent_method_requires_mut
@@ -10196,7 +10309,7 @@ impl<'a> TypeChecker<'a> {
         self.hashset_ty(elem_ty)
     }
 
-    fn check_queue_literal(&mut self, arr: &ArrayExpr, _expected: Expectation) -> Ty {
+    fn check_deque_backed_literal(&mut self, arr: &ArrayExpr, owner: &str) -> Ty {
         let elem_ty = self.tcx.int_ty(IntTy::I64);
         match arr {
             ArrayExpr::List(elems) => {
@@ -10211,7 +10324,18 @@ impl<'a> TypeChecker<'a> {
                 self.check_expr(count);
             }
         }
-        self.vecdeque_ty(elem_ty)
+        match owner {
+            "Stack" | "VecStack" => self.vecstack_ty(elem_ty),
+            _ => self.vecqueue_ty(elem_ty),
+        }
+    }
+
+    fn check_queue_literal(&mut self, arr: &ArrayExpr, _expected: Expectation) -> Ty {
+        self.check_deque_backed_literal(arr, "Queue")
+    }
+
+    fn check_stack_literal(&mut self, arr: &ArrayExpr, _expected: Expectation) -> Ty {
+        self.check_deque_backed_literal(arr, "Stack")
     }
 
     fn check_max_heap_literal(&mut self, arr: &ArrayExpr, _expected: Expectation) -> Ty {
@@ -10936,7 +11060,7 @@ impl<'a> TypeChecker<'a> {
                     .unwrap_or_else(|| self.fresh());
                 return self.tcx.intern(TyKind::JoinHandle(elem));
             }
-            "HashMap" => {
+            "Map" | "HashMap" => {
                 let substs = self.substs_from_ast(path);
                 let tys = substs.types();
                 let key = tys.first().copied().unwrap_or_else(|| self.fresh());
@@ -10949,7 +11073,7 @@ impl<'a> TypeChecker<'a> {
             // method dispatch recover the receiver kind from its *type* when a
             // set/map flows across a function boundary and the construction
             // tag is gone.
-            "HashSet" | "BTreeSet" => {
+            "Set" | "HashSet" | "BTreeSet" => {
                 let substs = self.substs_from_ast(path);
                 let (local, name) = if path
                     .segments
@@ -10958,7 +11082,7 @@ impl<'a> TypeChecker<'a> {
                 {
                     (BTREE_SET_DEF_LOCAL, "BTreeSet")
                 } else {
-                    (HASH_SET_DEF_LOCAL, "HashSet")
+                    (HASH_SET_DEF_LOCAL, "Set")
                 };
                 let def = gossamer_resolve::DefId::local(local);
                 self.tcx.register_def_name(def, name);
@@ -10974,7 +11098,7 @@ impl<'a> TypeChecker<'a> {
             // Phase 1 `VecDeque` is an opaque i64 ring-buffer handle. Resolve
             // the annotation to the named sentinel Adt so method dispatch can
             // recover the receiver kind after construction tags are gone.
-            "VecDeque" | "VecDequeue" | "VecQueue" => {
+            "Deque" | "VecDeque" | "Queue" | "VecQueue" | "Stack" | "VecStack" => {
                 let substs = self.substs_from_ast(path);
                 let elem = substs
                     .types()
@@ -10982,12 +11106,17 @@ impl<'a> TypeChecker<'a> {
                     .copied()
                     .unwrap_or_else(|| self.tcx.int_ty(IntTy::I64));
                 self.require_phase1_i64_collection_elem(elem, head_name, span);
-                let def = gossamer_resolve::DefId::local(VEC_DEQUE_DEF_LOCAL);
-                self.tcx.register_def_name(def, "VecDeque");
+                let (local, name) = match head_name {
+                    "Queue" | "VecQueue" => (VEC_QUEUE_DEF_LOCAL, "Queue"),
+                    "Stack" | "VecStack" => (VEC_STACK_DEF_LOCAL, "Stack"),
+                    _ => (VEC_DEQUE_DEF_LOCAL, "Deque"),
+                };
+                let def = gossamer_resolve::DefId::local(local);
+                self.tcx.register_def_name(def, name);
                 let substs = crate::Substs::from_types([self.tcx.int_ty(IntTy::I64)]);
                 return self.tcx.intern(TyKind::Adt { def, substs });
             }
-            "BinaryHeap" | "MaxHeap" => {
+            "BinaryHeap" | "MaxBinaryHeap" | "MaxHeap" => {
                 let substs = self.substs_from_ast(path);
                 let elem = substs
                     .types()
@@ -10998,7 +11127,7 @@ impl<'a> TypeChecker<'a> {
                 let elem = self.tcx.int_ty(IntTy::I64);
                 return self.binary_heap_ty(elem);
             }
-            "MinHeap" => {
+            "MinBinaryHeap" | "MinHeap" => {
                 let substs = self.substs_from_ast(path);
                 let elem = substs
                     .types()
@@ -11764,14 +11893,7 @@ fn strings_fn_param_metadata(name: &str, position: usize, shape: StrArgShape) ->
 /// exact value, while paths remain useful without requiring the source map.
 fn argument_value_display(arg: &Expr) -> String {
     match &arg.kind {
-        ExprKind::Array(ArrayExpr::List(values)) => format!(
-            "[{}]",
-            values
-                .iter()
-                .map(argument_value_display)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        ExprKind::Array(ArrayExpr::List(values)) => array_value_display("[", "]", values),
         ExprKind::Array(ArrayExpr::Repeat { value, count }) => {
             format!(
                 "[{}; {}]",
@@ -11779,14 +11901,7 @@ fn argument_value_display(arg: &Expr) -> String {
                 argument_value_display(count)
             )
         }
-        ExprKind::FixedArray(ArrayExpr::List(values)) => format!(
-            "#[{}]",
-            values
-                .iter()
-                .map(argument_value_display)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        ExprKind::FixedArray(ArrayExpr::List(values)) => array_value_display("#[", "]", values),
         ExprKind::FixedArray(ArrayExpr::Repeat { value, count }) => {
             format!(
                 "#[{}; {}]",
@@ -11794,29 +11909,23 @@ fn argument_value_display(arg: &Expr) -> String {
                 argument_value_display(count)
             )
         }
-        ExprKind::QueueLiteral(ArrayExpr::List(values)) => format!(
-            "<[{}]>",
-            values
-                .iter()
-                .map(argument_value_display)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        ExprKind::QueueLiteral(ArrayExpr::List(values)) => array_value_display("<[", "]", values),
         ExprKind::QueueLiteral(ArrayExpr::Repeat { value, count }) => {
             format!(
-                "<[{}; {}]>",
+                "<[{}; {}]",
                 argument_value_display(value),
                 argument_value_display(count)
             )
         }
-        ExprKind::MaxHeapLiteral(ArrayExpr::List(values)) => format!(
-            "^[{}]",
-            values
-                .iter()
-                .map(argument_value_display)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        ExprKind::StackLiteral(ArrayExpr::List(values)) => array_value_display("[", "]>", values),
+        ExprKind::StackLiteral(ArrayExpr::Repeat { value, count }) => {
+            format!(
+                "[{}; {}]>",
+                argument_value_display(value),
+                argument_value_display(count)
+            )
+        }
+        ExprKind::MaxHeapLiteral(ArrayExpr::List(values)) => array_value_display("^[", "]", values),
         ExprKind::MaxHeapLiteral(ArrayExpr::Repeat { value, count }) => {
             format!(
                 "^[{}; {}]",
@@ -11824,14 +11933,7 @@ fn argument_value_display(arg: &Expr) -> String {
                 argument_value_display(count)
             )
         }
-        ExprKind::MinHeapLiteral(ArrayExpr::List(values)) => format!(
-            "_[{}]",
-            values
-                .iter()
-                .map(argument_value_display)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        ExprKind::MinHeapLiteral(ArrayExpr::List(values)) => array_value_display("_[", "]", values),
         ExprKind::MinHeapLiteral(ArrayExpr::Repeat { value, count }) => {
             format!(
                 "_[{}; {}]",
@@ -11854,6 +11956,17 @@ fn argument_value_display(arg: &Expr) -> String {
     }
 }
 
+fn array_value_display(prefix: &str, suffix: &str, values: &[Expr]) -> String {
+    format!(
+        "{prefix}{}{suffix}",
+        values
+            .iter()
+            .map(argument_value_display)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 /// Renders container-like invalid arguments without leaking unresolved
 /// inference variables such as `[?1; 3]` into diagnostics. The expression
 /// shape is more useful here than a partially inferred element type.
@@ -11861,7 +11974,8 @@ fn string_argument_found_type(arg: &Expr, tcx: &TyCtxt, ty: Ty) -> String {
     match &arg.kind {
         ExprKind::Array(_) => "Vec".to_string(),
         ExprKind::FixedArray(_) => "array".to_string(),
-        ExprKind::QueueLiteral(_) => "VecDeque".to_string(),
+        ExprKind::QueueLiteral(_) => "Queue".to_string(),
+        ExprKind::StackLiteral(_) => "Stack".to_string(),
         ExprKind::MaxHeapLiteral(_) => "MaxHeap".to_string(),
         ExprKind::MinHeapLiteral(_) => "MinHeap".to_string(),
         ExprKind::MapLiteral(_) => "map literal".to_string(),

@@ -592,7 +592,7 @@ fn render_stdlib_page(modules: &[StdModule]) -> String {
     writeln!(
         out,
         "Receiver methods on built-in types such as `String`, `Vec`, \
-         `HashMap`, `Option`, and `Result` are listed in \
+         `Map`, `Option`, and `Result` are listed in \
          [Methods by type](method_support.md)."
     )
     .unwrap();
@@ -1158,7 +1158,7 @@ const STDLIB_SUPPORT: &[StdlibSupport] = &[
         Coverage::Full,
         Coverage::Full,
         Coverage::Full,
-        "Vec, HashMap, HashSet, VecDeque (both ends), BTreeMap (String/i64 keys).",
+        "Vec, Map, Set, Deque, Queue, Stack, heaps, and ordered maps/sets.",
     ),
     item(
         "std::net",

@@ -1466,7 +1466,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "chunk_by",
-        signature: "fn chunk_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> HashMap<K, Vec<T>>",
+        signature: "fn chunk_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> Map<K, Vec<T>>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1486,7 +1486,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "count_by",
-        signature: "fn count_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> HashMap<K, i64>",
+        signature: "fn count_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> Map<K, i64>",
     },
     StdFunctionSignature {
         module_path: "std::iter",

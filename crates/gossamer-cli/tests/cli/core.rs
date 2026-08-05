@@ -457,6 +457,39 @@ fn run_subcommand_executes_via_vm() {
     let _ = std::fs::remove_file(&fixture);
 }
 
+#[test]
+fn vec_queue_and_vec_stack_push_pop_order() {
+    let fixture = write_fixture(
+        "vec-queue-stack",
+        "use std::collections::{VecQueue, VecStack}\n\
+         fn main() {\n\
+             let mut q: VecQueue<i64> = <[1, 2, 3]\n\
+             q.push(4)\n\
+             println!(\"{}\", q)\n\
+             println!(\"queue {} {} {} {}\", q.len(), q.peek().unwrap_or(0), q.pop().unwrap_or(0), q.pop().unwrap_or(0))\n\
+             let mut s: VecStack<i64> = [1, 2, 3]>\n\
+             s.push(4)\n\
+             println!(\"{}\", s)\n\
+             println!(\"stack {} {} {}\", s.len(), s.peek().unwrap_or(0), s.pop().unwrap_or(0))\n\
+         }\n",
+    );
+    let out = Command::new(gos_bin())
+        .arg("run")
+        .arg(&fixture)
+        .output()
+        .expect("spawn run");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "VecQueue [1, 2, 3, 4]\nqueue 4 1 1 2\nVecStack [1, 2, 3, 4]\nstack 4 4 4\n"
+    );
+    let _ = std::fs::remove_file(&fixture);
+}
+
 const LAZY_ITERATOR_TIER_SOURCE: &str = r#"use std::{iter, option}
 
 fn main() {

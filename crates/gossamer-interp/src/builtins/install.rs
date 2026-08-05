@@ -631,6 +631,8 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         &[("new", builtin_btmap_new), ("from", builtin_map_from)],
         globals,
     );
+    install_module("Set", &[("new", builtin_set_new)], globals);
+    install_module("collections::Set", &[("new", builtin_set_new)], globals);
     install_module("HashSet", &[("new", builtin_set_new)], globals);
     install_module("collections::HashSet", &[("new", builtin_set_new)], globals);
     install_module(
@@ -699,6 +701,59 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "Scanner::text",
         builtin("Scanner::text", builtin_bufio_scanner_text),
     ));
+    // Map surface - exposed both qualified (`Map::*`) and legacy
+    // `HashMap::*` spellings plus bare (`m.get(k)`, `m.insert(k, v)`)
+    // so user code can use the method form. Mutating methods
+    // (insert/remove/clear) ride the method-dispatch writeback path
+    // same as Vec mutators.
+    install_module(
+        "Map",
+        &[
+            ("new", builtin_map_new),
+            ("from", builtin_map_from),
+            ("with_capacity", builtin_map_with_capacity),
+            ("get", builtin_map_get),
+            ("get_or", builtin_map_get_or),
+            ("inc", builtin_map_inc),
+            ("or_insert", builtin_map_or_insert),
+            ("inc_at", builtin_map_inc_at),
+            ("inc_batch", builtin_map_inc_batch),
+            ("insert", builtin_map_insert),
+            ("remove", builtin_map_remove),
+            ("contains_key", builtin_map_contains_key),
+            ("len", builtin_map_len),
+            ("keys", builtin_map_keys),
+            ("values", builtin_map_values),
+            ("iter", builtin_map_iter),
+            ("clear", builtin_map_clear),
+            ("is_empty", builtin_map_is_empty),
+        ],
+        globals,
+    );
+    install_module(
+        "collections::Map",
+        &[
+            ("new", builtin_map_new),
+            ("from", builtin_map_from),
+            ("with_capacity", builtin_map_with_capacity),
+            ("get", builtin_map_get),
+            ("get_or", builtin_map_get_or),
+            ("inc", builtin_map_inc),
+            ("or_insert", builtin_map_or_insert),
+            ("inc_at", builtin_map_inc_at),
+            ("inc_batch", builtin_map_inc_batch),
+            ("insert", builtin_map_insert),
+            ("remove", builtin_map_remove),
+            ("contains_key", builtin_map_contains_key),
+            ("len", builtin_map_len),
+            ("keys", builtin_map_keys),
+            ("values", builtin_map_values),
+            ("iter", builtin_map_iter),
+            ("clear", builtin_map_clear),
+            ("is_empty", builtin_map_is_empty),
+        ],
+        globals,
+    );
     // HashMap surface - exposed both qualified (`HashMap::*`) and
     // bare (`m.get(k)`, `m.insert(k, v)`) so user code can use the
     // method form. Mutating methods (insert/remove/clear) ride the
@@ -1272,6 +1327,11 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push((
         "collections::Vec::remove",
         builtin("collections::Vec::remove", builtin_vec_remove_safe),
+    ));
+    globals.push(("Map::pop", builtin("Map::pop", builtin_map_pop)));
+    globals.push((
+        "collections::Map::pop",
+        builtin("collections::Map::pop", builtin_map_pop),
     ));
     globals.push(("HashMap::pop", builtin("HashMap::pop", builtin_map_pop)));
     globals.push((

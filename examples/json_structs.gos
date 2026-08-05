@@ -12,7 +12,7 @@
  * `"age"` field is a string fails with a structured error.
  *
  * Nested structs, growable arrays (`[String]`), tuples, fixed-size
- * arrays, `Option<T>`, and `HashMap<String, V>` are walked
+ * arrays, `Option<T>`, and `Map<String, V>` are walked
  * recursively.
  *
  * Run:

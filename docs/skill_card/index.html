@@ -2394,13 +2394,28 @@ card:</p>
 <li><strong><code>s.to_i64()</code> / <code>to_f64()</code> / <code>to_bool()</code></strong> - strict full-string
   parses returning <code>Option&lt;T&gt;</code>:
   <code>env::args().first().unwrap_or("8").to_i64().unwrap_or(8)</code>.</li>
-<li><strong><code>[v; N]</code> creates a Vec by default</strong>. Use <code>#[v; N]</code> or an expected
-  <code>[T; N]</code> type for fixed arrays; the count is compile-time constant.</li>
-<li><strong>Collection constructors infer</strong>: <code>let mut m = HashMap::new()</code>,
-  <code>let empty: HashMap&lt;String, i64&gt; = HashMap::from([])</code>, and
-  <code>let map = {"one": 1}</code>. <code>HashMap::from</code> accepts array pairs, while
-  map literals construct <code>HashMap</code> values directly. <code>#{a, b}</code> constructs
-  a <code>HashSet</code>, or a <code>BTreeSet</code> when an expected <code>BTreeSet&lt;T&gt;</code> type is present.</li>
+<li><strong>Collection literal spellings are distinct.</strong> Fixed array and Vec
+  construction differs from Rust. Use <code>[]</code> / <code>[1,2,3]</code> for <code>Vec</code>, <code>#[]</code> /
+  <code>#[1,2,3]</code> for fixed arrays, <code>{}</code> / <code>{"one": 1}</code> for <code>Map</code>, <code>#{}</code> /
+  <code>#{1,2,3}</code> for <code>Set</code>, <code>^[]</code> / <code>^[1,2,3]</code> for <code>MaxHeap</code>, <code>_[]</code> /
+  <code>_[1,2,3]</code> for <code>MinHeap</code>, <code>&lt;[]</code> / <code>&lt;[1,2,3]</code> for <code>Queue</code>, and <code>[]&gt;</code> /
+  <code>[1,2,3]&gt;</code> for <code>Stack</code>. Use <code>Deque::new()</code> or
+  <code>Deque::from([1,2,3])</code> when both ends matter. Repeat literals follow
+  the same prefixes: <code>[v; N]</code> is a Vec by default, while <code>#[v; N]</code> is a fixed
+  array.</li>
+<li><strong>Prefer dedicated collection contracts for intent.</strong> <code>Stack</code> is the
+  idiomatic LIFO-only type even though <code>Vec</code> can push/pop at the end;
+  <code>Queue</code> is the FIFO-only type even though a deque can model it; <code>MinHeap</code>
+  and <code>MaxHeap</code> avoid negating keys or wrapping values in <code>Reverse</code>. Use the
+  general structures only when you actually need their broader method surface.
+  Longer aliases remain accepted: <code>HashMap</code> for <code>Map</code>, <code>HashSet</code> for <code>Set</code>,
+  <code>VecDeque</code> for <code>Deque</code>, <code>VecQueue</code> for <code>Queue</code>, <code>VecStack</code> for <code>Stack</code>,
+  <code>MaxBinaryHeap</code> for <code>MaxHeap</code>, and <code>MinBinaryHeap</code> for <code>MinHeap</code>.</li>
+<li><strong>Collection constructors infer</strong>: <code>let mut m = Map::new()</code>,
+  <code>let empty: Map&lt;String, i64&gt; = Map::from([])</code>, and
+  <code>let map = {"one": 1}</code>. <code>Map::from</code> accepts array pairs, while
+  map literals construct <code>Map</code> values directly. <code>#{a, b}</code> constructs
+  a <code>Set</code>, or a <code>BTreeSet</code> when an expected <code>BTreeSet&lt;T&gt;</code> type is present.</li>
 <li><strong>Byte reads</strong>: <code>s[i]</code> is the byte as <code>i64</code>; compare with byte
   literals (<code>s[i] &gt;= b'0'</code>), render with <code>s[i] as char</code>. Prefer this
   over per-byte <code>substring</code>.</li>
@@ -2479,8 +2494,8 @@ Left-associative, very low precedence.</p>
   <code>Unit</code> or <code>Unit {}</code>, tuple structs use <code>Pair(a, b)</code>, and named structs
   require keyed <code>Point { x: 1, y: 2 }</code> fields. Positional or mixed
   braced named-struct literals are rejected.</li>
-<li><strong>Imports</strong>: <code>use std::{iter, os, strings}</code>, alias via <code>{HashMap as
-  Map}</code>; always spell the full path (<code>std::encoding::json</code>, not
+<li><strong>Imports</strong>: <code>use std::{iter, os, strings}</code>, alias via <code>{Map as
+  Scores}</code>; always spell the full path (<code>std::encoding::json</code>, not
   <code>std::json</code>) - paths validate against the std manifest (GR0005).
   Cross-module: <code>super::item</code>, <code>crate::path::item</code>, <code>self::child::item</code>.</li>
 <li><strong>Entry file may omit <code>fn main</code></strong>: top-level statements become the
@@ -2585,12 +2600,16 @@ are callable as methods/free functions and materialize results.</p>
 <h2 id="10-data-structures">10. Data structures<a class="headerlink" href="#10-data-structures" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>[T; N]</code> is an owned fixed array, <code>[T]</code> is an unsized borrowed slice,
-  and <code>Vec&lt;T&gt;</code> is the only owned growable sequence. Bracket literals create
-  Vec values by default; use <code>#[a, b]</code> or an expected <code>[T; N]</code> type for
-  fixed arrays. Arrays, slices, and Vec share the implemented slice method
-  surface. Eager collection combinators are Vec methods; arrays and slices
-  use <code>iter()</code> first. Only Vec has push/pop/insert/remove/clear, truncation,
-  extension, reservation, and capacity methods. Mutable arrays and slices
+  and <code>Vec&lt;T&gt;</code> is the default owned growable sequence. Literal spellings are
+  <code>[]</code> for Vec, <code>#[]</code> for fixed arrays, <code>{}</code> for <code>Map</code>, <code>#{}</code> for
+  <code>Set</code> or expected <code>BTreeSet</code>, <code>^[]</code> for <code>MaxHeap</code>, <code>_[]</code> for
+  <code>MinHeap</code>, <code>&lt;[]</code> for <code>Queue</code>, and <code>[]&gt;</code> for <code>Stack</code>. Arrays, slices, and Vec share the
+  implemented slice method surface. Eager collection combinators are Vec
+  methods; arrays and slices use <code>iter()</code> first. Use <code>Stack</code> for a
+  LIFO-only argument contract instead of a general <code>Vec</code>, <code>Queue</code> for
+  FIFO-only behavior, and <code>MinHeap</code> / <code>MaxHeap</code> for explicit priority order.
+  Only Vec has the full sequence surface: insert, remove, truncation,
+  extension, reservation, capacity, and indexed mutation methods. Mutable arrays and slices
   support <code>sort</code>, <code>reverse</code>, <code>swap</code>, and <code>fill</code> without resizing. <code>%i</code>
   reports each type's real surface, while <code>%e</code> also removes methods that the
   binding's mutability cannot call. Tuples use <code>.0</code>/<code>.1</code>;
@@ -2598,12 +2617,12 @@ are callable as methods/free functions and materialize results.</p>
   <code>xs.insert/remove/swap</code> mutate in place and return <code>Result</code>, with an
   <code>Err</code> for an out-of-bounds index. Qualified calls use the same contract:
   <code>Vec::insert(&amp;mut xs, i, v)</code> / <code>Vec::remove(&amp;mut xs, i)</code>.</li>
-<li><code>std::collections</code>: <code>Vec</code>, <code>HashMap</code> (struct/tuple keys by value;
+<li><code>std::collections</code>: <code>Vec</code>, <code>Map</code> (struct/tuple keys by value;
   aggregate-key maps use <code>iter()</code> rather than <code>keys()</code> until typed key
   snapshots are available;
-  <code>iter()</code> yields <code>[(K, V)]</code>, <code>keys</code>, <code>values</code>, <code>HashMap::pop</code>),
-  <code>HashSet</code> / <code>BTreeSet</code> (<code>#{...}</code> literals and full set algebra), <code>BTreeMap</code> (sorted; <code>String</code> or <code>i64</code>
-  keys), <code>VecDeque</code>. A separate i64-only <code>queue</code>/<code>stack</code>/<code>deque</code>/
+  <code>iter()</code> yields <code>[(K, V)]</code>, <code>keys</code>, <code>values</code>, <code>Map::pop</code>),
+  <code>Set</code> / <code>BTreeSet</code> (<code>#{...}</code> literals and full set algebra), <code>BTreeMap</code> (sorted; <code>String</code> or <code>i64</code>
+  keys), <code>Deque</code>, <code>Queue</code>, <code>Stack</code>. A separate i64-only <code>queue</code>/<code>stack</code>/<code>deque</code>/
   <code>heap</code>/<code>ordered_*</code> family is functional re-bind style
   (<code>let q = queue::push(q, v)</code>), not mutating.</li>
 <li>Bracket literals create Vec values unless an expected fixed-array type is
@@ -2660,7 +2679,7 @@ test</code> also compiles and runs fenced code in doc comments.</p>
   ascii85, hex, pem, binary}</code>. Typed serde is free functions with a
   turbofish - <code>from_json::&lt;T&gt;(&amp;text)?</code> / <code>to_json::&lt;T&gt;(v)</code> (same for
   yaml/toml). Struct fields may be scalars, <code>String</code>, <code>Option&lt;T&gt;</code>,
-  tuples, <code>HashMap&lt;String, V&gt;</code>, nested structs, and <code>Vec&lt;T&gt;</code> of those;
+  tuples, <code>Map&lt;String, V&gt;</code>, nested structs, and <code>Vec&lt;T&gt;</code> of those;
   fixed arrays/slices are rejected with a type diagnostic. For dynamic or
   partially-known shapes use <code>json::parse</code> + <code>get</code>/<code>at</code>/<code>as_i64</code>/
   <code>as_str</code>/<code>keys</code>/<code>len</code>. Unknown JSON keys are ignored.</li>
@@ -2710,7 +2729,7 @@ build</code>. Known sharp edges:</p>
 <li><code>+</code> on <code>String</code> copies; heavy assembly wants <code>bytes::Builder</code> or a
   <code>mut String</code> with <code>+=</code>.</li>
 <li>Method dispatch is type-directed for user methods, core
-  <code>String</code>/<code>HashMap</code>/<code>Vec</code> receivers, and typed stdlib receivers.
+  <code>String</code>/<code>Map</code>/<code>Vec</code> receivers, and typed stdlib receivers.
   Qualified paths (<code>Point::origin()</code>) remain the most explicit form
   when several types intentionally share a method name.</li>
 <li>Per-file test modules need unique names (GR0003; section 11).</li>

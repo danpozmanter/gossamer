@@ -2,7 +2,7 @@
 
 Gossamer has dedicated literal forms for the everyday collection shapes:
 growable vectors, fixed arrays, hash maps, hash sets, ordered sets, queues,
-and heaps.
+stacks, and heaps.
 
 ```gos
 let values = [1, 2, 3]
@@ -10,7 +10,8 @@ let fixed = #[1, 2, 3]
 let names = {"ada": 36, "grace": 37}
 let tags = #{"compiler", "runtime", "docs"}
 let ordered: BTreeSet<String> = #{"compiler", "runtime", "docs"}
-let queue = <[1, 2, 3]>
+let queue = <[1, 2, 3]
+let stack = [1, 2, 3]>
 let max_heap = ^[1, 2, 3]
 let min_heap = _[1, 2, 3]
 ```
@@ -52,31 +53,33 @@ let point: [i64; 2] = [3, 4]
 Fixed arrays and slices support non-resizing sequence methods. Use a `Vec<T>`
 when the collection must grow or shrink.
 
-## HashMap
+## Map
 
-A brace literal creates a `HashMap<K, V>`.
+A brace literal creates a `Map<K, V>`.
 
 ```gos
 let ages = {"ada": 36, "grace": 37}
 println(ages.get("ada"))
 ```
 
-The empty brace literal creates an empty `HashMap`.
+The empty brace literal creates an empty `Map`.
 
 ```gos
 let counts = {}
 println(counts.len())
 
-let typed: HashMap<String, i64> = {}
+let typed: Map<String, i64> = {}
 println(typed.len())
 ```
 
 Annotate an empty map when later code does not give the checker enough key and
 value information.
 
-## HashSet And BTreeSet
+`HashMap` remains accepted as a longer alias for `Map`.
 
-Use `#{...}` for a `HashSet<T>`.
+## Set And BTreeSet
+
+Use `#{...}` for a `Set<T>`.
 
 ```gos
 let seen = #{"ada", "grace", "ada"}
@@ -86,6 +89,8 @@ println(seen.contains("ada"))
 
 The literal removes duplicates just like repeated `insert` calls.
 
+`HashSet` remains accepted as a longer alias for `Set`.
+
 An expected `BTreeSet<T>` type shapes the same literal into an ordered set:
 
 ```gos
@@ -93,22 +98,61 @@ let ordered: BTreeSet<String> = #{"grace", "ada", "ada"}
 println(ordered.to_vec())
 ```
 
-## VecQueue and VecDeque
+## Queue
 
-Use `<[...]>` for a queue literal. Phase 1 queue literals create
-`VecDeque<i64>` in front-to-back order. `VecQueue<i64>` and
-`VecDequeue<i64>` are aliases for the same runtime shape.
+Use `<[...]` for a FIFO queue literal. Phase 1 queue literals create
+`Queue<i64>` in front-to-back order. `push` appends to the back and
+`pop` removes from the front. Use `peek`, `len`, `is_empty`, and `clear` for
+the common queue observers and reset operation.
 
 ```gos
-let mut q: VecQueue<i64> = <[10, 20]>
-q.push_back(30)
-println(q.pop_front())
+let mut q: Queue<i64> = <[10, 20]
+q.push(30)
+println(q.len())
+println(q.peek())
+println(q.pop())
 ```
+
+`VecQueue` remains accepted as a longer alias for `Queue`.
+
+## Stack
+
+Use `[a, b]>` for a LIFO stack literal. Phase 1 stack literals create
+`Stack<i64>` in bottom-to-top order. `push` appends to the top and
+`pop` removes from the top. Use `peek`, `len`, `is_empty`, and `clear` for
+the common stack observers and reset operation.
+
+```gos
+let mut s: Stack<i64> = [10, 20]>
+s.push(30)
+println(s.len())
+println(s.peek())
+println(s.pop())
+```
+
+`VecStack` remains accepted as a longer alias for `Stack`.
+
+## Deque
+
+Use `Deque<i64>` when both ends matter. It has explicit front/back methods
+and no dedicated literal.
+
+```gos
+let mut d: Deque<i64> = Deque::from([10, 20])
+d.push_front(5)
+d.push_back(30)
+println(d.pop_front())
+println(d.pop_back())
+```
+
+`VecDeque` remains accepted as a longer alias for `Deque`.
 
 ## MaxHeap and MinHeap
 
 Use `^[...]` for a `MaxHeap<i64>` and `_[...]` for a `MinHeap<i64>`.
-`BinaryHeap<i64>` is accepted as a compatibility alias for `MaxHeap<i64>`.
+`BinaryHeap<i64>` and `MaxBinaryHeap<i64>` are accepted as compatibility
+aliases for `MaxHeap<i64>`. `MinBinaryHeap<i64>` is accepted as a longer alias
+for `MinHeap<i64>`.
 
 ```gos
 let mut max_heap = ^[5, 1, 3]
@@ -129,9 +173,10 @@ println(min_heap.pop())   // Some(0)
 | `[a, b]` | `Vec<T>` |
 | `#[a, b]` | `[T; N]` fixed array |
 | `#[value; count]` | repeated fixed array |
-| `{}` | empty `HashMap<K, V>` |
-| `{key: value}` | `HashMap<K, V>` |
-| `#{a, b}` | `HashSet<T>`, or `BTreeSet<T>` with an expected type |
-| `<[a, b]>` | `VecDeque<i64>` |
+| `{}` | empty `Map<K, V>` |
+| `{key: value}` | `Map<K, V>` |
+| `#{a, b}` | `Set<T>`, or `BTreeSet<T>` with an expected type |
+| `<[a, b]` | `Queue<i64>` |
+| `[a, b]>` | `Stack<i64>` |
 | `^[a, b]` | `MaxHeap<i64>` |
 | `_[a, b]` | `MinHeap<i64>` |

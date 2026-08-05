@@ -2744,7 +2744,7 @@ pub(crate) fn insert_vec_elem_metas(body: &mut Body, tcx: &mut gossamer_types::T
     let is_map_ctor = |name: &str| -> bool {
         matches!(
             name,
-            "HashMap::new" | "gos_rt_map_new" | "gos_rt_map_new_with_capacity"
+            "Map::new" | "HashMap::new" | "gos_rt_map_new" | "gos_rt_map_new_with_capacity"
         )
     };
     let elem_ty_of = |l: Local, tcx: &gossamer_types::TyCtxt| -> Option<gossamer_types::Ty> {
@@ -3644,24 +3644,40 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             // The cranelift backend's `lower_intrinsic_call` table
             // routes these straight to the runtime helper, so the
             // drop pass needs to recognise both forms.
-            "HashMap::new"
+            "Map::new"
+            | "collections::Map::new"
+            | "HashMap::new"
             | "collections::HashMap::new"
+            | "Map::with_capacity"
+            | "collections::Map::with_capacity"
             | "HashMap::with_capacity"
             | "collections::HashMap::with_capacity" => Some("gos_rt_map_free"),
             "Vec::new" | "Vec::with_capacity" => Some("gos_rt_vec_free"),
-            "HashSet::new"
+            "Set::new"
+            | "collections::Set::new"
+            | "HashSet::new"
             | "collections::HashSet::new"
             | "BTreeSet::new"
             | "collections::BTreeSet::new" => Some("gos_rt_set_free"),
             "BTreeMap::new" | "collections::BTreeMap::new" => Some("gos_rt_btmap_free"),
             "gos_rt_deque_new"
+            | "Deque::new"
+            | "collections::Deque::new"
             | "VecDeque::new"
             | "collections::VecDeque::new"
-            | "VecDequeue::new"
-            | "collections::VecDequeue::new"
+            | "gos_rt_deque_from_vec_i64"
+            | "gos_rt_queue_new"
+            | "Queue::new"
+            | "collections::Queue::new"
             | "VecQueue::new"
             | "collections::VecQueue::new"
-            | "gos_rt_deque_from_vec_i64" => Some("gos_rt_deque_free"),
+            | "gos_rt_queue_from_vec_i64"
+            | "gos_rt_stack_new"
+            | "Stack::new"
+            | "collections::Stack::new"
+            | "VecStack::new"
+            | "collections::VecStack::new"
+            | "gos_rt_stack_from_vec_i64" => Some("gos_rt_deque_free"),
             _ => None,
         }
     };

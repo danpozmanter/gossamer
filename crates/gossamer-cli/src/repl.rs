@@ -135,6 +135,7 @@ struct CoreMethodEntry {
 }
 
 pub(crate) fn core_method_names(owner: &str) -> Vec<&'static str> {
+    let owner = canonical_collection_owner(owner);
     CORE_METHODS
         .iter()
         .filter(|method| method.owner == owner && method.kind == "method")
@@ -813,122 +814,122 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         doc: "Returns the maximum value by derived key.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "new",
         kind: "assoc",
-        signature: "fn new<K, V>() -> HashMap<K, V>",
+        signature: "fn new<K, V>() -> Map<K, V>",
         doc: "Creates an empty hash map.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "with_capacity",
         kind: "assoc",
-        signature: "fn with_capacity<K, V>(capacity: i64) -> HashMap<K, V>",
+        signature: "fn with_capacity<K, V>(capacity: i64) -> Map<K, V>",
         doc: "Creates an empty hash map with capacity reserved.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "from",
         kind: "assoc",
-        signature: "fn from<K, V, const N: usize>(entries: [(K, V); N]) -> HashMap<K, V>",
+        signature: "fn from<K, V, const N: usize>(entries: [(K, V); N]) -> Map<K, V>",
         doc: "Creates a hash map from a fixed array of key-value tuples.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "insert",
         kind: "method",
-        signature: "fn insert<K, V>(self: &mut HashMap<K, V>, key: K, value: V) -> Option<V>",
+        signature: "fn insert<K, V>(self: &mut Map<K, V>, key: K, value: V) -> Option<V>",
         doc: "Inserts a pair and returns the previous value when present.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "get",
         kind: "method",
-        signature: "fn get<K, V>(self: HashMap<K, V>, key: K) -> Option<V>",
+        signature: "fn get<K, V>(self: Map<K, V>, key: K) -> Option<V>",
         doc: "Returns the value for a key when present.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "get_or",
         kind: "method",
-        signature: "fn get_or<K, V>(self: HashMap<K, V>, key: K, default: V) -> V",
+        signature: "fn get_or<K, V>(self: Map<K, V>, key: K, default: V) -> V",
         doc: "Returns the value for a key or a default.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "or_insert",
         kind: "method",
-        signature: "fn or_insert<K, V>(self: &mut HashMap<K, V>, key: K, default: V) -> V",
+        signature: "fn or_insert<K, V>(self: &mut Map<K, V>, key: K, default: V) -> V",
         doc: "Returns the existing value or inserts a default.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "remove",
         kind: "method",
-        signature: "fn remove<K, V>(self: &mut HashMap<K, V>, key: K) -> Option<V>",
+        signature: "fn remove<K, V>(self: &mut Map<K, V>, key: K) -> Option<V>",
         doc: "Removes a key and returns its previous value when present.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "pop",
         kind: "method",
-        signature: "fn pop<K, V>(self: &mut HashMap<K, V>, key: K) -> Option<V>",
+        signature: "fn pop<K, V>(self: &mut Map<K, V>, key: K) -> Option<V>",
         doc: "Removes and returns the value for a key when present.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "contains_key",
         kind: "method",
-        signature: "fn contains_key<K, V>(self: HashMap<K, V>, key: K) -> bool",
+        signature: "fn contains_key<K, V>(self: Map<K, V>, key: K) -> bool",
         doc: "Returns true when the map contains a key.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "contains",
         kind: "method",
-        signature: "fn contains<K, V>(self: HashMap<K, V>, key: K) -> bool",
+        signature: "fn contains<K, V>(self: Map<K, V>, key: K) -> bool",
         doc: "Alias for contains_key.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "len",
         kind: "method",
-        signature: "fn len<K, V>(self: HashMap<K, V>) -> i64",
+        signature: "fn len<K, V>(self: Map<K, V>) -> i64",
         doc: "Returns the number of entries.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "is_empty",
         kind: "method",
-        signature: "fn is_empty<K, V>(self: HashMap<K, V>) -> bool",
+        signature: "fn is_empty<K, V>(self: Map<K, V>) -> bool",
         doc: "Returns true when the map has no entries.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "keys",
         kind: "method",
-        signature: "fn keys<K, V>(self: HashMap<K, V>) -> Vec<K>",
+        signature: "fn keys<K, V>(self: Map<K, V>) -> Vec<K>",
         doc: "Returns all keys.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "values",
         kind: "method",
-        signature: "fn values<K, V>(self: HashMap<K, V>) -> Vec<V>",
+        signature: "fn values<K, V>(self: Map<K, V>) -> Vec<V>",
         doc: "Returns all values.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "iter",
         kind: "method",
-        signature: "fn iter<K, V>(self: HashMap<K, V>) -> Vec<(K, V)>",
+        signature: "fn iter<K, V>(self: Map<K, V>) -> Vec<(K, V)>",
         doc: "Returns key-value pairs.",
     },
     CoreMethodHelp {
-        owner: "HashMap",
+        owner: "Map",
         name: "clear",
         kind: "method",
-        signature: "fn clear<K, V>(self: &mut HashMap<K, V>) -> ()",
+        signature: "fn clear<K, V>(self: &mut Map<K, V>) -> ()",
         doc: "Removes all entries.",
     },
     CoreMethodHelp {
@@ -1044,122 +1045,122 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         doc: "Removes all entries.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "new",
         kind: "assoc",
-        signature: "fn new<T>() -> HashSet<T>",
+        signature: "fn new<T>() -> Set<T>",
         doc: "Creates an empty hash set.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "from",
         kind: "assoc",
-        signature: "fn from<T, const N: usize>(values: [T; N]) -> HashSet<T>",
+        signature: "fn from<T, const N: usize>(values: [T; N]) -> Set<T>",
         doc: "Creates a hash set from a collection, removing duplicate values.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "insert",
         kind: "method",
-        signature: "fn insert<T>(self: &mut HashSet<T>, value: T) -> bool",
+        signature: "fn insert<T>(self: &mut Set<T>, value: T) -> bool",
         doc: "Adds a value to the set.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "remove",
         kind: "method",
-        signature: "fn remove<T>(self: &mut HashSet<T>, value: T) -> bool",
+        signature: "fn remove<T>(self: &mut Set<T>, value: T) -> bool",
         doc: "Removes a value from the set.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "contains",
         kind: "method",
-        signature: "fn contains<T>(self: HashSet<T>, value: T) -> bool",
+        signature: "fn contains<T>(self: Set<T>, value: T) -> bool",
         doc: "Returns true when the set contains a value.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "union",
         kind: "method",
-        signature: "fn union<T>(self: HashSet<T>, other: HashSet<T>) -> HashSet<T>",
+        signature: "fn union<T>(self: Set<T>, other: Set<T>) -> Set<T>",
         doc: "Returns the union of two sets.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "intersection",
         kind: "method",
-        signature: "fn intersection<T>(self: HashSet<T>, other: HashSet<T>) -> HashSet<T>",
+        signature: "fn intersection<T>(self: Set<T>, other: Set<T>) -> Set<T>",
         doc: "Returns the intersection of two sets.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "difference",
         kind: "method",
-        signature: "fn difference<T>(self: HashSet<T>, other: HashSet<T>) -> HashSet<T>",
+        signature: "fn difference<T>(self: Set<T>, other: Set<T>) -> Set<T>",
         doc: "Returns values present only in the receiver.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "symmetric_difference",
         kind: "method",
-        signature: "fn symmetric_difference<T>(self: HashSet<T>, other: HashSet<T>) -> HashSet<T>",
+        signature: "fn symmetric_difference<T>(self: Set<T>, other: Set<T>) -> Set<T>",
         doc: "Returns values present in exactly one set.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "len",
         kind: "method",
-        signature: "fn len<T>(self: HashSet<T>) -> i64",
+        signature: "fn len<T>(self: Set<T>) -> i64",
         doc: "Returns the number of values.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "is_empty",
         kind: "method",
-        signature: "fn is_empty<T>(self: HashSet<T>) -> bool",
+        signature: "fn is_empty<T>(self: Set<T>) -> bool",
         doc: "Returns true when the set has no values.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "clear",
         kind: "method",
-        signature: "fn clear<T>(self: &mut HashSet<T>) -> ()",
+        signature: "fn clear<T>(self: &mut Set<T>) -> ()",
         doc: "Removes every value.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "iter",
         kind: "method",
-        signature: "fn iter<T>(self: HashSet<T>) -> Vec<T>",
+        signature: "fn iter<T>(self: Set<T>) -> Vec<T>",
         doc: "Returns a deterministic snapshot suitable for iterator methods.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "to_vec",
         kind: "method",
-        signature: "fn to_vec<T>(self: HashSet<T>) -> Vec<T>",
+        signature: "fn to_vec<T>(self: Set<T>) -> Vec<T>",
         doc: "Returns the values in deterministic order.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "is_subset",
         kind: "method",
-        signature: "fn is_subset<T>(self: HashSet<T>, other: HashSet<T>) -> bool",
+        signature: "fn is_subset<T>(self: Set<T>, other: Set<T>) -> bool",
         doc: "Returns true when every value is present in the other set.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "is_superset",
         kind: "method",
-        signature: "fn is_superset<T>(self: HashSet<T>, other: HashSet<T>) -> bool",
+        signature: "fn is_superset<T>(self: Set<T>, other: Set<T>) -> bool",
         doc: "Returns true when the set contains every value from the other set.",
     },
     CoreMethodHelp {
-        owner: "HashSet",
+        owner: "Set",
         name: "is_disjoint",
         kind: "method",
-        signature: "fn is_disjoint<T>(self: HashSet<T>, other: HashSet<T>) -> bool",
+        signature: "fn is_disjoint<T>(self: Set<T>, other: Set<T>) -> bool",
         doc: "Returns true when the sets have no values in common.",
     },
     CoreMethodHelp {
@@ -1282,109 +1283,193 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         doc: "Returns true when the sets have no values in common.",
     },
     CoreMethodHelp {
-        owner: "VecDeque",
+        owner: "Deque",
         name: "new",
         kind: "assoc",
-        signature: "fn new<T>() -> VecDeque<T>",
+        signature: "fn new() -> Deque<i64>",
         doc: "Creates an empty double-ended queue.",
     },
     CoreMethodHelp {
-        owner: "VecDeque",
+        owner: "Deque",
         name: "from",
         kind: "assoc",
-        signature: "fn from<T, const N: usize>(values: [T; N]) -> VecDeque<T>",
-        doc: "Creates a deque from values in front-to-back order. The queue literal spelling is <[a, b]>.",
+        signature: "fn from<const N: usize>(values: [i64; N]) -> Deque<i64>",
+        doc: "Creates a deque from values in front-to-back order.",
     },
     CoreMethodHelp {
-        owner: "VecDeque",
+        owner: "Deque",
         name: "push_back",
         kind: "method",
-        signature: "fn push_back<T>(self: &mut VecDeque<T>, value: T) -> ()",
+        signature: "fn push_back(self: &mut Deque<i64>, value: i64) -> ()",
         doc: "Appends a value to the back.",
     },
     CoreMethodHelp {
-        owner: "VecDeque",
+        owner: "Deque",
         name: "push_front",
         kind: "method",
-        signature: "fn push_front<T>(self: &mut VecDeque<T>, value: T) -> ()",
+        signature: "fn push_front(self: &mut Deque<i64>, value: i64) -> ()",
         doc: "Appends a value to the front.",
     },
     CoreMethodHelp {
-        owner: "VecDeque",
+        owner: "Deque",
         name: "pop_front",
         kind: "method",
-        signature: "fn pop_front<T>(self: &mut VecDeque<T>) -> Option<T>",
+        signature: "fn pop_front(self: &mut Deque<i64>) -> Option<i64>",
         doc: "Removes and returns the front value when present.",
     },
     CoreMethodHelp {
-        owner: "VecDeque",
+        owner: "Deque",
         name: "pop_back",
         kind: "method",
-        signature: "fn pop_back<T>(self: &mut VecDeque<T>) -> Option<T>",
+        signature: "fn pop_back(self: &mut Deque<i64>) -> Option<i64>",
         doc: "Removes and returns the back value when present.",
     },
     CoreMethodHelp {
-        owner: "VecDeque",
+        owner: "Deque",
         name: "peek_front",
         kind: "method",
-        signature: "fn peek_front<T>(self: VecDeque<T>) -> Option<T>",
+        signature: "fn peek_front(self: Deque<i64>) -> Option<i64>",
         doc: "Returns the front value without removing it.",
     },
     CoreMethodHelp {
-        owner: "VecDeque",
+        owner: "Deque",
         name: "peek_back",
         kind: "method",
-        signature: "fn peek_back<T>(self: VecDeque<T>) -> Option<T>",
+        signature: "fn peek_back(self: Deque<i64>) -> Option<i64>",
         doc: "Returns the back value without removing it.",
     },
     CoreMethodHelp {
-        owner: "VecDeque",
+        owner: "Deque",
         name: "len",
         kind: "method",
-        signature: "fn len<T>(self: VecDeque<T>) -> i64",
+        signature: "fn len(self: Deque<i64>) -> i64",
         doc: "Returns the number of values.",
     },
     CoreMethodHelp {
-        owner: "VecDeque",
+        owner: "Deque",
         name: "is_empty",
         kind: "method",
-        signature: "fn is_empty<T>(self: VecDeque<T>) -> bool",
+        signature: "fn is_empty(self: Deque<i64>) -> bool",
         doc: "Returns true when the deque has no values.",
     },
     CoreMethodHelp {
-        owner: "VecDeque",
+        owner: "Deque",
         name: "clear",
         kind: "method",
-        signature: "fn clear<T>(self: &mut VecDeque<T>) -> ()",
+        signature: "fn clear(self: &mut Deque<i64>) -> ()",
         doc: "Removes all values.",
     },
     CoreMethodHelp {
-        owner: "VecDequeue",
+        owner: "Queue",
         name: "new",
         kind: "assoc",
-        signature: "fn new<T>() -> VecDequeue<T>",
-        doc: "Alias for VecDeque::new.",
+        signature: "fn new() -> Queue<i64>",
+        doc: "Creates an empty FIFO queue.",
     },
     CoreMethodHelp {
-        owner: "VecDequeue",
+        owner: "Queue",
         name: "from",
         kind: "assoc",
-        signature: "fn from<T, const N: usize>(values: [T; N]) -> VecDequeue<T>",
-        doc: "Alias for VecDeque::from.",
+        signature: "fn from<const N: usize>(values: [i64; N]) -> Queue<i64>",
+        doc: "Creates a FIFO queue from values in front-to-back order. The literal spelling is <[a, b].",
     },
     CoreMethodHelp {
-        owner: "VecQueue",
+        owner: "Queue",
+        name: "push",
+        kind: "method",
+        signature: "fn push(self: &mut Queue<i64>, value: i64) -> ()",
+        doc: "Appends a value to the back of the queue.",
+    },
+    CoreMethodHelp {
+        owner: "Queue",
+        name: "pop",
+        kind: "method",
+        signature: "fn pop(self: &mut Queue<i64>) -> Option<i64>",
+        doc: "Removes and returns the front value when present.",
+    },
+    CoreMethodHelp {
+        owner: "Queue",
+        name: "peek",
+        kind: "method",
+        signature: "fn peek(self: Queue<i64>) -> Option<i64>",
+        doc: "Returns the front value without removing it.",
+    },
+    CoreMethodHelp {
+        owner: "Queue",
+        name: "len",
+        kind: "method",
+        signature: "fn len(self: Queue<i64>) -> i64",
+        doc: "Returns the number of values.",
+    },
+    CoreMethodHelp {
+        owner: "Queue",
+        name: "is_empty",
+        kind: "method",
+        signature: "fn is_empty(self: Queue<i64>) -> bool",
+        doc: "Returns true when the queue has no values.",
+    },
+    CoreMethodHelp {
+        owner: "Queue",
+        name: "clear",
+        kind: "method",
+        signature: "fn clear(self: &mut Queue<i64>) -> ()",
+        doc: "Removes all values.",
+    },
+    CoreMethodHelp {
+        owner: "Stack",
         name: "new",
         kind: "assoc",
-        signature: "fn new<T>() -> VecQueue<T>",
-        doc: "Alias for VecDeque::new.",
+        signature: "fn new() -> Stack<i64>",
+        doc: "Creates an empty LIFO stack.",
     },
     CoreMethodHelp {
-        owner: "VecQueue",
+        owner: "Stack",
         name: "from",
         kind: "assoc",
-        signature: "fn from<T, const N: usize>(values: [T; N]) -> VecQueue<T>",
-        doc: "Creates a queue from values in front-to-back order. The literal spelling is <[a, b]>.",
+        signature: "fn from<const N: usize>(values: [i64; N]) -> Stack<i64>",
+        doc: "Creates a LIFO stack from values in bottom-to-top order. The literal spelling is [a, b]>.",
+    },
+    CoreMethodHelp {
+        owner: "Stack",
+        name: "push",
+        kind: "method",
+        signature: "fn push(self: &mut Stack<i64>, value: i64) -> ()",
+        doc: "Appends a value to the top of the stack.",
+    },
+    CoreMethodHelp {
+        owner: "Stack",
+        name: "pop",
+        kind: "method",
+        signature: "fn pop(self: &mut Stack<i64>) -> Option<i64>",
+        doc: "Removes and returns the top value when present.",
+    },
+    CoreMethodHelp {
+        owner: "Stack",
+        name: "peek",
+        kind: "method",
+        signature: "fn peek(self: Stack<i64>) -> Option<i64>",
+        doc: "Returns the top value without removing it.",
+    },
+    CoreMethodHelp {
+        owner: "Stack",
+        name: "len",
+        kind: "method",
+        signature: "fn len(self: Stack<i64>) -> i64",
+        doc: "Returns the number of values.",
+    },
+    CoreMethodHelp {
+        owner: "Stack",
+        name: "is_empty",
+        kind: "method",
+        signature: "fn is_empty(self: Stack<i64>) -> bool",
+        doc: "Returns true when the stack has no values.",
+    },
+    CoreMethodHelp {
+        owner: "Stack",
+        name: "clear",
+        kind: "method",
+        signature: "fn clear(self: &mut Stack<i64>) -> ()",
+        doc: "Removes all values.",
     },
     CoreMethodHelp {
         owner: "BinaryHeap",
@@ -2014,16 +2099,27 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
             match build_and_call(&probe, &format!("__irepl_{input_no}")) {
                 Ok(_) => {
                     new_binding.source_index = lets.len();
-                    if let Some(helper) = editor.helper_mut() {
-                        let names: Vec<&str> = new_binding
-                            .vars
-                            .iter()
-                            .map(|var| var.name.as_str())
-                            .collect();
-                        helper.observe_let(&candidate, &names);
-                    }
+                    let completion_names = new_binding
+                        .vars
+                        .iter()
+                        .map(|var| var.name.clone())
+                        .collect::<Vec<_>>();
                     update_repl_bindings(&mut bindings, new_binding);
                     lets.push(candidate.clone());
+                    let completion_owners = completion_names
+                        .iter()
+                        .map(|name| {
+                            let owner = infer_repl_binding_type(&declarations, &lets, name)
+                                .ok()
+                                .and_then(|ty| ty.method_owner);
+                            (name, owner)
+                        })
+                        .collect::<Vec<_>>();
+                    if let Some(helper) = editor.helper_mut() {
+                        for (name, owner) in completion_owners {
+                            helper.set_binding_method_owner(name, owner.as_deref());
+                        }
+                    }
                     if verbose {
                         println!("    binding added ({} total)", bindings.len());
                     }
@@ -2118,7 +2214,7 @@ impl ReplValueType {
             Some(gossamer_types::TyKind::Slice(_)) => (Some("Slice".to_string()), true),
             Some(gossamer_types::TyKind::Vec(_)) => (Some("Vec".to_string()), false),
             Some(gossamer_types::TyKind::String) => (Some("String".to_string()), false),
-            Some(gossamer_types::TyKind::HashMap { .. }) => (Some("HashMap".to_string()), false),
+            Some(gossamer_types::TyKind::HashMap { .. }) => (Some("Map".to_string()), false),
             Some(gossamer_types::TyKind::Iterator(_)) => (Some("Iterator".to_string()), false),
             Some(gossamer_types::TyKind::Sender(_)) => (Some("Sender".to_string()), false),
             Some(gossamer_types::TyKind::Receiver(_)) => (Some("Receiver".to_string()), false),
@@ -2152,23 +2248,34 @@ fn render_repl_binding_value(value: &gossamer_interp::Value, ty: &ReplValueType)
     let mut rendered = render_repl_value(value);
     if ty.fixed_array && rendered.starts_with('[') {
         rendered = format!("#{rendered}");
-    } else if matches!(ty.method_owner.as_deref(), Some("HashSet" | "BTreeSet"))
-        && let Some((_, rest)) = rendered.split_once(' ')
+    } else if matches!(
+        ty.method_owner.as_deref(),
+        Some("Set" | "HashSet" | "BTreeSet")
+    ) && let Some((_, rest)) = rendered.split_once(' ')
         && rest.starts_with('{')
     {
         rendered = format!("#{rest}");
-    } else if matches!(ty.method_owner.as_deref(), Some("VecDeque"))
+    } else if matches!(ty.method_owner.as_deref(), Some("Queue" | "VecQueue"))
         && let Some((_, rest)) = rendered.split_once(' ')
         && rest.starts_with('[')
     {
-        rendered = format!("<{rest}>");
-    } else if matches!(ty.method_owner.as_deref(), Some("BinaryHeap" | "MaxHeap"))
+        rendered = format!("<{rest}");
+    } else if matches!(ty.method_owner.as_deref(), Some("Stack" | "VecStack"))
         && let Some((_, rest)) = rendered.split_once(' ')
+        && rest.starts_with('[')
+    {
+        rendered = format!("{rest}>");
+    } else if matches!(
+        ty.method_owner.as_deref(),
+        Some("BinaryHeap" | "MaxBinaryHeap" | "MaxHeap")
+    ) && let Some((_, rest)) = rendered.split_once(' ')
         && rest.starts_with('[')
     {
         rendered = format!("^{rest}");
-    } else if matches!(ty.method_owner.as_deref(), Some("MinHeap"))
-        && let Some((_, rest)) = rendered.split_once(' ')
+    } else if matches!(
+        ty.method_owner.as_deref(),
+        Some("MinBinaryHeap" | "MinHeap")
+    ) && let Some((_, rest)) = rendered.split_once(' ')
         && rest.starts_with('[')
     {
         rendered = format!("_{rest}");
@@ -2549,6 +2656,21 @@ fn resolve_repl_binding(
     build_and_call_with_type_for_inspection(&source, entry)
 }
 
+fn infer_repl_binding_type(
+    declarations: &[String],
+    lets: &[String],
+    name: &str,
+) -> std::result::Result<ReplValueType, String> {
+    let let_body = render_repl_setup(lets);
+    let entry = "__irepl_binding_type";
+    let source = format!(
+        "{}\nfn {entry}() {{ {lets}{name} }}\n",
+        declarations.join("\n"),
+        lets = let_body,
+    );
+    infer_repl_tail_type(&source)
+}
+
 fn repl_binding_from_let_source(input: &str) -> std::result::Result<ReplBinding, String> {
     use gossamer_ast::{ExprKind, ItemKind, StmtKind};
 
@@ -2927,7 +3049,7 @@ fn render_catalog_matches(pattern: &Regex, details: bool) -> String {
                 &owner,
                 "type",
                 "",
-                "Built-in receiver and associated methods.",
+                core_namespace_description(&owner),
                 Some("Builtin"),
                 details,
             );
@@ -2997,7 +3119,7 @@ fn render_catalog_query_matches(query: &str, details: bool) -> String {
             &owner,
             "type",
             "",
-            "Built-in receiver and associated methods.",
+            core_namespace_description(&owner),
             Some("Builtin"),
             details,
         );
@@ -3096,14 +3218,14 @@ fn catalog_kind_label(kind: &str) -> &str {
 
 fn catalog_example(path: &str, kind: &str, signature: &str) -> String {
     match path {
-        "HashMap::from" => {
-            return "let empty: HashMap<String, i64> = HashMap::from([]); let map = {\"one\": 1, \"two\": 2}; let also = HashMap::from([(\"one\", 1), (\"two\", 2)])".to_string();
+        "Map::from" | "HashMap::from" => {
+            return "let empty: Map<String, i64> = Map::from([]); let map = {\"one\": 1, \"two\": 2}; let also = Map::from([(\"one\", 1), (\"two\", 2)])".to_string();
         }
         "BTreeMap::from" => {
             return "let map = BTreeMap::from([(\"one\", 1), (\"two\", 2)])".to_string();
         }
-        "HashSet::from" => {
-            return "let set: HashSet<i64> = HashSet::from([1, 2, 2, 3])".to_string();
+        "Set::from" | "HashSet::from" => {
+            return "let set: Set<i64> = Set::from([1, 2, 2, 3])".to_string();
         }
         "BTreeSet::from" => {
             return "let set: BTreeSet<i64> = BTreeSet::from(#[1, 2, 2, 3])".to_string();
@@ -3111,13 +3233,19 @@ fn catalog_example(path: &str, kind: &str, signature: &str) -> String {
         "Vec::from" => {
             return "let values = Vec::from(#[1, 2, 3])".to_string();
         }
-        "VecDeque::from" | "VecDequeue::from" | "VecQueue::from" => {
-            return "let queue = <[1, 2, 3]>".to_string();
+        "Deque::from" | "VecDeque::from" => {
+            return "let deque = Deque::from([1, 2, 3])".to_string();
         }
-        "BinaryHeap::from" | "MaxHeap::from" => {
+        "Queue::from" | "VecQueue::from" => {
+            return "let queue = <[1, 2, 3]".to_string();
+        }
+        "Stack::from" | "VecStack::from" => {
+            return "let stack = [1, 2, 3]>".to_string();
+        }
+        "BinaryHeap::from" | "MaxBinaryHeap::from" | "MaxHeap::from" => {
             return "let heap: MaxHeap<i64> = ^[1, 2, 3]".to_string();
         }
-        "MinHeap::from" => {
+        "MinBinaryHeap::from" | "MinHeap::from" => {
             return "let heap: MinHeap<i64> = _[1, 2, 3]".to_string();
         }
         _ => {}
@@ -3143,14 +3271,44 @@ fn example_receiver(owner: &str) -> &'static str {
     match owner.rsplit("::").next().unwrap_or(owner) {
         "String" | "str" => "\"text\"",
         "Vec" | "Slice" | "Array" => "values",
-        "HashMap" | "BTreeMap" => "map",
-        "HashSet" | "BTreeSet" => "set",
-        "VecDeque" | "VecDequeue" | "VecQueue" => "queue",
-        "BinaryHeap" | "MaxHeap" | "MinHeap" => "heap",
+        "Map" | "HashMap" | "BTreeMap" => "map",
+        "Set" | "HashSet" | "BTreeSet" => "set",
+        "Deque" | "VecDeque" => "deque",
+        "Queue" | "VecQueue" => "queue",
+        "Stack" | "VecStack" => "stack",
+        "BinaryHeap" | "MaxBinaryHeap" | "MaxHeap" | "MinBinaryHeap" | "MinHeap" => "heap",
         "Option" => "option",
         "Result" => "result",
         "Iterator" | "Range" => "iter",
         _ => "value",
+    }
+}
+
+fn core_namespace_description(owner: &str) -> &'static str {
+    if owner == "sync::Map" {
+        return "Concurrent string map.";
+    }
+    match owner.rsplit("::").next().unwrap_or(owner) {
+        "Array" => "Fixed-size contiguous sequence.",
+        "Slice" => "Borrowed contiguous sequence.",
+        "Vec" => "Growable contiguous sequence.",
+        "Map" => "Key-value map (HashMap).",
+        "Set" => "Unique-value set (HashSet).",
+        "BTreeMap" => "Ordered key-value map (BTreeMap).",
+        "BTreeSet" => "Ordered unique-value set (BTreeSet).",
+        "Deque" => "Double-ended queue (VecDeque).",
+        "Queue" => "FIFO queue (VecQueue).",
+        "Stack" => "LIFO stack (VecStack).",
+        "BinaryHeap" => "Alias for MaxHeap backed by BinaryHeap.",
+        "MaxHeap" => "Max-priority heap (MaxBinaryHeap).",
+        "MinHeap" => "Min-priority heap (MinBinaryHeap).",
+        "Iterator" => "Lazy sequence iterator.",
+        "Option" => "Optional value.",
+        "Result" => "Success or error value.",
+        "String" => "UTF-8 string.",
+        "Buffer" => "Growable byte buffer.",
+        "Builder" => "Incremental string builder.",
+        _ => "Built-in type and method namespace.",
     }
 }
 
@@ -3565,19 +3723,17 @@ fn runtime_core_method_signature(owner: &str, name: &str, kind: &str) -> Option<
         ("RwLock", "new") => Some("fn new<T>(value: T) -> RwLock<T>"),
         ("Once", "new") => Some("fn new() -> Once"),
         ("WaitGroup", "new") => Some("fn new() -> WaitGroup"),
-        ("Map" | "sync::Map", "new") => Some("fn new() -> sync::Map"),
-        ("Map" | "sync::Map", "insert") => {
+        ("sync::Map", "new") => Some("fn new() -> sync::Map"),
+        ("sync::Map", "insert") => {
             Some("fn insert(self: &sync::Map, key: String, value: String) -> ()")
         }
-        ("Map" | "sync::Map", "get") => {
-            Some("fn get(self: &sync::Map, key: String) -> Option<String>")
-        }
-        ("Map" | "sync::Map", "remove") => Some("fn remove(self: &sync::Map, key: String) -> ()"),
-        ("Map" | "sync::Map", "len") => Some("fn len(self: &sync::Map) -> i64"),
-        ("Map" | "sync::Map", "contains_key") => {
+        ("sync::Map", "get") => Some("fn get(self: &sync::Map, key: String) -> Option<String>"),
+        ("sync::Map", "remove") => Some("fn remove(self: &sync::Map, key: String) -> ()"),
+        ("sync::Map", "len") => Some("fn len(self: &sync::Map) -> i64"),
+        ("sync::Map", "contains_key") => {
             Some("fn contains_key(self: &sync::Map, key: String) -> bool")
         }
-        ("Map" | "sync::Map", "keys") => Some("fn keys(self: &sync::Map) -> Vec<String>"),
+        ("sync::Map", "keys") => Some("fn keys(self: &sync::Map) -> Vec<String>"),
         ("Errors" | "validate::Errors", "new") => Some("fn new() -> validate::Errors"),
         ("FieldError" | "validate::FieldError", "new") => {
             Some("fn new(path: String, message: String, code: String) -> validate::FieldError")
@@ -3621,7 +3777,7 @@ fn runtime_core_method_signature(owner: &str, name: &str, kind: &str) -> Option<
     reason = "flat metadata table keeps REPL core-method docs auditable"
 )]
 fn runtime_core_method_doc(owner: &str, name: &str) -> Option<&'static str> {
-    if matches!(owner, "Map" | "sync::Map") {
+    if owner == "sync::Map" {
         return match name {
             "new" => Some("Creates an empty concurrent string map."),
             "insert" => Some("Associates a string key with a string value."),
@@ -3707,20 +3863,39 @@ fn runtime_core_method_doc(owner: &str, name: &str) -> Option<&'static str> {
         ("Vec", "take") => Some("Returns the first n values."),
         ("Vec", "windows") => Some("Returns overlapping fixed-size windows."),
         ("Vec", "zip") => Some("Pairs values with another sequence."),
-        ("HashMap", "clear") => Some("Removes all entries."),
-        ("HashMap", "inc") => Some("Increments an i64 counter value."),
-        ("HashMap", "inc_at") => Some("Increments counters from a substring key range."),
-        ("HashMap", "inc_batch") => Some("Increments counters for a batch of keys."),
-        ("HashSet", "clear") => Some("Removes all values from the set."),
-        ("HashSet", "is_disjoint") => Some("Returns true when two sets share no values."),
-        ("HashSet", "is_empty") => Some("Returns true when the set has no values."),
-        ("HashSet", "is_subset") => Some("Returns true when every value is in the other set."),
-        ("HashSet", "is_superset") => Some("Returns true when the other set is a subset."),
-        ("HashSet", "iter") => Some("Returns the set values as a vector."),
-        ("HashSet", "len") => Some("Returns the number of values."),
-        ("HashSet", "to_vec") => Some("Returns the set values as a vector."),
-        ("VecDeque", "is_empty") => Some("Returns true when the deque has no values."),
-        ("VecDeque", "len") => Some("Returns the number of values."),
+        ("Map", "clear") => Some("Removes all entries."),
+        ("Map", "inc") => Some("Increments an i64 counter value."),
+        ("Map", "inc_at") => Some("Increments counters from a substring key range."),
+        ("Map", "inc_batch") => Some("Increments counters for a batch of keys."),
+        ("Set", "clear") => Some("Removes all values from the set."),
+        ("Set", "is_disjoint") => Some("Returns true when two sets share no values."),
+        ("Set", "is_empty") => Some("Returns true when the set has no values."),
+        ("Set", "is_subset") => Some("Returns true when every value is in the other set."),
+        ("Set", "is_superset") => Some("Returns true when the other set is a subset."),
+        ("Set", "iter") => Some("Returns the set values as a vector."),
+        ("Set", "len") => Some("Returns the number of values."),
+        ("Set", "to_vec") => Some("Returns the set values as a vector."),
+        ("Deque", "push_back") => Some("Appends a value to the back."),
+        ("Deque", "push_front") => Some("Appends a value to the front."),
+        ("Deque", "pop_front") => Some("Removes and returns the front value when present."),
+        ("Deque", "pop_back") => Some("Removes and returns the back value when present."),
+        ("Deque", "peek_front") => Some("Returns the front value without removing it."),
+        ("Deque", "peek_back") => Some("Returns the back value without removing it."),
+        ("Deque", "clear") => Some("Removes all values."),
+        ("Deque", "is_empty") => Some("Returns true when the deque has no values."),
+        ("Deque", "len") => Some("Returns the number of values."),
+        ("Queue", "push") => Some("Appends a value to the back of the queue."),
+        ("Queue", "pop") => Some("Removes and returns the front value when present."),
+        ("Queue", "peek") => Some("Returns the front value without removing it."),
+        ("Queue", "clear") => Some("Removes all values."),
+        ("Queue", "is_empty") => Some("Returns true when the queue has no values."),
+        ("Queue", "len") => Some("Returns the number of values."),
+        ("Stack", "push") => Some("Appends a value to the top of the stack."),
+        ("Stack", "pop") => Some("Removes and returns the top value when present."),
+        ("Stack", "peek") => Some("Returns the top value without removing it."),
+        ("Stack", "clear") => Some("Removes all values."),
+        ("Stack", "is_empty") => Some("Returns true when the stack has no values."),
+        ("Stack", "len") => Some("Returns the number of values."),
         ("Option", "filter") => Some("Keeps Some only when a predicate accepts it."),
         ("Option", "flatten") => Some("Flattens a nested Option."),
         ("Option", "iter") => Some("Returns a zero-or-one element vector."),
@@ -3764,6 +3939,13 @@ fn canonical_runtime_owner(owner: &str) -> Option<String> {
         "result" => "Result",
         "bytes::Buffer" => "Buffer",
         "bytes::Builder" => "Builder",
+        "HashMap" => "Map",
+        "HashSet" => "Set",
+        "VecDeque" => "Deque",
+        "VecQueue" => "Queue",
+        "VecStack" => "Stack",
+        "MaxBinaryHeap" => "MaxHeap",
+        "MinBinaryHeap" => "MinHeap",
         other => other,
     };
     if matches!(
@@ -3873,12 +4055,13 @@ fn module_query_matches(module: &StdModule, query: &str) -> bool {
 
 fn core_namespace_matches(owner: &str, query: &str) -> bool {
     let (query, substring) = split_symbol_query(query);
+    let canonical_query = canonical_collection_owner(query);
     if substring {
         owner
             .to_ascii_lowercase()
             .contains(&query.to_ascii_lowercase())
     } else {
-        owner == query || owner.eq_ignore_ascii_case(query)
+        owner == query || owner.eq_ignore_ascii_case(query) || owner == canonical_query
     }
 }
 
@@ -3898,16 +4081,30 @@ fn core_method_query_matches(method: &CoreMethodEntry, query: &str) -> bool {
             || format!("{}::{}", method.owner, method.name).contains(query)
             || core_lower_path(method).contains(query);
     }
+    let alias_path_matches = query.rsplit_once("::").is_some_and(|(owner, name)| {
+        name == method.name && canonical_collection_owner(owner) == method.owner
+    });
     method.name == query
         || format!("{}::{}", method.owner, method.name) == query
         || core_lower_path(method) == query
-        || query
-            .rsplit_once("::")
-            .is_some_and(|(owner, name)| name == method.name && owner == method.owner)
+        || alias_path_matches
 }
 
 fn core_lower_path(method: &CoreMethodEntry) -> String {
     format!("{}::{}", method.owner.to_ascii_lowercase(), method.name)
+}
+
+fn canonical_collection_owner(owner: &str) -> &str {
+    match owner.strip_prefix("collections::").unwrap_or(owner) {
+        "HashMap" => "Map",
+        "HashSet" => "Set",
+        "VecDeque" => "Deque",
+        "VecQueue" => "Queue",
+        "VecStack" => "Stack",
+        "MaxBinaryHeap" => "MaxHeap",
+        "MinBinaryHeap" => "MinHeap",
+        other => other,
+    }
 }
 
 fn info_search_query(arg: &str) -> String {
@@ -4156,6 +4353,7 @@ fn repl_expr_contains_ref_mut(expr: &gossamer_ast::Expr) -> bool {
         ExprKind::Array(array)
         | ExprKind::FixedArray(array)
         | ExprKind::QueueLiteral(array)
+        | ExprKind::StackLiteral(array)
         | ExprKind::MaxHeapLiteral(array)
         | ExprKind::MinHeapLiteral(array) => repl_array_expr_contains_ref_mut(array),
         ExprKind::Range { start, end, .. } => {
@@ -4267,6 +4465,7 @@ fn repl_expr_mutates_binding(
         ExprKind::Array(array)
         | ExprKind::FixedArray(array)
         | ExprKind::QueueLiteral(array)
+        | ExprKind::StackLiteral(array)
         | ExprKind::MaxHeapLiteral(array)
         | ExprKind::MinHeapLiteral(array) => {
             repl_array_expr_mutates_binding(array, user_mutating_methods)
@@ -4440,6 +4639,35 @@ fn build_and_call_with_type_for_inspection(
     entry: &str,
 ) -> std::result::Result<(gossamer_interp::Value, ReplValueType), String> {
     build_and_call_with_type_inner(source, entry, true)
+}
+
+fn infer_repl_tail_type(source: &str) -> std::result::Result<ReplValueType, String> {
+    let source = gossamer_parse::autoderive::augment_source(source);
+    let mut map = gossamer_lex::SourceMap::new();
+    let file = map.add_file("irepl".to_string(), source.clone());
+    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&source, file);
+    if !parse_diags.is_empty() {
+        return Err(format_parse_diags(&parse_diags, &map, file));
+    }
+    let (res, resolve_diags) = gossamer_resolve::resolve_source_file(&sf);
+    if !resolve_diags.is_empty() {
+        return Err(format_resolve_diags(&sf, &resolve_diags));
+    }
+    let mut tcx = gossamer_types::TyCtxt::new();
+    let (tbl, type_diags) =
+        gossamer_types::typecheck_source_file_for_repl_inspection(&sf, &res, &mut tcx);
+    let tail_span = repl_generated_body_span(&sf);
+    let user_type_diags: Vec<_> = type_diags
+        .iter()
+        .filter(|diag| !is_implicit_repl_tail_diag(diag, tail_span))
+        .collect();
+    if !user_type_diags.is_empty() {
+        return Err(format_semantic_diags("type", &user_type_diags));
+    }
+    let tail_ty_id = repl_generated_tail_expr(&sf).and_then(|expr| tbl.get(expr.id));
+    Ok(tail_ty_id.map_or_else(ReplValueType::unknown, |ty| {
+        ReplValueType::from_ty(&tcx, ty)
+    }))
 }
 
 fn build_and_call_with_type_inner(
@@ -4701,21 +4929,23 @@ mod tests {
 
     #[test]
     fn sync_map_info_lists_complete_callable_signatures() {
-        for owner in ["Map", "sync::Map"] {
-            let entries = core_method_entries()
-                .into_iter()
-                .filter(|entry| entry.owner == owner)
-                .collect::<Vec<_>>();
-            assert_eq!(entries.len(), 7, "incomplete {owner} surface: {entries:?}");
-            assert!(
-                entries.iter().all(|entry| {
-                    !entry.signature.trim().is_empty()
-                        && entry.signature.starts_with("fn ")
-                        && !entry.doc.starts_with("Built-in ")
-                }),
-                "{owner} contains placeholder metadata: {entries:?}"
-            );
-        }
+        let entries = core_method_entries()
+            .into_iter()
+            .filter(|entry| entry.owner == "sync::Map")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            entries.len(),
+            7,
+            "incomplete sync::Map surface: {entries:?}"
+        );
+        assert!(
+            entries.iter().all(|entry| {
+                !entry.signature.trim().is_empty()
+                    && entry.signature.starts_with("fn ")
+                    && !entry.doc.starts_with("Built-in ")
+            }),
+            "sync::Map contains placeholder metadata: {entries:?}"
+        );
         let rendered = render_catalog_query_matches("sync::Map", false);
         for expected in [
             "sync::Map::new() -> sync::Map [associated function]",
@@ -4731,6 +4961,20 @@ mod tests {
                 "missing `{expected}`:\n{rendered}"
             );
         }
+    }
+
+    #[test]
+    fn repl_binding_type_inference_tracks_queue_and_stack_owners() {
+        let lets = vec![
+            "let mut queue = <[1, 2, 3]".to_string(),
+            "let mut stack = [1, 2, 3]>".to_string(),
+        ];
+
+        let queue = infer_repl_binding_type(&[], &lets, "queue").expect("infer queue type");
+        let stack = infer_repl_binding_type(&[], &lets, "stack").expect("infer stack type");
+
+        assert_eq!(queue.method_owner.as_deref(), Some("Queue"));
+        assert_eq!(stack.method_owner.as_deref(), Some("Stack"));
     }
 
     #[test]
@@ -4768,13 +5012,13 @@ mod tests {
         let checked = [
             "String",
             "Vec",
-            "HashMap",
+            "Map",
             "BTreeMap",
-            "HashSet",
+            "Set",
             "BTreeSet",
-            "VecDeque",
-            "VecDequeue",
-            "VecQueue",
+            "Deque",
+            "Queue",
+            "Stack",
             "BinaryHeap",
             "MaxHeap",
             "MinHeap",
@@ -4804,16 +5048,26 @@ mod tests {
             "Vec::capacity",
             "Vec::reserve",
             "Vec::truncate",
+            "Map::insert",
             "HashMap::insert",
             "BTreeMap::insert",
             "BTreeMap::from",
+            "Set::union",
             "HashSet::union",
             "BTreeSet::union",
+            "Deque::push_back",
             "VecDeque::push_back",
-            "VecDeque::clear",
-            "VecQueue::from",
+            "Deque::clear",
+            "Queue::push",
+            "VecQueue::push",
+            "Queue::len",
+            "Stack::pop",
+            "VecStack::pop",
+            "Stack::peek",
             "MaxHeap::push",
+            "MaxBinaryHeap::push",
             "MinHeap::push",
+            "MinBinaryHeap::push",
             "BinaryHeap::push",
             "Option::map",
             "Result::map_err",

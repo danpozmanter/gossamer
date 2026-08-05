@@ -23,7 +23,13 @@ more explicit types and errors.
 | `ch <- v` | `tx.send(v)` | Channels use sender and receiver handles. |
 | `v, ok := <-ch` | `while let Some(v) = rx.recv() { ... }` | `None` means the channel is closed. |
 | `make([]int, 0, 16)` | `Vec::<i64>::with_capacity(16)` | `Vec<T>` owns growable storage; `&[T]` is a borrowed slice view. |
-| `make(map[string]int)` | `HashMap::<String, i64>::new()` | Import from `std::collections`. |
+| `make(map[string]int)` | `Map::<String, i64>::new()` | Import from `std::collections`. |
+| `map[string]int{"k": 1}` | `{"k": 1}` | Map literal. |
+| set via `map[T]struct{}` | `#{...}` | Set literal, or typed `BTreeSet<T>` for ordered sets. |
+| FIFO queue slice | `Queue<i64>` with `<[1, 2]` | `push` appends, `pop` removes from the front. |
+| stack slice | `Stack<i64>` with `[1, 2]>` | `push` appends, `pop` removes from the top. |
+| `container/heap` | `MinHeap<i64>` with `_[...]`, or `MaxHeap<i64>` with `^[...]` | Heap operations are `push`, `pop`, and `peek`. |
+| `container/list` or ring-buffer deque | `Deque<i64>` | Use explicit front/back methods. |
 
 Entry files may use top-level statements. Items are hoisted, and bare
 statements become the body of an implicit `fn main()`.
@@ -87,9 +93,9 @@ let first = users[0]              // slice/Vec index; traps if out of bounds
 let initial = first.name[0]       // String index is a UTF-8 byte as i64
 let pair = (first.name, first.active)
 let enabled = pair.1
-let mut by_name: HashMap<String, User> = HashMap::new()
+let mut by_name: Map<String, User> = Map::new()
 by_name.insert(first.name, first)
-let cached = by_name.get("Ada")   // HashMap lookup returns Option<V>
+let cached = by_name.get("Ada")   // Map lookup returns Option<V>
 let found = Lookup::Found {
     index: 0
     user: cached.unwrap()

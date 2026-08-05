@@ -794,19 +794,22 @@ fn repl_btreemap_from_tuple_arrays_work() {
 }
 
 #[test]
-fn repl_vecdequeue_alias_and_vecdeque_clear_work() {
+fn repl_vecdeque_canonical_methods_and_clear_work() {
     let out = run_repl(
-        "let mut d: VecDequeue<i64> = VecDequeue::new()\n\
+        "let mut d: VecDeque<i64> = VecDeque::new()\n\
          d.push_front(2)\n\
          d.push_back(3)\n\
          println(d.pop_front())\n\
+         println(d.pop_back())\n\
          d.clear()\n\
          println(d.is_empty())\n",
     );
     assert!(out.success, "stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("Some(2)") && out.stdout.contains("true"),
-        "VecDequeue alias or VecDeque::clear failed: {}",
+        out.stdout.contains("Some(2)")
+            && out.stdout.contains("Some(3)")
+            && out.stdout.contains("true"),
+        "VecDeque canonical methods or clear failed: {}",
         out.stdout
     );
 }
@@ -3438,12 +3441,17 @@ fn repl_persists_map_set_and_deque_mutations() {
 #[test]
 fn repl_renders_queue_and_heap_literals_in_bindings() {
     let out = run_repl(
-        "let q = <[1, 2, 3]>\nlet max = ^[1, 2, 3]\nlet min = _[1, 2, 3]\n%b\nmax.peek()\nmin.peek()\n",
+        "let q = <[1, 2, 3]\nlet s = [1, 2, 3]>\nlet max = ^[1, 2, 3]\nlet min = _[1, 2, 3]\n%b\nmax.peek()\nmin.peek()\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("q: VecDeque<i64> = <[1, 2, 3]>"),
+        out.stdout.contains("q: VecQueue<i64> = <[1, 2, 3]"),
         "queue literal did not render through %b: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("s: VecStack<i64> = [1, 2, 3]>"),
+        "stack literal did not render through %b: {}",
         out.stdout
     );
     assert!(

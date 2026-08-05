@@ -405,7 +405,7 @@ impl Value {
             Self::Closure(_) => "closure".to_string(),
             Self::Builtin(_) | Self::Native(_) => "function".to_string(),
             Self::Channel(_) => "Channel".to_string(),
-            Self::Map(_) | Self::IntMap(_) | Self::StrIntMap(_) => "HashMap".to_string(),
+            Self::Map(_) | Self::IntMap(_) | Self::StrIntMap(_) => "Map".to_string(),
             Self::Uint(_) => "u64".to_string(),
             Self::Weak(_) => "Weak".to_string(),
             Self::MutCell(cell) => cell.lock().type_name(),
@@ -2637,7 +2637,7 @@ impl fmt::Display for Value {
                 if matches!(inner.name.as_str(), "bytes::Buffer" | "bytes::Builder") {
                     return out.write_str(inner.name.as_str());
                 }
-                if matches!(inner.name.as_str(), "HashSet" | "BTreeSet") {
+                if is_set_struct_name(inner.name.as_str()) {
                     let values =
                         crate::stdlib_builtins::set::set_snapshot(self).unwrap_or_default();
                     write!(
@@ -2647,6 +2647,9 @@ impl fmt::Display for Value {
                         values.iter().map(repr_value).collect::<Vec<_>>().join(", ")
                     )?;
                     return Ok(());
+                }
+                if is_deque_struct_name(inner.name.as_str()) {
+                    return out.write_str(&repr_deque(self, inner.name.as_str()));
                 }
                 // `errors::Error` prints Go-style as its colon-joined
                 // cause chain ("outer: mid: root") so `format!("{}", e)`
@@ -2755,7 +2758,7 @@ fn repr_value(value: &Value) -> String {
         {
             inner.name.as_str().to_string()
         }
-        Value::Struct(inner) if matches!(inner.name.as_str(), "HashSet" | "BTreeSet") => {
+        Value::Struct(inner) if is_set_struct_name(inner.name.as_str()) => {
             let values = crate::stdlib_builtins::set::set_snapshot(value).unwrap_or_default();
             format!(
                 "{} {{{}}}",
@@ -2763,10 +2766,10 @@ fn repr_value(value: &Value) -> String {
                 values.iter().map(repr_value).collect::<Vec<_>>().join(", ")
             )
         }
-        Value::Struct(inner) if inner.name.as_str() == "VecDeque" => repr_deque(value),
-        Value::Struct(inner)
-            if matches!(inner.name.as_str(), "BinaryHeap" | "MaxHeap" | "MinHeap") =>
-        {
+        Value::Struct(inner) if is_deque_struct_name(inner.name.as_str()) => {
+            repr_deque(value, inner.name.as_str())
+        }
+        Value::Struct(inner) if is_heap_struct_name(inner.name.as_str()) => {
             repr_binary_heap(value, inner.name.as_str())
         }
         Value::Struct(inner) => repr_struct(
@@ -2809,11 +2812,29 @@ fn repr_value(value: &Value) -> String {
     }
 }
 
-fn repr_deque(value: &Value) -> String {
+fn repr_deque(value: &Value, owner: &str) -> String {
     let values = crate::stdlib_builtins::deque::deque_snapshot(value).unwrap_or_default();
     format!(
-        "VecDeque [{}]",
+        "{owner} [{}]",
         values.iter().map(repr_value).collect::<Vec<_>>().join(", ")
+    )
+}
+
+fn is_set_struct_name(name: &str) -> bool {
+    matches!(name, "Set" | "HashSet" | "BTreeSet")
+}
+
+fn is_deque_struct_name(name: &str) -> bool {
+    matches!(
+        name,
+        "Deque" | "VecDeque" | "Queue" | "VecQueue" | "Stack" | "VecStack"
+    )
+}
+
+fn is_heap_struct_name(name: &str) -> bool {
+    matches!(
+        name,
+        "BinaryHeap" | "MaxBinaryHeap" | "MaxHeap" | "MinBinaryHeap" | "MinHeap"
     )
 }
 

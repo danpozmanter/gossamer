@@ -117,17 +117,28 @@ Write clear, low-complexity, concise code.
 - **`s.to_i64()` / `to_f64()` / `to_bool()`** - strict full-string
   parses returning `Option<T>`:
   `env::args().first().unwrap_or("8").to_i64().unwrap_or(8)`.
-- **Collection literal spellings are distinct**: `[]` creates `Vec`,
-  `#[]` creates fixed arrays, `{}` creates `HashMap`, `#{}` creates
-  `HashSet` or `BTreeSet` with an expected set type, `^[]` creates
-  `MaxHeap`, `_[]` creates `MinHeap`, and `<[]>` creates `VecDeque`.
-  Repeat literals follow the same prefixes: `[v; N]` is a Vec by default,
-  while `#[v; N]` is a fixed array.
-- **Collection constructors infer**: `let mut m = HashMap::new()`,
-  `let empty: HashMap<String, i64> = HashMap::from([])`, and
-  `let map = {"one": 1}`. `HashMap::from` accepts array pairs, while
-  map literals construct `HashMap` values directly. `#{a, b}` constructs
-  a `HashSet`, or a `BTreeSet` when an expected `BTreeSet<T>` type is present.
+- **Collection literal spellings are distinct.** Fixed array and Vec
+  construction differs from Rust. Use `[]` / `[1,2,3]` for `Vec`, `#[]` /
+  `#[1,2,3]` for fixed arrays, `{}` / `{"one": 1}` for `Map`, `#{}` /
+  `#{1,2,3}` for `Set`, `^[]` / `^[1,2,3]` for `MaxHeap`, `_[]` /
+  `_[1,2,3]` for `MinHeap`, `<[]` / `<[1,2,3]` for `Queue`, and `[]>` /
+  `[1,2,3]>` for `Stack`. Use `Deque::new()` or
+  `Deque::from([1,2,3])` when both ends matter. Repeat literals follow
+  the same prefixes: `[v; N]` is a Vec by default, while `#[v; N]` is a fixed
+  array.
+- **Prefer dedicated collection contracts for intent.** `Stack` is the
+  idiomatic LIFO-only type even though `Vec` can push/pop at the end;
+  `Queue` is the FIFO-only type even though a deque can model it; `MinHeap`
+  and `MaxHeap` avoid negating keys or wrapping values in `Reverse`. Use the
+  general structures only when you actually need their broader method surface.
+  Longer aliases remain accepted: `HashMap` for `Map`, `HashSet` for `Set`,
+  `VecDeque` for `Deque`, `VecQueue` for `Queue`, `VecStack` for `Stack`,
+  `MaxBinaryHeap` for `MaxHeap`, and `MinBinaryHeap` for `MinHeap`.
+- **Collection constructors infer**: `let mut m = Map::new()`,
+  `let empty: Map<String, i64> = Map::from([])`, and
+  `let map = {"one": 1}`. `Map::from` accepts array pairs, while
+  map literals construct `Map` values directly. `#{a, b}` constructs
+  a `Set`, or a `BTreeSet` when an expected `BTreeSet<T>` type is present.
 - **Byte reads**: `s[i]` is the byte as `i64`; compare with byte
   literals (`s[i] >= b'0'`), render with `s[i] as char`. Prefer this
   over per-byte `substring`.
@@ -209,8 +220,8 @@ let n = 3 |> double |> add(10) |> clamp(0, 100)
   `Unit` or `Unit {}`, tuple structs use `Pair(a, b)`, and named structs
   require keyed `Point { x: 1, y: 2 }` fields. Positional or mixed
   braced named-struct literals are rejected.
-- **Imports**: `use std::{iter, os, strings}`, alias via `{HashMap as
-  Map}`; always spell the full path (`std::encoding::json`, not
+- **Imports**: `use std::{iter, os, strings}`, alias via `{Map as
+  Scores}`; always spell the full path (`std::encoding::json`, not
   `std::json`) - paths validate against the std manifest (GR0005).
   Cross-module: `super::item`, `crate::path::item`, `self::child::item`.
 - **Entry file may omit `fn main`**: top-level statements become the
@@ -331,13 +342,15 @@ are callable as methods/free functions and materialize results.
 
 - `[T; N]` is an owned fixed array, `[T]` is an unsized borrowed slice,
   and `Vec<T>` is the default owned growable sequence. Literal spellings are
-  `[]` for Vec, `#[]` for fixed arrays, `{}` for `HashMap`, `#{}` for
-  `HashSet` or expected `BTreeSet`, `^[]` for `MaxHeap`, `_[]` for
-  `MinHeap`, and `<[]>` for `VecDeque`. Arrays, slices, and Vec share the
+  `[]` for Vec, `#[]` for fixed arrays, `{}` for `Map`, `#{}` for
+  `Set` or expected `BTreeSet`, `^[]` for `MaxHeap`, `_[]` for
+  `MinHeap`, `<[]` for `Queue`, and `[]>` for `Stack`. Arrays, slices, and Vec share the
   implemented slice method surface. Eager collection combinators are Vec
-  methods; arrays and slices use `iter()` first. Only Vec has
-  push/pop/insert/remove/clear, truncation,
-  extension, reservation, and capacity methods. Mutable arrays and slices
+  methods; arrays and slices use `iter()` first. Use `Stack` for a
+  LIFO-only argument contract instead of a general `Vec`, `Queue` for
+  FIFO-only behavior, and `MinHeap` / `MaxHeap` for explicit priority order.
+  Only Vec has the full sequence surface: insert, remove, truncation,
+  extension, reservation, capacity, and indexed mutation methods. Mutable arrays and slices
   support `sort`, `reverse`, `swap`, and `fill` without resizing. `%i`
   reports each type's real surface, while `%e` also removes methods that the
   binding's mutability cannot call. Tuples use `.0`/`.1`;
@@ -345,12 +358,12 @@ are callable as methods/free functions and materialize results.
   `xs.insert/remove/swap` mutate in place and return `Result`, with an
   `Err` for an out-of-bounds index. Qualified calls use the same contract:
   `Vec::insert(&mut xs, i, v)` / `Vec::remove(&mut xs, i)`.
-- `std::collections`: `Vec`, `HashMap` (struct/tuple keys by value;
+- `std::collections`: `Vec`, `Map` (struct/tuple keys by value;
   aggregate-key maps use `iter()` rather than `keys()` until typed key
   snapshots are available;
-  `iter()` yields `[(K, V)]`, `keys`, `values`, `HashMap::pop`),
-  `HashSet` / `BTreeSet` (`#{...}` literals and full set algebra), `BTreeMap` (sorted; `String` or `i64`
-  keys), `VecDeque`. A separate i64-only `queue`/`stack`/`deque`/
+  `iter()` yields `[(K, V)]`, `keys`, `values`, `Map::pop`),
+  `Set` / `BTreeSet` (`#{...}` literals and full set algebra), `BTreeMap` (sorted; `String` or `i64`
+  keys), `Deque`, `Queue`, `Stack`. A separate i64-only `queue`/`stack`/`deque`/
   `heap`/`ordered_*` family is functional re-bind style
   (`let q = queue::push(q, v)`), not mutating.
 - Bracket literals create Vec values unless an expected fixed-array type is
@@ -412,7 +425,7 @@ Full path spelling is validated (GR0005); discover signatures with
   ascii85, hex, pem, binary}`. Typed serde is free functions with a
   turbofish - `from_json::<T>(&text)?` / `to_json::<T>(v)` (same for
   yaml/toml). Struct fields may be scalars, `String`, `Option<T>`,
-  tuples, `HashMap<String, V>`, nested structs, and `Vec<T>` of those;
+  tuples, `Map<String, V>`, nested structs, and `Vec<T>` of those;
   fixed arrays/slices are rejected with a type diagnostic. For dynamic or
   partially-known shapes use `json::parse` + `get`/`at`/`as_i64`/
   `as_str`/`keys`/`len`. Unknown JSON keys are ignored.
@@ -469,7 +482,7 @@ build`. Known sharp edges:
 - `+` on `String` copies; heavy assembly wants `bytes::Builder` or a
   `mut String` with `+=`.
 - Method dispatch is type-directed for user methods, core
-  `String`/`HashMap`/`Vec` receivers, and typed stdlib receivers.
+  `String`/`Map`/`Vec` receivers, and typed stdlib receivers.
   Qualified paths (`Point::origin()`) remain the most explicit form
   when several types intentionally share a method name.
 - Per-file test modules need unique names (GR0003; section 11).

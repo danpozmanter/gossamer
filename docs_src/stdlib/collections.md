@@ -12,17 +12,17 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`BTreeMap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BTreeMap` | Ordered map surface routed through the typed map runtime. |
-| [`BTreeSet`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BTreeSet` | Ordered set. |
-| [`BinaryHeap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BinaryHeap` | Compatibility alias for `MaxHeap<i64>`. |
-| [`MaxHeap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type MaxHeap` | Phase 1 max heap shape is `MaxHeap<i64>`. Use `^[1, 2, 3]` for literals. |
-| [`MinHeap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type MinHeap` | Phase 1 min heap shape is `MinHeap<i64>`. Use `_[1, 2, 3]` for literals. |
-| [`HashMap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type HashMap` | Hash map backed by the swiss-table layout. |
-| [`HashSet`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type HashSet` | Unordered set built on top of `HashMap`. |
+| [`BTreeMap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BTreeMap` | Ordered key-value map backed by BTreeMap. |
+| [`BTreeSet`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BTreeSet` | Ordered unique-value set backed by BTreeSet. |
+| [`BinaryHeap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type BinaryHeap` | Alias for `MaxHeap<T>`; underlying storage is BinaryHeap. |
+| [`MaxHeap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type MaxHeap` | Max-priority heap (MaxBinaryHeap) backed by BinaryHeap; use `^[1, 2, 3]` for literals. |
+| [`MinHeap`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type MinHeap` | Min-priority heap (MinBinaryHeap) backed by BinaryHeap; use `_[1, 2, 3]` for literals. |
+| [`Map`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Map` | Key-value map (HashMap) backed by the swiss-table layout. |
+| [`Set`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Set` | Unique-value set (HashSet) backed by a hash table. |
 | [`Vec`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Vec` | Growable contiguous sequence. |
-| [`VecDeque`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type VecDeque` | Phase 1 double-ended queue shape is `VecDeque<i64>`. |
-| [`VecDequeue`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type VecDequeue` | Alias for `VecDeque<i64>`. |
-| [`VecQueue`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type VecQueue` | Alias for `VecDeque<i64>`. Use `<[1, 2, 3]>` for queue literals. |
+| [`Deque`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Deque` | Double-ended queue (VecDeque) with explicit front/back methods such as `push_back` and `pop_front`. |
+| [`Queue`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Queue` | FIFO queue (VecQueue) backed by VecDeque; use `<[1, 2, 3]` for literals and `push`, `pop`, `peek`, `len`, `is_empty`, and `clear`. |
+| [`Stack`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `type Stack` | LIFO stack (VecStack) backed by VecDeque; use `[1, 2, 3]>` for literals and `push`, `pop`, `peek`, `len`, `is_empty`, and `clear`. |
 | [`len`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn len(xs: Vec<i64>) -> i64` | Element count. |
 | [`peek_back`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek_back(xs: Vec<i64>) -> Option<i64>` | Back element, if present. |
 | [`peek_front`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn peek_front(xs: Vec<i64>) -> Option<i64>` | Front element, if present. |
@@ -59,19 +59,19 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 | [`pop`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn pop(xs: Vec<i64>) -> Vec<i64>` | Drop the top; returns the new stack. |
 | [`push`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/collections.rs) | `fn push(xs: Vec<i64>, value: i64) -> Vec<i64>` | Push an i64 onto the top; returns the new stack. |
 
-## `HashSet<T>` methods
+## `Set<T>` methods
 
-`HashSet` provides `new`, `insert`, `remove`, `contains`, `len`, `is_empty`,
+`Set` provides `new`, `insert`, `remove`, `contains`, `len`, `is_empty`,
 `clear`, `iter`, `to_vec`, `union`, `intersection`, `difference`,
 `symmetric_difference`, `is_subset`, `is_superset`, and `is_disjoint`.
-Use `#{a, b, c}` for a `HashSet` literal.
+Use `#{a, b, c}` for a `Set` literal.
 
-As in Rust, `map` is an iterator method rather than a `HashSet` method. Use
+As in Rust, `map` is an iterator method rather than a `Set` method. Use
 `set.iter().map(f)`. Calling `set.map(f)` is a type error.
 
 ## `BTreeSet<T>` methods
 
-`BTreeSet` provides the same set method surface as `HashSet`, but iteration
+`BTreeSet` provides the same set method surface as `Set`, but iteration
 and `to_vec` return values in sorted order. Use an expected type to shape a
 set literal:
 

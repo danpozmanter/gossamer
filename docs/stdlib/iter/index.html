@@ -1942,7 +1942,7 @@ short-circuiting, overflow, and backend behavior.</p>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>chunk_by</code></a></td>
-<td><code>fn chunk_by&lt;T, K: Eq&gt;(key: Fn(T) -&gt; K, items: Vec&lt;T&gt;) -&gt; HashMap&lt;K, Vec&lt;T&gt;&gt;</code></td>
+<td><code>fn chunk_by&lt;T, K: Eq&gt;(key: Fn(T) -&gt; K, items: Vec&lt;T&gt;) -&gt; Map&lt;K, Vec&lt;T&gt;&gt;</code></td>
 <td>Groups elements into a map keyed by f.</td>
 </tr>
 <tr>
@@ -1962,7 +1962,7 @@ short-circuiting, overflow, and backend behavior.</p>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>count_by</code></a></td>
-<td><code>fn count_by&lt;T, K: Eq&gt;(key: Fn(T) -&gt; K, items: Vec&lt;T&gt;) -&gt; HashMap&lt;K, i64&gt;</code></td>
+<td><code>fn count_by&lt;T, K: Eq&gt;(key: Fn(T) -&gt; K, items: Vec&lt;T&gt;) -&gt; Map&lt;K, i64&gt;</code></td>
 <td>Counts elements per key derived by f.</td>
 </tr>
 <tr>

@@ -8,7 +8,7 @@
 #![forbid(unsafe_code)]
 
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use gossamer_lex::{Punct, SourceMap, TokenKind, tokenize};
 use rustyline::completion::Completer;
@@ -30,7 +30,7 @@ const DIM: &str = "\x1b[2m";
 /// REPL helper that highlights Gossamer source as the user types.
 #[derive(Default)]
 pub(crate) struct GosReplHelper {
-    hash_set_bindings: HashSet<String>,
+    binding_method_owners: HashMap<String, String>,
 }
 
 impl GosReplHelper {
@@ -40,26 +40,24 @@ impl GosReplHelper {
         Self::default()
     }
 
-    /// Records receiver types introduced by a successful REPL `let`.
-    pub(crate) fn observe_let(&mut self, source: &str, names: &[&str]) {
-        let is_hash_set = source.contains("HashSet::new(") || source.contains(": HashSet<");
-        for name in names {
-            if is_hash_set {
-                self.hash_set_bindings.insert((*name).to_string());
-            } else {
-                self.hash_set_bindings.remove(*name);
-            }
+    /// Records the core method receiver owner for a persistent binding.
+    pub(crate) fn set_binding_method_owner(&mut self, name: &str, owner: Option<&str>) {
+        if let Some(owner) = owner {
+            self.binding_method_owners
+                .insert(name.to_string(), owner.to_string());
+        } else {
+            self.binding_method_owners.remove(name);
         }
     }
 
     /// Removes completion metadata for a binding ended by `%drop`.
     pub(crate) fn forget_binding(&mut self, name: &str) {
-        self.hash_set_bindings.remove(name);
+        self.binding_method_owners.remove(name);
     }
 
     /// Clears all completion metadata with the rest of the REPL session.
     pub(crate) fn reset_session(&mut self) {
-        self.hash_set_bindings.clear();
+        self.binding_method_owners.clear();
     }
 }
 
@@ -145,7 +143,7 @@ impl Completer for GosReplHelper {
         pos: usize,
         _ctx: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<String>)> {
-        Ok(complete_at(line, pos, &self.hash_set_bindings))
+        Ok(complete_at(line, pos, &self.binding_method_owners))
     }
 }
 
@@ -154,7 +152,7 @@ impl Completer for GosReplHelper {
 fn complete_at(
     line: &str,
     pos: usize,
-    hash_set_bindings: &HashSet<String>,
+    binding_method_owners: &HashMap<String, String>,
 ) -> (usize, Vec<String>) {
     let start = word_start(line, pos);
     let word = &line[start..pos];
@@ -164,11 +162,11 @@ fn complete_at(
     if start > 0
         && line.as_bytes()[start - 1] == b'.'
         && let Some(receiver_start) = receiver_start(line, start - 1)
-        && hash_set_bindings.contains(&line[receiver_start..start - 1])
+        && let Some(owner) = binding_method_owners.get(&line[receiver_start..start - 1])
     {
         return (
             start,
-            crate::repl::core_method_names("HashSet")
+            crate::repl::core_method_names(owner)
                 .into_iter()
                 .filter(|method| method.starts_with(word))
                 .map(str::to_string)
@@ -397,24 +395,24 @@ impl Highlighter for GosReplHelper {
 #[cfg(test)]
 mod repl_helper_tests {
     use super::{GosReplHelper, complete_at, continuation_indent, incomplete_reason};
-    use std::collections::HashSet;
+    use std::collections::HashMap;
 
     #[test]
     fn keyword_prefix_completes() {
-        let (start, cands) = complete_at("le", 2, &HashSet::new());
+        let (start, cands) = complete_at("le", 2, &HashMap::new());
         assert_eq!(start, 0);
         assert!(cands.iter().any(|c| c == "let"));
     }
 
     #[test]
     fn empty_word_yields_nothing() {
-        let (_, cands) = complete_at("let x = ", 8, &HashSet::new());
+        let (_, cands) = complete_at("let x = ", 8, &HashMap::new());
         assert!(cands.is_empty());
     }
 
     #[test]
     fn qualified_path_completes_member() {
-        let (start, cands) = complete_at("println!(strings::jo", 20, &HashSet::new());
+        let (start, cands) = complete_at("println!(strings::jo", 20, &HashMap::new());
         assert_eq!(start, 9);
         assert!(
             cands.iter().any(|c| c == "strings::join"),
@@ -426,21 +424,31 @@ mod repl_helper_tests {
 
     #[test]
     fn completion_offset_is_word_start_not_line_start() {
-        let (start, _) = complete_at("    fo", 6, &HashSet::new());
+        let (start, _) = complete_at("    fo", 6, &HashMap::new());
         assert_eq!(start, 4);
     }
 
     #[test]
     fn hash_set_binding_completes_methods_after_dot() {
         let mut helper = GosReplHelper::new();
-        helper.observe_let("let mut set = HashSet::new()", &["set"]);
+        helper.set_binding_method_owner("set", Some("HashSet"));
 
-        let (start, cands) = complete_at("set.ins", 7, &helper.hash_set_bindings);
+        let (start, cands) = complete_at("set.ins", 7, &helper.binding_method_owners);
         assert_eq!(start, 4);
         assert_eq!(cands, vec!["insert"]);
 
-        let (_, cands) = complete_at("set.insecure", 12, &helper.hash_set_bindings);
+        let (_, cands) = complete_at("set.insecure", 12, &helper.binding_method_owners);
         assert!(cands.is_empty());
+    }
+
+    #[test]
+    fn vec_stack_binding_completes_methods_after_dot() {
+        let mut helper = GosReplHelper::new();
+        helper.set_binding_method_owner("x", Some("VecStack"));
+
+        let (start, cands) = complete_at("x.l", 3, &helper.binding_method_owners);
+        assert_eq!(start, 2);
+        assert_eq!(cands, vec!["len"]);
     }
 
     #[test]

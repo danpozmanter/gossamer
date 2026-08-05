@@ -43,6 +43,26 @@ pub unsafe extern "C" fn gos_rt_deque_from_vec_i64(v: *const GosVec) -> *mut Gos
     })
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_queue_new() -> *mut GosDeque {
+    unsafe { gos_rt_deque_new() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_queue_from_vec_i64(v: *const GosVec) -> *mut GosDeque {
+    unsafe { gos_rt_deque_from_vec_i64(v) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_stack_new() -> *mut GosDeque {
+    unsafe { gos_rt_deque_new() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_stack_from_vec_i64(v: *const GosVec) -> *mut GosDeque {
+    unsafe { gos_rt_deque_from_vec_i64(v) }
+}
+
 /// Append `value` to the back of the deque.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_deque_push_back(d: *mut GosDeque, value: i64) {

@@ -25,11 +25,11 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 | [`all`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs) | `fn all<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> bool` | True if every element satisfies f. |
 | [`any`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs) | `fn any<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> bool` | True if any element satisfies f. |
 | [`chain`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs) | `fn chain<T>(left: Vec<T>, right: Vec<T>) -> Vec<T>` | Concatenates two sequences. |
-| [`chunk_by`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs) | `fn chunk_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> HashMap<K, Vec<T>>` | Groups elements into a map keyed by f. |
+| [`chunk_by`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs) | `fn chunk_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> Map<K, Vec<T>>` | Groups elements into a map keyed by f. |
 | [`chunks`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs) | `fn chunks<T>(n: i64, items: Vec<T>) -> Vec<Vec<T>>` | Non-overlapping chunks of length n. |
 | [`collect`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs) | `fn collect<T>(items: Vec<T>) -> Vec<T>` | Materializes a sequence into a Vec. |
 | [`count`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs) | `fn count<T>(items: Vec<T>) -> i64` | Number of elements. |
-| [`count_by`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs) | `fn count_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> HashMap<K, i64>` | Counts elements per key derived by f. |
+| [`count_by`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs) | `fn count_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> Map<K, i64>` | Counts elements per key derived by f. |
 | [`dedup`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs) | `fn dedup<T: Eq>(items: Vec<T>) -> Vec<T>` | Removes consecutive duplicate elements. |
 | [`empty`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs) | `fn empty<T>() -> Vec<T>` | Empty Vec. |
 | [`enumerate`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/iter.rs) | `fn enumerate<T>(items: Vec<T>) -> Vec<(i64, T)>` | Pairs each element with its index. |

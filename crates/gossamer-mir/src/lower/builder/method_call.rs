@@ -72,6 +72,8 @@ const BTREE_SET_DEF_LOCAL: u32 = u32::MAX - 18;
 const BINARY_HEAP_DEF_LOCAL: u32 = u32::MAX - 28;
 const REVERSE_DEF_LOCAL: u32 = u32::MAX - 29;
 const MIN_HEAP_DEF_LOCAL: u32 = u32::MAX - 30;
+const VEC_QUEUE_DEF_LOCAL: u32 = u32::MAX - 31;
+const VEC_STACK_DEF_LOCAL: u32 = u32::MAX - 32;
 
 fn tuple_get_const_index(expr: &HirExpr) -> Option<usize> {
     match &expr.kind {
@@ -1511,6 +1513,12 @@ impl<'a> Builder<'a> {
             TyKind::Adt { def, .. } if def.local == MIN_HEAP_DEF_LOCAL => {
                 Some("collections::MinHeap")
             }
+            TyKind::Adt { def, .. } if def.local == VEC_QUEUE_DEF_LOCAL => {
+                Some("collections::VecQueue")
+            }
+            TyKind::Adt { def, .. } if def.local == VEC_STACK_DEF_LOCAL => {
+                Some("collections::VecStack")
+            }
             TyKind::Adt { def, .. } if def.local == VALIDATE_ERRORS_DEF_LOCAL => {
                 Some("validate::Errors")
             }
@@ -2564,6 +2572,18 @@ impl<'a> Builder<'a> {
             (Some("collections::VecDeque"), "len") => Some("gos_rt_deque_len"),
             (Some("collections::VecDeque"), "is_empty") => Some("gos_rt_deque_is_empty"),
             (Some("collections::VecDeque"), "clear") => Some("gos_rt_deque_clear"),
+            (Some("collections::VecQueue"), "push") => Some("gos_rt_deque_push_back"),
+            (Some("collections::VecQueue"), "pop") => Some("gos_rt_deque_pop_front"),
+            (Some("collections::VecQueue"), "peek") => Some("gos_rt_deque_peek_front"),
+            (Some("collections::VecQueue"), "len") => Some("gos_rt_deque_len"),
+            (Some("collections::VecQueue"), "is_empty") => Some("gos_rt_deque_is_empty"),
+            (Some("collections::VecQueue"), "clear") => Some("gos_rt_deque_clear"),
+            (Some("collections::VecStack"), "push") => Some("gos_rt_deque_push_back"),
+            (Some("collections::VecStack"), "pop") => Some("gos_rt_deque_pop_back"),
+            (Some("collections::VecStack"), "peek") => Some("gos_rt_deque_peek_back"),
+            (Some("collections::VecStack"), "len") => Some("gos_rt_deque_len"),
+            (Some("collections::VecStack"), "is_empty") => Some("gos_rt_deque_is_empty"),
+            (Some("collections::VecStack"), "clear") => Some("gos_rt_deque_clear"),
             (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
             (Some("collections::BTreeMap"), "get") => Some("gos_rt_btmap_get"),
             (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),
@@ -3553,6 +3573,18 @@ impl<'a> Builder<'a> {
             (Some("collections::VecDeque"), "len") => Some("gos_rt_deque_len"),
             (Some("collections::VecDeque"), "is_empty") => Some("gos_rt_deque_is_empty"),
             (Some("collections::VecDeque"), "clear") => Some("gos_rt_deque_clear"),
+            (Some("collections::VecQueue"), "push") => Some("gos_rt_deque_push_back"),
+            (Some("collections::VecQueue"), "pop") => Some("gos_rt_deque_pop_front"),
+            (Some("collections::VecQueue"), "peek") => Some("gos_rt_deque_peek_front"),
+            (Some("collections::VecQueue"), "len") => Some("gos_rt_deque_len"),
+            (Some("collections::VecQueue"), "is_empty") => Some("gos_rt_deque_is_empty"),
+            (Some("collections::VecQueue"), "clear") => Some("gos_rt_deque_clear"),
+            (Some("collections::VecStack"), "push") => Some("gos_rt_deque_push_back"),
+            (Some("collections::VecStack"), "pop") => Some("gos_rt_deque_pop_back"),
+            (Some("collections::VecStack"), "peek") => Some("gos_rt_deque_peek_back"),
+            (Some("collections::VecStack"), "len") => Some("gos_rt_deque_len"),
+            (Some("collections::VecStack"), "is_empty") => Some("gos_rt_deque_is_empty"),
+            (Some("collections::VecStack"), "clear") => Some("gos_rt_deque_clear"),
             (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
             (Some("collections::BTreeMap"), "get") => Some("gos_rt_btmap_get"),
             (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),

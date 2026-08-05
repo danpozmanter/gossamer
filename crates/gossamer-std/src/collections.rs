@@ -1,6 +1,6 @@
 //! Runtime support for `std::collections`.
-//! The Gossamer-facing collection types are named `Vec`, `HashMap`,
-//! `BTreeMap`, ... to match the stdlib surface. Their concrete
+//! The Gossamer-facing collection types are named `Vec`, `Map`,
+//! `Set`, `Deque`, ... to match the stdlib surface. Their concrete
 //! implementations wrap the Rust standard library so
 //! every operation is safe and battle-tested. Later phases may swap
 //! the backing store for a GC-aware implementation without changing
@@ -9,7 +9,8 @@
 #![forbid(unsafe_code)]
 
 use std::collections::{
-    BTreeMap, BTreeSet, BinaryHeap as StdBinaryHeap, HashMap, HashSet, VecDeque,
+    BTreeMap, BTreeSet, BinaryHeap as StdBinaryHeap, HashMap as StdHashMap, HashSet as StdHashSet,
+    VecDeque as StdVecDeque,
 };
 
 /// Dense sequence used by Gossamer's `Vec<T>`.
@@ -97,11 +98,20 @@ impl<'a, T> IntoIterator for &'a Vector<T> {
 /// Double-ended queue wrapper.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Deque<T> {
-    inner: VecDeque<T>,
+    inner: StdVecDeque<T>,
 }
 
-/// Queue alias for Gossamer's `VecQueue<T>` spelling.
-pub type VecQueue<T> = Deque<T>;
+/// FIFO queue wrapper.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Queue<T> {
+    inner: StdVecDeque<T>,
+}
+
+/// LIFO stack wrapper.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stack<T> {
+    inner: StdVecDeque<T>,
+}
 
 /// Max-heap wrapper.
 #[derive(Debug, Clone)]
@@ -111,6 +121,16 @@ pub struct MaxHeap<T: Ord> {
 
 /// Compatibility spelling for a max heap.
 pub type BinaryHeap<T> = MaxHeap<T>;
+/// Explicit compatibility spelling for a max heap backed by a binary heap.
+pub type MaxBinaryHeap<T> = MaxHeap<T>;
+/// Explicit compatibility spelling for a min heap backed by a binary heap.
+pub type MinBinaryHeap<T> = MinHeap<T>;
+/// Compatibility spelling for a double-ended queue.
+pub type VecDeque<T> = Deque<T>;
+/// Compatibility spelling for a FIFO queue.
+pub type VecQueue<T> = Queue<T>;
+/// Compatibility spelling for a LIFO stack.
+pub type VecStack<T> = Stack<T>;
 
 impl<T: Ord> MaxHeap<T> {
     /// Empty max heap.
@@ -239,7 +259,7 @@ impl<T> Deque<T> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: VecDeque::new(),
+            inner: StdVecDeque::new(),
         }
     }
     /// Pushes to the back.
@@ -276,18 +296,137 @@ impl<T> Default for Deque<T> {
     }
 }
 
+impl<T> Queue<T> {
+    /// Empty FIFO queue.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: StdVecDeque::new(),
+        }
+    }
+
+    /// Pushes to the back.
+    pub fn push(&mut self, value: T) {
+        self.inner.push_back(value);
+    }
+
+    /// Pops from the front.
+    pub fn pop(&mut self) -> Option<T> {
+        self.inner.pop_front()
+    }
+
+    /// Borrows the front value.
+    #[must_use]
+    pub fn peek(&self) -> Option<&T> {
+        self.inner.front()
+    }
+
+    /// Current length.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Empty check.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Removes all values.
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
+}
+
+impl<T> Default for Queue<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> From<Vec<T>> for Queue<T> {
+    fn from(inner: Vec<T>) -> Self {
+        Self {
+            inner: StdVecDeque::from(inner),
+        }
+    }
+}
+
+impl<T> Stack<T> {
+    /// Empty LIFO stack.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: StdVecDeque::new(),
+        }
+    }
+
+    /// Pushes to the top.
+    pub fn push(&mut self, value: T) {
+        self.inner.push_back(value);
+    }
+
+    /// Pops from the top.
+    pub fn pop(&mut self) -> Option<T> {
+        self.inner.pop_back()
+    }
+
+    /// Borrows the top value.
+    #[must_use]
+    pub fn peek(&self) -> Option<&T> {
+        self.inner.back()
+    }
+
+    /// Current length.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Empty check.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Removes all values.
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
+}
+
+impl<T> Default for Stack<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> From<Vec<T>> for Stack<T> {
+    fn from(inner: Vec<T>) -> Self {
+        Self {
+            inner: StdVecDeque::from(inner),
+        }
+    }
+}
+
 /// Hash-map wrapper.
 #[derive(Debug, Clone)]
 pub struct HashMapS<K, V> {
-    inner: HashMap<K, V>,
+    inner: StdHashMap<K, V>,
 }
+
+/// Gossamer-facing hash-map wrapper name.
+pub type Map<K, V> = HashMapS<K, V>;
+/// Compatibility spelling for a hash map.
+pub type HashMap<K, V> = Map<K, V>;
 
 impl<K: std::hash::Hash + Eq, V> HashMapS<K, V> {
     /// Empty map.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: HashMap::new(),
+            inner: StdHashMap::new(),
         }
     }
     /// Inserts a key/value pair, returning the previous value if any.
@@ -371,15 +510,20 @@ impl<K: Ord, V> Default for TreeMap<K, V> {
 /// Hash-set wrapper.
 #[derive(Debug, Clone)]
 pub struct HashSetS<T> {
-    inner: HashSet<T>,
+    inner: StdHashSet<T>,
 }
+
+/// Gossamer-facing hash-set wrapper name.
+pub type Set<T> = HashSetS<T>;
+/// Compatibility spelling for a hash set.
+pub type HashSet<T> = Set<T>;
 
 impl<T: std::hash::Hash + Eq> HashSetS<T> {
     /// Empty set.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: HashSet::new(),
+            inner: StdHashSet::new(),
         }
     }
     /// Inserts `value`, returning whether it was newly added.

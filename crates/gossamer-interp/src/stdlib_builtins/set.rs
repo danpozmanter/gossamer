@@ -107,6 +107,46 @@ use super::*;
 
 pub(crate) fn install_set(globals: &mut Vec<(&'static str, Value)>) {
     let entries: &[(&str, BuiltinFnPub)] = &[
+        ("Set::new", builtin_set_new),
+        ("Set::from", builtin_set_from),
+        ("Set::insert", builtin_set_insert),
+        ("Set::remove", builtin_set_remove),
+        ("Set::contains", builtin_set_contains),
+        ("Set::len", builtin_set_len),
+        ("Set::is_empty", builtin_set_is_empty),
+        ("Set::clear", builtin_set_clear),
+        ("Set::to_vec", builtin_set_to_vec),
+        ("Set::iter", builtin_set_to_vec),
+        ("Set::union", builtin_set_union),
+        ("Set::intersection", builtin_set_intersection),
+        ("Set::difference", builtin_set_difference),
+        (
+            "Set::symmetric_difference",
+            builtin_set_symmetric_difference,
+        ),
+        ("Set::is_subset", builtin_set_is_subset),
+        ("Set::is_superset", builtin_set_is_superset),
+        ("Set::is_disjoint", builtin_set_is_disjoint),
+        ("collections::Set::new", builtin_set_new),
+        ("collections::Set::from", builtin_set_from),
+        ("collections::Set::insert", builtin_set_insert),
+        ("collections::Set::remove", builtin_set_remove),
+        ("collections::Set::contains", builtin_set_contains),
+        ("collections::Set::len", builtin_set_len),
+        ("collections::Set::is_empty", builtin_set_is_empty),
+        ("collections::Set::clear", builtin_set_clear),
+        ("collections::Set::to_vec", builtin_set_to_vec),
+        ("collections::Set::iter", builtin_set_to_vec),
+        ("collections::Set::union", builtin_set_union),
+        ("collections::Set::intersection", builtin_set_intersection),
+        ("collections::Set::difference", builtin_set_difference),
+        (
+            "collections::Set::symmetric_difference",
+            builtin_set_symmetric_difference,
+        ),
+        ("collections::Set::is_subset", builtin_set_is_subset),
+        ("collections::Set::is_superset", builtin_set_is_superset),
+        ("collections::Set::is_disjoint", builtin_set_is_disjoint),
         ("HashSet::new", builtin_set_new),
         ("HashSet::from", builtin_set_from),
         ("HashSet::insert", builtin_set_insert),
@@ -167,7 +207,7 @@ pub(crate) fn next_set_handle() -> i64 {
 }
 
 pub(crate) fn set_handle(id: i64) -> Value {
-    set_handle_named("HashSet", id)
+    set_handle_named("Set", id)
 }
 
 pub(crate) fn set_handle_named(name: &'static str, id: i64) -> Value {
@@ -179,7 +219,7 @@ pub(crate) fn set_handle_named(name: &'static str, id: i64) -> Value {
 
 pub(crate) fn set_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
-        if matches!(inner.name.as_str(), "HashSet" | "BTreeSet") {
+        if matches!(inner.name.as_str(), "Set" | "HashSet" | "BTreeSet") {
             for (i, v) in &inner.fields {
                 if (*i) == "__set" {
                     if let Value::Int(n) = v {
@@ -193,7 +233,7 @@ pub(crate) fn set_id_of(value: &Value) -> Option<i64> {
 }
 
 pub(crate) fn builtin_set_new(_args: &[Value]) -> RuntimeResult<Value> {
-    builtin_set_new_named("HashSet")
+    builtin_set_new_named("Set")
 }
 
 pub(crate) fn builtin_btreeset_new(_args: &[Value]) -> RuntimeResult<Value> {
@@ -209,7 +249,7 @@ fn builtin_set_new_named(name: &'static str) -> RuntimeResult<Value> {
 }
 
 fn builtin_set_from(args: &[Value]) -> RuntimeResult<Value> {
-    builtin_set_from_named("HashSet", args)
+    builtin_set_from_named("Set", args)
 }
 
 fn builtin_btreeset_from(args: &[Value]) -> RuntimeResult<Value> {
@@ -339,7 +379,7 @@ fn set_pair_ids(args: &[Value]) -> Option<(i64, i64)> {
 fn set_handle_name(value: Option<&Value>) -> &'static str {
     match value {
         Some(Value::Struct(inner)) if inner.name == "BTreeSet" => "BTreeSet",
-        _ => "HashSet",
+        _ => "Set",
     }
 }
 
@@ -621,6 +661,6 @@ mod set_registry_tests {
             snapshot.first().map(MapKey::from_value),
             Some(MapKey::from_value(&first))
         );
-        assert_eq!(handle.repr(), "HashSet {Point { x: 1, y: 2 }}");
+        assert_eq!(handle.repr(), "Set {Point { x: 1, y: 2 }}");
     }
 }

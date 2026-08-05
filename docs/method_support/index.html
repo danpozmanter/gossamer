@@ -888,10 +888,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#hashmap" class="md-nav__link">
+  <a href="#map" class="md-nav__link">
     <span class="md-ellipsis">
 
-        HashMap
+        Map
 
     </span>
   </a>
@@ -910,10 +910,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#hashset" class="md-nav__link">
+  <a href="#set" class="md-nav__link">
     <span class="md-ellipsis">
 
-        HashSet
+        Set
 
     </span>
   </a>
@@ -932,10 +932,32 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#vecdeque" class="md-nav__link">
+  <a href="#deque" class="md-nav__link">
     <span class="md-ellipsis">
 
-        VecDeque
+        Deque
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#queue" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Queue
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#stack" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Stack
 
     </span>
   </a>
@@ -2114,10 +2136,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#hashmap" class="md-nav__link">
+  <a href="#map" class="md-nav__link">
     <span class="md-ellipsis">
 
-        HashMap
+        Map
 
     </span>
   </a>
@@ -2136,10 +2158,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#hashset" class="md-nav__link">
+  <a href="#set" class="md-nav__link">
     <span class="md-ellipsis">
 
-        HashSet
+        Set
 
     </span>
   </a>
@@ -2158,10 +2180,32 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#vecdeque" class="md-nav__link">
+  <a href="#deque" class="md-nav__link">
     <span class="md-ellipsis">
 
-        VecDeque
+        Deque
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#queue" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Queue
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#stack" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Stack
 
     </span>
   </a>
@@ -2286,7 +2330,7 @@
 
 <h1 id="methods-by-type">Methods by type<a class="headerlink" href="#methods-by-type" title="Permanent link">&para;</a></h1>
 <p>This page is the source-facing reference for inherent methods on core
-types such as <code>String</code>, <code>Vec</code>, <code>HashMap</code>, <code>HashSet</code>, <code>BTreeSet</code>, <code>Option</code>, and
+types such as <code>String</code>, <code>Vec</code>, <code>Map</code>, <code>Set</code>, <code>BTreeSet</code>, <code>Option</code>, and
 <code>Result</code>.</p>
 <p>Items listed here resolve in <code>gos</code> (interpreter), forced-JIT execution,
 and <code>gos build [--release]</code> (compiled) unless a row explicitly says
@@ -2491,9 +2535,12 @@ cannot change their length or capacity. Iterator combinators are used through
 </tr>
 </tbody>
 </table>
-<p>Map literals such as <code>{"one": 1}</code> construct <code>HashMap</code> values. Set literals
-such as <code>#{1, 2, 2}</code> construct <code>HashSet</code> values, or <code>BTreeSet</code> values when an
+<p>Map literals such as <code>{"one": 1}</code> construct <code>Map</code> values. Set literals
+such as <code>#{1, 2, 2}</code> construct <code>Set</code> values, or <code>BTreeSet</code> values when an
 expected <code>BTreeSet&lt;T&gt;</code> type is present.</p>
+<p>Longer aliases remain accepted: <code>HashMap</code> for <code>Map</code>, <code>HashSet</code> for <code>Set</code>,
+<code>VecDeque</code> for <code>Deque</code>, <code>VecQueue</code> for <code>Queue</code>, <code>VecStack</code> for <code>Stack</code>,
+<code>MaxBinaryHeap</code> for <code>MaxHeap</code>, and <code>MinBinaryHeap</code> for <code>MinHeap</code>.</p>
 <table>
 <thead>
 <tr>
@@ -2660,7 +2707,7 @@ expected <code>BTreeSet&lt;T&gt;</code> type is present.</p>
 </tr>
 </tbody>
 </table>
-<h2 id="hashmap">HashMap<a class="headerlink" href="#hashmap" title="Permanent link">&para;</a></h2>
+<h2 id="map">Map<a class="headerlink" href="#map" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -2671,9 +2718,9 @@ expected <code>BTreeSet&lt;T&gt;</code> type is present.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>HashMap::from&lt;K, V, const N: usize&gt;([(K, V); N])</code></td>
-<td><code>HashMap&lt;K, V&gt;</code></td>
-<td>Associated function; accepts array pairs. Map literals such as <code>{"one": 1}</code> construct <code>HashMap</code> values directly.</td>
+<td><code>Map::from&lt;K, V, const N: usize&gt;([(K, V); N])</code></td>
+<td><code>Map&lt;K, V&gt;</code></td>
+<td>Associated function; accepts array pairs. Map literals such as <code>{"one": 1}</code> construct <code>Map</code> values directly.</td>
 </tr>
 <tr>
 <td><code>m.insert(k, v)</code></td>
@@ -2728,7 +2775,7 @@ expected <code>BTreeSet&lt;T&gt;</code> type is present.</p>
 </tbody>
 </table>
 <h2 id="btreemap">BTreeMap<a class="headerlink" href="#btreemap" title="Permanent link">&para;</a></h2>
-<p>BTreeMap uses the same typed map runtime as HashMap, with key-sorted user-facing
+<p>BTreeMap uses the same typed map runtime as Map, with key-sorted user-facing
 iteration.</p>
 <table>
 <thead>
@@ -2796,7 +2843,7 @@ iteration.</p>
 </tr>
 </tbody>
 </table>
-<h2 id="hashset">HashSet<a class="headerlink" href="#hashset" title="Permanent link">&para;</a></h2>
+<h2 id="set">Set<a class="headerlink" href="#set" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -2838,22 +2885,22 @@ iteration.</p>
 </tr>
 <tr>
 <td><code>s.union(other)</code></td>
-<td><code>HashSet&lt;T&gt;</code></td>
+<td><code>Set&lt;T&gt;</code></td>
 <td>Set union.</td>
 </tr>
 <tr>
 <td><code>s.intersection(other)</code></td>
-<td><code>HashSet&lt;T&gt;</code></td>
+<td><code>Set&lt;T&gt;</code></td>
 <td>Shared values.</td>
 </tr>
 <tr>
 <td><code>s.difference(other)</code></td>
-<td><code>HashSet&lt;T&gt;</code></td>
+<td><code>Set&lt;T&gt;</code></td>
 <td>Values present only in <code>s</code>.</td>
 </tr>
 <tr>
 <td><code>s.symmetric_difference(other)</code></td>
-<td><code>HashSet&lt;T&gt;</code></td>
+<td><code>Set&lt;T&gt;</code></td>
 <td>Values present in exactly one set.</td>
 </tr>
 <tr>
@@ -2869,12 +2916,12 @@ iteration.</p>
 </tbody>
 </table>
 <h2 id="btreeset">BTreeSet<a class="headerlink" href="#btreeset" title="Permanent link">&para;</a></h2>
-<p><code>BTreeSet&lt;T&gt;</code> has the same method surface as <code>HashSet&lt;T&gt;</code>, with ordered
+<p><code>BTreeSet&lt;T&gt;</code> has the same method surface as <code>Set&lt;T&gt;</code>, with ordered
 iteration and <code>to_vec</code> output.</p>
-<h2 id="vecdeque">VecDeque<a class="headerlink" href="#vecdeque" title="Permanent link">&para;</a></h2>
-<p>Phase 1 <code>VecDeque</code> support is <code>VecDeque&lt;i64&gt;</code>. It is a double-ended ring
-buffer; both ends are constant-time. The spelling <code>VecDequeue&lt;i64&gt;</code> is accepted
-as an alias. The pop / peek methods return <code>Option&lt;i64&gt;</code>.</p>
+<h2 id="deque">Deque<a class="headerlink" href="#deque" title="Permanent link">&para;</a></h2>
+<p>Phase 1 <code>Deque</code> support is <code>Deque&lt;i64&gt;</code>. It is a double-ended ring
+buffer; both ends are constant-time. The pop / peek methods return
+<code>Option&lt;i64&gt;</code>. Like Rust's <code>VecDeque</code>, use explicit front/back method names.</p>
 <table>
 <thead>
 <tr>
@@ -2926,6 +2973,96 @@ as an alias. The pop / peek methods return <code>Option&lt;i64&gt;</code>.</p>
 </tr>
 <tr>
 <td><code>d.clear()</code></td>
+<td><code>()</code></td>
+<td>Removes all values.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="queue">Queue<a class="headerlink" href="#queue" title="Permanent link">&para;</a></h2>
+<p>Phase 1 <code>Queue</code> support is <code>Queue&lt;i64&gt;</code>. It is a restricted FIFO queue:
+<code>push</code> appends to the back, <code>pop</code> removes from the front, and <code>peek</code> observes
+the front without removing it. Use <code>&lt;[a, b]</code> for literals.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Returns</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>q.push(v)</code></td>
+<td><code>()</code></td>
+<td>Append to the back.</td>
+</tr>
+<tr>
+<td><code>q.pop()</code></td>
+<td><code>Option&lt;i64&gt;</code></td>
+<td>Remove and return the front element.</td>
+</tr>
+<tr>
+<td><code>q.peek()</code></td>
+<td><code>Option&lt;i64&gt;</code></td>
+<td>Return the front element without removing it.</td>
+</tr>
+<tr>
+<td><code>q.len()</code></td>
+<td><code>i64</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>q.is_empty()</code></td>
+<td><code>bool</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>q.clear()</code></td>
+<td><code>()</code></td>
+<td>Removes all values.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stack">Stack<a class="headerlink" href="#stack" title="Permanent link">&para;</a></h2>
+<p>Phase 1 <code>Stack</code> support is <code>Stack&lt;i64&gt;</code>. It is a restricted LIFO stack:
+<code>push</code> appends to the top, <code>pop</code> removes from the top, and <code>peek</code> observes
+the top without removing it. Use <code>[a, b]&gt;</code> for literals.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Returns</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>s.push(v)</code></td>
+<td><code>()</code></td>
+<td>Push onto the top.</td>
+</tr>
+<tr>
+<td><code>s.pop()</code></td>
+<td><code>Option&lt;i64&gt;</code></td>
+<td>Remove and return the top element.</td>
+</tr>
+<tr>
+<td><code>s.peek()</code></td>
+<td><code>Option&lt;i64&gt;</code></td>
+<td>Return the top element without removing it.</td>
+</tr>
+<tr>
+<td><code>s.len()</code></td>
+<td><code>i64</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>s.is_empty()</code></td>
+<td><code>bool</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>s.clear()</code></td>
 <td><code>()</code></td>
 <td>Removes all values.</td>
 </tr>

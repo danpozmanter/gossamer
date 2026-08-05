@@ -2217,8 +2217,38 @@ more explicit types and errors.</p>
 </tr>
 <tr>
 <td><code>make(map[string]int)</code></td>
-<td><code>HashMap::&lt;String, i64&gt;::new()</code></td>
+<td><code>Map::&lt;String, i64&gt;::new()</code></td>
 <td>Import from <code>std::collections</code>.</td>
+</tr>
+<tr>
+<td><code>map[string]int{"k": 1}</code></td>
+<td><code>{"k": 1}</code></td>
+<td>Map literal.</td>
+</tr>
+<tr>
+<td>set via <code>map[T]struct{}</code></td>
+<td><code>#{...}</code></td>
+<td>Set literal, or typed <code>BTreeSet&lt;T&gt;</code> for ordered sets.</td>
+</tr>
+<tr>
+<td>FIFO queue slice</td>
+<td><code>Queue&lt;i64&gt;</code> with <code>&lt;[1, 2]</code></td>
+<td><code>push</code> appends, <code>pop</code> removes from the front.</td>
+</tr>
+<tr>
+<td>stack slice</td>
+<td><code>Stack&lt;i64&gt;</code> with <code>[1, 2]&gt;</code></td>
+<td><code>push</code> appends, <code>pop</code> removes from the top.</td>
+</tr>
+<tr>
+<td><code>container/heap</code></td>
+<td><code>MinHeap&lt;i64&gt;</code> with <code>_[...]</code>, or <code>MaxHeap&lt;i64&gt;</code> with <code>^[...]</code></td>
+<td>Heap operations are <code>push</code>, <code>pop</code>, and <code>peek</code>.</td>
+</tr>
+<tr>
+<td><code>container/list</code> or ring-buffer deque</td>
+<td><code>Deque&lt;i64&gt;</code></td>
+<td>Use explicit front/back methods.</td>
 </tr>
 </tbody>
 </table>
@@ -2273,9 +2303,9 @@ tuple enum variants. Collection and field access is explicit:</p>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">initial</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">first</span><span class="p">.</span><span class="n">name</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w">       </span><span class="c1">// String index is a UTF-8 byte as i64</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">pair</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">first</span><span class="p">.</span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">first</span><span class="p">.</span><span class="n">active</span><span class="p">)</span>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="kd">let</span><span class="w"> </span><span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">pair</span><span class="p">.</span><span class="mi">1</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">by_name</span>: <span class="nc">HashMap</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">User</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">HashMap</span>::<span class="n">new</span><span class="p">()</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">by_name</span>: <span class="nc">Map</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">User</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Map</span>::<span class="n">new</span><span class="p">()</span>
 <a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">by_name</span><span class="p">.</span><span class="n">insert</span><span class="p">(</span><span class="n">first</span><span class="p">.</span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">first</span><span class="p">)</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="kd">let</span><span class="w"> </span><span class="n">cached</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">by_name</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;Ada&quot;</span><span class="p">)</span><span class="w">   </span><span class="c1">// HashMap lookup returns Option&lt;V&gt;</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="kd">let</span><span class="w"> </span><span class="n">cached</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">by_name</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;Ada&quot;</span><span class="p">)</span><span class="w">   </span><span class="c1">// Map lookup returns Option&lt;V&gt;</span>
 <a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="kd">let</span><span class="w"> </span><span class="n">found</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Lookup</span>::<span class="n">Found</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="n">index</span>: <span class="mi">0</span>
 <a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">    </span><span class="n">user</span>: <span class="nc">cached</span><span class="p">.</span><span class="n">unwrap</span><span class="p">()</span>

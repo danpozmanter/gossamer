@@ -886,7 +886,11 @@ impl Lowerer<'_> {
             }
             AstExprKind::QueueLiteral(arr) => {
                 let queue_ty = self.ty_of(expr.id);
-                self.lower_collection_array_literal("VecDeque", arr, expr.span, queue_ty)
+                self.lower_collection_array_literal("VecQueue", arr, expr.span, queue_ty)
+            }
+            AstExprKind::StackLiteral(arr) => {
+                let stack_ty = self.ty_of(expr.id);
+                self.lower_collection_array_literal("VecStack", arr, expr.span, stack_ty)
             }
             AstExprKind::MaxHeapLiteral(arr) => {
                 let heap_ty = self.ty_of(expr.id);

@@ -512,7 +512,7 @@ pub(crate) fn reserve_hashmaps_for_counted_insert_loops(body: &mut Body, tcx: &T
         {
             continue;
         }
-        if !matches!(callee, Operand::Const(ConstValue::Str(name)) if matches!(name.as_str(), "HashMap::new" | "collections::HashMap::new" | "gos_rt_map_new"))
+        if !matches!(callee, Operand::Const(ConstValue::Str(name)) if matches!(name.as_str(), "Map::new" | "collections::Map::new" | "HashMap::new" | "collections::HashMap::new" | "gos_rt_map_new"))
         {
             continue;
         }

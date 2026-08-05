@@ -89,7 +89,7 @@ fn completion_function_item_with_snippet(name: &str) -> Value {
 /// Receiver-side identification used to look up methods.
 #[derive(Debug, Clone)]
 struct ReceiverDescriptor {
-    /// Builtin classification (`Vec` / `String` / `HashMap` / `Option` / `Result` / …).
+    /// Builtin classification (`Vec` / `String` / `Map` / `Option` / `Result` / …).
     builtin: BuiltinReceiver,
     /// User-facing type name extracted from `let r: Foo = …` or
     /// `struct Foo { … }`. Used to match `impl Foo` blocks.
@@ -115,6 +115,8 @@ enum BuiltinReceiver {
     HashSet,
     BTreeSet,
     VecDeque,
+    VecQueue,
+    VecStack,
     MaxHeap,
     MinHeap,
     Iterator,
@@ -185,7 +187,7 @@ fn classify_receiver(doc: &DocumentAnalysis, expr: &str) -> ReceiverDescriptor {
     if head.starts_with("#{") {
         return ReceiverDescriptor {
             builtin: BuiltinReceiver::HashSet,
-            type_name: None,
+            type_name: Some("Set".to_string()),
             writable: false,
         };
     }
@@ -205,8 +207,15 @@ fn classify_receiver(doc: &DocumentAnalysis, expr: &str) -> ReceiverDescriptor {
     }
     if head.starts_with("<[") {
         return ReceiverDescriptor {
-            builtin: BuiltinReceiver::VecDeque,
-            type_name: Some("VecDeque".to_string()),
+            builtin: BuiltinReceiver::VecQueue,
+            type_name: Some("Queue".to_string()),
+            writable: false,
+        };
+    }
+    if head.starts_with('[') && head.ends_with("]>") {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::VecStack,
+            type_name: Some("Stack".to_string()),
             writable: false,
         };
     }
@@ -220,7 +229,7 @@ fn classify_receiver(doc: &DocumentAnalysis, expr: &str) -> ReceiverDescriptor {
     if head.starts_with('{') {
         return ReceiverDescriptor {
             builtin: BuiltinReceiver::HashMap,
-            type_name: None,
+            type_name: Some("Map".to_string()),
             writable: false,
         };
     }
@@ -271,13 +280,19 @@ fn classify_type_string(ty: &str) -> ReceiverDescriptor {
     if head.starts_with("Vec<") {
         return receiver_desc(BuiltinReceiver::Vec, None);
     }
-    if type_name_matches(head, &["VecDeque", "VecDequeue", "VecQueue"]) {
-        return receiver_desc(BuiltinReceiver::VecDeque, Some("VecDeque"));
+    if type_name_matches(head, &["Deque", "VecDeque"]) {
+        return receiver_desc(BuiltinReceiver::VecDeque, Some("Deque"));
     }
-    if type_name_matches(head, &["BinaryHeap", "MaxHeap"]) {
+    if type_name_matches(head, &["Queue", "VecQueue"]) {
+        return receiver_desc(BuiltinReceiver::VecQueue, Some("Queue"));
+    }
+    if type_name_matches(head, &["Stack", "VecStack"]) {
+        return receiver_desc(BuiltinReceiver::VecStack, Some("Stack"));
+    }
+    if type_name_matches(head, &["BinaryHeap", "MaxBinaryHeap", "MaxHeap"]) {
         return receiver_desc(BuiltinReceiver::MaxHeap, Some("MaxHeap"));
     }
-    if type_name_matches(head, &["MinHeap"]) {
+    if type_name_matches(head, &["MinBinaryHeap", "MinHeap"]) {
         return receiver_desc(BuiltinReceiver::MinHeap, Some("MinHeap"));
     }
     if head.starts_with('[') {
@@ -291,11 +306,11 @@ fn classify_type_string(ty: &str) -> ReceiverDescriptor {
             writable: false,
         };
     }
-    if head.starts_with("HashMap<") {
-        return receiver_desc(BuiltinReceiver::HashMap, None);
+    if head.starts_with("Map<") || head.starts_with("HashMap<") {
+        return receiver_desc(BuiltinReceiver::HashMap, Some("Map"));
     }
-    if head.starts_with("HashSet<") {
-        return receiver_desc(BuiltinReceiver::HashSet, None);
+    if head.starts_with("Set<") || head.starts_with("HashSet<") {
+        return receiver_desc(BuiltinReceiver::HashSet, Some("Set"));
     }
     if type_name_matches(head, &["BTreeSet"]) {
         return receiver_desc(BuiltinReceiver::BTreeSet, Some("BTreeSet"));
@@ -824,25 +839,25 @@ const HASHSET_METHODS: &[BuiltinMethod] = &[
     },
     BuiltinMethod {
         name: "union",
-        signature: "fn union(&self, other: HashSet<T>) -> HashSet<T>",
+        signature: "fn union(&self, other: Set<T>) -> Set<T>",
         doc: "Returns values present in either set.",
         snippet: "union($0)",
     },
     BuiltinMethod {
         name: "intersection",
-        signature: "fn intersection(&self, other: HashSet<T>) -> HashSet<T>",
+        signature: "fn intersection(&self, other: Set<T>) -> Set<T>",
         doc: "Returns values present in both sets.",
         snippet: "intersection($0)",
     },
     BuiltinMethod {
         name: "difference",
-        signature: "fn difference(&self, other: HashSet<T>) -> HashSet<T>",
+        signature: "fn difference(&self, other: Set<T>) -> Set<T>",
         doc: "Returns values present only in this set.",
         snippet: "difference($0)",
     },
     BuiltinMethod {
         name: "symmetric_difference",
-        signature: "fn symmetric_difference(&self, other: HashSet<T>) -> HashSet<T>",
+        signature: "fn symmetric_difference(&self, other: Set<T>) -> Set<T>",
         doc: "Returns values present in exactly one set.",
         snippet: "symmetric_difference($0)",
     },
@@ -878,19 +893,19 @@ const HASHSET_METHODS: &[BuiltinMethod] = &[
     },
     BuiltinMethod {
         name: "is_subset",
-        signature: "fn is_subset(&self, other: HashSet<T>) -> bool",
+        signature: "fn is_subset(&self, other: Set<T>) -> bool",
         doc: "Reports whether every value is in the other set.",
         snippet: "is_subset($0)",
     },
     BuiltinMethod {
         name: "is_superset",
-        signature: "fn is_superset(&self, other: HashSet<T>) -> bool",
+        signature: "fn is_superset(&self, other: Set<T>) -> bool",
         doc: "Reports whether this set contains every value in the other set.",
         snippet: "is_superset($0)",
     },
     BuiltinMethod {
         name: "is_disjoint",
-        signature: "fn is_disjoint(&self, other: HashSet<T>) -> bool",
+        signature: "fn is_disjoint(&self, other: Set<T>) -> bool",
         doc: "Reports whether the sets share no values.",
         snippet: "is_disjoint($0)",
     },
@@ -899,37 +914,37 @@ const HASHSET_METHODS: &[BuiltinMethod] = &[
 const VECDEQUE_METHODS: &[BuiltinMethod] = &[
     BuiltinMethod {
         name: "push_back",
-        signature: "fn push_back(&mut self, value: T)",
+        signature: "fn push_back(&mut self, value: i64)",
         doc: "Appends a value to the back.",
         snippet: "push_back($0)",
     },
     BuiltinMethod {
         name: "push_front",
-        signature: "fn push_front(&mut self, value: T)",
+        signature: "fn push_front(&mut self, value: i64)",
         doc: "Appends a value to the front.",
         snippet: "push_front($0)",
     },
     BuiltinMethod {
         name: "pop_front",
-        signature: "fn pop_front(&mut self) -> Option<T>",
+        signature: "fn pop_front(&mut self) -> Option<i64>",
         doc: "Removes and returns the front value when present.",
         snippet: "pop_front()$0",
     },
     BuiltinMethod {
         name: "pop_back",
-        signature: "fn pop_back(&mut self) -> Option<T>",
+        signature: "fn pop_back(&mut self) -> Option<i64>",
         doc: "Removes and returns the back value when present.",
         snippet: "pop_back()$0",
     },
     BuiltinMethod {
         name: "peek_front",
-        signature: "fn peek_front(&self) -> Option<T>",
+        signature: "fn peek_front(&self) -> Option<i64>",
         doc: "Returns the front value without removing it.",
         snippet: "peek_front()$0",
     },
     BuiltinMethod {
         name: "peek_back",
-        signature: "fn peek_back(&self) -> Option<T>",
+        signature: "fn peek_back(&self) -> Option<i64>",
         doc: "Returns the back value without removing it.",
         snippet: "peek_back()$0",
     },
@@ -943,6 +958,45 @@ const VECDEQUE_METHODS: &[BuiltinMethod] = &[
         name: "is_empty",
         signature: "fn is_empty(&self) -> bool",
         doc: "Returns true when the deque has no values.",
+        snippet: "is_empty()$0",
+    },
+    BuiltinMethod {
+        name: "clear",
+        signature: "fn clear(&mut self)",
+        doc: "Removes all values.",
+        snippet: "clear()$0",
+    },
+];
+
+const VEC_QUEUE_STACK_METHODS: &[BuiltinMethod] = &[
+    BuiltinMethod {
+        name: "push",
+        signature: "fn push(&mut self, value: i64)",
+        doc: "Pushes a value.",
+        snippet: "push($0)",
+    },
+    BuiltinMethod {
+        name: "pop",
+        signature: "fn pop(&mut self) -> Option<i64>",
+        doc: "Removes and returns a value when present.",
+        snippet: "pop()$0",
+    },
+    BuiltinMethod {
+        name: "peek",
+        signature: "fn peek(&self) -> Option<i64>",
+        doc: "Returns the next value without removing it.",
+        snippet: "peek()$0",
+    },
+    BuiltinMethod {
+        name: "len",
+        signature: "fn len(&self) -> i64",
+        doc: "Returns the number of values.",
+        snippet: "len()$0",
+    },
+    BuiltinMethod {
+        name: "is_empty",
+        signature: "fn is_empty(&self) -> bool",
+        doc: "Returns true when the collection has no values.",
         snippet: "is_empty()$0",
     },
     BuiltinMethod {
@@ -1197,6 +1251,9 @@ fn builtin_methods_for(receiver: &ReceiverDescriptor) -> Vec<&'static BuiltinMet
         BuiltinReceiver::HashSet => HASHSET_METHODS.iter().collect(),
         BuiltinReceiver::BTreeSet => HASHSET_METHODS.iter().collect(),
         BuiltinReceiver::VecDeque => VECDEQUE_METHODS.iter().collect(),
+        BuiltinReceiver::VecQueue | BuiltinReceiver::VecStack => {
+            VEC_QUEUE_STACK_METHODS.iter().collect()
+        }
         BuiltinReceiver::MaxHeap | BuiltinReceiver::MinHeap => HEAP_METHODS.iter().collect(),
         BuiltinReceiver::Iterator => ITERATOR_METHODS.iter().collect(),
         BuiltinReceiver::Option => OPTION_METHODS.iter().collect(),

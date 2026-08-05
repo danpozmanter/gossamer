@@ -90,7 +90,7 @@ dies. No lifetimes, no borrow-checker surface, no tracing collector.
 - [Running](running.md) - `gos` cheat-sheet.
 - [Syntax](syntax.md) - grammar tour with worked examples.
 - [Collection literals](collection_literals.md) - create Vecs, fixed arrays,
-  HashMaps, HashSets, and BTreeSets.
+  Maps, Sets, and BTreeSets.
 - [Memory model](memory.md) - how values, references, and
   automatic memory management fit together.
 - [Writing libraries](libraries.md) - `project.toml`, module

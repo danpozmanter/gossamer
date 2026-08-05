@@ -96,6 +96,7 @@ impl Printer {
             ExprKind::MapLiteral(entries) => self.print_map_literal(entries),
             ExprKind::SetLiteral(entries) => self.print_set_literal(entries),
             ExprKind::QueueLiteral(array) => self.print_queue_literal(array),
+            ExprKind::StackLiteral(array) => self.print_stack_literal(array),
             ExprKind::MaxHeapLiteral(array) => self.print_max_heap_literal(array),
             ExprKind::MinHeapLiteral(array) => self.print_min_heap_literal(array),
             ExprKind::Array(array) => self.print_array(array),
@@ -206,6 +207,10 @@ impl Printer {
 
     fn print_queue_literal(&mut self, array: &ArrayExpr) {
         self.write("<");
+        self.print_array(array);
+    }
+
+    fn print_stack_literal(&mut self, array: &ArrayExpr) {
         self.print_array(array);
         self.write(">");
     }
@@ -696,6 +701,7 @@ fn expr_precedence(expr: &Expr) -> Precedence {
         | ExprKind::MapLiteral(_)
         | ExprKind::SetLiteral(_)
         | ExprKind::QueueLiteral(_)
+        | ExprKind::StackLiteral(_)
         | ExprKind::MaxHeapLiteral(_)
         | ExprKind::MinHeapLiteral(_)
         | ExprKind::Array(_)

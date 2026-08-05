@@ -913,7 +913,10 @@ pub(super) fn lower_intrinsic_call_collections(
         // bytes (one word each) - matches the codegen's flat-
         // slot representation. Real per-type sizing needs MIR
         // plumbing that L3 didn't cover.
-        "HashMap::new"
+        "Map::new"
+        | "collections::Map::new"
+        | "std::collections::Map::new"
+        | "HashMap::new"
         | "collections::HashMap::new"
         | "std::collections::HashMap::new"
         | "gos_rt_map_new" => {
@@ -973,7 +976,10 @@ pub(super) fn lower_intrinsic_call_collections(
             );
             Ok(true)
         }
-        "HashMap::with_capacity"
+        "Map::with_capacity"
+        | "collections::Map::with_capacity"
+        | "std::collections::Map::with_capacity"
+        | "HashMap::with_capacity"
         | "collections::HashMap::with_capacity"
         | "std::collections::HashMap::with_capacity"
         | "gos_rt_map_new_with_capacity" => {
@@ -1052,7 +1058,7 @@ pub(super) fn lower_intrinsic_call_collections(
             );
             Ok(true)
         }
-        "HashSet::new" | "collections::HashSet::new" => {
+        "Set::new" | "collections::Set::new" | "HashSet::new" | "collections::HashSet::new" => {
             let new_fn = intrinsics.extern_fn_by_name(module, "gos_rt_set_new")?;
             let fref = module.declare_func_in_func(new_fn, builder.func);
             let call = builder.ins().call(fref, &[]);

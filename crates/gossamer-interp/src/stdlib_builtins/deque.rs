@@ -1,10 +1,10 @@
-//! VM builtins for `std::collections::VecDeque<T>`.
+//! VM builtins for `std::collections::Deque<T>` and restricted queue/stack wrappers.
 //!
 //! On the bytecode tier, a deque value is represented as
-//! `Value::Struct { name: "VecDeque", fields: [("__deque", id)] }`
+//! `Value::Struct { name: "...", fields: [("__deque" | "__queue" | "__stack", id)] }`
 //! where `id` is a handle into `DEQUE_REGISTRY`. Method dispatch
-//! routes through `qualified_key("VecDeque", method)` so each method
-//! must be registered under the `"VecDeque::<method>"` name.
+//! routes through `qualified_key(owner, method)` so each exposed owner
+//! must register its source-facing method names.
 
 use std::cell::RefCell;
 use std::collections::{HashMap as StdHashMap, VecDeque as StdVecDeque};
@@ -26,21 +26,66 @@ static NEXT_DEQUE_HANDLE: GlobalReg<i64> =
 static DEQUE_REGISTRY: GlobalReg<StdHashMap<i64, StdVecDeque<Value>>> =
     GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
 
-/// Install all VecDeque VM builtins into the global table.
+/// Install all Deque VM builtins into the global table.
 pub(crate) fn install_deque(globals: &mut Vec<(&'static str, Value)>) {
     let entries: &[(&str, BuiltinFnPub)] = &[
+        ("Deque::new", builtin_deque_new),
+        ("collections::Deque::new", builtin_deque_new),
         ("VecDeque::new", builtin_deque_new),
         ("collections::VecDeque::new", builtin_deque_new),
-        ("VecDequeue::new", builtin_deque_new),
-        ("collections::VecDequeue::new", builtin_deque_new),
-        ("VecQueue::new", builtin_deque_new),
-        ("collections::VecQueue::new", builtin_deque_new),
+        ("Deque::from", builtin_deque_from),
+        ("collections::Deque::from", builtin_deque_from),
         ("VecDeque::from", builtin_deque_from),
         ("collections::VecDeque::from", builtin_deque_from),
-        ("VecDequeue::from", builtin_deque_from),
-        ("collections::VecDequeue::from", builtin_deque_from),
-        ("VecQueue::from", builtin_deque_from),
-        ("collections::VecQueue::from", builtin_deque_from),
+        ("Queue::new", builtin_queue_new),
+        ("collections::Queue::new", builtin_queue_new),
+        ("VecQueue::new", builtin_queue_new),
+        ("collections::VecQueue::new", builtin_queue_new),
+        ("Queue::from", builtin_queue_from),
+        ("collections::Queue::from", builtin_queue_from),
+        ("VecQueue::from", builtin_queue_from),
+        ("collections::VecQueue::from", builtin_queue_from),
+        ("Queue::push", builtin_deque_push_back),
+        ("Queue::pop", builtin_deque_pop_front),
+        ("Queue::peek", builtin_deque_peek_front),
+        ("Queue::len", builtin_deque_len),
+        ("Queue::is_empty", builtin_deque_is_empty),
+        ("Queue::clear", builtin_deque_clear),
+        ("VecQueue::push", builtin_deque_push_back),
+        ("VecQueue::pop", builtin_deque_pop_front),
+        ("VecQueue::peek", builtin_deque_peek_front),
+        ("VecQueue::len", builtin_deque_len),
+        ("VecQueue::is_empty", builtin_deque_is_empty),
+        ("VecQueue::clear", builtin_deque_clear),
+        ("Stack::new", builtin_stack_new),
+        ("collections::Stack::new", builtin_stack_new),
+        ("VecStack::new", builtin_stack_new),
+        ("collections::VecStack::new", builtin_stack_new),
+        ("Stack::from", builtin_stack_from),
+        ("collections::Stack::from", builtin_stack_from),
+        ("VecStack::from", builtin_stack_from),
+        ("collections::VecStack::from", builtin_stack_from),
+        ("Stack::push", builtin_deque_push_back),
+        ("Stack::pop", builtin_deque_pop_back),
+        ("Stack::peek", builtin_deque_peek_back),
+        ("Stack::len", builtin_deque_len),
+        ("Stack::is_empty", builtin_deque_is_empty),
+        ("Stack::clear", builtin_deque_clear),
+        ("VecStack::push", builtin_deque_push_back),
+        ("VecStack::pop", builtin_deque_pop_back),
+        ("VecStack::peek", builtin_deque_peek_back),
+        ("VecStack::len", builtin_deque_len),
+        ("VecStack::is_empty", builtin_deque_is_empty),
+        ("VecStack::clear", builtin_deque_clear),
+        ("Deque::push_back", builtin_deque_push_back),
+        ("Deque::push_front", builtin_deque_push_front),
+        ("Deque::pop_front", builtin_deque_pop_front),
+        ("Deque::pop_back", builtin_deque_pop_back),
+        ("Deque::peek_front", builtin_deque_peek_front),
+        ("Deque::peek_back", builtin_deque_peek_back),
+        ("Deque::len", builtin_deque_len),
+        ("Deque::is_empty", builtin_deque_is_empty),
+        ("Deque::clear", builtin_deque_clear),
         ("VecDeque::push_back", builtin_deque_push_back),
         ("VecDeque::push_front", builtin_deque_push_front),
         ("VecDeque::pop_front", builtin_deque_pop_front),
@@ -66,9 +111,18 @@ fn next_deque_handle() -> i64 {
 }
 
 fn deque_handle(id: i64) -> Value {
+    deque_handle_named(id, "Deque")
+}
+
+fn deque_handle_named(id: i64, name: &'static str) -> Value {
+    let field = match name {
+        "Queue" | "VecQueue" => "__queue",
+        "Stack" | "VecStack" => "__stack",
+        _ => "__deque",
+    };
     Value::struct_(
-        "VecDeque",
-        Arc::unwrap_or_clone(Arc::new(vec![("__deque", Value::Int(id))])),
+        name,
+        Arc::unwrap_or_clone(Arc::new(vec![(field, Value::Int(id))])),
     )
 }
 
@@ -79,9 +133,12 @@ pub(crate) fn deque_snapshot(value: &Value) -> Option<Vec<Value>> {
 
 fn deque_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
-        if inner.name == "VecDeque" {
+        if matches!(
+            inner.name.as_str(),
+            "Deque" | "VecDeque" | "Queue" | "VecQueue" | "Stack" | "VecStack"
+        ) {
             for (i, v) in &inner.fields {
-                if (*i) == "__deque" {
+                if matches!(*i, "__deque" | "__queue" | "__stack") {
                     if let Value::Int(n) = v {
                         return Some(*n);
                     }
@@ -93,14 +150,38 @@ fn deque_id_of(value: &Value) -> Option<i64> {
 }
 
 fn builtin_deque_new(_args: &[Value]) -> RuntimeResult<Value> {
+    builtin_deque_new_named("Deque")
+}
+
+fn builtin_queue_new(_args: &[Value]) -> RuntimeResult<Value> {
+    builtin_deque_new_named("Queue")
+}
+
+fn builtin_stack_new(_args: &[Value]) -> RuntimeResult<Value> {
+    builtin_deque_new_named("Stack")
+}
+
+fn builtin_deque_new_named(name: &'static str) -> RuntimeResult<Value> {
     let id = next_deque_handle();
     DEQUE_REGISTRY.with(|r| {
         r.borrow_mut().insert(id, StdVecDeque::new());
     });
-    Ok(deque_handle(id))
+    Ok(deque_handle_named(id, name))
 }
 
 fn builtin_deque_from(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_deque_from_named(args, "Deque")
+}
+
+fn builtin_queue_from(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_deque_from_named(args, "Queue")
+}
+
+fn builtin_stack_from(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_deque_from_named(args, "Stack")
+}
+
+fn builtin_deque_from_named(args: &[Value], name: &'static str) -> RuntimeResult<Value> {
     let id = next_deque_handle();
     let mut deque = StdVecDeque::new();
     match args.first().unwrap_or(&Value::Unit) {
@@ -111,7 +192,7 @@ fn builtin_deque_from(args: &[Value]) -> RuntimeResult<Value> {
     DEQUE_REGISTRY.with(|r| {
         r.borrow_mut().insert(id, deque);
     });
-    Ok(deque_handle(id))
+    Ok(deque_handle_named(id, name))
 }
 
 fn builtin_deque_push_back(args: &[Value]) -> RuntimeResult<Value> {

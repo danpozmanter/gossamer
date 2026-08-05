@@ -348,7 +348,7 @@
       "name": "std::collections::BTreeMap",
       "kind": "type",
       "signature": null,
-      "description": "Ordered map. Phase 1 runtime support is `BTreeMap<String, i64>`.",
+      "description": "Ordered key-value map backed by BTreeMap.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -367,7 +367,7 @@
       "name": "std::collections::BTreeSet",
       "kind": "type",
       "signature": null,
-      "description": "Ordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods. Set literals use `#{a, b}` and empty set literals use `#{}` when an expected `BTreeSet<T>` type is present.",
+      "description": "Ordered unique-value set backed by BTreeSet.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -386,7 +386,26 @@
       "name": "std::collections::BinaryHeap",
       "kind": "type",
       "signature": null,
-      "description": "Compatibility alias for `MaxHeap<i64>`; heap literals use `^[a, b]` and empty heap literals use `^[]`.",
+      "description": "Alias for `MaxHeap<T>`; underlying storage is BinaryHeap.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdcollections",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-collections-Deque",
+      "name": "std::collections::Deque",
+      "kind": "type",
+      "signature": null,
+      "description": "Double-ended queue (VecDeque) with explicit front/back methods; use `Deque::new()` or `Deque::from([a, b])`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -405,7 +424,7 @@
       "name": "std::collections::HashMap",
       "kind": "type",
       "signature": null,
-      "description": "Hash map backed by the swiss-table layout. Map literals use `{key: value}` and empty map literals use `{}`.",
+      "description": "Alias for `Map<K, V>`; underlying storage is HashMap.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -424,7 +443,45 @@
       "name": "std::collections::HashSet",
       "kind": "type",
       "signature": null,
-      "description": "Unordered set with `insert`, `contains`, `remove`, `len`, `is_empty`, `clear`, `iter`, `to_vec`, and set-algebra methods. Set literals use `#{a, b}` and empty set literals use `#{}`. Like Rust's `HashSet`, mapping is an iterator operation: use `set.iter().map(f)`, not `set.map(f)`.",
+      "description": "Alias for `Set<T>`; underlying storage is HashSet.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdcollections",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-collections-Map",
+      "name": "std::collections::Map",
+      "kind": "type",
+      "signature": null,
+      "description": "Key-value map (HashMap) backed by the swiss-table layout; literals use `{key: value}` and empty map literals use `{}`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdcollections",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-collections-MaxBinaryHeap",
+      "name": "std::collections::MaxBinaryHeap",
+      "kind": "type",
+      "signature": null,
+      "description": "Alias for `MaxHeap<T>`; underlying storage is BinaryHeap.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -443,7 +500,26 @@
       "name": "std::collections::MaxHeap",
       "kind": "type",
       "signature": null,
-      "description": "Max heap. Phase 1 runtime support is `MaxHeap<i64>`; heap literals use `^[a, b]` and empty heap literals use `^[]`.",
+      "description": "Max-priority heap (MaxBinaryHeap) backed by BinaryHeap; literals use `^[a, b]` and empty heap literals use `^[]`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdcollections",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-collections-MinBinaryHeap",
+      "name": "std::collections::MinBinaryHeap",
+      "kind": "type",
+      "signature": null,
+      "description": "Alias for `MinHeap<T>`; underlying storage is BinaryHeap with reversed ordering.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -462,7 +538,64 @@
       "name": "std::collections::MinHeap",
       "kind": "type",
       "signature": null,
-      "description": "Min heap. Phase 1 runtime support is `MinHeap<i64>`; heap literals use `_[a, b]` and empty heap literals use `_[]`.",
+      "description": "Min-priority heap (MinBinaryHeap) backed by BinaryHeap; literals use `_[a, b]` and empty heap literals use `_[]`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdcollections",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-collections-Queue",
+      "name": "std::collections::Queue",
+      "kind": "type",
+      "signature": null,
+      "description": "FIFO queue (VecQueue) backed by VecDeque; literals use `<[a, b]` and empty queue literals use `<[]`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdcollections",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-collections-Set",
+      "name": "std::collections::Set",
+      "kind": "type",
+      "signature": null,
+      "description": "Unique-value set (HashSet) backed by a hash table; literals use `#{a, b}` and empty set literals use `#{}`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdcollections",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-collections-Stack",
+      "name": "std::collections::Stack",
+      "kind": "type",
+      "signature": null,
+      "description": "LIFO stack (VecStack) backed by VecDeque; literals use `[a, b]>` and empty stack literals use `[]>`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -500,26 +633,7 @@
       "name": "std::collections::VecDeque",
       "kind": "type",
       "signature": null,
-      "description": "Double-ended queue backed by a ring buffer. Phase 1 runtime support is `VecDeque<i64>`; queue literals use `<[a, b]>` and empty queue literals use `<[]>`.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollections",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-VecDequeue",
-      "name": "std::collections::VecDequeue",
-      "kind": "type",
-      "signature": null,
-      "description": "Alias for `VecDeque`; queue literals use `<[a, b]>` and empty queue literals use `<[]>`.",
+      "description": "Alias for `Deque<T>`; underlying storage is VecDeque.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -538,7 +652,26 @@
       "name": "std::collections::VecQueue",
       "kind": "type",
       "signature": null,
-      "description": "Alias for `VecDeque`; queue literals use `<[a, b]>` and empty queue literals use `<[]>`.",
+      "description": "Alias for `Queue<T>`; underlying storage is VecQueue backed by VecDeque.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdcollections",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-collections-VecStack",
+      "name": "std::collections::VecStack",
+      "kind": "type",
+      "signature": null,
+      "description": "Alias for `Stack<T>`; underlying storage is VecStack backed by VecDeque.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -7738,7 +7871,7 @@
       "id": "std-iter-chunk-by",
       "name": "std::iter::chunk_by",
       "kind": "function",
-      "signature": "fn chunk_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> HashMap<K, Vec<T>>",
+      "signature": "fn chunk_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> Map<K, Vec<T>>",
       "description": "Groups elements into a map keyed by f.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -7814,7 +7947,7 @@
       "id": "std-iter-count-by",
       "name": "std::iter::count_by",
       "kind": "function",
-      "signature": "fn count_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> HashMap<K, i64>",
+      "signature": "fn count_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> Map<K, i64>",
       "description": "Counts elements per key derived by f.",
       "lifecycle": "experimental",
       "tier_support": [
