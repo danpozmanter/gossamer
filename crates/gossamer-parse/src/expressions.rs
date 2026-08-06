@@ -1157,32 +1157,8 @@ impl Parser<'_> {
         ExprKind::Error
     }
 
+    /// `[a, b]` / `[value; count]` - the fixed-array literal.
     fn parse_array_expr_inner(&mut self) -> ExprKind {
-        if self.eat_punct(Punct::RBracket) {
-            return ExprKind::Array(ArrayExpr::List(Vec::new()));
-        }
-        let first = self.parse_expr_no_assign();
-        if self.at_punct(Punct::Semi) {
-            let semi_span = self.peek_span();
-            self.bump();
-            let _count = self.parse_expr_no_assign();
-            self.expect_punct(Punct::RBracket, "to close array expression");
-            let span = self.join(first.span, semi_span);
-            self.record(ParseError::BareRepeatLiteral, span);
-            return ExprKind::Error;
-        }
-        let mut elements = vec![first];
-        while self.eat_punct(Punct::Comma) {
-            if self.at_punct(Punct::RBracket) {
-                break;
-            }
-            elements.push(self.parse_expr_no_assign());
-        }
-        self.expect_punct(Punct::RBracket, "to close array expression");
-        ExprKind::Array(ArrayExpr::List(elements))
-    }
-
-    fn parse_fixed_array_expr_inner(&mut self) -> ExprKind {
         if self.eat_punct(Punct::RBracket) {
             return ExprKind::FixedArray(ArrayExpr::List(Vec::new()));
         }
@@ -1204,6 +1180,33 @@ impl Parser<'_> {
         }
         self.expect_punct(Punct::RBracket, "to close fixed array expression");
         ExprKind::FixedArray(ArrayExpr::List(elements))
+    }
+
+    /// `#[a, b]` - the Vec literal. The repeat form belongs to the
+    /// fixed-array spelling, so `#[value; count]` is rejected.
+    fn parse_fixed_array_expr_inner(&mut self) -> ExprKind {
+        if self.eat_punct(Punct::RBracket) {
+            return ExprKind::Array(ArrayExpr::List(Vec::new()));
+        }
+        let first = self.parse_expr_no_assign();
+        if self.at_punct(Punct::Semi) {
+            let semi_span = self.peek_span();
+            self.bump();
+            let _count = self.parse_expr_no_assign();
+            self.expect_punct(Punct::RBracket, "to close Vec expression");
+            let span = self.join(first.span, semi_span);
+            self.record(ParseError::BareRepeatLiteral, span);
+            return ExprKind::Error;
+        }
+        let mut elements = vec![first];
+        while self.eat_punct(Punct::Comma) {
+            if self.at_punct(Punct::RBracket) {
+                break;
+            }
+            elements.push(self.parse_expr_no_assign());
+        }
+        self.expect_punct(Punct::RBracket, "to close Vec expression");
+        ExprKind::Array(ArrayExpr::List(elements))
     }
 
     fn parse_set_literal_expr_inner(&mut self) -> ExprKind {

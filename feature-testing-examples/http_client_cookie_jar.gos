@@ -59,7 +59,7 @@ fn serve_app() {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, Vec::from([])) {
+        if let Ok(_) = http::get(url, Vec::from(#[])) {
             return
         }
         time::sleep(25)
@@ -72,11 +72,11 @@ fn main() {
     await_ready(&"http://127.0.0.1:23892/ready")
 
     let client = http::Client::builder().cookie_jar(true).timeout_ms(5000).build()
-    match client.request("GET", "http://127.0.0.1:23892/login", "", []) {
+    match client.request("GET", "http://127.0.0.1:23892/login", "", #[]) {
         Ok(r) => println!("login status={}", r.status),
         Err(e) => println!("login error: {}", e),
     }
-    match client.request("GET", "http://127.0.0.1:23892/me", "", []) {
+    match client.request("GET", "http://127.0.0.1:23892/me", "", #[]) {
         Ok(r) => println!("me_body={}", r.body),
         Err(e) => println!("me error: {}", e),
     }

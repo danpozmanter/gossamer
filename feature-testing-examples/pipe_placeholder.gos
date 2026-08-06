@@ -39,7 +39,7 @@ fn main() {
     // tuple index and array index
     let pair = (10, 20)
     println!("{}", pair |> _.1)
-    let xs = [3, 6, 9]
+    let xs = #[3, 6, 9]
     println!("{}", xs |> _[1])
 
     // identity
@@ -54,11 +54,11 @@ fn main() {
     }
 
     // mixed with data-last iter steps; `_.len()` consumes the iter result
-    let evens = [1, 2, 3, 4, 5, 6] |> iter::filter(|x: i64| x % 2 == 0) |> _.len()
+    let evens = #[1, 2, 3, 4, 5, 6] |> iter::filter(|x: i64| x % 2 == 0) |> _.len()
     println!("{}", evens)
 
     // in-place method through a pipe, used as a statement
-    let mut v = [3, 1, 2]
+    let mut v = #[3, 1, 2]
     v |> _.sort()
     println!("{} {} {}", v[0], v[1], v[2])
 
@@ -91,7 +91,7 @@ mod tests {
     #[test]
     fn tuple_and_index() {
         let _ = testing::check(((1, 2) |> _.1) == 2, "_.1 tuple index")
-        let _ = testing::check(([7, 8, 9] |> _[2]) == 9, "_[i] index")
+        let _ = testing::check((#[7, 8, 9] |> _[2]) == 9, "_[i] index")
     }
 
     #[test]
@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn mixed_with_iter() {
-        let n = [1, 2, 3, 4] |> iter::filter(|x: i64| x % 2 == 0) |> _.len()
+        let n = #[1, 2, 3, 4] |> iter::filter(|x: i64| x % 2 == 0) |> _.len()
         let _ = testing::check(n == 2, "_.len() consumes an iter result")
     }
 }

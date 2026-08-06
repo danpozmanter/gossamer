@@ -38,7 +38,7 @@ fn classify_color(c: &Color) -> String {
 }
 
 fn main() {
-    let shapes = [
+    let shapes = #[
         Shape::Circle(1.0, Color::Red),
         Shape::Circle(2.0, Color::Green),
         Shape::Rect(3.0, 4.0, Color::Blue),
@@ -51,7 +51,7 @@ fn main() {
         println!("{}", describe(&s))
     }
 
-    let colors = [Color::Red, Color::Green, Color::Blue]
+    let colors = #[Color::Red, Color::Green, Color::Blue]
     for c in colors {
         println!("{} is {}", classify_color(&c), if let Color::Red = c { "warm" } else { "cool" })
     }

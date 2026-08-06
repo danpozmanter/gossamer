@@ -68,7 +68,7 @@ fn option_family() {
 }
 
 fn iter_transforms() {
-    let xs = [1, 2, 3, 4]
+    let xs = #[1, 2, 3, 4]
     let mapped = xs |> iter::map(|x: i64| x * 2)
     let mut map_sum = 0
     for x in mapped { map_sum += x }
@@ -78,21 +78,21 @@ fn iter_transforms() {
     let fm = xs |> iter::filter_map(|x: i64| if x > 2 { Some(x * 10) } else { None })
     let mut fm_sum = 0
     for x in fm { fm_sum += x }
-    let flat = [1, 2] |> iter::flat_map(|x: i64| [x, x * 10])
+    let flat = #[1, 2] |> iter::flat_map(|x: i64| #[x, x * 10])
     let mut flat_sum = 0
     for x in flat { flat_sum += x }
-    let scanned = [1, 2, 3] |> iter::scan(0, |acc: i64, x: i64| acc + x)
+    let scanned = #[1, 2, 3] |> iter::scan(0, |acc: i64, x: i64| acc + x)
     let mut scan_last = 0
     for x in scanned { scan_last = x }
     println!("iter map {map_sum} filter {filter_sum} filter_map {fm_sum} flat_map {flat_sum} scan {scan_last}")
 }
 
 fn iter_reductions() {
-    let xs = [1, 2, 3, 4]
+    let xs = #[1, 2, 3, 4]
     let folded = xs |> iter::fold(100, |acc: i64, x: i64| acc + x)
     let reduced = xs |> iter::reduce(|a: i64, b: i64| a * b) |> option::unwrap_or(0)
     let sq = xs |> iter::sum_by(|x: i64| x * x)
-    let prod = [2, 3] |> iter::product_by(|x: i64| x + 1)
+    let prod = #[2, 3] |> iter::product_by(|x: i64| x + 1)
     let parity_counts = xs |> iter::count_by(|x: i64| x % 2)
     println!(
         "iter fold {folded} reduce {reduced} sum_by {sq} product_by {prod} count_by {}/{}",
@@ -108,7 +108,7 @@ fn iter_reductions() {
 }
 
 fn iter_searches() {
-    let xs = [3, 1, 4, 1, 5]
+    let xs = #[3, 1, 4, 1, 5]
     let found = xs |> iter::find(|x: i64| x > 3) |> option::unwrap_or(0)
     let pos = xs |> iter::position(|x: i64| x == 4) |> option::unwrap_or(0 - 1)
     let fmapped = xs |> iter::find_map(|x: i64| if x > 3 { Some(x * 100) } else { None })
@@ -124,7 +124,7 @@ fn iter_searches() {
 }
 
 fn iter_orderings() {
-    let xs = [3, 1, 2]
+    let xs = #[3, 1, 2]
     let asc = xs |> iter::sort_by(|a: i64, b: i64| a - b)
     let by_key = xs |> iter::sort_by_key(|x: i64| 0 - x)
     println!(
@@ -139,13 +139,13 @@ fn iter_orderings() {
 }
 
 fn iter_groupings() {
-    let (evens, odds) = [1, 2, 3, 4] |> iter::partition(|x: i64| x % 2 == 0)
+    let (evens, odds) = #[1, 2, 3, 4] |> iter::partition(|x: i64| x % 2 == 0)
     let mut even_sum = 0
     for x in evens { even_sum += x }
     let mut odd_sum = 0
     for x in odds { odd_sum += x }
-    let groups = [1, 2, 3, 4] |> iter::chunk_by(|x: i64| x % 2)
-    let zero_bucket = groups.get_or(0, Vec::from([]))
+    let groups = #[1, 2, 3, 4] |> iter::chunk_by(|x: i64| x % 2)
+    let zero_bucket = groups.get_or(0, Vec::from(#[]))
     let mut bucket_sum = 0
     for x in zero_bucket { bucket_sum += x }
     println!("iter partition {even_sum}/{odd_sum} group_by {bucket_sum} groups {}", groups.len())

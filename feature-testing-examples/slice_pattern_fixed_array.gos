@@ -1,4 +1,4 @@
-// Slice patterns over fixed-size array literals (`#[T; N]`) bind prefix and
+// Slice patterns over fixed-size array literals (`[T; N]`) bind prefix and
 // suffix elements and materialize the `..rest` sub-slice with the correct
 // element size, for both `[i64]` and `[String]` element types. The same
 // lowering runs on the bytecode VM, the Cranelift JIT, and the LLVM AOT
@@ -33,16 +33,16 @@ fn str_head_rest(xs: [String; 3]) -> String {
 }
 
 fn main() {
-    let xs = #[10, 20, 30, 40]
+    let xs = [10, 20, 30, 40]
     println!("{}", head_rest(xs))
-    println!("last={}", last_only(#[1, 2, 3, 4]))
-    println!("sum={}", exact_four(#[5, 6, 7, 8]))
+    println!("last={}", last_only([1, 2, 3, 4]))
+    println!("sum={}", exact_four([5, 6, 7, 8]))
 
-    let ss = #["a".to_string(), "b".to_string(), "c".to_string()]
+    let ss = ["a".to_string(), "b".to_string(), "c".to_string()]
     println!("{}", str_head_rest(ss))
 
     // Inline match over a fresh array literal.
-    match #[100, 200, 300, 400] {
+    match [100, 200, 300, 400] {
         [first, ..rest] => println!("inline first={} rest_len={}", first, rest.len()),
         [] => println!("inline empty"),
     }

@@ -305,12 +305,12 @@ fn main() {
 fn multi_dim_fixed_array_index_walks_inner_strides() {
     // Bug fixed in 0.10.0: `lower_place_address` did not advance
     // `current_ty` after a `Projection::Index`, so `arr[i][j]` over
-    // `[#[T; A]; B]` used the OUTER array's bounds for the inner
+    // `[[T; A]; B]` used the OUTER array's bounds for the inner
     // index. Iron Knight's 3D zobrist write hit this.
     let src = r#"
 struct Z { pieces: [[[i64; 64]; 6]; 2] }
 fn main() {
-    let mut z = Z { pieces: #[#[#[0; 64]; 6], #[#[0; 64]; 6]] }
+    let mut z = Z { pieces: [[[0; 64]; 6], [[0; 64]; 6]] }
     let mut s: i64 = 0
     while s < 2 {
         let mut p: i64 = 0
@@ -481,7 +481,7 @@ fn main() {
 #[test]
 fn typed_int_array_parameter_uses_generic_index_path() {
     // Function arguments use the general Value ABI. In particular, a
-    // `#[i64; N]` parameter may be boxed as `Value::Array`, so parameters must
+    // `[i64; N]` parameter may be boxed as `Value::Array`, so parameters must
     // stay on the generic indexing path rather than being incorrectly marked
     // as `Value::IntArray` fast-path storage.
     let src = r#"
@@ -599,7 +599,7 @@ fn mut_fixed_struct_array_not_promoted_keeps_layout_across_calls() {
     // data) and produced NaN. The promotion now fires only when the
     // binding actually receives a growth method (push / pop / sort /
     // …); a fixed array that is merely indexed, field-mutated, or
-    // passed to a `#[T; N]` parameter keeps its inline layout.
+    // passed to a `[T; N]` parameter keeps its inline layout.
     let src = r#"
 struct Body { x: f64, vx: f64, mass: f64 }
 fn total_momentum(b: &[Body; 2]) -> f64 {

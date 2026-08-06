@@ -84,7 +84,7 @@ fn main() {
     println!("{} {}", b.first(), b.second())
 
     // A generic struct holding a struct, stored in an array and read in a loop.
-    let xs = [
+    let xs = #[
         Wrapper { value: Point { x: 1, y: 2 } },
         Wrapper { value: Point { x: 3, y: 4 } },
     ]

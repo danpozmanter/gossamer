@@ -44,7 +44,7 @@ fn run_server() {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, Vec::from([])) {
+        if let Ok(_) = http::get(url, Vec::from(#[])) {
             return
         }
         time::sleep(25)
@@ -57,18 +57,18 @@ fn main() {
     await_ready(&"http://127.0.0.1:23875/data")
 
     let follow = http::Client::builder().timeout_ms(5000).build()
-    match follow.request("GET", "http://127.0.0.1:23875/hop", "", []) {
+    match follow.request("GET", "http://127.0.0.1:23875/hop", "", #[]) {
         Ok(r) => println!("a_status={} a_body={}", r.status, r.body),
         Err(e) => println!("a_error: {}", e),
     }
 
     let raw = http::Client::builder().max_redirects(0).timeout_ms(5000).build()
-    match raw.request("GET", "http://127.0.0.1:23875/hop", "", []) {
+    match raw.request("GET", "http://127.0.0.1:23875/hop", "", #[]) {
         Ok(r) => println!("b_status={} b_location={}", r.status, r.location),
         Err(e) => println!("b_error: {}", e),
     }
 
-    match follow.request_bytes("POST", "http://127.0.0.1:23875/echo", [104, 105], []) {
+    match follow.request_bytes("POST", "http://127.0.0.1:23875/echo", #[104, 105], #[]) {
         Ok(r) => println!("c_status={} c_body={}", r.status, r.body),
         Err(e) => println!("c_error: {}", e),
     }

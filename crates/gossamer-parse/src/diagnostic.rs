@@ -165,8 +165,8 @@ pub enum ParseError {
         /// The container the spelling used to build.
         container: String,
     },
-    /// A repeat literal written with bare brackets (`[value; count]`).
-    #[error("`[value; count]` is not valid syntax - a repeat literal is a fixed array")]
+    /// A repeat literal written with the Vec spelling (`#[value; count]`).
+    #[error("`#[value; count]` is not valid syntax - a repeat literal is a fixed array")]
     BareRepeatLiteral,
     /// A struct used in a `to_json` / `from_json` (or toml/yaml) call has a
     /// field whose type the serde synthesizer cannot handle. Without this the
@@ -329,9 +329,9 @@ impl ParseError {
             ),
             ParseError::BareRepeatLiteral => (
                 "GP0033",
-                "`[value; count]` is not valid syntax".to_string(),
+                "`#[value; count]` is not valid syntax".to_string(),
                 Some(
-                    "a repeat literal is a fixed array: write `#[value; count]`. `[a, b]` is a \
+                    "a repeat literal is a fixed array: write `[value; count]`. `#[a, b]` is a \
                      Vec of the listed elements"
                         .to_string(),
                 ),

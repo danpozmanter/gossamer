@@ -12,7 +12,7 @@ fn apply_i64(f: Fn(i64) -> i64, x: i64) -> i64 {
 }
 
 fn keep_i64(xs: Vec<i64>, pred: Fn(i64) -> bool) -> Vec<i64> {
-    let mut out: Vec<i64> = Vec::from([])
+    let mut out: Vec<i64> = Vec::from(#[])
     for x in xs {
         if pred(x) {
             out.push(x)
@@ -22,7 +22,7 @@ fn keep_i64(xs: Vec<i64>, pred: Fn(i64) -> bool) -> Vec<i64> {
 }
 
 fn main() {
-    let xs = Vec::from([1, 2, 3, 4])
+    let xs = Vec::from(#[1, 2, 3, 4])
     println!("{}", apply_i64(inc, 41))
     println!("{:?}", xs.map(double))
     println!("{:?}", keep_i64(xs, is_even))

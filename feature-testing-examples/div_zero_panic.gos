@@ -4,7 +4,7 @@
 // 101, so this fixture runs with allow_nonzero.
 
 fn main() {
-    let xs = [4, 6, 10]
+    let xs = #[4, 6, 10]
     let mut z = 0
     for x in xs { z += x }
     z -= 20

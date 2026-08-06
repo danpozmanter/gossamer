@@ -4,7 +4,7 @@
 use std::encoding::json
 
 fn main() {
-    let built = json::Value::object([("a", json::Value::Int(1))])
+    let built = json::Value::object(#[("a", json::Value::Int(1))])
     let with_b = built.set("b", json::Value::Int(2)).set("c", json::Value::Int(3))
     println!("{}", json::render(&with_b))
 

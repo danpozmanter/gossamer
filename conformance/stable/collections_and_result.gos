@@ -8,7 +8,7 @@ fn first_even(values: Vec<i64>) -> Result<i64, String> {
 }
 
 fn main() {
-    let values: Vec<i64> = Vec::from([3, 5, 8, 13])
+    let values: Vec<i64> = Vec::from(#[3, 5, 8, 13])
     match first_even(values) {
         Ok(value) => println!("even={}", value),
         Err(err) => println!("error={}", err),

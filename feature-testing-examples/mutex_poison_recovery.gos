@@ -47,11 +47,11 @@ fn main() {
 
     // Histogram via channel fan-out
     let (htx, hrx) = channel::unbounded()
-    go parallel_histogram(Vec::from([Vec::from([1, 2, 3]), Vec::from([4, 5, 6]), Vec::from([7, 8, 9])]), htx)
+    go parallel_histogram(Vec::from(#[Vec::from(#[1, 2, 3]), Vec::from(#[4, 5, 6]), Vec::from(#[7, 8, 9])]), htx)
     time::sleep(80)
     htx.close()
 
-    let mut sums: Vec<i64> = Vec::from([])
+    let mut sums: Vec<i64> = Vec::from(#[])
     while let Some(v) = hrx.recv() {
         sums.push(v)
     }
@@ -62,7 +62,7 @@ fn main() {
 
     // Sequential atomic-style update via closure
     let mut shared = 0
-    let updates = [3, 7, 2, 8, 5]
+    let updates = #[3, 7, 2, 8, 5]
     for delta in updates {
         shared += delta
     }
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn sequential_counter_sum() {
-        let vals = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        let vals = #[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         let mut sum = 0
         for v in vals {
             sum += v

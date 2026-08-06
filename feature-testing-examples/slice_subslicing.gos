@@ -5,7 +5,7 @@
 // so correctness can be tested without the unsupported syntax.
 
 fn subslice(xs: Vec<i64>, start: i64, end: i64) -> Vec<i64> {
-    let mut out: Vec<i64> = Vec::from([])
+    let mut out: Vec<i64> = Vec::from(#[])
     let mut i = start
     while i < end {
         out.push(xs[i])
@@ -15,7 +15,7 @@ fn subslice(xs: Vec<i64>, start: i64, end: i64) -> Vec<i64> {
 }
 
 fn windows(xs: Vec<i64>, size: i64) -> Vec<Vec<i64>> {
-    let mut out: Vec<Vec<i64>> = Vec::from([])
+    let mut out: Vec<Vec<i64>> = Vec::from(#[])
     let n = xs.len() as i64
     let mut i = 0
     while i + size <= n {
@@ -26,7 +26,7 @@ fn windows(xs: Vec<i64>, size: i64) -> Vec<Vec<i64>> {
 }
 
 fn chunks(xs: Vec<i64>, size: i64) -> Vec<Vec<i64>> {
-    let mut out: Vec<Vec<i64>> = Vec::from([])
+    let mut out: Vec<Vec<i64>> = Vec::from(#[])
     let n = xs.len() as i64
     let mut i = 0
     while i < n {
@@ -55,7 +55,7 @@ fn sum(xs: Vec<i64>) -> i64 {
 }
 
 fn main() {
-    let data = Vec::from([10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
+    let data = Vec::from(#[10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
 
     // Subslice middle
     let mid = subslice(data, 2, 5)
@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn subslice_middle() {
-        let xs = [1, 2, 3, 4, 5, 6, 7, 8]
+        let xs = #[1, 2, 3, 4, 5, 6, 7, 8]
         let s = super::subslice(xs, 2, 5)
         let _ = testing::check_eq(&(s.len() as i64), &3, "len=3")
         let _ = testing::check_eq(&s[0], &3, "s[0]=3")
@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn prefix_and_suffix() {
-        let xs = [10, 20, 30, 40, 50]
+        let xs = #[10, 20, 30, 40, 50]
         let p = super::prefix(xs, 2)
         let _ = testing::check_eq(&super::sum(p), &30, "prefix sum 10+20=30")
         let s = super::suffix(xs, 2)
@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn windows_overlap() {
-        let xs = [1, 2, 3, 4, 5]
+        let xs = #[1, 2, 3, 4, 5]
         let ws = super::windows(xs, 3)
         // 5 elements, window 3 → 3 windows
         let _ = testing::check_eq(&(ws.len() as i64), &3, "3 windows")
@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn chunks_no_overlap() {
-        let xs = [1, 2, 3, 4, 5, 6, 7]
+        let xs = #[1, 2, 3, 4, 5, 6, 7]
         let cs = super::chunks(xs, 3)
         // 7 elements / 3 → 3 chunks (sizes 3, 3, 1)
         let _ = testing::check_eq(&(cs.len() as i64), &3, "3 chunks")
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn empty_subslice() {
-        let xs = [1, 2, 3]
+        let xs = #[1, 2, 3]
         let s = super::subslice(xs, 1, 1)
         let _ = testing::check_eq(&(s.len() as i64), &0, "empty subslice len=0")
     }

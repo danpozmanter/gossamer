@@ -9,7 +9,7 @@
 use std::os::exec
 
 fn main() {
-    let args: Vec<String> = ["30"].to_vec()
+    let args: Vec<String> = #["30"].to_vec()
     match exec::spawn(&"/bin/sleep", &args) {
         Ok(pid) => {
             if pid > 0 { println!("spawned") }
@@ -24,7 +24,7 @@ fn main() {
     // kill_group: spawn `sh -c 'sleep 30 & wait'` so the leader pid
     // owns descendants; we kill the group and expect a non-zero
     // wait result within the grace window.
-    let group_args: Vec<String> = ["-c", "sleep 30 & wait"].to_vec()
+    let group_args: Vec<String> = #["-c", "sleep 30 & wait"].to_vec()
     match exec::spawn(&"/bin/sh", &group_args) {
         Ok(pid) => {
             if pid > 0 { println!("group-spawned") }

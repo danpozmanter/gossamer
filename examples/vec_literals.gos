@@ -1,20 +1,21 @@
-// Bracket literals build Vec values by default. Use `#[...]` when an
-// explicit fixed array is required, or let a `#[T; N]` expected type shape
-// a plain bracket literal.
+// `#[...]` builds a Vec, the default growable sequence. `[...]` builds an
+// owned fixed array `[T; N]`, and owns the `[value; count]` repeat form.
+// An expected type shapes either spelling into the other where the shapes
+// agree.
 
 struct Basket { fruits: Vec<String> }
 
 // A literal in return position becomes the declared `Vec<T>`.
 fn greetings() -> Vec<String> {
-    ["hello", "hi", "hey"]
+    #["hello", "hi", "hey"]
 }
 
 // Branches of differing length join to a `Vec<T>`.
 fn scores(high: bool) -> Vec<i64> {
-    if high { [90, 95, 100] } else { [60] }
+    if high { #[90, 95, 100] } else { #[60] }
 }
 
-// A `Vec<T>` parameter accepts a bare literal at the call site.
+// A `Vec<T>` parameter accepts a Vec literal at the call site.
 fn total(values: Vec<i64>) -> i64 {
     values.sum()
 }
@@ -25,36 +26,42 @@ fn count(items: &[String]) -> i64 {
 }
 
 fn main() {
-    // List form and the `#[value; count]` repeat form.
-    let names = ["ada", "grace", "edsger"]
-    let zeros = #[0; 5]
+    // Vec list form, and the fixed-array `[value; count]` repeat form.
+    let names = #["ada", "grace", "edsger"]
+    let zeros = [0; 5]
 
     println!("first name: {}", names[0])
     println!("zeros: {} entries, last = {}", zeros.len(), zeros[4])
+
+    // Only a Vec grows.
+    let mut queue = #[]
+    queue.push("first")
+    queue.push("second")
+    println!("queue holds {}", queue.len())
 
     // Return position.
     let hellos = greetings()
     println!("greetings: {}", hellos.len())
     println!("scores(true) has {} entries", scores(true).len())
 
-    // Struct field.
-    let basket = Basket { fruits: ["apple", "pear"] }
+    // Struct field: the declared `Vec<String>` shapes the literal.
+    let basket = Basket { fruits: #["apple", "pear"] }
     println!("basket holds {} and {}", basket.fruits[0], basket.fruits[1])
 
     // Arguments.
-    println!("total = {}", total([3, 4, 5]))
-    println!("count = {}", count(&["x", "y", "z"]))
+    println!("total = {}", total(#[3, 4, 5]))
+    println!("count = {}", count(&#["x", "y", "z"]))
 
     // Nested literals build a Vec of Vecs.
-    let grid = [
-        [1, 2, 3],
-        [4, 5],
-        [6]
+    let grid = #[
+        #[1, 2, 3],
+        #[4, 5],
+        #[6]
     ]
     println!("grid rows = {}, grid[0][2] = {}", grid.len(), grid[0][2])
 
-    // Fixed arrays are still available.
-    let fixed = #[1, 2, 3]
+    // Fixed arrays: length is part of the type.
+    let fixed = [1, 2, 3]
     let shaped: [i64; 2] = [4, 5]
     println!("fixed = {}, shaped = {}", fixed.len(), shaped.len())
 }

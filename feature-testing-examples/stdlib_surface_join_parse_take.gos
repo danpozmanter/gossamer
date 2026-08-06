@@ -6,12 +6,12 @@
 use std::iter
 
 fn main() {
-    println!("{}", [1, 2, 3].join(" "))
-    println!("{}", [1.5, 2.5].join(", "))
-    println!("{}", [true, false].join("|"))
-    println!("{}", [false, true, true].join(","))
-    println!("{}", ["a", "b", "c"].join("-"))
-    let mut grown = #[false; 2]
+    println!("{}", #[1, 2, 3].join(" "))
+    println!("{}", #[1.5, 2.5].join(", "))
+    println!("{}", #[true, false].join("|"))
+    println!("{}", #[false, true, true].join(","))
+    println!("{}", #["a", "b", "c"].join("-"))
+    let mut grown = [false; 2]
     grown[0] = true
     println!("{}", grown.join("|"))
 

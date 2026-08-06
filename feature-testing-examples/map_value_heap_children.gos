@@ -9,7 +9,7 @@ use std::collections::Map
 struct Item { name: String, tags: Vec<String>, n: i64 }
 
 fn make(k: i64) -> Item {
-    let mut tags: Vec<String> = Vec::from([])
+    let mut tags: Vec<String> = Vec::from(#[])
     tags.push(format!("tag-{}", k))
     Item { name: format!("item-name-number-{}", k), tags: tags, n: k }
 }

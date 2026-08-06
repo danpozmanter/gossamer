@@ -21,13 +21,13 @@ fn maximum(xs: &[i64]) -> Option<i64> {
 }
 
 fn main() {
-    let xs: [i64; 9] = [4, 9, 1, 7, 3, 8, 2, 6, 5]
+    let xs: [i64; 9] = #[4, 9, 1, 7, 3, 8, 2, 6, 5]
     println!("sum     = {}", sum(&xs))
     println!("product = {}", product(&xs))
 
     if let Some(v) = maximum(&xs) { println!("maximum = {}", v) }
 
-    let empty: Vec<i64> = []
+    let empty: Vec<i64> = #[]
     if let Some(v) = maximum(&empty) {
         println!("maximum of empty = {}", v)
     } else {

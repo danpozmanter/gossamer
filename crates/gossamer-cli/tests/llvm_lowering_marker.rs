@@ -314,7 +314,7 @@ fn first_negative(xs: [i64; 5]) -> i64 {
     0
 }
 fn main() {
-    let xs = #[1, 2, -3, 4, 5]
+    let xs = [1, 2, -3, 4, 5]
     println!("{}", first_negative(xs))
 }
 "#,

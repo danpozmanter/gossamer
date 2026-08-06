@@ -1032,7 +1032,7 @@ fn unsuffixed_integer_literal_rejected_in_string_position() {
 
 #[test]
 fn array_literal_does_not_coerce_to_vec_annotation() {
-    let checked = run("fn main() { let xs: Vec<String> = #[\"a\", \"b\"] }\n");
+    let checked = run("fn main() { let xs: Vec<String> = [\"a\", \"b\"] }\n");
     assert!(checked.diagnostics.iter().any(|diagnostic| matches!(
         &diagnostic.error,
         TypeError::TypeMismatch { expected, found }
@@ -1042,7 +1042,7 @@ fn array_literal_does_not_coerce_to_vec_annotation() {
 
 #[test]
 fn named_array_does_not_coerce_to_vec_annotation() {
-    let checked = run("fn main() { let a = #[1, 2, 3]\n let mut v: Vec<i64> = a\n v.push(4) }\n");
+    let checked = run("fn main() { let a = [1, 2, 3]\n let mut v: Vec<i64> = a\n v.push(4) }\n");
     assert!(checked.diagnostics.iter().any(|diagnostic| matches!(
         &diagnostic.error,
         TypeError::TypeMismatch { expected, found }
@@ -1099,7 +1099,7 @@ fn distinct_spans_each_keep_their_own_diagnostic() {
 
 #[test]
 fn vec_from_repeat_array_is_explicit_and_accepted() {
-    let checked = run("fn main() { let xs: Vec<i64> = Vec::from(#[0; 4]) }\n");
+    let checked = run("fn main() { let xs: Vec<i64> = Vec::from([0; 4]) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
@@ -1124,7 +1124,7 @@ fn if_branches_of_differing_array_length_are_rejected() {
     // Differing lengths can only co-type as a Vec; this must check for any
     // element type, not only integer literals.
     let checked =
-        run("fn main() { let v: Vec<String> = if true { #[\"a\", \"b\"] } else { #[\"c\"] } }\n");
+        run("fn main() { let v: Vec<String> = if true { [\"a\", \"b\"] } else { [\"c\"] } }\n");
     assert!(!checked.diagnostics.is_empty());
 }
 
@@ -1877,28 +1877,27 @@ fn index_on_vec_and_string_is_accepted() {
 
 #[test]
 fn reasonable_fixed_array_is_accepted() {
-    let d = diagnostics_for("fn main() { let a: [i64; 16] = #[0; 16]\n println!(\"{}\", a[0]) }\n");
+    let d = diagnostics_for("fn main() { let a: [i64; 16] = [0; 16]\n println!(\"{}\", a[0]) }\n");
     assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]
 fn benchmark_sized_fixed_array_is_accepted() {
     let d = diagnostics_for(
-        "fn main() { let a: [f64; 40000] = #[0.0; 40000]\n println!(\"{}\", a[0]) }\n",
+        "fn main() { let a: [f64; 40000] = [0.0; 40000]\n println!(\"{}\", a[0]) }\n",
     );
     assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]
 fn very_large_fixed_array_is_accepted() {
-    let d =
-        diagnostics_for("fn main() { let a: [i64; 100000000] = #[0; 100000000]\n let _ = a }\n");
+    let d = diagnostics_for("fn main() { let a: [i64; 100000000] = [0; 100000000]\n let _ = a }\n");
     assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]
 fn owned_slice_repeat_is_rejected_as_unsized() {
-    let d = diagnostics_for("fn main() { let v: [i64] = #[0; 100000000]\n let _ = v.len() }\n");
+    let d = diagnostics_for("fn main() { let v: [i64] = [0; 100000000]\n let _ = v.len() }\n");
     assert!(
         d.iter()
             .any(|diagnostic| { matches!(diagnostic.error, TypeError::UnsizedSliceValue { .. }) }),
@@ -2425,7 +2424,7 @@ fn fixed_array_range_index_has_vec_type() {
 fn fixed_array_rejects_vec_only_methods() {
     let d = diagnostics_for(
         "fn main() {\n\
-         let mut a = #[1; 3]\n\
+         let mut a = [1; 3]\n\
          a.push(4)\n\
          let _ = a.pop()\n\
          a.insert(1, 9)\n\
@@ -2679,7 +2678,7 @@ fn strings_count_reports_exact_parameter_types_and_names() {
     assert_eq!(
         mismatches,
         vec![
-            ("strings::count", "text", "String", "array", "#[1, 2]"),
+            ("strings::count", "text", "String", "Vec", "#[1, 2]"),
             ("strings::count", "text", "String", "char", "'a'"),
             ("strings::count", "needle", "String | char", "i64", "1"),
         ],
@@ -2690,13 +2689,13 @@ fn strings_count_reports_exact_parameter_types_and_names() {
 #[test]
 fn named_string_argument_mismatch_uses_a_user_facing_container_type() {
     let d = diagnostics_for(
-        "use std::strings\nfn main() { let _ = strings::slice(#[1, 2, 3], 1, 2) }\n",
+        "use std::strings\nfn main() { let _ = strings::slice([1, 2, 3], 1, 2) }\n",
     );
     assert!(
         d.iter().any(|diag| matches!(
             &diag.error,
             TypeError::ArgumentTypeMismatch { parameter, found, actual, .. }
-                if parameter == "text" && found == "array" && actual == "#[1, 2, 3]"
+                if parameter == "text" && found == "array" && actual == "[1, 2, 3]"
         )),
         "array mismatch must not expose an inference variable: {d:?}"
     );
@@ -3004,10 +3003,10 @@ fn map_binding_cannot_be_retyped_to_or_insert_result() {
 fn constant_repeat_literal_can_flow_into_vec_of_fixed_arrays() {
     let checked = run("fn main() {\n\
          let mut rows: Vec<[i64; 6]> = Vec::new()\n\
-         let mut row = #[0; 6]\n\
+         let mut row = [0; 6]\n\
          row[3] = 9\n\
          rows.push(row)\n\
-         let shaped: Vec<i64> = Vec::from(#[0; 4])\n\
+         let shaped: Vec<i64> = Vec::from([0; 4])\n\
          println!(\"{} {}\", rows[0][3], shaped.len())\n\
          }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
@@ -3018,7 +3017,7 @@ fn std_iter_skip_while_full_import_and_methods_typecheck() {
     let checked = run_with_lazy_iterators(
         "use std::iter::skip_while\n\
          fn main() {\n\
-         let xs = [1, 2, 3, 1]\n\
+         let xs = #[1, 2, 3, 1]\n\
          let a = skip_while(|x: i64| x < 3, xs)\n\
          let b = xs.skip_while(|x: i64| x < 3)\n\
          let c = (1..5).skip_while(|x: i64| x < 3).collect()\n\

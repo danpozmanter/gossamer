@@ -3,7 +3,7 @@
 // ignoring the preceding out-of-range write.
 
 fn main() {
-    let mut fixed: Vec<i64> = Vec::from([1, 2, 3])
+    let mut fixed: Vec<i64> = Vec::from(#[1, 2, 3])
     fixed[1] = 7
     println!("fixed-in-range={}", fixed[1])
 

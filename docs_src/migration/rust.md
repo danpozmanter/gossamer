@@ -81,7 +81,7 @@ let cached = by_name.get("Ada"); // Option<&User>
 ```
 
 ```gos
-let users = [user, rename(user, "Grace")]
+let users = #[user, rename(user, "Grace")]
 let first = users[0]              // Vec/array index; traps if out of bounds
 let initial = first.name[0]       // String index is a UTF-8 byte as i64
 let pair = (first.name, first.active)
@@ -97,25 +97,26 @@ let found = Lookup::Found {
 
 ## Collection Literals
 
-Use `[a, b]` for `Vec<T>`, `#[a, b]` or `#[value; N]` for fixed arrays,
+Use `#[a, b]` for `Vec<T>`, `[a, b]` or `[value; N]` for fixed arrays,
 `{key: value}` and `{}` for `Map<K, V>`, and `#{a, b}` for `Set<T>`. An
 expected `BTreeSet<T>` type shapes the same set literal into an ordered set.
 Queues, stacks, deques, and heaps are built through their type with `new()` or
-`from([...])`. Rust's `HashMap`, `HashSet`, `VecDeque`, and `BinaryHeap`
+`from(#[...])`. A Rust `vec![...]` is Gossamer's `#[a, b]`, and a Rust
+`[a, b]` array keeps its spelling. Rust's `HashMap`, `HashSet`, `VecDeque`, and `BinaryHeap`
 spellings are not accepted - each container has exactly one name.
 
 ```gos
-let values = [1, 2, 3]
-let fixed = #[1, 2, 3]
+let values = #[1, 2, 3]
+let fixed = [1, 2, 3]
 let map = {"ada": 36, "grace": 37}
 let empty: Map<String, i64> = {}
 let set = #{"parse", "lower", "parse"}
 let ordered: BTreeSet<String> = #{"lower", "parse"}
-let queue = Queue::from([1, 2, 3])
-let stack = Stack::from([1, 2, 3])
-let deque = Deque::from([1, 2, 3])
-let max_heap = MaxHeap::from([1, 2, 3])
-let min_heap = MinHeap::from([1, 2, 3])
+let queue = Queue::from(#[1, 2, 3])
+let stack = Stack::from(#[1, 2, 3])
+let deque = Deque::from(#[1, 2, 3])
+let max_heap = MaxHeap::from(#[1, 2, 3])
+let min_heap = MinHeap::from(#[1, 2, 3])
 let pair = (1, "two")
 ```
 
@@ -126,7 +127,7 @@ syntax. Heap aggregates are runtime-managed, primitives copy by value,
 and references are ordinary aliases.
 
 ```gos
-let a = [1, 2, 3]
+let a = #[1, 2, 3]
 let b = a
 println!("{} {}", a.len(), b.len())
 ```
@@ -205,7 +206,7 @@ Gossamer:
 use std::{errors, http}
 
 fn fetch(url: &String) -> Result<String, errors::Error> {
-    let response = http::get(url, [])?
+    let response = http::get(url, #[])?
     Ok(response.body)
 }
 ```
@@ -218,11 +219,11 @@ let (tx, rx) = channel()
 for url in urls {
     let tx = tx.clone()
     go fn() {
-        tx.send(http::get(&url, []))
+        tx.send(http::get(&url, #[]))
     }()
 }
 
-let mut responses = []
+let mut responses = #[]
 for _ in urls {
     responses.push(rx.recv().unwrap())
 }

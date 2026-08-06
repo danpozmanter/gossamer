@@ -4,7 +4,7 @@
 // consistent across execution tiers.
 
 fn map_i64(xs: Vec<i64>, f: Fn(i64) -> i64) -> Vec<i64> {
-    let mut out: Vec<i64> = Vec::from([])
+    let mut out: Vec<i64> = Vec::from(#[])
     for x in xs {
         out.push(f(x))
     }
@@ -12,7 +12,7 @@ fn map_i64(xs: Vec<i64>, f: Fn(i64) -> i64) -> Vec<i64> {
 }
 
 fn filter_i64(xs: Vec<i64>, pred: Fn(i64) -> bool) -> Vec<i64> {
-    let mut out: Vec<i64> = Vec::from([])
+    let mut out: Vec<i64> = Vec::from(#[])
     for x in xs {
         if pred(x) {
             out.push(x)
@@ -31,7 +31,7 @@ fn fold_i64(xs: Vec<i64>, init: i64, f: Fn(i64, i64) -> i64) -> i64 {
 
 fn zip_sum(xs: Vec<i64>, ys: Vec<i64>) -> Vec<i64> {
     let len = if xs.len() < ys.len() { xs.len() } else { ys.len() }
-    let mut out: Vec<i64> = Vec::from([])
+    let mut out: Vec<i64> = Vec::from(#[])
     for i in 0..len {
         out.push(xs[i] + ys[i])
     }
@@ -39,7 +39,7 @@ fn zip_sum(xs: Vec<i64>, ys: Vec<i64>) -> Vec<i64> {
 }
 
 fn main() {
-    let xs = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    let xs = Vec::from(#[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 
     // map: double every element
     let doubled = map_i64(xs, |x| x * 2)
@@ -57,7 +57,7 @@ fn main() {
     println!("sum = {}", total)
 
     // fold: product of first 5
-    let first5 = Vec::from([1, 2, 3, 4, 5])
+    let first5 = Vec::from(#[1, 2, 3, 4, 5])
     let product = fold_i64(first5, 1, |acc, x| acc * x)
     println!("product(1..5) = {}", product)
 
@@ -68,14 +68,14 @@ fn main() {
     println!("sum of squares of odds = {}", sum_sq)
 
     // zip
-    let aa = Vec::from([1, 2, 3])
-    let bs = Vec::from([10, 20, 30])
+    let aa = Vec::from(#[1, 2, 3])
+    let bs = Vec::from(#[10, 20, 30])
     let zipped = zip_sum(aa, bs)
     println!("zip_sum[0] = {}", zipped[0])
     println!("zip_sum[2] = {}", zipped[2])
 
     // max via fold
-    let nums = Vec::from([5, 3, 9, 1, 7])
+    let nums = Vec::from(#[5, 3, 9, 1, 7])
     let max = fold_i64(nums, nums[0], |acc, x| if x > acc { x } else { acc })
     println!("max = {}", max)
 }
@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn map_doubles() {
-        let r = super::map_i64([1, 2, 3], |x| x * 2)
+        let r = super::map_i64(#[1, 2, 3], |x| x * 2)
         let _ = testing::check_eq(&r.len(), &3, "len")
         let _ = testing::check_eq(&r[0], &2, "r[0]")
         let _ = testing::check_eq(&r[2], &6, "r[2]")
@@ -94,20 +94,20 @@ mod tests {
 
     #[test]
     fn filter_evens() {
-        let r = super::filter_i64([1, 2, 3, 4], |x| x % 2 == 0)
+        let r = super::filter_i64(#[1, 2, 3, 4], |x| x % 2 == 0)
         let _ = testing::check_eq(&r.len(), &2, "evens len")
         let _ = testing::check_eq(&r[0], &2, "first even")
     }
 
     #[test]
     fn fold_sum() {
-        let s = super::fold_i64([1, 2, 3, 4, 5], 0, |a, x| a + x)
+        let s = super::fold_i64(#[1, 2, 3, 4, 5], 0, |a, x| a + x)
         let _ = testing::check_eq(&s, &15, "sum 1..5")
     }
 
     #[test]
     fn zip_sum_basic() {
-        let r = super::zip_sum([1, 2, 3], [4, 5, 6])
+        let r = super::zip_sum(#[1, 2, 3], #[4, 5, 6])
         let _ = testing::check_eq(&r[0], &5, "zip[0]")
         let _ = testing::check_eq(&r[2], &9, "zip[2]")
     }

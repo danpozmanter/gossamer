@@ -18,12 +18,12 @@ fn transform(v: Node) -> Node {
         Node::Leaf(n) => Node::Leaf(n + 1),
         Node::Text(s) => Node::Text(strings::to_uppercase(&s)),
         Node::List(xs) => {
-            let mut out: Vec<Node> = Vec::from([])
+            let mut out: Vec<Node> = Vec::from(#[])
             for x in xs { out.push(transform(x)) }
             Node::List(out)
         }
         Node::Map(pairs) => {
-            let mut out: Vec<(String, Node)> = Vec::from([])
+            let mut out: Vec<(String, Node)> = Vec::from(#[])
             for (k, v) in pairs { out.push((k, transform(v))) }
             Node::Map(out)
         }
@@ -66,14 +66,14 @@ fn serialize_into(v: &Node, out: &mut String) {
 }
 
 fn build(seed: i64) -> Node {
-    let mut tags: Vec<Node> = Vec::from([])
+    let mut tags: Vec<Node> = Vec::from(#[])
     tags.push(Node::Text("alpha"))
     tags.push(Node::Text("beta"))
     tags.push(Node::Leaf(seed))
-    let mut meta: Vec<(String, Node)> = Vec::from([])
+    let mut meta: Vec<(String, Node)> = Vec::from(#[])
     meta.push(("level", Node::Leaf(seed % 7)))
     meta.push(("group", Node::Text(format!("grp-{}", seed % 3))))
-    let mut rec: Vec<(String, Node)> = Vec::from([])
+    let mut rec: Vec<(String, Node)> = Vec::from(#[])
     rec.push(("id", Node::Leaf(seed)))
     rec.push(("tags", Node::List(tags)))
     rec.push(("meta", Node::Map(meta)))

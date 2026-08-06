@@ -247,8 +247,8 @@ Gossamer follows Rust's sequence model:
 - `[T; N]` is an owned fixed-size array. Use `#[a, b]` for an explicit fixed
   literal, or let an expected fixed type such as `[i64; 2]` shape `[a, b]`.
 - `[T]` is unsized and is ordinarily used as `&[T]` or `&mut [T]`.
-- `Vec<T>` is the only owned growable sequence. Bracket literals such as
-  `[a, b]` create Vec values by default.
+- `Vec<T>` is the only owned growable sequence. `#[a, b]` creates a Vec, and
+  `[a, b]` creates a fixed `[T; N]` array whose length is part of its type.
 - `{key: value}` creates a `Map<K, V>`, and `#{a, b}` creates a
   `Set<T>` unless an expected `BTreeSet<T>` type shapes it.
 - Queues, stacks, deques, and heaps have no literal form. Build them through

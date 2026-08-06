@@ -43,6 +43,6 @@ fn main() {
     // JSON
     let json_str = encoding::json::encode(42)
     println!("json int:  {}", json_str)
-    let arr = encoding::json::encode([1, 2, 3])
+    let arr = encoding::json::encode(#[1, 2, 3])
     println!("json arr:  {}", arr)
 }

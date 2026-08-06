@@ -23,7 +23,7 @@ fn main() {
     }
 
     println!("\nenvironment (selected):")
-    let env_vars = ["PATH", "HOME", "USER", "GOSSAMER_DEBUG"]
+    let env_vars = #["PATH", "HOME", "USER", "GOSSAMER_DEBUG"]
     env_vars |> iter::for_each(|name| report_env(&name))
 
     match env::current_dir() {

@@ -26,7 +26,7 @@ fn eq_through_ref(a: &String, b: &String) -> bool {
 }
 
 fn main() {
-    let tree = Node::Branch(Vec::from([Node::Leaf(1), Node::Branch(Vec::from([Node::Leaf(2), Node::Leaf(3)])), Node::Leaf(4)]))
+    let tree = Node::Branch(Vec::from(#[Node::Leaf(1), Node::Branch(Vec::from(#[Node::Leaf(2), Node::Leaf(3)])), Node::Leaf(4)]))
     let mut s = String::new()
     ser(&tree, &mut s)
     println!("{}", s)

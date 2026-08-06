@@ -21,14 +21,14 @@ fn header_of(headers: &[(String, String)], want: String) -> String {
 }
 
 fn main() {
-    let key: Vec<u8> = Vec::from([
+    let key: Vec<u8> = Vec::from(#[
         1, 2, 3, 4, 5, 6, 7, 8,
         9, 10, 11, 12, 13, 14, 15, 16,
         17, 18, 19, 20, 21, 22, 23, 24,
         25, 26, 27, 28, 29, 30, 31, 32,
     ])
     let mut cfg = http::csrf::config(key)
-    cfg.trusted_origins = Vec::from(["https://app.example.com"])
+    cfg.trusted_origins = Vec::from(#["https://app.example.com"])
 
     let token = match http::csrf::issue_token(cfg.key) {
         Ok(t) => t,

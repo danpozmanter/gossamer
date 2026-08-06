@@ -14,11 +14,11 @@ fn mutate_exact_copy(v: &mut [i64; 3]) {
 }
 
 fn main() {
-    let mut fixed: [i64; 3] = [1, 2, 3]
+    let mut fixed: [i64; 3] = #[1, 2, 3]
     set_first(&mut fixed)
     println!("fixed_after_set: {} {} {}", fixed[0], fixed[1], fixed[2])
 
-    let mut fixed_exact = #[1, 2, 3]
+    let mut fixed_exact = [1, 2, 3]
     {
         let fixed_alias = &mut fixed_exact
         mutate_exact_copy(fixed_alias)
@@ -26,7 +26,7 @@ fn main() {
     }
     println!("fixed_exact_source: {}", fixed_exact[0])
 
-    let mut grow = [1, 2, 3]
+    let mut grow = #[1, 2, 3]
     set_first(&mut grow)
     push_one(&mut grow)
     println!("vec_after: len={} first={} last={}", grow.len(), grow[0], grow[3])

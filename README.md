@@ -104,12 +104,12 @@ This gives a consistent and cleaner look.
 
 **Collection Literals**
 
-Note: Fixed array & Vec construction differs from Rust.
+Inspired by Clojure here (#{} for set):
 
 | Collection | Empty | With Data |
 |---|---|---|
-| Vec | [] | [1,2,3] |
-| Fixed Array | #[] | #[1,2,3] |
+| Fixed Array | [] | [1,2,3] |
+| Vec | #[] | #[1,2,3] |
 | Map | {} | {"one": 1, "two": 2, "three": 3} |
 | Set | #{} | #{1,2,3} |
 | Tuple | () | (1, "two", 3.0) |

@@ -10,7 +10,7 @@ struct Tag { id: i64 }
 struct Item { weight: i64, label: String }
 
 fn main() {
-    let mut tags: Vec<Tag> = Vec::from([])
+    let mut tags: Vec<Tag> = Vec::from(#[])
     tags.push(Tag { id: 3 })
     tags.push(Tag { id: 1 })
     tags.push(Tag { id: 2 })
@@ -18,7 +18,7 @@ fn main() {
     for t in tags { print!("{} ", t.id) }
     println!("")
 
-    let mut items: Vec<Item> = Vec::from([])
+    let mut items: Vec<Item> = Vec::from(#[])
     items.push(Item { weight: 5, label: "e" })
     items.push(Item { weight: 1, label: "a" })
     items.push(Item { weight: 3, label: "c" })
@@ -26,7 +26,7 @@ fn main() {
     for it in items { print!("{}:{} ", it.weight, it.label) }
     println!("")
 
-    let mut words: Vec<String> = Vec::from([])
+    let mut words: Vec<String> = Vec::from(#[])
     words.push("pear")
     words.push("apple")
     words.push("fig")

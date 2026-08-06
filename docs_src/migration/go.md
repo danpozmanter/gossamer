@@ -88,7 +88,7 @@ cached, ok := byName["Ada"]
 ```
 
 ```gos
-let users = [user, rename(user, "Grace")]
+let users = #[user, rename(user, "Grace")]
 let first = users[0]              // slice/Vec index; traps if out of bounds
 let initial = first.name[0]       // String index is a UTF-8 byte as i64
 let pair = (first.name, first.active)
@@ -250,7 +250,7 @@ data argument last:
 ```gos
 use std::iter
 
-let total = [1, 2, 3, 4, 5]
+let total = #[1, 2, 3, 4, 5]
     |> iter::filter(|n: i64| n % 2 == 0)
     |> iter::sum_by(|n: i64| n * n)
 ```

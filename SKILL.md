@@ -118,11 +118,11 @@ Write clear, low-complexity, concise code.
   parses returning `Option<T>`:
   `env::args().first().unwrap_or("8").to_i64().unwrap_or(8)`.
 - **Collection literal spellings are distinct.** Fixed array and Vec
-  construction differs from Rust. Use `[]` / `[1,2,3]` for `Vec`, `#[]` /
-  `#[1,2,3]` for fixed arrays, `{}` / `{"one": 1}` for `Map`, and `#{}` /
+  construction differs from Rust. Use `#[]` / `#[1,2,3]` for `Vec`, `[]` /
+  `[1,2,3]` for fixed arrays, `{}` / `{"one": 1}` for `Map`, and `#{}` /
   `#{1,2,3}` for `Set`. `Queue`, `Stack`, `Deque`, `MaxHeap`, and `MinHeap`
-  have no literal: build them with `T::new()` or `T::from([1,2,3])`. A repeat
-  literal is a fixed array, `#[v; N]`; bare `[v; N]` is a syntax error.
+  have no literal: build them with `T::new()` or `T::from(#[1,2,3])`. A repeat
+  literal is a fixed array, `[v; N]`; `#[v; N]` is a syntax error.
 - **Prefer dedicated collection contracts for intent.** `Stack` is the
   idiomatic LIFO-only type even though `Vec` can push/pop at the end;
   `Queue` is the FIFO-only type even though a deque can model it; `MinHeap`
@@ -339,7 +339,7 @@ are callable as methods/free functions and materialize results.
 
 - `[T; N]` is an owned fixed array, `[T]` is an unsized borrowed slice,
   and `Vec<T>` is the default owned growable sequence. Literal spellings are
-  `[]` for Vec, `#[]` for fixed arrays, `{}` for `Map`, and `#{}` for
+  `#[]` for Vec, `[]` for fixed arrays, `{}` for `Map`, and `#{}` for
   `Set` or expected `BTreeSet`; `Queue`, `Stack`, `Deque`, `MaxHeap`, and
   `MinHeap` use `new()` / `from([..])`. Arrays, slices, and Vec share the
   implemented slice method surface. Eager collection combinators are Vec
@@ -358,9 +358,12 @@ are callable as methods/free functions and materialize results.
   differ. Read and assign positionally (`t.0`, chained `t.0.1`, `t.0 = v`
   through a `mut` binding), destructure in `let` / `for` / `match` / params,
   and compare structurally in declaration order (so `sort` orders a sequence
-  of tuples lexicographically). No import, no methods; `%i Tuple` documents
-  it and `%e <binding>` lists a tuple's elements. Tuple structs are the
-  named variant and are fully usable.
+  of tuples lexicographically). No import; methods are `len`, `is_empty`,
+  `get`, `clone`, `to_string`, `into`, `try_into` - `iter()` and its
+  combinators are rejected (elements may differ in type, so there is no
+  element type to yield). `%i Tuple` documents it and
+  `%e <binding>` lists a tuple's elements. Tuple structs are the named
+  variant and are fully usable.
 - `std::collections`: `Vec`, `Map` (struct/tuple keys by value;
   aggregate-key maps use `iter()` rather than `keys()` until typed key
   snapshots are available;

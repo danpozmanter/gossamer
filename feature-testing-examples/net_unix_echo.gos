@@ -25,7 +25,7 @@ fn client(path: String, tx: Sender<i64>) {
         Err(_) => { tx.send(CONNECT_FAILED)
             return }
     }
-    let _ = stream.write([80, 73, 78, 71])
+    let _ = stream.write(#[80, 73, 78, 71])
     let echo = match stream.read(64) {
         Ok(b) => b,
         Err(_) => { tx.send(READ_FAILED)

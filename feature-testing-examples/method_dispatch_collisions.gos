@@ -6,8 +6,8 @@ use std::strings
 
 fn main() {
     let s = "hello world"
-    let v = ["a", "b", "c"]
-    let nums = [3, 1, 2]
+    let v = #["a", "b", "c"]
+    let nums = #[3, 1, 2]
 
     println!("{}", s.len())            // String length: 11
     println!("{}", v.len())            // Vec length: 3

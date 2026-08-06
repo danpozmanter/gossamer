@@ -48,7 +48,7 @@ fn header_of(headers: &Vec<(String, String)>, want: String) -> String {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, Vec::from([])) {
+        if let Ok(_) = http::get(url, Vec::from(#[])) {
             return
         }
         time::sleep(25)
@@ -67,7 +67,7 @@ fn main() {
     await_ready(&url)
 
     // Single range: bytes 2-5 -> "2345".
-    let single_hdr: Vec<(String, String)> = Vec::from([("Range", "bytes=2-5")])
+    let single_hdr: Vec<(String, String)> = Vec::from(#[("Range", "bytes=2-5")])
     match http::request("GET", &url, "", single_hdr) {
         Ok(r) => println!(
             "single status={} cr={} body={}",
@@ -79,18 +79,18 @@ fn main() {
     }
 
     // Multi range: bytes 0-2 + 5-7 -> multipart/byteranges.
-    let multi_hdr: Vec<(String, String)> = Vec::from([("Range", "bytes=0-2,5-7")])
+    let multi_hdr: Vec<(String, String)> = Vec::from(#[("Range", "bytes=0-2,5-7")])
     match http::request("GET", &url, "", multi_hdr) {
         Ok(r) => println!("multi status={} ct={}", r.status, r.content_type),
         Err(e) => println!("multi error: {}", e),
     }
-    match http::request("GET", &url, "", Vec::from([("Range", "bytes=0-2,5-7")])) {
+    match http::request("GET", &url, "", Vec::from(#[("Range", "bytes=0-2,5-7")])) {
         Ok(r) => println!("multi body=[{}]", r.body),
         Err(e) => println!("multi body error: {}", e),
     }
 
     // Unsatisfiable range -> 416.
-    let bad_hdr: Vec<(String, String)> = Vec::from([("Range", "bytes=100-200")])
+    let bad_hdr: Vec<(String, String)> = Vec::from(#[("Range", "bytes=100-200")])
     match http::request("GET", &url, "", bad_hdr) {
         Ok(r) => println!(
             "bad status={} cr={}",
@@ -101,7 +101,7 @@ fn main() {
     }
 
     // No range -> whole file 200.
-    match http::get(&url, Vec::from([])) {
+    match http::get(&url, Vec::from(#[])) {
         Ok(r) => println!("whole status={} body={}", r.status, r.body),
         Err(e) => println!("whole error: {}", e),
     }

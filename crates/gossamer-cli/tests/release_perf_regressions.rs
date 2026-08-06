@@ -138,7 +138,7 @@ for i in 0..n {
 let mut pass = 0
 while pass < 8 {
     let shift = pass * 8
-    let mut count = #[0; 256]
+    let mut count = [0; 256]
     for i in 0..n { count[(src[i] >> shift) & 0xff] += 1 }
     let mut total = 0
     for k in 0..256 {

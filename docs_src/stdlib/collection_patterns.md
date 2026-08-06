@@ -17,7 +17,7 @@ let queued = q.len()
 let next = q.peek()
 let first = q.pop()
 
-let mut seeded = Queue::from([10, 20])
+let mut seeded = Queue::from(#[10, 20])
 let seeded_first = seeded.pop()
 ```
 
@@ -26,7 +26,7 @@ For small `i64` examples, `std::collections::queue` also offers a re-bind helper
 ```gossamer
 use std::collections::queue
 
-let q = []
+let q = #[]
 let q = queue::push(q, 10)
 let q = queue::push(q, 20)
 let first = queue::peek(&q)
@@ -46,7 +46,7 @@ d.push_back(2)
 let front = d.pop_front()
 let back = d.pop_back()
 
-let mut from_values = Deque::from([1, 2])
+let mut from_values = Deque::from(#[1, 2])
 from_values.push_front(0)
 ```
 
@@ -55,7 +55,7 @@ For value-style `i64` code, the `std::collections::deque` module returns the upd
 ```gossamer
 use std::collections::deque
 
-let d = []
+let d = #[]
 let d = deque::push_front(d, 1)
 let d = deque::push_back(d, 2)
 let front = deque::peek_front(&d)
@@ -69,7 +69,7 @@ seeds one in bottom-to-top order.
 ```gossamer
 use std::collections::Stack
 
-let mut stack: Stack<i64> = Stack::from([1])
+let mut stack: Stack<i64> = Stack::from(#[1])
 stack.push(1)
 stack.push(2)
 let depth = stack.len()
@@ -82,7 +82,7 @@ The `std::collections::stack` module is the re-bind helper form over `Vec<i64>`:
 ```gossamer
 use std::collections::stack
 
-let s = []
+let s = #[]
 let s = stack::push(s, 1)
 let s = stack::push(s, 2)
 let top = stack::peek(&s)
@@ -97,7 +97,7 @@ negating keys into a max heap.
 ```gossamer
 use std::collections::MinHeap
 
-let mut h = MinHeap::from([5, 1, 3])
+let mut h = MinHeap::from(#[5, 1, 3])
 let smallest = h.peek()
 h.push(0)
 let popped = h.pop()
@@ -110,7 +110,7 @@ Use `MaxHeap<i64>` when the largest value should come first.
 ```gossamer
 use std::collections::MaxHeap
 
-let mut h = MaxHeap::from([5, 1, 3])
+let mut h = MaxHeap::from(#[5, 1, 3])
 let largest = h.peek()
 h.push(8)
 let popped = h.pop()

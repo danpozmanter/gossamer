@@ -7,7 +7,7 @@
 // compiled tiers.
 struct Row { count: i64, name: String }
 fn main() {
-    let mut v: Vec<i64> = Vec::from([])
+    let mut v: Vec<i64> = Vec::from(#[])
     v.push(3)
     v.push(1)
     v.push(2)
@@ -16,7 +16,7 @@ fn main() {
     v.sort_by_key_desc(|n| n)
     println!("{:?}", v)
 
-    let mut rows: Vec<Row> = Vec::from([])
+    let mut rows: Vec<Row> = Vec::from(#[])
     rows.push(Row { count: 2, name: "b" })
     rows.push(Row { count: 1, name: "z" })
     rows.push(Row { count: 2, name: "a" })

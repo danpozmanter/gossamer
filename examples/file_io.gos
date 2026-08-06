@@ -30,11 +30,11 @@ fn main() -> Result<(), errors::Error> {
     println!("read {} bytes: {}", contents.len(), contents.trim())
 
     // --- JSON ---
-    let features = [
+    let features = #[
         json::Value::String("http"),
         json::Value::String("tls"),
     ]
-    let payload = json::Value::object([
+    let payload = json::Value::object(#[
         ("port", json::Value::Int(8080)),
         ("addr", json::Value::String("0.0.0.0")),
         ("features", json::Value::Array(features)),

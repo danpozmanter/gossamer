@@ -1,5 +1,5 @@
 fn main() {
-    let mut a = [0i64, 0i64, 0i64, 0i64]
+    let mut a = #[0i64, 0i64, 0i64, 0i64]
     a[1usize] = 42i64
     let _ = a[1usize]
     println("done")

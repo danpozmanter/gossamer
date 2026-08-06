@@ -83,7 +83,7 @@ fn phase_insecure() {
             return }
     }
     let _ = stream.read(512)
-    let _ = stream.write([1, 2, 3, 4, 5])
+    let _ = stream.write(#[1, 2, 3, 4, 5])
     let _ = stream.close()
     let _ = listener.close()
     let code = match rx.recv() {

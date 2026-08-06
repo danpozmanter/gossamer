@@ -15,7 +15,7 @@ use std::path
 fn main() -> Result<(), errors::Error> {
     // [u8] literal: accumulation must run at 64-bit width even
     // though `sum` infers as u8 (200+200+60+4 = 464, not 208).
-    let body: Vec<u8> = Vec::from([200, 200, 60, 4])
+    let body: Vec<u8> = Vec::from(#[200, 200, 60, 4])
     let mut sum = 0
     for b in body {
         sum += b as i64
@@ -51,7 +51,7 @@ fn main() -> Result<(), errors::Error> {
     // Byte-file roundtrip: compiled tiers receive a packed
     // elem_bytes=1 vec from the runtime; indexing, element
     // writes, and for-loops must honour the header stride.
-    let payload: Vec<u8> = Vec::from([0, 255, 1, 254])
+    let payload: Vec<u8> = Vec::from(#[0, 255, 1, 254])
     let tmp = path::join(&env::temp_dir(), &"gos_byte_vec_i64_model.bin")
     fs::write(&tmp, &payload)?
     let mut bytes = fs::read(&tmp)?

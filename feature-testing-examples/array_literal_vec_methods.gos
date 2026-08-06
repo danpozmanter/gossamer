@@ -2,7 +2,7 @@
 // explicit Vec. Fixed arrays never acquire Vec-only methods implicitly.
 
 fn main() {
-    let words = ["alpha", "beta", "gamma", "beta"]
+    let words = #["alpha", "beta", "gamma", "beta"]
     println!("{}", words.contains("beta"))
     println!("{}", match words.index_of("gamma") { Some(i) => i, None => -1 })
     println!("{}", words.count_of("beta"))
@@ -12,7 +12,7 @@ fn main() {
     let rev = words.to_vec().rev()
     println!("{}|{}", rev[0], rev[3])
 
-    let nums = [10, 20, 30, 20]
+    let nums = #[10, 20, 30, 20]
     println!("{}", nums.contains(20))
     println!("{}", match nums.index_of(30) { Some(i) => i, None => -1 })
     println!("{}", nums.count_of(20))
@@ -26,7 +26,7 @@ mod tests {
 
     #[test]
     fn string_array_literal_methods() {
-        let w = ["a", "b", "c", "b"]
+        let w = #["a", "b", "c", "b"]
         let _ = testing::check(w.contains("b"), "contains on array literal")
         let _ = testing::check(w.count_of("b") == 2, "count_of on array literal")
         let _ = testing::check(w.join("+") == "a+b+c+b", "join on array literal")
@@ -36,7 +36,7 @@ mod tests {
 
     #[test]
     fn int_array_literal_methods() {
-        let n = [10, 20, 30]
+        let n = #[10, 20, 30]
         let _ = testing::check(n.contains(20), "contains i64 array literal")
         let idx = match n.index_of(30) { Some(i) => i, None => -1 }
         let _ = testing::check(idx == 2, "index_of i64 array literal")

@@ -188,6 +188,55 @@ const CORE_TYPES: &[CoreTypeHelp] = &[CoreTypeHelp {
 // `"123".parse()` are not hidden from `%help` and `%info`.
 const CORE_METHODS: &[CoreMethodHelp] = &[
     CoreMethodHelp {
+        owner: "Tuple",
+        name: "len",
+        kind: "method",
+        signature: "fn len(self: Tuple) -> i64",
+        doc: "Element count, fixed by the tuple's type and folded at compile time.",
+    },
+    CoreMethodHelp {
+        owner: "Tuple",
+        name: "is_empty",
+        kind: "method",
+        signature: "fn is_empty(self: Tuple) -> bool",
+        doc: "True only for the empty tuple `()`.",
+    },
+    CoreMethodHelp {
+        owner: "Tuple",
+        name: "get",
+        kind: "method",
+        signature: "fn get(self: Tuple, index: i64) -> Option<T>",
+        doc: "Element at a runtime index; prefer `t.0` when the position is known.",
+    },
+    CoreMethodHelp {
+        owner: "Tuple",
+        name: "clone",
+        kind: "method",
+        signature: "fn clone(self: Tuple) -> Tuple",
+        doc: "Copies the tuple, sharing each element's storage.",
+    },
+    CoreMethodHelp {
+        owner: "Tuple",
+        name: "to_string",
+        kind: "method",
+        signature: "fn to_string(self: Tuple) -> String",
+        doc: "Renders as `(a, b, ...)`, the same text `{}` and `{:?}` produce.",
+    },
+    CoreMethodHelp {
+        owner: "Tuple",
+        name: "into",
+        kind: "method",
+        signature: "fn into<B>(self: Tuple) -> B",
+        doc: "Converts through the target's `From` impl, fixed by the use site.",
+    },
+    CoreMethodHelp {
+        owner: "Tuple",
+        name: "try_into",
+        kind: "method",
+        signature: "fn try_into<B, E>(self: Tuple) -> Result<B, E>",
+        doc: "Fallible conversion through the target's `TryFrom` impl.",
+    },
+    CoreMethodHelp {
         owner: "Buffer",
         name: "new",
         kind: "assoc",
@@ -2229,7 +2278,9 @@ impl ReplValueType {
 
 fn render_repl_binding_value(value: &gossamer_interp::Value, ty: &ReplValueType) -> String {
     let mut rendered = render_repl_value(value);
-    if ty.fixed_array && rendered.starts_with('[') {
+    // A Vec prints in its own spelling; a fixed array is the bare bracket
+    // form, which `render_repl_value` already produces.
+    if matches!(ty.method_owner.as_deref(), Some("Vec")) && rendered.starts_with('[') {
         rendered = format!("#{rendered}");
     } else if matches!(ty.method_owner.as_deref(), Some("Set" | "BTreeSet"))
         && let Some((_, rest)) = rendered.split_once(' ')
@@ -3302,6 +3353,7 @@ fn core_namespace_description(owner: &str) -> &'static str {
         "Result" => "Success or error value.",
         "String" => "UTF-8 string.",
         "Buffer" => "Growable byte buffer.",
+        "Tuple" => "Fixed-length group of values whose element types may differ.",
         "Builder" => "Incremental string builder.",
         _ => "Built-in type and method namespace.",
     }

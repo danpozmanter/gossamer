@@ -401,10 +401,10 @@ and Vec is the only sequence type that owns growable storage.
 
 #### Collection literals
 
-`[a, b, c]` creates a `Vec<T>` by default. Use `#[a, b, c]` and
-`#[value; N]` for fixed `[T; N]` arrays. `N` must be a compile-time constant.
-An expected fixed-array type can also shape `[a, b, c]` into `[T; N]`. The
-repeat form belongs to fixed arrays alone: bare `[value; N]` is `GP0033`.
+`#[a, b, c]` creates a `Vec<T>`. `[a, b, c]` and `[value; N]` create fixed
+`[T; N]` arrays; `N` must be a compile-time constant. An expected type can
+shape either spelling into the other where the shapes agree. The repeat form
+belongs to fixed arrays alone: `#[value; N]` is `GP0033`.
 
 `Queue`, `Stack`, `Deque`, `MaxHeap`, and `MinHeap` have no literal form and
 are constructed through their type, with `T::new()` for an empty container and
@@ -2310,11 +2310,10 @@ includes the Rust macros a newcomer reaches for: there is no `vec!`,
 `map!`, `set!`, `write!`, `writeln!`, `assert!`, `assert_eq!`,
 `debug_assert!`, `include_str!`, `include_bytes!`, or `env!`.
 
-- Collection literals use `[a, b]` for `Vec` values by default. Use
-  `#[a, b]` / `#[v; N]` for fixed arrays, `{}` or `{k: v}` for `Map`, and
-  `#{a, b}` for set values; there is no `vec!`, `map!`, or `set!`. A repeat
-  literal is always a fixed array, so bare `[v; N]` is a syntax error
-  (`GP0033`).
+- Collection literals use `#[a, b]` for `Vec` values. Use `[a, b]` /
+  `[v; N]` for fixed arrays, `{}` or `{k: v}` for `Map`, and `#{a, b}` for set
+  values; there is no `vec!`, `map!`, or `set!`. A repeat literal is always a
+  fixed array, so `#[v; N]` is a syntax error (`GP0033`).
 - `assert(cond[, msg])` and `assert_eq(a, b[, msg])` are prelude
   *functions* called without a `!`; `std::testing` provides the
   non-panicking `check*` variants.

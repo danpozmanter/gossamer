@@ -35,7 +35,7 @@ fn analyse(text: &String) -> Stats {
 }
 
 fn main() {
-    let inputs = [
+    let inputs = #[
         "hello world",
         "the quick brown fox jumps over the lazy dog",
         "   leading and trailing   ",

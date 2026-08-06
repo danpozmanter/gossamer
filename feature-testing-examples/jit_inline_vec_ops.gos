@@ -37,10 +37,10 @@ fn walk_neighbors(graph: &[Vec<i64>]) -> i64 {
 }
 
 fn build_graph(n: i64) -> Vec<Vec<i64>> {
-    let mut graph: Vec<Vec<i64>> = Vec::from([])
+    let mut graph: Vec<Vec<i64>> = Vec::from(#[])
     let mut node = 0
     while node < n {
-        let mut neighbors: Vec<i64> = Vec::from([])
+        let mut neighbors: Vec<i64> = Vec::from(#[])
         let mut e = 0
         while e < 4 {
             neighbors.push((node * 7 + e) % n)
@@ -53,7 +53,7 @@ fn build_graph(n: i64) -> Vec<Vec<i64>> {
 }
 
 fn main() {
-    let xs = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    let xs = #[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     let mut total = 0
     let mut r = 0
     while r < 5000 {

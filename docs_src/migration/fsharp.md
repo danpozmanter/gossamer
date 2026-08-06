@@ -74,7 +74,7 @@ let cached = Map.tryFind "Ada" byName
 ```
 
 ```gos
-let users = [user, rename(user, "Grace")]
+let users = #[user, rename(user, "Grace")]
 let first = users[0]              // Vec/array index; traps if out of bounds
 let initial = first.name[0]       // String index is a UTF-8 byte as i64
 let pair = (first.name, first.active)
@@ -89,7 +89,7 @@ let found = Lookup::Found {
 ```
 
 Gossamer collection literals cover the common F# collection shapes:
-`[a, b]` for `Vec<T>`, `#[a, b]` for a fixed array, `{key: value}` for
+`#[a, b]` for `Vec<T>`, `[a, b]` for a fixed array, `{key: value}` for
 `Map<K, V>`, and `#{a, b}` for `Set<T>` or an expected `BTreeSet<T>`.
 `Queue<i64>`, `Stack<i64>`, `Deque<i64>`, `MaxHeap<i64>`, and `MinHeap<i64>`
 are built through their type with `new()` or `from([...])`.
@@ -214,7 +214,7 @@ for url in urls {
     let tx = tx.clone()
     go fn() {
         defer wg.done()
-        tx.send(http::get(&url, []))
+        tx.send(http::get(&url, #[]))
     }()
 }
 

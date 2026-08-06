@@ -12,7 +12,7 @@ fn classify(n: i64) -> String {
 }
 
 fn main() {
-    let inputs = [0, 1, 2, 3, 4, 7, 10, 11, -1]
+    let inputs = #[0, 1, 2, 3, 4, 7, 10, 11, -1]
     for n in inputs {
         println!("{}", classify(n))
     }

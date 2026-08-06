@@ -28,8 +28,8 @@ fn sum_prefix(xs: &[i64], n: i64) -> i64 {
 }
 
 fn main() {
-    let mut xs = [2, 4, 6, 8]
+    let mut xs = #[2, 4, 6, 8]
     println!("scaled = {}", scale_and_sum(&mut xs, 5))
-    let ys = [10, 20, 30, 40, 50]
+    let ys = #[10, 20, 30, 40, 50]
     println!("prefix = {}", sum_prefix(&ys, 3))
 }

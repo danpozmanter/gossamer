@@ -18,7 +18,7 @@ struct Rec { hits: i64, label: String }
 struct Outer { inner: Rec }
 
 fn main() {
-    let txs = [("alice", 100), ("bob", 50), ("alice", -30), ("carol", 200), ("bob", -20), ("alice", 40)]
+    let txs = #[("alice", 100), ("bob", 50), ("alice", -30), ("carol", 200), ("bob", -20), ("alice", 40)]
     let mut accounts = Map::new()
     for (name, amount) in txs {
         accounts.or_insert(name, Account { balance: 0, txns: 0 }).apply(amount)

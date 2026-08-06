@@ -44,7 +44,7 @@ fn serve_app() {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, Vec::from([])) {
+        if let Ok(_) = http::get(url, Vec::from(#[])) {
             return
         }
         time::sleep(25)
@@ -57,7 +57,7 @@ fn main() {
     let url = "http://127.0.0.1:23913/x"
     await_ready(&url)
 
-    match http::get(&url, Vec::from([])) {
+    match http::get(&url, Vec::from(#[])) {
         Ok(r) => println!("status={} body={}", r.status, r.body),
         Err(e) => println!("error: {}", e),
     }

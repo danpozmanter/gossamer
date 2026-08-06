@@ -50,7 +50,7 @@ fn serve_ws() {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, Vec::from([])) {
+        if let Ok(_) = http::get(url, Vec::from(#[])) {
             return
         }
         time::sleep(25)
@@ -64,7 +64,7 @@ fn main() {
     go serve_ws()
     await_ready(&"http://127.0.0.1:23891/x")
 
-    let up: Vec<(String, String)> = Vec::from([
+    let up: Vec<(String, String)> = Vec::from(#[
         ("Upgrade", "websocket"),
         ("Connection", "Upgrade"),
         ("Sec-WebSocket-Version", "13"),
@@ -74,7 +74,7 @@ fn main() {
         Ok(r) => println!("valid={}", r.body),
         Err(e) => println!("valid error: {}", e),
     }
-    match http::get("http://127.0.0.1:23891/ws", Vec::from([])) {
+    match http::get("http://127.0.0.1:23891/ws", Vec::from(#[])) {
         Ok(r) => println!("reject={}", r.body),
         Err(e) => println!("reject error: {}", e),
     }

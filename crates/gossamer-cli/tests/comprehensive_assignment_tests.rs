@@ -213,7 +213,7 @@ fn repl_rejects_aggregate_reference_pattern() {
         .stdin
         .as_mut()
         .expect("stdin")
-        .write_all(b"let mut m = #[1, 2, 3]\nlet &mut d = &mut m\nlet b = d\n%b\n")
+        .write_all(b"let mut m = [1, 2, 3]\nlet &mut d = &mut m\nlet b = d\n%b\n")
         .expect("write repl input");
     drop(child.stdin.take());
     let output = child.wait_with_output().expect("wait for repl");

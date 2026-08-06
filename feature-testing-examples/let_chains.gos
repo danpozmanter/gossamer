@@ -41,7 +41,7 @@ fn main() {
     }
 
     // while-let chain: bind an element and test it each iteration.
-    let xs = [3, 2, 1, 0, 5]
+    let xs = #[3, 2, 1, 0, 5]
     let mut i = 0
     let mut sum = 0
     while i < xs.len() && let n = xs[i] && n > 0 {

@@ -22,7 +22,7 @@ fn main() {
     let loud = name |> option::map(|s| strings::to_uppercase(&s)) |> option::unwrap_or("none")
     println!("option_map={}", loud)
 
-    let words = ["alpha", "be", "gamma"]
+    let words = #["alpha", "be", "gamma"]
     let banged = words |> iter::map(|w| w + "!")
     for w in banged {
         println!("iter_map={}", w)
@@ -41,7 +41,7 @@ fn main() {
         println!("eta={}", e.message())
     }
 
-    match http::request("GET", "http://127.0.0.1:23907/never", "", Vec::from([])) {
+    match http::request("GET", "http://127.0.0.1:23907/never", "", Vec::from(#[])) {
         Ok(r) => println!("unexpected status={}", r.status),
         Err(e) => {
             let rendered = format!("net: {e}")

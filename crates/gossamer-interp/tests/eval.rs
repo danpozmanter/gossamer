@@ -265,7 +265,7 @@ fn main() {
 fn array_repeat_form_fills_with_value() {
     let source = r#"
 fn main() {
-    let xs = #[7i64; 4i64]
+    let xs = [7i64; 4i64]
     let mut sum = 0i64
     for x in xs {
         sum = sum + x

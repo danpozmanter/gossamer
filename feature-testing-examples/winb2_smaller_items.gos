@@ -19,6 +19,6 @@ fn main() {
         Err(e) => println!("baderr=[{}]", e),
     }
 
-    let a = [10, 20, 30]
+    let a = #[10, 20, 30]
     println!("inb={}", a[1])
 }

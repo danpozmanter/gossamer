@@ -2,15 +2,15 @@
 // every slot is element-initialised, single-row writes stay row-local,
 // and `{:?}` renders the nested shape - bit-identical on every tier.
 fn main() {
-    let mut c = #[#[0; 3]; 3]
+    let mut c = [[0; 3]; 3]
     c[1][2] = 5
     println!("{:?}", c)
-    let f = #[#[1.5; 2]; 2]
+    let f = [[1.5; 2]; 2]
     println!("{:?}", f)
-    let mut b = #[#[false; 2]; 3]
+    let mut b = [[false; 2]; 3]
     b[2][0] = true
     println!("{:?}", b)
-    let big = #[#[7; 2]; 20]
+    let big = [[7; 2]; 20]
     println!("{} {} {}", big[0][0], big[19][1], big.len())
     let mut sum = 0
     for row in c {

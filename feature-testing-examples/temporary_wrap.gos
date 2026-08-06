@@ -20,7 +20,7 @@ fn main() {
     // iter::min / iter::max are typed `Option<i64>`. Piped straight
     // into option::unwrap_or / matched inline, the boxed-Option ABI must
     // hold for the non-empty (Some) and empty (None) cases alike.
-    let xs = [4, 1, 7, 3]
+    let xs = #[4, 1, 7, 3]
     let lo = iter::min(&xs) |> option::unwrap_or(0)
     let hi = iter::max(&xs) |> option::unwrap_or(0)
     println!("min = {} max = {}", lo, hi)
@@ -31,7 +31,7 @@ fn main() {
     }
     println!("min is_some = {}", present)
 
-    let empty: Vec<i64> = Vec::from([])
+    let empty: Vec<i64> = Vec::from(#[])
     let fallback = iter::min(&empty) |> option::unwrap_or(-1)
     println!("empty default = {}", fallback)
 }

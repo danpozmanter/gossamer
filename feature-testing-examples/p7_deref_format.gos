@@ -37,14 +37,14 @@ fn sum_ints(items: &Vec<String>) -> Result<i64, errors::Error> {
 }
 
 fn main() {
-    let items = [Val::Int(42), Val::Flt(3.5), Val::Txt("hi"), Val::Int(-7)]
+    let items = #[Val::Int(42), Val::Flt(3.5), Val::Txt("hi"), Val::Int(-7)]
     let mut out = String::new()
     for v in items {
         ser(&v, &mut out)
         out += ";"
     }
     println!("{}", out)
-    let nums: Vec<String> = Vec::from(["12", "300", "7"])
+    let nums: Vec<String> = Vec::from(#["12", "300", "7"])
     match sum_ints(&nums) {
         Ok(t) => println!("sum {}", t),
         Err(e) => println!("err {}", e),

@@ -7,7 +7,7 @@ use std::jwt
 use std::crypto
 
 fn main() {
-    let key: Vec<u8> = Vec::from([115, 101, 99, 114, 101, 116])
+    let key: Vec<u8> = Vec::from(#[115, 101, 99, 114, 101, 116])
     let claims = "{\"iss\":\"acme\",\"sub\":\"user-1\"}"
 
     // HS256 - fixed shared key + claims => deterministic token.

@@ -33,7 +33,7 @@ fn main() {
         |> iter::sum_by(|n: i64| n * n)
     println!("sum of even squares: {total}")
 
-    let xs = [1, 3, 5, 9, 14, 21]
+    let xs = #[1, 3, 5, 9, 14, 21]
     let first_big = xs
         |> iter::find(|n: i64| n > 10)
         |> option::unwrap_or(-1)

@@ -6,7 +6,7 @@ fn vec_case() -> i64 {
     let mut total = 0
     let mut i = 0
     while i < 500 {
-        let mut xs: Vec<Node> = Vec::from([])
+        let mut xs: Vec<Node> = Vec::from(#[])
         let inner = Node { val: i + 5, next: None }
         xs.push(Node { val: i, next: Some(inner) })
         xs.push(Node { val: i + 1, next: None })

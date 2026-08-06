@@ -4,7 +4,7 @@
 // backends.
 
 fn main() {
-    let arr: Vec<i64> = Vec::from([10, 20, 30, 40, 50])
+    let arr: Vec<i64> = Vec::from(#[10, 20, 30, 40, 50])
 
     // Valid accesses with bare i64 indices
     println!("arr[0] = {}", arr[0])
@@ -23,7 +23,7 @@ fn main() {
     println!("sum via loop = {}", sum)
 
     // Fixed-size array
-    let fixed: [i64; 3] = [1, 2, 3]
+    let fixed: [i64; 3] = #[1, 2, 3]
     println!("fixed[1] = {}", fixed[1])
 
     // Index computed from expression
@@ -37,7 +37,7 @@ mod tests {
 
     #[test]
     fn sum_via_loop() {
-        let arr: Vec<i64> = Vec::from([10, 20, 30, 40, 50])
+        let arr: Vec<i64> = Vec::from(#[10, 20, 30, 40, 50])
         let mut s = 0
         for i in 0..arr.len() {
             s += arr[i]
@@ -47,21 +47,21 @@ mod tests {
 
     #[test]
     fn fixed_array_access() {
-        let fixed: [i64; 3] = [1, 2, 3]
+        let fixed: [i64; 3] = #[1, 2, 3]
         let _ = testing::check_eq(&fixed[0], &1, "fixed[0]=1")
         let _ = testing::check_eq(&fixed[2], &3, "fixed[2]=3")
     }
 
     #[test]
     fn mid_element() {
-        let arr: Vec<i64> = Vec::from([10, 20, 30, 40, 50])
+        let arr: Vec<i64> = Vec::from(#[10, 20, 30, 40, 50])
         let idx: i64 = (arr.len() / 2)
         let _ = testing::check_eq(&arr[idx], &30, "mid=30")
     }
 
     #[test]
     fn last_element() {
-        let arr: Vec<i64> = Vec::from([10, 20, 30, 40, 50])
+        let arr: Vec<i64> = Vec::from(#[10, 20, 30, 40, 50])
         let last = arr.len() - 1
         let _ = testing::check_eq(&arr[last], &50, "last=50")
     }

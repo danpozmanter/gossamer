@@ -10,11 +10,11 @@ fn main() {
         println!("literal {x}")
     }
 
-    for (index, label) in ["a", "b"].enumerate() {
+    for (index, label) in #["a", "b"].enumerate() {
         println!("literal enumerate {index} {label}")
     }
 
-    let words = ["c", "d"]
+    let words = #["c", "d"]
     for (index, label) in words.enumerate() {
         println!("binding enumerate {index} {label}")
     }
@@ -23,7 +23,7 @@ fn main() {
         println!("iter enumerate {index} {label}")
     }
 
-    let numbers = [7, 2, 9]
+    let numbers = #[7, 2, 9]
     let cursor = numbers.iter()
     for value in cursor {
         println!("iter binding {value}")
@@ -45,7 +45,7 @@ mod iterator_loop_sources_tests {
     #[test]
     fn a_literal_enumerate_yields_each_element_once() {
         let mut seen = 0
-        for (index, _label) in ["a", "b"].enumerate() {
+        for (index, _label) in #["a", "b"].enumerate() {
             seen += index + 1
         }
         let _ = testing::check_eq(&seen, &3, "0+1 then 1+1")
@@ -53,7 +53,7 @@ mod iterator_loop_sources_tests {
 
     #[test]
     fn an_iterator_binding_walks_to_the_end() {
-        let numbers = [7, 2, 9]
+        let numbers = #[7, 2, 9]
         let cursor = numbers.iter()
         let mut total = 0
         for value in cursor {
@@ -64,9 +64,9 @@ mod iterator_loop_sources_tests {
 
     #[test]
     fn an_earlier_iter_does_not_restart_a_later_loop() {
-        let numbers = [7, 2, 9]
+        let numbers = #[7, 2, 9]
         let _ = numbers.iter().min()
-        let words = ["c", "d"]
+        let words = #["c", "d"]
         let mut seen = 0
         for (index, _label) in words.enumerate() {
             seen += index + 1

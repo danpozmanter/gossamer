@@ -35,7 +35,7 @@ struct User {
 }
 
 fn main() -> Result<(), errors::Error> {
-    let tags: Vec<String> = ["admin", "ops"]
+    let tags: Vec<String> = #["admin", "ops"]
     let original = User { name: "alice", age: 30, active: true, tags: tags, address: Address { city: "denver", zip: "80205" } }
 
     // Serialize: one call, one line.

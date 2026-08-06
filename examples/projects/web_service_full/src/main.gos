@@ -43,7 +43,7 @@ struct Note { id: i64, body: String }
 // on each read so handlers never share mutable state across the
 // request goroutines the server fans out to.
 fn seed_notes() -> Vec<Note> {
-    Vec::from([
+    Vec::from(#[
         Note { id: 1, body: "first note" },
         Note { id: 2, body: "second note" },
         Note { id: 3, body: "third note" },
@@ -269,7 +269,7 @@ mod web_service_tests {
     #[test]
     fn html_escapes_markup() {
         let note = super::Note { id: 1, body: "<script>" }
-        let notes = [note]
+        let notes = #[note]
         let out = super::render_notes_html(&notes)
         let _ = testing::check(out.contains("&lt;script&gt;"), "markup escaped")
         let _ = testing::check(!out.contains("<script>"), "no raw script tag")

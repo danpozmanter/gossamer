@@ -47,7 +47,7 @@ fn main() {
         |> option::unwrap_or(-1)
     println!("{found}")
 
-    let borrowed = [1, 2, 3, 4]
+    let borrowed = #[1, 2, 3, 4]
     let borrowed_total = borrowed
         |> iter::map(|x| x * 2)
         |> iter::filter(|x| x > 4)

@@ -7,8 +7,8 @@ use std::encoding
 use std::hash
 
 fn main() {
-    let empty: Vec<u8> = Vec::from([])
-    let abc: Vec<u8> = Vec::from([97, 98, 99])
+    let empty: Vec<u8> = Vec::from(#[])
+    let abc: Vec<u8> = Vec::from(#[97, 98, 99])
 
     // --- SHA-256 (digest bytes + hex) on empty and known vectors ---
     println!("sha256(empty) = {}", crypto::sha256::hex(""))
@@ -30,13 +30,13 @@ fn main() {
     println!("hmac(key,msg) = {}", crypto::hmac::sha256_hex("key", "msg"))
     println!("hmac(empty,empty) = {}", crypto::hmac::sha256_hex("", ""))
     println!("hmac(key,empty) = {}", crypto::hmac::sha256_hex("key", ""))
-    println!("hmac mac len = {}", crypto::hmac::sha256_mac(Vec::from([107, 101, 121]), Vec::from([109, 115, 103])).len())
+    println!("hmac mac len = {}", crypto::hmac::sha256_mac(Vec::from(#[107, 101, 121]), Vec::from(#[109, 115, 103])).len())
 
     // --- subtle constant-time eq, incl empty vs empty ---
     println!("cteq empty/empty = {}", crypto::subtle::constant_time_eq(empty, empty))
-    println!("cteq abc/abc = {}", crypto::subtle::constant_time_eq(Vec::from([97, 98, 99]), Vec::from([97, 98, 99])))
-    println!("cteq abc/abd = {}", crypto::subtle::constant_time_eq(Vec::from([97, 98, 99]), Vec::from([97, 98, 100])))
-    println!("cteq len mismatch = {}", crypto::subtle::constant_time_eq(Vec::from([1, 2]), Vec::from([1, 2, 3])))
+    println!("cteq abc/abc = {}", crypto::subtle::constant_time_eq(Vec::from(#[97, 98, 99]), Vec::from(#[97, 98, 99])))
+    println!("cteq abc/abd = {}", crypto::subtle::constant_time_eq(Vec::from(#[97, 98, 99]), Vec::from(#[97, 98, 100])))
+    println!("cteq len mismatch = {}", crypto::subtle::constant_time_eq(Vec::from(#[1, 2]), Vec::from(#[1, 2, 3])))
 
     // --- insecure (MD5 / SHA-1) on empty + vector ---
     println!("md5(empty) = {}", crypto::insecure::md5_hex(""))
@@ -46,30 +46,30 @@ fn main() {
 
     // --- non-crypto hashes on empty + bytes + chaining ---
     println!("fnv1a32(empty) = {}", hash::fnv::hash32(empty))
-    println!("fnv1a32(hi) = {}", hash::fnv::hash32(Vec::from([104, 105])))
-    println!("fnv1a64(hi) = {}", hash::fnv::hash64(Vec::from([104, 105])))
+    println!("fnv1a32(hi) = {}", hash::fnv::hash32(Vec::from(#[104, 105])))
+    println!("fnv1a64(hi) = {}", hash::fnv::hash64(Vec::from(#[104, 105])))
     println!("fnv str(hello) = {}", hash::fnv::hash_string("hello"))
     println!("crc32(empty) = {}", hash::crc32::checksum(empty))
     println!("crc32(hw) = {}", hash::crc32::checksum_string("hello world"))
-    println!("crc32 chained = {}", hash::crc32::update(hash::crc32::update(0, Vec::from([104])), Vec::from([105])))
+    println!("crc32 chained = {}", hash::crc32::update(hash::crc32::update(0, Vec::from(#[104])), Vec::from(#[105])))
     println!("adler32(empty) = {}", hash::adler32::checksum(empty))
     println!("adler32(hw) = {}", hash::adler32::checksum_string("hello world"))
-    println!("adler32 chained = {}", hash::adler32::update(hash::adler32::update(1, Vec::from([104])), Vec::from([105])))
+    println!("adler32 chained = {}", hash::adler32::update(hash::adler32::update(1, Vec::from(#[104])), Vec::from(#[105])))
 
     // --- KDF: PBKDF2-HMAC-SHA256 deterministic vectors ---
-    let pw: Vec<u8> = Vec::from([112, 97, 115, 115, 119, 111, 114, 100])
-    let salt: Vec<u8> = Vec::from([115, 97, 108, 116])
+    let pw: Vec<u8> = Vec::from(#[112, 97, 115, 115, 119, 111, 114, 100])
+    let salt: Vec<u8> = Vec::from(#[115, 97, 108, 116])
     println!("pbkdf2 c1 = {}", encoding::hex::encode(crypto::kdf::pbkdf2_sha256(pw, salt, 1, 32)))
     println!("pbkdf2 c2 = {}", encoding::hex::encode(crypto::kdf::pbkdf2_sha256(pw, salt, 2, 20)))
 
     // --- AEAD deterministic seal (fixed key + nonce) ---
-    let key: Vec<u8> = Vec::from([
+    let key: Vec<u8> = Vec::from(#[
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
         17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
     ])
-    let nonce: Vec<u8> = Vec::from([9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9])
-    let pt: Vec<u8> = Vec::from([104, 101, 108, 108, 111])
-    let aad: Vec<u8> = Vec::from([109, 101, 116, 97])
+    let nonce: Vec<u8> = Vec::from(#[9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9])
+    let pt: Vec<u8> = Vec::from(#[104, 101, 108, 108, 111])
+    let aad: Vec<u8> = Vec::from(#[109, 101, 116, 97])
     match crypto::aead::aes_256_gcm_seal(key, nonce, pt, aad) {
         Ok(ct) => println!("aes ct = {}", encoding::hex::encode(ct)),
         Err(e) => println!("aes seal err {}", e),

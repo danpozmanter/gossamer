@@ -11,7 +11,7 @@
 use std::archive
 
 fn main() {
-    let files = [
+    let files = #[
         ("hello.txt", "hello, world\n".as_bytes()),
         ("readme.md", "# demo\n\nA tiny archive.\n".as_bytes()),
     ]

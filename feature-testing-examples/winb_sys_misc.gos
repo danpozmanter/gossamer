@@ -15,7 +15,7 @@ fn main() {
     println!("arch={}", os::arch())
 
     // bufio::split_whitespace: pure tokenisation on runs of whitespace.
-    let cases = [
+    let cases = #[
         "a b  c", "  leading", "trailing  ", "", "   ",
         "one\ttwo\nthree", "single",
     ]

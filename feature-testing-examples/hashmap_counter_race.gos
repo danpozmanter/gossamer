@@ -23,7 +23,7 @@ fn main() {
     println!("cherry after or_insert = {}", tally.get_or("cherry", 0))
 
     // Manual update loop
-    let words = ["one", "two", "two", "three", "three", "three"]
+    let words = #["one", "two", "two", "three", "three", "three"]
     let mut counts: Map<String, i64> = Map::new()
     for w in words {
         counts.inc(w)
@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn word_count_stress() {
-        let words = ["a", "b", "a", "c", "a", "b"]
+        let words = #["a", "b", "a", "c", "a", "b"]
         let mut counts: Map<String, i64> = Map::new()
         for w in words {
             counts.inc(w)

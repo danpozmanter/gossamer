@@ -39,7 +39,7 @@ fn run_server() {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, Vec::from([])) {
+        if let Ok(_) = http::get(url, Vec::from(#[])) {
             return
         }
         time::sleep(25)
@@ -50,7 +50,7 @@ fn await_ready(url: &String) {
 fn main() {
     go run_server()
     await_ready(&"http://127.0.0.1:23871/bytes")
-    match http::get("http://127.0.0.1:23871/bytes", Vec::from([])) {
+    match http::get("http://127.0.0.1:23871/bytes", Vec::from(#[])) {
         Ok(r) => {
             let mut v = r.raw_bytes
             println!("len={}", v.len())

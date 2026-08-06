@@ -26,7 +26,7 @@ fn is_palindrome(text: &String) -> bool {
 }
 
 fn main() {
-    let inputs = ["hello", "racecar", "Gossamer", "level"]
+    let inputs = #["hello", "racecar", "Gossamer", "level"]
     for s in inputs {
         let rev = reverse_bytes(&s)
         let label = if is_palindrome(&s) { "palindrome" } else { "not palindrome" }

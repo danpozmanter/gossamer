@@ -77,7 +77,7 @@ val cached = byName["Ada"] // User?
 ```
 
 ```gos
-let users = [user, rename(user, "Grace")]
+let users = #[user, rename(user, "Grace")]
 let first = users[0]              // List/Vec index; traps if out of bounds
 let initial = first.name[0]       // String index is a UTF-8 byte as i64
 let pair = (first.name, first.active)
@@ -210,7 +210,7 @@ val total = listOf(1, 2, 3, 4)
 ```gos
 use std::iter
 
-let total = [1, 2, 3, 4]
+let total = #[1, 2, 3, 4]
     |> iter::filter(|n: i64| n % 2 == 0)
     |> iter::sum_by(|n: i64| n * n)
 ```
@@ -218,7 +218,7 @@ let total = [1, 2, 3, 4]
 Mutating operations stay method-shaped:
 
 ```gos
-let mut xs = [3, 1, 2]
+let mut xs = #[3, 1, 2]
 xs.sort()
 xs.push(4)
 ```
@@ -256,7 +256,7 @@ for url in urls {
     let tx = tx.clone()
     go fn() {
         defer wg.done()
-        tx.send(http::get(&url, []))
+        tx.send(http::get(&url, #[]))
     }()
 }
 

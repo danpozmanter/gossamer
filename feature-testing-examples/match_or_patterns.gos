@@ -108,17 +108,17 @@ fn option_result(v: Option<Result<i64, i64>>) -> i64 {
 }
 
 fn main() {
-    let ranks = [Rank::Ace, Rank::Number(7), Rank::Jack, Rank::Queen, Rank::King]
+    let ranks = #[Rank::Ace, Rank::Number(7), Rank::Jack, Rank::Queen, Rank::King]
     for r in ranks {
         println!("value = {}", card_value(&r))
     }
 
-    let nums = [0, 1, 2, 3, 5, 7, 4, -1]
+    let nums = #[0, 1, 2, 3, 5, 7, 4, -1]
     for n in nums {
         println!("{} -> {}", n, classify_int(n))
     }
 
-    let pts = [
+    let pts = #[
         Point3 { x: 3, y: 0, z: 0 },
         Point3 { x: 0, y: 5, z: 0 },
         Point3 { x: 0, y: 0, z: 7 },
@@ -128,12 +128,12 @@ fn main() {
         println!("{}", on_axis(&p))
     }
 
-    let sigs = [Signal::Red(3), Signal::Yellow(4), Signal::Green(0), Signal::Red(-2)]
+    let sigs = #[Signal::Red(3), Signal::Yellow(4), Signal::Green(0), Signal::Red(-2)]
     for s in sigs {
         println!("int={} {}", intensity(&s), describe(&s))
     }
 
-    let cells = [
+    let cells = #[
         Cell::Filled(Signal::Red(7)),
         Cell::Filled(Signal::Yellow(2)),
         Cell::Filled(Signal::Green(9)),

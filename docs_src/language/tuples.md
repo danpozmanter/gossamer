@@ -84,7 +84,7 @@ That ordering is what `sort` uses on a sequence of tuples, which makes a tuple
 the usual sort key:
 
 ```gossamer
-let mut pairs = [(3, "c"), (1, "a"), (2, "b")]
+let mut pairs = #[(3, "c"), (1, "a"), (2, "b")]
 pairs.sort()
 ```
 
@@ -105,6 +105,24 @@ let by_position: Map<(i64, i64), String> = Map::new()
 
 `Map::iter()` yields `[(K, V)]`, and `Vec::enumerate()` yields
 `Vec<(i64, T)>`, so the `for (a, b) in ...` shape reads the same everywhere.
+
+## Methods
+
+A tuple's surface is mostly syntax: positional access, destructuring, and
+structural comparison. Its methods are the four that do not assume a sequence:
+
+| Method | Returns |
+|---|---|
+| `len()` | element count, folded at compile time from the type |
+| `is_empty()` | true only for `()` |
+| `get(i)` | element at a runtime index; prefer `t.0` when the position is known |
+| `clone()` | a copy of the tuple |
+| `to_string()` | `(a, b, ...)`, the text `{}` and `{:?}` produce |
+| `into()` / `try_into()` | conversion through a `From` / `TryFrom` impl |
+
+`iter()` and the combinators built on it are rejected: a tuple's elements may
+differ in type, so there is no element type to yield. Walk a tuple by
+destructuring it, not by iterating it.
 
 ## Discovery
 

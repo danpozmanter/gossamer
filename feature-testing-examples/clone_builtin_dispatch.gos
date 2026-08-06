@@ -12,7 +12,7 @@ fn main() {
     let s = "hello"
     println!("str: {}", s.clone())
 
-    let xs: Vec<String> = Vec::from(["a", "b", "c"])
+    let xs: Vec<String> = Vec::from(#["a", "b", "c"])
     let ys = xs.clone()
     println!("vec: {} {}", ys.len(), ys[2])
 

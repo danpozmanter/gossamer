@@ -28,7 +28,7 @@ fn main() {
     println!("from_micros(999).as_millis={}", time::Duration::as_millis(z))
 
     // format_rfc3339 over fixed unix-ms instants.
-    let stamps = [
+    let stamps = #[
         0, 1000, 1500, 1609459200000, 1640995199000,
         951782400000, 1234567890000, 86400000, 1893456000000,
         -1000, -1500, -86400000, -1609459200000,
@@ -39,7 +39,7 @@ fn main() {
 
     // parse_rfc3339 over fixed strings: UTC, timezone offsets, space
     // separator, fractional seconds, pre-1970, and invalid dates.
-    let strs = [
+    let strs = #[
         "1970-01-01T00:00:00Z", "2021-01-01T00:00:00Z",
         "2021-12-31T23:59:59Z", "2000-02-29T12:00:00Z",
         "2009-02-13T23:31:30Z",

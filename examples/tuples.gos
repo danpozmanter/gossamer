@@ -38,7 +38,7 @@ fn main() {
 
     // Tuples compare element by element in declaration order, so a tuple
     // is the usual sort key and needs no wrapper type.
-    let mut by_priority = [(2, "later"), (1, "sooner"), (2, "last")]
+    let mut by_priority = #[(2, "later"), (1, "sooner"), (2, "last")]
     by_priority.sort()
     for (priority, label) in by_priority {
         println!("sorted: {priority} {label}")
@@ -50,7 +50,7 @@ fn main() {
     println!("single: {:?}", single)
 
     // `enumerate` and map iteration both hand back tuples.
-    let words = ["alpha", "beta"]
+    let words = #["alpha", "beta"]
     for (index, word) in words.enumerate() {
         println!("enumerated: {index} {word}")
     }

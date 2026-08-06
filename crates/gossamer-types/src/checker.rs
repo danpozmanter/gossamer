@@ -6693,6 +6693,10 @@ impl<'a> TypeChecker<'a> {
         let available = match self.tcx.kind(resolved) {
             Some(TyKind::Array { .. }) => is_array_sequence_method(method),
             Some(TyKind::Slice(_)) => is_slice_sequence_method(method),
+            // A tuple is not iterable: its elements may differ in type, so
+            // there is no element type to hand a loop or a combinator.
+            // Positional access (`t.0`, `t.get(i)`) stays available.
+            Some(TyKind::Tuple(_)) => !is_tuple_rejected_method(method),
             _ => return false,
         };
         if available || is_vec_only_sequence_method(method) {
@@ -11844,18 +11848,18 @@ fn strings_fn_param_metadata(name: &str, position: usize, shape: StrArgShape) ->
 /// exact value, while paths remain useful without requiring the source map.
 fn argument_value_display(arg: &Expr) -> String {
     match &arg.kind {
-        ExprKind::Array(ArrayExpr::List(values)) => array_value_display("[", "]", values),
+        ExprKind::Array(ArrayExpr::List(values)) => array_value_display("#[", "]", values),
         ExprKind::Array(ArrayExpr::Repeat { value, count }) => {
             format!(
-                "[{}; {}]",
+                "#[{}; {}]",
                 argument_value_display(value),
                 argument_value_display(count)
             )
         }
-        ExprKind::FixedArray(ArrayExpr::List(values)) => array_value_display("#[", "]", values),
+        ExprKind::FixedArray(ArrayExpr::List(values)) => array_value_display("[", "]", values),
         ExprKind::FixedArray(ArrayExpr::Repeat { value, count }) => {
             format!(
-                "#[{}; {}]",
+                "[{}; {}]",
                 argument_value_display(value),
                 argument_value_display(count)
             )
@@ -12937,6 +12941,16 @@ pub fn is_slice_sequence_method(name: &str) -> bool {
             | "to_vec"
             | "iter"
     )
+}
+
+/// Returns whether a method is rejected for a tuple receiver. A tuple's
+/// elements may differ in type, so nothing that walks it as a sequence of
+/// one element type applies: iteration has no element type to yield, and
+/// the combinators built on it inherit that. Positional access (`t.0`,
+/// `t.get(i)`) and whole-value operations stay available.
+#[must_use]
+pub fn is_tuple_rejected_method(name: &str) -> bool {
+    matches!(name, "iter" | "count") || is_vec_only_sequence_method(name)
 }
 
 /// Fixed arrays expose value-preserving `clone` in addition to methods made

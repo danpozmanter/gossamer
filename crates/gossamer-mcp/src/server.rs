@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn skill_card_teaches_collection_literal_spellings() {
-        for literal in ["`[]`", "`#[]`", "`{}`", "`#{}`", "`T::from([1,2,3])`"] {
+        for literal in ["`#[]`", "`[]`", "`{}`", "`#{}`", "`T::from(#[1,2,3])`"] {
             assert!(
                 SKILL_CARD.contains(literal),
                 "skill card should document {literal}"
@@ -207,7 +207,7 @@ mod tests {
         assert!(SKILL_CARD.contains("FIFO-only behavior"));
         assert!(SKILL_CARD.contains("MinHeap` / `MaxHeap` for explicit priority order"));
         assert!(
-            SKILL_CARD.contains("bare `[v; N]` is a syntax error"),
+            SKILL_CARD.contains("`#[v; N]` is a syntax error"),
             "skill card should teach that a repeat literal is a fixed array"
         );
         assert!(

@@ -1625,11 +1625,19 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> MethodLowering {
         let receiver_kind_flat = receiver_kind_flat.clone();
+        // A tuple's element count is part of its type, exactly like a fixed
+        // array's length, so both fold to a constant here. Without the
+        // tuple arm the dispatch fell through to the generic vec-header
+        // read, which reported 1.
+        let constant_len = match &receiver_kind_flat {
+            TyKind::Array { len, .. } => Some(len.to_usize()),
+            TyKind::Tuple(elems) => Some(elems.len()),
+            _ => None,
+        };
         if method.name.as_str() == "len"
             && args.is_empty()
-            && let TyKind::Array { len, .. } = &receiver_kind_flat
+            && let Some(n) = constant_len
         {
-            let n = len.to_usize();
             let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
             let dest = self.fresh(i64_ty);
             self.emit_assign(

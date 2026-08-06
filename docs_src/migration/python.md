@@ -81,7 +81,7 @@ cached = by_name.get("Ada")  # User | None
 ```
 
 ```gos
-let users = [user, rename(user, "Grace")]
+let users = #[user, rename(user, "Grace")]
 let first = users[0]              // Vec/array index; traps if out of bounds
 let initial = first.name[0]       // UTF-8 byte as i64, not a Python character
 let pair = (first.name, first.active)
@@ -232,7 +232,7 @@ let (tx, rx) = channel()
 for url in urls {
     let tx = tx.clone()
     go fn() {
-        tx.send(http::get(&url, []))
+        tx.send(http::get(&url, #[]))
     }()
 }
 

@@ -18,7 +18,7 @@ fn make(n: i64) -> One {
 
 fn main() {
     // copy a single-field struct out of a Vec by index, then read its field
-    let mut xs: Vec<One> = Vec::from([])
+    let mut xs: Vec<One> = Vec::from(#[])
     let mut i = 0
     while i < 6 {
         xs.push(One { v: i * i })
@@ -53,7 +53,7 @@ fn main() {
 
     // single String field (heap), returned from a function, nested in a struct
     let named = Named { s: format!("len{}", make(7).v) }
-    let mut ws: Vec<Wrap> = Vec::from([])
+    let mut ws: Vec<Wrap> = Vec::from(#[])
     ws.push(Wrap { inner: One { v: 9 }, tag: 1 })
     let w = ws[0]
 

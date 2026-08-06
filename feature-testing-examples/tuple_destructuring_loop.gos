@@ -5,7 +5,7 @@
 use std::collections::Map
 
 fn main() {
-    let pairs = [(1, "one"), (2, "two"), (3, "three")]
+    let pairs = #[(1, "one"), (2, "two"), (3, "three")]
 
     // Destructure in for
     for (n, word) in pairs {
@@ -29,7 +29,7 @@ fn main() {
     println!("scores total+namelen = {}", total)
 
     // Nested tuples
-    let triples = [(1, 2, 3), (4, 5, 6)]
+    let triples = #[(1, 2, 3), (4, 5, 6)]
     for (a, b, c) in triples {
         println!("{} + {} + {} = {}", a, b, c, a + b + c)
     }
@@ -71,8 +71,8 @@ mod tests {
 
     #[test]
     fn destructure_triple_in_loop() {
-        let triples = [(1, 2, 3), (4, 5, 6)]
-        let mut sums: Vec<i64> = Vec::from([])
+        let triples = #[(1, 2, 3), (4, 5, 6)]
+        let mut sums: Vec<i64> = Vec::from(#[])
         for (a, b, c) in triples {
             sums.push(a + b + c)
         }

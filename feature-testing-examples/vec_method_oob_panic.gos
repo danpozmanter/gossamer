@@ -2,7 +2,7 @@
 // Err without mutating the receiver on every tier.
 
 fn main() {
-    let mut xs = Vec::from([1, 2, 3])
+    let mut xs = Vec::from(#[1, 2, 3])
     let _ = xs.insert(3, 4)
     println!("before {}", xs.len())
     match xs.insert(5, 99) {

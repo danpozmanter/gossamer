@@ -41,7 +41,7 @@ fn main() {
     let single = (99,)
     println!("{:?}", single)
 
-    let mut pairs = [(3, "c"), (1, "a"), (2, "b")]
+    let mut pairs = #[(3, "c"), (1, "a"), (2, "b")]
     pairs.sort()
     for (rank, label) in pairs {
         println!("{rank}{label}")

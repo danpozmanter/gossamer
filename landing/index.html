@@ -190,7 +190,7 @@ let _ = router::add(routes, "GET", "/")
 let _ = router::add(routes, "GET", "/users/{id}")
 let _ = router::add(routes, "POST", "/users")
 
-let requests = [("GET", "/"), ("GET", "/users/42"), ("POST", "/users"), ("DELETE", "/users/42")]
+let requests = #[("GET", "/"), ("GET", "/users/42"), ("POST", "/users"), ("DELETE", "/users/42")]
 for (method, path) in requests {
     let status = match router::lookup(routes, method, path) {
         Some(_) =&gt; "200 ok",
@@ -231,7 +231,7 @@ fn area(s: &amp;Shape) -&gt; f64 {
 }
 
 // Top-level statements - no fn main() needed
-let shapes = [Shape::Circle(3.0), Shape::Rect { w: 4.0, h: 5.0 }, Shape::Triangle(6.0, 2.0)]
+let shapes = #[Shape::Circle(3.0), Shape::Rect { w: 4.0, h: 5.0 }, Shape::Triangle(6.0, 2.0)]
 for s in shapes {
     println!("area = {:.2}", area(&amp;s))
 }</code></pre>
@@ -240,14 +240,14 @@ for s in shapes {
         <div class="tabpanel" role="tabpanel" id="panel-collections" aria-labelledby="tab-collections" hidden>
 <pre><code class="language-gossamer">use std::collections::{BTreeSet, Map, Set, Deque, Queue, Stack, MaxHeap, MinHeap}
 
-let mut nums = []
+let mut nums = #[]
 nums.push(10)
 nums.push(20)
 let dropped = nums.remove(0).unwrap_or(-1)
 println!("[] Vec: len={} removed={} first={}", nums.len(), dropped, nums[0])
 
-let fixed = #[1, 2, 3]
-println!("#[] fixed array: len={}", fixed.len())
+let fixed = [1, 2, 3]
+println!("[] fixed array: len={}", fixed.len())
 
 let mut scores: Map&lt;String, i64&gt; = {}
 scores.insert("ada", 100)
@@ -289,12 +289,12 @@ let front = deque.pop_front().unwrap_or(0)
 let back = deque.pop_back().unwrap_or(0)
 println!("Deque: front={} back={} len={}", front, back, deque.len())
 
-let mut queue = Queue::from([7, 8])
+let mut queue = Queue::from(#[7, 8])
 queue.push(9)
 let next = queue.pop().unwrap_or(0)
 println!("Queue: next={} len={}", next, queue.len())
 
-let mut stack = Stack::from([7, 8])
+let mut stack = Stack::from(#[7, 8])
 stack.push(9)
 let top = stack.pop().unwrap_or(0)
 println!("Stack: top={} len={}", top, stack.len())

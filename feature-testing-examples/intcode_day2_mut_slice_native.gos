@@ -46,16 +46,16 @@ fn solve_part2(program: &[i64], target: i64) -> Option<i64> {
 }
 
 fn main() {
-    let sample = [1, 1, 1, 4, 99, 5, 6, 0, 99]
+    let sample = #[1, 1, 1, 4, 99, 5, 6, 0, 99]
     println!("sample={}", run_intcode(&sample, 1, 1))
 
-    let input = [1, 9, 10, 3, 2, 3, 11, 0, 99, 30, 40, 50]
+    let input = #[1, 9, 10, 3, 2, 3, 11, 0, 99, 30, 40, 50]
     println!("pos0={}", run_intcode(&input, 9, 10))
 
-    let value_copy = [1, 2, 3]
+    let value_copy = #[1, 2, 3]
     println!("copy={}, base={}", mutate_copy(&value_copy), value_copy[0])
 
-    let part2 = [1, 0, 0, 0, 99]
+    let part2 = #[1, 0, 0, 0, 99]
     match solve_part2(&part2, 4) {
         Some(answer) => println!("part2={}", answer),
         None => println!("part2=none")

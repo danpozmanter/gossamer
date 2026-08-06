@@ -161,7 +161,7 @@ fn main() {
 fn fixed_u8_array_to_vec_preserves_packed_positions_across_tiers() {
     let src = r"
 fn main() {
-    let mut bytes = #[0u8; 10]
+    let mut bytes = [0u8; 10]
     bytes[1] = 11u8
     bytes[7] = 77u8
     let values: Vec<u8> = bytes.to_vec()
@@ -657,7 +657,7 @@ fn main() {
 fn native_vec_swap_and_pop_preserve_multiword_elements() {
     let src = r#"
 fn main() {
-    let mut xs = [(1, 2), (3, 4)]
+    let mut xs = #[(1, 2), (3, 4)]
     let _ = xs.swap(0, 1)
     match xs.pop() {
         Some(v) => println!("{} {}", v.0, v.1),
@@ -1035,10 +1035,10 @@ struct Rec { name: String, nums: Vec<i64> }
 fn main() {
     println!("{}", (1, "x", true))
     let mut m = {"a": 1, "b": 2}
-    println!("{}", (m, [1, 2, 3]))
+    println!("{}", (m, #[1, 2, 3]))
     println!("{}", #{3, 1, 2})
-    println!("{}", BTreeSet::from(#[3, 1, 2]))
-    println!("{:?}", Rec { name: "r", nums: [1, 2] })
+    println!("{}", BTreeSet::from([3, 1, 2]))
+    println!("{:?}", Rec { name: "r", nums: #[1, 2] })
 }
 "#;
     let expected = "\

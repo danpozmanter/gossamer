@@ -45,7 +45,7 @@ fn main() {
     println!("idx(cafe\u{00e9}, \u{00e9})={}", idx(&"café", &"é"))
 
     // split edge cases.
-    let cases = [
+    let cases = #[
         ("a,b,,c", ","), ("abc", ","), (",a,", ","),
         ("a--b--c", "--"), ("", ","), ("xx", ""),
     ]

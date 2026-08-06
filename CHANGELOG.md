@@ -1,11 +1,21 @@
 # Changelog
 
-## 0.43.0 - Tuples, one name per container, and constructor-only containers
+## 0.43.0 - Tuple surface, one name per container,collection literals, fixes
 
 - Bump workspace crates and lockfile package versions to 0.43.0.
-- Document `Tuple` as a first-class type with a language reference page, a
-  worked example, `%info Tuple`, and `%explain` element listings for tuple
-  bindings.
+- Make the existing tuple type discoverable and complete its surface: a
+  language reference page, a worked example, `%info Tuple`, and `%explain`
+  element listings for tuple bindings.
+- Fold `len()` on a tuple from its type. The dispatch fell through to the
+  generic vec-header read, so a 3-element tuple reported 1 in a native build
+  and 3 on the VM.
+- Reject `iter()` and its combinators on a tuple: its elements may differ in
+  type, so there is no element type to yield. `iter()` faulted in a native
+  build and `count()` answered 0.
+- Swap the sequence literal spellings: `#[a, b]` builds a `Vec<T>` and
+  `[a, b]` builds a fixed `[T; N]` array. The repeat form follows the array
+  spelling, so `[value; count]` is a fixed array and `#[value; count]` is
+  `GP0033`.
 - Parse chained tuple indices so `t.0.1` reads through a nested tuple.
 - Assign tuple elements positionally on the bytecode VM, matching the compiled
   tiers: `t.0 = v` and `t.0.1 = v` now work everywhere.

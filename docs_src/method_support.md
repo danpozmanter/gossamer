@@ -69,6 +69,7 @@ cannot change their length or capacity. Iterator combinators are used through
 | `&mut [T; N]`, `&mut [T]` | Shared methods plus in-place `sort`, `sort_by`, `sort_by_key`, `reverse`, `swap`, and `fill` |
 | `Vec<T>`, `&Vec<T>`, `&mut Vec<T>` | Shared methods plus eager combinators, resizing, and capacity operations |
 
+`#[...]` constructs `Vec` values and `[...]` constructs fixed arrays.
 Map literals such as `{"one": 1}` construct `Map` values. Set literals
 such as `#{1, 2, 2}` construct `Set` values, or `BTreeSet` values when an
 expected `BTreeSet<T>` type is present.
@@ -78,9 +79,11 @@ Every container has exactly one name. `HashMap`, `HashSet`, `VecDeque`,
 not accepted; write `Map`, `Set`, `Deque`, `Queue`, `Stack`, `MaxHeap`, and
 `MinHeap`.
 
-A tuple has no methods: its surface is positional access (`t.0`), assignment
-through a `mut` binding, destructuring, and structural comparison. See
-[Tuples](language/tuples.md).
+A tuple's surface is positional access (`t.0`), assignment through a `mut`
+binding, destructuring, and structural comparison, plus `len`, `is_empty`,
+`get`, `clone`, `to_string`, `into`, and `try_into`. `iter()` and its
+combinators are rejected - a tuple's elements may differ in type, so there is
+no element type to yield. See [Tuples](language/tuples.md).
 
 | Method | Returns | Notes |
 |---|---|---|

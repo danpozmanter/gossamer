@@ -31,7 +31,7 @@ fn fibonacci(n: u64) -> u64 {
 
 // A fallible helper used below to show `check_ok` integration.
 fn parse_sequence(text: &String) -> Result<Vec<u64>, errors::Error> {
-    let mut out: Vec<u64> = []
+    let mut out: Vec<u64> = #[]
     for piece in text.split(',') {
         let trimmed = piece.trim()
         let n: u64 = trimmed.parse()
@@ -51,7 +51,7 @@ mod tests {
          * runner; no `.expect()` is needed for `gos test` to see a
          * failure. Propagate with `?` only when a later assertion
          * depends on this one passing. */
-        let expected = [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+        let expected = #[0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
         for i in 0..10 {
             let got = super::fibonacci(i)
             let want = expected[i]

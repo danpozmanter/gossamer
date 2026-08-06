@@ -790,7 +790,7 @@ fn concurrency_rejects_unmarshalable_inline_aggregates() {
         ),
         (
             "fixed array goroutine argument",
-            "fn work(value: [i64; 2]) {}\nfn main() { let value = #[1, 2]\n go work(value) }",
+            "fn work(value: [i64; 2]) {}\nfn main() { let value = [1, 2]\n go work(value) }",
         ),
         (
             "tuple containing Vec argument",

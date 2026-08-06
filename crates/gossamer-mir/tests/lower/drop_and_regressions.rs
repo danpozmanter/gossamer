@@ -754,7 +754,7 @@ fn lifted_map_err_closure_param_keeps_string_type() {
 #[test]
 fn lifted_iter_map_closure_param_keeps_string_type() {
     let source = "use std::iter\n\
-                  fn main() { let xs: Vec<String> = Vec::from([\"a\", \"b\"])\n\
+                  fn main() { let xs: Vec<String> = Vec::from(#[\"a\", \"b\"])\n\
                   let ys = iter::map(|s| format!(\"[{s}]\"), xs)\n\
                   let _ = ys }\n";
     let (bodies, tcx) = build_with_lift(source);
@@ -773,7 +773,7 @@ fn lifted_iter_map_closure_param_keeps_string_type() {
 #[test]
 fn lifted_closure_destructures_tuple_parameter_before_body() {
     let source = "fn main() {\n\
-                  let values = [1, 2, 3, 4]\n\
+                  let values = #[1, 2, 3, 4]\n\
                   let shifted = values.enumerate().map(|(i, value)| value + i)\n\
                   let _ = shifted\n\
                   }\n";
@@ -1304,7 +1304,7 @@ fn http_response_literal_full_lowers_to_constructor_and_setters() {
     let source = "use std::http\n\
                   fn h() -> http::Response {\n\
                   http::Response { status: 201, body: \"x\", content_type: \"t\",\n\
-                  headers: Vec::from([(\"a\", \"b\"), (\"c\", \"d\")]) } }\n";
+                  headers: Vec::from(#[(\"a\", \"b\"), (\"c\", \"d\")]) } }\n";
     let (bodies, _) = build(source);
     let h = bodies.iter().find(|b| b.name == "h").expect("h body");
     let names = call_names(h);
@@ -1535,17 +1535,17 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
     ),
     (
         "iter::filter_map",
-        "use std::iter\nfn main() { let xs = [1, 2] |> iter::filter_map(|x: i64| if x > 1 { Some(x) } else { None })\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[1, 2] |> iter::filter_map(|x: i64| if x > 1 { Some(x) } else { None })\nlet _ = xs }",
         "gos_rt_iter_filter_map_i64",
     ),
     (
         "iter::collect",
-        "use std::iter\nfn main() { let xs = iter::collect([1, 2])\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = iter::collect(#[1, 2])\nlet _ = xs }",
         "gos_rt_vec_clone",
     ),
     (
         "Vec::collect",
-        "fn main() { let xs = Vec::from([1, 2]).collect()\nlet _ = xs }",
+        "fn main() { let xs = Vec::from(#[1, 2]).collect()\nlet _ = xs }",
         "gos_rt_vec_clone",
     ),
     (
@@ -1560,92 +1560,92 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
     ),
     (
         "iter::step_by",
-        "use std::iter\nfn main() { let xs = [1, 2, 3] |> iter::step_by(2)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[1, 2, 3] |> iter::step_by(2)\nlet _ = xs }",
         "gos_rt_vec_step_by",
     ),
     (
         "iter::flat_map (fixed array literal)",
-        "use std::iter\nfn main() { let xs = #[1, 2] |> iter::flat_map(|x: i64| #[x, x * 10])\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = [1, 2] |> iter::flat_map(|x: i64| [x, x * 10])\nlet _ = xs }",
         "gos_rt_iter_flat_map_arr_i64",
     ),
     (
         "iter::reduce",
-        "use std::iter\nfn main() { let v = [1, 2] |> iter::reduce(|a: i64, b: i64| a + b)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[1, 2] |> iter::reduce(|a: i64, b: i64| a + b)\nlet _ = v }",
         "gos_rt_iter_reduce_i64",
     ),
     (
         "iter::scan",
-        "use std::iter\nfn main() { let xs = [1, 2] |> iter::scan(0, |a: i64, x: i64| a + x)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[1, 2] |> iter::scan(0, |a: i64, x: i64| a + x)\nlet _ = xs }",
         "gos_rt_iter_scan_i64",
     ),
     (
         "iter::product_by",
-        "use std::iter\nfn main() { let v = [1, 2] |> iter::product_by(|x: i64| x + 1)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[1, 2] |> iter::product_by(|x: i64| x + 1)\nlet _ = v }",
         "gos_rt_iter_product_by_i64",
     ),
     (
         "iter::position",
-        "use std::iter\nfn main() { let v = [5, 6] |> iter::position(|x: i64| x == 6)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[5, 6] |> iter::position(|x: i64| x == 6)\nlet _ = v }",
         "gos_rt_iter_position_i64",
     ),
     (
         "iter::find_map",
-        "use std::iter\nfn main() { let v = [1, 2] |> iter::find_map(|x: i64| if x > 1 { Some(x) } else { None })\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[1, 2] |> iter::find_map(|x: i64| if x > 1 { Some(x) } else { None })\nlet _ = v }",
         "gos_rt_iter_find_map_i64",
     ),
     (
         "iter::take_while",
-        "use std::iter\nfn main() { let xs = [1, 9] |> iter::take_while(|x: i64| x < 5)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[1, 9] |> iter::take_while(|x: i64| x < 5)\nlet _ = xs }",
         "gos_rt_iter_take_while_i64",
     ),
     (
         "iter::skip_while",
-        "use std::iter\nfn main() { let xs = [1, 9] |> iter::skip_while(|x: i64| x < 5)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[1, 9] |> iter::skip_while(|x: i64| x < 5)\nlet _ = xs }",
         "gos_rt_iter_skip_while_i64",
     ),
     (
         "iter::partition",
-        "use std::iter\nfn main() { let (a, b) = [1, 2] |> iter::partition(|x: i64| x % 2 == 0)\nlet _ = a\nlet _ = b }",
+        "use std::iter\nfn main() { let (a, b) = #[1, 2] |> iter::partition(|x: i64| x % 2 == 0)\nlet _ = a\nlet _ = b }",
         "gos_rt_iter_partition_i64",
     ),
     (
         "iter::sort_by",
-        "use std::iter\nfn main() { let xs = [3, 1] |> iter::sort_by(|a: i64, b: i64| a - b)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[3, 1] |> iter::sort_by(|a: i64, b: i64| a - b)\nlet _ = xs }",
         "gos_rt_iter_sorted_by_i64",
     ),
     (
         "iter::sort_by_key",
-        "use std::iter\nfn main() { let xs = [3, 1] |> iter::sort_by_key(|x: i64| 0 - x)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[3, 1] |> iter::sort_by_key(|x: i64| 0 - x)\nlet _ = xs }",
         "gos_rt_iter_sorted_by_key_i64",
     ),
     (
         "iter::min_by",
-        "use std::iter\nfn main() { let v = [3, 1] |> iter::min_by(|a: i64, b: i64| a - b)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[3, 1] |> iter::min_by(|a: i64, b: i64| a - b)\nlet _ = v }",
         "gos_rt_iter_min_by_i64",
     ),
     (
         "iter::max_by",
-        "use std::iter\nfn main() { let v = [3, 1] |> iter::max_by(|a: i64, b: i64| a - b)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[3, 1] |> iter::max_by(|a: i64, b: i64| a - b)\nlet _ = v }",
         "gos_rt_iter_max_by_i64",
     ),
     (
         "iter::min_by_key",
-        "use std::iter\nfn main() { let v = [3, 1] |> iter::min_by_key(|x: i64| 0 - x)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[3, 1] |> iter::min_by_key(|x: i64| 0 - x)\nlet _ = v }",
         "gos_rt_iter_min_by_key_i64",
     ),
     (
         "iter::max_by_key",
-        "use std::iter\nfn main() { let v = [3, 1] |> iter::max_by_key(|x: i64| 0 - x)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[3, 1] |> iter::max_by_key(|x: i64| 0 - x)\nlet _ = v }",
         "gos_rt_iter_max_by_key_i64",
     ),
     (
         "iter::chunk_by",
-        "use std::iter\nfn main() { let m = [1, 2] |> iter::chunk_by(|x: i64| x % 2)\nlet _ = m }",
+        "use std::iter\nfn main() { let m = #[1, 2] |> iter::chunk_by(|x: i64| x % 2)\nlet _ = m }",
         "gos_rt_iter_group_by_i64",
     ),
     (
         "iter::count_by",
-        "use std::iter\nfn main() { let m = [1, 2] |> iter::count_by(|x: i64| x % 2)\nlet _ = m }",
+        "use std::iter\nfn main() { let m = #[1, 2] |> iter::count_by(|x: i64| x % 2)\nlet _ = m }",
         "gos_rt_iter_count_by_i64",
     ),
 ];
@@ -1724,7 +1724,7 @@ fn std_fn_value_map_err_resolves_to_runtime_symbol() {
 #[test]
 fn std_fn_value_iter_map_resolves_to_runtime_symbol() {
     let source = "use std::{iter, strings}\n\
-                  fn main() { let out = [\"ab\"] |> iter::map(strings::to_uppercase)\nlet _ = out }";
+                  fn main() { let out = #[\"ab\"] |> iter::map(strings::to_uppercase)\nlet _ = out }";
     let (bodies, _) = build_with_lift(source);
     let main = bodies.iter().find(|b| b.name == "main").expect("main");
     let strings = const_strings(main);
