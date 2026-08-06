@@ -207,8 +207,12 @@ mod tests {
         assert!(SKILL_CARD.contains("FIFO-only behavior"));
         assert!(SKILL_CARD.contains("MinHeap` / `MaxHeap` for explicit priority order"));
         assert!(
-            SKILL_CARD.contains("`#[v; N]` is a syntax error"),
-            "skill card should teach that a repeat literal is a fixed array"
+            SKILL_CARD.contains("`[5; 5]` is a fixed array"),
+            "skill card should teach that a bare repeat literal is a fixed array"
+        );
+        assert!(
+            SKILL_CARD.contains("`#[6; 7]` is a `Vec`"),
+            "skill card should teach that a hash-prefixed repeat literal is a Vec"
         );
         assert!(
             SKILL_CARD.contains("`%i Tuple` documents"),
