@@ -1,7 +1,13 @@
 use std::sync
+
+fn produce(tx: Sender<i64>) {
+    tx.send(7i64)
+    tx.close()
+}
+
 fn main() {
-    let ch = sync::channel::<i64>()
-    ch.send(7i64)
-    let x: i64 = ch.recv()
+    let (tx, rx) = sync::channel::<i64>()
+    go produce(tx)
+    let x = rx.recv().unwrap_or(0i64)
     println!("{}", x)
 }

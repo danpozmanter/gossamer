@@ -6690,16 +6690,27 @@ impl<'a> TypeChecker<'a> {
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = self.infer.resolve(self.tcx, *inner);
         }
-        let available = match self.tcx.kind(resolved) {
-            Some(TyKind::Array { .. }) => is_array_sequence_method(method),
-            Some(TyKind::Slice(_)) => is_slice_sequence_method(method),
+        // A resizing method on a fixed-size sequence gets the more specific
+        // `SequenceResizeRequiresVec` diagnostic from the sibling check, so
+        // it is left alone here. An iterator has no buffer to resize, so
+        // its surface is decided by the combinator list alone.
+        let (available, resize_reported_separately) = match self.tcx.kind(resolved) {
+            Some(TyKind::Array { .. }) => (is_array_sequence_method(method), true),
+            Some(TyKind::Slice(_)) => (is_slice_sequence_method(method), true),
             // A tuple is not iterable: its elements may differ in type, so
             // there is no element type to hand a loop or a combinator.
             // Positional access (`t.0`, `t.get(i)`) stays available.
-            Some(TyKind::Tuple(_)) => !is_tuple_rejected_method(method),
+            Some(TyKind::Tuple(_)) => (!is_tuple_rejected_method(method), false),
+            // Iterator state addresses elements through the combinator
+            // surface; a buffer method has no length or storage to act on
+            // and would read as a silent no-op.
+            Some(TyKind::Iterator(_)) => (is_iterator_method(method), false),
+            // A map is keyed, not ordered by position: the sequence surface
+            // has nothing to index, reorder, or slice on it.
+            Some(TyKind::HashMap { .. }) => (is_map_method(method), false),
             _ => return false,
         };
-        if available || is_vec_only_sequence_method(method) {
+        if available || (resize_reported_separately && is_vec_only_sequence_method(method)) {
             return false;
         }
         for arg in args {
@@ -9870,6 +9881,13 @@ impl<'a> TypeChecker<'a> {
                 match self.tcx.kind_of(cur).clone() {
                     TyKind::Ref { inner, mutability } => match self.tcx.kind_of(inner).clone() {
                         TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
+                            // A shared borrow yields the same element binding
+                            // the owned sequence does; only `&mut` keeps the
+                            // reference, which is what carries a write through
+                            // to the source.
+                            if mutability == crate::Mutbl::Not {
+                                break Some(elem);
+                            }
                             break Some(self.tcx.intern(TyKind::Ref {
                                 mutability,
                                 inner: elem,
@@ -12950,7 +12968,47 @@ pub fn is_slice_sequence_method(name: &str) -> bool {
 /// `t.get(i)`) and whole-value operations stay available.
 #[must_use]
 pub fn is_tuple_rejected_method(name: &str) -> bool {
-    matches!(name, "iter" | "count") || is_vec_only_sequence_method(name)
+    !is_tuple_method(name)
+}
+
+/// Returns whether a method is implemented for a tuple receiver. A tuple is
+/// a fixed heterogeneous group, so its surface is whole-value operations
+/// plus positional access - the sequence methods have no single element
+/// type to act on and no buffer to reorder.
+#[must_use]
+pub fn is_tuple_method(name: &str) -> bool {
+    matches!(
+        name,
+        "len" | "is_empty" | "get" | "clone" | "to_string" | "into" | "try_into"
+    )
+}
+
+/// Returns whether a method is implemented for a `Map` receiver. Keeping
+/// discovery, type checking, and the runtime on one list stops a sequence
+/// method from reaching a map, where it has no ordered buffer to act on and
+/// would read as a silent no-op.
+#[must_use]
+pub fn is_map_method(name: &str) -> bool {
+    matches!(
+        name,
+        "insert"
+            | "get"
+            | "get_or"
+            | "or_insert"
+            | "remove"
+            | "pop"
+            | "contains_key"
+            | "contains"
+            | "inc"
+            | "inc_at"
+            | "inc_batch"
+            | "len"
+            | "is_empty"
+            | "keys"
+            | "values"
+            | "iter"
+            | "clear"
+    )
 }
 
 /// Fixed arrays expose value-preserving `clone` in addition to methods made
@@ -12968,7 +13026,8 @@ pub fn is_array_sequence_method(name: &str) -> bool {
 pub fn is_iterator_method(name: &str) -> bool {
     matches!(
         name,
-        "take"
+        "next"
+            | "take"
             | "skip"
             | "step_by"
             | "enumerate"

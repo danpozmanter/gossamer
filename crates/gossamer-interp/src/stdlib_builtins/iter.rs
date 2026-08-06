@@ -1645,9 +1645,14 @@ pub(crate) fn builtin_iter_flatten(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_iter_reversed(args: &[Value]) -> RuntimeResult<Value> {
-    let mut xs = collect_array(args.first().unwrap_or(&Value::Unit));
+    let source = args.first().unwrap_or(&Value::Unit);
+    // Reversal needs every element, so the snapshot is unavoidable; the
+    // result still has to answer `next()` when the source did, or the
+    // `Iterator<T>` the checker gave it has no cursor to advance.
+    let source_is_lazy = matches!(source, Value::LazyIter(_));
+    let mut xs = collect_array(source);
     xs.reverse();
-    if lazy_iterators_enabled() {
+    if source_is_lazy || lazy_iterators_enabled() {
         return Ok(new_lazy_iter(LazyIterState::Array {
             items: Arc::new(xs),
             source_id: 0,

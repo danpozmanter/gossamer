@@ -2712,7 +2712,12 @@ impl<'a> Builder<'a> {
         // and `x` to the element. Without this, the for-loop falls
         // through to the array/vec dispatch with a 2-tuple loop_pat
         // and the body never runs (no fields on a scalar element).
-        if let Some(inner) = enumerate_inner_expr(for_loop.iter_expr) {
+        // The index walk needs a buffer with a readable length, so a lazy
+        // source (a range, or an adapter chain over one) keeps its pairs
+        // and goes through the iterator snapshot below instead.
+        if let Some(inner) = enumerate_inner_expr(for_loop.iter_expr)
+            && !matches!(self.tcx.kind_of(inner.ty), TyKind::Iterator(_))
+        {
             if let HirPatKind::Tuple(sub_pats) = &for_loop.loop_pat.kind {
                 if sub_pats.len() == 2 {
                     return self.lower_for_enumerate(
@@ -2791,15 +2796,7 @@ impl<'a> Builder<'a> {
         {
             let iter_local = self.lower_expr(for_loop.iter_expr)?;
             let vec_ty = self.tcx.intern(TyKind::Vec(elem_ty));
-            let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-            let helper = match self.tcx.kind_of(elem_ty) {
-                TyKind::Tuple(fields)
-                    if fields.len() == 2 && fields.iter().all(|field| *field == i64_ty) =>
-                {
-                    "gos_rt_lazy_iter_collect_pair_i64"
-                }
-                _ => "gos_rt_lazy_iter_collect_i64",
-            };
+            let helper = self.lazy_collect_symbol(elem_ty);
             let vec_local = self.emit_combinator_call(
                 helper,
                 vec![Operand::Copy(Place::local(iter_local))],

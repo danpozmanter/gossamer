@@ -187,3 +187,45 @@ fn example_programs_resolve_without_diagnostics() {
         assert!(unresolved.is_empty(), "{path} unresolved: {unresolved:?}");
     }
 }
+
+#[test]
+fn use_names_a_local_module_from_the_crate_root() {
+    // The bundler inlines a sibling file as `mod options { ... }`, so a
+    // `use` may name it directly, through `root::`, or through `crate::`.
+    let body = "mod options {\n    enum Colorize { Always, Never }\n    fn tag() -> i64 { 1 }\n}\n";
+    for path in [
+        "use options::Colorize",
+        "use root::options::Colorize",
+        "use crate::options::Colorize",
+        "use options::{Colorize, tag}",
+    ] {
+        let source = format!("{path}\n\n{body}fn main() {{ }}\n");
+        let sf = parse(&source);
+        let (_, diags) = resolve_source_file(&sf);
+        assert!(
+            diags.is_empty(),
+            "{path}: unexpected diagnostics: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn use_names_a_nested_local_module() {
+    let source = "use example::options::tag\n\nmod example {\n    mod options {\n        fn tag() -> i64 { 1 }\n    }\n}\nfn main() { }\n";
+    let sf = parse(source);
+    let (_, diags) = resolve_source_file(&sf);
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+}
+
+#[test]
+fn use_of_an_unknown_module_path_still_reports() {
+    let source = "use nowhere::Thing\n\nfn main() { }\n";
+    let sf = parse(source);
+    let (_, diags) = resolve_source_file(&sf);
+    assert!(
+        diags
+            .iter()
+            .any(|d| matches!(d.error, ResolveError::UnknownModulePath { .. })),
+        "expected UnknownModulePath, got: {diags:?}"
+    );
+}

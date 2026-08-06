@@ -71,8 +71,30 @@ impl<'tcx> FnBuilder<'tcx> {
                 }
                 _ => false,
             };
-        if is_vec_ctor {
+        if is_vec_ctor || Self::init_is_sequence_snapshot(init) {
             self.collection_locals.insert(reg);
+        }
+    }
+
+    /// `true` when `init` walks a temporary sequence - an array or Vec
+    /// literal, optionally through `iter()` / `enumerate()`. The value is an
+    /// indexable snapshot, so the for-loop's `&mut` binding is driven by index
+    /// rather than by the `next()` cursor protocol, which such a value does
+    /// not carry.
+    fn init_is_sequence_snapshot(init: &HirExpr) -> bool {
+        let mut cur = init;
+        loop {
+            match &cur.kind {
+                HirExprKind::Array(_) => return true,
+                HirExprKind::MethodCall {
+                    receiver,
+                    name,
+                    args,
+                } if args.is_empty() && matches!(name.name.as_str(), "iter" | "enumerate") => {
+                    cur = receiver;
+                }
+                _ => return false,
+            }
         }
     }
 

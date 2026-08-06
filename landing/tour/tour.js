@@ -28,8 +28,8 @@ const LESSONS = [
       format macros are built in: there are no user-defined macros.</p>
       <p>Press <strong>Run</strong> (or Ctrl / Cmd + Enter) to execute the
       program on the right. Edit it freely and run it again.</p>`,
-    code: `// Bindings are immutable by default; reach for \`let mut\` only when
-// a value really changes. String literals are already \`String\`.
+    code: `// Bindings are immutable by default; reach for \\\`let mut\\\` only when
+// a value really changes. String literals are already \\\`String\\\`.
 let name = "Gossamer"
 let pi = 3.14159
 
@@ -42,62 +42,67 @@ println!("pi is about {pi}")
 `,
   },
   {
-    slug: "pipes",
-    title: "Forward pipe |>",
+    slug: "loops",
+    title: "Loops and loop expressions",
     prose: `
-      <p>The forward-pipe <code>|></code> turns nested calls into
-      left-to-right dataflow. <code>x |> f</code> is <code>f(x)</code>;
-      <code>x |> f(a)</code> threads the value into the <strong>last</strong>
-      argument, so it reads <code>f(a, x)</code>.</p>
-      <p>The <code>_</code> placeholder instead makes the piped value the
-      receiver: <code>x |> _.trim</code> is <code>x.trim()</code>. And
-      ranges are plain values, so a combinator chain like
-      <code>(1..=5).filter(...).sum()</code> needs no pipe at all - pick
-      whichever direction reads best.</p>`,
-    code: `fn double(x: i64) -> i64 { x * 2 }
-fn add(a: i64, b: i64) -> i64 { a + b }
+      <p>A <code>for</code> loop walks a range or a collection directly - no <code>.iter()</code>, no <code>as usize</code> on indices. <code>enumerate()</code> pairs each element with its index.</p>
+      <p><code>while</code> covers a condition and <code>while let</code> drains an <code>Option</code>-yielding call. <code>loop</code> is an <strong>expression</strong>: <code>break value</code> is what the loop evaluates to, so a search does not need a mutable result slot. <code>if</code> and <code>match</code> are expressions too.</p>
+      <p>A label breaks out of an outer level from inside an inner one, and <code>continue</code> skips the rest of one iteration.</p>`,
+    code: `fn main() {
+    // \`for\` walks a range or a collection - no \`.iter()\`, no \`as usize\`.
+    let mut total = 0
+    for n in 1..=5 { total += n }
+    println!("1..=5 sums to {total}")
 
-// \`x |> f\` is \`f(x)\`; \`x |> f(a)\` lands x in the last slot: \`f(a, x)\`.
-let n = 3 |> double |> add(10)
-println!("3 |> double |> add(10) = {n}")
+    for (i, name) in #["ada", "grace", "alan"].iter().enumerate() {
+        println!("{i}: {name}")
+    }
 
-// \`_.method\` pipes a value through its own methods - \`_\` is the receiver.
-let shout = "  hi there  " |> _.trim |> _.to_uppercase
-println!("shout = {shout}")
+    // \`while\` for a condition, \`while let\` to drain an Option-yielding call.
+    let mut countdown = 3
+    while countdown > 0 {
+        print!("{countdown}.. ")
+        countdown -= 1
+    }
+    println!("liftoff")
 
-// Ranges are values and combinators are methods - chain them directly.
-let total = (1..=5).filter(|n| n % 2 == 1).sum()
-println!("sum of odds in 1..=5 = {total}")
-`,
-  },
-  {
-    slug: "closures",
-    title: "Closures + higher-order fns",
-    prose: `
-      <p>A closure is <code>|param: T| body</code> and captures its
-      environment automatically - there is no <code>move</code>. Two
-      callable types name a function value: <code>fn(args) -> ret</code>
-      for a bare code pointer, and <code>Fn(args) -> ret</code> - the
-      callable trait - which also accepts capturing closures.</p>
-      <p>A higher-order function takes an <code>Fn(...)</code> parameter,
-      and a bare <code>fn</code> coerces into it at the call site. The
-      sequence combinators - <code>filter</code>, <code>map</code>,
-      <code>sum</code> - are higher-order all the way down, taking a
-      closure per step.</p>`,
-    code: `// \`Fn(i64) -> i64\` accepts both capturing closures and bare functions.
-fn apply(f: Fn(i64) -> i64, x: i64) -> i64 { f(x) }
+    let mut stack = #[1, 2, 3]
+    while let Some(top) = stack.pop() {
+        print!("{top} ")
+    }
+    println!("")
 
-fn inc(y: i64) -> i64 { y + 1 }
+    // \`loop\` is an expression: \`break value\` is what it evaluates to.
+    let mut n = 1
+    let doubled_past_100 = loop {
+        n *= 2
+        if n > 100 { break n }
+    }
+    println!("first power of two past 100 = {doubled_past_100}")
 
-fn main() {
-    let scale = 10
-    let scaled = |y: i64| scale * y       // captures \`scale\`
-    println!("scaled(5) = {}", apply(scaled, 5))
-    println!("inc(41)   = {}", apply(inc, 41))   // bare fn coerces
+    // \`if\` and \`match\` are expressions too - bind their result.
+    let size = if doubled_past_100 > 64 { "big" } else { "small" }
+    println!("that is {size}")
 
-    // Closures power the sequence combinators, one per step.
-    let total = (1..=6).filter(|n| n % 2 == 0).map(|n| n * n).sum()
-    println!("sum of squares of evens in 1..=6 = {total}")
+    // A labeled loop breaks the outer level from inside the inner one.
+    let mut found = (0, 0)
+    'search: for row in 0..5 {
+        for col in 0..5 {
+            if row * col == 6 {
+                found = (row, col)
+                break 'search
+            }
+        }
+    }
+    println!("first pair with product 6 = {:?}", found)
+
+    // \`continue\` skips the rest of one iteration.
+    let mut odds = #[]
+    for n in 0..10 {
+        if n % 2 == 0 { continue }
+        odds.push(n)
+    }
+    println!("odds = {:?}", odds)
 }
 `,
   },
@@ -119,7 +124,7 @@ fn main() {
     Line,
 }
 
-// \`match\` is exhaustive and yields a value - every variant is handled.
+// \\\`match\\\` is exhaustive and yields a value - every variant is handled.
 fn area(shape: &Shape) -> f64 {
     match shape {
         Shape::Circle(r) => 3.14159 * *r * *r,
@@ -131,6 +136,375 @@ fn area(shape: &Shape) -> f64 {
 let shapes = [Shape::Circle(2.0), Shape::Rect { w: 3.0, h: 4.0 }, Shape::Line]
 for s in shapes {
     println!("area = {}", area(s))
+}
+`,
+  },
+  {
+    slug: "closures",
+    title: "Closures + higher-order fns",
+    prose: `
+      <p>A closure is <code>|param: T| body</code> and captures its
+      environment automatically - there is no <code>move</code>. Two
+      callable types name a function value: <code>fn(args) -> ret</code>
+      for a bare code pointer, and <code>Fn(args) -> ret</code> - the
+      callable trait - which also accepts capturing closures.</p>
+      <p>A higher-order function takes an <code>Fn(...)</code> parameter,
+      and a bare <code>fn</code> coerces into it at the call site. The
+      sequence combinators - <code>filter</code>, <code>map</code>,
+      <code>sum</code> - are higher-order all the way down, taking a
+      closure per step.</p>`,
+    code: `// \\\`Fn(i64) -> i64\\\` accepts both capturing closures and bare functions.
+fn apply(f: Fn(i64) -> i64, x: i64) -> i64 { f(x) }
+
+fn inc(y: i64) -> i64 { y + 1 }
+
+fn main() {
+    let scale = 10
+    let scaled = |y: i64| scale * y       // captures \\\`scale\\\`
+    println!("scaled(5) = {}", apply(scaled, 5))
+    println!("inc(41)   = {}", apply(inc, 41))   // bare fn coerces
+
+    // Closures power the sequence combinators, one per step.
+    let total = (1..=6).filter(|n| n % 2 == 0).map(|n| n * n).sum()
+    println!("sum of squares of evens in 1..=6 = {total}")
+}
+`,
+  },
+  {
+    slug: "pipes",
+    title: "Forward pipe |>",
+    prose: `
+      <p>The forward-pipe <code>|></code> turns nested calls into
+      left-to-right dataflow. <code>x |> f</code> is <code>f(x)</code>;
+      <code>x |> f(a)</code> threads the value into the <strong>last</strong>
+      argument, so it reads <code>f(a, x)</code>.</p>
+      <p>The <code>_</code> placeholder instead makes the piped value the
+      receiver: <code>x |> _.trim</code> is <code>x.trim()</code>. And
+      ranges are plain values, so a combinator chain like
+      <code>(1..=5).filter(...).sum()</code> needs no pipe at all - pick
+      whichever direction reads best.</p>`,
+    code: `fn double(x: i64) -> i64 { x * 2 }
+fn add(a: i64, b: i64) -> i64 { a + b }
+
+// \\\`x |> f\\\` is \\\`f(x)\\\`; \\\`x |> f(a)\\\` lands x in the last slot: \\\`f(a, x)\\\`.
+let n = 3 |> double |> add(10)
+println!("3 |> double |> add(10) = {n}")
+
+// \\\`_.method\\\` pipes a value through its own methods - \\\`_\\\` is the receiver.
+let shout = "  hi there  " |> _.trim |> _.to_uppercase
+println!("shout = {shout}")
+
+// Ranges are values and combinators are methods - chain them directly.
+let total = (1..=5).filter(|n| n % 2 == 1).sum()
+println!("sum of odds in 1..=5 = {total}")
+`,
+  },
+  {
+    slug: "sequences",
+    title: "Vec, arrays, slices, tuples",
+    prose: `
+      <p>The literal spellings are distinct: <code>#[..]</code> builds a growable <code>Vec&lt;T&gt;</code>, <code>[..]</code> builds a fixed <code>[T; N]</code> array. A slice <code>&amp;[T]</code> borrows either without copying.</p>
+      <p>Only <code>Vec</code> carries the resizing surface - <code>push</code>, <code>insert</code>, <code>remove</code>, <code>truncate</code>. Arrays and slices keep the fixed-size operations, so a length change is a type error rather than a surprise.</p>
+      <p>A <strong>tuple</strong> groups a fixed number of values whose types may differ. Read it positionally with <code>t.0</code>, destructure it in a <code>let</code>, and compare tuples structurally.</p>`,
+    code: `fn main() {
+    // \`#[..]\` builds a growable Vec; \`[..]\` builds a fixed array.
+    let mut queue = #[4, 8, 15]
+    queue.push(16)
+    let fixed = [1, 2, 3]
+
+    println!("vec   = {:?} (len {})", queue, queue.len())
+    println!("array = {:?} (len {})", fixed, fixed.len())
+
+    // Indices are plain i64 - no casts. Reads and writes are bounds-checked.
+    println!("queue[0] = {}, last = {:?}", queue[0], queue.last())
+
+    // A slice borrows a sequence without copying it.
+    println!("sum of a borrowed slice = {}", total(&queue))
+
+    // Vec owns the resizing surface: insert, remove, truncate.
+    let _ = queue.insert(0, 1)
+    let _ = queue.remove(1)
+    println!("after insert/remove = {:?}", queue)
+
+    // Tuples group values of different types; read them positionally or
+    // destructure them.
+    let entry = ("gossamer", 2026, true)
+    let (name, year, _) = entry
+    println!("{name} ({year}), tuple len = {}", entry.len())
+    println!("field access: {}", entry.0)
+}
+
+fn total(xs: &[i64]) -> i64 {
+    let mut acc = 0
+    for x in xs { acc += x }
+    acc
+}
+`,
+  },
+  {
+    slug: "maps-sets",
+    title: "Map, Set, and the BTree pair",
+    prose: `
+      <p><code>{}</code> is a <code>Map</code> literal and <code>#{}</code> is a <code>Set</code> literal. <code>m.inc(k)</code> is the counter idiom and <code>m.get_or(k, default)</code> the fallback read, so neither needs a get-then-branch.</p>
+      <p>Sets carry the algebra - <code>union</code>, <code>intersection</code>, <code>difference</code>, <code>is_subset</code> - not just membership.</p>
+      <p><code>BTreeMap</code> and <code>BTreeSet</code> keep their keys in sorted order, which is what you want whenever output order is part of the result.</p>`,
+    code: `use std::collections::{BTreeMap, BTreeSet}
+
+fn main() {
+    // \`{}\` is a Map literal; \`#{}\` is a Set literal.
+    let mut stock = {"apples": 12, "pears": 3}
+    stock.insert("figs", 7)
+
+    // \`inc\` is the counter idiom, \`get_or\` the fallback read.
+    stock.inc("apples", 5)
+    println!("apples = {}", stock.get_or("apples", 0))
+    println!("kiwis  = {}", stock.get_or("kiwis", 0))
+    println!("has figs = {}", stock.contains_key("figs"))
+
+    for (name, count) in stock.iter() {
+        if count > 6 { println!("plenty of {name}: {count}") }
+    }
+
+    // Sets carry the algebra, not just membership.
+    let planted = #{"apples", "pears", "plums"}
+    let sold = #{"pears", "figs"}
+    println!("both      = {:?}", planted.intersection(&sold).to_vec())
+    println!("unsold    = {:?}", planted.difference(&sold).to_vec())
+    println!("every one = {:?}", planted.union(&sold).to_vec())
+
+    // The BTree pair keeps keys in sorted order.
+    let mut ordered: BTreeMap<String, i64> = BTreeMap::new()
+    ordered.insert("zebra", 1)
+    ordered.insert("ant", 2)
+    println!("sorted keys = {:?}", ordered.keys())
+
+    let tags: BTreeSet<String> = #{"gamma", "alpha", "beta"}
+    println!("sorted tags = {:?}", tags.to_vec())
+}
+`,
+  },
+  {
+    slug: "queues-heaps",
+    title: "Deque, Queue, Stack, heaps",
+    prose: `
+      <p>Each container has exactly one name and one contract. <code>Queue</code> is FIFO-only and <code>Stack</code> is LIFO-only even though a <code>Vec</code> could do either - the narrower type states the intent in the signature.</p>
+      <p><code>Deque</code> pushes and pops at both ends. <code>MaxHeap</code> and <code>MinHeap</code> give priority order directly, so a min-heap never means negating your keys.</p>
+      <p>None of these have a literal: build them with <code>T::new()</code> or <code>T::from(#[..])</code>.</p>`,
+    code: `use std::collections::{Deque, Queue, Stack, MinHeap, MaxHeap}
+
+fn main() {
+    let mut q = Queue::from(#[1, 2, 3])
+    q.push(4)
+    println!("queue front = {:?}, len = {}", q.pop(), q.len())
+
+    let mut st = Stack::from(#[1, 2, 3])
+    st.push(4)
+    println!("stack top = {:?}", st.pop())
+
+    let mut dq = Deque::from(#[2, 3])
+    dq.push_front(1)
+    dq.push_back(4)
+    println!("deque ends = {:?} {:?}", dq.pop_front(), dq.pop_back())
+
+    let mut hi = MaxHeap::from(#[3, 9, 4])
+    hi.push(11)
+    println!("max = {:?}", hi.pop())
+
+    let mut lo = MinHeap::from(#[3, 9, 4])
+    println!("min = {:?}", lo.pop())
+}
+`,
+  },
+  {
+    slug: "functional",
+    title: "map, filter, fold and friends",
+    prose: `
+      <p>The combinators are methods on any Vec, array, or range - <code>map</code>, <code>filter</code>, <code>fold</code>, <code>any</code>, <code>all</code>, <code>find</code>, <code>position</code>, <code>min_by_key</code>, <code>take</code>, <code>step_by</code>, <code>rev</code>.</p>
+      <p>They chain left to right, so a query reads in the order it happens and never needs a manual accumulator loop. Terminals like <code>sum</code>, <code>count</code>, <code>collect</code>, and <code>join</code> end the chain.</p>
+      <p>Ranges carry the same surface as collections, so <code>(1..=6).filter(..).map(..).collect()</code> is one pipeline.</p>`,
+    code: `fn main() {
+    let readings = #[12, 7, 30, 4, 18, 25]
+
+    // Transform, select, and reduce - each combinator is a method.
+    println!("doubled  = {:?}", readings.map(|n| n * 2))
+    println!("over ten = {:?}", readings.filter(|n| n > 10))
+    println!("sum      = {}", readings.sum())
+    println!("count    = {}", readings.count(|n| n % 2 == 0))
+    println!("fold     = {}", readings.fold(0, |acc, n| acc + n * n))
+
+    // Questions about a sequence answer directly.
+    println!("any over 25 = {}", readings.any(|n| n > 25))
+    println!("all positive = {}", readings.all(|n| n > 0))
+    println!("first over 15 = {:?}", readings.find(|n| n > 15))
+    println!("its index = {:?}", readings.position(|n| n > 15))
+    println!("largest = {:?}", readings.max())
+    println!("closest to 20 = {:?}", readings.min_by_key(|n| if n > 20 { n - 20 } else { 20 - n }))
+
+    // Ranges carry the same surface, and the pipeline reads left to right.
+    let squares = (1..=6).filter(|n| n % 2 == 1).map(|n| n * n).collect()
+    println!("odd squares = {:?}", squares)
+    println!("reversed    = {:?}", (1..=5).rev().collect())
+    println!("every other = {:?}", (0..10).step_by(3).collect())
+    println!("first three = {:?}", readings.iter().take(3).collect())
+
+    // Sorting takes the key you care about; \`join\` renders the result.
+    let mut names = #["Ada", "Grace", "Alan", "Barbara"]
+    names.sort_by_key(|n| n.len())
+    println!("by length = {}", names.join(", "))
+}
+`,
+  },
+  {
+    slug: "sorting",
+    title: "Sorting and searching",
+    prose: `
+      <p><code>sort</code> orders in place and <code>sort_by_key</code> takes the key you actually care about, so ordering by a derived value needs no comparator boilerplate.</p>
+      <p>Structs, tuples, and enums compare structurally by declaration order with no derive, so a sequence of them sorts as it reads.</p>
+      <p>Searching splits the same way: <code>find</code> and <code>position</code> scan linearly, while a sorted sequence supports a binary search you can write in a handful of lines.</p>`,
+    code: `struct Player { name: String, score: i64 }
+
+fn main() {
+    let mut scores = #[42, 7, 19, 7, 88, 3]
+
+    // \`sort\` orders in place; \`sort_by_key\` takes the key you care about.
+    scores.sort()
+    println!("sorted     = {:?}", scores)
+    println!("descending = {:?}", scores.rev())
+    println!("no repeats = {:?}", scores.dedup())
+
+    // Structs and tuples compare structurally, field by field, with no
+    // derive - so a sequence of them sorts as it reads.
+    let mut board = #[
+        Player { name: "ada", score: 19 },
+        Player { name: "grace", score: 88 },
+        Player { name: "alan", score: 42 },
+    ]
+    board.sort_by_key(|p| 0 - p.score)
+    for p in board {
+        println!("  {:>6} {:>3}", p.name, p.score)
+    }
+
+    // Binary search over the sorted sequence: halve the window each step.
+    println!("19 lives at index {:?}", index_of_sorted(&scores, 19))
+    println!("20 is absent: {:?}", index_of_sorted(&scores, 20))
+
+    // The linear searches read the same either way.
+    println!("first over 40 = {:?}", scores.find(|n| n > 40))
+    println!("its position  = {:?}", scores.position(|n| n > 40))
+}
+
+fn index_of_sorted(xs: &[i64], needle: i64) -> Option<i64> {
+    let mut lo = 0
+    let mut hi = xs.len() - 1
+    while lo <= hi {
+        let mid = (lo + hi) / 2
+        if xs[mid] == needle { return Some(mid) }
+        if xs[mid] < needle { lo = mid + 1 } else { hi = mid - 1 }
+    }
+    None
+}
+`,
+  },
+  {
+    slug: "strings",
+    title: "Strings + format! specs",
+    prose: `
+      <p>Strings are values, not references you juggle. Concatenate with
+      <code>+</code>, append with <code>+=</code>, and pipe a string through
+      its own methods with <code>_.method</code> -
+      <code>title |> _.trim |> _.to_title</code>.</p>
+      <p>Formatted output follows Rust's <code>{:spec}</code> grammar: width
+      and alignment (<code>{:>8}</code>, <code>{:^7}</code>), zero-padding and
+      radix (<code>{:08x}</code>), and precision (<code>{:.2}</code>), for
+      both positional and named arguments.</p>`,
+    code: `fn main() {
+    let title = "  the gossamer tour  "
+
+    // Method chaining through \\\`_.method\\\`; strings are plain values.
+    let clean = title |> _.trim |> _.to_title
+    println!("[{clean}]")
+
+    // \\\`+=\\\` appends; \\\`+\\\` concatenates with no separator.
+    let mut line = "items:"
+    for part in ["alpha", "beta", "gamma"] {
+        line += " " + &part
+    }
+    println!("{line}")
+
+    // Format specs follow Rust's {:spec} grammar.
+    println!("[{:>8}]", 42)
+    println!("[{:08x}]", 255)
+    println!("[{:^7}]", "hi")
+    println!("[{:.2}]", 3.14159)
+}
+`,
+  },
+  {
+    slug: "types",
+    title: "Structs / traits / generics / derive",
+    prose: `
+      <p>Structs are runtime-managed value types; traits define a shared
+      interface that each type implements. They compare by value and
+      <code>.clone()</code> with no derive, so <code>==</code> and
+      <code>.clone()</code> just work on every tier;
+      <code>#[derive(Debug)]</code> adds the <code>{:?}</code>
+      representation (<code>Default</code>, <code>PartialOrd</code>, and
+      <code>Ord</code> are derivable too).</p>
+      <p>Generic functions take trait bounds -
+      <code>fn farther&lt;T: Distance&gt;(...)</code> - and each call site
+      monomorphises to a direct call, with no dynamic dispatch.</p>`,
+    code: `// Structs compare by value and \\\`.clone()\\\` with no derive; derive Debug for {:?}.
+#[derive(Debug)]
+struct Point { x: i64, y: i64 }
+
+trait Distance {
+    fn from_origin(&self) -> i64
+}
+
+impl Distance for Point {
+    fn from_origin(&self) -> i64 { self.x * self.x + self.y * self.y }
+}
+
+// Generic over any \\\`Distance\\\`, dispatched statically and monomorphised.
+fn farther<T: Distance>(a: &T, b: &T) -> bool {
+    a.from_origin() > b.from_origin()
+}
+
+fn main() {
+    let a = Point { x: 3, y: 4 }
+    let b = Point { x: 1, y: 2 }
+    println!("a = {:?}", a)
+    println!("a == a.clone(): {}", a == a.clone())
+    println!("a farther than b: {}", farther(&a, &b))
+}
+`,
+  },
+  {
+    slug: "operators",
+    title: "Operator overloading",
+    prose: `
+      <p>Arithmetic operators are trait methods, so a type opts into them
+      by implementing the trait: <code>impl Add for Vec2</code> gives
+      <code>Vec2 + Vec2</code> its meaning, and the same shape covers
+      <code>Sub</code>, <code>Mul</code>, and the rest.</p>
+      <p>These are written by hand, not derived. The compiler already
+      synthesizes <code>==</code>, ordering, and <code>.clone()</code>
+      for you - a custom <code>+</code> is the part that is genuinely
+      yours to define.</p>`,
+    code: `// Operator overloading: \\\`impl Add for T\\\` makes \\\`+\\\` work on your type.
+struct Vec2 { x: f64, y: f64 }
+
+impl Add for Vec2 {
+    fn add(self, other: Vec2) -> Vec2 {
+        Vec2 { x: self.x + other.x, y: self.y + other.y }
+    }
+}
+
+fn main() {
+    let a = Vec2 { x: 1.0, y: 2.0 }
+    let b = Vec2 { x: 3.0, y: 4.0 }
+    let c = a + b
+    println!("sum = ({}, {})", c.x, c.y)
 }
 `,
   },
@@ -149,8 +523,8 @@ for s in shapes {
       evaluator recurses with one exhaustive <code>match</code> - the
       whole shape of a real tree-walking interpreter.</p>`,
     code: `// A recursive enum needs no wrapping: a variant payload can be the enum
-// itself, and every node is heap-shared. \`Box\`/\`Arc\`/\`Rc\` are
-// transparent, so \`Box<Expr>\` would compile to exactly the same thing.
+// itself, and every node is heap-shared. \\\`Box\\\`/\\\`Arc\\\`/\\\`Rc\\\` are
+// transparent, so \\\`Box<Expr>\\\` would compile to exactly the same thing.
 enum Expr {
     Num(i64),
     Add(Expr, Expr),
@@ -184,7 +558,7 @@ fn main() {
       <p>It is the same <code>?</code> that propagates <code>Err</code>
       in a <code>Result</code> function: the present path stays flat
       while the absent path needs no nesting at all.</p>`,
-    code: `// \`?\` propagates \`None\` inside an Option-returning function.
+    code: `// \\\`?\\\` propagates \\\`None\\\` inside an Option-returning function.
 fn first_even(xs: &[i64]) -> Option<i64> {
     for x in xs {
         if *x % 2 == 0 { return Some(*x) }
@@ -192,8 +566,8 @@ fn first_even(xs: &[i64]) -> Option<i64> {
     None
 }
 
-// \`?\` chains Option-returning calls: if \`first_even\` yields \`None\`,
-// this returns \`None\` immediately - no nesting on the absent path.
+// \\\`?\\\` chains Option-returning calls: if \\\`first_even\\\` yields \\\`None\\\`,
+// this returns \\\`None\\\` immediately - no nesting on the absent path.
 fn half_of_first_even(xs: &[i64]) -> Option<i64> {
     let n = first_even(xs)?
     Some(n / 2)
@@ -225,7 +599,7 @@ fn main() {
       inside a pipeline.</p>`,
     code: `use std::errors
 
-// Fallible work returns \`Result<T, E>\`; \`?\` propagates the \`Err\`.
+// Fallible work returns \\\`Result<T, E>\\\`; \\\`?\\\` propagates the \\\`Err\\\`.
 fn parse_port(text: &String) -> Result<i64, errors::Error> {
     let n: i64 = match text.parse() {
         Ok(n) => n,
@@ -242,144 +616,9 @@ fn main() {
         Err(e) => eprintln!("error: {}", e.message()),
     }
 
-    // \`wrap\` adds context; printing shows the colon-joined cause chain.
+    // \\\`wrap\\\` adds context; printing shows the colon-joined cause chain.
     let bad = parse_port(&"oops").map_err(|e| errors::wrap(e, "loading config"))
     if let Err(e) = bad { println!("{e}") }
-}
-`,
-  },
-  {
-    slug: "collections",
-    title: "Vec / HashMap / iterators",
-    prose: `
-      <p>The built-in growable array is <code>[T]</code> - push, index, and
-      iterate with <code>for x in xs</code> (no <code>.iter()</code>, no
-      <code>as usize</code> on indices). Richer containers live in
-      <code>std::collections</code>: <code>HashMap</code>,
-      <code>HashSet</code>, and <code>BTreeMap</code>.</p>
-      <p><code>HashMap</code> carries ergonomic helpers - <code>m.inc(k)</code>
-      for counters and <code>m.get_or(k, default)</code> for a fallback read.
-      Combinators such as <code>filter</code> and <code>sum</code> are
-      methods on any Vec or range, so a query never needs a manual
-      loop.</p>`,
-    code: `fn main() {
-    // A growable Vec; iterate the values directly.
-    let mut nums = [4, 8, 15, 16, 23]
-    nums.push(42)
-    println!("count = {}, last = {}", nums.len(), nums.last().unwrap_or(0))
-
-    // Combinators are methods on any Vec or range.
-    println!("sum of evens = {}", nums.filter(|n| n % 2 == 0).sum())
-
-    // HashMap counters: \`inc\` does the get-or-zero-then-add for you.
-    let mut tally = {}
-    for word in ["go", "go", "rust", "go"] {
-        tally.inc(word)
-    }
-    println!("go appears {} times", tally.get_or("go", 0))
-}
-`,
-  },
-  {
-    slug: "strings",
-    title: "Strings + format! specs",
-    prose: `
-      <p>Strings are values, not references you juggle. Concatenate with
-      <code>+</code>, append with <code>+=</code>, and pipe a string through
-      its own methods with <code>_.method</code> -
-      <code>title |> _.trim |> _.to_title</code>.</p>
-      <p>Formatted output follows Rust's <code>{:spec}</code> grammar: width
-      and alignment (<code>{:>8}</code>, <code>{:^7}</code>), zero-padding and
-      radix (<code>{:08x}</code>), and precision (<code>{:.2}</code>), for
-      both positional and named arguments.</p>`,
-    code: `fn main() {
-    let title = "  the gossamer tour  "
-
-    // Method chaining through \`_.method\`; strings are plain values.
-    let clean = title |> _.trim |> _.to_title
-    println!("[{clean}]")
-
-    // \`+=\` appends; \`+\` concatenates with no separator.
-    let mut line = "items:"
-    for part in ["alpha", "beta", "gamma"] {
-        line += " " + &part
-    }
-    println!("{line}")
-
-    // Format specs follow Rust's {:spec} grammar.
-    println!("[{:>8}]", 42)
-    println!("[{:08x}]", 255)
-    println!("[{:^7}]", "hi")
-    println!("[{:.2}]", 3.14159)
-}
-`,
-  },
-  {
-    slug: "json",
-    title: "JSON round-trip",
-    prose: `
-      <p>Every user <code>struct</code> automatically gains two generic
-      free functions: <code>to_json::&lt;T&gt;(&amp;value)</code> encodes
-      it to text and <code>from_json::&lt;T&gt;(&amp;text)</code> decodes
-      text back into a typed value, validating each field against its
-      declared type with path-qualified errors.</p>
-      <p>There is one spelling - the turbofish form - and it works on
-      every tier. Here a <code>Server</code> config makes the full round
-      trip; for unknown-shape documents the dynamic
-      <code>json::parse</code> API stays available.</p>`,
-    code: `// Every user struct gets \`to_json::<T>\` / \`from_json::<T>\` for free.
-// \`?\` makes this entry file's implicit \`main\` return a Result.
-#[derive(Debug)]
-struct Server { host: String, port: i64, tls: bool }
-
-let cfg = Server { host: "localhost", port: 8080, tls: true }
-
-// Encode the struct to JSON text...
-let text = to_json::<Server>(&cfg)?
-println!("encoded = {text}")
-
-// ...then decode it straight back into a typed struct, validating
-// each field against its declared type.
-let back: Server = from_json::<Server>(&text)?
-println!("decoded = {:?}", back)
-println!("address = {}:{}", back.host, back.port)
-`,
-  },
-  {
-    slug: "regex",
-    title: "Regular expressions",
-    prose: `
-      <p><code>std::regex</code> wraps Rust's <code>regex</code> crate.
-      <code>compile</code> once into a <code>Pattern</code> - it carries
-      its source for diagnostics - then reuse it across
-      <code>is_match</code>, <code>find</code> / <code>find_all</code>,
-      <code>captures</code>, <code>replace_all</code>, and
-      <code>split</code>.</p>
-      <p><code>captures</code> returns <code>[full, group1, ...]</code>,
-      each an <code>Option&lt;String&gt;</code>. A
-      <strong>let-chain</strong> binds every group and tests them in one
-      condition, so a structured parse collapses to a single
-      <code>if</code>.</p>`,
-    code: `use std::regex
-
-fn main() {
-    // Compile once; the pattern carries its source for diagnostics.
-    let re = match regex::compile("([0-9]{4}-[0-9]{2}-[0-9]{2}) ([A-Z]+) (.+)") {
-        Ok(r) => r,
-        Err(e) => { eprintln!("bad pattern: {e}"); return }
-    }
-
-    let lines = ["2026-06-29 ERROR disk full", "2026-06-30 INFO restarted"]
-    for line in lines {
-        // \`captures\` yields [full, group1, group2, ...]; a let-chain
-        // binds all three groups and tests them in one condition.
-        if let Some(c) = regex::captures(&re, &line)
-            && let Some(date) = c[1]
-            && let Some(level) = c[2]
-            && let Some(msg) = c[3] {
-            println!("{date}  [{level}]  {msg}")
-        }
-    }
 }
 `,
   },
@@ -409,7 +648,7 @@ fn main() {
     let (tx, rx) = sync::channel(5)
     go produce(tx)
 
-    // \`recv\` yields \`Some\` until the channel is closed and drained.
+    // \\\`recv\\\` yields \\\`Some\\\` until the channel is closed and drained.
     let mut total = 0
     while let Some(v) = rx.recv() { total += v }
     println!("sum of squares 1..=5 = {total}")
@@ -438,8 +677,8 @@ fn main() {
     let (tx_hi, rx_hi) = sync::channel(3)
     let (tx_lo, rx_lo) = sync::channel(2)
 
-    go produce(tx_hi, [1, 2, 3])
-    go produce(tx_lo, [10, 20])
+    go produce(tx_hi, #[1, 2, 3])
+    go produce(tx_lo, #[10, 20])
 
     // Five values arrive across two channels; \`select\` takes whichever
     // arm is ready, polling them in source order.
@@ -485,145 +724,9 @@ fn main() {
         wg.add(1)
         go worker(total, wg, i)
     }
-    wg.wait()      // block until every worker has called \`done\`
+    wg.wait()      // block until every worker has called \\\`done\\\`
 
     println!("sum of squares 1..=4 = {}", sync::AtomicI64::load(total))
-}
-`,
-  },
-  {
-    slug: "types",
-    title: "Structs / traits / generics / derive",
-    prose: `
-      <p>Structs are runtime-managed value types; traits define a shared
-      interface that each type implements. They compare by value and
-      <code>.clone()</code> with no derive, so <code>==</code> and
-      <code>.clone()</code> just work on every tier;
-      <code>#[derive(Debug)]</code> adds the <code>{:?}</code>
-      representation (<code>Default</code>, <code>PartialOrd</code>, and
-      <code>Ord</code> are derivable too).</p>
-      <p>Generic functions take trait bounds -
-      <code>fn farther&lt;T: Distance&gt;(...)</code> - and each call site
-      monomorphises to a direct call, with no dynamic dispatch.</p>`,
-    code: `// Structs compare by value and \`.clone()\` with no derive; derive Debug for {:?}.
-#[derive(Debug)]
-struct Point { x: i64, y: i64 }
-
-trait Distance {
-    fn from_origin(&self) -> i64
-}
-
-impl Distance for Point {
-    fn from_origin(&self) -> i64 { self.x * self.x + self.y * self.y }
-}
-
-// Generic over any \`Distance\`, dispatched statically and monomorphised.
-fn farther<T: Distance>(a: &T, b: &T) -> bool {
-    a.from_origin() > b.from_origin()
-}
-
-fn main() {
-    let a = Point { x: 3, y: 4 }
-    let b = Point { x: 1, y: 2 }
-    println!("a = {:?}", a)
-    println!("a == a.clone(): {}", a == a.clone())
-    println!("a farther than b: {}", farther(&a, &b))
-}
-`,
-  },
-  {
-    slug: "operators",
-    title: "Operator overloading",
-    prose: `
-      <p>Arithmetic operators are trait methods, so a type opts into them
-      by implementing the trait: <code>impl Add for Vec2</code> gives
-      <code>Vec2 + Vec2</code> its meaning, and the same shape covers
-      <code>Sub</code>, <code>Mul</code>, and the rest.</p>
-      <p>These are written by hand, not derived. The compiler already
-      synthesizes <code>==</code>, ordering, and <code>.clone()</code>
-      for you - a custom <code>+</code> is the part that is genuinely
-      yours to define.</p>`,
-    code: `// Operator overloading: \`impl Add for T\` makes \`+\` work on your type.
-struct Vec2 { x: f64, y: f64 }
-
-impl Add for Vec2 {
-    fn add(self, other: Vec2) -> Vec2 {
-        Vec2 { x: self.x + other.x, y: self.y + other.y }
-    }
-}
-
-fn main() {
-    let a = Vec2 { x: 1.0, y: 2.0 }
-    let b = Vec2 { x: 3.0, y: 4.0 }
-    let c = a + b
-    println!("sum = ({}, {})", c.x, c.y)
-}
-`,
-  },
-  {
-    slug: "comptime",
-    title: "Compile-time evaluation",
-    prose: `
-      <p>A <code>comptime fn</code> runs during compilation. Inside a
-      <code>comptime { }</code> block its result is folded to a literal
-      before the program runs, so the work happens once, at build time,
-      and every tier embeds the same constant.</p>
-      <p>Use it for lookup tables and derived constants - anything better
-      computed at build time than on every run.
-      <code>const FACT_10: i64 = comptime { factorial(10) }</code> ships
-      the answer, not the loop that produced it.</p>`,
-    code: `// A \`comptime fn\` runs at compile time; calling it inside a
-// \`comptime { }\` block folds the result into a literal, so the runtime
-// never repeats the work - every tier compiles the same constant.
-comptime fn factorial(n: i64) -> i64 {
-    let mut acc = 1
-    for i in 2..=n { acc *= i }
-    acc
-}
-
-const FACT_10: i64 = comptime { factorial(10) }
-
-fn main() {
-    println!("10! folded at compile time = {FACT_10}")
-
-    // A \`comptime\` block can fold an inline computation to a literal too.
-    let triangular = comptime {
-        let mut acc = 0
-        for i in 1..=100 { acc += i }
-        acc
-    }
-    println!("sum 1..=100 = {triangular}")
-}
-`,
-  },
-  {
-    slug: "arena",
-    title: "arena { } regions",
-    prose: `
-      <p>Memory is automatic: deterministic reference counting, no borrow
-      checker, no GC pauses. For an object graph that all dies together,
-      an <code>arena { }</code> block bump-allocates everything inside it
-      and frees the whole region at every exit path.</p>
-      <p>The contract is simple: nothing allocated inside may escape, so
-      you compute a scalar or string summary inside and keep that. Here
-      each round fills a throwaway buffer and only the running total
-      survives the block.</p>`,
-    code: `fn main() {
-    // Everything allocated inside an \`arena { }\` is bump-allocated and
-    // freed wholesale at every exit. The contract: nothing allocated
-    // inside may escape, so compute a scalar summary and keep that.
-    let mut grand_total = 0
-    for round in 1..=3 {
-        arena {
-            let mut scratch: Vec<i64> = []
-            for i in 0..1000 { scratch.push(i * round) }
-
-            let mut sum = 0
-            for x in scratch { sum += x }
-            grand_total += sum      // a scalar survives; the Vec does not
-        }
-    }
-    println!("grand total = {grand_total}")
 }
 `,
   },
@@ -647,7 +750,7 @@ fn main() {
 }
 
 fn main() {
-    // \`defer\` runs when control leaves the block, in LIFO order.
+    // \\\`defer\\\` runs when control leaves the block, in LIFO order.
     {
         defer println!("third")
         defer println!("second")
@@ -656,6 +759,376 @@ fn main() {
     }
     println!("---")
     use_resource(&"file")
+}
+`,
+  },
+  {
+    slug: "arena",
+    title: "arena { } regions",
+    prose: `
+      <p>Memory is automatic: deterministic reference counting, no borrow
+      checker, no GC pauses. For an object graph that all dies together,
+      an <code>arena { }</code> block bump-allocates everything inside it
+      and frees the whole region at every exit path.</p>
+      <p>The contract is simple: nothing allocated inside may escape, so
+      you compute a scalar or string summary inside and keep that. Here
+      each round fills a throwaway buffer and only the running total
+      survives the block.</p>`,
+    code: `fn main() {
+    // Everything allocated inside an \`arena { }\` is bump-allocated and
+    // freed wholesale at every exit. The contract: nothing allocated
+    // inside may escape, so compute a scalar summary and keep that.
+    let mut grand_total = 0
+    for round in 1..=3 {
+        arena {
+            let mut scratch: Vec<i64> = #[]
+            for i in 0..1000 { scratch.push(i * round) }
+
+            let mut sum = 0
+            for x in scratch { sum += x }
+            grand_total += sum      // a scalar survives; the Vec does not
+        }
+    }
+    println!("grand total = {grand_total}")
+}
+`,
+  },
+  {
+    slug: "comptime",
+    title: "Compile-time evaluation",
+    prose: `
+      <p>A <code>comptime fn</code> runs during compilation. Inside a
+      <code>comptime { }</code> block its result is folded to a literal
+      before the program runs, so the work happens once, at build time,
+      and every tier embeds the same constant.</p>
+      <p>Use it for lookup tables and derived constants - anything better
+      computed at build time than on every run.
+      <code>const FACT_10: i64 = comptime { factorial(10) }</code> ships
+      the answer, not the loop that produced it.</p>`,
+    code: `// A \\\`comptime fn\\\` runs at compile time; calling it inside a
+// \\\`comptime { }\\\` block folds the result into a literal, so the runtime
+// never repeats the work - every tier compiles the same constant.
+comptime fn factorial(n: i64) -> i64 {
+    let mut acc = 1
+    for i in 2..=n { acc *= i }
+    acc
+}
+
+const FACT_10: i64 = comptime { factorial(10) }
+
+fn main() {
+    println!("10! folded at compile time = {FACT_10}")
+
+    // A \\\`comptime\\\` block can fold an inline computation to a literal too.
+    let triangular = comptime {
+        let mut acc = 0
+        for i in 1..=100 { acc += i }
+        acc
+    }
+    println!("sum 1..=100 = {triangular}")
+}
+`,
+  },
+  {
+    slug: "time",
+    title: "Dates and times",
+    prose: `
+      <p>An instant is milliseconds since the epoch: <code>time::parse_rfc3339</code> reads one, <code>time::format_rfc3339</code> writes one back, and both return a <code>Result</code> so bad input is never a silent zero.</p>
+      <p>A <code>Duration</code> is a value you build, add, and read back through <code>as_secs</code> / <code>as_millis</code>. The span between two instants is a duration over their difference.</p>
+      <p>Because instants are integers, comparing and sorting them is ordinary arithmetic.</p>`,
+    code: `use std::time
+
+fn main() {
+    // RFC 3339 text in, milliseconds since the epoch out.
+    let launch = time::parse_rfc3339("2026-08-06T09:30:00Z").unwrap_or(0)
+    let landing = time::parse_rfc3339("2026-08-07T11:00:00Z").unwrap_or(0)
+    println!("launch ms = {launch}")
+
+    // Durations are values: build them, add them, read them back.
+    let day = time::Duration::from_secs(86400)
+    let hold = time::Duration::from_secs(5400)
+    let expected = launch + day.as_millis() + hold.as_millis()
+    println!("expected  = {}", time::format_rfc3339(expected).unwrap_or("?"))
+
+    // A span between two instants is a duration over the difference.
+    let flight = time::Duration::from_millis(landing - launch)
+    println!("flight    = {} h {} m", flight.as_secs() / 3600, (flight.as_secs() % 3600) / 60)
+
+    // Comparison and ordering are plain integer work.
+    println!("on time   = {}", landing <= expected)
+
+    // A schedule is just a sequence of instants - sort and render it.
+    let mut stops = #[
+        time::parse_rfc3339("2026-08-06T18:00:00Z").unwrap_or(0),
+        launch,
+        landing,
+    ]
+    stops.sort()
+    for at in stops {
+        println!("  {}", time::format_rfc3339(at).unwrap_or("?"))
+    }
+
+    // Bad input is a \`Result\`, never a silent zero.
+    match time::parse_rfc3339("not a timestamp") {
+        Ok(ms) => println!("parsed {ms}"),
+        Err(e) => println!("rejected: {e}"),
+    }
+}
+`,
+  },
+  {
+    slug: "json",
+    title: "JSON round-trip",
+    prose: `
+      <p>Every user <code>struct</code> automatically gains two generic
+      free functions: <code>to_json::&lt;T&gt;(&amp;value)</code> encodes
+      it to text and <code>from_json::&lt;T&gt;(&amp;text)</code> decodes
+      text back into a typed value, validating each field against its
+      declared type with path-qualified errors.</p>
+      <p>There is one spelling - the turbofish form - and it works on
+      every tier. Here a <code>Server</code> config makes the full round
+      trip; for unknown-shape documents the dynamic
+      <code>json::parse</code> API stays available.</p>`,
+    code: `// Every user struct gets \\\`to_json::<T>\\\` / \\\`from_json::<T>\\\` for free.
+// \\\`?\\\` makes this entry file's implicit \\\`main\\\` return a Result.
+#[derive(Debug)]
+struct Server { host: String, port: i64, tls: bool }
+
+let cfg = Server { host: "localhost", port: 8080, tls: true }
+
+// Encode the struct to JSON text...
+let text = to_json::<Server>(&cfg)?
+println!("encoded = {text}")
+
+// ...then decode it straight back into a typed struct, validating
+// each field against its declared type.
+let back: Server = from_json::<Server>(&text)?
+println!("decoded = {:?}", back)
+println!("address = {}:{}", back.host, back.port)
+`,
+  },
+  {
+    slug: "encoding",
+    title: "Encoding bytes and records",
+    prose: `
+      <p><code>base64</code> and <code>hex</code> round-trip bytes through text, which is what most transport and storage formats need.</p>
+      <p>Strings expose the record-splitting surface - <code>lines</code>, <code>split_once</code>, <code>split</code> - so a delimited file is a loop rather than a parser.</p>
+      <p>Every decode returns a <code>Result</code>, so malformed input is handled at the point it arrives.</p>`,
+    code: `use std::encoding::{base64, hex}
+use std::errors
+
+fn main() -> Result<(), errors::Error> {
+    // Base64 and hex round-trip bytes through text.
+    let secret = "gossamer".as_bytes()
+    let encoded = base64::encode(&secret)
+    println!("base64 = {encoded}")
+    let raw = base64::decode(&encoded)?
+    println!("back   = {} bytes, first = {}", raw.len(), raw[0] as char)
+    println!("hex    = {}", hex::encode(&secret))
+
+    // A delimited record splits with the string surface.
+    let sheet = "name,role\\nada,analyst\\ngrace,admiral\\n"
+    for line in sheet.lines() {
+        if let Some((name, role)) = line.split_once(",") {
+            println!("  {name} | {role}")
+        }
+    }
+
+    // Hex decodes back to the same bytes it encoded.
+    let round = hex::decode(&hex::encode(&secret))?
+    println!("hex round-trips = {}", round.len() == secret.len())
+    Ok(())
+}
+`,
+  },
+  {
+    slug: "regex",
+    title: "Regular expressions",
+    prose: `
+      <p><code>std::regex</code> wraps Rust's <code>regex</code> crate.
+      <code>compile</code> once into a <code>Pattern</code> - it carries
+      its source for diagnostics - then reuse it across
+      <code>is_match</code>, <code>find</code> / <code>find_all</code>,
+      <code>captures</code>, <code>replace_all</code>, and
+      <code>split</code>.</p>
+      <p><code>captures</code> returns <code>[full, group1, ...]</code>,
+      each an <code>Option&lt;String&gt;</code>. A
+      <strong>let-chain</strong> binds every group and tests them in one
+      condition, so a structured parse collapses to a single
+      <code>if</code>.</p>`,
+    code: `use std::regex
+
+fn main() {
+    // Compile once; the pattern carries its source for diagnostics.
+    let re = match regex::compile("([0-9]{4}-[0-9]{2}-[0-9]{2}) ([A-Z]+) (.+)") {
+        Ok(r) => r,
+        Err(e) => { eprintln!("bad pattern: {e}"); return }
+    }
+
+    let lines = ["2026-06-29 ERROR disk full", "2026-06-30 INFO restarted"]
+    for line in lines {
+        // \\\`captures\\\` yields [full, group1, group2, ...]; a let-chain
+        // binds all three groups and tests them in one condition.
+        if let Some(c) = regex::captures(&re, &line)
+            && let Some(date) = c[1]
+            && let Some(level) = c[2]
+            && let Some(msg) = c[3] {
+            println!("{date}  [{level}]  {msg}")
+        }
+    }
+}
+`,
+  },
+  {
+    slug: "http-server",
+    title: "HTTP serving and routing",
+    prose: `
+      <p>A handler takes an <code>http::Request</code> and returns a <code>Result&lt;http::Response, errors::Error&gt;</code> - that is the entire contract. Routes chain with <code>|&gt;</code>, one verb method per route, and <code>{id}</code> path parameters come back through <code>path_int</code> / <code>path_value</code>.</p>
+      <p>On a host the program ends with <code>http::serve("127.0.0.1:8080", routes)?</code>. This page runs in a browser sandbox with no sockets, so it builds the router and then constructs the same responses the handlers return.</p>`,
+    code: `use std::errors
+use std::http
+use std::http::router
+
+struct Note { id: i64, title: String }
+
+// A handler takes a request and returns a response - nothing else. The
+// router hands it the matched request; \`{id}\` arrives through \`path_int\`.
+fn get_note(r: http::Request) -> Result<http::Response, errors::Error> {
+    let id = r.path_int("id").unwrap_or(0)
+    Ok(http::Response::json(200, note_json(id)?))
+}
+
+fn health(_r: http::Request) -> Result<http::Response, errors::Error> {
+    Ok(http::Response::text(200, "ok"))
+}
+
+fn note_json(id: i64) -> Result<String, errors::Error> {
+    to_json::<Note>(Note { id: id, title: "written in Gossamer" })
+}
+
+fn main() -> Result<(), errors::Error> {
+    // Routes chain with \`|>\`, one verb method per route.
+    let routes = router::Router::new()
+        |> _.get("/health", health)
+        |> _.get("/notes/{id}", get_note)
+        |> _.post("/notes", get_note)
+    println!("router ready")
+
+    // On a host this is the whole program:
+    //     http::serve("127.0.0.1:8080", routes)?
+    // The browser sandbox has no sockets, so the responses below are built
+    // exactly as the handlers build them.
+    let ok = http::Response::text(200, "ok")
+    println!("GET /health   -> {} {}", ok.status, ok.body)
+
+    let note = http::Response::json(200, note_json(42)?)
+    println!("GET /notes/42 -> {} {}", note.status, note.body)
+
+    let created = http::Response::json(201, note_json(43)?)
+        |> _.with_header("location", "/notes/43")
+    println!("POST /notes   -> {} ({} header)", created.status, created.headers.len())
+
+    let missing = http::Response::text(404, "no such note")
+    println!("miss          -> {} {}", missing.status, missing.body)
+    Ok(())
+}
+`,
+  },
+  {
+    slug: "http-client",
+    title: "HTTP clients and streaming",
+    prose: `
+      <p>A response body is text, so decoding it is the same work whether it arrived over the wire or came from a file: <code>from_json::&lt;T&gt;</code> for a known shape, <code>json::parse</code> for a partly-known one.</p>
+      <p>A streaming endpoint hands you the body in pieces rather than as one document, so each chunk is handled as it lands - the loop below reads a server-sent-event feed line by line.</p>
+      <p>On a host, <code>http::get(url)?.body</code> supplies the text. The browser sandbox has no sockets, so the payload here is captured inline.</p>`,
+    code: `use std::errors
+use std::encoding::json
+use std::strings
+
+struct Repo { name: String, stars: i64 }
+
+fn main() -> Result<(), errors::Error> {
+    // On a host, one call fetches a body:
+    //     let body = http::get("https://api.example.com/repos/gossamer")?.body
+    // The browser sandbox has no sockets, so this page decodes a captured
+    // payload the same way the response body would be decoded.
+    let body = "{\\"name\\":\\"gossamer\\",\\"stars\\":420}"
+
+    // Typed decode: fields land in a struct, unknown keys are ignored.
+    let repo = from_json::<Repo>(&body)?
+    println!("{} has {} stars", repo.name, repo.stars)
+
+    // The document round-trips: encode it back, or pretty-print what
+    // arrived when you are inspecting a payload by hand.
+    println!("re-encoded = {}", to_json::<Repo>(repo)?)
+    println!("{}", json::render(&json::parse(&body)?))
+
+    // Streaming: a server-sent-event feed arrives as lines, not as one
+    // document, so each chunk is handled as it lands.
+    let feed = "event: tick\\ndata: 1\\n\\nevent: tick\\ndata: 2\\n\\nevent: done\\ndata: bye\\n"
+    let mut ticks = 0
+    for line in feed.lines() {
+        if let Some(payload) = line.strip_prefix("data: ") {
+            if payload == "bye" {
+                println!("stream closed")
+            } else {
+                ticks += 1
+                println!("chunk {ticks}: {payload}")
+            }
+        }
+    }
+
+    // A failed request is a \`Result\`, so the error path is written once.
+    let bad = from_json::<Repo>(&"{\\"name\\":42}")
+    match bad {
+        Ok(r) => println!("decoded {}", r.name),
+        Err(e) => println!("decode failed: {e}"),
+    }
+    Ok(())
+}
+`,
+  },
+  {
+    slug: "testing",
+    title: "Tests and assertions",
+    prose: `
+      <p><code>assert</code> and <code>assert_eq</code> are prelude builtins - no import and no harness needed to state what must hold.</p>
+      <p>Unit tests live beside the code they cover in a <code>#[cfg(test)] mod</code> with a name unique to the file, reaching items through <code>super::</code>. <code>gos test</code> runs them, along with any fenced code in a doc comment, so documented examples cannot rot.</p>`,
+    code: `fn median(xs: Vec<i64>) -> i64 {
+    let mut sorted = xs
+    sorted.sort()
+    let mid = sorted.len() / 2
+    if sorted.len() % 2 == 1 { sorted[mid] } else { (sorted[mid - 1] + sorted[mid]) / 2 }
+}
+
+fn main() {
+    // \`assert\` and \`assert_eq\` are prelude builtins - no import, no harness.
+    assert(median(#[3, 1, 2]) == 2, "odd count takes the middle")
+    assert_eq(median(#[4, 1, 3, 2]), 2, "even count averages the pair")
+    println!("median checks passed")
+
+    // A failing assertion panics with the message you wrote.
+    let empty: Vec<i64> = Vec::from(#[])
+    assert(empty.is_empty(), "an empty vec has no elements")
+
+    // \`#[test]\` functions run under \`gos test\`, and the fenced code in a
+    // doc comment above an item runs there too, so examples cannot rot.
+    println!("2 of 2 checks passed")
+}
+
+#[cfg(test)]
+mod tour_testing_tests {
+    use std::testing
+
+    #[test]
+    fn median_of_odd_count() {
+        let _ = testing::check_eq(&super::median(#[5, 1, 3]), &3, "middle value")
+    }
+
+    #[test]
+    fn median_of_even_count() {
+        let _ = testing::check_eq(&super::median(#[1, 2, 3, 4]), &2, "averaged pair")
+    }
 }
 `,
   },
@@ -684,7 +1157,7 @@ fn main() {
     }
 
     // Move the entries into structs and sort by count, descending.
-    let mut rows = []
+    let mut rows = #[]
     for (word, count) in counts.iter() {
         rows.push(Tally { word: word, count: count })
     }

@@ -1228,6 +1228,37 @@ impl<'a> Builder<'a> {
                 Some(dest)
             }
             ("iter::rev", 1) => {
+                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(_)) {
+                    // Reversal is only defined once the source's length is
+                    // known, so the pipeline is snapshotted, reversed, and
+                    // handed back as iterator state the rest of the chain
+                    // (and the `for` desugar) can keep pulling from.
+                    let iter = self.lower_lazy_iter_i64_arg(&args[0])?;
+                    let elem = match self.tcx.kind_of(ty) {
+                        TyKind::Iterator(elem) => *elem,
+                        _ => i64_ty,
+                    };
+                    let vec_ty = self.tcx.intern(TyKind::Vec(elem));
+                    let collect_symbol = self.lazy_collect_symbol(elem);
+                    let collected = self.emit_combinator_call(
+                        collect_symbol,
+                        vec![Operand::Copy(Place::local(iter))],
+                        vec_ty,
+                        span,
+                    );
+                    let reversed = self.emit_combinator_call(
+                        "gos_rt_iter_reversed_i64",
+                        vec![Operand::Copy(Place::local(collected))],
+                        vec_ty,
+                        span,
+                    );
+                    return Some(self.emit_combinator_call(
+                        "gos_rt_lazy_iter_from_vec_i64",
+                        vec![Operand::Copy(Place::local(reversed))],
+                        ty,
+                        span,
+                    ));
+                }
                 self.lower_iter_simple_vec_in_vec_out("gos_rt_iter_reversed_i64", args, ty, span)
             }
             ("iter::chain", 2) => {
@@ -2861,6 +2892,22 @@ impl<'a> Builder<'a> {
             return Some(self.coerce_array_to_vec(raw, elem, len, arg.span));
         }
         Some(raw)
+    }
+
+    /// Runtime symbol that drains iterator state into a `Vec` of `elem`.
+    /// A two-`i64` tuple element rides its own shim because the snapshot
+    /// stores pairs rather than scalar slots.
+    pub(crate) fn lazy_collect_symbol(&mut self, elem: Ty) -> &'static str {
+        use gossamer_types::TyKind;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        match self.tcx.kind_of(elem) {
+            TyKind::Tuple(fields)
+                if fields.len() == 2 && fields.iter().all(|field| *field == i64_ty) =>
+            {
+                "gos_rt_lazy_iter_collect_pair_i64"
+            }
+            _ => "gos_rt_lazy_iter_collect_i64",
+        }
     }
 
     /// Lowers an edition-2027 scalar iterator input. Existing iterator state

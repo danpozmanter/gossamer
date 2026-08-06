@@ -1,8 +1,29 @@
 # Changelog
 
-## 0.43.0 - Tuple surface, one name per container,collection literals, fixes
+## 0.43.0 - Tuple surface, one name per container, collection literals,
+## Iterator for-loops, reverse fix, dead method audit, explicit module imports
 
-- Bump workspace crates and lockfile package versions to 0.43.0.
+- Walk a `for` header's iterator source once on the bytecode VM: a range,
+  `.rev()`, or an adapter chain over either was rebuilt on every pull and
+  repeated its first element forever.
+- Lower `.rev()` on an iterator receiver in MIR; the compiled tiers emitted a
+  call to an undefined `rev` symbol and failed to build.
+- Keep `.rev()` lazy on the VM when its source is, so the reversed pipeline
+  still answers `next()` instead of restarting at element zero.
+- Snapshot a lazy `enumerate()` for-loop instead of indexing iterator state as
+  a buffer, which faulted in a native build.
+- Reject the sequence surface on iterator, `Map`, and tuple receivers:
+  `reverse`, `sort`, `push`, `len`, `to_vec`, and friends were accepted and
+  silently did nothing, and `windows` / `chunks` / `dedup` on a map failed at
+  runtime with an unbound name.
+- Bind a shared-slice loop element by value, so `for n in xs` over a `&[T]`
+  parameter reads the same as over the owned sequence.
+- Resolve a `use` that names a module in the same unit: `use options::Item`
+  from the crate root, `use root::path::Item`, and nested `use a::b::Item`.
+- Rebuild the tour of Gossamer: loops and loop expressions, every collection,
+  the combinator surface, dates and times, HTTP serving and routing, HTTP
+  clients and streaming, sorting, encoding, and tests - each step runs in the
+  browser playground.
 - Make the existing tuple type discoverable and complete its surface: a
   language reference page, a worked example, `%info Tuple`, and `%explain`
   element listings for tuple bindings.

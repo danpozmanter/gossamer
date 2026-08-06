@@ -26,6 +26,13 @@ fn is_prelude_binding(b: &Binding) -> bool {
     )
 }
 
+/// `true` when `b` came from a `use`. A definition collected afterwards
+/// takes the slot: the import names that very item, so the definition is
+/// what the name should resolve to.
+fn is_import_binding(b: &Binding) -> bool {
+    matches!(b.resolution, Resolution::Import { .. })
+}
+
 /// A single entry in the value or type namespace.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Binding {
@@ -78,7 +85,7 @@ impl Scope {
     /// (e.g. `fn clamp(...)` overriding the new prelude `clamp`).
     pub(crate) fn insert_type(&mut self, name: &str, binding: Binding) -> bool {
         if let Some(existing) = self.types.get(name) {
-            if !is_prelude_binding(existing) {
+            if !is_prelude_binding(existing) && !is_import_binding(existing) {
                 return false;
             }
         }
@@ -88,7 +95,7 @@ impl Scope {
 
     pub(crate) fn insert_value(&mut self, name: &str, binding: Binding) -> bool {
         if let Some(existing) = self.values.get(name) {
-            if !is_prelude_binding(existing) {
+            if !is_prelude_binding(existing) && !is_import_binding(existing) {
                 return false;
             }
         }

@@ -74,6 +74,11 @@ struct Resolver {
     module_scopes: std::collections::HashMap<NodeId, crate::scope::Scope>,
     /// Chain of enclosing inline modules during item collection.
     collect_mod_stack: Vec<NodeId>,
+    /// Every module path this compilation unit declares, joined with
+    /// `::` (`options`, `config`, `config::example`). A `use` may name
+    /// one of these directly - the crate root is the implicit base, the
+    /// same default Rust gives `use`.
+    local_module_paths: std::collections::HashSet<String>,
 }
 
 impl Resolver {
@@ -87,10 +92,12 @@ impl Resolver {
             project_alias_modules: std::collections::HashMap::new(),
             module_scopes: std::collections::HashMap::new(),
             collect_mod_stack: Vec::new(),
+            local_module_paths: std::collections::HashSet::new(),
         }
     }
 
     fn run(&mut self, source: &SourceFile) {
+        self.local_module_paths = collect_module_paths(&source.items);
         self.collect_imports(&source.uses);
         self.collect_items(&source.items);
         self.bind_project_imports();
@@ -201,16 +208,18 @@ impl Resolver {
         if p.segments.len() < 2 {
             return;
         }
-        if matches!(p.segments[0].name.as_str(), "self" | "super" | "crate") {
+        if matches!(
+            p.segments[0].name.as_str(),
+            "self" | "super" | "crate" | "root"
+        ) {
             return;
         }
         if p.segments[0].name != "std" {
-            let joined = p
-                .segments
-                .iter()
-                .map(|segment| segment.name.as_str())
-                .collect::<Vec<_>>()
-                .join("::");
+            let segments: Vec<&str> = p.segments.iter().map(|s| s.name.as_str()).collect();
+            if self.names_local_module(&segments) {
+                return;
+            }
+            let joined = segments.join("::");
             if crate::external::lookup_external_item(&joined).is_none() {
                 self.emit(
                     ResolveError::UnknownModulePath { path: joined },
@@ -328,6 +337,17 @@ impl Resolver {
         }
     }
 
+    /// `true` when `segments` walks into a module this unit declares.
+    /// The last segment is the imported item, so any prefix that names a
+    /// declared module makes the path local: `options::Colorize` and
+    /// `config::example::options::Colorize` both start at the crate root.
+    fn names_local_module(&self, segments: &[&str]) -> bool {
+        (1..segments.len()).any(|end| {
+            self.local_module_paths
+                .contains(&segments[..end].join("::"))
+        })
+    }
+
     fn define_import(&mut self, name: &str, use_id: NodeId, span: Span) {
         let module = self.scopes.module_mut();
         // Allow imports to shadow prelude entries (Gossamer's
@@ -344,6 +364,10 @@ impl Resolver {
             {
                 true
             }
+            // Naming an item this unit already defines is an alias for it,
+            // not a second definition: `use options::Colorize` spells out
+            // where a bundled sibling module's name comes from.
+            Some(crate::resolutions::Resolution::Def { .. }) => true,
             None => true,
             _ => false,
         };
@@ -1492,6 +1516,35 @@ impl Resolver {
             }
         }
     }
+}
+
+/// Every `mod` path declared under `items`, joined with `::`. Nested
+/// modules contribute their full path, so a `use` can name any level.
+fn collect_module_paths(items: &[gossamer_ast::Item]) -> std::collections::HashSet<String> {
+    fn walk(
+        items: &[gossamer_ast::Item],
+        prefix: &str,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        for item in items {
+            let ItemKind::Mod(decl) = &item.kind else {
+                continue;
+            };
+            let path = if prefix.is_empty() {
+                decl.name.name.clone()
+            } else {
+                format!("{prefix}::{}", decl.name.name)
+            };
+            if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                walk(inner, &path, out);
+            }
+            out.insert(path);
+        }
+    }
+
+    let mut out = std::collections::HashSet::new();
+    walk(items, "", &mut out);
+    out
 }
 
 fn tail_name(target: &UseTarget) -> Option<String> {

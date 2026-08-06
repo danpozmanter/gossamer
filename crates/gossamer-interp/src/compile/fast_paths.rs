@@ -2135,18 +2135,23 @@ impl<'tcx> FnBuilder<'tcx> {
                             if name.name == "iter" && args.is_empty()
                     )
         );
-        // A local bound to a collection's `iter()` / `enumerate()` holds a
-        // materialized sequence, so the index walk below drives it. Pulling
-        // `next()` from such a value has no cursor to advance and yields
-        // element zero forever. A range or a real adapter keeps the
-        // `next()` protocol.
-        if self.receiver_is_lazy_iterator(next_recv)
+        // A range, or an adapter chain over one, carries live iterator state
+        // instead of an indexable buffer, and its `next()` receiver is an
+        // rvalue the generic loop re-evaluates on every pull. Snapshot it
+        // once below and drive the snapshot by index - the shape the
+        // compiled tiers lower to. A stateful `impl Iterator` receiver
+        // (`(&mut __for_iter).next()`) keeps the `next()` protocol.
+        let lazy_source = self.receiver_is_lazy_iterator(next_recv)
             && !self.receiver_is_materialized_iterator(next_recv)
             && !collection_iter_method
             && !concrete_enumerate_method
-        {
-            return Ok(None);
-        }
+            && !matches!(
+                &next_recv.kind,
+                HirExprKind::Unary {
+                    op: HirUnaryOp::RefMut,
+                    ..
+                }
+            );
         // Walk the iterator chain. Recognise:
         //   `vec.iter()`              → element binding, no enumerate
         //   `vec.iter().enumerate()`  → tuple binding (i, x)
@@ -2158,6 +2163,10 @@ impl<'tcx> FnBuilder<'tcx> {
         // `impl Iterator` (Adt receiver) falls through to `None` so the
         // stateful `.next()` desugar keeps its own handling.
         let (vec_expr, is_enumerate, write_back_elem) = match &next_recv.kind {
+            // A lazy pipeline yields its elements (pairs included) straight
+            // from the snapshot, so it is driven as a plain sequence: the
+            // `enumerate` index rides in the tuple the snapshot holds.
+            _ if lazy_source => (next_recv.as_ref(), false, false),
             HirExprKind::MethodCall {
                 receiver: chain_recv,
                 name: chain_name,
@@ -2317,6 +2326,25 @@ impl<'tcx> FnBuilder<'tcx> {
 
         // Compile the iterable and capture it once.
         let mut vec_reg = self.compile_expr(source_expr)?;
+
+        // A lazy pipeline's value is iterator state with no indexable
+        // length. `collect` drains it into the snapshot the index walk
+        // drives; on an already-materialized sequence it hands back the
+        // same buffer.
+        if lazy_source {
+            let snap = self.alloc_reg();
+            let collect_idx = self.global_idx("collect");
+            let cache_idx = self.alloc_cache_idx();
+            self.emit(Op::MethodCall {
+                dst: snap,
+                receiver: vec_reg,
+                name_idx: collect_idx,
+                args: 0,
+                argc: 0,
+                cache_idx,
+            });
+            vec_reg = snap;
+        }
 
         // A bare `HashSet` iterand is not indexable; snapshot it to a
         // sorted `Vec` (the same order `set.to_vec()` / `.iter()` yield)

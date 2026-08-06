@@ -4557,6 +4557,7 @@ impl<'a> Builder<'a> {
             ("max", 0) => Some("iter::max"),
             ("count", 0) => Some("iter::count"),
             ("enumerate", 0) => Some("iter::enumerate"),
+            ("rev", 0) => Some("iter::rev"),
             ("chunks", 1) => Some("iter::chunks"),
             _ => None,
         };
@@ -4580,9 +4581,12 @@ impl<'a> Builder<'a> {
         ) {
             return MethodLowering::Pass;
         }
+        // A sequence receiver keeps the dedicated buffer symbols routed from
+        // the guarded table above; only an iterator receiver needs the
+        // `iter::` combinator lowering here.
         if matches!(
             method.name.as_str(),
-            "take" | "skip" | "step_by" | "collect" | "product"
+            "take" | "skip" | "step_by" | "collect" | "product" | "rev"
         ) && !matches!(recv_kind, TyKind::Iterator(_))
         {
             return MethodLowering::Pass;

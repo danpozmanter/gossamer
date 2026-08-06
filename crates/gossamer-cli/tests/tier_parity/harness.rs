@@ -961,6 +961,11 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/map_entry_and_format_paths.gos"),
     spec("feature-testing-examples/nested_repeat_literal.gos"),
     spec("feature-testing-examples/range_pipeline_iter.gos"),
+    // A `for` header over iterator state (a range, `.rev()`, or an adapter
+    // chain over either) walks the pipeline once. Re-pulling the iterand per
+    // iteration restarts it at element zero, so every tier must agree on the
+    // full element sequence, the bound-local shape, and early `break`.
+    spec("feature-testing-examples/for_lazy_iterator_source.gos"),
     spec("feature-testing-examples/seq_method_combinators.gos"),
     spec("feature-testing-examples/stdlib_slog.gos"),
     // Top-level statements (implicit `fn main`): plain, `?`-propagation,

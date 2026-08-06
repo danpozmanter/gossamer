@@ -1,0 +1,136 @@
+// A `for` header whose iterand is iterator state - a range, `.rev()`, or an
+// adapter chain over either - must walk the pipeline once and yield every
+// element in order, on every tier. The iterand is evaluated once: pulling it
+// again per iteration would restart the pipeline at its first element.
+
+fn joined(xs: Vec<i64>) -> String {
+    let mut out = String::from("")
+    for x in xs {
+        if out.len() > 0 {
+            out += ","
+        }
+        out += format!("{}", x)
+    }
+    out
+}
+
+fn collect_rev(n: i64) -> Vec<i64> {
+    let mut out: Vec<i64> = Vec::from(#[])
+    for x in (0..n).rev() {
+        out.push(x)
+    }
+    out
+}
+
+fn main() {
+    println!("range.rev = {}", joined(collect_rev(5)))
+
+    let mut mapped: Vec<i64> = Vec::from(#[])
+    for x in (0..5).map(|v| v * 2) {
+        mapped.push(x)
+    }
+    println!("range.map = {}", joined(mapped))
+
+    let mut taken: Vec<i64> = Vec::from(#[])
+    for x in (0..5).take(2) {
+        taken.push(x)
+    }
+    println!("range.take = {}", joined(taken))
+
+    let mut stepped: Vec<i64> = Vec::from(#[])
+    for x in (0..6).step_by(2) {
+        stepped.push(x)
+    }
+    println!("range.step_by = {}", joined(stepped))
+
+    let mut kept: Vec<i64> = Vec::from(#[])
+    for x in (0..6).filter(|v| v > 3) {
+        kept.push(x)
+    }
+    println!("range.filter = {}", joined(kept))
+
+    let mut pairs: Vec<i64> = Vec::from(#[])
+    for (i, x) in (10..13).enumerate() {
+        pairs.push(i * 100 + x)
+    }
+    println!("range.enumerate = {}", joined(pairs))
+
+    let xs = Vec::from(#[10, 20, 30])
+
+    let mut backwards: Vec<i64> = Vec::from(#[])
+    for x in xs.iter().rev() {
+        backwards.push(x)
+    }
+    println!("iter.rev = {}", joined(backwards))
+
+    let mut bumped: Vec<i64> = Vec::from(#[])
+    for x in xs.iter().map(|v| v + 1) {
+        bumped.push(x)
+    }
+    println!("iter.map = {}", joined(bumped))
+
+    let mut skipped: Vec<i64> = Vec::from(#[])
+    for x in xs.iter().skip(1) {
+        skipped.push(x)
+    }
+    println!("iter.skip = {}", joined(skipped))
+
+    // A literal iterand is a temporary the loop snapshots once; it walks its
+    // elements rather than re-reading the first.
+    let mut literal: Vec<i64> = Vec::from(#[])
+    for x in #[7, 8, 9].iter() {
+        literal.push(x)
+    }
+    println!("literal.iter = {}", joined(literal))
+
+    let mut literal_pairs: Vec<i64> = Vec::from(#[])
+    for (i, x) in #[7, 8, 9].iter().enumerate() {
+        literal_pairs.push(i * 10 + x)
+    }
+    println!("literal.enumerate = {}", joined(literal_pairs))
+
+    // Iterator state bound to a local walks the same elements as the inline
+    // pipeline it was built from.
+    let stored = (0..4).rev()
+    let mut bound: Vec<i64> = Vec::from(#[])
+    for x in stored {
+        bound.push(x)
+    }
+    println!("bound.rev = {}", joined(bound))
+
+    // A reversed pipeline stays chainable: further adapters and terminals
+    // keep pulling from it.
+    println!("chained = {}", joined((0..6).rev().take(3).collect()))
+    println!("sum = {}", (0..5).rev().sum())
+
+    // `break` leaves the walk early instead of restarting it.
+    let mut first_two: Vec<i64> = Vec::from(#[])
+    for x in (0..100).rev() {
+        if first_two.len() == 2 {
+            break
+        }
+        first_two.push(x)
+    }
+    println!("break = {}", joined(first_two))
+}
+
+#[cfg(test)]
+mod for_lazy_iterator_source_tests {
+    use std::testing
+
+    #[test]
+    fn range_rev_walks_down_once() {
+        let r = super::collect_rev(4)
+        let _ = testing::check_eq(&r.len(), &4, "len")
+        let _ = testing::check_eq(&r[0], &3, "first")
+        let _ = testing::check_eq(&r[3], &0, "last")
+    }
+
+    #[test]
+    fn reversed_pipeline_stays_chainable() {
+        let r = (0..5).rev().take(2).collect()
+        let _ = testing::check_eq(&r.len(), &2, "len")
+        let _ = testing::check_eq(&r[0], &4, "first")
+        let _ = testing::check_eq(&r[1], &3, "second")
+    }
+}
